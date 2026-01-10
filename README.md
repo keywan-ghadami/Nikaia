@@ -1,2 +1,2 @@
-# Mellite
-Mellite Programming Language
+# Nikaia
+Nikaia Programming Language
