@@ -247,6 +247,8 @@ state.access() |guard| {
 ```
 
 **Escape Hatch:** `allow_blocking { ... }` für bewusste Ausnahmen.
+Eine mit sync markierte Funktion darf ausschließlich andere sync-Funktionen oder primitive Operationen aufrufen. Der Aufruf einer Standard-Funktion (implizit async) ist ein Kompilierfehler.
+
 
 ### 3.4. Synchronisierung und Speicher
 `Locked[T]` wird zu `Mutex[T]` (Blocking OS-Mutex). Daher ist das Verbot von I/O innerhalb von Locks essenziell.
