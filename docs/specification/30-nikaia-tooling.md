@@ -282,3 +282,62 @@ unsafe asm {
     test $src, $src
 }
 ```
+## Chapter 17: The Standard Library ("Batteries Included")
+
+Unlike languages that prefer a minimal core, Nikaia pursues immediate productivity. The standard library consists of universal modules (same API everywhere) and profile-specific capabilities.
+
+### 17.1. Universal Modules
+These modules rely on Unified Types and function identically in both Lite and Advanced profiles, though their internal implementation differs significantly to match the runtime model.
+
+**`std::http`**
+A production-ready HTTP/1.1 and HTTP/2 server and client.
+* **Lite Profile:** Runs on a single-threaded Event Loop.
+* **Advanced Profile:** Runs on a multi-threaded Work-Stealing Executor.
+
+```nika
+use std::http
+
+fn main() {
+    // Starts a server on Port 8080.
+    // The code looks the same, but the runtime behavior adapts to the profile.
+    http::Server::new()
+        .route("/", |_| => "Hello World")
+        .listen(":8080")
+}
+```
+
+**`std::fs` (Compiler Magic)**
+File system access is designed to look **blocking** (synchronous) for ease of use. However, the compiler automatically transforms these calls into **non-blocking** state machines backed by the runtime's reactor. You never block the thread, but you never have to write "callback hell".
+
+**Other Key Modules:**
+* **`std::json`**: High-performance serialization using compile-time code generation (zero-allocation parsing where possible).
+* **`std::cli`**: Parsers for command-line arguments, environment variables, and ANSI terminal colors.
+* **`std::net`**: Low-level TCP/UDP sockets for building custom protocols.
+
+### 17.2. Profile-Specific Availability
+Some modules are only available or behave restrictively depending on the compilation target.
+
+* **`std::process`**: Spawning child processes.
+* **`std::thread`**:
+    * **Advanced:** Allows spawning OS threads and using thread-local storage.
+    * **Lite / WASM:** Usage results in a **compile-time error**. The Lite profile enforces a "Share-Nothing" architecture where manual threading is prohibited.
+
+---
+
+# Appendix A: Error Hierarchy
+
+Nikaia strictly distinguishes between errors caused by the environment (recoverable) and bugs in the program logic (unrecoverable).
+
+### A.1. Recoverable Errors (`throws`)
+Errors arising from external circumstances (File not found, Network timeout).
+* **Mechanism:** Must be declared in the function signature via `throws`.
+* **Handling:** Enforced by the compiler via `?{}` blocks or propagation.
+
+### A.2. Unrecoverable Errors (`panic`)
+Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). The behavior differs drastically based on the profile:
+
+| Profile | Panic Behavior | Consequence |
+| :--- | :--- | :--- |
+| **Lite** | **Abort** | The entire process terminates immediately. In WebAssembly, this triggers a "Trap". There is no stack unwinding, resulting in minimal binary size. |
+| **Advanced** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked<T>`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
+
