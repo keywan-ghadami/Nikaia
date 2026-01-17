@@ -17,8 +17,7 @@ When you create a new project (`nikaia new my_project`), the following structure
     * **Asset Hashing:** If a macro or grammar reads an external file (e.g., `from "schema.sql"`), the compiler stores the file's SHA256 hash here.
     * **Instant Builds:** On subsequent builds, if the hash on disk hasn't changed, the compiler skips re-processing the macro.
 * `src/`: The folder containing your source code.
-    * `main.nika`: The entry point.
-      
+    * `main.nika`: The entry point.  
 
 ### 13.2. Core Commands
 * `nikaia build`: Compiles the project.
@@ -26,6 +25,33 @@ When you create a new project (`nikaia new my_project`), the following structure
 * `nikaia test`: Runs unit tests and fuzzers.
 * `nikaia bench`: Runs performance benchmarks.
 * `nikaia fmt`: Automatically formats your code.
+
+### 13.3. Manifest Configuration (`nikaia.toml`)
+The manifest allows defining project metadata and configuring Build Profiles (Lite vs. Advanced).
+
+```toml
+[package]
+name = "hyper-core"
+version = "0.1.0"
+authors = ["dev@nikaia.org"]
+
+# Defines the default compilation mode
+# Options: "lite" (I/O optimized) or "advanced" (CPU optimized)
+default-profile = "advanced"
+
+[dependencies]
+http-server = "1.2"
+# Import native Rust Crates
+regex = { type = "rust", version = "1.5" }
+
+[profiles.lite]
+opt-level = "z"     # Optimize for binary size
+panic = "abort"     # Disable stack unwinding for smaller footprint
+
+[profiles.advanced]
+opt-level = 3       # Maximize throughput
+lto = true          # Link Time Optimization
+```
 
 ---
 
