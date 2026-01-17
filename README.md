@@ -93,7 +93,7 @@ fn main() {
 
 ## 🛠 Roadmap to 0.1.0
 
-This is currently a **Specification (Version 0.0.3)**. We are in the bootstrap phase.
+This is currently a **Specification (Version 0.0.4)**. We are in the bootstrap phase.
 
 - [x] **Spec 0.0.3:** Definition of Syntax, Profiles, and Unified Types.
 - [x] **Manifesto:** Defining the soul and philosophy of the project.
@@ -105,7 +105,7 @@ This is currently a **Specification (Version 0.0.3)**. We are in the bootstrap p
 
 ## ❤️ Dedication
 
-This project is dedicated to **Nika**.
+This project is dedicated to my daughter **Nika**.
 Because the future belongs to those who build it—without unnecessary hurdles.
 
 ---
