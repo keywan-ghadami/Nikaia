@@ -207,23 +207,78 @@ fn process() {
 
 ## Chapter 16: Inline Assembly
 
-For maximum control (e.g., OS Kernels, Drivers), you can write raw Assembly.
-Nikaia uses a natural block syntax (`asm { ... }`) rather than a macro style. This is always `unsafe`.
+For low-level control (kernels, drivers, SIMD), Nikaia provides `unsafe asm`.
+To ensure robust parsing and clear separation of concerns, the assembly construct is divided into two distinct blocks: the **Binding Header** and the **Assembly Body**.
+
+### 16.1. Syntax Structure
+```nika
+unsafe asm {
+    // [Block 1] The Binding Header
+    // Maps Nikaia variables to internal assembly aliases.
+    // Syntax: $alias = direction(location) variable
+    $lhs = in(reg) a,
+    $rhs = in(mem) b,
+    $dst = out(reg) result
+} {
+    // [Block 2] The Assembly Body
+    // Contains raw assembly instructions.
+    // The compiler treats this as a template string and only replaces aliases ($name).
+    mov $dst, $lhs
+    add $dst, $rhs
+}
+```
+
+### 16.2. Directions and Modifiers
+The first part of the constraint defines how data flows between Nikaia and the CPU.
+
+* `in(...)`: Read-only input. The variable is copied into the location before execution.
+* `out(...)`: Write-only output. The result in the location is copied to the variable after execution.
+* `inout(...)`: Read-write. Initialized with the variable's value, and the result is written back.
+* `lateout(...)`: Optimization hint. Defines an output that is written *after* all inputs are consumed. Allows the compiler to reuse an input register for this output (saving registers).
+
+### 16.3. Location Constraints
+The second part defines where the value must be placed (Register vs. Memory).
+
+| Constraint | Description | Example Architecture Mapping |
+| :--- | :--- | :--- |
+| `reg` | Any general-purpose integer register | x86: `rax`, `rbx`, ... |
+| `freg` | Floating-point / SIMD register | x86: `xmm0` - `xmm15` |
+| `mem` | A memory operand (address) | Passed as `[ptr]` or specific syntax |
+| `imm` | An immediate constant value | Used for instructions expecting literals |
+| `reg_or_mem` | Flexible: Compiler chooses best fit | Useful for CISC (x86) instructions like `add` |
+
+### 16.4. Example: x86_64 Arithmetic
+This example demonstrates mixing memory and register operands safely.
 
 ```nika
-fn add_fast(a: i64, b: i64) -> i64 {
+fn fast_add(val: i64, ptr: &i64) -> i64 {
     let result: i64
     
     unsafe asm {
-        // x86_64 Syntax
-        // The compiler replaces {0} and {1} with registers
-        "add {0}, {1}"
-        
-        // Data Flow constraints
-        inout(reg) a => result // Use 'a' register for input, rewrite with 'result'
-        in(reg) b              // Use 'b' register for input
+        // We read 'val' into a register
+        $v = in(reg) val,
+        // We can read 'ptr' directly from memory (efficient on x86)
+        $p = in(mem) ptr,
+        // We write the result to a register
+        $r = out(reg) result
+    } {
+        // AT&T Syntax example
+        mov $v, $r
+        add $p, $r
     }
     
     return result
+}
+```
+
+### 16.5. Clobbering (Side Effects)
+If your assembly modifies registers that are not defined as outputs (e.g., flags or specific hardcoded registers), you must declare them in the header using the `clobber` keyword.
+
+```nika
+unsafe asm {
+    $src = in(reg) input,
+    clobber("cc") // "cc" tells the compiler: Condition Codes (Flags) are modified
+} {
+    test $src, $src
 }
 ```
