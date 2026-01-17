@@ -13,9 +13,12 @@ A modern programming language is more than just a compiler. It requires a suite 
 When you create a new project (`nikaia new my_project`), the following structure is generated:
 
 * `nikaia.toml`: The **Manifest**. It describes the project, its authors, and its dependencies.
-* `nikaia.lock`: The **Lockfile**. It records the exact versions of all libraries used to ensure that builds are reproducible (identical on every machine).
+* `nikaia.lock`: The **Lockfile**. It records the exact versions of dependencies for reproducible builds. Additionally, it serves as a **Cache Key** for Compile-Time I/O.
+    * **Asset Hashing:** If a macro or grammar reads an external file (e.g., `from "schema.sql"`), the compiler stores the file's SHA256 hash here.
+    * **Instant Builds:** On subsequent builds, if the hash on disk hasn't changed, the compiler skips re-processing the macro.
 * `src/`: The folder containing your source code.
     * `main.nika`: The entry point.
+      
 
 ### 13.2. Core Commands
 * `nikaia build`: Compiles the project.
