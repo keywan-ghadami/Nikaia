@@ -1,0 +1,28 @@
+name: Nikaia Vibe Experiment
+
+on: [push, workflow_dispatch]
+
+jobs:
+  bootstrap_compiler:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Hier passiert das "Version Pinning" aus ADR-001
+      # Wir erzwingen die Nightly-Version, die interne APIs erlaubt.
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2024-01-01 # Wir pinnen auf ein stabiles Datum
+          components: rustc-dev, llvm-tools-preview
+
+      # Beweis 1: Zeige, dass wir Zugriff auf den Driver haben
+      - name: Verify Environment
+        run: |
+          rustc --version
+          echo "Nikaia Experiment: Environment Ready"
+
+      # Beweis 2: Der "Driver" kompiliert sich selbst und führt die In-Memory-Injection aus
+      - name: Run Nikaia Driver (The Magic)
+        run: cargo run --release
