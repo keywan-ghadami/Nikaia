@@ -203,6 +203,29 @@ fn process() {
 }
 ```
 
+### 15.3. WebAssembly (WASM) Synergy
+The **Lite Profile** possesses a natural affinity for WebAssembly. Since WASM (in its basic form) shares a linear memory model and runs in single-threaded host environments, the Lite Profile is the perfect match.
+
+**Zero Overhead**
+Compiling with `nikaia build --profile=lite --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
+
+**JavaScript Interoperability (`dsl js`)**
+Instead of trying to map the entire DOM to Nikaia structs, Nikaia allows embedding raw JavaScript using the `dsl` keyword. Variables can be injected safely.
+
+```nika
+// main.nika (Lite Profile)
+fn main() {
+    let message = "Hello from Nikaia!"
+
+    // The 'js' macro takes raw JavaScript code.
+    // Nikaia variables are injected where '{...}' is used.
+    dsl js {
+        document.querySelector("#submit").addEventListener("click", () => {
+            window.alert({message});
+        });
+    }
+}
+
 ---
 
 ## Chapter 16: Inline Assembly
