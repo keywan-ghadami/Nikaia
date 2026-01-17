@@ -53,6 +53,24 @@ opt-level = 3       # Maximize throughput
 lto = true          # Link Time Optimization
 ```
 
+### 13.4. Build Scripts (`build.nika`)
+If a project requires custom build steps (e.g., compiling C-code or generating proto-files), you can place a `build.nika` file in the root. This script is compiled and executed **before** the main build.
+
+It has access to a special `std::build` API to emit instructions to the compiler.
+
+```nika
+// build.nika
+use std::build
+
+fn main() {
+    // Compile a local C library
+    build::cc("src/native/mylib.c")
+    
+    // Link against a system library
+    build::rustc_link_lib("z") // links libz
+}
+```
+
 ---
 
 ## Chapter 14: Testing and Quality Assurance
