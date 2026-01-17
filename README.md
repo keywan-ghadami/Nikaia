@@ -9,6 +9,7 @@
     <a href="#-profiles">Profiles</a> •
     <a href="#-example">Example</a> •
     <a href="SPECIFICATION.md">Specification</a>
+    <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
   ![Version](https://img.shields.io/badge/version-0.0.3-blue.svg)
