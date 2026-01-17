@@ -212,6 +212,51 @@ Nikaia includes built-in types for storing groups of data.
     let mut scores = HashMap::new()
     scores["Player1"] = 100
     ```
+### 4.5. Generics (Type Parameters)
+To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.
+
+```nika
+// A generic wrapper that can hold any type 'T'
+struct Box[T] {
+    item: T,
+}
+
+// Usage
+let int_box = Box { item: 42 }       // T is i32
+let str_box = Box { item: "Hello" }  // T is String
+```
+
+**Generic Functions**
+Functions can also be generic.
+
+```nika
+// Returns the item unchanged. Works for any type.
+fn identity[T](item: T) -> T {
+    return item
+}
+```
+### 4.6. Traits (Defining Behavior)
+A **Trait** defines a set of behaviors (methods) that different types can share. It is similar to an "Interface" in other languages.
+
+```nika
+// Defining the contract
+trait Summarize {
+    fn summary(&self) -> String
+}
+
+// Implementing the contract for a specific struct
+impl Summarize for User {
+    fn summary(&self) -> String {
+        return "User: " + self.username
+    }
+}
+
+// Using the trait as a constraint
+// This function accepts ANY type that implements Summarize
+fn print_summary(item: &Summarize) {
+    println(item.summary())
+}
+```
 
 ---
 
@@ -288,6 +333,33 @@ data.access(guard => {
     guard += 1
 })
 ```
+### 6.4. Resource Cleanup (RAII)
+Since Nikaia does not use a Garbage Collector, resources must be cleaned up deterministically. Nikaia follows the **RAII** principle (Resource Acquisition Is Initialization).
+
+**Automatic Destruction**
+When a variable goes out of scope (usually at the closing brace `}`), Nikaia automatically frees its memory.
+
+**Custom Cleanup (`impl Drop`)**
+If your struct manages external resources (like File Handles, Sockets, or C-Pointers), you can implement the `Drop` trait. The `drop` method is called automatically when the object is destroyed.
+
+```nika
+struct FileHandle {
+    fd: i32
+}
+
+impl Drop for FileHandle {
+    fn drop(&mut self) {
+        println("Closing file descriptor...")
+        // Native close call would go here
+    }
+}
+```
+
+> **Design Note: Why no `defer`?**
+> Unlike languages like Go or Zig, Nikaia does not need a `defer` keyword.
+> 1.  **Scope-Bound:** Cleanup happens automatically at the end of the block via `Drop`. You cannot forget it.
+> 2.  **Safety:** Patterns like `.access()` for locks guarantee that resources are released, replacing manual `lock/defer unlock` sequences.
+> 3.  **Unwinding:** If an error occurs (`throws`), the stack unwinds and triggers `drop` for all variables in the scope, ensuring no resource leaks even during failures.
 
 ---
 
