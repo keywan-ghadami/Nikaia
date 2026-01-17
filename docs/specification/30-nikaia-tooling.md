@@ -363,6 +363,28 @@ Some modules are only available or behave restrictively depending on the compila
 * **`std::thread`**:
     * **Advanced:** Allows spawning OS threads and using thread-local storage.
     * **Lite / WASM:** Usage results in a **compile-time error**. The Lite profile enforces a "Share-Nothing" architecture where manual threading is prohibited.
+**`std::db` (Universal SQL)**
+Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.
+
+* **Zero-Blocking Guarantee:** Database operations are implicitly asynchronous. They never block the Event Loop (Lite) or the Compute Scheduler (Advanced).
+* **Architecture Adapter:** The implementation switches automatically based on the compilation target:
+    * **Native Targets:** Utilizes a dedicated, hidden I/O thread (powered by `tokio-rusqlite`) to offload blocking filesystem operations.
+    * **WASM Targets:** Automatically spawns a **Web Worker** and utilizes the **OPFS** (Origin Private File System). This enables native-grade, persistent SQL performance in the browser without freezing the UI thread.
+
+```nika
+use std::db::sqlite
+
+fn query_data() {
+    // Transparently starts the required Sidecar (Thread or Worker)
+    let db = sqlite::open("app.db")
+    
+    // The 'sql' macro validates syntax at compile-time.
+    // At runtime, it performs an async round-trip to the sidecar.
+    let active_users = dsl sql db {
+        SELECT * FROM users WHERE last_login > 0
+    }
+}
+```
 
 ---
 
