@@ -1,63 +1,51 @@
 // src/meta_ast.rs
-// Der "Meta-AST": Die Struktur unserer .grammar Dateien.
-// Dient als Input für den Parser-Generator.
+// Stage 0 Meta-AST mit Vererbungs-Support
 
 use syn::{Ident, Type, LitStr, Lit};
 use proc_macro2::TokenStream;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)] // Clone ist wichtig für das Mergen!
 pub struct GrammarDefinition {
     pub name: Ident,
-    // Optionen wie 'recursion_limit'
+    // Die Vererbung: grammar Full : Core
+    pub inherits: Option<Ident>, 
     pub options: Vec<GrammarOption>,
     pub rules: Vec<Rule>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GrammarOption {
     pub name: Ident,
     pub value: Lit,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Rule {
-    pub is_pub: bool,      // "pub rule"
+    pub is_pub: bool,
     pub name: Ident,
-    pub return_type: Type, // "-> Stmt"
-    
-    // Eine Regel besteht aus einer oder mehreren Varianten (getrennt durch |)
-    // Beispiel: rule stmt = | Let... | Expr...
+    pub return_type: Type,
     pub variants: Vec<RuleVariant>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RuleVariant {
-    // Die Sequenz von Mustern: "let" name:ident() "=" ...
     pub pattern: Vec<Pattern>,
-    // Der Rust-Codeblock: -> { Stmt::Let { ... } }
     pub action: TokenStream,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Pattern {
-    // Ein String-Literal: "let", "=", "fn"
     Lit(LitStr),
-
-    // Ein Aufruf einer anderen Regel: name:ident()
     RuleCall {
-        binding: Option<Ident>, // "name"
-        rule_name: Ident,       // "ident"
-        args: Vec<Lit>,         // Argumente, z.B. für regex("[0-9]+")
+        binding: Option<Ident>,
+        rule_name: Ident,
+        args: Vec<Lit>,
     },
-
-    // Wiederholungen oder Optionen: rule*, rule+, rule?
     Repeat {
-        binding: Option<Ident>, // "items" bei items:item()*
+        binding: Option<Ident>,
         pattern: Box<Pattern>,
         kind: RepeatKind,
     },
-
-    // Gruppierungen: (a b)
     Group(Vec<Pattern>),
 }
 
@@ -67,4 +55,3 @@ pub enum RepeatKind {
     ZeroOrMore, // *
     OneOrMore,  // +
 }
-
