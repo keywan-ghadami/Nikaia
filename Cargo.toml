@@ -1,0 +1,9 @@
+[package]
+name = "nikaia_driver"
+version = "0.0.1"
+edition = "2024" # Rust 2024 Edition ist in 2026 der Standard!
+
+[dependencies]
+libc = "0.2"
+# Wir nutzen interne Crates (rustc_private), daher hier leer.
+
