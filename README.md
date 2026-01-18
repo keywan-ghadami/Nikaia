@@ -111,6 +111,19 @@ Because the future belongs to those who build it—without unnecessary hurdles.
 
 ---
 
+## ⚖️ Intellectual Property & Governance
+
+Nikaia introduces the **Unified Core Architecture**, a novel approach to compile-time orchestration, deterministic concurrency (`access_all`), and profile-based runtime transformation.
+
+**For Corporate Entities & Implementers:**
+This repository establishes public **Prior Art** for these architectural concepts, ensuring they remain unencumbered for the open-source ecosystem. 
+
+While Nikaia is released under the **Apache 2.0 License**, the project is designed with long-term governance in mind to prevent proprietary fragmentation. We actively invite organizations interested in adopting, extending, or standardizing these concepts to join us as **Founding Partners** rather than attempting parallel implementations.
+
+The architecture is complex; let's build the standard together.
+
+---
+
 ## 📄 License
 
 This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
