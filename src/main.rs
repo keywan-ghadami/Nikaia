@@ -5,12 +5,13 @@ extern crate rustc_interface;
 extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_errors;
+extern crate rustc_middle; // NEU: Benötigt für TyCtxt
 
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::{interface, Config};
 use rustc_session::config::{Input};
-// FIX 1: Direkter Import, da source_map::FileName private ist
-use rustc_span::FileName; 
+use rustc_span::FileName;
+use rustc_middle::ty::TyCtxt; // Der stabile Typ für die Analyse-Phase
 
 struct NikaiaVirtualInput {
     source_code: String,
@@ -26,19 +27,19 @@ impl Callbacks for NikaiaVirtualInput {
         println!("::notice title=Nikaia Driver::Virtual Source Code Injected");
     }
 
-    // FIX 2: 'after_parsing' gibt es nicht mehr. Wir nutzen 'after_analysis'.
-    // Das passiert nach dem Parsing und der Macro-Expansion -> Perfekt für unseren Check.
+    // FIX: Wir nutzen die Signatur aus den Nightly-Docs mit TyCtxt.
+    // Das vermeidet den Zugriff auf das private 'Queries' Modul.
     fn after_analysis<'tcx>(
         &mut self,
         _compiler: &interface::Compiler,
-        // FIX 3: Korrekter Pfad für Queries
-        _queries: &'tcx rustc_interface::queries::Queries<'tcx>, 
+        _tcx: TyCtxt<'tcx>, // Statt Queries nutzen wir den Type Context
     ) -> Compilation {
         println!("::group::Semantic Analysis");
         println!("[Nikaia] Parsing AST...");
         println!("[Nikaia] Verifying Profile Constraints (Lite)...");
         println!("::endgroup::");
         
+        // Wir stoppen hier, da wir keinen echten Maschinencode generieren wollen
         Compilation::Stop
     }
 }
@@ -65,11 +66,9 @@ fn main() {
 
     println!("::section::Compiling Nikaia Source");
 
-    // FIX 4: 'RunCompiler' Struct ist weg. Wir nutzen die funktionale API 'run_compiler'.
-    // Wir wrappen es in 'catch_with_exit_code', um Panics sauber abzufangen.
+    // FIX: Exakt 2 Argumente, wie im Log verlangt.
     let exit_code = rustc_driver::catch_with_exit_code(move || {
-        // args, callbacks, file_loader (None), emitter (None)
-        rustc_driver::run_compiler(&args, &mut callbacks, None, None)
+        rustc_driver::run_compiler(&args, &mut callbacks)
     });
     
     println!("::endsection::");
