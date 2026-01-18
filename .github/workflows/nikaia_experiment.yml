@@ -12,9 +12,9 @@ jobs:
       # Hier passiert das "Version Pinning" aus ADR-001
       # Wir erzwingen die Nightly-Version, die interne APIs erlaubt.
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: nightly-2024-01-01 # Wir pinnen auf ein stabiles Datum
+          toolchain: stable
           components: rustc-dev, llvm-tools-preview
 
       # Beweis 1: Zeige, dass wir Zugriff auf den Driver haben
