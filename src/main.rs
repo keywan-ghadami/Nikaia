@@ -5,13 +5,13 @@ extern crate rustc_interface;
 extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_errors;
-extern crate rustc_middle; // NEU: Benötigt für TyCtxt
+extern crate rustc_middle;
 
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::{interface, Config};
 use rustc_session::config::{Input};
 use rustc_span::FileName;
-use rustc_middle::ty::TyCtxt; // Der stabile Typ für die Analyse-Phase
+use rustc_middle::ty::TyCtxt;
 
 struct NikaiaVirtualInput {
     source_code: String,
@@ -20,6 +20,7 @@ struct NikaiaVirtualInput {
 impl Callbacks for NikaiaVirtualInput {
     fn config(&mut self, config: &mut Config) {
         let source = self.source_code.clone();
+        // Hier injizieren wir den echten Code für "main.nika"
         config.input = Input::Str {
             name: FileName::Custom("main.nika".to_string()),
             input: source,
@@ -27,19 +28,16 @@ impl Callbacks for NikaiaVirtualInput {
         println!("::notice title=Nikaia Driver::Virtual Source Code Injected");
     }
 
-    // FIX: Wir nutzen die Signatur aus den Nightly-Docs mit TyCtxt.
-    // Das vermeidet den Zugriff auf das private 'Queries' Modul.
     fn after_analysis<'tcx>(
         &mut self,
         _compiler: &interface::Compiler,
-        _tcx: TyCtxt<'tcx>, // Statt Queries nutzen wir den Type Context
+        _tcx: TyCtxt<'tcx>,
     ) -> Compilation {
         println!("::group::Semantic Analysis");
         println!("[Nikaia] Parsing AST...");
         println!("[Nikaia] Verifying Profile Constraints (Lite)...");
         println!("::endgroup::");
         
-        // Wir stoppen hier, da wir keinen echten Maschinencode generieren wollen
         Compilation::Stop
     }
 }
@@ -58,15 +56,17 @@ fn main() {
         source_code: nikaia_src,
     };
 
+    // FIX: Wir fügen "main.nika" als Positions-Argument hinzu.
+    // Der Driver braucht das, um den Prozess überhaupt zu starten.
     let args = vec![
         "nikaia_driver".to_string(),
         "--crate-type".to_string(), "bin".to_string(),
         "-o".to_string(), "output_bin".to_string(),
+        "main.nika".to_string(),
     ];
 
     println!("::section::Compiling Nikaia Source");
 
-    // FIX: Exakt 2 Argumente, wie im Log verlangt.
     let exit_code = rustc_driver::catch_with_exit_code(move || {
         rustc_driver::run_compiler(&args, &mut callbacks)
     });
