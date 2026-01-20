@@ -1,8 +1,8 @@
 # Nikaia Language Specification
 **Part I: The Language Core & Nikaia Lite**
-**Version:** 0.0.4 (Educational Draft)
+**Version:** 0.0.5 (Draft)
 **Codename:** Vibe Coding Experiment
-**Date:** January 16, 2026
+**Date:** January 20, 2026
 
 ---
 
@@ -69,7 +69,18 @@ Nikaia provides basic types to represent simple values.
     * `String`: A piece of text that can be modified and owns its memory.
     * `&str`: A "String Slice". A read-only view into an existing string.
 
-### 2.3. Type Inference
+### 2.3. Nullable Types (Null Safety)
+In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
+
+```nika
+let strictly_string: String = "Hello"
+// strictly_string = null // Error!
+
+let maybe_string: String? = null // Valid
+maybe_string = "World"           // Valid
+```
+
+### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
 
 ```nika
@@ -145,12 +156,29 @@ match value {
 }
 ```
 
+### 3.5. Null Safety Operators
+Accessing members of a Nullable Type requires handling the potential `null` case.
+
+* **Safe Navigation (`?.`):** Accesses a member only if the receiver is not null. If it is null, the expression short-circuits to `null`.
+* **Null Coalescing (`??`):** Provides a fallback value when an expression evaluates to `null`.
+
+```nika
+// If find_user returns null, 'name' becomes null.
+let name = repo.find_user(id)?.full_name
+
+// If 'name' is null, "Guest" is assigned.
+let display_name = name ?? "Guest"
+```
+
 ---
 
 ## Chapter 4: Data Structures
 
 ### 4.1. Structs (Custom Data Types)
 A **Struct** (short for Structure) allows you to group related values together under a single name. Each value inside a struct is called a **Field**.
+
+**Constructor Style Instantiation**
+To eliminate ambiguity with code blocks, Nikaia uses a Constructor-style syntax using parentheses `Type(...)` for instantiation.
 
 ```nika
 struct User {
@@ -160,11 +188,11 @@ struct User {
 }
 
 // Creating an instance of the struct
-let user1 = User {
+let user1 = User(
     username: "Alice",
     email: "alice@example.com",
-    active: true,
-}
+    active: true
+)
 
 // Accessing fields
 println(user1.username)
@@ -222,8 +250,8 @@ struct Box[T] {
 }
 
 // Usage
-let int_box = Box { item: 42 }       // T is i32
-let str_box = Box { item: "Hello" }  // T is String
+let int_box = Box(item: 42)       // T is i32
+let str_box = Box(item: "Hello")  // T is String
 ```
 
 **Generic Functions**
@@ -271,40 +299,30 @@ fn add(a: i32, b: i32) -> i32 {
 }
 ```
 
-### 5.2. Closures (Lambdas)
-A **Closure** is an anonymous function (a function without a name) that can be passed as data. Nikaia uses modern **Arrow Syntax** (`=>`) to define them.
+**Optional Parentheses**
+For named functions requiring no arguments, parentheses may be omitted in their definition to maintain consistency with block lambdas.
 
-**A. Expression Lambdas**
-Used for short, single-line operations. The result of the expression is automatically returned.
-*Syntax:* `argument => expression`
+```nika
+fn init { 
+    // No args, no parentheses required
+}
+```
+
+### 5.2. Explicit Block Lambdas
+To allow the parser to distinguish between the start of a **Lambda/Closure** and a standard **Scope Block** without lookahead, lambdas in argument lists must be prefixed with `fn`.
+
+* **Syntax:** `fn { ... }` or `fn argument { ... }`
 
 ```nika
 let numbers = [1, 2, 3]
-let doubled = numbers.map(x => x * 2)
-```
 
-**B. Standard Closures**
-Used for multi-line logic. These use curly braces `{ ... }`.
-*Syntax:* `(argument1, argument2) => { statements }`
-
-```nika
-numbers.for_each((index, n) => {
-    let result = n * 10
-    println("Index {index}: {result}")
+// Block Lambda
+spawn(fn { 
+    print("Async Task") 
 })
-```
 
-**C. Block Lambdas (Syntactic Sugar)**
-A special shorthand exists for closures that take **no arguments** (often used for background tasks or simple blocks).
-If a closure has no arguments, you can omit the `() =>` entirely and just write the block `{ ... }`. This makes the code look cleaner.
-
-* *Explicit:* `() => { do_work() }`
-* *Block Lambda:* `{ do_work() }`
-
-```nika
-// These are identical:
-spawn(() => { print("Working") }) 
-spawn({ print("Working") })       // Cleaner Syntax
+// Lambda with arguments
+let doubled = numbers.map(fn n { n * 2 })
 ```
 
 ---
@@ -329,7 +347,7 @@ To modify data inside a `Locked` container, you must use the `.access()` method.
 let data: Shared[Locked[i32]] = ...
 
 // Uses a closure to define the safe access area
-data.access(guard => {
+data.access(fn guard {
     guard += 1
 })
 ```
@@ -387,13 +405,12 @@ When an error occurs, it "bubbles up" to the caller automatically. Nikaia automa
 * The full **Stack Trace** (the history of function calls).
 This happens invisibly, so you don't need to manually add context to every error.
 
-**Handling Errors**
-To handle an error, use the `?{ ... }` block. Inside this block, the variable `error` is available.
+**Handling Errors (`catch`)**
+The `?` symbol is reserved for Nullable Types. To handle an error, use the `catch` keyword. Inside the catch block, the error is available for inspection.
 
 ```nika
-let content = fetch_config()?{
-    println("Failed at {error.file}:{error.line}")
-    println("Reason: {error}")
+let content = fetch_config() catch {
+    println("Failed to fetch")
     return // Stop execution
 }
 ```
@@ -411,10 +428,10 @@ Even in **Nikaia Lite** (Single-Threaded), you can perform multiple tasks concur
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
 
 ### 8.2. Spawning Tasks
-To run a new independent task, use `spawn`. It takes a **Block Lambda** (a closure with no arguments) containing the code to run.
+To run a new independent task, use `spawn`. It takes an **Explicit Block Lambda** containing the code to run.
 
 ```nika
-spawn({
+spawn(fn {
     println("I am running in the background!")
 })
 ```
@@ -426,7 +443,7 @@ By default, closures only "borrow" variables (look at them). If a background tas
 let message = "Hello"
 
 // 'move' transfers the 'message' variable into the Block Lambda
-spawn(move {
+spawn(move fn {
     println(message)
 })
 // 'message' is no longer valid here
