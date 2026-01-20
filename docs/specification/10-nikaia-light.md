@@ -308,21 +308,33 @@ fn init {
 }
 ```
 
-### 5.2. Explicit Block Lambdas
-To allow the parser to distinguish between the start of a **Lambda/Closure** and a standard **Scope Block** without lookahead, lambdas in argument lists must be prefixed with `fn`.
+### 5.2. Explicit Block Lambdas & Shorthand
+Nikaia uses an explicit `fn` prefix for lambdas. This is a deliberate design choice to improve readability for beginners and non-programmers. It clearly distinguishes between **Immediate Execution** (standard blocks) and **Deferred Execution** (lambdas).
 
-* **Syntax:** `fn { ... }` or `fn argument { ... }`
+**Standard Syntax**
+Use `fn` with arguments and a block for complex logic.
 
 ```nika
 let numbers = [1, 2, 3]
 
-// Block Lambda
-spawn(fn { 
-    print("Async Task") 
+// Explicit naming makes the code easy to scan
+let doubled = numbers.map(fn n { 
+    return n * 2 
 })
+```
 
-// Lambda with arguments
-let doubled = numbers.map(fn n { n * 2 })
+**Shorthand Syntax (`fn:`)**
+For concise operations, Nikaia supports a shorthand syntax where arguments are implicitly named `a` (1st), `b` (2nd), etc. This works for both single expressions and blocks.
+
+```nika
+// Single-line (Expression)
+let doubled = numbers.map(fn: a * 2) 
+
+// Multi-line (Block)
+let complex = numbers.map(fn: {
+    let x = a * 2
+    x + 1
+})
 ```
 
 ---
