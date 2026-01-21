@@ -288,19 +288,19 @@ fn print_summary(item: &Summarize) {
 
 ---
 
-## Chapter 5: Functions and Closures
+## Chapter 5: Functions & Closures
 
 ### 5.1. Functions
-A **Function** is a reusable block of code. It is declared with `fn`. Arguments must have types, and the return type is specified after `->`.
+A function is declared with `fn`. The value of the last expression in the block is automatically returned. The `return` keyword is generally omitted unless an early exit is required.
 
 ```nika
 fn add(a: i32, b: i32) -> i32 {
-    return a + b
+    a + b // Implicit return
 }
 ```
 
-**Optional Parentheses**
-For named functions requiring no arguments, parentheses may be omitted in their definition to maintain consistency with block lambdas.
+**Optional Parentheses for Nullary Functions**
+Named functions requiring no arguments may omit the parentheses in their definition.
 
 ```nika
 fn init { 
@@ -308,33 +308,56 @@ fn init {
 }
 ```
 
-### 5.2. Explicit Block Lambdas & Shorthand
-Nikaia uses an explicit `fn` prefix for lambdas. This is a deliberate design choice to improve readability for beginners and non-programmers. It clearly distinguishes between **Immediate Execution** (standard blocks) and **Deferred Execution** (lambdas).
+### 5.2. Expression Lambdas (The `fn:` Shorthand)
+For concise, single-line logic, use the `fn:` syntax.
+* **Implicit Arguments:** `a`, `b`, `c` are automatically available.
+* **Implicit Return:** The result of the expression is returned.
 
-**Standard Syntax**
-Use `fn` with arguments and a block for complex logic.
+**Trailing Syntax**
+If a `fn:` expression is the last argument, parentheses can be omitted.
 
 ```nika
-let numbers = [1, 2, 3]
+// Cleanest Syntax: No parentheses required
+let ids = users.map fn: a.id
 
-// Explicit naming makes the code easy to scan
-let doubled = numbers.map(fn n { 
-    return n * 2 
-})
+// With other arguments
+let sum = numbers.reduce(0) fn: a + b
 ```
 
-**Shorthand Syntax (`fn:`)**
-For concise operations, Nikaia supports a shorthand syntax where arguments are implicitly named `a` (1st), `b` (2nd), etc. This works for both single expressions and blocks.
+### 5.3. Block Lambdas (`fn { ... }`)
+When logic requires multiple steps, use a Block Lambda. You can choose between implicit arguments (for speed) or explicit arguments (for clarity).
+
+**Option A: Implicit Arguments (The Default)**
+Use this for short blocks where context is obvious.
+* **Syntax:** `fn { ... }`
+* **Args:** `a` (1st), `b` (2nd)...
 
 ```nika
-// Single-line (Expression)
-let doubled = numbers.map(fn: a * 2) 
+let complex = users.map fn {
+    let bonus = calculate_bonus(a)
+    // Implicit return of the last line
+    a.score + bonus
+}
+```
 
-// Multi-line (Block)
-let complex = numbers.map(fn: {
-    let x = a * 2
-    x + 1
-})
+**Option B: Explicit Arguments**
+Use this when you need specific names (e.g., nested closures) or types.
+* **Syntax:** `fn(name) { ... }`
+* **Note:** This disables the implicit `a` and `b`.
+
+```nika
+// Explicit naming for better readability
+users.map fn(user) {
+    if user.is_guest() {
+        return "Guest"
+    }
+    return user.name
+}
+
+// Full type syntax (optional, for strictness)
+users.map fn(user: User) -> String {
+    return user.name
+}
 ```
 
 ---
@@ -358,11 +381,10 @@ To modify data inside a `Locked` container, you must use the `.access()` method.
 ```nika
 let data: Shared[Locked[i32]] = ...
 
-// Uses a closure to define the safe access area
-data.access(fn guard {
-    guard += 1
-})
+// Uses short syntax where 'a' is the locked value
+data.access fn: a += 1
 ```
+
 ### 6.4. Resource Cleanup (RAII)
 Since Nikaia does not use a Garbage Collector, resources must be cleaned up deterministically. Nikaia follows the **RAII** principle (Resource Acquisition Is Initialization).
 
@@ -443,9 +465,7 @@ In Nikaia, functions that perform Input/Output (I/O), like reading a file or dow
 To run a new independent task, use `spawn`. It takes an **Explicit Block Lambda** containing the code to run.
 
 ```nika
-spawn(fn {
-    println("I am running in the background!")
-})
+spawn fn: println("I am running in the background!")
 ```
 
 ### 8.3. Moving Data (`move`)
@@ -454,10 +474,9 @@ By default, closures only "borrow" variables (look at them). If a background tas
 ```nika
 let message = "Hello"
 
-// 'move' transfers the 'message' variable into the Block Lambda
-spawn(move fn {
-    println(message)
-})
+// 'move' transfers the 'message' variable into the Lambda
+spawn move fn: println(message)
+
 // 'message' is no longer valid here
 ```
 
@@ -488,3 +507,4 @@ fn main() {
     http::Server::new()
 }
 ```
+
