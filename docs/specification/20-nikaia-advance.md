@@ -64,7 +64,7 @@ pub macro Describe(def: StructDef) -> AstExpr {
     
     // Logic: Create a print statement for every field in the struct.
     // .map() iterates over the fields and creates a list of code blocks.
-    // Updated Syntax: Use 'fn:' shorthand. 'a' is the implicit argument (the field).
+    // Syntax: Trailing Lambda with 'fn:' shorthand. No parentheses.
     let print_statements = def.fields.map fn: quote {
         // 'quote' creates a piece of code. 
         // We inject 'a.name' and 'self.a.name' into this code.
@@ -197,7 +197,7 @@ fn main() {
 
     // 2. Parallel Execution (Fork)
     // 'spawn' throws the task into the Thread Pool.
-    // We use the 'fn:' shorthand here.
+    // Trailing lambda syntax: no parentheses around 'fn:'.
     // CRITICAL: arguments are IMPLICITLY moved into the task.
     let handle1 = spawn fn: process_image("a.jpg")
     let handle2 = spawn fn: process_image("b.jpg")
@@ -238,7 +238,7 @@ fn calculate_physics(obj: Object) sync {
 
 // Usage in Parallel Iterator
 // par_iter requires a 'sync' closure because it runs purely on CPU cores.
-// Uses 'fn:' shorthand with implicit 'a'.
+// Trailing lambda syntax: 'fn:' is outside parentheses.
 particles.par_iter().for_each fn: calculate_physics(a)
 ```
 
@@ -278,7 +278,7 @@ let account_b: Shared[Locked[Account]] = ...
 
 // Atomic Locking (Deadlock Proof)
 // The runtime sorts A and B internally and locks them safely.
-// We use 'fn(a, b)' explicitly here.
+// We use a trailing lambda block explicitly here.
 access_all(account_a, account_b) fn(a, b) {
     // Both 'a' and 'b' are mutable guards here.
     let amount = 100
@@ -324,10 +324,10 @@ let pixels = [/* 1 million pixels */]
 
 // The compiler splits the array into chunks and distributes them
 // across all cores. The closure must be 'sync'.
-// Updated Syntax: Uses 'fn:' shorthand with implicit 'a'.
+// Correct Syntax: Methods chained with trailing lambdas (no parens around fn:).
 let bright_pixels = pixels.par_iter()
-    .map(fn: a.brightness * 1.5)
-    .filter(fn: a > 0.5)
+    .map fn: a.brightness * 1.5
+    .filter fn: a > 0.5
     .collect()
 ```
 
@@ -338,6 +338,7 @@ Normally, threads cannot borrow variables from the stack because the compiler do
 let data = [1, 2, 3]
 
 // Syntax: Block Lambda with explicit argument 's' (the scope)
+// Trailing lambda syntax allows omitting parentheses for the block.
 thread::scope fn(s) {
     // This thread borrows 'data' directly. No copy needed.
     s.spawn fn: println("Reading: {data}")
@@ -357,6 +358,7 @@ This allows building self-healing systems.
 ```nika
 // Subject: The Task (Lambda)
 // Config: restart_policy (Protocol: separated by ;)
+// Note: 'spawn' syntax (fn {}) is the subject.
 supervisor::start_link(fn {
     server.run()
 }; restart_policy: "always")
