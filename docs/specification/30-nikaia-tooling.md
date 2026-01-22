@@ -410,4 +410,4 @@ Errors indicating an inconsistent program state (Index Out of Bounds, Division b
 | Profile | Panic Behavior | Consequence |
 | :--- | :--- | :--- |
 | **Lite** | **Abort** | The entire process terminates immediately. In WebAssembly, this triggers a "Trap". There is no stack unwinding, resulting in minimal binary size. |
-| **Advanced** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked<T>`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
+| **Advanced** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
