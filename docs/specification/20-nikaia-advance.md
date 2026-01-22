@@ -33,12 +33,13 @@ grammar ColorParser {
 One of Nikaia's most powerful features is that a grammar defined once can be used in two completely different ways.
 
 **A. Static Embedding (Compile-Time)**
-You can use a parser to read files *during the build process*. If the file contains a syntax error, the compilation fails. The result is embedded directly into the binary as a strictly typed object.
+You can use a parser to read files *during the build process* using the `from` keyword. If the file contains a syntax error, the compilation fails. The result is embedded directly into the binary as a strictly typed object.
 
 ```nika
 // Validated at compile-time. 'theme' is a Color struct, not a Result.
-// The '!' operator unwraps the result at compile-time.
-const theme = ColorParser::parse(include_str("theme.hex")) !
+// 'from' reads the file content relative to the source file.
+// The '!' operator unwraps the result at compile-time (build failure on error).
+const theme = ColorParser::parse(from "theme.hex") !
 ```
 
 **B. Dynamic Parsing (Runtime)**
@@ -94,7 +95,17 @@ fn main() {
 }
 ```
 
-*(Sections on Hygienic Macros and Compile-Time I/O remain as per standard Nikaia spec)*
+### 10.4. Hygienic Macros
+Nikaia macros are **Hygienic**. Variables defined inside a macro do not conflict with variables in the user's code, preventing accidental shadowing bugs.
+
+### 10.5. Compile-Time I/O
+Macros can access the file system (read-only) during compilation via `from`. This enables "Typed Assets."
+
+```nika
+// The macro reads the SQL file via 'from', checks syntax, 
+// and generates types for the query result at compile time.
+let query = sql::query(from "users.sql")
+```
 
 ---
 
@@ -112,7 +123,7 @@ To run tasks in **Parallel**, you use `spawn`.
 
 **Implicit Move (Ownership Transfer)**
 In Nikaia, spawning a task **always** implies transferring ownership of captured variables to the new task. There is no explicit `move` keyword required.
-* **Why?** This guarantees thread safety by default. The parent thread cannot access the data while the child is using it (logical "Use-After-Free" prevention).
+* **Why?** This guarantees thread safety by default. The parent thread cannot access the data while the child is using it (prevention of Data Races).
 * **Copying:** If you need to keep the data in the parent thread, you must explicitly call `.clone()` before spawning.
 
 **Fault Isolation**
@@ -132,7 +143,8 @@ fn main() {
     // println(img_path) // <--- Compiler Error: Variable moved to task.
 
     // 2. Fault Isolation
-    // If process_image crashes, 'handle.join()' will return an Error.
+    // If process_image crashes, 'handle.join()' returns an Error.
+    // We use the 'catch' block to handle the error (recoverable).
     let result = handle.join() catch {
         println("Task crashed, but I am still alive!")
         return
@@ -172,7 +184,7 @@ let account_a: Shared[Locked[Account]] = ...
 let account_b: Shared[Locked[Account]] = ...
 
 // Atomic Locking
-// Explicit arguments 'fn(a, b)' for clarity.
+// Trailing Lambda with explicit arguments 'fn(a, b)'.
 access_all(account_a, account_b) fn(a, b) {
     let amount = 100
     a.balance -= amount
