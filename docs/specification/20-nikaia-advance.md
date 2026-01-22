@@ -33,13 +33,12 @@ grammar ColorParser {
 One of Nikaia's most powerful features is that a grammar defined once can be used in two completely different ways.
 
 **A. Static Embedding (Compile-Time)**
-You can use a parser to read files *during the build process* using the `from` keyword. If the file contains a syntax error, the compilation fails. The result is embedded directly into the binary as a strictly typed object.
+You can use a parser to read files *during the build process*. The `from ... with` syntax connects a file to a grammar. If the file contains a syntax error, the compilation fails. The result is embedded directly into the binary as a strictly typed object.
 
 ```nika
-// Validated at compile-time. 'theme' is a Color struct, not a Result.
-// 'from' reads the file content relative to the source file.
-// The '!' operator unwraps the result at compile-time (build failure on error).
-const theme = ColorParser::parse(from "theme.hex") !
+// Validated at compile-time. 'THEME' is a Color struct.
+// The 'from' keyword loads the file, 'with' applies the parser.
+const THEME: Color = from "theme.conf" with ColorParser
 ```
 
 **B. Dynamic Parsing (Runtime)**
