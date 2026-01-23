@@ -176,43 +176,37 @@ In both profiles, the syntax looks identical. You do **not** use `async` keyword
 
 The code remains "Direct Style". You write code as if it were synchronous, and the compiler handles the suspension points.
 
-### 11.2. Parallelism via `spawn`
-Since code is implicitly async, "calling a function" usually means "running it now". To run tasks in **Parallel**, you strictly use `spawn`.
+### 11.2. Parallelism via spawn
+Since code is implicitly async, "calling a function" usually means "running it now". To run tasks concurrently or in parallel, you strictly use `spawn`.
 
-In the Advanced Profile, `spawn` returns a **Handle**. This handle allows you to wait for the result later (`join`).
+#### The @detached Contract
+The `spawn` function is defined with the `@detached` attribute. This triggers **Implicit Move Semantics**.
+* **Why?** This guarantees thread safety (Advanced) and prevents logic races or "Use-After-Free" (Lite). The parent scope cannot access the captured data while the detached task owns it.
+* **Copying:** If you need to keep data in the parent thread, you must explicitly call `.clone()` before spawning.
 
-**Implicit Move (Ownership Transfer)**
-In Nikaia, spawning a task **always** implies transferring ownership of captured variables to the new task. There is no explicit `move` keyword required.
-* **Why?** This guarantees thread safety by default. The parent thread cannot access the data while the child is using it (Use-After-Free prevention).
-* **Copying:** If you need to keep the data in the parent thread, you must explicitly call `.clone()` before spawning.
+#### Return Values & Handles
+Regardless of the profile, `spawn` returns a `TaskHandle`.
+* In **Advanced**: It represents a running thread (or green thread).
+* In **Lite**: It represents a scheduled event/promise.
+Calling `.await` or `.join()` on this handle works identically in both profiles.
 
 ```nika
 fn process_image(path: String) -> Image { ... }
 
 fn main() {
-    // 1. Sequential Execution (Default)
-    // The main thread runs image1, then image2.
-    let img1 = process_image("a.jpg") 
-    let img2 = process_image("b.jpg")
+    let img_path = "a.jpg"
 
-    // 2. Parallel Execution (Fork)
-    // 'spawn' throws the task into the Thread Pool.
-    // Trailing lambda syntax: no parentheses around 'fn:'.
-    // CRITICAL: arguments are IMPLICITLY moved into the task.
-    let handle1 = spawn fn: process_image("a.jpg")
-    let handle2 = spawn fn: process_image("b.jpg")
+    // 'spawn' is a @detached context.
+    // 'img_path' is implicitly moved into the task.
+    let handle = spawn fn: process_image(img_path)
 
-    // 3. Join (Await) with Fault Isolation
-    // If a task crashes, it does NOT kill the program.
-    // 'join' returns an Error which we handle with 'catch'.
-    let result1 = handle1.join() catch { 
-        println("Task 1 crashed!"); return 
-    }
-    let result2 = handle2.join() catch {
-        println("Task 2 crashed!"); return
-    }
+    // Compiler Error: img_path is gone.
+    // println("Processing: " + img_path) 
+
+    // Uniform API: Works in Lite and Advanced
+    let result = handle.await catch { return }
 }
-```
+
 
 ---
 
