@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.4 (Educational Draft)
-**Date:** January 17, 2026
+**Version:** 0.0.5 (Draft)
+**Date:** January 22, 2026
 
 ---
 
@@ -17,7 +17,7 @@ When you create a new project (`nikaia new my_project`), the following structure
     * **Asset Hashing:** If a macro or grammar reads an external file (e.g., `from "schema.sql"`), the compiler stores the file's SHA256 hash here.
     * **Instant Builds:** On subsequent builds, if the hash on disk hasn't changed, the compiler skips re-processing the macro.
 * `src/`: The folder containing your source code.
-    * `main.nika`: The entry point.  
+    * `main.nika`: The entry point.
 
 ### 13.2. Core Commands
 * `nikaia build`: Compiles the project.
@@ -237,6 +237,7 @@ fn main() {
 
     // The 'js' macro takes raw JavaScript code.
     // Nikaia variables are injected where '{...}' is used.
+    // Note: This relies on the variable injection, not function arguments.
     dsl js {
         document.querySelector("#submit").addEventListener("click", () => {
             window.alert({message});
@@ -324,6 +325,9 @@ unsafe asm {
     test $src, $src
 }
 ```
+
+---
+
 ## Chapter 17: The Standard Library ("Batteries Included")
 
 Unlike languages that prefer a minimal core, Nikaia pursues immediate productivity. The standard library consists of universal modules (same API everywhere) and profile-specific capabilities.
@@ -342,8 +346,9 @@ use std::http
 fn main() {
     // Starts a server on Port 8080.
     // The code looks the same, but the runtime behavior adapts to the profile.
+    // Note: We use the Trailing Lambda syntax (fn: ...) for the handler.
     http::Server::new()
-        .route("/", |_| => "Hello World")
+        .route("/") fn: "Hello World"
         .listen(":8080")
 }
 ```
@@ -360,9 +365,11 @@ File system access is designed to look **blocking** (synchronous) for ease of us
 Some modules are only available or behave restrictively depending on the compilation target.
 
 * **`std::process`**: Spawning child processes.
-* **`std::thread`**:
-    * **Advanced:** Allows spawning OS threads and using thread-local storage.
-    * **Lite / WASM:** Usage results in a **compile-time error**. The Lite profile enforces a "Share-Nothing" architecture where manual threading is prohibited.
+* **`std::thread` / `spawn`**:
+    * **Advanced:** Supports full concurrency. The primary mechanism is `spawn`.
+        * **Strict Implicit Move:** To ensure thread safety without complex lifetime tracking, Nikaia enforces **Implicit Move Semantics** for all tasks spawned this way. Ownership of variables used inside the `spawn` block is automatically transferred to the new thread.
+    * **Lite / WASM:** Direct usage of `std::thread` results in a **compile-time error**. The Lite profile enforces a "Share-Nothing" architecture where manual threading is prohibited to ensure compatibility with WASM hosts.
+
 **`std::db` (Universal SQL)**
 Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.
 
@@ -395,7 +402,7 @@ Nikaia strictly distinguishes between errors caused by the environment (recovera
 ### A.1. Recoverable Errors (`throws`)
 Errors arising from external circumstances (File not found, Network timeout).
 * **Mechanism:** Must be declared in the function signature via `throws`.
-* **Handling:** Enforced by the compiler via `?{}` blocks or propagation.
+* **Handling:** Enforced by the compiler via `catch{}` blocks or propagation.
 
 ### A.2. Unrecoverable Errors (`panic`)
 Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). The behavior differs drastically based on the profile:
@@ -403,5 +410,34 @@ Errors indicating an inconsistent program state (Index Out of Bounds, Division b
 | Profile | Panic Behavior | Consequence |
 | :--- | :--- | :--- |
 | **Lite** | **Abort** | The entire process terminates immediately. In WebAssembly, this triggers a "Trap". There is no stack unwinding, resulting in minimal binary size. |
-| **Advanced** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked<T>`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
+| **Advanced** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
+
+# Appendix B: Compiler Internals & Annotations
+
+To enforce the "Contextual Capture" rules (Chapter 5.4) without hard-coding specific function names into the compiler, Nikaia uses internal attributes. These are primarily used by the Standard Library but are available to library authors.
+
+### B.1. Capture Attributes
+
+| Attribute | Internal Name | Default | Description |
+| :--- | :--- | :--- | :--- |
+| None | `capture_mode = "immediate"` | Yes | The lambda executes within the caller's stack frame. Captured variables are **Borrowed** (`&T`). Used by `map`, `filter`, `lock.access`. |
+| `@detached` | `capture_mode = "detached"` | No | The lambda escapes the current stack frame (stored, spawned, or deferred). Captured variables are **Moved** (Owned). Used by `spawn`, `defer`. |
+
+### B.2. Standard Library Signatures
+
+Here is how common standard library functions are annotated internally to drive the compiler's behavior:
+
+```nika
+// std::collections::List
+// Standard immediate execution
+pub fn map[U](self, op: fn(T) -> U) -> List[U]
+
+// std::task (Global Spawn)
+// Detached execution: Must take ownership of environment
+pub fn spawn(task: @detached fn() -> T) -> TaskHandle[T]
+
+// std::task
+// Scope is immediate because it waits for completion
+pub fn scope(f: fn(Scope))
+
 

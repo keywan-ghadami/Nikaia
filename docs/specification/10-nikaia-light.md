@@ -1,8 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core & Nikaia Lite**
-**Version:** 0.0.4 (Educational Draft)
-**Codename:** Vibe Coding Experiment
-**Date:** January 16, 2026
+**Version:** 0.0.5 (Draft)
+**Date:** January 22, 2026
 
 ---
 
@@ -69,7 +68,18 @@ Nikaia provides basic types to represent simple values.
     * `String`: A piece of text that can be modified and owns its memory.
     * `&str`: A "String Slice". A read-only view into an existing string.
 
-### 2.3. Type Inference
+### 2.3. Nullable Types (Null Safety)
+In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
+
+```nika
+let strictly_string: String = "Hello"
+// strictly_string = null // Error!
+
+let maybe_string: String? = null // Valid
+maybe_string = "World"           // Valid
+```
+
+### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
 
 ```nika
@@ -145,39 +155,91 @@ match value {
 }
 ```
 
+### 3.5. Null Safety Operators
+Accessing members of a Nullable Type requires handling the potential `null` case.
+
+* **Safe Navigation (`?.`):** Accesses a member only if the receiver is not null. If it is null, the expression short-circuits to `null`.
+* **Null Coalescing (`??`):** Provides a fallback value when an expression evaluates to `null`.
+
+```nika
+// If find_user returns null, 'name' becomes null.
+let name = repo.find_user(id)?.full_name
+
+// If 'name' is null, "Guest" is assigned.
+let display_name = name ?? "Guest"
+```
+
 ---
 
 ## Chapter 4: Data Structures
 
 ### 4.1. Structs (Custom Data Types)
-A **Struct** (short for Structure) allows you to group related values together under a single name. Each value inside a struct is called a **Field**.
+A **Struct** allows you to group related values together under a single name.
+
+**Visibility and Encapsulation**
+In Nikaia, **everything is Private by Default**. This includes Structs and their Fields.
+* To make a Struct usable by other modules, you must mark it `pub`.
+* Even if a Struct is public, its fields remain private unless explicitly marked `pub`.
 
 ```nika
-struct User {
+// file: users.nika
+
+// The Struct is public, but fields are private
+pub struct User {
     username: String,
     email: String,
-    active: bool,
+    is_active: bool,
 }
-
-// Creating an instance of the struct
-let user1 = User {
-    username: "Alice",
-    email: "alice@example.com",
-    active: true,
-}
-
-// Accessing fields
-println(user1.username)
 ```
 
-### 4.2. Why No Classes? (Data vs. Behavior)
-Nikaia does not use **Classes** (a concept from Object-Oriented Programming). Classes often mix data storage with logic, and rely on **Inheritance** (creating hierarchies of objects), which can lead to complex and brittle code.
+### 4.2. Constructors and Instantiation
+Because fields are private by default, you often cannot initialize a struct directly from another module using the standard `Type(field: value)` syntax. You must provide a public **Constructor**.
 
-Instead, Nikaia separates them:
+**The Anonymous Constructor (`pub fn`)**
+Nikaia allows you to define a special function inside an `impl` block that has no name. This function is automatically called when you invoke the Type name like a function `User(...)`.
+
+* **Internal Access:** Inside the `users.nika` module, code can access private fields to build the object using the standard Struct Literal syntax.
+* **External Access:** Outside modules utilize the public anonymous constructor.
+
+```nika
+// file: users.nika
+impl User {
+    // The Constructor
+    // It accepts positional arguments (Subject Zone)
+    pub fn(username: String, email: String) -> User {
+        // We can access private fields here because we are inside the module
+        return User(
+            username: username,
+            email: email,
+            is_active: true // Default logic handled internally
+        )
+    }
+}
+```
+
+**Usage Example**
+External modules see `User` as a factory function.
+
+```nika
+// file: main.nika
+use users::User
+
+fn main() {
+    // ERROR: Private Fields
+    // Direct struct initialization is forbidden because fields are private.
+    // let u = User(username: "A", email: "a@b.com", is_active: true)
+
+    // OK: Public Factory Constructor
+    // Calls the 'pub fn' defined in 'impl User'.
+    // Note: Uses positional arguments as per Function Syntax.
+    let u = User("Alice", "alice@example.com")
+}
+```
+
+### 4.3. Why No Classes? (Data vs. Behavior)
+Nikaia does not use **Classes** (a concept from Object-Oriented Programming). Instead, Nikaia separates them:
 1.  **Structs** define the **Data** (what it is).
 2.  **Impl Blocks** define the **Behavior** (what it does).
-
-This approach, known as **Composition**, makes systems easier to understand and test.
 
 ```nika
 // Defining behavior for the User struct
@@ -188,8 +250,8 @@ impl User {
 }
 ```
 
-### 4.3. Enums (Algebraic Data Types)
-An **Enum** (Enumeration) is a type that can be one of several distinct variants. Unlike simple lists of constants in other languages, Nikaia Enums can hold data specific to each variant.
+### 4.4. Enums (Algebraic Data Types)
+An **Enum** (Enumeration) is a type that can be one of several distinct variants.
 
 ```nika
 enum Message {
@@ -199,7 +261,7 @@ enum Message {
 }
 ```
 
-### 4.4. Collections
+### 4.5. Collections
 Nikaia includes built-in types for storing groups of data.
 
 * **List (Vector):** An ordered sequence of elements.
@@ -212,99 +274,159 @@ Nikaia includes built-in types for storing groups of data.
     let mut scores = HashMap::new()
     scores["Player1"] = 100
     ```
-### 4.5. Generics (Type Parameters)
+### 4.6. Generics (Type Parameters)
 To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.
 
 ```nika
-// A generic wrapper that can hold any type 'T'
 struct Box[T] {
     item: T,
 }
-
-// Usage
-let int_box = Box { item: 42 }       // T is i32
-let str_box = Box { item: "Hello" }  // T is String
 ```
 
-**Generic Functions**
-Functions can also be generic.
+### 4.7. Traits (Defining Behavior)
+A **Trait** defines a set of behaviors (methods) that different types can share.
 
 ```nika
-// Returns the item unchanged. Works for any type.
-fn identity[T](item: T) -> T {
-    return item
-}
-```
-### 4.6. Traits (Defining Behavior)
-A **Trait** defines a set of behaviors (methods) that different types can share. It is similar to an "Interface" in other languages.
-
-```nika
-// Defining the contract
 trait Summarize {
     fn summary(&self) -> String
 }
 
-// Implementing the contract for a specific struct
 impl Summarize for User {
     fn summary(&self) -> String {
         return "User: " + self.username
     }
 }
-
-// Using the trait as a constraint
-// This function accepts ANY type that implements Summarize
-fn print_summary(item: &Summarize) {
-    println(item.summary())
-}
 ```
 
 ---
 
-## Chapter 5: Functions and Closures
+## Chapter 5: Functions & Argument Architecture
 
-### 5.1. Functions
-A **Function** is a reusable block of code. It is declared with `fn`. Arguments must have types, and the return type is specified after `->`.
+### 5.1. The "Subject ; Config" Protocol
+Nikaia enforces a strict separation between data (subjects) and configuration options to maximize readability. This is achieved via a dedicated **Semicolon Separator (`;`)** in function signatures.
+
+**Zone 1: Subject (Positional)**
+Arguments *before* the semicolon are the data the function operates on.
+* **Syntactic Rule:** Positional arguments are allowed here.
+
+**Zone 2: Configuration (Named Only)**
+Arguments *after* the semicolon are options, flags, or modifiers.
+* **Syntactic Rule:** Arguments here *must* be named. Positional usage is forbidden.
 
 ```nika
-fn add(a: i32, b: i32) -> i32 {
-    return a + b
+// Definition
+fn request(url: String; timeout: i32 = 30, method: String = "GET") { ... }
+
+// Valid Calls
+request("[https://api.com](https://api.com)"; timeout: 60)
+
+// Invalid Calls (Compiler Errors)
+// request("[https://api.com](https://api.com)", 60)         // Error: Positional arg in named zone
+```
+
+**Optional Parentheses**
+For functions defined without configuration or arguments, parentheses may be omitted to match the block lambda style.
+
+```nika
+fn init { 
+    // No args, no parentheses required
 }
 ```
 
-### 5.2. Closures (Lambdas)
-A **Closure** is an anonymous function (a function without a name) that can be passed as data. Nikaia uses modern **Arrow Syntax** (`=>`) to define them.
+### 5.2. Expression Lambdas (The `fn:` Shorthand)
+For concise, single-line logic, use the `fn:` syntax.
+* **Implicit Arguments:** `a`, `b`, `c` are automatically available.
+* **Implicit Return:** The result of the expression is returned.
 
-**A. Expression Lambdas**
-Used for short, single-line operations. The result of the expression is automatically returned.
-*Syntax:* `argument => expression`
+**Trailing Syntax**
+If a `fn:` expression is the last argument, parentheses can be omitted.
 
 ```nika
-let numbers = [1, 2, 3]
-let doubled = numbers.map(x => x * 2)
+// Cleanest Syntax: No parentheses required
+let ids = users.map fn: a.id
+
+// With other arguments
+let sum = numbers.reduce(0) fn: a + b
 ```
 
-**B. Standard Closures**
-Used for multi-line logic. These use curly braces `{ ... }`.
-*Syntax:* `(argument1, argument2) => { statements }`
+### 5.3. Block Lambdas (`fn { ... }`)
+When logic requires multiple steps, use a Block Lambda. You can choose between implicit arguments (for speed) or explicit arguments (for clarity).
+
+**Option A: Implicit Arguments (The Default)**
+Use this for short blocks where context is obvious.
+* **Syntax:** `fn { ... }`
+* **Args:** `a` (1st), `b` (2nd)...
 
 ```nika
-numbers.for_each((index, n) => {
-    let result = n * 10
-    println("Index {index}: {result}")
-})
+let complex = users.map fn {
+    let bonus = calculate_bonus(a)
+    // Implicit return of the last line
+    a.score + bonus
+}
 ```
 
-**C. Block Lambdas (Syntactic Sugar)**
-A special shorthand exists for closures that take **no arguments** (often used for background tasks or simple blocks).
-If a closure has no arguments, you can omit the `() =>` entirely and just write the block `{ ... }`. This makes the code look cleaner.
-
-* *Explicit:* `() => { do_work() }`
-* *Block Lambda:* `{ do_work() }`
+**Option B: Explicit Arguments**
+Use this when you need specific names (e.g., nested closures) or types.
+* **Syntax:** `fn(name) { ... }`
+* **Note:** This disables the implicit `a` and `b`.
 
 ```nika
-// These are identical:
-spawn(() => { print("Working") }) 
-spawn({ print("Working") })       // Cleaner Syntax
+// Explicit naming for better readability
+users.map fn(user) {
+    if user.is_guest() {
+        return "Guest"
+    }
+    return user.name
+}
+```
+### 5.4. Contextual Capture (The Lifecycle Rule)
+Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is consistent across both Lite (Event Loop) and Advanced (Multi-Threaded) profiles.
+
+#### A. Immediate Context (`@immediate`)
+If a function guarantees that the callback will be executed and finished before the function itself returns, it is an **Immediate Context**.
+* **Behavior:** Implicit Borrow (`&T`).
+* **Examples:** `map`, `filter`, `for_each`, `sort_by`.
+
+```nika
+let prefix = "User: "
+let names = ["Alice", "Bob"]
+
+// 'map' is @immediate. It executes completely within this stack frame.
+// 'prefix' is implicitly borrowed.
+let formatted = names.map fn: prefix + a 
+
+// 'prefix' is still valid here because it was only borrowed.
+println(prefix)
+
+#### B. Detached Context (@detached)
+​If a function stores the callback, executes it later, or sends it to another thread/task, it is a Detached Context.
+​Behavior: Implicit Move (Ownership Transfer).
+​Examples: spawn, defer, set_timeout, channel.on_receive.
+
+````nila
+let prefix = "Log: "
+
+// 'spawn' is @detached. The lambda might outlive the current function.
+// 'prefix' is implicitly moved into the background task to ensure safety.
+spawn fn: println(prefix + "System started")
+
+// Compiler Error: 'prefix' has been moved!
+// println(prefix) 
+````
+
+#### C. Constraint Propagation (The Viral Rule)
+
+​The distinction between immediate and detached is part of the function's type signature.
+​By default, function parameters accepting lambdas fn() are Immediate.
+​To accept a lambda that will be stored or spawned, you must explicitly mark the parameter as @detached.
+​Safety Rule: You cannot pass an immediate lambda to a detached parameter.
+
+```nika
+// Custom function wrapper for spawning
+fn launch_task(task: @detached fn()) {
+    // Valid: 'task' is marked detached, so we can pass it to 'spawn'
+    spawn(task)
+}
 ```
 
 ---
@@ -328,11 +450,10 @@ To modify data inside a `Locked` container, you must use the `.access()` method.
 ```nika
 let data: Shared[Locked[i32]] = ...
 
-// Uses a closure to define the safe access area
-data.access(guard => {
-    guard += 1
-})
+// Uses short syntax where 'a' is the locked value
+data.access fn: a += 1
 ```
+
 ### 6.4. Resource Cleanup (RAII)
 Since Nikaia does not use a Garbage Collector, resources must be cleaned up deterministically. Nikaia follows the **RAII** principle (Resource Acquisition Is Initialization).
 
@@ -387,13 +508,12 @@ When an error occurs, it "bubbles up" to the caller automatically. Nikaia automa
 * The full **Stack Trace** (the history of function calls).
 This happens invisibly, so you don't need to manually add context to every error.
 
-**Handling Errors**
-To handle an error, use the `?{ ... }` block. Inside this block, the variable `error` is available.
+**Handling Errors (`catch`)**
+To handle an error, use the `catch` keyword. Inside the catch block, the error is available for inspection.
 
 ```nika
-let content = fetch_config()?{
-    println("Failed at {error.file}:{error.line}")
-    println("Reason: {error}")
+let content = fetch_config() catch {
+    println("Failed to fetch")
     return // Stop execution
 }
 ```
@@ -411,12 +531,10 @@ Even in **Nikaia Lite** (Single-Threaded), you can perform multiple tasks concur
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
 
 ### 8.2. Spawning Tasks
-To run a new independent task, use `spawn`. It takes a **Block Lambda** (a closure with no arguments) containing the code to run.
+To run a new independent task, use `spawn`. It takes an **Explicit Block Lambda** containing the code to run.
 
 ```nika
-spawn({
-    println("I am running in the background!")
-})
+spawn fn: println("I am running in the background!")
 ```
 
 ### 8.3. Moving Data (`move`)
@@ -425,10 +543,9 @@ By default, closures only "borrow" variables (look at them). If a background tas
 ```nika
 let message = "Hello"
 
-// 'move' transfers the 'message' variable into the Block Lambda
-spawn(move {
-    println(message)
-})
+// 'move' transfers the 'message' variable into the Lambda
+spawn move fn: println(message)
+
 // 'message' is no longer valid here
 ```
 
@@ -441,21 +558,40 @@ While Nikaia Lite enforces a strict single-threaded model for user logic ("The H
 
 ---
 
-## Chapter 9: Project Organization
+## Chapter 9: Project Organization and Visibility
 
-### 9.1. Modules
-Code is organized into files. Each file is a **Module**.
-* `main.nika`: The entry point of the program.
-* `math.nika`: Can be imported as a module named `math`.
+### 9.1. Modules and Files
+Every file in Nikaia (e.g., `utils.nika`) is implicitly a **Module**.
 
-### 9.2. Imports (`use`)
-To use code from other modules or libraries, use the `use` keyword.
+### 9.2. Visibility Rules (Privacy)
+Nikaia enforces strict encapsulation to prevent tight coupling between parts of your code.
+
+1.  **Private by Default:**
+    * Functions, Structs, Enums, and Constants are only visible inside the file they are defined in.
+    * Struct Fields are only visible inside the file where the struct is defined.
+
+2.  **The `pub` Keyword:**
+    * To allow other modules to use an item, prefix it with `pub`.
+    * To allow other modules to access a specific field of a struct, prefix the field with `pub`.
+
+### 9.3. Granular Control
+While `pub` makes an item available generally, strict privacy forces developers to create safe interfaces (Constructors and Methods) rather than exposing raw data.
 
 ```nika
-use std::http
-use my_project::utils
+// file: network.nika
 
-fn main() {
-    http::Server::new()
+// Private: Only usable inside network.nika
+struct Config {
+    port: i32
+}
+
+// Public: Usable by anyone
+pub struct Server {
+    // Private field: Can only be changed by Server methods
+    config: Config,
+    
+    // Public field: Can be read/written by anyone
+    pub name: String 
 }
 ```
+
