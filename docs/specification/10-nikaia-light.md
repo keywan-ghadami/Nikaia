@@ -379,6 +379,55 @@ users.map fn(user) {
     return user.name
 }
 ```
+### 5.4. Contextual Capture (The Lifecycle Rule)
+Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is consistent across both Lite (Event Loop) and Advanced (Multi-Threaded) profiles.
+
+#### A. Immediate Context (`@immediate`)
+If a function guarantees that the callback will be executed and finished before the function itself returns, it is an **Immediate Context**.
+* **Behavior:** Implicit Borrow (`&T`).
+* **Examples:** `map`, `filter`, `for_each`, `sort_by`.
+
+```nika
+let prefix = "User: "
+let names = ["Alice", "Bob"]
+
+// 'map' is @immediate. It executes completely within this stack frame.
+// 'prefix' is implicitly borrowed.
+let formatted = names.map fn: prefix + a 
+
+// 'prefix' is still valid here because it was only borrowed.
+println(prefix)
+
+#### B. Detached Context (@detached)
+​If a function stores the callback, executes it later, or sends it to another thread/task, it is a Detached Context.
+​Behavior: Implicit Move (Ownership Transfer).
+​Examples: spawn, defer, set_timeout, channel.on_receive.
+
+````nila
+let prefix = "Log: "
+
+// 'spawn' is @detached. The lambda might outlive the current function.
+// 'prefix' is implicitly moved into the background task to ensure safety.
+spawn fn: println(prefix + "System started")
+
+// Compiler Error: 'prefix' has been moved!
+// println(prefix) 
+````
+
+#### C. Constraint Propagation (The Viral Rule)
+
+​The distinction between immediate and detached is part of the function's type signature.
+​By default, function parameters accepting lambdas fn() are Immediate.
+​To accept a lambda that will be stored or spawned, you must explicitly mark the parameter as @detached.
+​Safety Rule: You cannot pass an immediate lambda to a detached parameter.
+
+```nika
+// Custom function wrapper for spawning
+fn launch_task(task: @detached fn()) {
+    // Valid: 'task' is marked detached, so we can pass it to 'spawn'
+    spawn(task)
+}
+```
 
 ---
 
