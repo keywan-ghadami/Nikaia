@@ -411,3 +411,33 @@ Errors indicating an inconsistent program state (Index Out of Bounds, Division b
 | :--- | :--- | :--- |
 | **Lite** | **Abort** | The entire process terminates immediately. In WebAssembly, this triggers a "Trap". There is no stack unwinding, resulting in minimal binary size. |
 | **Advanced** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
+
+# Appendix B: Compiler Internals & Annotations
+
+To enforce the "Contextual Capture" rules (Chapter 5.4) without hard-coding specific function names into the compiler, Nikaia uses internal attributes. These are primarily used by the Standard Library but are available to library authors.
+
+### B.1. Capture Attributes
+
+| Attribute | Internal Name | Default | Description |
+| :--- | :--- | :--- | :--- |
+| None | `capture_mode = "immediate"` | Yes | The lambda executes within the caller's stack frame. Captured variables are **Borrowed** (`&T`). Used by `map`, `filter`, `lock.access`. |
+| `@detached` | `capture_mode = "detached"` | No | The lambda escapes the current stack frame (stored, spawned, or deferred). Captured variables are **Moved** (Owned). Used by `spawn`, `defer`. |
+
+### B.2. Standard Library Signatures
+
+Here is how common standard library functions are annotated internally to drive the compiler's behavior:
+
+```nika
+// std::collections::List
+// Standard immediate execution
+pub fn map[U](self, op: fn(T) -> U) -> List[U]
+
+// std::task (Global Spawn)
+// Detached execution: Must take ownership of environment
+pub fn spawn(task: @detached fn() -> T) -> TaskHandle[T]
+
+// std::task
+// Scope is immediate because it waits for completion
+pub fn scope(f: fn(Scope))
+
+
