@@ -325,20 +325,25 @@ let bright_pixels = pixels.par_iter()
     .collect()
 ```
 
-### 12.7. Scoped Threads
-Normally, threads cannot borrow variables from the stack because the compiler doesn't know when the thread will finish. **Scoped Threads** guarantee that the threads finish *before* the current function ends, allowing safe borrowing.
+### 12.7. Scoped Tasks (@immediate Parallelism)
+Normally, tasks cannot borrow variables from the stack because the compiler assumes a standard `spawn` is `@detached` (might live forever).
+Scoped Tasks are a special exception. The `task::scope` function acts as an **Immediate Context**.
+
+* **Guarantee:** The scope function blocks (yields) until all tasks spawned within it have completed.
+* **Result:** Because the scope guarantees the tasks finish before the stack frame unwinds, the compiler permits **Implicit Borrowing**.
 
 ```nika
 let data = [1, 2, 3]
 
-// Syntax: Block Lambda with explicit argument 's' (the scope)
-// Trailing lambda syntax allows omitting parentheses for the block.
-thread::scope fn(s) {
-    // This thread borrows 'data' directly. No copy needed.
-    s.spawn fn: println("Reading: {data}")
-
-    // The scope waits here until the thread is done.
+// 'task::scope' is @immediate.
+// Variables captured inside are borrowed, not moved.
+task::scope fn(s) {
+    // Note: s.spawn is tied to the scope, unlike global spawn.
+    s.spawn fn: println("Reading: {data}") // Safe Borrow
+    s.spawn fn: println("Reading: {data}") // Safe Borrow
 }
+// 'data' is still valid here
+
 ```
 
 ### 12.8. Supervision Trees
