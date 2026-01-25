@@ -255,30 +255,28 @@ fn main() {
 In Nikaia 0.0.6, hardware instructions are no longer part of the core language. Instead, they are provided by library-defined DSLs (e.g., `dsl backend::x86` or `dsl backend::wasm`). This decouples the language core from specific hardware architectures.
 
 ### 16.1. Usage
-Assembly is written using the standard `dsl` syntax. The grammar defines the instruction syntax, and parameters are used to bind Nikaia variables to registers or memory.
+Assembly is written using the standard `dsl` syntax. Unlike SQL (which creates a reusable object), the Assembly DSL uses **Immediate Capture** (`meta::capture`) to bind variables from the current scope and injects the machine code directly at the call site.
 
 ```nika
 use std::backend::x86
 
 fn fast_add(val: i64, ptr: &i64) -> i64 {
-    let result: i64
+    let mut result: i64 = 0
     
-    // 1. Define the Assembly Block
-    // The grammar parses x86 syntax. 
-    // :v, :p, :r are defined as parameters.
-    let asm_op = dsl x86 {
-        mov :r, :v
-        add :r, :p
+    // The DSL executes immediately in the current scope.
+    // The grammar parses the bindings and resolves 'val', 'ptr', and 'result'
+    // directly from the environment using meta::capture.
+    dsl x86 {
+        // 1. Binding Header
+        // Syntax defined by x86 grammar: $alias = constraint(variable)
+        $v = in(reg) val
+        $p = in(mem) ptr
+        $r = out(reg) result
+
+        // 2. Instructions
+        mov $r, $v
+        add $r, $p
     } eod
-    
-    // 2. Execute with Constraints
-    // We map the parameters to variables and define constraints (reg, mem)
-    // via the configuration arguments.
-    asm_op.run(; 
-        v: in(reg) val, 
-        p: in(mem) ptr, 
-        r: out(reg) result
-    )
     
     return result
 }
