@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.5 (Draft)
-**Date:** January 22, 2026
+**Version:** 0.0.6 (Draft)
+**Date:** January 24, 2026
 
 ---
 
@@ -9,23 +9,25 @@
 
 Metaprogramming allows developers to extend the language itself. In Nikaia, this is not done with text replacements (like in C) but by manipulating the structure of the code (the **AST** or Abstract Syntax Tree) in a safe way.
 
-### 10.1. Parsing with `grammar`
-Before you can manipulate code, you often need to read custom data formats. The `grammar` tool allows you to write parsers easily.
+### 10.1. Parsing with `grammar` (Scannerless Protocol)
+Before you can manipulate code, you often need to read custom data formats. The `grammar` tool allows you to write **Scannerless Parsers**. Unlike traditional tools that separate tokenization (Lexer) and parsing, Nikaia grammars operate directly on the byte stream. This allows handling complex embedded languages without ambiguity.
+
+**Key Features:**
+*   **Commit Points (`=>`):** Controls backtracking. If the parser passes this point, it commits to the current branch.
+*   **Auto-AST:** If no explicit mapping (`->`) is provided, Nikaia automatically generates Structs and Enums.
+*   **Regex Terminals:** Efficient byte-level matching.
 
 ```nika
-// Defines a parser that turns strings like "#FF0000" into a Color struct
-grammar ColorParser {
-    option recursion_limit = 50;
-
-    pub rule entry -> Color = {
-        "#" r:hex() g:hex() b:hex()
-    } -> {
-        Color { r, g, b }
-    }
+grammar Json {
+    // Auto-AST: Generates 'enum Value { Object(Object), Array(Array), ... }'
+    pub rule value = object | array | string | number
     
-    rule hex -> u8 = s:regex("[0-9A-Fa-f]{2}") -> { 
-        u8::from_str_radix(s, 16)? 
-    }
+    // Commit Point usage: If '{' is found, we MUST parse members and '}', otherwise Error.
+    rule object -> Object 
+        = "{" => members:list(pair, ",") "}" 
+        -> { Object { members } }
+
+    rule pair = key:string ":" => val:value
 }
 ```
 
@@ -36,19 +38,19 @@ One of Nikaia's most powerful features is that a grammar defined once can be use
 You can use a parser to read files *during the build process*. If the file contains a syntax error, the compilation fails. The result is embedded into the final binary as a constant, with zero runtime cost.
 
 ```nika
-// Reads "theme.conf" at compile time.
-// The compiler executes ColorParser. If the file is invalid, the build stops.
-const THEME: Color = from "theme.conf" with ColorParser
+// Reads "config.json" at compile time.
+// The compiler executes the Json grammar. If the file is invalid, the build stops.
+const CONFIG: Json::Value = dsl Json from "config.json"
 ```
 
 **B. Dynamic Parsing (Runtime)**
-You can use the exact same parser to process user input or network data while the program is running.
+You can use the exact same parser to process user input or network data while the program is running. DSLs are expressions that return a typed value.
 
 ```nika
-fn update_color(input: String) throws ParseError {
-    // The ::parse method is automatically generated for every grammar.
-    let color = ColorParser::parse(input)?
-    println("New Color: {color.r}, {color.g}, {color.b}")
+fn parse_input(input: String) throws ParseError {
+    // 'dsl' expression parsing the string variable 'input'
+    let data = dsl Json from input
+    println("Parsed: {data}")
 }
 ```
 
@@ -121,32 +123,41 @@ fn main() {
 ```
 
 ### 10.5. Using DSLs (The `dsl` Keyword)
-While `quote` allows generating code, the `dsl` keyword allows developers to embed *foreign syntax* directly into Nikaia code. This is useful for SQL, HTML, or Regex.
+The `dsl` keyword allows developers to embed *foreign syntax* directly into Nikaia code. This is useful for SQL, HTML, or Regex.
 
-The syntax `dsl <macro_name> <context> { ... }` passes the raw tokens inside the block to the macro, allowing completely custom syntax.
+**The Protocol:**
+1.  **Explicit Termination:** DSL blocks must end with `} eod` (End of DSL). This allows the Nikaia compiler to parse the rest of the file in parallel without waiting for the DSL parser.
+2.  **Scannerless Parsing:** The core compiler delegates the raw byte stream to the DSL grammar. There is no global lexer.
+3.  **Hybrid Binding:** DSL authors use `meta::capture` for compile-time scope capture or `meta::parameter` for runtime arguments.
+4.  **Subject ; Config:** You fill runtime parameters by passing named arguments to the resulting object, strictly following the Subject/Config protocol.
 
 **Example: Embedding SQL**
 Instead of writing SQL as a string (which is prone to typos), we verify it at compile time.
 
 ```nika
-use nikaia_sql::{Database, sql}
+use nikaia_sql::{Database, mysql}
 
 fn query_users(db: Shared[Database], min_age: i32) {
-    // The code inside { ... } is NOT Nikaia syntax.
-    // It is raw SQL, processed by the 'sql' macro.
-    // The macro validates table names and column types during compilation.
-    let users = dsl sql db {
+    // 1. Define the Statement
+    // The compiler parses this SQL. It sees ':target_age' (defined as a parameter
+    // in the grammar) and generates a specialized Shadow Type.
+    let query = dsl mysql {
         SELECT name, email 
         FROM users 
-        WHERE age >= min_age
-    }
+        WHERE age >= :target_age
+    } eod
+
+    // 2. Execute with Typed Parameters
+    // We must provide 'target_age' as a named configuration argument.
+    // Subject: None (method on self) ; Config: target_age
+    let users = query.execute(; target_age: min_age)
 }
 ```
 
 ### 10.6. Advanced Parser Features
 Nikaia grammars are designed for high-performance tooling.
 
-**Zero-Copy Parsing (Slices)**
+**Zero-Copy Parsing (Scannerless)**
 Traditional parsers often copy text into new `String` objects for every identifier found. Nikaia avoids this.
 The parser yields **Slices** (references to the original text buffer). The compiler's borrow checker ensures that you cannot use a token after the original text has been deleted. This significantly reduces memory usage.
 
@@ -156,7 +167,7 @@ Nikaia supports `recover` blocks to define synchronization points.
 
 ```nika
 rule block -> Vec[Stmt] = {
-    "{" statements:stmt()* "}"
+    "{" => statements:stmt()* "}"
 }
 // If parsing fails inside the block, the parser skips tokens 
 // until it finds a closing brace '}', then resumes.
