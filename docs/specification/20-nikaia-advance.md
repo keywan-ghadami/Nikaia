@@ -127,20 +127,21 @@ The `dsl` keyword allows developers to embed *foreign syntax* directly into Nika
 
 **The Protocol:**
 1.  **Explicit Termination:** DSL blocks must end with `} eod` (End of DSL). This allows the Nikaia compiler to parse the rest of the file in parallel without waiting for the DSL parser.
-2.  **Typed Bindings:** String interpolation is forbidden. Instead, DSLs define parameters (e.g., `:min_age`) which create a "hole" in the AST.
-3.  **Subject ; Config:** You fill these holes by passing named arguments to the resulting object, strictly following the Subject/Config protocol.
+2.  **Scannerless Parsing:** The core compiler delegates the raw byte stream to the DSL grammar. There is no global lexer.
+3.  **Hybrid Binding:** DSL authors use `meta::capture` for compile-time scope capture or `meta::parameter` for runtime arguments.
+4.  **Subject ; Config:** You fill runtime parameters by passing named arguments to the resulting object, strictly following the Subject/Config protocol.
 
 **Example: Embedding SQL**
 Instead of writing SQL as a string (which is prone to typos), we verify it at compile time.
 
 ```nika
-use nikaia_sql::{Database, sql}
+use nikaia_sql::{Database, mysql}
 
 fn query_users(db: Shared[Database], min_age: i32) {
     // 1. Define the Statement
-    // The compiler parses this SQL. It sees ':target_age' and generates
-    // a specialized type requiring a 'target_age' parameter.
-    let query = dsl sql {
+    // The compiler parses this SQL. It sees ':target_age' (defined as a parameter
+    // in the grammar) and generates a specialized Shadow Type.
+    let query = dsl mysql {
         SELECT name, email 
         FROM users 
         WHERE age >= :target_age
