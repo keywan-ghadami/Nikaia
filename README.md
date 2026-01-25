@@ -8,11 +8,11 @@
     <a href="#-the-promise">The Promise</a> •
     <a href="#-profiles">Profiles</a> •
     <a href="#-example">Example</a> •
-    <a href="SPECIFICATION.md">Specification</a>
+    <a href="docs/specification">Specification</a>
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  ![Version](https://img.shields.io/badge/version-0.0.3-blue.svg)
+  ![Version](https://img.shields.io/badge/version-0.0.6-blue.svg)
   ![Status](https://img.shields.io/badge/status-experimental-orange.svg)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)
 </div>
@@ -28,14 +28,14 @@ Nikaia features a **Unified Core Architecture**: You write simple, linear code (
 
 > **"We no longer write code to satisfy the computer. We write Nikaia to win."**
 >
-> 👉 [Read the Manifesto and the origin story](MANIFESTO.md)
+> 👉 [Read the Manifesto and the origin story](manifesto.md)
 
 ---
 
 ## 💎 The Promise
 
 1.  **Async by Default:** No `async`, no `await`, no callback hell. The compiler generates state machines invisibly in the background.
-2.  **Unified Types:** Write `Shared[T]`. In the **Lite** profile, it compiles to `Rc` (fast); in the **Standard** profile, it becomes `Arc` (thread-safe).
+2.  **Unified Types:** Write `Shared[T]`. In the **Lite** profile, it compiles to `Rc` (fast); in the **Advanced** profile, it becomes `Arc` (thread-safe).
 3.  **Zero Color:** A function is just a function. No fragmentation of the ecosystem into synchronous and asynchronous worlds.
 4.  **No Garbage Collection:** Deterministic resource management via RAII and ownership, but without the pain.
 
@@ -51,7 +51,7 @@ Nikaia adapts to your problem, not the other way around. Define the profile in y
 * **Benefit:** No race conditions by design, maximum I/O density, minimal memory footprint.
 * **Use Case:** Microservices, Web Servers, CLI Tools, Edge Workers.
 
-### 🔵 Nikaia Standard (The Compute Engine)
+### 🔵 Nikaia Advanced (The Compute Engine)
 * **Target:** Rust, C++ alternative.
 * **Architecture:** Multi-Threaded Work-Stealing Runtime.
 * **Benefit:** Utilizes all CPU cores, mathematically proven thread safety via borrow checking.
@@ -79,8 +79,9 @@ fn main() {
     
     // `spawn` behaves polymorphically:
     // - Lite: Green Thread on Main Loop
-    // - Standard: Task on Thread Pool
-    spawn || {
+    // - Advanced: Task on Thread Pool
+    // Syntax: Uses 'fn' block for lambdas (no '||')
+    spawn fn {
         http::Server::new()
             .route("/", handle_request)
             .listen(":8080")
@@ -94,9 +95,9 @@ fn main() {
 
 ## 🛠 Roadmap to 0.1.0
 
-This is currently a **Specification (Version 0.0.4)**. We are in the bootstrap phase.
+This is currently a **Specification (Version 0.0.6)**. We are in the bootstrap phase.
 
-- [x] **Spec 0.0.3:** Definition of Syntax, Profiles, and Unified Types.
+- [x] **Spec 0.0.6:** Definition of Syntax, Profiles, Unified Types, and Scannerless Grammar Protocol.
 - [x] **Manifesto:** Defining the soul and philosophy of the project.
 - [ ] **Bootstrap Compiler:** A transpiler written in Rust (Stage 0).
 - [ ] **Runtime Integration:** Binding `tokio` (Current-Thread & Thread-Pool).
@@ -131,4 +132,3 @@ This project is licensed under the Apache License, Version 2.0. See the [LICENSE
 <div align="center">
   <sub>Designed with Vibe. Built for Victory.</sub>
 </div>
-
