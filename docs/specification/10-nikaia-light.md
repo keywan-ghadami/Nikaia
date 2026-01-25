@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core & Nikaia Lite**
-**Version:** 0.0.5 (Draft)
-**Date:** January 22, 2026
+**Version:** 0.0.6 (Draft)
+**Date:** January 24, 2026
 
 ---
 
@@ -594,4 +594,3 @@ pub struct Server {
     pub name: String 
 }
 ```
-
