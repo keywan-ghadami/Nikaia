@@ -1,12 +1,32 @@
 // nikaia/src/parser.rs
-use crate::ast::*; // AST muss verfügbar sein
+use crate::ast::*;
+use syn_grammar::grammar;
 
-// Inkludiere den generierten Code
-include!(concat!(env!("OUT_DIR"), "/generated_parser.rs"));
+grammar! {
+    grammar CompilerGrammar {
+        // Placeholder: The full grammar will be defined here or in an external .g file
+        // matching the goal defined in ADR-001.
+        rule program -> Program = items:item* -> { 
+            Program { items } 
+        }
 
-// Optional: Wrapper für syn::parse::Parse Trait, falls nötig
+        rule item -> Item = 
+            // Temporary stub for compilation
+            "fn" name:ident "(" ")" "{" "}" -> {
+                Item::Fn {
+                    name,
+                    generics: vec![],
+                    args: vec![],
+                    ret_type: None,
+                    body: Block { stmts: vec![] },
+                    is_sync: false,
+                }
+            }
+    }
+}
+
 impl syn::parse::Parse for Program {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        parse_program(input) // Aufruf der generierten Funktion
+        CompilerGrammar::parse_program(input)
     }
 }
