@@ -8,7 +8,7 @@ grammar! {
         }
 
         rule item -> Item = 
-            | "fn" name:ident "(" args:fn_args? ")" body:block -> {
+            "fn" name:ident "(" args:fn_args? ")" body:block -> {
                 Item::Fn {
                     name,
                     generics: vec![],
@@ -20,32 +20,32 @@ grammar! {
             }
 
         rule fn_args -> Vec<FnArg> =
-            | first:fn_arg rest:("," arg:fn_arg -> { arg })* -> {
+            first:fn_arg rest:("," arg:fn_arg -> { arg })* -> {
                 let mut args = vec![first];
                 args.extend(rest);
                 args
             }
 
         rule fn_arg -> FnArg =
-            | name:ident ":" ty:type_ref -> { FnArg { name, ty } }
+            name:ident ":" ty:type_ref -> { FnArg { name, ty } }
 
         rule type_ref -> Type =
-            | name:ident -> { Type { name, generics: vec![] } }
+            name:ident -> { Type { name, generics: vec![] } }
 
         rule block -> Block = 
-            | "{" stmts:stmt* "}" -> { Block { stmts } }
+            "{" stmts:stmt* "}" -> { Block { stmts } }
 
         rule stmt -> Stmt = 
-            | e:expr ";"? -> { Stmt::Expr(e) }
+            e:expr ";"? -> { Stmt::Expr(e) }
 
         rule expr -> Expr = 
-            | spawn_expr
+            spawn_expr
             | call_expr
             | block_expr
             | lit_str
 
         rule call_expr -> Expr = 
-            | func:ident "(" args:call_args? ")" -> {
+            func:ident "(" args:call_args? ")" -> {
                 Expr::Call {
                     func: Box::new(Expr::Variable(func)),
                     args: args.unwrap_or_default(),
@@ -53,21 +53,21 @@ grammar! {
             }
 
         rule call_args -> Vec<Expr> =
-            | first:expr rest:("," e:expr -> { e })* -> {
+            first:expr rest:("," e:expr -> { e })* -> {
                 let mut args = vec![first];
                 args.extend(rest);
                 args
             }
 
         rule spawn_expr -> Expr =
-            | "spawn" "(" body:expr ")" -> {
+            "spawn" "(" body:expr ")" -> {
                 Expr::Spawn { body: Box::new(body), is_move: false }
             }
 
         rule block_expr -> Expr =
-            | b:block -> { Expr::Block(b) }
+            b:block -> { Expr::Block(b) }
 
         rule lit_str -> Expr = 
-            | s:string_lit -> { Expr::LitStr(s.value()) }
+            s:string_lit -> { Expr::LitStr(s.value()) }
     }
 }
