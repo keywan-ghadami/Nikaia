@@ -12,6 +12,7 @@ use rustc_interface::{interface, Config};
 use rustc_session::config::{Input};
 use rustc_span::FileName;
 use rustc_middle::ty::TyCtxt;
+use syn::parse::Parser; // Import trait for parse_str
 
 struct NikaiaVirtualInput {
     source_code: String,
@@ -35,7 +36,21 @@ impl Callbacks for NikaiaVirtualInput {
     ) -> Compilation {
         println!("::group::Semantic Analysis");
         println!("[Nikaia] Parsing AST...");
-        println!("[Nikaia] Verifying Profile Constraints (Lite)...");
+
+        // Invoke the syn-grammar parser
+        let parse_result = nikaia_driver::parser::CompilerGrammar::parse_program.parse_str(&self.source_code);
+
+        match parse_result {
+            Ok(program) => {
+                println!("[Nikaia] Parse Success: {} items found.", program.items.len());
+                println!("[Nikaia] Verifying Profile Constraints (Lite)...");
+            }
+            Err(e) => {
+                println!("[Nikaia] Parse Error: {}", e);
+                return Compilation::Stop;
+            }
+        }
+
         println!("::endgroup::");
         
         Compilation::Stop
