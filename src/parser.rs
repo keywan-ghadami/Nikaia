@@ -8,7 +8,7 @@ grammar! {
         }
 
         rule item -> Item = 
-            "fn" name:ident "(" args:fn_args? ")" body:block -> {
+            "fn" name:ident paren(args:fn_args?) body:block -> {
                 Item::Fn {
                     name,
                     generics: vec![],
@@ -36,7 +36,7 @@ grammar! {
             name:ident -> { Type { name, generics: vec![] } }
 
         rule block -> Block = 
-            "{" stmts:stmt* "}" -> { Block { stmts } }
+            braced(stmts:stmt*) -> { Block { stmts } }
 
         rule stmt -> Stmt = 
             e:expr ";"? -> { Stmt::Expr(e) }
@@ -48,7 +48,7 @@ grammar! {
             | e:lit_str -> { e }
 
         rule call_expr -> Expr = 
-            func:ident "(" args:call_args? ")" -> {
+            func:ident paren(args:call_args?) -> {
                 Expr::Call {
                     func: Box::new(Expr::Variable(func)),
                     args: args.unwrap_or_default(),
@@ -66,7 +66,7 @@ grammar! {
             "," e:expr -> { e }
 
         rule spawn_expr -> Expr =
-            "spawn" "(" body:expr ")" -> {
+            "spawn" paren(body:expr) -> {
                 Expr::Spawn { body: Box::new(body), is_move: false }
             }
 
