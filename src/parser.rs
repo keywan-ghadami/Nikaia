@@ -2,7 +2,7 @@ use crate::ast::*;
 use syn_grammar::grammar;
 
 grammar! {
-    pub grammar CompilerGrammar {
+    grammar CompilerGrammar {
         rule program -> Program = items:item* -> { 
             Program { items } 
         }
