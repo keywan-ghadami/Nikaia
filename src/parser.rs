@@ -20,11 +20,14 @@ grammar! {
             }
 
         rule fn_args -> Vec<FnArg> =
-            first:fn_arg rest:("," arg:fn_arg -> { arg })* -> {
+            first:fn_arg rest:fn_arg_rest* -> {
                 let mut args = vec![first];
                 args.extend(rest);
                 args
             }
+
+        rule fn_arg_rest -> FnArg =
+            "," arg:fn_arg -> { arg }
 
         rule fn_arg -> FnArg =
             name:ident ":" ty:type_ref -> { FnArg { name, ty } }
@@ -53,11 +56,14 @@ grammar! {
             }
 
         rule call_args -> Vec<Expr> =
-            first:expr rest:("," e:expr -> { e })* -> {
+            first:expr rest:call_arg_rest* -> {
                 let mut args = vec![first];
                 args.extend(rest);
                 args
             }
+
+        rule call_arg_rest -> Expr =
+            "," e:expr -> { e }
 
         rule spawn_expr -> Expr =
             "spawn" "(" body:expr ")" -> {
