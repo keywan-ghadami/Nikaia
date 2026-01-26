@@ -41,7 +41,11 @@ grammar! {
         rule stmt -> Stmt = 
             e:expr ";"? -> { Stmt::Expr(e) }
 
-        rule expr -> Expr =  spawn_expr | call_expr| block_expr| lit_str
+        rule expr -> Expr = 
+            e:spawn_expr -> { e }
+            | e:call_expr -> { e }
+            | e:block_expr -> { e }
+            | e:lit_str -> { e }
 
         rule call_expr -> Expr = 
             func:ident "(" args:call_args? ")" -> {
