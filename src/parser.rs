@@ -36,7 +36,7 @@ grammar! {
             name:ident -> { Type { name, generics: vec![] } }
 
         rule block -> Block = 
-            brace(stmts:stmts) -> { Block { stmts } }
+            braced { stmts:stmts } -> { Block { stmts } }
 
         rule stmts -> Vec<Stmt> = 
             s:stmt* -> { s }
