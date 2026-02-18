@@ -20,6 +20,23 @@ grammar! {
         // --- Top-Level Items ---
         rule item -> Item =
             i:fn_item -> { i }
+          | u:import_item -> { u }
+
+        rule import_item -> Item =
+            "use" path:import_path -> { Item::Import { path } }
+
+        rule import_path -> String =
+            head:ident tail:import_path_tail* -> {
+                let mut s = head;
+                for t in tail {
+                    s.push_str("::");
+                    s.push_str(&t);
+                }
+                s
+            }
+
+        rule import_path_tail -> String =
+            "::" i:ident -> { i }
 
         rule kw_sync -> () = "sync" -> { () }
 
@@ -140,6 +157,7 @@ grammar! {
 
         rule expr -> Expr =
             s:spawn_expr -> { s }
+          | d:dsl_expr -> { d }
           | c:call_expr -> { c }
           | s:str_lit -> { s }
           | b:block -> { Expr::Block(b) }
@@ -148,6 +166,20 @@ grammar! {
             "spawn" paren(body:expr) -> {
                 Expr::Spawn { body: Box::new(body), is_move: false }
             }
+
+        // dsl js { ... } -> Content ignored/empty for now
+        rule dsl_expr -> Expr =
+            "dsl" target:ident content:raw_block_rule -> {
+                 Expr::Dsl {
+                     target: Ident::new(&target, Span::call_site()),
+                     context: None,
+                     content
+                 }
+            }
+
+        // Only matches empty block {}
+        rule raw_block_rule -> String =
+            "{" "}" -> { String::new() }
 
         rule call_expr -> Expr =
             func:ident paren(args:call_args?) -> {

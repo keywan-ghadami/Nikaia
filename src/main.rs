@@ -70,8 +70,7 @@ impl Callbacks for NikaiaVirtualInput {
 
         println!("::endgroup::");
 
-        // Stop the compiler here, we don't want it to try to generate code for the dummy program
-        // (or maybe we do, but for now stopping is cleaner as we ran our interpreter).
+        // Stop the compiler here
         Compilation::Stop
     }
 }
@@ -85,7 +84,7 @@ fn main() {
             spawn({
                 log("Async Task Running")
             })
-            dsl js { console.log("WASM Bridge"); }
+            dsl js { } 
         }
     "#
     .to_string();
