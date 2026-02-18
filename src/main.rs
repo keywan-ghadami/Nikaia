@@ -1,18 +1,18 @@
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
+extern crate rustc_errors;
 extern crate rustc_interface;
+extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
-extern crate rustc_errors;
-extern crate rustc_middle;
 
 use rustc_driver::{Callbacks, Compilation};
-use rustc_interface::{interface, Config};
-use rustc_session::config::{Input};
-use rustc_span::FileName;
+use rustc_interface::{Config, interface};
 use rustc_middle::ty::TyCtxt;
-use syn::parse::Parser; // Import trait for parse_str
+use rustc_session::config::Input;
+use rustc_span::FileName;
+use winnow::Parser; // Import trait for parse
 
 struct NikaiaVirtualInput {
     source_code: String,
@@ -37,12 +37,16 @@ impl Callbacks for NikaiaVirtualInput {
         println!("::group::Semantic Analysis");
         println!("[Nikaia] Parsing AST...");
 
-        // Invoke the syn-grammar parser
-        let parse_result = nikaia_driver::parser::CompilerGrammar::parse_program.parse_str(&self.source_code);
+        // Invoke the winnow-grammar parser
+        let parse_result =
+            nikaia_driver::parser::CompilerGrammar::parse_program.parse(self.source_code.as_str());
 
         match parse_result {
             Ok(program) => {
-                println!("[Nikaia] Parse Success: {} items found.", program.items.len());
+                println!(
+                    "[Nikaia] Parse Success: {} items found.",
+                    program.items.len()
+                );
                 println!("[Nikaia] Verifying Profile Constraints (Lite)...");
             }
             Err(e) => {
@@ -52,7 +56,7 @@ impl Callbacks for NikaiaVirtualInput {
         }
 
         println!("::endgroup::");
-        
+
         Compilation::Stop
     }
 }
@@ -65,7 +69,8 @@ fn main() {
             spawn({ println("Async Task") })
             dsl js { console.log("WASM Bridge"); }
         }
-    "#.to_string();
+    "#
+    .to_string();
 
     let mut callbacks = NikaiaVirtualInput {
         source_code: nikaia_src,
@@ -75,8 +80,10 @@ fn main() {
     // Der Driver braucht das, um den Prozess überhaupt zu starten.
     let args = vec![
         "nikaia_driver".to_string(),
-        "--crate-type".to_string(), "bin".to_string(),
-        "-o".to_string(), "output_bin".to_string(),
+        "--crate-type".to_string(),
+        "bin".to_string(),
+        "-o".to_string(),
+        "output_bin".to_string(),
         "main.nika".to_string(),
     ];
 
@@ -85,12 +92,12 @@ fn main() {
     let exit_code = rustc_driver::catch_with_exit_code(move || {
         rustc_driver::run_compiler(&args, &mut callbacks)
     });
-    
+
     println!("::endsection::");
-    
+
     if exit_code == 0 {
-         println!("::notice title=Success::Build & Analysis Complete.");
+        println!("::notice title=Success::Build & Analysis Complete.");
     } else {
-         panic!("Driver crashed with exit code: {}", exit_code);
+        panic!("Driver crashed with exit code: {}", exit_code);
     }
 }

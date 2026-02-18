@@ -1,82 +1,163 @@
-use crate::ast::*;
-use syn_grammar::grammar;
+use winnow_grammar::grammar;
 
 grammar! {
     grammar CompilerGrammar {
-        rule program -> Program = items:item* -> { 
-            Program { items } 
-        }
+        use crate::ast::*;
+        use syn::Ident;
+        use proc_macro2::Span;
 
-        rule item -> Item = 
-            "fn" name:ident paren(args:fn_args?) body:block -> {
+        // --- Entry Point ---
+        pub rule program -> Program =
+            items:item* -> {
+                Program { items }
+            }
+
+        // --- Top-Level Items ---
+        rule item -> Item =
+            i:fn_item -> { i }
+
+        rule kw_sync -> () = "sync" -> { () }
+
+        rule fn_item -> Item =
+            "fn"
+            name:ident
+            generics:generic_list?
+            args:fn_arg_list
+            is_sync:kw_sync?
+            ret:return_type_arrow?
+            body:block
+            -> {
                 Item::Fn {
-                    name,
-                    generics: vec![],
-                    args: args.unwrap_or_default(),
-                    ret_type: None,
+                    name: Ident::new(&name, Span::call_site()),
+                    generics: generics.unwrap_or_default(),
+                    args,
+                    ret_type: ret,
                     body,
-                    is_sync: false,
+                    is_sync: is_sync.is_some()
                 }
             }
 
-        rule fn_args -> Vec<FnArg> =
-            first:fn_arg rest:fn_arg_rest* -> {
-                let mut args = vec![first];
-                args.extend(rest);
+        // --- Argumente & Typen ---
+
+        rule fn_arg_list -> Vec<FnArg> =
+            paren(args:fn_arg_defs?) -> { args.unwrap_or_default() }
+
+        rule fn_arg_defs -> Vec<FnArg> =
+            head:fn_arg_def tail:fn_arg_def_tail* -> {
+                let mut args = vec![head];
+                args.extend(tail);
                 args
             }
 
-        rule fn_arg_rest -> FnArg =
-            "," arg:fn_arg -> { arg }
+        rule fn_arg_def_tail -> FnArg =
+            "," arg:fn_arg_def -> { arg }
 
-        rule fn_arg -> FnArg =
-            name:ident ":" ty:type_ref -> { FnArg { name, ty } }
+        rule fn_arg_def -> FnArg =
+            name:ident ":" ty:type_ref -> {
+                FnArg { name: Ident::new(&name, Span::call_site()), ty }
+            }
+
+        rule return_type_arrow -> Type =
+            "->" ty:type_ref -> { ty }
+
+        rule generic_list -> Vec<GenericParam> =
+            [ params:generic_params? ] -> { params.unwrap_or_default() }
+
+        rule generic_params -> Vec<GenericParam> =
+            head:generic_param tail:generic_param_tail* -> {
+                let mut params = vec![head];
+                params.extend(tail);
+                params
+            }
+
+        rule generic_param_tail -> GenericParam =
+            "," p:generic_param -> { p }
+
+        rule generic_param -> GenericParam =
+            name:ident
+            -> { GenericParam { name: Ident::new(&name, Span::call_site()) } }
 
         rule type_ref -> Type =
-            name:ident -> { Type { name, generics: vec![] } }
+            name:ident
+            generics:generic_type_args?
+            -> {
+                Type { name: Ident::new(&name, Span::call_site()), generics: generics.unwrap_or_default() }
+            }
 
-        rule block -> Block = 
-            braced { stmts:stmts } -> { Block { stmts } }
+        rule generic_type_args -> Vec<Type> =
+            [ args:type_refs? ] -> { args.unwrap_or_default() }
 
-        rule stmts -> Vec<Stmt> = 
-            s:stmt* -> { s }
+        rule type_refs -> Vec<Type> =
+            head:type_ref tail:type_ref_tail* -> {
+                let mut args = vec![head];
+                args.extend(tail);
+                args
+            }
 
-        rule stmt -> Stmt = 
+        rule type_ref_tail -> Type =
+            "," t:type_ref -> { t }
+
+        // --- Statements & Blocks ---
+
+        rule block -> Block =
+            { stmts:stmt* } -> { Block { stmts } }
+
+        rule stmt -> Stmt =
+            l:let_stmt -> { l }
+          | e:expr_stmt -> { e }
+
+        rule kw_mut -> () = "mut" -> { () }
+
+        rule let_stmt -> Stmt =
+            "let"
+            mutable:kw_mut?
+            name:ident
+            ty:type_annotation?
+            "="
+            val:expr
+            ";"?
+            -> {
+                Stmt::Let {
+                    name: Ident::new(&name, Span::call_site()),
+                    mutable: mutable.is_some(),
+                    ty,
+                    value: val
+                }
+            }
+
+        rule type_annotation -> Type =
+            ":" ty:type_ref -> { ty }
+
+        rule expr_stmt -> Stmt =
             e:expr ";"? -> { Stmt::Expr(e) }
 
-        rule expr -> Expr = 
-            e:spawn_expr -> { e }
-            | e:call_expr -> { e }
-            | e:block_expr -> { e }
-            | e:lit_str -> { e }
+        // --- Expressions ---
 
-        rule call_expr -> Expr = 
+        rule expr -> Expr =
+            c:call_expr -> { c }
+          | s:str_lit -> { s }
+
+        rule call_expr -> Expr =
             func:ident paren(args:call_args?) -> {
                 Expr::Call {
-                    func: Box::new(Expr::Variable(func)),
+                    func: Box::new(Expr::Variable(Ident::new(&func, Span::call_site()))),
                     args: args.unwrap_or_default(),
                 }
             }
 
         rule call_args -> Vec<Expr> =
-            first:expr rest:call_arg_rest* -> {
-                let mut args = vec![first];
-                args.extend(rest);
+            head:expr tail:call_args_tail* -> {
+                let mut args = vec![head];
+                args.extend(tail);
                 args
             }
 
-        rule call_arg_rest -> Expr =
+        rule call_args_tail -> Expr =
             "," e:expr -> { e }
 
-        rule spawn_expr -> Expr =
-            "spawn" paren(body:expr) -> {
-                Expr::Spawn { body: Box::new(body), is_move: false }
+        rule str_lit -> Expr =
+            s:string -> {
+                Expr::LitStr(s)
             }
-
-        rule block_expr -> Expr =
-            b:block -> { Expr::Block(b) }
-
-        rule lit_str -> Expr = 
-            s:string_lit -> { Expr::LitStr(s.value()) }
     }
 }

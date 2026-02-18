@@ -2,8 +2,8 @@
 // Nikaia AST definition matching Spec 0.0.4
 // Based on ADR-001 and Part I/II/III documents.
 
-use syn::Ident;
 use proc_macro2::TokenStream;
+use syn::Ident;
 
 /// Ein Nikaia-Programm ist eine Liste von Top-Level Items.
 #[derive(Debug, Clone)]
@@ -55,7 +55,7 @@ pub enum Item {
         name: String,
         body: Block,
     },
-    
+
     // Part II, Kap 10.1: grammar ColorParser { ... }
     Grammar {
         name: Ident,
@@ -65,7 +65,7 @@ pub enum Item {
     // Kap 9.2: use std::http
     Import {
         path: String,
-    }
+    },
 }
 
 /// Ein Block von Statements { ... }
@@ -84,7 +84,7 @@ pub enum Stmt {
         ty: Option<Type>, // Type Inference macht dies optional
         value: Expr,
     },
-    
+
     // Kap 2.1: x = 20
     Assign {
         target: Expr,
@@ -129,7 +129,7 @@ pub enum Expr {
 
     // Part II, Kap 10.5: dsl sql db { ... }
     Dsl {
-        target: Ident,         // z.B. sql
+        target: Ident,          // z.B. sql
         context: Option<Ident>, // z.B. db (optional)
         content: TokenStream,   // Roher Inhalt
     },
@@ -145,7 +145,7 @@ pub enum Expr {
         expr: Box<Expr>,
         handler: Block, // Der Block mit 'error' Variable
     },
-    
+
     // Kap 3.4: match value { ... }
     Match {
         expr: Box<Expr>,
@@ -194,7 +194,7 @@ pub struct MatchArm {
 // Part III, Kap 16.1: $dst = out(reg) result
 #[derive(Debug, Clone)]
 pub struct AsmBinding {
-    pub alias: Ident,     // $dst
+    pub alias: Ident,      // $dst
     pub direction: String, // "out", "in", "inout"
     pub location: String,  // "reg", "mem"
     pub variable: Ident,   // result
