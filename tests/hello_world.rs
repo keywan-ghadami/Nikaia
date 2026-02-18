@@ -1,6 +1,7 @@
 use nikaia_driver::ast::{Expr, Item, Stmt};
 use nikaia_driver::parser::CompilerGrammar;
 use winnow::Parser;
+use winnow::stream::LocatingSlice;
 
 #[test]
 fn test_advanced_hello_world_compilation() {
@@ -15,8 +16,9 @@ fn test_advanced_hello_world_compilation() {
     "#;
 
     // 1. Compile (Parse)
+    let input = LocatingSlice::new(source_code);
     let program = CompilerGrammar::parse_program
-        .parse(source_code)
+        .parse(input)
         .expect("Failed to compile Nikaia source");
 
     // 2. Execute Verification (Inspect AST)
@@ -59,7 +61,7 @@ fn test_advanced_hello_world_compilation() {
                     panic!("Spawn body should be a block");
                 }
             }
-            _ => panic!("Second statement should be spawn");
+            _ => panic!("Second statement should be spawn"),
         }
     } else {
         panic!("Top level item is not a function");

@@ -13,6 +13,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_session::config::Input;
 use rustc_span::FileName;
 use winnow::Parser; // Import trait for parse
+use winnow::stream::LocatingSlice;
 
 struct NikaiaVirtualInput {
     source_code: String,
@@ -38,8 +39,8 @@ impl Callbacks for NikaiaVirtualInput {
         println!("[Nikaia] Parsing AST...");
 
         // Invoke the winnow-grammar parser
-        let parse_result =
-            nikaia_driver::parser::CompilerGrammar::parse_program.parse(self.source_code.as_str());
+        let input = LocatingSlice::new(self.source_code.as_str());
+        let parse_result = nikaia_driver::parser::CompilerGrammar::parse_program.parse(input);
 
         match parse_result {
             Ok(program) => {

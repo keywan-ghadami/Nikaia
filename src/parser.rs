@@ -5,12 +5,17 @@ grammar! {
         use crate::ast::*;
         use syn::Ident;
         use proc_macro2::Span;
+        use winnow::ascii::multispace0;
 
         // --- Entry Point ---
         pub rule program -> Program =
-            items:item* -> {
+            items:item*
+            _end:skip_ws
+            -> {
                 Program { items }
             }
+
+        rule skip_ws -> () = multispace0 -> { () }
 
         // --- Top-Level Items ---
         rule item -> Item =
@@ -134,8 +139,15 @@ grammar! {
         // --- Expressions ---
 
         rule expr -> Expr =
-            c:call_expr -> { c }
+            s:spawn_expr -> { s }
+          | c:call_expr -> { c }
           | s:str_lit -> { s }
+          | b:block -> { Expr::Block(b) }
+
+        rule spawn_expr -> Expr =
+            "spawn" paren(body:expr) -> {
+                Expr::Spawn { body: Box::new(body), is_move: false }
+            }
 
         rule call_expr -> Expr =
             func:ident paren(args:call_args?) -> {
