@@ -1,8 +1,7 @@
-// src/ast.rs
+// crates/nikaia/src/ast/mod.rs
 // Nikaia AST definition matching Spec 0.0.4
 // Based on ADR-001 and Part I/II/III documents.
 
-// use proc_macro2::TokenStream; // Removed for now to simplify parsing
 use syn::Ident;
 
 /// Ein Nikaia-Programm ist eine Liste von Top-Level Items.

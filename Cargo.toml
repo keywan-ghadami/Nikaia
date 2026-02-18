@@ -1,12 +1,28 @@
-[package]
-name = "nikaia_driver"
-version = "0.0.1"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "crates/bridge-ir",
+    "crates/bridge-orchestrator",
+    "crates/rustc-executor",
+    "crates/nikaia",
+]
 
-[dependencies]
-libc = "0.2"
-quote = "1.0"
-proc-macro2 = "1.0"
-syn = { version = "2.0", features = ["full", "extra-traits"] }
-winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main" , version = "0.1.0"}
+[workspace.dependencies]
+bridge-ir = { path = "crates/bridge-ir" }
+bridge-orchestrator = { path = "crates/bridge-orchestrator" }
+rustc-executor = { path = "crates/rustc-executor" }
+winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main", version = "0.1.0" }
 winnow = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+thiserror = "1.0"
+anyhow = "1.0"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+debug = false

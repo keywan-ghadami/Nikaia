@@ -1,5 +1,5 @@
-// src/interpreter.rs
-use crate::ast::{Expr, Item, Program, Stmt};
+// crates/nikaia/src/interpreter/mod.rs
+use crate::ast::{Block, Expr, Item, Program, Stmt};
 
 pub struct Interpreter;
 
@@ -23,7 +23,7 @@ impl Interpreter {
         println!("[Nikaia Kernel] No main function found.");
     }
 
-    fn eval_block(&self, block: &crate::ast::Block) {
+    fn eval_block(&self, block: &Block) {
         for stmt in &block.stmts {
             self.eval_stmt(stmt);
         }
@@ -31,16 +31,18 @@ impl Interpreter {
 
     fn eval_stmt(&self, stmt: &Stmt) {
         match stmt {
-            Stmt::Expr(expr) => {
-                self.eval_expr(expr);
-            }
             Stmt::Let { name, value, .. } => {
                 // In a real implementation, we would store the result in a scope map.
                 // For now, we just print the binding.
                 println!("[Nikaia Runtime] Bind: {} = <evaluated>", name);
                 self.eval_expr(value);
             }
-            _ => println!("[Nikaia Runtime] Skipping statement {:?}", stmt),
+            Stmt::Expr(expr) => {
+                self.eval_expr(expr);
+            }
+            Stmt::Assign { .. } => {
+                println!("[Nikaia Runtime] Assignment (Skipped)");
+            }
         }
     }
 
