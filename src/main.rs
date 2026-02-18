@@ -1,3 +1,5 @@
+// src/main.rs
+
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
@@ -15,19 +17,23 @@ use rustc_span::FileName;
 use winnow::Parser; // Import trait for parse
 use winnow::stream::LocatingSlice;
 
+use nikaia_driver::interpreter::Interpreter;
+
 struct NikaiaVirtualInput {
     source_code: String,
 }
 
 impl Callbacks for NikaiaVirtualInput {
     fn config(&mut self, config: &mut Config) {
-        let source = self.source_code.clone();
-        // Hier injizieren wir den echten Code für "main.nika"
+        // HACK: We feed rustc a dummy Rust program so it doesn't crash parsing our Nikaia syntax.
+        // The actual Nikaia code is stored in `self.source_code` and processed in the callback.
+        let dummy_source = "fn main() {}".to_string();
+
         config.input = Input::Str {
-            name: FileName::Custom("main.nika".to_string()),
-            input: source,
+            name: FileName::Custom("dummy_main.rs".to_string()),
+            input: dummy_source,
         };
-        println!("::notice title=Nikaia Driver::Virtual Source Code Injected");
+        println!("::notice title=Nikaia Driver::Dummy Rust Source Injected");
     }
 
     fn after_analysis<'tcx>(
@@ -36,9 +42,9 @@ impl Callbacks for NikaiaVirtualInput {
         _tcx: TyCtxt<'tcx>,
     ) -> Compilation {
         println!("::group::Semantic Analysis");
-        println!("[Nikaia] Parsing AST...");
+        println!("[Nikaia] Parsing AST from internal source...");
 
-        // Invoke the winnow-grammar parser
+        // Parse the ACTUAL Nikaia source code
         let input = LocatingSlice::new(self.source_code.as_str());
         let parse_result = nikaia_driver::parser::CompilerGrammar::parse_program.parse(input);
 
@@ -48,7 +54,13 @@ impl Callbacks for NikaiaVirtualInput {
                     "[Nikaia] Parse Success: {} items found.",
                     program.items.len()
                 );
-                println!("[Nikaia] Verifying Profile Constraints (Lite)...");
+
+                // EXECUTE THE INTERPRETER
+                println!("::endgroup::");
+                println!("::group::Nikaia Runtime (Interpreter)");
+
+                let interpreter = Interpreter::new();
+                interpreter.run(&program);
             }
             Err(e) => {
                 println!("[Nikaia] Parse Error: {}", e);
@@ -58,16 +70,21 @@ impl Callbacks for NikaiaVirtualInput {
 
         println!("::endgroup::");
 
+        // Stop the compiler here, we don't want it to try to generate code for the dummy program
+        // (or maybe we do, but for now stopping is cleaner as we ran our interpreter).
         Compilation::Stop
     }
 }
 
 fn main() {
+    // Our Nikaia Hello World Program
     let nikaia_src = r#"
         use std::http
         fn main() {
             println("Nikaia System Init...");
-            spawn({ println("Async Task") })
+            spawn({
+                log("Async Task Running")
+            })
             dsl js { console.log("WASM Bridge"); }
         }
     "#
@@ -77,15 +94,14 @@ fn main() {
         source_code: nikaia_src,
     };
 
-    // FIX: Wir fügen "main.nika" als Positions-Argument hinzu.
-    // Der Driver braucht das, um den Prozess überhaupt zu starten.
+    // Rustc driver arguments
     let args = vec![
         "nikaia_driver".to_string(),
         "--crate-type".to_string(),
         "bin".to_string(),
         "-o".to_string(),
         "output_bin".to_string(),
-        "main.nika".to_string(),
+        "dummy_main.rs".to_string(), // Matches the name in config
     ];
 
     println!("::section::Compiling Nikaia Source");

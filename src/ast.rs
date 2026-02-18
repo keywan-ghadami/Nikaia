@@ -2,7 +2,7 @@
 // Nikaia AST definition matching Spec 0.0.4
 // Based on ADR-001 and Part I/II/III documents.
 
-use proc_macro2::TokenStream;
+// use proc_macro2::TokenStream; // Removed for now to simplify parsing
 use syn::Ident;
 
 /// Ein Nikaia-Programm ist eine Liste von Top-Level Items.
@@ -59,7 +59,7 @@ pub enum Item {
     // Part II, Kap 10.1: grammar ColorParser { ... }
     Grammar {
         name: Ident,
-        content: TokenStream, // Grammars werden intern als DSL behandelt
+        content: String, // Simplified from TokenStream
     },
 
     // Kap 9.2: use std::http
@@ -131,7 +131,7 @@ pub enum Expr {
     Dsl {
         target: Ident,          // z.B. sql
         context: Option<Ident>, // z.B. db (optional)
-        content: TokenStream,   // Roher Inhalt
+        content: String,        // Simplified from TokenStream
     },
 
     // Part III, Kap 16: unsafe asm { Bindings } { Body }
