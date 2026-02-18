@@ -6,7 +6,11 @@ cargo fmt
 # If there are staged rust files, add them again to capture formatting changes
 FILES=$(git diff --name-only --cached | grep '\.rs$')
 if [ -n "$FILES" ]; then
-    echo "$FILES" | xargs git add
+    for FILE in $FILES; do
+        if [ -f "$FILE" ]; then
+            git add "$FILE"
+        fi
+    done
 fi
 
 # Ensure no clippy warnings are present
