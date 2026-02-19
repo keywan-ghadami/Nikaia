@@ -1,17 +1,30 @@
 # Findings regarding winnow-grammar
 
-## Usage Observations
+## Verified Behavior
 
-1.  **Rule Visibility**: The `grammar!` macro generates a structure or module. Accessing the rules from outside might require specific visibility settings or path usage.
-    - *Issue*: `use of undeclared type CompilerGrammar`.
-    - *Hypothesis*: The macro might generate a module `CompilerGrammar`. If defined inside `parser/mod.rs`, it should be accessible via `CompilerGrammar` or `self::CompilerGrammar`.
+1.  **Module Generation**: 
+    The `grammar Name { ... }` block generates a Rust **module** with the name `Name`.
+    *   *Example*: `grammar CompilerGrammar` creates `mod CompilerGrammar`.
 
-2.  **Helper Rules**: Standard helpers like `bracket`, `paren`, `brace` are not automatically available or imported.
-    - *Action*: These need to be defined manually in the grammar or imported if they exist in a library.
-    - *Workaround*: Define `rule bracket<T> = "[" t:T "]" -> { t }` if generics are supported, or specific rules like `rule bracket_generics = "[" ... "]"`.
+2.  **Function Naming Convention**: 
+    For every rule defined as `rule name`, the macro generates a public function named **`parse_name`**.
+    *   *Observation*: `pub rule program` generated `pub fn parse_program`.
+    *   *Usage*: Must be called as `CompilerGrammar::parse_program`.
 
-3.  **Imports in Grammar**: External parsers like `digit1` need to be imported within the grammar block or wrapper rules must be defined.
+3.  **Input Type Requirements**: 
+    The generated parser functions require the input type to implement `winnow::stream::Location`.
+    *   *Issue*: passing a raw `&str` fails with `E0277` (`&str: Location` is not satisfied).
+    *   *Solution*: Wrap the input in `winnow::stream::LocatingSlice`.
+    *   *Code*: `let input = LocatingSlice::new(input_str);`
 
-## Errors Encountered
-- `Undefined rule: 'bracket'`
-- `failed to resolve: use of undeclared type CompilerGrammar`
+4.  **Scope & Imports**: 
+    The grammar block acts as a closed scope.
+    *   External types (e.g., `crate::ast::*`) must be imported inside the `grammar! { ... }` block.
+    *   Winnow combinators (e.g., `winnow::ascii::digit1`) must be explicitly imported to be used as terminal rules.
+
+## Syntax Notes
+
+*   **Brackets**: The syntax `[ ... ]` is supported directly within the grammar to define sequences enclosed in brackets or for grouping.
+    *   *Example*: `rule generic_list -> Vec<T> = [ params:generic_params? ] -> { params }`
+*   **Return Types**: Defined after the arrow `->` (e.g., `rule foo -> MyType`).
+*   **Rule Visibility**: `pub rule` makes the generated `parse_` function public.

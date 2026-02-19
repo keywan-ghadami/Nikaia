@@ -102,8 +102,9 @@ grammar! {
         rule return_type_arrow -> Type =
             "->" _sp:skip_ws ty:type_ref -> { ty }
 
+        // USING [ ] SYNTAX directly for testing
         rule generic_list -> Vec<GenericParam> =
-            "[" _sp:skip_ws params:generic_params? _sp2:skip_ws "]" -> { params.unwrap_or_default() }
+            [ _sp:skip_ws params:generic_params? _sp2:skip_ws ] -> { params.unwrap_or_default() }
 
         rule generic_params -> Vec<GenericParam> =
             head:generic_param tail:generic_param_tail* -> {
@@ -126,8 +127,9 @@ grammar! {
                 Type { name: Ident::new(&name, Span::call_site()), generics: generics.unwrap_or_default() }
             }
 
+        // USING [ ] SYNTAX directly for testing
         rule generic_type_args -> Vec<Type> =
-            "[" _sp:skip_ws args:type_refs? _sp2:skip_ws "]" -> { args.unwrap_or_default() }
+            [ _sp:skip_ws args:type_refs? _sp2:skip_ws ] -> { args.unwrap_or_default() }
 
         rule type_refs -> Vec<Type> =
             head:type_ref tail:type_ref_tail* -> {
