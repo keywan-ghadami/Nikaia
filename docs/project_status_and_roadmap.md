@@ -2,16 +2,21 @@
 
 This document outlines the current status of the Nikaia compiler and the toolchain, and lists the necessary steps to reach a fully functional and stable v1.0 release.
 
-## Current Status (Vertical Slice: Complete)
+## Current Status (Vertical Slice: Complete & Architecturally Robust)
 
-We have successfully implemented a "Vertical Slice" of the compiler that can compile a simple "Hello World" program.
+We have successfully implemented a "Vertical Slice" of the compiler that can compile a simple "Hello World" program, using a robust, future-proof architecture.
 
 *   ✅ **Parser**: Functional `winnow-grammar` parser for `fn`, `block`, `let`, `call`, and primitive literals.
 *   ✅ **AST**: Nikaia AST defined and used.
 *   ✅ **Lowering**: Transformation from Nikaia AST to Bridge IR implemented.
 *   ✅ **Bridge IR**: Stable intermediate representation defined.
-*   ✅ **Executor**: Transpilation to Rust source code and compilation to executable via `rustc`.
-*   ✅ **End-to-End**: `hallo.nika` -> `hallo` executable works.
+*   ✅ **Unified AST Lowering (Phase 4)**: 
+    *   Implemented `Bridge -> rustc_ast::Crate` transformation in `rustc-executor` (ADR-004).
+    *   Verified against `nightly-2026-01-01` source code.
+    *   Correctly maps Nikaia concepts to internal Rust AST (`Fn`, `Item`, `Stmt`, `Expr`, `Lit`).
+    *   *Note*: Code compiles (`cargo check`), but running the binary requires `RUSTFLAGS="-C prefer-dynamic"` and correct environment setup due to `rustc_private` dynamic linking requirements.
+*   ✅ **Executor**: Generates valid Rust source from the internal AST (Transpilation for Debug) using `rustc_ast_pretty`.
+*   ⚠️ **End-to-End Execution**: Currently blocked by `std` linkage conflicts when running via `cargo run`. Requires environment configuration for dynamic linking of `rustc_driver`.
 
 ---
 
@@ -49,9 +54,11 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 
 ### Phase 3: Tooling & Ecosystem (The "Hub")
 
-*   [ ] **Bridge Orchestrator**: Implement incremental compilation and caching.
+*   [ ] **Bridge Orchestrator (Cargo Wrapper)**: Implement the logic defined in ADR-003 to wrap `cargo build`.
+    *   *Missing*: Setting `RUSTC_WORKSPACE_WRAPPER`, intercepting compiler calls, and delegating to `nikaia` frontend for `.nika` files vs `rustc` for `.rs` files.
+    *   *Current*: Orchestrator is a simple CLI argument parser with backend selection scaffolding.
+*   [ ] **Incremental Compilation**: Implement hashing and caching in the Orchestrator.
     *   *Goal*: Avoid recompiling unchanged files.
-    *   *Strategy*: Hash source files and cache Bridge IR artifacts.
 *   [ ] **LSP Server**: Create a Language Server Protocol (LSP) implementation.
     *   *Benefit*: IDE support (syntax highlighting, go-to-definition) in editors like VS Code.
     *   *Reuse*: Reuse the parser and AST for this.
@@ -60,14 +67,14 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 
 ### Phase 4: Backend Optimization
 
-*   [ ] **Direct `rustc_driver` Integration**: Move from source generation (transpilation) to direct AST generation using `rustc_private` (optional, for performance).
-    *   *Status*: `rustc-executor` currently shells out to `rustc` CLI.
+*   [x] **Direct `rustc_driver` Integration (Code)**: Logic implemented and verified.
+*   [ ] **Direct `rustc_driver` Integration (Runtime)**: Fix `std` linkage issues to allow the compiler to run as a standalone binary linking against `rustc_driver` dylibs.
 *   [ ] **LLVM / Cranelift Backend**: Investigate alternative backends for faster debug builds (e.g., using Cranelift directly via `bridge-ir`).
 
 ---
 
 ## Immediate Next Steps
 
-1.  **Implement Control Flow**: Add `if/else` support to the parser and bridge.
-2.  **Struct Support**: Allow defining and instantiating simple structs.
-3.  **Error Messages**: Improve parser error reporting to show line/column numbers.
+1.  **Fix Linkage**: Configure cargo/rustc flags to allow running the `rustc-executor` with dynamic linking.
+2.  **Implement Control Flow**: Add `if/else` support.
+3.  **Struct Support**: Allow defining and instantiating simple structs.
