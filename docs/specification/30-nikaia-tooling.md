@@ -228,64 +228,103 @@ The **Lite Profile** possesses a natural affinity for WebAssembly. Since WASM (i
 Compiling with `nikaia build --profile=lite --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
 
 **JavaScript Interoperability (`dsl js`)**
-Instead of trying to map the entire DOM to Nikaia structs, Nikaia allows embedding raw JavaScript using the `dsl` keyword.
+Instead of trying to map the entire DOM to Nikaia structs, Nikaia allows embedding raw JavaScript using the `dsl` keyword. Variables can be injected safely.
 
 ```nika
 // main.nika (Lite Profile)
 fn main() {
     let message = "Hello from Nikaia!"
 
-    // The 'js' grammar parses the code.
-    // We use ':msg' to define a parameter hole.
-    let script = dsl js {
+    // The 'js' macro takes raw JavaScript code.
+    // Nikaia variables are injected where '{...}' is used.
+    // Note: This relies on the variable injection, not function arguments.
+    dsl js {
         document.querySelector("#submit").addEventListener("click", () => {
-            window.alert(:msg);
+            window.alert({message});
         });
-    } eod
-
-    // Execute the script, passing 'message' into ':msg'
-    script.exec(; msg: message)
+    }
 }
 ```
 
 ---
 
-## Chapter 16: Inline Assembly (via DSL)
+## Chapter 16: Inline Assembly
 
-In Nikaia 0.0.6, hardware instructions are no longer part of the core language. Instead, they are provided by library-defined DSLs (e.g., `dsl backend::x86` or `dsl backend::wasm`). This decouples the language core from specific hardware architectures.
+For low-level control (kernels, drivers, SIMD), Nikaia provides `unsafe asm`.
+To ensure robust parsing and clear separation of concerns, the assembly construct is divided into two distinct blocks: the **Binding Header** and the **Assembly Body**.
 
-### 16.1. Usage
-Assembly is written using the standard `dsl` syntax. Unlike SQL (which creates a reusable object), the Assembly DSL uses **Immediate Capture** (`meta::capture`) to bind variables from the current scope and injects the machine code directly at the call site.
+### 16.1. Syntax Structure
+```nika
+unsafe asm {
+    // [Block 1] The Binding Header
+    // Maps Nikaia variables to internal assembly aliases.
+    // Syntax: $alias = direction(location) variable
+    $lhs = in(reg) a,
+    $rhs = in(mem) b,
+    $dst = out(reg) result
+} {
+    // [Block 2] The Assembly Body
+    // Contains raw assembly instructions.
+    // The compiler treats this as a template string and only replaces aliases ($name).
+    mov $dst, $lhs
+    add $dst, $rhs
+}
+```
+
+### 16.2. Directions and Modifiers
+The first part of the constraint defines how data flows between Nikaia and the CPU.
+
+* `in(...)`: Read-only input. The variable is copied into the location before execution.
+* `out(...)`: Write-only output. The result in the location is copied to the variable after execution.
+* `inout(...)`: Read-write. Initialized with the variable's value, and the result is written back.
+* `lateout(...)`: Optimization hint. Defines an output that is written *after* all inputs are consumed. Allows the compiler to reuse an input register for this output (saving registers).
+
+### 16.3. Location Constraints
+The second part defines where the value must be placed (Register vs. Memory).
+
+| Constraint | Description | Example Architecture Mapping |
+| :--- | :--- | :--- |
+| `reg` | Any general-purpose integer register | x86: `rax`, `rbx`, ... |
+| `freg` | Floating-point / SIMD register | x86: `xmm0` - `xmm15` |
+| `mem` | A memory operand (address) | Passed as `[ptr]` or specific syntax |
+| `imm` | An immediate constant value | Used for instructions expecting literals |
+| `reg_or_mem` | Flexible: Compiler chooses best fit | Useful for CISC (x86) instructions like `add` |
+
+### 16.4. Example: x86_64 Arithmetic
+This example demonstrates mixing memory and register operands safely.
 
 ```nika
-use std::backend::x86
-
 fn fast_add(val: i64, ptr: &i64) -> i64 {
-    let mut result: i64 = 0
+    let result: i64
     
-    // The DSL executes immediately in the current scope.
-    // The grammar parses the bindings and resolves 'val', 'ptr', and 'result'
-    // directly from the environment using meta::capture.
-    dsl x86 {
-        // 1. Binding Header
-        // Syntax defined by x86 grammar: $alias = constraint(variable)
-        $v = in(reg) val
-        $p = in(mem) ptr
+    unsafe asm {
+        // We read 'val' into a register
+        $v = in(reg) val,
+        // We can read 'ptr' directly from memory (efficient on x86)
+        $p = in(mem) ptr,
+        // We write the result to a register
         $r = out(reg) result
-
-        // 2. Instructions
-        mov $r, $v
-        add $r, $p
-    } eod
+    } {
+        // AT&T Syntax example
+        mov $v, $r
+        add $p, $r
+    }
     
     return result
 }
 ```
 
-### 16.2. Benefits
-*   **Portability:** The core compiler is not tied to register-based CPUs, making it fully compatible with Stack Machines like WebAssembly.
-*   **Validation:** The DSL parser can validate instruction operands at compile time.
-*   **Optimization:** The DSL implementation can generate optimized machine code or SIMD instructions specific to the target.
+### 16.5. Clobbering (Side Effects)
+If your assembly modifies registers that are not defined as outputs (e.g., flags or specific hardcoded registers), you must declare them in the header using the `clobber` keyword.
+
+```nika
+unsafe asm {
+    $src = in(reg) input,
+    clobber("cc") // "cc" tells the compiler: Condition Codes (Flags) are modified
+} {
+    test $src, $src
+}
+```
 
 ---
 
@@ -350,7 +389,7 @@ fn query_data() {
     // At runtime, it performs an async round-trip to the sidecar.
     let active_users = dsl sql db {
         SELECT * FROM users WHERE last_login > 0
-    } eod
+    }
 }
 ```
 
@@ -400,3 +439,5 @@ pub fn spawn(task: @detached fn() -> T) -> TaskHandle[T]
 // std::task
 // Scope is immediate because it waits for completion
 pub fn scope(f: fn(Scope))
+
+
