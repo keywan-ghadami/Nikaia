@@ -7,6 +7,7 @@ edition = "2021"
 bridge-orchestrator = { workspace = true }
 bridge-ir = { workspace = true }
 winnow = { workspace = true }
+winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main" }
 anyhow = { workspace = true }
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 proc-macro2 = "1.0"

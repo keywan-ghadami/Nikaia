@@ -48,15 +48,16 @@ pub fn main() -> Result<()> {
         };
         let bridge_module = frontend.parse(&source)?;
 
-        println!(
-            "Generated Bridge IR: {}",
-            serde_json::to_string(&bridge_module).unwrap()
-        );
+        // Output name based on input
+        let file_stem = args.input.file_stem().unwrap().to_str().unwrap();
+        let output_path = format!("./{}", file_stem);
+
+        println!("Compiling {} to {}...", args.input.display(), output_path);
 
         // Manually call the backend executor
-        rustc_executor::execute(&bridge_module, "temp_output.json")?;
+        rustc_executor::execute(&bridge_module, &output_path)?;
 
-        println!("Compilation successful. Output at temp_output.json");
+        println!("Compilation successful: {}", output_path);
 
         Ok(())
     }
