@@ -1,25 +1,31 @@
+// crates/rustc-executor/src/lib.rs
 use anyhow::Result;
 use bridge_ir::{BridgeExpr, BridgeFunction, BridgeItem, BridgeLiteral, BridgeModule, BridgeStmt};
 use std::fs::File;
 use std::io::Write;
 use std::process::Command;
 
+// Include our mock AST (ADR-004 Unified AST Lowering)
+mod ast;
+use ast::{Block, Call, Crate, Expr, Function, Item, ItemKind, Lit, Local, Pat, Stmt};
+
 pub fn execute(bridge_module: &BridgeModule, output_path: &str) -> Result<()> {
     println!("Executing Bridge Module: {}", bridge_module.name);
 
-    // 1. Generate Rust Source Code
-    let rust_code = generate_rust_source(bridge_module)?;
+    // 1. Unified Lowering (Bridge -> AST)
+    let krate = lower_module(bridge_module)?;
 
-    // 2. Write to temporary file
+    // 2. Transpilation (AST -> Rust Source)
+    let rust_code = ast::print_crate(&krate);
+
+    // 3. Write to temporary file
     let temp_file_path = format!("{}.rs", output_path);
     let mut file = File::create(&temp_file_path)?;
     file.write_all(rust_code.as_bytes())?;
 
     println!("Generated Rust source at: {}", temp_file_path);
 
-    // 3. Invoke rustc
-    // We assume 'rustc' is in the PATH.
-    // We strictly use stable features here as this is the "Executor" translating BridgeIR -> Rust.
+    // 4. Invoke rustc (Driver Logic)
     let status = Command::new("rustc")
         .arg(&temp_file_path)
         .arg("-o")
@@ -35,88 +41,75 @@ pub fn execute(bridge_module: &BridgeModule, output_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn generate_rust_source(module: &BridgeModule) -> Result<String> {
-    let mut code = String::new();
-
-    // Add standard imports if needed
-    // code.push_str("use std::io;\n\n");
-
+fn lower_module(module: &BridgeModule) -> Result<Crate> {
+    let mut items = Vec::new();
     for item in &module.items {
-        match item {
-            BridgeItem::Function(func) => {
-                code.push_str(&generate_function(func)?);
-            }
-            _ => {
-                // Ignore structs for now in this vertical slice
-            }
+        if let Some(lowered) = lower_item(item)? {
+            items.push(lowered);
         }
     }
-
-    Ok(code)
+    Ok(Crate { items })
 }
 
-fn generate_function(func: &BridgeFunction) -> Result<String> {
-    let mut code = String::new();
-    code.push_str(&format!("fn {}() {{\n", func.name));
-
-    for stmt in &func.body.stmts {
-        code.push_str(&generate_stmt(stmt)?);
+fn lower_item(item: &BridgeItem) -> Result<Option<Item>> {
+    match item {
+        BridgeItem::Function(func) => Ok(Some(Item {
+            name: func.name.clone(),
+            kind: ItemKind::Fn(lower_fn(func)?),
+        })),
+        _ => Ok(None),
     }
-
-    code.push_str("}\n\n");
-    Ok(code)
 }
 
-fn generate_stmt(stmt: &BridgeStmt) -> Result<String> {
+fn lower_fn(func: &BridgeFunction) -> Result<Function> {
+    Ok(Function {
+        body: lower_block(&func.body)?,
+    })
+}
+
+fn lower_block(block: &bridge_ir::BridgeBlock) -> Result<Block> {
+    let mut stmts = Vec::new();
+    for stmt in &block.stmts {
+        stmts.push(lower_stmt(stmt)?);
+    }
+    Ok(Block { stmts })
+}
+
+fn lower_stmt(stmt: &BridgeStmt) -> Result<Stmt> {
     match stmt {
-        BridgeStmt::Let(let_stmt) => {
-            let mut code = format!("    let {}", let_stmt.name);
-            if let Some(init) = &let_stmt.init {
-                code.push_str(" = ");
-                code.push_str(&generate_expr(init)?);
+        BridgeStmt::Let(let_stmt) => Ok(Stmt::Local(Local {
+            pat: Pat::Ident(let_stmt.name.clone()),
+            init: if let Some(init) = &let_stmt.init {
+                Some(lower_expr(init)?)
+            } else {
+                None
+            },
+        })),
+        BridgeStmt::Expr(expr) => Ok(Stmt::Semi(lower_expr(expr)?)),
+    }
+}
+
+fn lower_expr(expr: &BridgeExpr) -> Result<Expr> {
+    match expr {
+        BridgeExpr::Literal(lit) => Ok(Expr::Lit(lower_lit(lit)?)),
+        BridgeExpr::Variable(name) => Ok(Expr::Path(name.clone())),
+        BridgeExpr::Call(call) => {
+            let mut args = Vec::new();
+            for arg in &call.args {
+                args.push(lower_expr(arg)?);
             }
-            code.push_str(";\n");
-            Ok(code)
-        }
-        BridgeStmt::Expr(expr) => {
-            let mut code = format!("    {}", generate_expr(expr)?);
-            code.push_str(";\n");
-            Ok(code)
+            Ok(Expr::Call(Call {
+                func: Box::new(lower_expr(&call.func)?),
+                args,
+            }))
         }
     }
 }
 
-fn generate_expr(expr: &BridgeExpr) -> Result<String> {
-    match expr {
-        BridgeExpr::Literal(lit) => match lit {
-            BridgeLiteral::Int(i) => Ok(i.to_string()),
-            BridgeLiteral::String(s) => Ok(format!("\"{}\"", s)),
-            BridgeLiteral::Bool(b) => Ok(b.to_string()),
-        },
-        BridgeExpr::Variable(name) => Ok(name.clone()),
-        BridgeExpr::Call(call) => {
-            // Special handling for println (it's a macro in Rust)
-            let func_name = match &*call.func {
-                BridgeExpr::Variable(name) => name.as_str(),
-                _ => return Err(anyhow::anyhow!("Indirect calls not supported yet")),
-            };
-
-            let mut code = String::new();
-            if func_name == "println" {
-                code.push_str("println!");
-            } else {
-                code.push_str(func_name);
-            }
-
-            code.push_str("(");
-            for (i, arg) in call.args.iter().enumerate() {
-                if i > 0 {
-                    code.push_str(", ");
-                }
-                code.push_str(&generate_expr(arg)?);
-            }
-            code.push_str(")");
-            Ok(code)
-        }
+fn lower_lit(lit: &BridgeLiteral) -> Result<Lit> {
+    match lit {
+        BridgeLiteral::Int(i) => Ok(Lit::Int(*i)),
+        BridgeLiteral::String(s) => Ok(Lit::Str(s.clone())),
+        BridgeLiteral::Bool(b) => Ok(Lit::Bool(*b)),
     }
 }
