@@ -520,7 +520,7 @@ Two refinements:
 
 **One restriction, told straight:** a `sync` function can never pause — so a resource with a pausable `cleanup` must not go out of scope inside one. The compiler catches this (`NK2602`) and names the ways out: return the resource to your caller, close it before the `sync` part, or use a non-buffering variant.
 
-**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and in the **Lite profile, a panic aborts the process immediately, so no destructors run at all** (Part III, Appendix A). Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
+**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and in the **Lite profile, a panic aborts the process immediately, so no destructors run at all** (Part III, Appendix A). What *does* still run on every panic is the **Panic Hook** (7.2) — your registered last-moment handler for dumps and crash reports. Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
 
 > **Design Note: Why no `defer`?**
 > Unlike languages like Go or Zig, Nikaia does not need a `defer` keyword.
@@ -657,6 +657,31 @@ let content = fetch_config() catch {
 
 ### 7.2. Unrecoverable Errors (`panic`)
 These are logical bugs, like trying to access the 10th item in a list of 5 items. Nikaia stops the execution to prevent incorrect behavior. In **Nikaia Lite**, this aborts the process safely.
+
+**The Panic Hook (`std::panic::on_panic`)**
+"Abort" does not mean *no* code runs anymore — it means no normal cleanup runs. Before the process dies (Lite) or the crashed task is isolated (Advanced), Nikaia calls one last, registered function: the **Panic Hook**. This is the place for a crash dump, a crash report, or flushing a diagnostics log — so a crash in production never has to be a mystery.
+
+```nika
+use std::panic
+
+fn main() {
+    // Global, one per application. Set it early.
+    // The hook must be 'sync' — mid-panic there is nothing to pause on.
+    panic::on_panic fn(info) sync {
+        // 'info' carries: message, file/line, and the stack trace.
+        // Pattern: open crash resources at startup, only WRITE here.
+        crash_log.write_report(info)
+    }
+
+    run_app()
+}
+```
+
+The rules, told straight:
+* **Global, application-only.** Exactly one hook per program, set by the application — a library calling `on_panic` is a compile error (`NK2604`). A crash-reporting library instead exports a function that your hook calls.
+* **It runs on every panic, in both profiles** — in Lite right before the abort (before the trap on WASM), in Advanced before the task is poisoned. Supervisors (Part II, 12.8) receive their crash information from the same `info`.
+* **Blocking is allowed here — briefly.** In Lite the process is ending anyway. In Advanced the program keeps running, so keep the hook short and hand heavy reporting to something you started earlier.
+* **Diagnosis, not cleanup.** Do not try to flush buffered files or finish transactions from the hook — those objects may be broken in exactly the way that caused the panic. That is why panics skip destructors, and the hook does not reopen that door. If the hook itself panics, the process aborts immediately.
 
 ---
 

@@ -13,6 +13,7 @@
 - **Spec Part I (6.4)**: `Drop` vs. `Cleanup` distinction with worked `NK2601` diagnostic, `sync`-context restriction (`NK2602`), parked-cleanup and honest Lite-panic notes.
 - **Spec Part II (12.4)**: defined semantics for "cancelled and cleaned up" (parked cleanup).
 - **Spec Part III**: `cleanup-deadline` manifest key (13.3); `NK26xx` resource-cleanup codes in Appendix C.
+- **Spec/ADR (ADR-006 D6)**: The Panic Hook (`std::panic::on_panic`) — global per application, `sync`, runs on every panic path including Lite's abort and the WASM trap (rides on the backend invoking the hook before abort under `panic = abort`); diagnosis-not-cleanup rule, brief-blocking allowance with Advanced nuance, recursion guard; `NK2604`; stackable hook chains rejected. Spec: Part I 7.2 (worked example), 6.4 note updated, Part III Appendix A.
 
 ### Changed
 - **Spec Part II (10.6)**: Zero-copy parsing respecified on Tethered Slices (`bytes::Bytes` model over `Shared`); buffer provably outlives tokens instead of borrow-checker rejection. Unsafe self-referential codegen recorded as future optimization note.
