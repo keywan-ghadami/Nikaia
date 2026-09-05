@@ -1,7 +1,5 @@
-use nikaia_driver::ast::{Expr, Item, Stmt};
-use nikaia_driver::parser::CompilerGrammar;
-use winnow::Parser;
-use winnow::stream::LocatingSlice;
+use nikaia::ast::{Expr, Item, Stmt};
+use nikaia::parser::parse_to_ast;
 
 #[test]
 fn test_advanced_hello_world_compilation() {
@@ -15,11 +13,7 @@ fn test_advanced_hello_world_compilation() {
         }
     "#;
 
-    // 1. Compile (Parse)
-    let input = LocatingSlice::new(source_code);
-    let program = CompilerGrammar::parse_program
-        .parse(input)
-        .expect("Failed to compile Nikaia source");
+    let program = parse_to_ast(source_code).expect("parse failed");
 
     // 2. Execute Verification (Inspect AST)
     assert_eq!(program.items.len(), 1, "Should have 1 main function");

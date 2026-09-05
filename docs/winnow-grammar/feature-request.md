@@ -1,6 +1,40 @@
 # Feature Requests & Bug Reports
 
+> **Note:** `winnow-grammar` lives in its own repository
+> (<https://github.com/keywan-ghadami/winnow-grammar>). The files in this
+> directory are Nikaia-side notes; `README.md` here is a copy and is older than
+> upstream `main`. Report items from this file there.
+
 ## Bugs
+
+### `Symbol` round-trip is off by one (blocks interning)
+
+`InternerContext::resolve` returns the *next* symbol's text, or panics with
+`Key out of bounds` on the most recently interned one.
+
+`lasso::Spur` stores `index + 1` internally:
+
+* `Spur::into_inner()` yields `index + 1`
+* `Spur::try_from_usize(n)` builds a key from an **index**, storing `n + 1`
+
+`Symbol` combines the two without compensating (`src/interner.rs`):
+
+```rust
+pub fn from_spur(spur: Spur) -> Self { Self(spur.into_inner()) }          // stores index + 1
+pub fn into_spur(self) -> Spur { Spur::try_from_usize(self.0.get() as usize) } // makes index + 2
+```
+
+Reproduction — parse `fn foo() {} fn main() {}` with a grammar binding
+`name:ident`, then resolve the first function's symbol: it yields `"main"`.
+With a single function it panics instead.
+
+Suggested fix: `Spur::try_from_usize(self.0.get() as usize - 1)`, plus a test
+that resolves the *last* interned symbol (the existing `tests/interning_test.rs`
+only compares symbols to each other, so it passes either way).
+
+**Impact on Nikaia:** the grammar uses the non-interning `raw_ident` terminal and
+the AST stores `String`. Spec Part II 10.6 / ADR-007 §4 call for interned
+identifiers; that switch waits on this fix.
 
 ### Infinite Recursion with rule named `ws`
 Defining a rule named `ws` that uses `multispace0` (or likely any external parser) causes a stack overflow/infinite recursion.

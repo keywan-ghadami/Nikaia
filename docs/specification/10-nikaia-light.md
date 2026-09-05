@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core & Nikaia Lite**
-**Version:** 0.0.5 (Draft)
-**Date:** January 22, 2026
+**Version:** 0.0.7 (Draft)
+**Date:** September 5, 2026
 
 ---
 
@@ -397,13 +397,14 @@ let formatted = names.map fn: prefix + a
 
 // 'prefix' is still valid here because it was only borrowed.
 println(prefix)
+```
 
 #### B. Detached Context (@detached)
 ​If a function stores the callback, executes it later, or sends it to another thread/task, it is a Detached Context.
 ​Behavior: Implicit Move (Ownership Transfer).
 ​Examples: spawn, defer, set_timeout, channel.on_receive.
 
-````nila
+````nika
 let prefix = "Log: "
 
 // 'spawn' is @detached. The lambda might outlive the current function.
@@ -461,7 +462,7 @@ Since Nikaia does not use a Garbage Collector, resources must be cleaned up dete
 When a variable goes out of scope (usually at the closing brace `}`), Nikaia automatically frees its memory.
 
 **Custom Cleanup (`impl Drop`)**
-If your struct manages external resources (like File Handles, Sockets, or C-Pointers), you can implement the `Drop` trait. The `drop` method is called automatically when the object is destroyed.
+If your struct manages external resources (like File Handles, Sockets, or C-Pointers), you can implement the `Drop` trait. The `drop` method is called automatically when the object is destroyed. `drop` is **synchronous**: it runs straight through and can never pause — use it for teardown that is pure memory work or a cheap native call.
 
 ```nika
 struct FileHandle {
@@ -476,11 +477,148 @@ impl Drop for FileHandle {
 }
 ```
 
+**Cleanup That Needs I/O (`impl Cleanup`)**
+Some resources cannot be torn down without doing real work: a buffered file must *flush* its remaining data to disk, a database transaction must *roll back*, a TLS connection wants to say goodbye over the network. All of that is I/O — and in Nikaia, I/O means the function may pause (Chapter 8). A synchronous `drop` cannot pause. For these resources, implement `Cleanup` instead:
+
+```nika
+impl Cleanup for BufferedFile {
+    // Pausable teardown. May pause, may fail.
+    // The compiler calls it automatically at the end of the scope —
+    // on normal exit AND while an error is bubbling up.
+    fn cleanup(&mut self) throws IoError {
+        self.flush()
+    }
+
+    // Synchronous last resort. Must not pause, must not fail.
+    // Runs after cleanup(), or alone if cleanup() cannot run
+    // (see "When cleanup cannot run" below).
+    fn drop(&mut self) {
+        // release the handle — nothing that waits
+    }
+}
+```
+
+You never call `cleanup` yourself, and you cannot forget it — the compiler inserts the call at the end of the block, exactly like `drop`. The only visible difference: the end of the block becomes a place where the function may briefly pause (like any other I/O), and the truth about errors surfaces (next paragraph).
+
+**Cleanup errors are real errors.** If closing a resource can fail, the function that owns it can fail — Nikaia does not hide this (silently losing data at close time is a decades-old bug class in other languages). If `cleanup` declares `throws IoError`, the surrounding function needs `throws IoError` too, and the compiler tells you precisely why:
+
+```text
+error[NK2601]: this function can fail because closing `f` can fail
+  --> report.nika:2
+   |
+ 2 |     let f = fs::create("report.txt")
+   |         ^ `f` is a buffered file; writing its remaining data
+   |           to disk at the end of this function can fail
+   |
+  help: declare the error:  fn save_report(text: String) throws IoError
+  help: or handle it precisely by closing explicitly:
+        f.close() catch { ... }
+```
+
+Two refinements:
+* If a value dies **while an error is already bubbling up**, the cleanup error does not replace it — it is attached to the original error as a *secondary error* (see 7.1's automatic debug information).
+* If you want to react to the close error specifically, call **`close()`** yourself — it consumes the resource, returns the error normally, and no implicit cleanup runs afterwards.
+
+**One restriction, told straight:** a `sync` function can never pause — so a resource with a pausable `cleanup` must not go out of scope inside one. The compiler catches this (`NK2602`) and names the ways out: return the resource to your caller, close it before the `sync` part, or use a non-buffering variant.
+
+**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and in the **Lite profile, a panic aborts the process immediately, so no destructors run at all** (Part III, Appendix A). What *does* still run on every panic is the **Panic Hook** (7.2) — your registered last-moment handler for dumps and crash reports. Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
+
 > **Design Note: Why no `defer`?**
 > Unlike languages like Go or Zig, Nikaia does not need a `defer` keyword.
 > 1.  **Scope-Bound:** Cleanup happens automatically at the end of the block via `Drop`. You cannot forget it.
 > 2.  **Safety:** Patterns like `.access()` for locks guarantee that resources are released, replacing manual `lock/defer unlock` sequences.
 > 3.  **Unwinding:** If an error occurs (`throws`), the stack unwinds and triggers `drop` for all variables in the scope, ensuring no resource leaks even during failures.
+
+### 6.5. References and Borrowing
+
+Sometimes a function only needs to *look at* a value, not own it. For this, Nikaia has **References** (written `&T`, or `&str` for text). Think of it as lending a book: the owner keeps the book, the borrower may read it, and the loan ends automatically.
+
+**The headline guarantee:**
+
+> **Nikaia source code contains no lifetime annotations. Ever.**
+> There is no syntax for them, and there never will be. Everything described below happens inside the compiler. (See [ADR-005](adr/adr-005.md).)
+
+Two things are guaranteed to *just work*:
+
+1.  **Borrowing inside a function**, even across I/O. Because Nikaia is async by default, a function may pause at any I/O call — and a borrowed value simply stays valid across that pause:
+
+    ```nika
+    fn report(config: &Config) {
+        let name = &config.name       // borrow
+        let data = fs::read("log")    // the function pauses here (I/O)...
+        println("{name}: {data}")     // ...and the borrow is still valid.
+    }
+    ```
+
+2.  **Returning borrowed values from functions.** A function like `fn first_word(s: &str) -> &str` needs no annotations. Even when the result could come from *several* inputs, the compiler figures out the connection on its own — across function boundaries, through your whole program (see 6.7).
+
+**The one rule you need to know:** a borrow may not outlive its owner. You will rarely be able to break this rule by accident, because of the next section.
+
+### 6.6. Stored References Are Tethered
+
+What happens when a borrowed value is not just used, but **stored** — put into a struct, sent to a background task, or returned far up the call chain? In most systems languages this is where the pain starts, because the compiler must prove the owner lives long enough.
+
+Nikaia takes a different route. The rule is:
+
+> **Transient = borrow, stored = tether.**
+
+* A slice that is only *used* (passed down, inspected, transformed) is a true zero-cost reference.
+* A slice that *escapes* — into a struct field, a `@detached` lambda, or a `return` that outlives the buffer — is automatically **tethered**: the compiler stores it as a lightweight handle to the original buffer (via `Shared`, see 6.2) plus a position, instead of a raw reference.
+
+The effect: **the buffer cannot die while anything still points into it.** Instead of an error telling you "you may not use this after the buffer is gone," the language simply guarantees the buffer stays alive. The cost is one shared handle per *buffer* (not per slice) — deterministic, no garbage collector involved.
+
+```nika
+struct Token {
+    text: &str,   // stored in a struct -> automatically tethered
+}
+
+fn tokenize(source: String) -> List[Token] {
+    // The returned tokens keep 'source' alive.
+    // No annotations, no copies of the text, no dangling references.
+    ...
+}
+```
+
+Because of tethering, you will also never see a "struct with lifetime parameters" in Nikaia — that concept does not exist in the language.
+
+### 6.7. The Borrow Contract Ledger
+
+For every function whose signature involves borrows, the compiler infers a **Borrow Contract**: a note such as "the result of `longest(a, b)` borrows from `a` or `b`." You never write these contracts. They are stored in a generated file, **`nikaia.contracts`**, which is committed alongside `nikaia.lock` (details in Part III, Chapter 13.5).
+
+The ledger has two jobs:
+
+1.  **Cache:** if a contract did not change, none of the function's callers need to be re-checked. Builds stay fast.
+2.  **Explanation:** if you edit a function *body* and that changes its contract, the compiler compares old and new contract. If a caller elsewhere breaks, the error does not point at some mysterious distant line — it tells the whole story: *what you changed, how the contract changed, and which caller is affected* — plus what to do about it.
+
+### 6.8. When the Compiler Says No
+
+Ownership rules occasionally reject code — usually because the code contains a genuine bug. Nikaia's promise ([ADR-005](adr/adr-005.md), D7): **every such error explains itself in plain language and tells you what to do next.** You never need Rust knowledge to read a Nikaia error; if a raw internal (Rust) error ever reaches you, that is a Nikaia bug — please report it.
+
+The most common case is changing a collection while looping over it:
+
+```nika
+let mut users = load_users()
+for u in users {
+    if u.is_duplicate() {
+        users.remove(u)   // bug: pulling the rug out from under the loop
+    }
+}
+```
+
+```text
+error[NK2301]: cannot change `users` while looping over it
+  --> main.nika:4
+   |
+ 4 |         users.remove(u)
+   |         ^^^^^^^^^^^^^^^ the loop is still reading `users`
+   |
+  note: removing items mid-loop would invalidate the loop's position
+        (this is a crash or silent bug in most languages)
+  help: use the built-in method that does this safely:
+        users.retain fn: !a.is_duplicate()
+```
+
+For every known pattern of this kind, the standard library provides a safe, named method (`retain`, `drain`, `entry`, `swap(i, j)`, …) and the error message points directly at it.
 
 ---
 
@@ -521,6 +659,31 @@ let content = fetch_config() catch {
 ### 7.2. Unrecoverable Errors (`panic`)
 These are logical bugs, like trying to access the 10th item in a list of 5 items. Nikaia stops the execution to prevent incorrect behavior. In **Nikaia Lite**, this aborts the process safely.
 
+**The Panic Hook (`std::panic::on_panic`)**
+"Abort" does not mean *no* code runs anymore — it means no normal cleanup runs. Before the process dies (Lite) or the crashed task is isolated (Advanced), Nikaia calls one last, registered function: the **Panic Hook**. This is the place for a crash dump, a crash report, or flushing a diagnostics log — so a crash in production never has to be a mystery.
+
+```nika
+use std::panic
+
+fn main() {
+    // Global, one per application. Set it early.
+    // The hook must be 'sync' — mid-panic there is nothing to pause on.
+    panic::on_panic fn(info) sync {
+        // 'info' carries: message, file/line, and the stack trace.
+        // Pattern: open crash resources at startup, only WRITE here.
+        crash_log.write_report(info)
+    }
+
+    run_app()
+}
+```
+
+The rules, told straight:
+* **Global, application-only.** Exactly one hook per program, set by the application — a library calling `on_panic` is a compile error (`NK2604`). A crash-reporting library instead exports a function that your hook calls.
+* **It runs on every panic, in both profiles** — in Lite right before the abort (before the trap on WASM), in Advanced before the task is poisoned. Supervisors (Part II, 12.8) receive their crash information from the same `info`.
+* **Blocking is allowed here — briefly.** In Lite the process is ending anyway. In Advanced the program keeps running, so keep the hook short and hand heavy reporting to something you started earlier.
+* **Diagnosis, not cleanup.** Do not try to flush buffered files or finish transactions from the hook — those objects may be broken in exactly the way that caused the panic. That is why panics skip destructors, and the hook does not reopen that door. If the hook itself panics, the process aborts immediately.
+
 ---
 
 ## Chapter 8: Concurrency (Doing things at the same time)
@@ -537,16 +700,42 @@ To run a new independent task, use `spawn`. It takes an **Explicit Block Lambda*
 spawn fn: println("I am running in the background!")
 ```
 
-### 8.3. Moving Data (`move`)
-By default, closures only "borrow" variables (look at them). If a background task needs to take full **Ownership** of a variable (so it stays alive even after the main function ends), you must use the `move` keyword.
+### 8.3. Data Ownership in Tasks (Implicit Move)
+A background task may keep running after the function that started it has already finished. It therefore cannot merely *borrow* variables — they might be gone by the time it runs. Following the Contextual Capture rules (Chapter 5.4), `spawn` is a **Detached Context**: variables used inside the task are **moved** into it automatically. There is no `move` keyword — the compiler applies the rule for you.
 
 ```nika
 let message = "Hello"
 
-// 'move' transfers the 'message' variable into the Lambda
-spawn move fn: println(message)
+// 'message' is implicitly moved into the task (spawn is @detached)
+spawn fn: println(message)
 
-// 'message' is no longer valid here
+// Compiler Error: 'message' now belongs to the task.
+// println(message)
+```
+
+If you still need the value afterwards, clone it first:
+
+```nika
+let message = "Hello"
+spawn fn: println(message.clone())
+println(message)   // OK: the task owns a copy
+```
+
+The compiler error for this situation explains exactly that:
+
+```text
+error[NK2101]: this background task takes ownership of `message`
+  --> main.nika:3
+   |
+ 3 | spawn fn: println(message)
+   |                   ^^^^^^^ moved into the task here
+ 4 | println(message)
+   | --------------- but `message` is used again afterwards
+   |
+  note: a task started with `spawn` may outlive this function,
+        so it cannot merely borrow your variables — it takes them with it
+  help: keep using `message` here by giving the task its own copy:
+        spawn fn: println(message.clone())
 ```
 
 ### 8.4. The Runtime Sidecar Model

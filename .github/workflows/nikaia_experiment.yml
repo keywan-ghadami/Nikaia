@@ -1,6 +1,9 @@
 name: Nikaia Vibe Experiment
 
-on: [push, workflow_dispatch]
+on: [push, pull_request, workflow_dispatch]
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   bootstrap_compiler:
@@ -9,20 +12,44 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Hier passiert das "Version Pinning" aus ADR-001
-      # Wir erzwingen die Nightly-Version, die interne APIs erlaubt.
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: rustc-dev, llvm-tools-preview
+      # Version pinning per ADR-001: `rust-toolchain.toml` is the single source
+      # of truth (nightly + rustc-dev, needed to link the compiler internals).
+      # `rustup show` installs exactly that toolchain and its components, so the
+      # channel is never duplicated here and cannot drift.
+      - name: Install Rust toolchain
+        run: rustup show
 
-      # Beweis 1: Zeige, dass wir Zugriff auf den Driver haben
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
       - name: Verify Environment
         run: |
           rustc --version
+          cargo --version
           echo "Nikaia Experiment: Environment Ready"
 
-      # Beweis 2: Der "Driver" kompiliert sich selbst und führt die In-Memory-Injection aus
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build
+        run: cargo build --workspace --release
+
+      - name: Test
+        run: cargo test --workspace --release
+
+      # The driver needs an input file, so run it on the samples rather than
+      # bare `cargo run`, which only prints clap's usage error and exits 2.
       - name: Run Nikaia Driver (The Magic)
-        run: cargo run --release
+        run: |
+          for sample in tests/samples/*.nika; do
+            echo "::group::$sample"
+            ./target/release/nikaia --input "$sample" --backend interpreter
+            echo "::endgroup::"
+          done

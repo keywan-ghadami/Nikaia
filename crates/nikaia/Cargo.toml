@@ -3,14 +3,17 @@ name = "nikaia"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Turn on winnow's parser trace (`cargo run --features trace`). The grammar!
+# expansion checks this feature, so it must exist here too.
+trace = ["winnow-grammar/trace"]
+
 [dependencies]
 bridge-orchestrator = { workspace = true }
 bridge-ir = { workspace = true }
 winnow = { workspace = true }
-winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main" }
+winnow-grammar = { workspace = true }
 anyhow = { workspace = true }
-syn = { version = "2.0", features = ["full", "extra-traits"] }
-proc-macro2 = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 serde_json = "1.0"
 rustc-executor = { workspace = true }

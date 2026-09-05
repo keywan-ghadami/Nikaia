@@ -13,7 +13,7 @@ impl Interpreter {
         // Entry point lookup: find 'main' function
         for item in &program.items {
             if let Item::Fn { name, body, .. } = item {
-                if name.to_string() == "main" {
+                if name == "main" {
                     println!("[Nikaia Kernel] Executing 'main'...");
                     self.eval_block(body);
                     return;
@@ -51,7 +51,7 @@ impl Interpreter {
             Expr::Call { func, args } => {
                 // Simplified function resolution
                 if let Expr::Variable(name) = &**func {
-                    let name_str = name.to_string();
+                    let name_str = name.as_str();
                     if name_str == "println" {
                         self.builtin_println(args);
                         return;
