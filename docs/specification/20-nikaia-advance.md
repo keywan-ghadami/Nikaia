@@ -329,6 +329,8 @@ select {
 ```
 *Note: When one branch wins, the other task is automatically cancelled and cleaned up.*
 
+**What "cleaned up" means precisely:** the losing task stops at its current pause point and its values are torn down. Resources with a pausable `cleanup` (Part I, 6.4) cannot be awaited by the *winner* — you should not pay for the loser's teardown — so the runtime **adopts** their `cleanup` runs and finishes them in the background ("parked cleanup"). The program will not exit before parked cleanups are done, bounded by the `cleanup-deadline` (Part III, 13.3). Errors from a parked cleanup have no caller to bubble to; they are reported through the runtime's error hook. See [ADR-006](adr/adr-006.md), D3.
+
 ### 12.5. Channels (Message Passing)
 Instead of locking shared memory, Nikaia encourages **Message Passing**.
 

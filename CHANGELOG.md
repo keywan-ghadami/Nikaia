@@ -9,6 +9,10 @@
 - **Spec Part III (Appendix C)**: The Diagnostics Contract — untranslated rustc errors are compiler bugs; NK error-code catalogue with testable requirements.
 - **Spec/ADR (D8)**: Determinism requirement for contract inference — the ledger is a byte-deterministic pure function of (source tree, toolchain); parallel solving allowed, cross-toolchain stability explicitly not required, one profile-neutral ledger per project, violations are compiler bugs; includes implementer ban list and CI double-build/cross-OS test definitions.
 - **Spec Part III (13.5)**: Determinism guarantee and `--locked` verification mode for `nikaia.contracts`.
+- **Spec/ADR**: ADR-006 "Resource Cleanup under Implicit Async" — the `Cleanup` trait (pausable `cleanup() throws` + synchronous `drop` fallback, compiler-inserted at scope exit); three-death-paths taxonomy; cleanup errors throw normally (signatures tell the truth, secondary-error attachment during unwinding, explicit `close()` opt-in); cancellation parks cleanups with the runtime; shutdown drain phase with `cleanup-deadline` and a termination argument (cannot hang, no deadlock via ADR-005 D6); rejected alternatives (blocking drop, fire-and-forget, explicit-close-only, linear types, rustc `async_drop`).
+- **Spec Part I (6.4)**: `Drop` vs. `Cleanup` distinction with worked `NK2601` diagnostic, `sync`-context restriction (`NK2602`), parked-cleanup and honest Lite-panic notes.
+- **Spec Part II (12.4)**: defined semantics for "cancelled and cleaned up" (parked cleanup).
+- **Spec Part III**: `cleanup-deadline` manifest key (13.3); `NK26xx` resource-cleanup codes in Appendix C.
 
 ### Changed
 - **Spec Part II (10.6)**: Zero-copy parsing respecified on Tethered Slices (`bytes::Bytes` model over `Shared`); buffer provably outlives tokens instead of borrow-checker rejection. Unsafe self-referential codegen recorded as future optimization note.

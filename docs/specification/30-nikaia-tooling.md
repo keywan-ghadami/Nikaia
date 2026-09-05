@@ -40,6 +40,15 @@ authors = ["dev@nikaia.org"]
 # Options: "lite" (I/O optimized) or "advanced" (CPU optimized)
 default-profile = "advanced"
 
+# How long the runtime waits at program end for pending resource cleanups
+# (flushes, rollbacks, connection shutdowns — see Part I, 6.4 and ADR-006).
+# Generous default: "30s". On expiry, remaining cleanups are cancelled
+# (their synchronous fallback runs) and the program exits with a warning
+# naming every resource that did not finish cleanly. "0" disables draining.
+# This deadline cannot hang: the timer runs in the runtime itself, and
+# cancelling a cleanup always terminates (the fallback cannot pause).
+cleanup-deadline = "30s"
+
 [dependencies]
 http-server = "1.2"
 # Import native Rust Crates
@@ -533,6 +542,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Borrow contracts | `NK2401` a contract change broke a caller, narrated from the ledger diff (13.5). |
 | `NK25xx` | Profile portability | Reserved: Advanced `Send`-rules reported under Lite as a portability lint, so Lite libraries stay Advanced-compatible. |
+| `NK26xx` | Resource cleanup | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. |
 
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
 

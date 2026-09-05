@@ -461,7 +461,7 @@ Since Nikaia does not use a Garbage Collector, resources must be cleaned up dete
 When a variable goes out of scope (usually at the closing brace `}`), Nikaia automatically frees its memory.
 
 **Custom Cleanup (`impl Drop`)**
-If your struct manages external resources (like File Handles, Sockets, or C-Pointers), you can implement the `Drop` trait. The `drop` method is called automatically when the object is destroyed.
+If your struct manages external resources (like File Handles, Sockets, or C-Pointers), you can implement the `Drop` trait. The `drop` method is called automatically when the object is destroyed. `drop` is **synchronous**: it runs straight through and can never pause — use it for teardown that is pure memory work or a cheap native call.
 
 ```nika
 struct FileHandle {
@@ -475,6 +475,52 @@ impl Drop for FileHandle {
     }
 }
 ```
+
+**Cleanup That Needs I/O (`impl Cleanup`)**
+Some resources cannot be torn down without doing real work: a buffered file must *flush* its remaining data to disk, a database transaction must *roll back*, a TLS connection wants to say goodbye over the network. All of that is I/O — and in Nikaia, I/O means the function may pause (Chapter 8). A synchronous `drop` cannot pause. For these resources, implement `Cleanup` instead:
+
+```nika
+impl Cleanup for BufferedFile {
+    // Pausable teardown. May pause, may fail.
+    // The compiler calls it automatically at the end of the scope —
+    // on normal exit AND while an error is bubbling up.
+    fn cleanup(&mut self) throws IoError {
+        self.flush()
+    }
+
+    // Synchronous last resort. Must not pause, must not fail.
+    // Runs after cleanup(), or alone if cleanup() cannot run
+    // (see "When cleanup cannot run" below).
+    fn drop(&mut self) {
+        // release the handle — nothing that waits
+    }
+}
+```
+
+You never call `cleanup` yourself, and you cannot forget it — the compiler inserts the call at the end of the block, exactly like `drop`. The only visible difference: the end of the block becomes a place where the function may briefly pause (like any other I/O), and the truth about errors surfaces (next paragraph).
+
+**Cleanup errors are real errors.** If closing a resource can fail, the function that owns it can fail — Nikaia does not hide this (silently losing data at close time is a decades-old bug class in other languages). If `cleanup` declares `throws IoError`, the surrounding function needs `throws IoError` too, and the compiler tells you precisely why:
+
+```text
+error[NK2601]: this function can fail because closing `f` can fail
+  --> report.nika:2
+   |
+ 2 |     let f = fs::create("report.txt")
+   |         ^ `f` is a buffered file; writing its remaining data
+   |           to disk at the end of this function can fail
+   |
+  help: declare the error:  fn save_report(text: String) throws IoError
+  help: or handle it precisely by closing explicitly:
+        f.close() catch { ... }
+```
+
+Two refinements:
+* If a value dies **while an error is already bubbling up**, the cleanup error does not replace it — it is attached to the original error as a *secondary error* (see 7.1's automatic debug information).
+* If you want to react to the close error specifically, call **`close()`** yourself — it consumes the resource, returns the error normally, and no implicit cleanup runs afterwards.
+
+**One restriction, told straight:** a `sync` function can never pause — so a resource with a pausable `cleanup` must not go out of scope inside one. The compiler catches this (`NK2602`) and names the ways out: return the resource to your caller, close it before the `sync` part, or use a non-buffering variant.
+
+**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and in the **Lite profile, a panic aborts the process immediately, so no destructors run at all** (Part III, Appendix A). Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
 
 > **Design Note: Why no `defer`?**
 > Unlike languages like Go or Zig, Nikaia does not need a `defer` keyword.
