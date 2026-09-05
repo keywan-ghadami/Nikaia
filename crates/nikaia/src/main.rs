@@ -1,14 +1,19 @@
 // crates/nikaia/src/main.rs
+#![feature(rustc_private)]
+
+// `rustc-executor` links against the compiler's own dylibs, which carry their
+// own copies of `std`/`core`. Declaring `rustc_driver` here too makes this
+// binary link the same dylib set instead of the regular rlib `std`; without it
+// every shared crate "shows up twice" and linking fails.
+extern crate rustc_driver;
+
 use anyhow::Result;
 use bridge_ir::BridgeModule;
-use bridge_orchestrator::{LanguageFrontend, Orchestrator};
+use bridge_orchestrator::LanguageFrontend;
 use clap::Parser;
 use std::path::PathBuf;
 
-// Modules
-mod ast;
-mod interpreter;
-mod parser;
+use nikaia::{interpreter, parser};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -20,9 +25,7 @@ pub struct Cli {
     pub backend: String, // "interpreter", "bridge", "cranelift", "llvm"
 }
 
-struct NikaiaFrontend {
-    backend: String,
-}
+struct NikaiaFrontend;
 
 impl LanguageFrontend for NikaiaFrontend {
     fn parse(&self, source: &str) -> Result<BridgeModule> {
@@ -43,10 +46,7 @@ pub fn main() -> Result<()> {
         Ok(())
     } else {
         // For compilation backends (bridge, llvm, etc.), we use the orchestrator flow (or similar)
-        let frontend = NikaiaFrontend {
-            backend: args.backend.clone(),
-        };
-        let bridge_module = frontend.parse(&source)?;
+        let bridge_module = NikaiaFrontend.parse(&source)?;
 
         // Output name based on input
         let file_stem = args.input.file_stem().unwrap().to_str().unwrap();

@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use bridge_ir::BridgeModule;
 use clap::Parser;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

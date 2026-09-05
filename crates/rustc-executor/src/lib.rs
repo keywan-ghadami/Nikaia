@@ -14,21 +14,20 @@ use std::process::Command;
 
 use anyhow::{anyhow, Result};
 use bridge_ir::{
-    BridgeCall, BridgeExpr, BridgeFunction, BridgeItem, BridgeLetStmt, BridgeLiteral, BridgeModule,
-    BridgeStmt,
+    BridgeCall, BridgeExpr, BridgeFunction, BridgeItem, BridgeLiteral, BridgeModule, BridgeStmt,
 };
 
 use rustc_ast::{
     self as ast, Block, BlockCheckMode, Crate, Expr, ExprKind, Fn, FnHeader, FnRetTy, FnSig,
     Generics, ItemKind, Local, LocalKind, MacCall, NodeId, Pat, PatKind, Path, Stmt, StmtKind,
-    StrStyle, Ty, TyKind, Visibility, VisibilityKind,
+    Visibility, VisibilityKind,
 };
 
 use rustc_ast::token::{self, Lit as TokenLit, Token, TokenKind};
 use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
-use rustc_data_structures::thin_vec::{thin_vec, ThinVec};
+use rustc_data_structures::thin_vec::ThinVec;
 use rustc_span::symbol::{Ident, Symbol};
-use rustc_span::{Span, DUMMY_SP};
+use rustc_span::DUMMY_SP;
 
 pub fn execute(bridge_module: &BridgeModule, output_path: &str) -> Result<()> {
     let krate = lower_module(bridge_module)?;
