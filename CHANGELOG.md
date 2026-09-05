@@ -7,6 +7,8 @@
 - **Spec Part I (6.5–6.8)**: References & Borrowing guarantees ("no lifetime annotations, ever"), Tethered Slices rule ("transient = borrow, stored = tether"), Borrow Contract Ledger overview, diagnostics promise with worked `NK2301` example.
 - **Spec Part III (13.5)**: The Borrow Contract Ledger (`nikaia.contracts`) — generated committed file serving as incremental cache and as the diff basis for narrated "what changed and what broke" errors (`NK2401`).
 - **Spec Part III (Appendix C)**: The Diagnostics Contract — untranslated rustc errors are compiler bugs; NK error-code catalogue with testable requirements.
+- **Spec/ADR (D8)**: Determinism requirement for contract inference — the ledger is a byte-deterministic pure function of (source tree, toolchain); parallel solving allowed, cross-toolchain stability explicitly not required, one profile-neutral ledger per project, violations are compiler bugs; includes implementer ban list and CI double-build/cross-OS test definitions.
+- **Spec Part III (13.5)**: Determinism guarantee and `--locked` verification mode for `nikaia.contracts`.
 
 ### Changed
 - **Spec Part II (10.6)**: Zero-copy parsing respecified on Tethered Slices (`bytes::Bytes` model over `Shared`); buffer provably outlives tokens instead of borrow-checker rejection. Unsafe self-referential codegen recorded as future optimization note.
