@@ -7,19 +7,45 @@ use bridge_ir::{
 };
 use winnow::stream::LocatingSlice;
 use winnow::Parser;
-use winnow_grammar::{grammar, ParseContext, ParseInput};
+use winnow_grammar::{grammar, InternerContext, ParseContext, ParseInput, Symbol};
 
 // --- Public API ---
+
+/// A parsed program together with the interner that produced its identifiers.
+///
+/// Identifiers in the AST are `Symbol` handles, which are only meaningful with
+/// the `InternerContext` they were interned into - so the two travel together.
+///
+/// Note the cost of interning: the derived `Debug` prints identifiers as
+/// `Symbol(3)` rather than their text. Use [`Parsed::text`] when a name needs to
+/// be read.
+#[derive(Debug)]
+pub struct Parsed {
+    pub program: ast::Program,
+    pub interner: InternerContext,
+}
+
+impl Parsed {
+    /// Resolve an identifier back to its text.
+    pub fn text(&self, sym: Symbol) -> &str {
+        self.interner.resolve(sym)
+    }
+}
 
 pub fn parse_to_bridge(input: &str) -> Result<BridgeModule> {
     lower_program(&parse_to_ast(input)?)
 }
 
-pub fn parse_to_ast(input: &str) -> Result<ast::Program> {
+pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // Generated parsers run on a `Stateful` stream: `LocatingSlice` supplies the
-    // spans, `ParseContext` carries the shared parser state.
+    // spans, `ParseContext` carries the shared parser state including the
+    // interner. Cloning the interner out shares it (it is an `Arc` inside), so
+    // the handles in the AST stay resolvable after parsing.
+    let context = ParseContext::<()>::default();
+    let interner = context.interner.clone();
+
     let mut stream = ParseInput::<()> {
-        state: ParseContext::default(),
+        state: context,
         input: LocatingSlice::new(input),
     };
 
@@ -38,7 +64,7 @@ pub fn parse_to_ast(input: &str) -> Result<ast::Program> {
         ));
     }
 
-    Ok(program)
+    Ok(Parsed { program, interner })
 }
 
 // --- Grammar Definition ---
@@ -69,7 +95,7 @@ grammar! {
         rule fn_item -> Item =
             "fn"
             _sp:skip_ws
-            name:raw_ident
+            name:ident
             _sp2:skip_ws
             generics:generic_list?
             args:fn_arg_list
@@ -81,7 +107,7 @@ grammar! {
             body:block
             -> {
                 Item::Fn {
-                    name: name.to_string(),
+                    name,
                     generics: generics.unwrap_or_default(),
                     args,
                     ret_type: ret,
@@ -106,8 +132,8 @@ grammar! {
             _sp:skip_ws "," _sp2:skip_ws arg:fn_arg_def -> { arg }
 
         rule fn_arg_def -> FnArg =
-            name:raw_ident _sp:skip_ws ":" _sp2:skip_ws ty:type_ref -> {
-                FnArg { name: name.to_string(), ty }
+            name:ident _sp:skip_ws ":" _sp2:skip_ws ty:type_ref -> {
+                FnArg { name, ty }
             }
 
         rule return_type_arrow -> Type =
@@ -128,14 +154,14 @@ grammar! {
             _sp:skip_ws "," _sp2:skip_ws p:generic_param -> { p }
 
         rule generic_param -> GenericParam =
-            name:raw_ident
-            -> { GenericParam { name: name.to_string() } }
+            name:ident
+            -> { GenericParam { name } }
 
         rule type_ref -> Type =
-            name:raw_ident
+            name:ident
             generics:generic_type_args?
             -> {
-                Type { name: name.to_string(), generics: generics.unwrap_or_default() }
+                Type { name, generics: generics.unwrap_or_default() }
             }
 
         // USING [ ] SYNTAX directly for testing
@@ -171,7 +197,7 @@ grammar! {
             _sp:skip_ws
             mutable:kw_mut?
             _sp2:skip_ws
-            name:raw_ident
+            name:ident
             _sp3:skip_ws
             ty:type_annotation?
             _sp4:skip_ws
@@ -183,7 +209,7 @@ grammar! {
             _sp7:skip_ws
             -> {
                 Stmt::Let {
-                    name: name.to_string(),
+                    name,
                     mutable: mutable.is_some(),
                     ty,
                     value: val
@@ -219,9 +245,9 @@ grammar! {
             b:block -> { Expr::Block(b) }
 
         rule call_expr -> Expr =
-            func:raw_ident _sp:skip_ws "(" _sp2:skip_ws args:call_args? _sp3:skip_ws ")" -> {
+            func:ident _sp:skip_ws "(" _sp2:skip_ws args:call_args? _sp3:skip_ws ")" -> {
                 Expr::Call {
-                    func: Box::new(Expr::Variable(func.to_string())),
+                    func: Box::new(Expr::Variable(func)),
                     args: args.unwrap_or_default(),
                 }
             }
@@ -247,7 +273,7 @@ grammar! {
             }
 
         rule var_expr -> Expr =
-            n:raw_ident -> { Expr::Variable(n.to_string()) }
+            n:ident -> { Expr::Variable(n) }
 
         rule digits -> String =
             d:digit1 -> { d.to_string() }
@@ -256,10 +282,10 @@ grammar! {
 
 // --- Lowering (AST -> Bridge) ---
 
-fn lower_program(prog: &ast::Program) -> Result<BridgeModule> {
+fn lower_program(parsed: &Parsed) -> Result<BridgeModule> {
     let mut items = Vec::new();
-    for item in &prog.items {
-        if let Some(bridge_item) = lower_item(item)? {
+    for item in &parsed.program.items {
+        if let Some(bridge_item) = lower_item(parsed, item)? {
             items.push(bridge_item);
         }
     }
@@ -270,52 +296,52 @@ fn lower_program(prog: &ast::Program) -> Result<BridgeModule> {
     })
 }
 
-fn lower_item(item: &ast::Item) -> Result<Option<BridgeItem>> {
+fn lower_item(parsed: &Parsed, item: &ast::Item) -> Result<Option<BridgeItem>> {
     match item {
         ast::Item::Fn { name, body, .. } => Ok(Some(BridgeItem::Function(BridgeFunction {
-            name: name.clone(),
+            name: parsed.text(*name).to_string(),
             args: vec![],
             ret_type: None,
-            body: lower_block(body)?,
+            body: lower_block(parsed, body)?,
             span: 0..0,
         }))),
         _ => Ok(None),
     }
 }
 
-fn lower_block(block: &ast::Block) -> Result<BridgeBlock> {
+fn lower_block(parsed: &Parsed, block: &ast::Block) -> Result<BridgeBlock> {
     let mut stmts = Vec::new();
     for stmt in &block.stmts {
-        stmts.push(lower_stmt(stmt)?);
+        stmts.push(lower_stmt(parsed, stmt)?);
     }
     Ok(BridgeBlock { stmts, span: 0..0 })
 }
 
-fn lower_stmt(stmt: &ast::Stmt) -> Result<BridgeStmt> {
+fn lower_stmt(parsed: &Parsed, stmt: &ast::Stmt) -> Result<BridgeStmt> {
     match stmt {
         ast::Stmt::Let { name, value, .. } => Ok(BridgeStmt::Let(BridgeLetStmt {
-            name: name.clone(),
+            name: parsed.text(*name).to_string(),
             ty: None,
-            init: Some(lower_expr(value)?),
+            init: Some(lower_expr(parsed, value)?),
             span: 0..0,
         })),
-        ast::Stmt::Expr(expr) => Ok(BridgeStmt::Expr(lower_expr(expr)?)),
+        ast::Stmt::Expr(expr) => Ok(BridgeStmt::Expr(lower_expr(parsed, expr)?)),
         _ => Err(anyhow::anyhow!("Unsupported statement type")),
     }
 }
 
-fn lower_expr(expr: &ast::Expr) -> Result<BridgeExpr> {
+fn lower_expr(parsed: &Parsed, expr: &ast::Expr) -> Result<BridgeExpr> {
     match expr {
         ast::Expr::LitInt(i) => Ok(BridgeExpr::Literal(BridgeLiteral::Int(*i))),
         ast::Expr::LitStr(s) => Ok(BridgeExpr::Literal(BridgeLiteral::String(s.clone()))),
-        ast::Expr::Variable(id) => Ok(BridgeExpr::Variable(id.clone())),
+        ast::Expr::Variable(id) => Ok(BridgeExpr::Variable(parsed.text(*id).to_string())),
         ast::Expr::Call { func, args } => {
             let mut bridge_args = Vec::new();
             for arg in args {
-                bridge_args.push(lower_expr(arg)?);
+                bridge_args.push(lower_expr(parsed, arg)?);
             }
             Ok(BridgeExpr::Call(BridgeCall {
-                func: Box::new(lower_expr(func)?),
+                func: Box::new(lower_expr(parsed, func)?),
                 args: bridge_args,
                 span: 0..0,
             }))

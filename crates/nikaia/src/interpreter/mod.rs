@@ -1,19 +1,30 @@
 // crates/nikaia/src/interpreter/mod.rs
-use crate::ast::{Block, Expr, Item, Program, Stmt};
+use crate::ast::{Block, Expr, Item, Stmt};
+use crate::parser::Parsed;
+use winnow_grammar::{InternerContext, Symbol};
 
-pub struct Interpreter;
+pub struct Interpreter {
+    /// Identifiers in the AST are interned handles; the interner turns them
+    /// back into text.
+    interner: InternerContext,
+}
 
 impl Interpreter {
-    pub fn new() -> Self {
-        Self
+    pub fn new(interner: InternerContext) -> Self {
+        Self { interner }
     }
 
-    pub fn run(&self, program: &Program) {
+    fn text(&self, sym: &Symbol) -> &str {
+        self.interner.resolve(*sym)
+    }
+
+    pub fn run(&self, parsed: &Parsed) {
+        let program = &parsed.program;
         println!("[Nikaia Kernel] Interpreter Init...");
         // Entry point lookup: find 'main' function
         for item in &program.items {
             if let Item::Fn { name, body, .. } = item {
-                if name == "main" {
+                if self.text(name) == "main" {
                     println!("[Nikaia Kernel] Executing 'main'...");
                     self.eval_block(body);
                     return;
@@ -34,7 +45,7 @@ impl Interpreter {
             Stmt::Let { name, value, .. } => {
                 // In a real implementation, we would store the result in a scope map.
                 // For now, we just print the binding.
-                println!("[Nikaia Runtime] Bind: {} = <evaluated>", name);
+                println!("[Nikaia Runtime] Bind: {} = <evaluated>", self.text(name));
                 self.eval_expr(value);
             }
             Stmt::Expr(expr) => {
@@ -51,7 +62,7 @@ impl Interpreter {
             Expr::Call { func, args } => {
                 // Simplified function resolution
                 if let Expr::Variable(name) = &**func {
-                    let name_str = name.as_str();
+                    let name_str = self.text(name);
                     if name_str == "println" {
                         self.builtin_println(args);
                         return;
@@ -79,7 +90,10 @@ impl Interpreter {
             }
             Expr::Block(b) => self.eval_block(b),
             Expr::Dsl { target, .. } => {
-                println!("[Nikaia Runtime] DSL Block '{}' (Skipped)", target);
+                println!(
+                    "[Nikaia Runtime] DSL Block '{}' (Skipped)",
+                    self.text(target)
+                );
             }
             _ => println!("[Nikaia Runtime] Eval: {:?}", expr),
         }
