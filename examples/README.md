@@ -85,15 +85,57 @@ CoreMark (embedded C microbenchmark).
 
 ## Gaps these examples exposed
 
-Writing the two programs below surfaced spec questions that are genuinely open. None of them
-are invented for the sake of the example; each is something a real implementation must answer.
+Writing the two programs surfaced spec questions that a real implementation must answer.
 
-| # | Gap | Where it belongs |
-| :-- | :--- | :--- |
-| G1 | `std::fs` is described as "looks blocking, is async" but names no functions. `read`, `open`, `lines` and a memory-mapped variant all need signatures. A 13 GB input makes the mmap question unavoidable. | Part III, 17.1 |
-| G2 | No syntax for how a `grammar` is applied to *many* inputs in a loop. `dsl G from x` is specified for one value; a per-line parser needs a cheaper form that does not re-enter the DSL protocol per row. | Part II, 10.2 |
-| G3 | Tethered slices are specified for tokens the parser yields (10.6), but not for a slice a user stores in their *own* struct. 1BRC needs exactly that — `Stats` keyed by a name pointing into the input buffer. | Part I, 6.6 |
-| G4 | `par_iter` is specified over a collection. Chunking a buffer at line boundaries and distributing the chunks has no spelled-out form. | Part II, 12.6 |
-| G5 | Sorted iteration over a `HashMap` is required for 1BRC's output; no ordered map or `sort_by` on map entries is specified. | Part III, 17.1 |
-| G6 | `std::http`'s handler signature (17.1) shows `.route("/") fn: "Hello World"` with no request argument, so there is no way to read a query parameter or set a status code. | Part III, 17.1 |
-| G7 | The template DSL in `fortunes.nika` needs HTML escaping to be part of the *grammar's* contract, not the caller's discipline. That is a security property and should be stated. | ADR-007, D4/D5 |
+### Resolved
+
+**G1 — `std::fs` named no functions.** The module was described ("looks blocking, is async")
+but had no surface. Now specified in Part III, 17.1: whole-file (`read`, `read_to_string`,
+`write`), streaming (`lines`, `bytes`), handles (`open` → `File`, which implements `Cleanup`
+so a failed flush surfaces as an error instead of being swallowed), memory mapping (`map`,
+a **compile error under Lite** because WASM has no mmap and degrading it to a full read would
+turn a constant-memory program into one that allocates its whole input), metadata and
+directory calls, and a per-profile availability table.
+
+### Open
+
+**G2 — a grammar rule that folds instead of collecting.**
+An earlier draft of this note claimed a gap around "applying a grammar per line". That was
+wrong, and it misread what the language offers: you do not run a grammar per row. You write
+down what the *file* looks like and get a parser for it, which drives itself over the bytes —
+paying the DSL protocol once instead of a billion times.
+
+The real gap only appears at the entry rule. `rule file -> Vec[Reading] = measurement*`
+collects, and a billion `Reading`s do not fit in memory. What is missing is a folding
+repetition:
+
+```nika
+pub rule file -> Summary =
+    fold(measurement, Summary::new, fn(acc, m) { acc.record(m) })
+```
+
+so the parser threads an accumulator through and never builds a collection. The backend can
+already do this — `winnow` has `repeat().fold()` — but the grammar layer does not expose it.
+This is an upstream feature request against `winnow-grammar` as much as a spec item.
+
+**G3 — tethered slices in user structs.** Specified for tokens a parser yields (Part II,
+10.6), but not for a slice stored in a struct of one's own. `Reading.name` and the `HashMap`
+key in `1brc.nika` are exactly that, and it is the difference between one allocation and a
+billion.
+
+**G4 — chunking a buffer for `par_iter`.** `par_iter` is specified over a collection.
+Splitting a buffer at line boundaries into one chunk per core, with each chunk a slice of the
+original, has no spelled-out form.
+
+**G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name; neither
+an ordered map nor `sort_by` over map entries is specified.
+
+**G6 — the HTTP handler cannot see the request.** `std::http`'s signature (17.1) is
+`.route("/") fn: "Hello World"` with no request argument, so a handler cannot read a query
+parameter or set a status code. `fortunes` happens not to need either, which is why this went
+unnoticed — the other six TechEmpower tests do need it.
+
+**G7 — HTML escaping belongs in the template grammar's contract.** A template DSL that lets an
+un-escaped value through a hole is an XSS hole with extra steps, and the compiler is the only
+place that can enforce it for every hole, every time. That makes it a property of the grammar
+(ADR-007, D4/D5), not of the caller's discipline.

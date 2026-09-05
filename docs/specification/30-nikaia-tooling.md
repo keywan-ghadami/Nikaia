@@ -416,6 +416,81 @@ fn main() {
 **`std::fs` (Compiler Magic)**
 File system access is designed to look **blocking** (synchronous) for ease of use. However, the compiler automatically transforms these calls into **non-blocking** state machines backed by the runtime's reactor. You never block the thread, but you never have to write "callback hell".
 
+Every function below may fail for environmental reasons, so every one of them `throws` (Appendix A.1) — a missing file is not a bug in your program. None of them take an `async` marker and none are awaited; that is the whole point.
+
+**Whole-file access**
+
+```nika
+// Subject: the path ; Config: options
+pub fn read(path: Path) -> Bytes throws                       // whole file, as bytes
+pub fn read_to_string(path: Path) -> String throws            // whole file, UTF-8 validated
+pub fn write(path: Path, data: &[u8]; append: bool = false, create: bool = true) throws
+```
+
+`read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices taken from it are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
+
+**Streaming**
+
+Reading a large file whole is a mistake the API should not encourage, so streaming is a first-class form rather than an afterthought:
+
+```nika
+pub fn lines(path: Path) -> Lines throws        // yields tethered &str, one per line
+pub fn bytes(path: Path) -> ByteStream throws   // yields chunks as they arrive
+```
+
+Both are **immediate contexts** (Part I, 5.4) when iterated, so the loop body borrows rather than moves. Neither holds the whole file in memory.
+
+**Handles**
+
+```nika
+pub fn open(path: Path; write: bool = false, append: bool = false,
+            create: bool = false, truncate: bool = false) -> File throws
+```
+
+`File` implements `Cleanup` (Part I, 6.4): the compiler flushes and closes it at the end of the scope, on the normal path *and* while an error is bubbling up, and a flush that fails surfaces as an error instead of being swallowed. Call `close()` explicitly only when you want to handle that error at a precise point.
+
+```nika
+impl File {
+    pub fn read(&mut self, into: &mut [u8]) -> usize throws
+    pub fn write(&mut self, data: &[u8]) -> usize throws
+    pub fn flush(&mut self) throws
+    pub fn seek(&mut self, to: Seek) -> u64 throws   // Seek::Start(n) | Current(n) | End(n)
+    pub fn len(&self) -> u64 throws
+    pub fn close(self) throws                        // explicit opt-in; otherwise Cleanup does it
+}
+```
+
+**Memory mapping (native only)**
+
+```nika
+pub fn map(path: Path) -> Mapped throws          // read-only memory map
+```
+
+`Mapped` derefs to `Bytes`, so a mapped file is a tethered buffer like any other and a parser cannot tell the difference. This is what makes a multi-gigabyte input practical: the pages are the buffer, and nothing is copied.
+
+**`fs::map` is not available in the Lite profile.** Memory mapping has no meaning on a WASM host, and silently degrading it to a full read would turn a constant-memory program into one that allocates its whole input. Using it under `--profile=lite` is a **compile-time error**, in the same way `std::thread` is (17.2). Code that must run in both profiles uses `lines` or `bytes`, which are constant-memory everywhere.
+
+**Metadata and directories**
+
+```nika
+pub fn exists(path: Path) -> bool throws
+pub fn metadata(path: Path) -> Metadata throws   // len, is_dir, is_file, modified
+pub fn read_dir(path: Path) -> DirEntries throws
+pub fn create_dir(path: Path; recursive: bool = false) throws
+pub fn remove(path: Path; recursive: bool = false) throws
+pub fn rename(from: Path, to: Path) throws
+pub fn copy(from: Path, to: Path) -> u64 throws
+```
+
+**Profile availability**
+
+| API | Advanced / native | Lite (native) | Lite (WASM) |
+| :--- | :--- | :--- | :--- |
+| `read`, `read_to_string`, `write` | yes | yes | yes — backed by OPFS |
+| `lines`, `bytes`, `open` | yes | yes | yes — backed by OPFS |
+| `map` | yes | **compile error** | **compile error** |
+| `metadata`, `read_dir`, `create_dir`, `remove`, `rename`, `copy` | yes | yes | yes — OPFS, within the origin's sandbox |
+
 **Other Key Modules:**
 * **`std::json`**: High-performance serialization using compile-time code generation (zero-allocation parsing where possible).
 * **`std::cli`**: Parsers for command-line arguments, environment variables, and ANSI terminal colors.

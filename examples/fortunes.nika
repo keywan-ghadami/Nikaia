@@ -13,8 +13,8 @@
 //
 // Build:  nikaia build --profile=lite --release
 //
-// NOTE: this does not compile yet - see examples/README.md. Gaps it depends on
-// are marked [G6]..[G7] and listed there.
+// NOTE: this does not compile yet - see examples/README.md, where the gaps it
+// depends on are marked [G6] and [G7].
 
 use std::http
 use std::db::postgres

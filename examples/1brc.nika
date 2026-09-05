@@ -4,44 +4,48 @@
 //
 // Input:  ~13 GB of lines, "<station name>;<temperature>\n", e.g. "Hamburg;12.0"
 // Output: one line, "{Abha=-23.0/18.0/59.2, Abidjan=-16.2/26.0/67.3, ...}"
-//         sorted by station name, min/mean/max rounded to one decimal.
+//         sorted by station name, min/mean/max to one decimal.
 //
-// This is a benchmark, not a demo: it stresses the three things the 0.0.7 grammar
-// protocol claims (scannerless parsing, zero-copy slices, and `sync` parallelism).
-// If it is slow, the claims in ADR-007 are wrong.
+// This is a benchmark, not a demo: it stresses the three things the 0.0.7
+// grammar protocol claims (scannerless parsing, zero-copy slices, `sync`
+// parallelism). If it is slow, the argument in ADR-007 is wrong.
 //
 // Build:  nikaia build --profile=advanced --release
 // Run:    ./1brc measurements.txt
 //
-// NOTE: this does not compile yet - see examples/README.md. Gaps it depends on
-// are marked [G1]..[G5] and listed there.
+// NOTE: this does not compile yet - see examples/README.md, where the two
+// remaining gaps it depends on are marked [G2] and [G4].
 
 use std::fs
 use std::cli
 use std::collections::HashMap
 
 // ---------------------------------------------------------------------------
-// 1. The line format, as a grammar
+// 1. A grammar for the file
 // ---------------------------------------------------------------------------
 
-// A scannerless grammar (Part II, 10.1). There is no tokenizer stage: the rules
-// consume the byte stream directly, which is the only workable approach here -
-// a global lexer has no useful notion of a "token" in `Hamburg;12.0`, and
-// station names legitimately contain blanks, dots and non-ASCII characters.
-grammar Measurement {
+// This is a grammar for the *input*, not for a line. You do not run it once per
+// row - you write down what the file looks like and get a parser for it, which
+// then drives itself over the bytes. Per-row invocation would pay the whole DSL
+// protocol a billion times over; the parser pays it once.
+//
+// It is scannerless (Part II, 10.1): the rules consume the byte stream
+// directly. There is no tokenizer to ask what a "token" is in `Hamburg;12.0`,
+// and station names legitimately contain blanks, dots and non-ASCII text.
+grammar Measurements {
 
     // Lexical rule (uppercase name): no implicit whitespace between parts.
-    // That matters - " Hamburg" and "Hamburg" are different stations, so the
-    // parser must not silently skip the leading blank.
+    // That matters here - " Hamburg" and "Hamburg" are different stations, so
+    // the parser must not helpfully skip the leading blank.
     //
-    // The name is returned as a slice into the input buffer, never copied
-    // (Part II, 10.6). At a billion rows, copying each name into a String is
-    // the difference between seconds and minutes.
+    // The name is a slice into the input buffer, never a copy (Part II, 10.6).
+    // At a billion rows, copying each name into a String is the difference
+    // between seconds and minutes.
     rule NAME -> &str = s:until(";") -> { s }
 
-    // Temperatures always carry exactly one decimal, so we parse them as
-    // tenths and keep the entire aggregation in integer arithmetic. Floating
-    // point is only reintroduced when printing.
+    // Temperatures always carry exactly one decimal, so they are parsed as
+    // tenths and the whole aggregation stays in integer arithmetic. Floating
+    // point comes back only when printing.
     rule TENTHS -> i32 =
         neg:"-"? whole:DIGITS "." frac:DIGIT
         -> {
@@ -54,17 +58,25 @@ grammar Measurement {
 
     // The commit point (`=>`) says: once the separator is there, this line *is*
     // a measurement. A malformed temperature after it is an error to report,
-    // not a reason to backtrack and try to reinterpret the line. Without it a
-    // corrupt row would be silently skipped - the worst outcome for a data
-    // aggregation.
-    pub rule line -> Reading =
-        name:NAME ";" => temp:TENTHS
+    // not a reason to backtrack and reinterpret the line. Without it a corrupt
+    // row is silently skipped - the worst possible outcome for an aggregation.
+    rule measurement -> Reading =
+        name:NAME ";" => temp:TENTHS "\n"
         -> { Reading { name, temp } }
+
+    // The entry rule *is* the file.
+    //
+    // Writing `measurement*` here would be wrong at this size: it collects, and
+    // a billion Readings do not fit in memory. `fold` threads an accumulator
+    // through instead, so the parser consumes one measurement at a time and
+    // nothing is ever collected. [G2]
+    pub rule file -> Summary =
+        fold(measurement, Summary::new, fn(acc, m) { acc.record(m) })
 }
 
 pub struct Reading {
-    // A tethered slice: it points into the file buffer, and the buffer provably
-    // outlives it (Part I, 6.6). [G3]
+    // A tethered slice into the input buffer, which provably outlives it
+    // (Part I, 6.6).
     name: &str,
     temp: i32,
 }
@@ -85,9 +97,9 @@ impl Stats {
         return Stats(min: first, max: first, sum: first, count: 1)
     }
 
-    // `sync` (Part II, 12.1): pure computation, no I/O, cannot pause. This is
-    // what lets `par_iter` use it below - the compiler checks it, we do not
-    // have to remember it.
+    // `sync` (Part II, 12.1): pure computation, cannot pause, cannot do I/O.
+    // This is what lets the parser run inside `par_iter` below - the compiler
+    // checks it, rather than us remembering it.
     fn add(&mut self, temp: i32) sync {
         if temp < self.min { self.min = temp }
         if temp > self.max { self.max = temp }
@@ -103,28 +115,35 @@ impl Stats {
     }
 
     fn mean(&self) -> f64 sync {
-        // Round half-up on the tenths, matching the reference implementation.
         return ((self.sum as f64) / (self.count as f64)) / 10.0
     }
 }
 
-// One worker's share of the file. Pure computation over a byte range, so the
-// whole function is `sync` and the Advanced profile can run one per core.
-fn fold_chunk(chunk: &str) -> HashMap[&str, Stats] sync {
-    let mut acc = HashMap::new()
+// What one parser run produces: the stations it saw, and their statistics.
+pub struct Summary {
+    stations: HashMap[&str, Stats],
+}
 
-    for line in chunk.lines() {
-        // [G2] Applying a grammar per line needs a cheaper form than the full
-        // `dsl G from x` protocol - re-entering it a billion times is the whole
-        // performance question.
-        let reading = dsl Measurement from line
-
-        acc.entry(reading.name)
-            .and_modify fn: a.add(reading.temp)
-            .or_insert_with fn: Stats(reading.temp)
+impl Summary {
+    pub fn() -> Summary {
+        return Summary(stations: HashMap::new())
     }
 
-    return acc
+    fn record(&mut self, m: Reading) sync {
+        self.stations
+            .entry(m.name)
+            .and_modify fn: a.add(m.temp)
+            .or_insert_with fn: Stats(m.temp)
+    }
+
+    fn merge(&mut self, other: &Summary) sync {
+        for (name, stats) in other.stations {
+            self.stations
+                .entry(name)
+                .and_modify fn: a.merge(&stats)
+                .or_insert(stats)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -134,49 +153,46 @@ fn fold_chunk(chunk: &str) -> HashMap[&str, Stats] sync {
 fn main() throws {
     let path = cli::args().nth(1) ?? "measurements.txt"
 
-    // I/O in direct style. There is no `async` on the signature and no `await`
-    // here: `fs::read` looks blocking and is compiled into a non-blocking state
-    // machine driven by the runtime's reactor (Part III, 17.1). The `throws` on
-    // `main` is what makes the failure path visible instead of hidden.
+    // I/O in direct style: no `async` on the signature, no `await` here.
+    // `fs::map` is compiled into a non-blocking state machine like every other
+    // `std::fs` call (Part III, 17.1). A memory map is what makes 13 GB
+    // practical - the pages *are* the buffer, so nothing is copied and every
+    // station name below points straight into the mapped file.
     //
-    // [G1] For 13 GB this should be a memory map, not a read into memory. The
-    // spec does not yet say which `std::fs` gives us.
-    let data = fs::read_to_string(path) catch {
-        eprintln("cannot read {path}: {error}")
+    // This is why the program is `--profile=advanced`: `fs::map` is a compile
+    // error under Lite, because a WASM host has no memory mapping and quietly
+    // turning it into a full read would blow up the memory profile.
+    let data = fs::map(path) catch {
+        eprintln("cannot open {path}: {error}")
         return
     }
 
-    // Split at line boundaries, one chunk per core. Every chunk is a slice into
-    // `data` - no copying, and `data` cannot be freed while a chunk is alive.
-    // [G4] The chunking helper itself is not specified yet.
+    // One chunk per core, split at line boundaries. Each chunk is a slice into
+    // the map - no copying, and the map cannot be unmapped while a chunk lives.
+    // [G4] The line-aligned chunking helper is not specified yet.
     let chunks = data.split_aligned(cpu::count(), "\n")
 
-    // The closure must be `sync`, and `fold_chunk` is - so this compiles. Had
-    // we tried to log to a file inside the fold, the compiler would have
-    // rejected it here rather than letting it silently serialise the workers.
-    let partials = chunks.par_iter()
-        .map fn: fold_chunk(a)
+    // One parser per chunk, running in parallel. The closure must be `sync`,
+    // and parsing is pure computation, so this compiles. Had we tried to log to
+    // a file inside it, the compiler would have rejected it here instead of
+    // silently serialising the workers.
+    let summaries = chunks.par_iter()
+        .map fn: dsl Measurements from a
         .collect()
 
-    // Merge sequentially: a billion rows collapse to a few thousand stations,
-    // so this costs nothing and needs no locking.
-    let mut totals = HashMap::new()
-    for partial in partials {
-        for (name, stats) in partial {
-            totals.entry(name)
-                .and_modify fn: a.merge(&stats)
-                .or_insert(stats)
-        }
+    // A billion rows collapse to a few thousand stations, so the merge is cheap
+    // and needs no locking.
+    let mut totals = Summary::new()
+    for partial in summaries {
+        totals.merge(&partial)
     }
 
-    // [G5] The output must be sorted by station name; no ordered iteration over
-    // a HashMap is specified.
-    let mut names = totals.keys().collect()
+    let mut names = totals.stations.keys().collect()
     names.sort()
 
     let body = names
         .map fn: {
-            let s = totals[a]
+            let s = totals.stations[a]
             "{a}={s.min / 10.0}/{s.mean()}/{s.max / 10.0}"
         }
         .join(", ")
