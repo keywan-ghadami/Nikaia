@@ -460,7 +460,7 @@ impl File {
 }
 ```
 
-**Memory mapping (native only)**
+**Memory mapping**
 
 ```nika
 pub fn map(path: Path) -> Mapped throws          // read-only memory map
@@ -468,7 +468,9 @@ pub fn map(path: Path) -> Mapped throws          // read-only memory map
 
 `Mapped` derefs to `Bytes`, so a mapped file is a tethered buffer like any other and a parser cannot tell the difference. This is what makes a multi-gigabyte input practical: the pages are the buffer, and nothing is copied.
 
-**`fs::map` is not available in the Lite profile.** Memory mapping has no meaning on a WASM host, and silently degrading it to a full read would turn a constant-memory program into one that allocates its whole input. Using it under `--profile=lite` is a **compile-time error**, in the same way `std::thread` is (17.2). Code that must run in both profiles uses `lines` or `bytes`, which are constant-memory everywhere.
+**Availability is a property of the target, not of the profile.** Memory mapping is an operating-system service, and whether it exists has nothing to do with whether the runtime is single-threaded. `fs::map` is therefore available under **both** profiles on any target whose platform provides it — a Lite-profile program compiled for Linux, macOS or Windows maps files exactly like an Advanced one. What rules it out is a target without the service: on `wasm32-*` there is no memory mapping to call, so `fs::map` is a **compile-time error** there.
+
+The error is deliberate rather than a silent fallback to `read`: degrading a memory map into a full read turns a constant-memory program into one that allocates its entire input, which is a failure the program would only discover in production. Code that must build for every target, WASM included, uses `lines` or `bytes` — constant-memory everywhere.
 
 **Metadata and directories**
 
@@ -482,14 +484,18 @@ pub fn rename(from: Path, to: Path) throws
 pub fn copy(from: Path, to: Path) -> u64 throws
 ```
 
-**Profile availability**
+**Availability by target**
 
-| API | Advanced / native | Lite (native) | Lite (WASM) |
-| :--- | :--- | :--- | :--- |
-| `read`, `read_to_string`, `write` | yes | yes | yes — backed by OPFS |
-| `lines`, `bytes`, `open` | yes | yes | yes — backed by OPFS |
-| `map` | yes | **compile error** | **compile error** |
-| `metadata`, `read_dir`, `create_dir`, `remove`, `rename`, `copy` | yes | yes | yes — OPFS, within the origin's sandbox |
+Both profiles have the same `std::fs` surface; only the target changes it.
+
+| API | Native (any profile) | `wasm32-*` (any profile) |
+| :--- | :--- | :--- |
+| `read`, `read_to_string`, `write` | yes | yes — backed by OPFS |
+| `lines`, `bytes`, `open` | yes | yes — backed by OPFS |
+| `map` | yes | **compile error** — the platform has no memory mapping |
+| `metadata`, `read_dir`, `create_dir`, `remove`, `rename`, `copy` | yes | yes — OPFS, within the origin's sandbox |
+
+This is the difference between `fs::map` and `std::thread` (17.2). `std::thread` is barred by the **profile**: Lite is share-nothing by design, so manual threading is a compile error even on a native target that has threads. `fs::map` is barred by the **target**: nothing about a single-threaded runtime prevents mapping a file.
 
 **Other Key Modules:**
 * **`std::json`**: High-performance serialization using compile-time code generation (zero-allocation parsing where possible).

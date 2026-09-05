@@ -97,26 +97,24 @@ a **compile error under Lite** because WASM has no mmap and degrading it to a fu
 turn a constant-memory program into one that allocates its whole input), metadata and
 directory calls, and a per-profile availability table.
 
-### Open
+**G2 — a grammar rule that folds instead of collecting.** An earlier draft of
+this note claimed a gap around "applying a grammar per line". That was wrong,
+and it misread what the language offers: you do not run a grammar per row. You
+write down what the *file* looks like and get a parser for it, which drives
+itself over the bytes — paying the DSL protocol once instead of a billion times.
 
-**G2 — a grammar rule that folds instead of collecting.**
-An earlier draft of this note claimed a gap around "applying a grammar per line". That was
-wrong, and it misread what the language offers: you do not run a grammar per row. You write
-down what the *file* looks like and get a parser for it, which drives itself over the bytes —
-paying the DSL protocol once instead of a billion times.
-
-The real gap only appears at the entry rule. `rule file -> Vec[Reading] = measurement*`
-collects, and a billion `Reading`s do not fit in memory. What is missing is a folding
-repetition:
+The real gap was narrower and only appeared at the entry rule:
+`rule file -> Vec[Reading] = measurement*` collects, and a billion `Reading`s do
+not fit in memory. `fold` now exists in `winnow-grammar` (upstream, with
+`SYNTAX.md` documentation and tests), so the entry rule threads an accumulator
+and never builds a collection:
 
 ```nika
 pub rule file -> Summary =
     fold(measurement, Summary::new, fn(acc, m) { acc.record(m) })
 ```
 
-so the parser threads an accumulator through and never builds a collection. The backend can
-already do this — `winnow` has `repeat().fold()` — but the grammar layer does not expose it.
-This is an upstream feature request against `winnow-grammar` as much as a spec item.
+### Open
 
 **G3 — tethered slices in user structs.** Specified for tokens a parser yields (Part II,
 10.6), but not for a slice stored in a struct of one's own. `Reading.name` and the `HashMap`

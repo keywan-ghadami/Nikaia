@@ -2,15 +2,13 @@
 // Nikaia AST definition.
 // Based on ADR-001 and Part I/II/III documents.
 
-// Identifiers are plain owned strings.
+// Identifiers are interned: the AST stores a `Symbol` handle and the text is
+// recovered through the `InternerContext` that produced it.
 //
-// Spec Part II, 10.6 (and ADR-007 s.4) calls for interned identifiers, and
-// `winnow-grammar` interns them natively - but its `Symbol` round-trip is
-// currently off by one (`Symbol::from_spur` stores `index + 1`, `into_spur`
-// adds another), so `InternerContext::resolve` returns the *next* symbol's text
-// or panics on the last one. Until that is fixed upstream the grammar uses the
-// non-interning `raw_ident` terminal. See docs/winnow-grammar/feature-request.md.
-pub type Ident = String;
+// This is Spec Part II, 10.6 in practice - identifiers are short, repeat
+// constantly, and are compared far more often than they are read, so interning
+// stores each distinct spelling once and makes equality an integer comparison.
+use winnow_grammar::Symbol as Ident;
 
 /// Ein Nikaia-Programm ist eine Liste von Top-Level Items.
 #[derive(Debug, Clone)]

@@ -13,20 +13,21 @@ fn test_advanced_hello_world_compilation() {
         }
     "#;
 
-    let program = parse_to_ast(source_code).expect("parse failed");
+    let parsed = parse_to_ast(source_code).expect("parse failed");
+    let program = &parsed.program;
 
     // 2. Execute Verification (Inspect AST)
     assert_eq!(program.items.len(), 1, "Should have 1 main function");
 
     if let Item::Fn { name, body, .. } = &program.items[0] {
-        assert_eq!(name.to_string(), "main");
+        assert_eq!(parsed.text(*name), "main");
         assert_eq!(body.stmts.len(), 2, "Main should have 2 statements");
 
         // Verify println("Hello Nikaia")
         match &body.stmts[0] {
             Stmt::Expr(Expr::Call { func, args }) => {
                 if let Expr::Variable(fname) = &**func {
-                    assert_eq!(fname.to_string(), "println");
+                    assert_eq!(parsed.text(*fname), "println");
                 } else {
                     panic!("Expected function name");
                 }

@@ -186,7 +186,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#b03a1f0ff09a307633addd66f8d1e0c597e3a66d"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#f4955bcc0c5d2fbe29efe6113af8b375245c79cf"
 dependencies = [
  "lasso",
  "paste",
@@ -607,7 +607,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-macros"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#b03a1f0ff09a307633addd66f8d1e0c597e3a66d"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#f4955bcc0c5d2fbe29efe6113af8b375245c79cf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -618,7 +618,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-model"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#b03a1f0ff09a307633addd66f8d1e0c597e3a66d"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#f4955bcc0c5d2fbe29efe6113af8b375245c79cf"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -40,9 +40,9 @@ pub fn main() -> Result<()> {
 
     if args.backend == "interpreter" {
         // For the interpreter, we need to parse to AST, not BridgeIR.
-        let program = parser::parse_to_ast(&source)?;
-        let interpreter = interpreter::Interpreter::new();
-        interpreter.run(&program);
+        let parsed = parser::parse_to_ast(&source)?;
+        let interpreter = interpreter::Interpreter::new(parsed.interner.clone());
+        interpreter.run(&parsed);
         Ok(())
     } else {
         // For compilation backends (bridge, llvm, etc.), we use the orchestrator flow (or similar)
