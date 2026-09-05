@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.5 (Draft)
-**Date:** January 22, 2026
+**Version:** 0.0.6 (Draft)
+**Date:** September 5, 2026
 
 ---
 
@@ -146,9 +146,13 @@ fn query_users(db: Shared[Database], min_age: i32) {
 ### 10.6. Advanced Parser Features
 Nikaia grammars are designed for high-performance tooling.
 
-**Zero-Copy Parsing (Slices)**
+**Zero-Copy Parsing (Tethered Slices)**
 Traditional parsers often copy text into new `String` objects for every identifier found. Nikaia avoids this.
-The parser yields **Slices** (references to the original text buffer). The compiler's borrow checker ensures that you cannot use a token after the original text has been deleted. This significantly reduces memory usage.
+The parser yields **Slices** into the original text buffer — no text is ever copied. Because tokens are typically *stored* (in an AST, a symbol table, a list), they follow the "transient = borrow, stored = tether" rule (Part I, Chapter 6.6): each stored token is automatically **tethered** to the source buffer via a `Shared` handle plus a position.
+
+The guarantee is stated positively: **the source text cannot be freed while any token still points into it.** You never manage this relationship, and you never see an error about it — the buffer's lifetime simply follows the tokens. The cost is one shared handle for the whole buffer (not per token), which is negligible next to the avoided string copies.
+
+> **Design Note (implementation):** This is the same architecture the async ecosystem converged on for zero-copy I/O (`bytes::Bytes` in Rust: a reference-counted buffer plus offsets). A future optimization may replace the reference count with compiler-verified self-referential storage — the driver controls all access patterns and could prove the invariants itself — but that is an internal optimization avenue, not a semantic change. See [ADR-005](adr/adr-005.md), D4.
 
 **Fault Tolerance (Recovery)**
 When building tools like Language Servers (LSP), the parser must not crash on the first error. It needs to recover and continue parsing the rest of the file.
@@ -249,9 +253,39 @@ To share mutable data, you use the `Locked[T]` type. Its implementation changes 
 * **Cost:** Higher (Atomic operations).
 * **Purpose:** It protects against **Memory Corruption**. It ensures that two physical threads cannot write to the memory address at the same time.
 
-**Deadlock Prevention (I/O Rule)**
-Because `Locked` in Advanced mode blocks the thread, holding a lock for too long is dangerous.
-**Rule:** You cannot perform I/O (call non-sync functions) while holding a lock. This prevents "Sleeping while holding a lock."
+**The `sync` Rule (No Pausing While Holding a Lock)**
+Holding a lock while the program pauses is dangerous in *both* profiles: in Advanced it can block a whole CPU core; in Lite it can freeze other tasks that need the same data. Nikaia rules this out **at compile time**, using a keyword the language already has:
+
+> **`access` and `access_all` require a `sync` lambda — in both profiles.**
+
+A `sync` lambda (see 12.1) can never perform I/O and can never pause. Therefore, while you hold locked data, the program provably runs straight through: lock, compute, unlock. There is nothing to remember — if you try to do I/O inside `access`, the compiler stops you with a plain explanation:
+
+```nika
+let counter: Shared[Locked[i32]] = ...
+
+// OK: pure computation
+counter.access fn: a += 1
+
+// Compiler Error: I/O inside a lock
+// counter.access fn: fs::write("log", "{a}")
+```
+
+```text
+error[NK2201]: cannot wait for I/O while holding locked data
+  --> main.nika:7
+   |
+ 7 | counter.access fn: fs::write("log", "{a}")
+   |                    ^^^^^^^^^^^^^^^^^^^^^^ this writes to a file,
+   |                                            which makes the program pause
+   |
+  note: while you hold locked data, every other task that needs it must wait.
+        Pausing here could freeze them for a long time (or forever).
+  help: copy the value out first, then do the I/O without holding the lock:
+        let snapshot = counter.access fn: a
+        fs::write("log", "{snapshot}")
+```
+
+This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. The runtime checks described above (reentrancy check in Lite, poisoning in Advanced) remain as a safety net for the remaining edge cases — e.g. accidentally re-entering the *same* lock through a chain of `sync` calls — but well-formed code never triggers them.
 
 ### 12.3. Deadlock Prevention: Atomic Composition
 The classic cause of deadlocks is inconsistent locking order (Thread 1 locks A then B; Thread 2 locks B then A).
@@ -326,25 +360,50 @@ let bright_pixels = pixels.par_iter()
 ```
 
 ### 12.7. Scoped Tasks (@immediate Parallelism)
-Normally, tasks cannot borrow variables from the stack because the compiler assumes a standard `spawn` is `@detached` (might live forever).
-Scoped Tasks are a special exception. The `task::scope` function acts as an **Immediate Context**.
 
-* **Guarantee:** The scope function blocks (yields) until all tasks spawned within it have completed.
-* **Result:** Because the scope guarantees the tasks finish before the stack frame unwinds, the compiler permits **Implicit Borrowing**.
+**The idea in one sentence:** a normal `spawn` task takes your variables *with* it (because it might outlive you, Chapter 8.3) — a **scoped** task only *borrows* them, because the scope promises to wait until every task inside it is finished.
+
+Think of it like this: lending your notebook to a colleague is fine *if they stay in the room and give it back before you leave*. That is what `task::scope` enforces: it is an **Immediate Context** (Chapter 5.4) — it does not return until all tasks spawned inside it have completed. Because of that promise, tasks inside the scope may simply read your variables: no moving, no cloning.
 
 ```nika
 let data = [1, 2, 3]
 
-// 'task::scope' is @immediate.
-// Variables captured inside are borrowed, not moved.
+// 'task::scope' waits for all inner tasks before it returns.
 task::scope fn(s) {
     // Note: s.spawn is tied to the scope, unlike global spawn.
     s.spawn fn: println("Reading: {data}") // Safe Borrow
     s.spawn fn: println("Reading: {data}") // Safe Borrow
 }
 // 'data' is still valid here
-
 ```
+
+**One rule differs between the profiles.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
+
+* **Lite Profile:** everything runs on one thread, and the runtime owns every task. When a scope ends (even when it is torn down early by an error), the runtime collects its tasks *before* your function's variables disappear. **Scoped tasks may do anything, including I/O.**
+* **Advanced Profile:** tasks run on other CPU cores *in parallel*. A task that is mid-computation on another core cannot be stopped at an arbitrary moment — so the scope can only keep its promise for tasks that finish on their own, deterministically. Therefore: **in Advanced, scoped tasks must be `sync`** (pure computation — no I/O, no pausing; the same rule as `par_iter`, 12.6). This is the natural fit anyway: scoped parallelism exists exactly for "split this computation across all cores".
+
+If a task needs to do I/O in Advanced, it does not belong in a scope — it is a background task. Use a normal `spawn` (the task takes ownership, Chapter 8.3) and collect the result through its handle. The compiler explains this when you hit the rule:
+
+```text
+error[NK2102]: tasks inside `task::scope` must be `sync` in the Advanced profile
+  --> worker.nika:12
+   |
+12 |     s.spawn fn: fetch_url(url)
+   |                 ^^^^^^^^^^^^^^ `fetch_url` performs network I/O
+   |
+  note: a scope promises to wait for its tasks. On multiple CPU cores this
+        promise only holds for pure computations (`sync` functions), which
+        finish on their own — a task waiting on the network might not.
+  help: choose one of the following:
+        1. keep it in the scope, but make the work pure:
+           mark the function `sync` (and do the I/O before the scope)
+        2. run it as a background task instead — it will take ownership
+           of its variables (clone what you still need):
+           let handle = spawn fn: fetch_url(url.clone())
+           let result = handle.await
+```
+
+> **Design Note (Soundness):** Borrowing across *parallel, pausable* tasks is a known unsoundness trap — a cancelled scope cannot instantly stop a task mid-execution on another core, yet the borrowed variables are about to disappear. General-purpose async runtimes cannot offer a safe async scope for exactly this reason. Nikaia avoids the trap structurally: in Lite the single-threaded runtime owns all task state and tears scopes down synchronously (which additionally requires that task futures are exclusively runtime-owned and that the language exposes no way to leak a live scope — both are language-level guarantees); in Advanced the `sync` restriction makes waiting deterministic. See [ADR-005](adr/adr-005.md), D5.
 
 ### 12.8. Supervision Trees
 In complex systems, threads might crash (panic). A **Supervisor** monitors tasks. If a child task crashes, the supervisor can decide to:

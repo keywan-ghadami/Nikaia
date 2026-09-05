@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core & Nikaia Lite**
-**Version:** 0.0.5 (Draft)
-**Date:** January 22, 2026
+**Version:** 0.0.6 (Draft)
+**Date:** September 5, 2026
 
 ---
 
@@ -403,7 +403,7 @@ println(prefix)
 ​Behavior: Implicit Move (Ownership Transfer).
 ​Examples: spawn, defer, set_timeout, channel.on_receive.
 
-````nila
+````nika
 let prefix = "Log: "
 
 // 'spawn' is @detached. The lambda might outlive the current function.
@@ -482,6 +482,97 @@ impl Drop for FileHandle {
 > 2.  **Safety:** Patterns like `.access()` for locks guarantee that resources are released, replacing manual `lock/defer unlock` sequences.
 > 3.  **Unwinding:** If an error occurs (`throws`), the stack unwinds and triggers `drop` for all variables in the scope, ensuring no resource leaks even during failures.
 
+### 6.5. References and Borrowing
+
+Sometimes a function only needs to *look at* a value, not own it. For this, Nikaia has **References** (written `&T`, or `&str` for text). Think of it as lending a book: the owner keeps the book, the borrower may read it, and the loan ends automatically.
+
+**The headline guarantee:**
+
+> **Nikaia source code contains no lifetime annotations. Ever.**
+> There is no syntax for them, and there never will be. Everything described below happens inside the compiler. (See [ADR-005](adr/adr-005.md).)
+
+Two things are guaranteed to *just work*:
+
+1.  **Borrowing inside a function**, even across I/O. Because Nikaia is async by default, a function may pause at any I/O call — and a borrowed value simply stays valid across that pause:
+
+    ```nika
+    fn report(config: &Config) {
+        let name = &config.name       // borrow
+        let data = fs::read("log")    // the function pauses here (I/O)...
+        println("{name}: {data}")     // ...and the borrow is still valid.
+    }
+    ```
+
+2.  **Returning borrowed values from functions.** A function like `fn first_word(s: &str) -> &str` needs no annotations. Even when the result could come from *several* inputs, the compiler figures out the connection on its own — across function boundaries, through your whole program (see 6.7).
+
+**The one rule you need to know:** a borrow may not outlive its owner. You will rarely be able to break this rule by accident, because of the next section.
+
+### 6.6. Stored References Are Tethered
+
+What happens when a borrowed value is not just used, but **stored** — put into a struct, sent to a background task, or returned far up the call chain? In most systems languages this is where the pain starts, because the compiler must prove the owner lives long enough.
+
+Nikaia takes a different route. The rule is:
+
+> **Transient = borrow, stored = tether.**
+
+* A slice that is only *used* (passed down, inspected, transformed) is a true zero-cost reference.
+* A slice that *escapes* — into a struct field, a `@detached` lambda, or a `return` that outlives the buffer — is automatically **tethered**: the compiler stores it as a lightweight handle to the original buffer (via `Shared`, see 6.2) plus a position, instead of a raw reference.
+
+The effect: **the buffer cannot die while anything still points into it.** Instead of an error telling you "you may not use this after the buffer is gone," the language simply guarantees the buffer stays alive. The cost is one shared handle per *buffer* (not per slice) — deterministic, no garbage collector involved.
+
+```nika
+struct Token {
+    text: &str,   // stored in a struct -> automatically tethered
+}
+
+fn tokenize(source: String) -> List[Token] {
+    // The returned tokens keep 'source' alive.
+    // No annotations, no copies of the text, no dangling references.
+    ...
+}
+```
+
+Because of tethering, you will also never see a "struct with lifetime parameters" in Nikaia — that concept does not exist in the language.
+
+### 6.7. The Borrow Contract Ledger
+
+For every function whose signature involves borrows, the compiler infers a **Borrow Contract**: a note such as "the result of `longest(a, b)` borrows from `a` or `b`." You never write these contracts. They are stored in a generated file, **`nikaia.contracts`**, which is committed alongside `nikaia.lock` (details in Part III, Chapter 13.5).
+
+The ledger has two jobs:
+
+1.  **Cache:** if a contract did not change, none of the function's callers need to be re-checked. Builds stay fast.
+2.  **Explanation:** if you edit a function *body* and that changes its contract, the compiler compares old and new contract. If a caller elsewhere breaks, the error does not point at some mysterious distant line — it tells the whole story: *what you changed, how the contract changed, and which caller is affected* — plus what to do about it.
+
+### 6.8. When the Compiler Says No
+
+Ownership rules occasionally reject code — usually because the code contains a genuine bug. Nikaia's promise ([ADR-005](adr/adr-005.md), D7): **every such error explains itself in plain language and tells you what to do next.** You never need Rust knowledge to read a Nikaia error; if a raw internal (Rust) error ever reaches you, that is a Nikaia bug — please report it.
+
+The most common case is changing a collection while looping over it:
+
+```nika
+let mut users = load_users()
+for u in users {
+    if u.is_duplicate() {
+        users.remove(u)   // bug: pulling the rug out from under the loop
+    }
+}
+```
+
+```text
+error[NK2301]: cannot change `users` while looping over it
+  --> main.nika:4
+   |
+ 4 |         users.remove(u)
+   |         ^^^^^^^^^^^^^^^ the loop is still reading `users`
+   |
+  note: removing items mid-loop would invalidate the loop's position
+        (this is a crash or silent bug in most languages)
+  help: use the built-in method that does this safely:
+        users.retain fn: !a.is_duplicate()
+```
+
+For every known pattern of this kind, the standard library provides a safe, named method (`retain`, `drain`, `entry`, `swap(i, j)`, …) and the error message points directly at it.
+
 ---
 
 ## Chapter 7: Error Handling
@@ -537,16 +628,42 @@ To run a new independent task, use `spawn`. It takes an **Explicit Block Lambda*
 spawn fn: println("I am running in the background!")
 ```
 
-### 8.3. Moving Data (`move`)
-By default, closures only "borrow" variables (look at them). If a background task needs to take full **Ownership** of a variable (so it stays alive even after the main function ends), you must use the `move` keyword.
+### 8.3. Data Ownership in Tasks (Implicit Move)
+A background task may keep running after the function that started it has already finished. It therefore cannot merely *borrow* variables — they might be gone by the time it runs. Following the Contextual Capture rules (Chapter 5.4), `spawn` is a **Detached Context**: variables used inside the task are **moved** into it automatically. There is no `move` keyword — the compiler applies the rule for you.
 
 ```nika
 let message = "Hello"
 
-// 'move' transfers the 'message' variable into the Lambda
-spawn move fn: println(message)
+// 'message' is implicitly moved into the task (spawn is @detached)
+spawn fn: println(message)
 
-// 'message' is no longer valid here
+// Compiler Error: 'message' now belongs to the task.
+// println(message)
+```
+
+If you still need the value afterwards, clone it first:
+
+```nika
+let message = "Hello"
+spawn fn: println(message.clone())
+println(message)   // OK: the task owns a copy
+```
+
+The compiler error for this situation explains exactly that:
+
+```text
+error[NK2101]: this background task takes ownership of `message`
+  --> main.nika:3
+   |
+ 3 | spawn fn: println(message)
+   |                   ^^^^^^^ moved into the task here
+ 4 | println(message)
+   | --------------- but `message` is used again afterwards
+   |
+  note: a task started with `spawn` may outlive this function,
+        so it cannot merely borrow your variables — it takes them with it
+  help: keep using `message` here by giving the task its own copy:
+        spawn fn: println(message.clone())
 ```
 
 ### 8.4. The Runtime Sidecar Model
