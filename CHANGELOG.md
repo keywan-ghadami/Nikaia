@@ -20,7 +20,7 @@
 ### Fixed (Toolchain / CI)
 - **Build**: The `nikaia` binary failed to link (`cannot satisfy dependencies so 'std' only shows up once`, 19 errors) because `rustc-executor` pulls in the compiler's dylibs while the binary linked the ordinary rlib `std`. The binary now declares `#![feature(rustc_private)]` + `extern crate rustc_driver`, and a build script adds the toolchain's lib directory to the rpath so the linked binary starts.
 - **Deps**: `winnow-grammar` advanced from `43aae1f3` to `b03a1f0f` and `winnow` from 0.6 to 0.7. Adapted to the new API: `parse_<rule>()` is a parser factory driven with `.parse_next()`, and it runs on a `Stateful` stream carrying `ParseContext`. Parse errors are now `winnow_grammar::ParseError` and are rendered with line/column and rule stack.
-- **Parser**: identifiers bind the non-interning `raw_ident` terminal and the AST stores `String`; `syn::Ident`/`proc-macro2` are gone from the front-end (they were left over from the `syn-grammar` era and cannot be built from the new terminals anyway). Interning waits on an upstream `Symbol` off-by-one — see `docs/winnow-grammar/feature-request.md`.
+- **Parser**: identifiers bind the non-interning `raw_ident` terminal and the AST stores `String`; `syn::Ident`/`proc-macro2` are gone from the front-end (they were left over from the `syn-grammar` era and cannot be built from the new terminals anyway). Interning waits on an upstream `Symbol` off-by-one — see ADR-007, D7.
 - **Grammar**: restored two rules the `crates/` restructure dropped although the changelog claimed them — `spawn_expr` (so `spawn({ … })` becomes `Expr::Spawn` instead of a generic call) and `block` in expression position.
 - **Tests**: `tests/hello_world.rs` referenced a crate (`nikaia_driver`) that no longer exists and sat outside any package, so cargo never built it. `crates/nikaia` gained a library target and the test now runs as `crates/nikaia/tests/parser.rs`; a new `samples.rs` asserts that every `tests/samples/*.nika` parses.
 - **Samples**: `let_assignment.nika` used a top-level `let`, which neither the grammar nor the spec allows; it is now a valid program.
@@ -29,8 +29,14 @@
 - **Warnings**: removed unused imports across the workspace and the unread `NikaiaFrontend::backend` field; added a `trace` feature forwarding to `winnow-grammar/trace` so the `grammar!` expansion's `cfg` check is legitimate. The workspace now builds warning-free.
 - **Repo**: deleted the orphaned root `build.rs` (the workspace root has no `[package]`, so cargo never ran it).
 
+### Added (Examples)
+- **`examples/`**: specification-level programs that the bootstrap parser cannot compile yet, kept separate from `tests/samples/` (which must parse and is covered by `cargo test`).
+  - `1brc.nika` — the One Billion Row Challenge: a scannerless grammar for the line format with a commit point after the separator, station names as tethered slices into the input buffer, integer-tenths aggregation, and a `sync` fold distributed with `par_iter`. Chosen because it stresses precisely what ADR-007 asserts — if it is slow, the grammar protocol's performance argument is wrong.
+  - `fortunes.nika` — the TechEmpower `fortunes` benchmark: one request handler using *both* binding modes from ADR-007 D4, deferred parameters for the SQL DSL and immediate capture for the HTML template DSL, over implicit-async I/O in the Lite profile.
+  - `README.md` — survey of the benchmark suites worth targeting (1BRC, Computer Language Benchmarks Game, TechEmpower, Are We Fast Yet?), with a recommended order, plus the seven specification gaps (G1–G7) that writing the two programs exposed.
+
 ### Documentation
-- **winnow-grammar notes**: recorded the `Symbol` off-by-one bug with reproduction and suggested fix, and flagged that `docs/winnow-grammar/README.md` is a stale copy of a separate repository.
+- **Removed `docs/winnow-grammar/`**: a stale copy of another project's documentation. The one Nikaia-relevant part — the `Symbol` off-by-one that blocks interning — now sits with the decision it constrains, in ADR-007 D7.
 - **Analysis**: `docs/analysis/branch-review-0.0.5-v0.0.6.md` — forensic review of the `0.0.5` and `v0.0.6` branches: both were squash-merged intact, `v0.0.6` was then reverted by `c6ff1fa`, and the resulting version-number collision. Lists the lost ideas, the convergences between the branches, and the conflicts.
 
 ### Added

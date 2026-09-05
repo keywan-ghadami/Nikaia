@@ -93,6 +93,13 @@ fn main() {
 
 ---
 
+## 📂 Examples
+
+`examples/` holds specification-level programs — the One Billion Row Challenge and the
+TechEmpower `fortunes` benchmark — together with a survey of the language benchmarks worth
+targeting and the specification gaps writing them exposed. `tests/samples/` holds the smaller
+programs the bootstrap compiler can already parse.
+
 ## 🛠 Roadmap to 0.1.0
 
 This is currently a **Specification (Version 0.0.7)**. We are in the bootstrap phase.

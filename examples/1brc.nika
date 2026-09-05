@@ -1,0 +1,185 @@
+// examples/1brc.nika
+//
+// The One Billion Row Challenge, in Nikaia 0.0.7.
+//
+// Input:  ~13 GB of lines, "<station name>;<temperature>\n", e.g. "Hamburg;12.0"
+// Output: one line, "{Abha=-23.0/18.0/59.2, Abidjan=-16.2/26.0/67.3, ...}"
+//         sorted by station name, min/mean/max rounded to one decimal.
+//
+// This is a benchmark, not a demo: it stresses the three things the 0.0.7 grammar
+// protocol claims (scannerless parsing, zero-copy slices, and `sync` parallelism).
+// If it is slow, the claims in ADR-007 are wrong.
+//
+// Build:  nikaia build --profile=advanced --release
+// Run:    ./1brc measurements.txt
+//
+// NOTE: this does not compile yet - see examples/README.md. Gaps it depends on
+// are marked [G1]..[G5] and listed there.
+
+use std::fs
+use std::cli
+use std::collections::HashMap
+
+// ---------------------------------------------------------------------------
+// 1. The line format, as a grammar
+// ---------------------------------------------------------------------------
+
+// A scannerless grammar (Part II, 10.1). There is no tokenizer stage: the rules
+// consume the byte stream directly, which is the only workable approach here -
+// a global lexer has no useful notion of a "token" in `Hamburg;12.0`, and
+// station names legitimately contain blanks, dots and non-ASCII characters.
+grammar Measurement {
+
+    // Lexical rule (uppercase name): no implicit whitespace between parts.
+    // That matters - " Hamburg" and "Hamburg" are different stations, so the
+    // parser must not silently skip the leading blank.
+    //
+    // The name is returned as a slice into the input buffer, never copied
+    // (Part II, 10.6). At a billion rows, copying each name into a String is
+    // the difference between seconds and minutes.
+    rule NAME -> &str = s:until(";") -> { s }
+
+    // Temperatures always carry exactly one decimal, so we parse them as
+    // tenths and keep the entire aggregation in integer arithmetic. Floating
+    // point is only reintroduced when printing.
+    rule TENTHS -> i32 =
+        neg:"-"? whole:DIGITS "." frac:DIGIT
+        -> {
+            let value = whole * 10 + frac
+            if neg.is_some() { -value } else { value }
+        }
+
+    rule DIGITS -> i32 = d:digit+ -> { d }
+    rule DIGIT  -> i32 = d:digit  -> { d }
+
+    // The commit point (`=>`) says: once the separator is there, this line *is*
+    // a measurement. A malformed temperature after it is an error to report,
+    // not a reason to backtrack and try to reinterpret the line. Without it a
+    // corrupt row would be silently skipped - the worst outcome for a data
+    // aggregation.
+    pub rule line -> Reading =
+        name:NAME ";" => temp:TENTHS
+        -> { Reading { name, temp } }
+}
+
+pub struct Reading {
+    // A tethered slice: it points into the file buffer, and the buffer provably
+    // outlives it (Part I, 6.6). [G3]
+    name: &str,
+    temp: i32,
+}
+
+// ---------------------------------------------------------------------------
+// 2. Aggregation
+// ---------------------------------------------------------------------------
+
+pub struct Stats {
+    min: i32,
+    max: i32,
+    sum: i64,
+    count: i64,
+}
+
+impl Stats {
+    pub fn(first: i32) -> Stats {
+        return Stats(min: first, max: first, sum: first, count: 1)
+    }
+
+    // `sync` (Part II, 12.1): pure computation, no I/O, cannot pause. This is
+    // what lets `par_iter` use it below - the compiler checks it, we do not
+    // have to remember it.
+    fn add(&mut self, temp: i32) sync {
+        if temp < self.min { self.min = temp }
+        if temp > self.max { self.max = temp }
+        self.sum += temp
+        self.count += 1
+    }
+
+    fn merge(&mut self, other: &Stats) sync {
+        if other.min < self.min { self.min = other.min }
+        if other.max > self.max { self.max = other.max }
+        self.sum += other.sum
+        self.count += other.count
+    }
+
+    fn mean(&self) -> f64 sync {
+        // Round half-up on the tenths, matching the reference implementation.
+        return ((self.sum as f64) / (self.count as f64)) / 10.0
+    }
+}
+
+// One worker's share of the file. Pure computation over a byte range, so the
+// whole function is `sync` and the Advanced profile can run one per core.
+fn fold_chunk(chunk: &str) -> HashMap[&str, Stats] sync {
+    let mut acc = HashMap::new()
+
+    for line in chunk.lines() {
+        // [G2] Applying a grammar per line needs a cheaper form than the full
+        // `dsl G from x` protocol - re-entering it a billion times is the whole
+        // performance question.
+        let reading = dsl Measurement from line
+
+        acc.entry(reading.name)
+            .and_modify fn: a.add(reading.temp)
+            .or_insert_with fn: Stats(reading.temp)
+    }
+
+    return acc
+}
+
+// ---------------------------------------------------------------------------
+// 3. Main: the I/O half
+// ---------------------------------------------------------------------------
+
+fn main() throws {
+    let path = cli::args().nth(1) ?? "measurements.txt"
+
+    // I/O in direct style. There is no `async` on the signature and no `await`
+    // here: `fs::read` looks blocking and is compiled into a non-blocking state
+    // machine driven by the runtime's reactor (Part III, 17.1). The `throws` on
+    // `main` is what makes the failure path visible instead of hidden.
+    //
+    // [G1] For 13 GB this should be a memory map, not a read into memory. The
+    // spec does not yet say which `std::fs` gives us.
+    let data = fs::read_to_string(path) catch {
+        eprintln("cannot read {path}: {error}")
+        return
+    }
+
+    // Split at line boundaries, one chunk per core. Every chunk is a slice into
+    // `data` - no copying, and `data` cannot be freed while a chunk is alive.
+    // [G4] The chunking helper itself is not specified yet.
+    let chunks = data.split_aligned(cpu::count(), "\n")
+
+    // The closure must be `sync`, and `fold_chunk` is - so this compiles. Had
+    // we tried to log to a file inside the fold, the compiler would have
+    // rejected it here rather than letting it silently serialise the workers.
+    let partials = chunks.par_iter()
+        .map fn: fold_chunk(a)
+        .collect()
+
+    // Merge sequentially: a billion rows collapse to a few thousand stations,
+    // so this costs nothing and needs no locking.
+    let mut totals = HashMap::new()
+    for partial in partials {
+        for (name, stats) in partial {
+            totals.entry(name)
+                .and_modify fn: a.merge(&stats)
+                .or_insert(stats)
+        }
+    }
+
+    // [G5] The output must be sorted by station name; no ordered iteration over
+    // a HashMap is specified.
+    let mut names = totals.keys().collect()
+    names.sort()
+
+    let body = names
+        .map fn: {
+            let s = totals[a]
+            "{a}={s.min / 10.0}/{s.mean()}/{s.max / 10.0}"
+        }
+        .join(", ")
+
+    println("{{body}}")
+}

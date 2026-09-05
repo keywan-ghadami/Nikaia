@@ -1,0 +1,106 @@
+// examples/fortunes.nika
+//
+// The TechEmpower "fortunes" benchmark, in Nikaia 0.0.7.
+//
+// Per request: read every row from a `fortune` table, add one row in memory,
+// sort by message, render an HTML table. It is the most interesting of the
+// TechEmpower tests because it touches a database, does server-side templating,
+// and requires correct HTML escaping - all on the hot path.
+//
+// For Nikaia it is the end-to-end test of the 0.0.7 DSL protocol: one handler
+// using *both* binding modes from ADR-007 D4 - deferred parameters for SQL,
+// immediate capture for the template.
+//
+// Build:  nikaia build --profile=lite --release
+//
+// NOTE: this does not compile yet - see examples/README.md. Gaps it depends on
+// are marked [G6]..[G7] and listed there.
+
+use std::http
+use std::db::postgres
+use std::html
+
+// ---------------------------------------------------------------------------
+// 1. Data
+// ---------------------------------------------------------------------------
+
+pub struct Fortune {
+    id: i32,
+    message: String,
+}
+
+// ---------------------------------------------------------------------------
+// 2. The template, as a DSL
+// ---------------------------------------------------------------------------
+
+// The `html` grammar uses *immediate capture* (`meta::capture`): `:rows` is
+// resolved from the enclosing scope at compile time, like an assembly operand
+// and unlike a SQL placeholder. The template is fixed at the call site; there
+// is nothing to reuse it over, so baking the binding in is correct here.
+//
+// [G7] Escaping must be part of this grammar's contract rather than the
+// caller's discipline. A template DSL that lets an un-escaped value through is
+// an XSS hole with extra steps - and the compiler is the only place that can
+// enforce it for every hole, every time.
+fn render(rows: List[Fortune]) -> String {
+    return dsl html {
+        <!DOCTYPE html>
+        <html>
+        <head><title>Fortunes</title></head>
+        <body>
+          <table>
+            <tr><th>id</th><th>message</th></tr>
+            <for row in :rows>
+              <tr><td>{row.id}</td><td>{row.message}</td></tr>
+            </for>
+          </table>
+        </body>
+        </html>
+    } eod
+}
+
+// ---------------------------------------------------------------------------
+// 3. The handler
+// ---------------------------------------------------------------------------
+
+fn fortunes(db: Shared[postgres::Connection]) -> String throws {
+
+    // A *deferred* parameter DSL, even though this query takes none today.
+    // The statement is parsed once at compile time; the compiler checks the
+    // column names against the schema and hands back a typed result. Writing it
+    // as a string would move both checks to the first production request.
+    let all = dsl postgres {
+        SELECT id, message FROM fortune
+    } eod
+
+    // Implicit async (Part II, 11.1): this is a network round-trip, written in
+    // direct style. No `async` on the signature, no `await` at the call. In the
+    // Lite profile the event loop picks up another connection while this one
+    // waits - which is the entire point of the benchmark.
+    let mut rows = all.fetch(db)?
+
+    // The benchmark requires one extra row added in memory, not in the query.
+    rows.push(Fortune(id: 0, message: "Additional fortune added at request time."))
+
+    // `sort_by` is @immediate (Part I, 5.4), so the comparison borrows `rows`
+    // rather than moving it - no clone needed.
+    rows.sort_by fn: a.message.cmp(b.message)
+
+    return render(rows)
+}
+
+fn main() throws {
+    // One connection per worker. In the Lite profile this is a single-threaded
+    // event loop, so `Shared` costs a non-atomic refcount; the same source
+    // compiled with --profile=advanced gets the atomic one, and nothing above
+    // this line changes (Part II, 12.2).
+    let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")?
+
+    // [G6] The spec's handler signature (17.1) takes no request argument, so a
+    // handler cannot read a query parameter or set a status code. `fortunes`
+    // does not need either, which is exactly why this gap went unnoticed - the
+    // other six TechEmpower tests do need it.
+    http::Server::new()
+        .route("/fortunes") fn: fortunes(db)
+        .listen(":8080")
+}
