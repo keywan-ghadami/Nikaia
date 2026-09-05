@@ -266,7 +266,8 @@ Reine Erweiterung, kein Konflikt.
 
 `winnow-grammar` ist ein **eigenes Repository**
 ([`keywan-ghadami/winnow-grammar`](https://github.com/keywan-ghadami/winnow-grammar));
-`docs/winnow-grammar/` in diesem Repo ist nur eine Notizkopie und inzwischen veraltet.
+Eine Notizkopie davon lag als `docs/winnow-grammar/` in diesem Repo, war veraltet und wurde
+entfernt — fremde Projektdokumentation gehört nicht hierher.
 Der Abgleich gegen den echten Stand ergibt die wichtigste Konvergenz des ganzen Reviews:
 
 | RFC-0.0.6-Vorschlag (Jan. 2026) | Stand in `winnow-grammar` (Sep. 2026) |
