@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core & Nikaia Lite**
-**Version:** 0.0.6 (Draft)
+**Version:** 0.0.7 (Draft)
 **Date:** September 5, 2026
 
 ---
@@ -397,6 +397,7 @@ let formatted = names.map fn: prefix + a
 
 // 'prefix' is still valid here because it was only borrowed.
 println(prefix)
+```
 
 #### B. Detached Context (@detached)
 ​If a function stores the callback, executes it later, or sends it to another thread/task, it is a Detached Context.

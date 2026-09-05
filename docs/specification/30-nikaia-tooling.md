@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.6 (Draft)
+**Version:** 0.0.7 (Draft)
 **Date:** September 5, 2026
 
 ---
@@ -301,103 +301,90 @@ The **Lite Profile** possesses a natural affinity for WebAssembly. Since WASM (i
 Compiling with `nikaia build --profile=lite --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
 
 **JavaScript Interoperability (`dsl js`)**
-Instead of trying to map the entire DOM to Nikaia structs, Nikaia allows embedding raw JavaScript using the `dsl` keyword. Variables can be injected safely.
+Instead of trying to map the entire DOM to Nikaia structs, Nikaia embeds raw JavaScript using the `dsl` keyword (Part II, 10.5).
 
 ```nika
 // main.nika (Lite Profile)
 fn main() {
     let message = "Hello from Nikaia!"
 
-    // The 'js' macro takes raw JavaScript code.
-    // Nikaia variables are injected where '{...}' is used.
-    // Note: This relies on the variable injection, not function arguments.
-    dsl js {
+    // The 'js' grammar parses the code. ':msg' is a parameter hole -
+    // a deferred parameter, not string interpolation, so the value cannot
+    // be spliced into the source text and change its meaning.
+    let script = dsl js {
         document.querySelector("#submit").addEventListener("click", () => {
-            window.alert({message});
+            window.alert(:msg);
         });
-    }
+    } eod
+
+    // Subject: none ; Config: msg
+    script.exec(; msg: message)
 }
 ```
 
 ---
 
-## Chapter 16: Inline Assembly
+## Chapter 16: Hardware Instructions (via DSL)
 
-For low-level control (kernels, drivers, SIMD), Nikaia provides `unsafe asm`.
-To ensure robust parsing and clear separation of concerns, the assembly construct is divided into two distinct blocks: the **Binding Header** and the **Assembly Body**.
+Hardware instructions are **not** part of the Nikaia core language. They are provided by
+library-defined DSLs — `dsl backend::x86`, `dsl backend::arm64`, `dsl backend::wasm` — each
+of which validates its own operands.
 
-### 16.1. Syntax Structure
-```nika
-unsafe asm {
-    // [Block 1] The Binding Header
-    // Maps Nikaia variables to internal assembly aliases.
-    // Syntax: $alias = direction(location) variable
-    $lhs = in(reg) a,
-    $rhs = in(mem) b,
-    $dst = out(reg) result
-} {
-    // [Block 2] The Assembly Body
-    // Contains raw assembly instructions.
-    // The compiler treats this as a template string and only replaces aliases ($name).
-    mov $dst, $lhs
-    add $dst, $rhs
-}
-```
+### 16.1. Why not a core construct
 
-### 16.2. Directions and Modifiers
-The first part of the constraint defines how data flows between Nikaia and the CPU.
+Earlier drafts (up to 0.0.5) specified an `unsafe asm` block with register constraints
+(`in(reg)`, `out(reg)`, `clobber("cc")`) built into the language. That construct assumed the
+target has registers.
 
-* `in(...)`: Read-only input. The variable is copied into the location before execution.
-* `out(...)`: Write-only output. The result in the location is copied to the variable after execution.
-* `inout(...)`: Read-write. Initialized with the variable's value, and the result is written back.
-* `lateout(...)`: Optimization hint. Defines an output that is written *after* all inputs are consumed. Allows the compiler to reuse an input register for this output (saving registers).
+Nikaia's Lite profile targets **WebAssembly** (Chapter 15), and WASM is a *stack machine*:
+there are no registers to constrain, and no meaning to give `in(reg)`. A core construct that
+cannot be given meaning on a first-class target is a defect in the core, not in the target.
+Moving instructions into DSLs lets each backend define exactly the operand model its hardware
+has. See [ADR-007](adr/adr-007.md), D6.
 
-### 16.3. Location Constraints
-The second part defines where the value must be placed (Register vs. Memory).
+### 16.2. Usage
 
-| Constraint | Description | Example Architecture Mapping |
-| :--- | :--- | :--- |
-| `reg` | Any general-purpose integer register | x86: `rax`, `rbx`, ... |
-| `freg` | Floating-point / SIMD register | x86: `xmm0` - `xmm15` |
-| `mem` | A memory operand (address) | Passed as `[ptr]` or specific syntax |
-| `imm` | An immediate constant value | Used for instructions expecting literals |
-| `reg_or_mem` | Flexible: Compiler chooses best fit | Useful for CISC (x86) instructions like `add` |
-
-### 16.4. Example: x86_64 Arithmetic
-This example demonstrates mixing memory and register operands safely.
+Assembly uses the standard `dsl` syntax. Unlike SQL — which builds a reusable statement and
+takes *deferred* parameters — the assembly DSL uses **immediate capture** (`meta::capture`,
+Part II 10.5): it binds variables from the current scope and injects machine code at the call
+site. That is the correct choice here, because `val` means *this* `val`, right here.
 
 ```nika
+use std::backend::x86
+
 fn fast_add(val: i64, ptr: &i64) -> i64 {
-    let result: i64
-    
-    unsafe asm {
-        // We read 'val' into a register
-        $v = in(reg) val,
-        // We can read 'ptr' directly from memory (efficient on x86)
-        $p = in(mem) ptr,
-        // We write the result to a register
+    let mut result: i64 = 0
+
+    // The grammar parses the bindings and resolves 'val', 'ptr' and 'result'
+    // from the enclosing scope.
+    dsl x86 {
+        // 1. Binding header - syntax defined by the x86 grammar
+        $v = in(reg) val
+        $p = in(mem) ptr
         $r = out(reg) result
-    } {
-        // AT&T Syntax example
-        mov $v, $r
-        add $p, $r
-    }
-    
+
+        // 2. Instructions
+        mov $r, $v
+        add $r, $p
+    } eod
+
     return result
 }
 ```
 
-### 16.5. Clobbering (Side Effects)
-If your assembly modifies registers that are not defined as outputs (e.g., flags or specific hardcoded registers), you must declare them in the header using the `clobber` keyword.
+The constraint vocabulary (`reg`, `freg`, `mem`, `imm`, clobber declarations) now belongs to
+the `x86` grammar and is documented with it, not with the language. A stack-machine backend
+declares a different vocabulary — `dsl wasm` has locals and a value stack, not registers.
 
-```nika
-unsafe asm {
-    $src = in(reg) input,
-    clobber("cc") // "cc" tells the compiler: Condition Codes (Flags) are modified
-} {
-    test $src, $src
-}
-```
+### 16.3. Consequences
+
+*   **Portability:** the language core makes no assumption about the target's execution model.
+*   **Validation:** the DSL parser checks instruction operands at compile time, and reports
+    errors through the same diagnostics contract as the rest of the compiler (Appendix C).
+*   **Optimization:** a backend DSL can emit target-specific or SIMD instructions without any
+    change to the language.
+*   **`unsafe`:** this was the keyword's only specified use. It remains **reserved** for future
+    FFI work rather than being removed from the grammar.
 
 ---
 
@@ -462,7 +449,7 @@ fn query_data() {
     // At runtime, it performs an async round-trip to the sidecar.
     let active_users = dsl sql db {
         SELECT * FROM users WHERE last_login > 0
-    }
+    } eod
 }
 ```
 

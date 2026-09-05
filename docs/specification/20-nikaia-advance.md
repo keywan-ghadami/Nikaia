@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.6 (Draft)
+**Version:** 0.0.7 (Draft)
 **Date:** September 5, 2026
 
 ---
@@ -9,46 +9,56 @@
 
 Metaprogramming allows developers to extend the language itself. In Nikaia, this is not done with text replacements (like in C) but by manipulating the structure of the code (the **AST** or Abstract Syntax Tree) in a safe way.
 
-### 10.1. Parsing with `grammar`
-Before you can manipulate code, you often need to read custom data formats. The `grammar` tool allows you to write parsers easily.
+### 10.1. Parsing with `grammar` (Scannerless)
+Before you can manipulate code, you often need to read custom data formats. The `grammar` tool lets you write parsers declaratively.
+
+Nikaia grammars are **scannerless**: there is no separate tokenizer stage. A grammar consumes the raw character stream directly. This is what makes it possible to embed foreign languages (10.5) — a global lexer could never tokenize SQL, assembly and Nikaia at once, because they disagree about what a `}` or a `'` means.
+
+**Key features:**
+*   **Commit Points (`=>`):** control backtracking. Once the parser passes a commit point, it stays in this branch — a later failure is an *error*, not a reason to silently try the next alternative.
+*   **Lexical vs. syntactic rules:** rule names starting with an uppercase letter are **lexical** (no whitespace between parts); lowercase rules are **syntactic** (whitespace allowed). This replaces the lexer/parser split.
+*   **Typed actions (`-> { … }`):** each rule builds your own types directly.
 
 ```nika
-// Defines a parser that turns strings like "#FF0000" into a Color struct
-grammar ColorParser {
-    option recursion_limit = 50;
+grammar Json {
+    pub rule value -> Value =
+        o:object -> { Value::Object(o) }
+      | a:array  -> { Value::Array(a) }
+      | s:string -> { Value::String(s) }
 
-    pub rule entry -> Color = {
-        "#" r:hex() g:hex() b:hex()
-    } -> {
-        Color { r, g, b }
-    }
-    
-    rule hex -> u8 = s:regex("[0-9A-Fa-f]{2}") -> { 
-        u8::from_str_radix(s, 16)? 
-    }
+    // Commit point: once '{' matched, members and '}' MUST follow, or we error.
+    rule object -> Object
+        = "{" => members:list(pair, ",") "}"
+        -> { Object { members } }
+
+    rule pair -> Pair = key:string ":" => val:value -> { Pair { key, val } }
+
+    // Lexical rule (uppercase): no whitespace inside a hex byte.
+    rule HEX -> u8 = d:hex_digit{2} -> { u8::from_str_radix(d, 16)? }
 }
 ```
 
+> **Note:** Auto-generated AST types (structs for labelled sequences, enums for alternatives, when no `-> { … }` is given) are a planned convenience, not current behaviour. Action blocks are required today. See [ADR-007](adr/adr-007.md), D7.
+
 ### 10.2. Dual-Mode Parsing (Static vs. Dynamic)
-One of Nikaia's most powerful features is that a grammar defined once can be used in two completely different ways.
+A grammar defined once can be used at compile time and at runtime — **with the same syntax**. Whether parsing happens during the build or while the program runs follows from the context, not from a different spelling.
 
 **A. Static Embedding (Compile-Time)**
-You can use a parser to read files *during the build process*. If the file contains a syntax error, the compilation fails. The result is embedded into the final binary as a constant, with zero runtime cost.
+Used in a `const`, the parser runs *during the build*. If the input is invalid, compilation fails. The result is embedded in the binary with zero runtime cost.
 
 ```nika
-// Reads "theme.conf" at compile time.
-// The compiler executes ColorParser. If the file is invalid, the build stops.
-const THEME: Color = from "theme.conf" with ColorParser
+// The compiler runs the Json grammar at build time.
+// If "config.json" is malformed, the build stops.
+const CONFIG: Json::Value = dsl Json from "config.json"
 ```
 
 **B. Dynamic Parsing (Runtime)**
-You can use the exact same parser to process user input or network data while the program is running.
+The exact same grammar processes user input or network data while the program runs.
 
 ```nika
-fn update_color(input: String) throws ParseError {
-    // The ::parse method is automatically generated for every grammar.
-    let color = ColorParser::parse(input)?
-    println("New Color: {color.r}, {color.g}, {color.b}")
+fn parse_input(input: String) throws ParseError {
+    let data = dsl Json from input
+    println("Parsed: {data}")
 }
 ```
 
@@ -121,53 +131,90 @@ fn main() {
 ```
 
 ### 10.5. Using DSLs (The `dsl` Keyword)
-While `quote` allows generating code, the `dsl` keyword allows developers to embed *foreign syntax* directly into Nikaia code. This is useful for SQL, HTML, or Regex.
+While `quote` generates *Nikaia* code, the `dsl` keyword embeds **foreign syntax** directly into a Nikaia file — SQL, HTML, regex, assembly.
 
-The syntax `dsl <macro_name> <context> { ... }` passes the raw tokens inside the block to the macro, allowing completely custom syntax.
+**The protocol:**
+
+1.  **Explicit termination.** A DSL block ends with `} eod` ("end of DSL"). The core parser cannot find the end by counting braces — the body is foreign syntax where `}` may be a string character or absent entirely. Having scanned ahead for the marker, the compiler can skip the body and **parse the rest of the file in parallel** while the DSL parser works.
+2.  **Scannerless delegation.** The core hands the isolated byte slice to the grammar. There is no global lexer to disagree with.
+3.  **Hybrid binding.** DSL authors choose per hole between a compile-time capture and a runtime parameter (see below).
+4.  **Subject `;` Config.** Runtime parameters are *configuration*, so they are passed as named arguments after the `;` — the rule from Part I, 5.1, without exception.
+
+**Hybrid Binding: immediate vs. deferred**
+
+| Intrinsic | When it resolves | Use for |
+| :--- | :--- | :--- |
+| `meta::capture(id)` | compile time, from the surrounding scope | assembly operands, table names — anything meaning *this variable, here* |
+| `meta::parameter(name, type)` | runtime, as a named argument | SQL placeholders — anything the statement should be *reusable* over |
+
+Both are needed. Capturing a variable is exactly right for assembly. It is exactly wrong for a SQL prepared statement: baking the values into the statement definition destroys the reuse that makes preparing it worthwhile.
+
+> **A recurring idea.** This immediate/deferred split is the same distinction the language already draws for lambda capture (`@immediate` borrows, `@detached` moves — Part I, 5.4) and for resource teardown (`task::scope` finishes now, a cancelled cleanup is parked — [ADR-006](adr/adr-006.md), D3). When you meet it a fourth time, it will mean the same thing: *does this resolve here, or later?*
 
 **Example: Embedding SQL**
-Instead of writing SQL as a string (which is prone to typos), we verify it at compile time.
+Instead of writing SQL as a string (where a typo survives until runtime), it is verified at compile time.
 
 ```nika
-use nikaia_sql::{Database, sql}
+use nikaia_sql::{Database, mysql}
 
 fn query_users(db: Shared[Database], min_age: i32) {
-    // The code inside { ... } is NOT Nikaia syntax.
-    // It is raw SQL, processed by the 'sql' macro.
-    // The macro validates table names and column types during compilation.
-    let users = dsl sql db {
-        SELECT name, email 
-        FROM users 
-        WHERE age >= min_age
+    // 1. Define the statement.
+    // The compiler parses this SQL, sees ':target_age' (a parameter hole
+    // declared by the grammar) and generates a specialized shadow type.
+    let query = dsl mysql {
+        SELECT name, email
+        FROM users
+        WHERE age >= :target_age
+    } eod
+
+    // 2. Execute with typed parameters.
+    // Subject: none (method on self) ; Config: target_age
+    // Omitting 'target_age' is a compile error - the compiler knows the
+    // statement needs it, because it parsed the statement.
+    let users = query.execute(; target_age: min_age)
+}
+```
+
+Library authors accept those parameters with the **typed spread**:
+
+```nika
+impl SqlParser {
+    // Subject: self (the parsed statement) ; Config: the DSL's parameters
+    pub fn execute(self; ...args: Self::dsl) -> Result[Row] {
+        return self.conn.query(self.sql, args.values())
     }
 }
 ```
 
+`Self::dsl` is the constraint proving these named arguments belong to this grammar. The compiler monomorphizes `args` per DSL string and allocates it on the stack — no heap traffic per query.
+
 ### 10.6. Advanced Parser Features
 Nikaia grammars are designed for high-performance tooling.
 
-**Zero-Copy Parsing (Tethered Slices)**
-Traditional parsers often copy text into new `String` objects for every identifier found. Nikaia avoids this.
-The parser yields **Slices** into the original text buffer — no text is ever copied. Because tokens are typically *stored* (in an AST, a symbol table, a list), they follow the "transient = borrow, stored = tether" rule (Part I, Chapter 6.6): each stored token is automatically **tethered** to the source buffer via a `Shared` handle plus a position.
+**Zero-Copy Parsing**
+Traditional parsers copy text into a new `String` for every identifier they find. Nikaia never copies the source text. Two mechanisms share that job, and the grammar picks per rule:
 
-The guarantee is stated positively: **the source text cannot be freed while any token still points into it.** You never manage this relationship, and you never see an error about it — the buffer's lifetime simply follows the tokens. The cost is one shared handle for the whole buffer (not per token), which is negligible next to the avoided string copies.
+*Identifiers and keywords → interned symbols.* Identifiers are short, repeat constantly, and are compared far more often than they are read. The parser **interns** them: each distinct spelling is stored once in a shared table and the parser yields a small `Symbol` handle. Comparing two identifiers becomes an integer comparison, and a file with a thousand uses of `count` stores the text once.
 
-> **Design Note (implementation):** This is the same architecture the async ecosystem converged on for zero-copy I/O (`bytes::Bytes` in Rust: a reference-counted buffer plus offsets). A future optimization may replace the reference count with compiler-verified self-referential storage — the driver controls all access patterns and could prove the invariants itself — but that is an internal optimization avenue, not a semantic change. See [ADR-005](adr/adr-005.md), D4.
+*Bulk text (string literals, comments, doc text, DSL bodies) → tethered slices.* This text is long, rarely repeated, and rarely compared, so interning would only waste table space. The parser yields **slices** into the original buffer. Because tokens are typically *stored* (in an AST, a symbol table, a list), they follow the "transient = borrow, stored = tether" rule (Part I, Chapter 6.6): each stored slice is automatically **tethered** to the source buffer via a `Shared` handle plus a position.
+
+For tethered slices the guarantee is stated positively: **the source text cannot be freed while any token still points into it.** You never manage this relationship, and you never see an error about it — the buffer's lifetime simply follows the tokens. The cost is one shared handle for the whole buffer (not per token), which is negligible next to the avoided string copies.
+
+> **Design Note (implementation):** Tethering is the architecture the async ecosystem converged on for zero-copy I/O (`bytes::Bytes` in Rust: a reference-counted buffer plus offsets); interning is what compiler front-ends converged on for symbol tables. A future optimization may replace the tether's reference count with compiler-verified self-referential storage — the driver controls all access patterns and could prove the invariants itself — but that is an internal optimization avenue, not a semantic change. Because grammars compile to direct byte-stream consumers, a parser may also use SIMD matching specialized to its own syntax. See [ADR-005](adr/adr-005.md) D4 and [ADR-007](adr/adr-007.md) §4.
+
+> **Correction (0.0.7):** Drafts up to 0.0.6 justified zero-copy parsing by claiming "the borrow checker ensures you cannot use a token after the original text has been deleted." That has it backwards — the borrow checker would *reject* such a program, which is the problem tethering exists to solve, not evidence that it is already handled.
 
 **Fault Tolerance (Recovery)**
-When building tools like Language Servers (LSP), the parser must not crash on the first error. It needs to recover and continue parsing the rest of the file.
-Nikaia supports `recover` blocks to define synchronization points.
+When building tools like Language Servers (LSP), the parser must not crash on the first error. It needs to recover and continue parsing the rest of the file. A grammar declares **synchronization points**: if a rule fails, the parser discards input until it reaches the sync token, then resumes.
 
 ```nika
-rule block -> Vec[Stmt] = {
-    "{" statements:stmt()* "}"
-}
-// If parsing fails inside the block, the parser skips tokens 
-// until it finds a closing brace '}', then resumes.
-recover { "}" }
+// If parsing fails inside the block, skip ahead to the closing brace
+// and carry on - the errors after this point are still worth reporting.
+rule block -> Vec[Stmt] =
+    "{" => statements:recover(stmt, "}")* "}"
 ```
 
----
+Note the commit point (`=>`): once the opening brace matched, this *is* a block, so a failure inside it is reported rather than causing the whole alternative to be abandoned. Commit points and recovery work together — the first decides where errors are worth reporting, the second decides where to resume.
 
 ## Chapter 11: Nikaia Advanced Profile (The Compute Engine)
 
@@ -210,7 +257,7 @@ fn main() {
     // Uniform API: Works in Lite and Advanced
     let result = handle.await catch { return }
 }
-
+```
 
 ---
 

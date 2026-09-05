@@ -185,7 +185,7 @@ Appendix B (Capture-Attribute).
 
 **Ein Nebenbefund:** `adr-001.md` wurde nach dem 0.0.5-Merge auf `syn-grammar` umgeschrieben
 (Zeile 79 ff.), `Cargo.toml` auf `main` nutzt aber inzwischen **`winnow-grammar`**.
-ADR-001 ist gegenüber der tatsächlichen Toolchain veraltet.
+ADR-001 war gegenüber der tatsächlichen Toolchain veraltet — in 0.0.7 korrigiert (Abschnitt 8).
 
 ---
 
@@ -258,22 +258,80 @@ Reine Erweiterung, kein Konflikt.
 | K3 | **10.6 textueller Merge-Konflikt** — beide Branches haben denselben Abschnitt neu geschrieben. | mittel |
 | K4 | **RFC 0.0.6 ist gelöscht** — die Begründungen („warum scannerless", „warum Hybrid Binding") existieren nur noch in der History. Das Repo nutzt inzwischen ADRs; ein ADR-007 wäre der richtige Ort. | mittel |
 | K5 | **`dsl sql db { }` ohne `eod`** (Kap. 17, Zeile 390) und `dsl js` mit `{message}`-Interpolation stehen wieder auf `main`. | niedrig |
-| K6 | **ADR-001 veraltet** — beschreibt `syn-grammar`, `Cargo.toml` nutzt `winnow-grammar`. | niedrig |
+| K6 | ~~**ADR-001 veraltet** — beschreibt `syn-grammar`, `Cargo.toml` nutzt `winnow-grammar`.~~ **erledigt in 0.0.7** | niedrig |
 
 ---
 
-## 7. Empfehlung
+## 7. Nachtrag: `winnow-grammar` hat Teile davon bereits gebaut
 
-1. **K1 klären, bevor irgendwas gemerged wird.** Entweder wird die Ziel-Spec-Version 0.0.6 als
-   *Vereinigung* beider Stränge definiert, oder die Concepts-Arbeit wird 0.0.7 und v0.0.6 wird
-   zuerst wiederhergestellt.
-2. **`c6ff1fa` gezielt rückgängig machen** (nur die drei Spec-Dateien), dann den Concepts-Branch
-   darauf rebasen. So kommen die verlorenen Kapitel 10.1/10.2/10.5/16 zurück.
-3. **10.6 manuell zusammenführen:** Tethered-Slices-Semantik (Concepts) + scannerless
-   Byte-Stream-Rahmung (v0.0.6).
-4. **ADR-007 „Scannerless Grammar Protocol & Hybrid Binding"** aus dem RFC-Text schreiben —
-   inklusive der drei Ablehnungsgründe gegen 0.0.5 (Register-Kopplung, Lexer-Grenzen,
-   Stale Closures) und der verworfenen Alternativen.
-5. **Immediate/Deferred als Querschnittsprinzip benennen** (Abschnitt 5.2) und aus Kap. 5.4
-   heraus auf Bindings und Cleanup verlinken.
-6. **ADR-001 auf `winnow-grammar` aktualisieren.**
+`winnow-grammar` ist ein **eigenes Repository**
+([`keywan-ghadami/winnow-grammar`](https://github.com/keywan-ghadami/winnow-grammar));
+`docs/winnow-grammar/` in diesem Repo ist nur eine Notizkopie und inzwischen veraltet.
+Der Abgleich gegen den echten Stand ergibt die wichtigste Konvergenz des ganzen Reviews:
+
+| RFC-0.0.6-Vorschlag (Jan. 2026) | Stand in `winnow-grammar` (Sep. 2026) |
+| :--- | :--- |
+| Scannerless, kein globaler Lexer | **umgesetzt** — Eingabe ist `&str`/`&[u8]`; lexikalische (GROSS) vs. syntaktische (klein) Regeln ersetzen die Lexer/Parser-Trennung |
+| Commit Points, geschrieben `=>` | **umgesetzt** — der Cut-Operator, gleiches Symbol, gleiche Semantik |
+| Recovery / Synchronisationspunkte | **umgesetzt** — `recover(rule, sync)` |
+| Zero-Copy | **anders umgesetzt** — String-Interner (`Symbol`) |
+| Auto-AST | **nicht vorhanden** — Action-Blöcke sind Pflicht |
+| Regex-Terminals mit DFA | **nicht vorhanden** — feste Built-in-Terminals |
+
+Beide Wege sind unabhängig voneinander bei derselben Architektur gelandet — der RFC aus der
+Sprachperspektive, `winnow-grammar` aus der Werkzeugperspektive (der `syn`-TokenStream konnte
+Nikaia-Syntax schlicht nicht abbilden). Dass sogar dasselbe Symbol `=>` gewählt wurde, ist
+Zufall, aber ein aussagekräftiger.
+
+**Zero-Copy ist damit dreifach beantwortet** — und die RFC-Antwort ist die einzige falsche:
+
+| Quelle | Mechanismus | Bewertung |
+| :--- | :--- | :--- |
+| RFC 0.0.6 | Slices; „der Borrow-Checker stellt sicher, dass du ein Token nicht nach Löschen des Textes nutzt" | **falsch herum** |
+| ADR-005 D4 | Tethered Slices (`Shared`-Handle + Offset) | richtig für Fließtext |
+| `winnow-grammar` | Interner: Identifier werden `Symbol` in gemeinsamer Tabelle | richtig für Identifier |
+
+Die beiden richtigen Antworten sind komplementär, nicht konkurrierend — Identifier interniert,
+Fließtext getethert. So steht es jetzt in 10.6.
+
+**Zwei Nebenbefunde am Code:**
+
+* `Cargo.lock` pinnt `winnow-grammar` auf Commit `43aae1f3`, HEAD ist `b03a1f0`. Dazwischen
+  liegen Breaking Changes: eigene Diagnostics-Engine (`ParseError` statt
+  `winnow::error::ContextError`), `winnow` 0.7 statt 0.6 (Nikaia pinnt 0.6), Paketumbenennung
+  `winnow-grammar-macro` → `-macros`, und `ident` liefert jetzt `Symbol` statt `String`
+  (`crates/nikaia/src/parser/mod.rs` ruft darauf `Ident::new(&name, …)`).
+  Ein Update des Pins ist keine reine Versionserhöhung.
+* Der README bewarb seit `db7ca99` „Spec 0.0.6 … and Scannerless Grammar Protocol" — nach dem
+  Revert zeigte diese Zeile ins Leere. Mit 0.0.7 stimmt sie wieder.
+
+---
+
+## 8. Was daraus geworden ist
+
+Entscheidung: **nicht zurücksetzen.** Die Vorschläge wurden einzeln neu bewertet und als
+**0.0.7** eingearbeitet — mit dem Vorteil, dass der Parser-Backend inzwischen existiert und
+mehrere Punkte damit nicht mehr spekulativ sind.
+
+| Verlorene Idee | Entscheidung | Ort |
+| :--- | :--- | :--- |
+| Scannerless Parsing | übernommen — jetzt Sprachgarantie, durch Implementierung bestätigt | ADR-007 D1, Part II 10.1 |
+| `} eod` | übernommen, mit dokumentierter Grenze (Body darf `} eod` nicht enthalten) | ADR-007 D2, Part II 10.5 |
+| Commit Points `=>` | übernommen — existiert bereits als Cut-Operator | Part II 10.1, 10.7 |
+| `dsl` als Ausdruck | übernommen — ersetzt `from … with …` und `P::parse()` | ADR-007 D3, Part II 10.2 |
+| Hybrid Binding | übernommen — das stärkste Argument des RFC | ADR-007 D4, Part II 10.5 |
+| Shadow Types + `...args` | übernommen, aber als riskantester Punkt gekennzeichnet | ADR-007 D5 |
+| `unsafe asm` raus aus dem Kern | übernommen — WASM-Argument ist entscheidend | ADR-007 D6, Part III 16 |
+| `dsl js` / `dsl sql` mit `eod` | übernommen | Part III 15, 17 |
+| Auto-AST | **zurückgestellt** — Backend kann es nicht; als Ziel markiert, nicht als Verhalten | ADR-007 D7 |
+| Regex-Terminals | **nicht übernommen** — Absicht erfüllt durch Built-in-Terminals | ADR-007 D7 |
+| Context-Aware SIMD | als nicht-normative Optimierungsnotiz behalten | Part II 10.6 |
+| Zero-Copy-Formulierung des RFC | **korrigiert** statt übernommen | ADR-007 §4, Part II 10.6 |
+
+Offen geblieben (K1 aus Abschnitt 6 ist damit gelöst — 0.0.6 bleibt beim Borrow-/Cleanup-Teil,
+0.0.7 ist die Grammatik-Hälfte):
+
+* Der `winnow-grammar`-Pin und `winnow 0.6 → 0.7` müssen zusammen angehoben werden; der Parser
+  braucht dabei Anpassung an `Symbol` und `ParseError`.
+* Zwei Upstream-Feature-Requests: Auto-AST, und `recover`, das Diagnosen sammelt statt den
+  übersprungenen Text zu verwerfen (steht dort schon im `TODO.md`).

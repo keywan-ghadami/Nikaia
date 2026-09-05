@@ -12,7 +12,7 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  ![Version](https://img.shields.io/badge/version-0.0.6-blue.svg)
+  ![Version](https://img.shields.io/badge/version-0.0.7-blue.svg)
   ![Status](https://img.shields.io/badge/status-experimental-orange.svg)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)
 </div>
@@ -95,9 +95,11 @@ fn main() {
 
 ## 🛠 Roadmap to 0.1.0
 
-This is currently a **Specification (Version 0.0.6)**. We are in the bootstrap phase.
+This is currently a **Specification (Version 0.0.7)**. We are in the bootstrap phase.
 
-- [x] **Spec 0.0.6:** Definition of Syntax, Profiles, Unified Types, and Scannerless Grammar Protocol.
+- [x] **Spec 0.0.5:** Definition of Syntax, Profiles, and Unified Types.
+- [x] **Spec 0.0.6:** Borrow model without lifetime annotations; resource cleanup under implicit async.
+- [x] **Spec 0.0.7:** Scannerless Grammar Protocol, DSLs as expressions, hardware instructions as libraries.
 - [x] **Manifesto:** Defining the soul and philosophy of the project.
 - [ ] **Bootstrap Compiler:** A transpiler written in Rust (Stage 0).
 - [ ] **Runtime Integration:** Binding `tokio` (Current-Thread & Thread-Pool).
