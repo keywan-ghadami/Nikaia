@@ -133,11 +133,29 @@ stays a plain reference" into a compile-time assertion for hot structs — used 
 `Reading`. Under those rules the program allocates nothing per row and does no refcount work in
 the parallel section.
 
-### Open
-
 **G4 — chunking a buffer for `par_iter`.** `par_iter` is specified over a collection.
 Splitting a buffer at line boundaries into one chunk per core, with each chunk a slice of the
-original, has no spelled-out form.
+original, had no spelled-out form.
+
+[ADR-009](../docs/specification/adr/adr-009.md) closes it by **dissolving** it rather than
+specifying `split_aligned`. A chunking helper asks the user to restate as an argument what the
+grammar already says — that a measurement ends at `"\n"` — and then to hand-write the
+split/parallel/merge pipeline that follows from it. Instead the grammar carries both halves:
+`@frame` marks a rule as a resynchronization unit (and the compiler *verifies* that the boundary
+cannot occur inside a frame, so CSV-with-quoted-newlines is rejected rather than silently
+miscounted), and `par_fold(rule, init, step, merge)` supplies the monoid. The blind split, the
+seam repair, the per-core accumulators and the reduce are then generated; `1brc.nika`'s `main`
+is down to `let totals = dsl Measurements from data`.
+
+The same ADR settles what the compiler may then do with the format the grammar states:
+word-at-a-time scanning as a specified complexity rather than a hoped-for optimization
+(portable SWAR baseline, SIMD only as a target-gated layer, so Lite and `wasm32` keep the same
+story), hashing a view from its first bytes while equality stays full-content, and skipping the
+unmap of a large read-only mapping at process exit. Parallelism stays opt-in: a plain `fold` is
+never parallelised behind your back, because a merge over floats would make the answer depend on
+the core count.
+
+### Open
 
 **G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name; neither
 an ordered map nor `sort_by` over map entries is specified.
@@ -151,3 +169,15 @@ unnoticed — the other six TechEmpower tests do need it.
 un-escaped value through a hole is an XSS hole with extra steps, and the compiler is the only
 place that can enforce it for every hole, every time. That makes it a property of the grammar
 (ADR-007, D4/D5), not of the caller's discipline.
+
+**G8 — the default hasher.** Raised by ADR-009 and deliberately not decided there. Rust's
+standard map defaults to a DoS-resistant hash because a server hashing attacker-controlled keys
+is the common case; a compute workload pays for it on every lookup. Nikaia has both profiles in
+one language, so the choice cannot be made per profile without reopening the schism ADR-005 D8c
+closed. Needs its own ADR with the threat model written out.
+
+**G9 — bounded repetition (`digit{1,2}`) in the grammar protocol.** ADR-009 D5: fixed-width
+numeric parsing is only sound where the grammar states the width bound. The pinned backend
+(`winnow-grammar` `f4955bc`) has `*`, `+`, `?`, `count` and `fold` but no `{n,m}` — an upstream
+feature request. Nothing depends on it to *run*; it is the difference between a good temperature
+parse and the reference implementations' one.

@@ -216,6 +216,42 @@ rule block -> Vec[Stmt] =
 
 Note the commit point (`=>`): once the opening brace matched, this *is* a block, so a failure inside it is reported rather than causing the whole alternative to be abandoned. Commit points and recovery work together — the first decides where errors are worth reporting, the second decides where to resume.
 
+### 10.7. Parallel Parsing
+
+A parser that reads a file end to end uses one core. For a multi-gigabyte input that is the whole cost of the program. Nikaia parallelises the *parse itself* — but only when the grammar has said the two things that make it safe.
+
+**First: where may the file be cut?** A rule marked `@frame` declares that it can be found from an arbitrary offset by scanning to the next boundary, with no knowledge of what came before:
+
+```nika
+@frame
+rule measurement -> Reading =
+    name:NAME ";" => temp:TENTHS "\n" -> { Reading { name, temp } }
+```
+
+The boundary is taken from the rule's trailing literal, or given explicitly as `@frame("\n")`.
+
+**This is checked, not believed.** Cutting at the next boundary is only correct if the boundary cannot appear *inside* a frame. The compiler works out which text the rule can consume and rejects the marker when the boundary can occur in the middle — the classic case is CSV with quoted fields, where a newline inside `"…"` would put the cut in the middle of a record. You get an error naming the rule that can swallow the boundary, rather than a wrong total on some inputs and not others.
+
+**Second: how do two halves combine?** The entry rule folds with a **merge**:
+
+```nika
+pub rule file -> Summary =
+    par_fold(measurement, Summary::new, fn(acc, m) { acc.record(m) }, Summary::merge)
+```
+
+`par_fold` is `fold` plus that merge. With both declarations in hand the compiler generates the rest: the file is cut into one piece per core, each piece repairs its own start to the next boundary so that every frame belongs to exactly one worker, each worker folds into its own accumulator with nothing shared, and the accumulators are merged at the end. Nothing about chunks appears in your program:
+
+```nika
+let data = fs::map(path)
+let totals = dsl Measurements from data
+```
+
+**Why you have to ask for it.** The compiler will not turn a `fold` into a `par_fold` on its own, even when it looks associative. Adding `f64` is not associative, so the number of cores would quietly change the answer. Writing `par_fold` is you saying that a different chunk count is the same result to you — for an aggregation over integers, as above, it is.
+
+Under the **Lite** profile `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
+
+**What you get for free.** Because the grammar states the format, the generated parser is allowed to exploit it: scanning for a separator or a frame boundary works a machine word at a time rather than byte by byte, on every target and with no `unsafe` in sight. See [ADR-009](adr/adr-009.md).
+
 ## Chapter 11: Nikaia Advanced Profile (The Compute Engine)
 
 While **Nikaia Lite** is designed for I/O density, **Nikaia Advanced** (`--profile=advanced`) is designed for **Parallel CPU Throughput**.
