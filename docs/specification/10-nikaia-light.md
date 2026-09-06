@@ -274,6 +274,7 @@ Nikaia includes built-in types for storing groups of data.
     let mut scores = HashMap::new()
     scores["Player1"] = 100
     ```
+    A map is hashed according to where its keys came from: keys derived from data a remote peer supplied are hashed with a random per-run key, so nobody can pick keys that make your program crawl, and keys from data you supplied are hashed with the fast function. You do not configure this and, in the ordinary case, you do not think about it — see Part III, 17.1, for the cases where you want the last word. One consequence is worth remembering here: **the order you get when iterating a map is not guaranteed** and may differ between runs.
 ### 4.6. Generics (Type Parameters)
 To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.
 
