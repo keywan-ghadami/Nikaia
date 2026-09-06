@@ -224,19 +224,23 @@ A parser that reads a file end to end uses one core. For a multi-gigabyte input 
 
 ```nika
 @frame
-rule measurement -> Reading =
+rule MEASUREMENT -> Reading =
     name:NAME ";" => temp:TENTHS "\n" -> { Reading { name, temp } }
 ```
 
-The boundary is taken from the rule's trailing literal, or given explicitly as `@frame("\n")`.
+The boundary is taken from the rule's trailing literal, or given explicitly as `@frame("\n")`. A frame must end in its boundary, and it is written **lexical** (uppercase) — the implicit whitespace of a syntactic rule would eat newlines, and a data format with no whitespace between its fields is lexical anyway.
 
-**This is checked, not believed.** Cutting at the next boundary is only correct if the boundary cannot appear *inside* a frame. The compiler works out which text the rule can consume and rejects the marker when the boundary can occur in the middle — the classic case is CSV with quoted fields, where a newline inside `"…"` would put the cut in the middle of a record. You get an error naming the rule that can swallow the boundary, rather than a wrong total on some inputs and not others.
+**This is checked, not believed.** Cutting at the next boundary is only correct if the boundary cannot appear *inside* a frame. The compiler walks everything the rule can reach and sorts what consumes input into three cases:
+
+* **Safe** — a literal without the boundary in it, a built-in that cannot produce it (`digit1`, `ident`), lookahead.
+* **Bounded** — `until(…)` and `recover`'s skip. They consume anything up to their terminator, so inside a frame the scan stops at the terminator *or the boundary*, whichever comes first. `NAME = until(";")` above cannot swallow a newline: a station name with one in it fails to parse at the newline, instead of two measurements quietly becoming one name. Same scan, same speed.
+* **Rejected**, with the rule and the pattern named — a literal that contains the boundary (the classic case is CSV with quoted fields, where a newline inside `"…"` would put the cut in the middle of a record), a built-in that can consume it (`any`, `multispace0`), or a syntactic rule. You get a compile error, rather than a wrong total on some inputs and not others.
 
 **Second: how do two halves combine?** The entry rule folds with a **merge**:
 
 ```nika
 pub rule file -> Summary =
-    par_fold(measurement, Summary::new, fn(acc, m) { acc.record(m) }, Summary::merge)
+    par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) }, Summary::merge)
 ```
 
 `par_fold` is `fold` plus that merge. With both declarations in hand the compiler generates the rest: the file is cut into one piece per core, each piece repairs its own start to the next boundary so that every frame belongs to exactly one worker, each worker folds into its own accumulator with nothing shared, and the accumulators are merged at the end. Nothing about chunks appears in your program:

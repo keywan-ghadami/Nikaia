@@ -141,9 +141,13 @@ original, had no spelled-out form.
 specifying `split_aligned`. A chunking helper asks the user to restate as an argument what the
 grammar already says — that a measurement ends at `"\n"` — and then to hand-write the
 split/parallel/merge pipeline that follows from it. Instead the grammar carries both halves:
-`@frame` marks a rule as a resynchronization unit (and the compiler *verifies* that the boundary
-cannot occur inside a frame, so CSV-with-quoted-newlines is rejected rather than silently
-miscounted), and `par_fold(rule, init, step, merge)` supplies the monoid. The blind split, the
+`@frame` marks a rule as a resynchronization unit — and the compiler *verifies* it: what a frame
+can reach is sorted into safe, **bounded** (`until` stops at its terminator or the boundary,
+whichever is first, so the flagship `NAME = until(";")` is repaired rather than refused) and
+rejected (a literal containing the boundary — CSV with quoted newlines — `any`, `multispace0`,
+or a syntactic rule, whose implicit whitespace eats newlines; frames are lexical). `par_fold(rule,
+init, step, merge)` supplies the monoid. Both exist in `winnow-grammar` `main` as `#[frame]` and
+`par_fold`, with `frames_<RULE>` and `merge_<RULE>` generated for the driver. The blind split, the
 seam repair, the per-core accumulators and the reduce are then generated; `1brc.nika`'s `main`
 is down to `let totals = dsl Measurements from data`.
 
@@ -171,6 +175,13 @@ seed for untrusted keys, fast hash for trusted ones — the profile enters as *h
 *whether*. 1BRC keeps the fast path without a word about hashing; `fortunes` gets hardened without
 anyone remembering to ask.
 
+**G9 — bounded repetition (`digit{1,2}`) in the grammar protocol.** ADR-009 D5: fixed-width
+numeric parsing is only sound where the grammar states the width bound. Delivered upstream —
+`p{n}`, `p{n,}`, `p{n,m}`, together with a single-digit `digit` terminal that turned out to be
+missing too (only the greedy `digit1` existed, which would have swallowed the run before a bound
+could count anything). `1brc.nika`'s `TENTHS` now states its width and rejects a three-digit
+temperature.
+
 ### Open
 
 **G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name; neither
@@ -192,8 +203,4 @@ this is specified: provenance may supply evidence and lints, but escaping at a h
 **unconditional** — an analysis that skips escaping on "trusted" data turns one wrong
 `trusted: true` into an XSS hole.
 
-**G9 — bounded repetition (`digit{1,2}`) in the grammar protocol.** ADR-009 D5: fixed-width
-numeric parsing is only sound where the grammar states the width bound. The pinned backend
-(`winnow-grammar` `f4955bc`) has `*`, `+`, `?`, `count` and `fold` but no `{n,m}` — an upstream
-feature request. Nothing depends on it to *run*; it is the difference between a good temperature
-parse and the reference implementations' one.
+
