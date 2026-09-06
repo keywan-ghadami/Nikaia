@@ -155,10 +155,29 @@ unmap of a large read-only mapping at process exit. Parallelism stays opt-in: a 
 never parallelised behind your back, because a merge over floats would make the answer depend on
 the core count.
 
+**G8 — the default hasher.** Raised by ADR-009, which framed it as a profile question and was
+wrong to. The profile answers "which runtime", never "who supplied these bytes": a single-threaded
+Lite server hashing attacker-supplied header names is exactly as vulnerable as an Advanced one,
+and a compute job over operator-chosen data has no adversary in either.
+
+[ADR-010](../docs/specification/adr/adr-010.md) decides it on the axis that matters, **provenance**,
+and at the level where the user actually knows the answer — the place the input enters. Sources are
+classified by `std` (network, IPC and database rows untrusted; files, argv, env and compile-time data
+trusted), the state travels the edges ADR-008 already tracks and lands in the same Ledger, joins
+conservatively, and fails safe at `dyn`/FFI barriers. The user overrides it at the source
+(`fs::map(path; trusted: false)`) and a DSL for a wire format can pin an `@untrusted` floor its
+callers cannot lower. Only then does the compiler pick an implementation: keyed hash with a random
+seed for untrusted keys, fast hash for trusted ones — the profile enters as *how*, never as
+*whether*. 1BRC keeps the fast path without a word about hashing; `fortunes` gets hardened without
+anyone remembering to ask.
+
 ### Open
 
 **G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name; neither
-an ordered map nor `sort_by` over map entries is specified.
+an ordered map nor `sort_by` over map entries is specified. ADR-010 D6 raises the stakes: an
+untrusted map is seeded randomly, so its iteration order differs between runs, and the spec now
+says so — which makes the explicit ordered form the only correct answer rather than merely the
+tidy one.
 
 **G6 — the HTTP handler cannot see the request.** `std::http`'s signature (17.1) is
 `.route("/") fn: "Hello World"` with no request argument, so a handler cannot read a query
@@ -168,13 +187,10 @@ unnoticed — the other six TechEmpower tests do need it.
 **G7 — HTML escaping belongs in the template grammar's contract.** A template DSL that lets an
 un-escaped value through a hole is an XSS hole with extra steps, and the compiler is the only
 place that can enforce it for every hole, every time. That makes it a property of the grammar
-(ADR-007, D4/D5), not of the caller's discipline.
-
-**G8 — the default hasher.** Raised by ADR-009 and deliberately not decided there. Rust's
-standard map defaults to a DoS-resistant hash because a server hashing attacker-controlled keys
-is the common case; a compute workload pays for it on every lookup. Nikaia has both profiles in
-one language, so the choice cannot be made per profile without reopening the schism ADR-005 D8c
-closed. Needs its own ADR with the threat model written out.
+(ADR-007, D4/D5), not of the caller's discipline. ADR-010 D8 adds the boundary condition for when
+this is specified: provenance may supply evidence and lints, but escaping at a hole must stay
+**unconditional** — an analysis that skips escaping on "trusted" data turns one wrong
+`trusted: true` into an XSS hole.
 
 **G9 — bounded repetition (`digit{1,2}`) in the grammar protocol.** ADR-009 D5: fixed-width
 numeric parsing is only sound where the grammar states the width bound. The pinned backend

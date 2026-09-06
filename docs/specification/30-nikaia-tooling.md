@@ -499,6 +499,31 @@ Both profiles have the same `std::fs` surface; only the target changes it.
 
 This is the difference between `fs::map` and `std::thread` (17.2). `std::thread` is barred by the **profile**: Lite is share-nothing by design, so manual threading is a compile error even on a native target that has threads. `fs::map` is barred by the **target**: nothing about a single-threaded runtime prevents mapping a file.
 
+**`std::collections` — and where your keys came from**
+
+A hash map can be attacked. If someone else chooses the keys, they can choose keys that collide, and a table that should answer in constant time starts answering in quadratic time. The defence is a hash function with a secret, random key — and it costs a little on every lookup, which is why languages that cannot tell the two situations apart make everybody pay it.
+
+Nikaia can tell them apart, because it knows where a buffer came from (Chapter 6.6 in Part I). Every input carries a **provenance**:
+
+* **Untrusted** — a remote peer chose these bytes: HTTP requests, sockets, IPC, rows read back from a database (data a user stored yesterday is still data a user chose).
+* **Trusted** — the operator chose these bytes: files, command-line arguments, the environment, anything compiled in.
+
+Values inherit the provenance of the buffer they come from, and a collection takes the *most cautious* provenance of everything put into it. Where the compiler cannot tell — across a dynamic call, or from a foreign library — the answer is Untrusted. Guessing "safe" is not a guess a compiler may make.
+
+From that, the hasher follows: untrusted keys get a keyed hash with a per-process random seed, trusted keys get a fast one. Nothing else about the map changes — same table, same API, and keys are always compared in full.
+
+**You have the last word, at the place the data enters:**
+
+```nika
+// A service that processes files uploaded by strangers:
+// a local path, but bytes nobody vetted.
+let data = fs::map(path; trusted: false)
+```
+
+The reverse (`trusted: true`) exists for the case where you know the peer. Both are recorded in `nikaia.contracts`, so "every place this program declared something safe" is one list in one file, and it shows up in review when it changes. A grammar for a wire format can also pin the floor for everyone who uses it — `@untrusted grammar HttpHeaders` — so no application can lower it by accident (Part II, 10.7 and [ADR-010](adr/adr-010.md)).
+
+`nikaia explain --trust` prints where every buffer came from and which hasher each map got. And because untrusted maps are seeded randomly, **iteration order is not stable between runs** — when order matters, ask for it explicitly rather than relying on what a map happens to do today.
+
 **Other Key Modules:**
 * **`std::json`**: High-performance serialization using compile-time code generation (zero-allocation parsing where possible).
 * **`std::cli`**: Parsers for command-line arguments, environment variables, and ANSI terminal colors.
