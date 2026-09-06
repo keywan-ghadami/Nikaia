@@ -427,7 +427,7 @@ pub fn read_to_string(path: Path) -> String throws            // whole file, UTF
 pub fn write(path: Path, data: &[u8]; append: bool = false, create: bool = true) throws
 ```
 
-`read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices taken from it are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
+`read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 
 **Streaming**
 
@@ -467,6 +467,8 @@ pub fn map(path: Path) -> Mapped throws          // read-only memory map
 ```
 
 `Mapped` derefs to `Bytes`, so a mapped file is a tethered buffer like any other and a parser cannot tell the difference. This is what makes a multi-gigabyte input practical: the pages are the buffer, and nothing is copied.
+
+**Retention.** A slice that escapes the mapping's scope tethers to it, and a tether keeps the *whole* map alive — one twelve-byte station name can pin thirteen gigabytes. The compiler warns where a small extract outlives a large buffer and suggests `.to_owned()`; the mapping is released once the last tether is gone, which may be later than the end of the block that created it ([ADR-008](adr/adr-008.md), D8). Slices that never leave that scope cost nothing and hold nothing.
 
 **Availability is a property of the target, not of the profile.** Memory mapping is an operating-system service, and whether it exists has nothing to do with whether the runtime is single-threaded. `fs::map` is therefore available under **both** profiles on any target whose platform provides it — a Lite-profile program compiled for Linux, macOS or Windows maps files exactly like an Advanced one. What rules it out is a target without the service: on `wasm32-*` there is no memory mapping to call, so `fs::map` is a **compile-time error** there.
 

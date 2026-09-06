@@ -114,12 +114,26 @@ pub rule file -> Summary =
     fold(measurement, Summary::new, fn(acc, m) { acc.record(m) })
 ```
 
-### Open
-
 **G3 — tethered slices in user structs.** Specified for tokens a parser yields (Part II,
 10.6), but not for a slice stored in a struct of one's own. `Reading.name` and the `HashMap`
 key in `1brc.nika` are exactly that, and it is the difference between one allocation and a
 billion.
+
+Writing the example did more than expose the gap — it showed the existing rule was stated over
+the wrong event. "Stored in a struct ⇒ tethered" (Part I 6.6, as of 0.0.7) puts a shared handle
+on `Reading`, which this program builds a billion times; under the Advanced profile that is a
+billion atomic increment/decrement pairs on one refcount word shared by every worker. Nothing
+in the program actually escapes, so the right answer costs nothing at all.
+
+[ADR-008](../docs/specification/adr/adr-008.md) settles it: view types stay (`&str` is a view
+marker, not a lifetime), the rule is restated over **escape** rather than storage, a view has
+three inferred states (Borrowed ⊑ Tethered ⊑ Owned), the shared handle sits on the *container*
+rather than on each slice, and `.to_owned()` is never inserted for you. `@borrowed` turns "this
+stays a plain reference" into a compile-time assertion for hot structs — used in `1brc.nika` on
+`Reading`. Under those rules the program allocates nothing per row and does no refcount work in
+the parallel section.
+
+### Open
 
 **G4 — chunking a buffer for `par_iter`.** `par_iter` is specified over a collection.
 Splitting a buffer at line boundaries into one chunk per core, with each chunk a slice of the

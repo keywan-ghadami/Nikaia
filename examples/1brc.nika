@@ -74,9 +74,15 @@ grammar Measurements {
         fold(measurement, Summary::new, fn(acc, m) { acc.record(m) })
 }
 
+// `@borrowed` is the assertion, not the mechanism: a `Reading` is built and
+// consumed inside the fold, so its name stays a plain reference into the input
+// buffer and costs nothing (Part I, 6.6). The marker makes that a compile-time
+// promise instead of an expectation - if a later edit ever let a `Reading`
+// escape the buffer's scope, the compiler would say so here rather than quietly
+// putting a shared handle on a struct that is built a billion times
+// (ADR-008, D6).
+@borrowed
 pub struct Reading {
-    // A tethered slice into the input buffer, which provably outlives it
-    // (Part I, 6.6).
     name: &str,
     temp: i32,
 }
@@ -120,6 +126,10 @@ impl Stats {
 }
 
 // What one parser run produces: the stations it saw, and their statistics.
+// The keys are slices into the input buffer too. `totals` dies before `data`
+// does, so they are plain references here as well; were this summary returned
+// past the mapping, the *map* would take one handle on the buffer and the keys
+// would stay offsets - never one handle per key (ADR-008, D4).
 pub struct Summary {
     stations: HashMap[&str, Stats],
 }
