@@ -554,32 +554,56 @@ Two things are guaranteed to *just work*:
 
 **The one rule you need to know:** a borrow may not outlive its owner. You will rarely be able to break this rule by accident, because of the next section.
 
-### 6.6. Stored References Are Tethered
+### 6.6. Escaping References Are Tethered
 
-What happens when a borrowed value is not just used, but **stored** — put into a struct, sent to a background task, or returned far up the call chain? In most systems languages this is where the pain starts, because the compiler must prove the owner lives long enough.
+What happens when a borrowed value is not just used, but **escapes** — returned past the scope that owns the buffer, captured by a `@detached` lambda, or put into a collection that lives longer than the buffer? In most systems languages this is where the pain starts, because the compiler must prove the owner lives long enough.
 
 Nikaia takes a different route. The rule is:
 
-> **Transient = borrow, stored = tether.**
+> **Transient = borrow. Escaping = tether. Copying = yours to ask for.**
 
-* A slice that is only *used* (passed down, inspected, transformed) is a true zero-cost reference.
-* A slice that *escapes* — into a struct field, a `@detached` lambda, or a `return` that outlives the buffer — is automatically **tethered**: the compiler stores it as a lightweight handle to the original buffer (via `Shared`, see 6.2) plus a position, instead of a raw reference.
+Every view (`&str`, `&[u8]`) is in one of three states, and the compiler picks the cheapest one that works. You never write these states:
 
-The effect: **the buffer cannot die while anything still points into it.** Instead of an error telling you "you may not use this after the buffer is gone," the language simply guarantees the buffer stays alive. The cost is one shared handle per *buffer* (not per slice) — deterministic, no garbage collector involved.
+| State | What it is | Cost |
+| :--- | :--- | :--- |
+| **Borrowed** | a plain reference into the buffer | nothing at all |
+| **Tethered** | a handle on the buffer plus a position | one shared handle per *container* — no copy, no allocation |
+| **Owned** | a `String` of its own | one allocation — **only** where you wrote `.to_owned()` |
+
+The effect: **the buffer cannot die while anything still points into it.** Instead of an error telling you "you may not use this after the buffer is gone," the language guarantees the buffer stays alive — deterministically, by reference counting, with no garbage collector involved.
+
+Two things about this are worth knowing, because they are what make it usable on large data:
+
+* **Storing a slice in a struct is not, by itself, an escape.** A struct that is built and consumed inside the scope that owns the buffer keeps plain references. A parser loop that builds a hundred million small records pays *nothing* for them.
+* **The handle sits on the container, not on every slice.** When a map full of slices outlives its buffer, the *map* holds one handle; its keys stay positions. Filling it costs no handle traffic at all.
 
 ```nika
 struct Token {
-    text: &str,   // stored in a struct -> automatically tethered
+    text: &str,   // a view into someone else's buffer
 }
 
 fn tokenize(source: String) -> List[Token] {
-    // The returned tokens keep 'source' alive.
-    // No annotations, no copies of the text, no dangling references.
+    // The returned tokens outlive `source`'s scope, so the list is tethered:
+    // it keeps `source` alive. No annotations, no copies of the text,
+    // no dangling references — and one handle for the whole list.
     ...
 }
 ```
 
-Because of tethering, you will also never see a "struct with lifetime parameters" in Nikaia — that concept does not exist in the language.
+Because of this, you will never see a "struct with lifetime parameters" in Nikaia — that concept does not exist in the language.
+
+**When you want the guarantee in writing.** In a hot loop you may want to be *told* if a value ever starts tethering rather than borrowing. Mark the struct `@borrowed`:
+
+```nika
+@borrowed
+struct Reading { name: &str, temp: i32 }
+```
+
+Nothing about the program changes — except that an escape is now a compile error that names the place where it happens. `nikaia explain --tethers` prints the state of every view without changing anything at all.
+
+**The one case that is an error.** If a slice escapes and its buffer cannot be shared — it lives on the stack, or came from a foreign library — no tether is possible. The compiler says so and offers the ways out, `.to_owned()` among them. It never inserts that copy on your behalf: an invisible copy in a loop over a billion rows is exactly the kind of surprise Nikaia refuses to produce. (Details: [ADR-008](adr/adr-008.md).)
+
+**One honest cost.** A tether keeps the *whole* buffer alive, not just the part you pointed at. Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB. Where that looks like a mistake the compiler warns and suggests `.to_owned()`.
 
 ### 6.7. The Borrow Contract Ledger
 

@@ -13,8 +13,10 @@
 // Build:  nikaia build --profile=advanced --release
 // Run:    ./1brc measurements.txt
 //
-// NOTE: this does not compile yet - see examples/README.md, where the one
-// remaining gap it depends on is marked [G4].
+// NOTE: this does not compile yet - see examples/README.md. The gaps it
+// depended on are specified now (G3 in ADR-008, G4 in ADR-009); what is left is
+// a compiler that implements them, plus the bounded repetition of ADR-009 D5,
+// which only makes the temperature parse faster and is not needed to run.
 
 use std::fs
 use std::cli
@@ -60,6 +62,13 @@ grammar Measurements {
     // a measurement. A malformed temperature after it is an error to report,
     // not a reason to backtrack and reinterpret the line. Without it a corrupt
     // row is silently skipped - the worst possible outcome for an aggregation.
+    // `@frame` (Part II, 10.7) is what makes the parse parallel: it says a
+    // measurement can be found from any offset by scanning to the next "\n",
+    // so the file can be cut blindly and each piece repairs its own start. The
+    // compiler does not take that on trust - it checks that no rule reachable
+    // from here can consume a "\n" in the middle, which is exactly what would
+    // make this wrong for, say, CSV with quoted fields.
+    @frame
     rule measurement -> Reading =
         name:NAME ";" => temp:TENTHS "\n"
         -> { Reading { name, temp } }
@@ -67,16 +76,34 @@ grammar Measurements {
     // The entry rule *is* the file.
     //
     // Writing `measurement*` here would be wrong at this size: it collects, and
-    // a billion Readings do not fit in memory. `fold` threads an accumulator
+    // a billion Readings do not fit in memory. A fold threads an accumulator
     // through instead, so the parser consumes one measurement at a time and
     // nothing is ever collected - the parse runs in constant space.
+    //
+    // `par_fold` adds the second half of what parallel parsing needs: how two
+    // partial results combine. With a frame boundary and a merge, the compiler
+    // generates the split, the seam repair, one accumulator per core and the
+    // final reduce - none of which appears in main() below.
+    //
+    // It has to be asked for. The compiler will not parallelise a plain `fold`
+    // on its own, because a merge over floats is not associative and the core
+    // count would silently change the answer. This one is associative: the
+    // aggregation runs entirely in i64 tenths and only becomes f64 at print
+    // time. Under --profile=lite the same grammar runs as a sequential fold.
     pub rule file -> Summary =
-        fold(measurement, Summary::new, fn(acc, m) { acc.record(m) })
+        par_fold(measurement, Summary::new, fn(acc, m) { acc.record(m) },
+                 Summary::merge)
 }
 
+// `@borrowed` is the assertion, not the mechanism: a `Reading` is built and
+// consumed inside the fold, so its name stays a plain reference into the input
+// buffer and costs nothing (Part I, 6.6). The marker makes that a compile-time
+// promise instead of an expectation - if a later edit ever let a `Reading`
+// escape the buffer's scope, the compiler would say so here rather than quietly
+// putting a shared handle on a struct that is built a billion times
+// (ADR-008, D6).
+@borrowed
 pub struct Reading {
-    // A tethered slice into the input buffer, which provably outlives it
-    // (Part I, 6.6).
     name: &str,
     temp: i32,
 }
@@ -120,6 +147,10 @@ impl Stats {
 }
 
 // What one parser run produces: the stations it saw, and their statistics.
+// The keys are slices into the input buffer too. `totals` dies before `data`
+// does, so they are plain references here as well; were this summary returned
+// past the mapping, the *map* would take one handle on the buffer and the keys
+// would stay offsets - never one handle per key (ADR-008, D4).
 pub struct Summary {
     stations: HashMap[&str, Stats],
 }
@@ -162,32 +193,26 @@ fn main() throws {
     // `fs::map` needs a target with memory mapping, not a particular profile:
     // this would map the file just the same under `--profile=lite` on Linux.
     // Only a `wasm32-*` target rules it out, where `fs::lines` is the
-    // constant-memory alternative. The Advanced profile is chosen here for
-    // `par_iter` below, not for the mapping.
+    // constant-memory alternative. The Advanced profile is chosen here so the
+    // grammar's `par_fold` uses every core, not for the mapping - and under
+    // Lite the same program still runs, on one core.
     let data = fs::map(path) catch {
         eprintln("cannot open {path}: {error}")
         return
     }
 
-    // One chunk per core, split at line boundaries. Each chunk is a slice into
-    // the map - no copying, and the map cannot be unmapped while a chunk lives.
-    // [G4] The line-aligned chunking helper is not specified yet.
-    let chunks = data.split_aligned(cpu::count(), "\n")
-
-    // One parser per chunk, running in parallel. The closure must be `sync`,
-    // and parsing is pure computation, so this compiles. Had we tried to log to
-    // a file inside it, the compiler would have rejected it here instead of
-    // silently serialising the workers.
-    let summaries = chunks.par_iter()
-        .map fn: dsl Measurements from a
-        .collect()
-
-    // A billion rows collapse to a few thousand stations, so the merge is cheap
-    // and needs no locking.
-    let mut totals = Summary::new()
-    for partial in summaries {
-        totals.merge(&partial)
-    }
+    // The whole parse, on every core. There is no chunking code here because
+    // the grammar already carries what chunking needs: `@frame` says where the
+    // file may be cut, `par_fold` says how the pieces combine. One parser per
+    // core, one accumulator each, nothing shared and nothing locked until the
+    // merge - and a billion rows collapse to a few thousand stations, so that
+    // merge costs nothing (ADR-009).
+    //
+    // Parsing is pure computation, so this satisfies the `sync` rule (12.1) the
+    // parallel form requires. Had a `println` found its way into an action
+    // block, the compiler would have said so here rather than quietly
+    // serialising the workers.
+    let totals = dsl Measurements from data
 
     let mut names = totals.stations.keys().collect()
     names.sort()

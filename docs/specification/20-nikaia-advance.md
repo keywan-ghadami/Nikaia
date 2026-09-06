@@ -196,9 +196,9 @@ Traditional parsers copy text into a new `String` for every identifier they find
 
 *Identifiers and keywords → interned symbols.* Identifiers are short, repeat constantly, and are compared far more often than they are read. The parser **interns** them: each distinct spelling is stored once in a shared table and the parser yields a small `Symbol` handle. Comparing two identifiers becomes an integer comparison, and a file with a thousand uses of `count` stores the text once.
 
-*Bulk text (string literals, comments, doc text, DSL bodies) → tethered slices.* This text is long, rarely repeated, and rarely compared, so interning would only waste table space. The parser yields **slices** into the original buffer. Because tokens are typically *stored* (in an AST, a symbol table, a list), they follow the "transient = borrow, stored = tether" rule (Part I, Chapter 6.6): each stored slice is automatically **tethered** to the source buffer via a `Shared` handle plus a position.
+*Bulk text (string literals, comments, doc text, DSL bodies) → tethered slices.* This text is long, rarely repeated, and rarely compared, so interning would only waste table space. The parser yields **slices** into the original buffer. Whether that slice stays a plain reference or becomes a **tether** — a handle on the source buffer plus a position — follows the "transient = borrow, escaping = tether" rule (Part I, Chapter 6.6): a token that lives and dies inside the scope holding the source text costs nothing at all, and one that outlives it is tethered automatically. An AST handed back to a caller is the second case, so it keeps its source alive; the handle sits on the AST, not on each of its tokens ([ADR-008](adr/adr-008.md), D4).
 
-For tethered slices the guarantee is stated positively: **the source text cannot be freed while any token still points into it.** You never manage this relationship, and you never see an error about it — the buffer's lifetime simply follows the tokens. The cost is one shared handle for the whole buffer (not per token), which is negligible next to the avoided string copies.
+For tethered slices the guarantee is stated positively: **the source text cannot be freed while any token still points into it.** You never manage this relationship, and you never see an error about it — the buffer's lifetime simply follows the tokens. The cost is one shared handle per *container* — for the whole AST, not per token, and nothing per token that never escapes — which is negligible next to the avoided string copies.
 
 > **Design Note (implementation):** Tethering is the architecture the async ecosystem converged on for zero-copy I/O (`bytes::Bytes` in Rust: a reference-counted buffer plus offsets); interning is what compiler front-ends converged on for symbol tables. A future optimization may replace the tether's reference count with compiler-verified self-referential storage — the driver controls all access patterns and could prove the invariants itself — but that is an internal optimization avenue, not a semantic change. Because grammars compile to direct byte-stream consumers, a parser may also use SIMD matching specialized to its own syntax. See [ADR-005](adr/adr-005.md) D4 and [ADR-007](adr/adr-007.md) §4.
 
@@ -215,6 +215,42 @@ rule block -> Vec[Stmt] =
 ```
 
 Note the commit point (`=>`): once the opening brace matched, this *is* a block, so a failure inside it is reported rather than causing the whole alternative to be abandoned. Commit points and recovery work together — the first decides where errors are worth reporting, the second decides where to resume.
+
+### 10.7. Parallel Parsing
+
+A parser that reads a file end to end uses one core. For a multi-gigabyte input that is the whole cost of the program. Nikaia parallelises the *parse itself* — but only when the grammar has said the two things that make it safe.
+
+**First: where may the file be cut?** A rule marked `@frame` declares that it can be found from an arbitrary offset by scanning to the next boundary, with no knowledge of what came before:
+
+```nika
+@frame
+rule measurement -> Reading =
+    name:NAME ";" => temp:TENTHS "\n" -> { Reading { name, temp } }
+```
+
+The boundary is taken from the rule's trailing literal, or given explicitly as `@frame("\n")`.
+
+**This is checked, not believed.** Cutting at the next boundary is only correct if the boundary cannot appear *inside* a frame. The compiler works out which text the rule can consume and rejects the marker when the boundary can occur in the middle — the classic case is CSV with quoted fields, where a newline inside `"…"` would put the cut in the middle of a record. You get an error naming the rule that can swallow the boundary, rather than a wrong total on some inputs and not others.
+
+**Second: how do two halves combine?** The entry rule folds with a **merge**:
+
+```nika
+pub rule file -> Summary =
+    par_fold(measurement, Summary::new, fn(acc, m) { acc.record(m) }, Summary::merge)
+```
+
+`par_fold` is `fold` plus that merge. With both declarations in hand the compiler generates the rest: the file is cut into one piece per core, each piece repairs its own start to the next boundary so that every frame belongs to exactly one worker, each worker folds into its own accumulator with nothing shared, and the accumulators are merged at the end. Nothing about chunks appears in your program:
+
+```nika
+let data = fs::map(path)
+let totals = dsl Measurements from data
+```
+
+**Why you have to ask for it.** The compiler will not turn a `fold` into a `par_fold` on its own, even when it looks associative. Adding `f64` is not associative, so the number of cores would quietly change the answer. Writing `par_fold` is you saying that a different chunk count is the same result to you — for an aggregation over integers, as above, it is.
+
+Under the **Lite** profile `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
+
+**What you get for free.** Because the grammar states the format, the generated parser is allowed to exploit it: scanning for a separator or a frame boundary works a machine word at a time rather than byte by byte, on every target and with no `unsafe` in sight. See [ADR-009](adr/adr-009.md).
 
 ## Chapter 11: Nikaia Advanced Profile (The Compute Engine)
 
