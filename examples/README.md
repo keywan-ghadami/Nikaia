@@ -141,13 +141,20 @@ original, had no spelled-out form.
 specifying `split_aligned`. A chunking helper asks the user to restate as an argument what the
 grammar already says — that a measurement ends at `"\n"` — and then to hand-write the
 split/parallel/merge pipeline that follows from it. Instead the grammar carries both halves:
-`@frame` marks a rule as a resynchronization unit — and the compiler *verifies* it: what a frame
-can reach is sorted into safe, **bounded** (`until` stops at its terminator or the boundary,
-whichever is first, so the flagship `NAME = until(";")` is repaired rather than refused) and
-rejected (a literal containing the boundary — CSV with quoted newlines — `any`, `multispace0`,
-or a syntactic rule, whose implicit whitespace eats newlines; frames are lexical). `par_fold(rule,
-init, step, merge)` supplies the monoid. Both exist in `winnow-grammar` `main` as `#[frame]` and
-`par_fold`, with `frames_<RULE>` and `merge_<RULE>` generated for the driver. The blind split, the
+`@frame` marks a rule as a resynchronization unit — and the compiler *verifies* it, and never
+rewrites the grammar to make it so: what a frame can reach is either safe or rejected with the
+rule and pattern named (a literal containing the boundary — CSV with quoted newlines — `any`,
+`multispace0`, a syntactic rule whose implicit whitespace eats newlines, an `until` that does not
+cover the boundary, `recover`). The flagship `NAME` therefore *says* `until(";" | frame_end)`,
+where `frame_end` names the boundary of the enclosing frame; an intermediate design that silently
+bounded `until(";")` was rejected in review because the same rule text then parsed differently
+depending on what reached it. `par_fold(rule, init, step, merge)` supplies the monoid, and its
+parser skips no whitespace at its entry, so pieces and the sequential parse agree on every input,
+rejections included. All of it is in `winnow-grammar` `main` (`#[frame(boundary = …)]`,
+`frame_end`, `par_fold`, `unchecked` for the formats a byte-string boundary cannot cut — its
+ADR 16 names them), with `frames_<RULE>`, `merge_<RULE>` and the driver
+`parse_<RULE>_pieces(input, ctx, Parallelism)` generated; Nikaia chooses the `Parallelism` from
+the profile and the executor. The blind split, the
 seam repair, the per-core accumulators and the reduce are then generated; `1brc.nika`'s `main`
 is down to `let totals = dsl Measurements from data`.
 

@@ -43,11 +43,15 @@ grammar Measurements {
     //
     // The name is a slice into the input buffer, never a copy (Part II, 10.6).
     // At a billion rows, copying each name into a String is the difference
-    // between seconds and minutes. The scan for the semicolon works a machine
-    // word at a time - and because NAME is reached from the frame below, it
-    // also stops at "\n": a name with a stray newline fails to parse right
-    // there, instead of two rows quietly becoming one name (ADR-009 D1).
-    rule NAME -> &str = s:until(";") -> { s }
+    // between seconds and minutes.
+    //
+    // Up to the semicolon - or to the end of the frame, whichever comes first.
+    // `frame_end` is the boundary of the frame this rule is reached from
+    // (MEASUREMENT below), written once there and referenced here. It has to
+    // be said: a plain `until(";")` would run through a newline, and the
+    // compiler rejects that under a frame rather than quietly fixing it
+    // (ADR-009 D1). Either way it is one machine-word-at-a-time scan.
+    rule NAME -> &str = s:until(";" | frame_end) -> { s }
 
     // Temperatures always carry exactly one decimal, so they are parsed as
     // tenths and the whole aggregation stays in integer arithmetic. Floating
@@ -79,9 +83,9 @@ grammar Measurements {
     // frame is lexical: the implicit whitespace of a syntactic rule would eat
     // the very newline the file is cut at - and `Hamburg ; 12.0` is not a
     // measurement anyway.
-    @frame
+    @frame(boundary: "\n")
     rule MEASUREMENT -> Reading =
-        name:NAME ";" => temp:TENTHS "\n"
+        name:NAME ";" => temp:TENTHS frame_end
         -> { Reading { name, temp } }
 
     // The entry rule *is* the file.
@@ -217,7 +221,8 @@ fn main() throws {
     // file may be cut, `par_fold` says how the pieces combine. One parser per
     // core, one accumulator each, nothing shared and nothing locked until the
     // merge - and a billion rows collapse to a few thousand stations, so that
-    // merge costs nothing (ADR-009).
+    // merge costs nothing. A bad row in piece seven is reported at its line in
+    // the file, not in piece seven (ADR-009 D3).
     //
     // Parsing is pure computation, so this satisfies the `sync` rule (12.1) the
     // parallel form requires. Had a `println` found its way into an action
