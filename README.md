@@ -117,9 +117,14 @@ This is currently a **Specification (Version 0.0.7)**. We are in the bootstrap p
   - [x] `impl` blocks and methods, `throws`/`catch`/`??`, string interpolation, and a
     `std` for what the examples call ([ADR-013](docs/specification/adr/adr-013.md)) — enough
     that **`examples/1brc.nika` compiles and runs**.
+  - [x] `fs::map` is a memory mapping and the parallel driver runs on every core
+    ([ADR-014](docs/specification/adr/adr-014.md)): 8M lines, 4 cores, 3.99 s → 1.05 s.
   - [ ] A type checker: everything Stage 0 cannot infer, the example has to say (ADR-013 D7).
 - [ ] **Runtime Integration:** Binding `tokio` (Current-Thread & Thread-Pool).
 - [ ] **Self-Hosting:** The compiler compiles itself.
+  - [x] The first `.nika` file the toolchain runs on: `crates/nikaia-std/src/text.nika`,
+    compiled into `std` by Stage 0 when `std` is built ([ADR-014](docs/specification/adr/adr-014.md) D1).
+    What a `std` file may contain is exactly what the compiler can lower; the share grows as it does.
 
 ---
 

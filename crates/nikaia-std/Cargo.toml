@@ -3,6 +3,18 @@ name = "nikaia-std"
 version = "0.1.0"
 edition = "2021"
 
-# Deliberately no dependencies: everything here is either std or a few lines of
-# glue. `fs::map` is the one place that will want `memmap2`, and it says so.
 [dependencies]
+# `fs::map` maps the file (Part III, 17.1); this is the mapping.
+memmap2 = "0.9"
+# The parser backend every generated program runs on. Declared here, on the
+# runtime, so that a program's `std` and its parser are one dependency - and
+# so that the tests can find the parser's rlib by reading this crate's
+# metadata rather than guessing among the copies in the deps directory.
+winnow-grammar = { workspace = true }
+
+[build-dependencies]
+# Parts of this crate are written in Nikaia (`src/*.nika`) and compiled to Rust
+# by the Stage 0 compiler when this crate is built - the library only, without
+# the rustc backend and the compiler internals it links.
+nikaia = { path = "../nikaia", default-features = false }
+anyhow = { workspace = true }

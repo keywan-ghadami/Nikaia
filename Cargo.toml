@@ -13,7 +13,12 @@ bridge-ir = { path = "crates/bridge-ir" }
 bridge-orchestrator = { path = "crates/bridge-orchestrator" }
 rustc-executor = { path = "crates/rustc-executor" }
 nikaia-std = { path = "crates/nikaia-std" }
-winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main", version = "0.1.0" }
+# `rayon`: `parse_<rule>_pieces` runs the pieces of a `par_fold` on rayon's
+# pool. It is the runtime of every generated program, and it is set here rather
+# than on `nikaia-std` alone so that one build never holds two differently
+# featured copies of the crate - the tests link the emitted Rust against
+# whatever is in the deps directory, and it has to be the same one.
+winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main", version = "0.1.0", features = ["rayon"] }
 winnow = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

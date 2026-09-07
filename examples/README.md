@@ -4,9 +4,10 @@ Programs here are **specification-level**: they show what Nikaia 0.0.7 is meant 
 
 **`1brc.nika` compiles and runs** ([ADR-013](../docs/specification/adr/adr-013.md)):
 `nikaia --input examples/1brc.nika --backend rust` produces Rust that prints what the benchmark
-asks for, and `crates/nikaia/tests/one_brc.rs` checks that by running it. Two of its claims are
-not true yet and are named in ADR-013 §4 — `fs::map` reads rather than maps, and the pieces of the
-parallel parse run in sequence.
+asks for, and `crates/nikaia/tests/one_brc.rs` checks that by running it. It maps the file and
+parses it on every core ([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines, 4
+cores, 3.99 s → 1.05 s, identical output), and one function it calls for every digit is written in
+Nikaia and compiled into `std` by the compiler itself.
 
 `fortunes.nika` does not: its gaps are `std::http` (G6) and template escaping (G7), below.
 

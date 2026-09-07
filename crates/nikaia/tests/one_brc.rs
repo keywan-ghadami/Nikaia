@@ -7,6 +7,8 @@
 //!
 //! The example is the real file, not a copy. It cannot drift.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -15,38 +17,6 @@ use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn deps_dir() -> PathBuf {
-    std::env::current_exe()
-        .expect("test binary path")
-        .parent()
-        .expect("deps directory")
-        .to_path_buf()
-}
-
-/// The rlib cargo built for `crate_name`, which is what the emitted program has
-/// to link against too.
-fn rlib(crate_name: &str) -> PathBuf {
-    let prefix = format!("lib{crate_name}-");
-    let mut candidates: Vec<_> = std::fs::read_dir(deps_dir())
-        .expect("read deps directory")
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            name.starts_with(&prefix) && name.ends_with(".rlib")
-        })
-        .collect();
-
-    // Newest wins: a stale hash from an earlier build is still lying there.
-    candidates.sort_by_key(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
-    candidates
-        .pop()
-        .unwrap_or_else(|| panic!("no {crate_name} rlib in {}", deps_dir().display()))
 }
 
 #[test]
@@ -58,31 +28,21 @@ fn the_1brc_example_compiles_and_prints_what_the_benchmark_asks_for() {
     let parsed = parse_to_ast(&source).expect("the example parses");
     let lowered = emit_program(&parsed, Profile::Advanced).expect("the example lowers");
 
-    let dir = std::env::temp_dir().join(format!("nikaia-1brc-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch directory");
+    let dir = common::scratch_dir("1brc");
     let rust = dir.join("brc.rs");
     std::fs::write(&rust, &lowered.rust).expect("write the emitted Rust");
 
     // 2. Compile it.
     let binary = dir.join("brc");
-    let compile = Command::new(env!("NIKAIA_RUSTC"))
-        .args(["--edition", "2021", "--crate-type", "bin"])
-        .arg("-L")
-        .arg(format!("dependency={}", deps_dir().display()))
-        .arg("--extern")
-        .arg(format!(
-            "winnow_grammar={}",
-            rlib("winnow_grammar").display()
-        ))
-        .arg("--extern")
-        .arg(format!("winnow={}", rlib("winnow").display()))
-        .arg("--extern")
-        .arg(format!("nikaia_std={}", rlib("nikaia_std").display()))
-        .arg(&rust)
-        .arg("-o")
-        .arg(&binary)
-        .output()
-        .expect("run rustc");
+    let compile = common::compile(
+        &rust,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
 
     assert!(
         compile.status.success(),

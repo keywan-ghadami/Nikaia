@@ -951,6 +951,13 @@ impl<'p> Emitter<'p> {
                 out.push(" ");
                 self.block(out, body, depth, flow, false)?;
             }
+            // A `return` that is the last statement is the block's value, and
+            // is written as one: `fn f() -> T { return x }` is `{ x }`. In a
+            // `throws` function the caller of this wraps the tail in `Ok`, so
+            // the value is emitted bare here in both cases.
+            Stmt::Return(Some(value)) if is_tail => {
+                self.expr(out, value, depth, flow)?;
+            }
             Stmt::Return(value) => {
                 // Kap 7.1: a `throws` function returns a `Result`, so what the
                 // source hands back is what goes inside the `Ok`.

@@ -6,8 +6,7 @@
 //! check, which runs inside a proc macro - are mapped through the emitter's
 //! source map onto the `.nika` file.
 
-use std::path::PathBuf;
-use std::process::Command;
+mod common;
 
 use nikaia::diagnostics::{self, Diagnostic};
 use nikaia::emit::{emit_program, Lowered, Profile};
@@ -23,78 +22,27 @@ fn lower(source: &str) -> Lowered {
     emit_program(&parsed, Profile::Advanced).expect("the fixture lowers")
 }
 
-/// Where cargo put the crates this test links against - which is also where the
-/// emitted Rust has to find `winnow_grammar`.
-fn deps_dir() -> PathBuf {
-    std::env::current_exe()
-        .expect("test binary path")
-        .parent()
-        .expect("deps directory")
-        .to_path_buf()
-}
-
-fn rlib(crate_name: &str) -> PathBuf {
-    let prefix = format!("lib{crate_name}-");
-    let mut candidates: Vec<_> = std::fs::read_dir(deps_dir())
-        .expect("read deps directory")
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            name.starts_with(&prefix) && name.ends_with(".rlib")
-        })
-        .collect();
-
-    // Stale builds leave older hashes behind; the newest is the one this test
-    // was linked against.
-    candidates.sort_by_key(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
-    candidates
-        .pop()
-        .unwrap_or_else(|| panic!("no {crate_name} rlib in {}", deps_dir().display()))
-}
-
 /// Compile emitted Rust and return rustc's JSON diagnostics.
 ///
 /// `--emit=metadata` is enough: the frame check runs during macro expansion, so
 /// there is no reason to pay for code generation to hear about it.
 fn compile(rust: &str) -> String {
-    // One directory per call: the tests run in parallel threads of one process,
-    // and two of them sharing a file name means one compiles the other's code.
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("nikaia-diagnostics-{}-{id}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch directory");
+    let dir = common::scratch_dir("diagnostics");
     let source = dir.join("lowered.rs");
     std::fs::write(&source, rust).expect("write emitted Rust");
 
-    let output = Command::new(env!("NIKAIA_RUSTC"))
-        .args([
-            "--edition",
-            "2021",
+    let output = common::compile(
+        &source,
+        &[
             "--crate-type",
             "lib",
             "--emit=metadata",
-        ])
-        .args(["--error-format", "json"])
-        .arg("-L")
-        .arg(format!("dependency={}", deps_dir().display()))
-        // `grammar!` expands to `::winnow::…` as well as `::winnow_grammar::…`,
-        // so both have to be named for a file compiled outside cargo.
-        .arg("--extern")
-        .arg(format!(
-            "winnow_grammar={}",
-            rlib("winnow_grammar").display()
-        ))
-        .arg("--extern")
-        .arg(format!("winnow={}", rlib("winnow").display()))
-        .arg(&source)
-        .arg("-o")
-        .arg(dir.join("lowered.rmeta"))
-        .output()
-        .expect("run rustc");
+            "--error-format",
+            "json",
+            "-o",
+            dir.join("lowered.rmeta").to_str().expect("utf-8 path"),
+        ],
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
     String::from_utf8(output.stderr).expect("rustc writes utf-8")

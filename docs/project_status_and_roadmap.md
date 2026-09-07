@@ -17,6 +17,7 @@ We have successfully implemented a "Vertical Slice" of the compiler that can com
     *   *Note*: Code compiles (`cargo check`), but running the binary requires `RUSTFLAGS="-C prefer-dynamic"` and correct environment setup due to `rustc_private` dynamic linking requirements.
 *   ✅ **Executor**: Generates valid Rust source from the internal AST (Transpilation for Debug) using `rustc_ast_pretty`.
 *   ⚠️ **End-to-End Execution**: Currently blocked by `std` linkage conflicts when running via `cargo run`. Requires environment configuration for dynamic linking of `rustc_driver`.
+*   ✅ **Nikaia in `std` (ADR-014)**: `crates/nikaia-std/src/*.nika` are compiled by the Stage 0 compiler when `std` is built. One function so far (`digit_value`); the share grows with what the compiler can lower. `fs::map` is a memory mapping and the `par_fold` driver runs on rayon (8M lines: 3.99 s → 1.05 s on 4 cores).
 *   ✅ **Grammar Lowering (Stage 0 transpiler, ADR-011)**: `--backend rust` lowers `grammar` items onto `winnow-grammar`'s `grammar!`: rules, patterns, the commit point, bounded repetition, `@frame` -> `#[frame]`, `fold`/`par_fold`, and `dsl … from …` onto the generated piece driver with the `Parallelism` the `--profile` asks for. Checked by compiling and running the emitter's own output (`crates/nikaia/tests/grammar_lowering.rs`).
     *   *Scope*: syntactic. There is no type checker, so `impl` methods used as a fold's step or merge are emitted as written and rejected by `rustc` rather than adapted (ADR-011 D2, §4).
 
