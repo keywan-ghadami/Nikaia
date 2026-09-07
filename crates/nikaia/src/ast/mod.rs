@@ -10,10 +10,37 @@
 // stores each distinct spelling once and makes equality an integer comparison.
 use winnow_grammar::Symbol as Ident;
 
+/// A byte range in the `.nika` source a node was parsed from.
+///
+/// Every diagnostic a user ever sees has to end up pointing at one of these:
+/// the compiler emits Rust, and an error reported against the emitted file
+/// names a line nobody wrote.
+pub type Span = std::ops::Range<usize>;
+
+/// A node and where it came from.
+#[derive(Debug, Clone)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(node: T, span: Span) -> Self {
+        Self { node, span }
+    }
+}
+
+/// Lets a rule written `-> Spanned<T> @=` wrap its value without an action.
+impl<T> winnow_grammar::WithSpan<T> for Spanned<T> {
+    fn with_span(node: T, span: Span) -> Self {
+        Self { node, span }
+    }
+}
+
 /// Ein Nikaia-Programm ist eine Liste von Top-Level Items.
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub items: Vec<Item>,
+    pub items: Vec<Spanned<Item>>,
 }
 
 /// Top-Level Konstrukte (außerhalb von Funktionen)
@@ -81,7 +108,7 @@ pub enum Item {
 /// Ein Block von Statements { ... }
 #[derive(Debug, Clone)]
 pub struct Block {
-    pub stmts: Vec<Stmt>,
+    pub stmts: Vec<Spanned<Stmt>>,
 }
 
 /// Anweisungen innerhalb eines Blocks
@@ -323,6 +350,7 @@ pub struct GrammarRule {
     pub frame: Option<FrameAttr>,
     pub ret_type: Option<Type>,
     pub alts: Vec<GrammarAlt>,
+    pub span: Span,
 }
 
 /// The keyed attribute of ADR-009 D1: `@frame`, `@frame(boundary: "\n")`,
@@ -337,28 +365,37 @@ pub struct FrameAttr {
 /// One alternative of a rule: a pattern and the action that builds its value.
 #[derive(Debug, Clone)]
 pub struct GrammarAlt {
-    pub pattern: Pattern,
+    pub pattern: Spanned<Pattern>,
     pub action: Option<Block>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
     /// `a b c` - matched in order.
-    Seq(Vec<Pattern>),
+    Seq(Vec<Spanned<Pattern>>),
     /// `a | b` - first match wins.
-    Choice(Vec<Pattern>),
+    Choice(Vec<Spanned<Pattern>>),
     /// `name:pattern` - binds the result for the action block.
-    Bind { name: Ident, pat: Box<Pattern> },
+    Bind {
+        name: Ident,
+        pat: Box<Spanned<Pattern>>,
+    },
     /// `";"`
     Literal(String),
     /// A rule reference (`NAME`), a built-in (`digit`, `frame_end`), or a call
     /// to either (`until(";" | frame_end)`, `list(pair, ",")`). One node,
     /// because the grammar cannot tell them apart and does not need to.
-    Ref { name: Ident, args: Vec<Pattern> },
+    Ref {
+        name: Ident,
+        args: Vec<Spanned<Pattern>>,
+    },
     /// `p*`, `p+`, `p?`, `p{1,2}`
-    Repeat { pat: Box<Pattern>, rep: Repeat },
+    Repeat {
+        pat: Box<Spanned<Pattern>>,
+        rep: Repeat,
+    },
     /// `( ... )` - grouping only, never a delimiter.
-    Group(Box<Pattern>),
+    Group(Box<Spanned<Pattern>>),
     /// `=>` - the commit point (Part II, 10.1).
     Cut,
     /// `fold(...)` / `par_fold(...)`

@@ -18,7 +18,9 @@ const DIGITS: &str = include_str!("fixtures/digits.nika");
 
 fn emit(source: &str, profile: Profile) -> String {
     let parsed = parse_to_ast(source).expect("the fixture parses");
-    emit_program(&parsed, profile).expect("the fixture lowers")
+    emit_program(&parsed, profile)
+        .expect("the fixture lowers")
+        .rust
 }
 
 /// Compare emitted code by its tokens rather than its indentation, for the one

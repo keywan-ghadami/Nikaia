@@ -24,6 +24,6 @@ fn main() -> anyhow::Result<()> {
 
     let source = std::fs::read_to_string(&path)?;
     let parsed = parse_to_ast(&source)?;
-    print!("{}", emit_program(&parsed, profile)?);
+    print!("{}", emit_program(&parsed, profile)?.rust);
     Ok(())
 }

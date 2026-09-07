@@ -14,7 +14,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 use nikaia::emit::{self, Profile};
-use nikaia::{interpreter, parser};
+use nikaia::{diagnostics, interpreter, parser};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -36,6 +36,14 @@ pub struct Cli {
     /// Where the `rust` backend writes. Defaults to `<input>.rs`.
     #[arg(short, long)]
     pub output: Option<PathBuf>,
+
+    /// Read `rustc --error-format=json` on stdin and report it against the
+    /// `.nika` source instead of the emitted Rust (ADR-012).
+    ///
+    /// The map is not an artifact: the lowering is deterministic, so it is
+    /// rebuilt from `--input` here rather than written out and kept in step.
+    #[arg(long)]
+    pub explain: bool,
 }
 
 struct NikaiaFrontend;
@@ -46,10 +54,52 @@ impl LanguageFrontend for NikaiaFrontend {
     }
 }
 
+/// `rustc --error-format=json … | nikaia --input x.nika --explain`
+///
+/// Every message rustc reports about the emitted file is placed back in the
+/// `.nika` it came from. The text is left alone: because the lowering is name
+/// for name (ADR-011 D2), only the position was ever wrong.
+fn explain(args: &Cli, source: &str) -> Result<()> {
+    use std::io::Read;
+
+    let profile = Profile::parse(&args.profile)?;
+    let parsed = parser::parse_to_ast(source)?;
+    let lowered = emit::emit_program(&parsed, profile)?;
+
+    let mut rustc_json = String::new();
+    std::io::stdin().read_to_string(&mut rustc_json)?;
+
+    let generated = args
+        .output
+        .clone()
+        .unwrap_or_else(|| args.input.with_extension("rs"));
+    let path = args.input.display().to_string();
+    let generated = generated.display().to_string();
+
+    let diagnostics = diagnostics::translate(&rustc_json, &lowered.map, source);
+    let errors = diagnostics.iter().filter(|d| d.level == "error").count();
+
+    for diagnostic in &diagnostics {
+        print!(
+            "{}",
+            diagnostics::render(diagnostic, &path, source, &generated)
+        );
+    }
+
+    if errors > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 pub fn main() -> Result<()> {
     let args = Cli::parse();
 
     let source = std::fs::read_to_string(&args.input)?;
+
+    if args.explain {
+        return explain(&args, &source);
+    }
 
     if args.backend == "interpreter" {
         // For the interpreter, we need to parse to AST, not BridgeIR.
@@ -62,12 +112,13 @@ pub fn main() -> Result<()> {
         // only through here - the Bridge IR has no macro to carry it.
         let profile = Profile::parse(&args.profile)?;
         let parsed = parser::parse_to_ast(&source)?;
-        let rust = emit::emit_program(&parsed, profile)?;
+        let lowered = emit::emit_program(&parsed, profile)?;
 
         let output_path = args
             .output
+            .clone()
             .unwrap_or_else(|| args.input.with_extension("rs"));
-        std::fs::write(&output_path, rust)?;
+        std::fs::write(&output_path, &lowered.rust)?;
 
         println!(
             "Lowered {} to {} (profile: {})",

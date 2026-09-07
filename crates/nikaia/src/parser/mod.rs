@@ -160,11 +160,14 @@ grammar! {
         // `grammar` and `struct` come before `fn`: all three are keyword-led,
         // and the order is what keeps `grammar` from being read as an
         // identifier.
-        rule item -> Item =
-            g:grammar_item -> { g }
-          | s:struct_item -> { s }
-          | u:use_item -> { u }
-          | i:fn_item -> { i }
+        // `@=` puts the byte range this rule matched into `_span`, which is
+        // how every node below gets the place in the `.nika` file it came from.
+        // Without it a diagnostic can only name generated Rust.
+        rule item -> Spanned<Item> @=
+            g:grammar_item -> { Spanned::new(g, _span) }
+          | s:struct_item -> { Spanned::new(s, _span) }
+          | u:use_item -> { Spanned::new(u, _span) }
+          | i:fn_item -> { Spanned::new(i, _span) }
 
         rule kw_sync -> () = "sync" -> { () }
         rule kw_pub -> () = "pub" -> { () }
@@ -326,7 +329,7 @@ grammar! {
             "{" _sp3:skip_ws rules:grammar_rule* _sp4:skip_ws "}"
             -> { Item::Grammar(GrammarDef { name, rules }) }
 
-        rule grammar_rule -> GrammarRule =
+        rule grammar_rule -> GrammarRule @=
             _sp:skip_ws
             frame:frame_attr?
             _sp2:skip_ws
@@ -348,6 +351,7 @@ grammar! {
                     frame,
                     ret_type: ret,
                     alts,
+                    span: _span,
                 }
             }
 
@@ -403,38 +407,39 @@ grammar! {
                 GrammarAlt { pattern: f, action: None }
             }
 
-        rule g_seq -> Pattern =
+        rule g_seq -> Spanned<Pattern> @=
             head:g_elem tail:g_elem_tail* -> {
                 if tail.is_empty() {
+                    // One element is its own span, not the sequence's.
                     head
                 } else {
                     let mut parts = vec![head];
                     parts.extend(tail);
-                    Pattern::Seq(parts)
+                    Spanned::new(Pattern::Seq(parts), _span)
                 }
             }
 
-        rule g_elem_tail -> Pattern =
+        rule g_elem_tail -> Spanned<Pattern> =
             _sp:skip_ws e:g_elem -> { e }
 
-        rule g_elem -> Pattern =
+        rule g_elem -> Spanned<Pattern> =
             c:g_cut -> { c }
           | b:g_bind -> { b }
           | p:g_postfix -> { p }
 
         // Part II, 10.1: the commit point. Once passed, a later failure is an
         // error rather than a reason to try the next alternative.
-        rule g_cut -> Pattern = "=>" -> { Pattern::Cut }
+        rule g_cut -> Spanned<Pattern> @= "=>" -> { Spanned::new(Pattern::Cut, _span) }
 
-        rule g_bind -> Pattern =
+        rule g_bind -> Spanned<Pattern> @=
             name:ident ":" p:g_postfix -> {
-                Pattern::Bind { name, pat: Box::new(p) }
+                Spanned::new(Pattern::Bind { name, pat: Box::new(p) }, _span)
             }
 
-        rule g_postfix -> Pattern =
+        rule g_postfix -> Spanned<Pattern> @=
             a:g_atom rep:g_repeat? -> {
                 match rep {
-                    Some(r) => Pattern::Repeat { pat: Box::new(a), rep: r },
+                    Some(r) => Spanned::new(Pattern::Repeat { pat: Box::new(a), rep: r }, _span),
                     None => a,
                 }
             }
@@ -461,79 +466,81 @@ grammar! {
         rule number -> u32 =
             d:digit1 -> { d.parse().unwrap_or(0) }
 
-        rule g_atom -> Pattern =
+        rule g_atom -> Spanned<Pattern> @=
             f:g_fold -> { f }
-          | s:STRING -> { Pattern::Literal(s) }
+          | s:STRING -> { Spanned::new(Pattern::Literal(s), _span) }
           | g:g_group -> { g }
           | r:g_ref -> { r }
 
-        rule g_group -> Pattern =
-            "(" _sp:skip_ws p:g_choice _sp2:skip_ws ")" -> { Pattern::Group(Box::new(p)) }
+        rule g_group -> Spanned<Pattern> @=
+            "(" _sp:skip_ws p:g_choice _sp2:skip_ws ")" -> {
+                Spanned::new(Pattern::Group(Box::new(p)), _span)
+            }
 
         // A rule reference, a built-in (`digit`, `frame_end`), or a call to
         // either (`until(";" | frame_end)`, `list(pair, ",")`). The grammar
         // cannot tell them apart, and does not need to: what a name means is
         // the backend's question.
-        rule g_ref -> Pattern =
+        rule g_ref -> Spanned<Pattern> @=
             name:ident args:g_args? -> {
-                Pattern::Ref { name, args: args.unwrap_or_default() }
+                Spanned::new(Pattern::Ref { name, args: args.unwrap_or_default() }, _span)
             }
 
-        rule g_args -> Vec<Pattern> =
+        rule g_args -> Vec<Spanned<Pattern>> =
             "(" _sp:skip_ws head:g_choice tail:g_arg_tail* _sp2:skip_ws ")" -> {
                 let mut args = vec![head];
                 args.extend(tail);
                 args
             }
 
-        rule g_arg_tail -> Pattern =
+        rule g_arg_tail -> Spanned<Pattern> =
             _sp:skip_ws "," _sp2:skip_ws p:g_choice -> { p }
 
-        rule g_choice -> Pattern =
+        rule g_choice -> Spanned<Pattern> @=
             head:g_seq tail:g_choice_tail* -> {
                 if tail.is_empty() {
                     head
                 } else {
                     let mut parts = vec![head];
                     parts.extend(tail);
-                    Pattern::Choice(parts)
+                    Spanned::new(Pattern::Choice(parts), _span)
                 }
             }
 
-        rule g_choice_tail -> Pattern =
+        rule g_choice_tail -> Spanned<Pattern> =
             _sp:skip_ws "|" _sp2:skip_ws p:g_seq -> { p }
 
         // ADR-009 D2: parallel parsing is a frame plus a monoid. `fold` is the
         // accumulator; the merge is what makes it parallelisable, and asking
         // for it is how the user says a different chunk count is the same
         // answer to them.
-        rule g_fold -> Pattern =
+        rule g_fold -> Spanned<Pattern> @=
             "par_fold" _sp:skip_ws "(" _sp2:skip_ws
             r:ident _sp3:skip_ws "," _sp4:skip_ws
             init:expr _sp5:skip_ws "," _sp6:skip_ws
             step:expr _sp7:skip_ws "," _sp8:skip_ws
             merge:expr _sp9:skip_ws ")"
             -> {
-                Pattern::Fold(Box::new(FoldSpec {
+                Spanned::new(Pattern::Fold(Box::new(FoldSpec {
                     parallel: true,
                     rule: r,
                     init,
                     step,
                     merge: Some(merge),
-                }))
+                })), _span)
             }
           | "fold" _sp:skip_ws "(" _sp2:skip_ws
             r:ident _sp3:skip_ws "," _sp4:skip_ws
             init:expr _sp5:skip_ws "," _sp6:skip_ws
             step:expr _sp7:skip_ws ")"
             -> {
-                Pattern::Fold(Box::new(FoldSpec {
+                Spanned::new(Pattern::Fold(Box::new(FoldSpec {
                     parallel: false,
                     rule: r,
                     init,
                     step,
                     merge: None,
-                }))
+                })), _span)
             }
 
         // --- Statements & Blocks ---
@@ -541,14 +548,14 @@ grammar! {
         rule block -> Block =
             "{" _sp:skip_ws stmts:stmt_list _sp2:skip_ws "}" -> { Block { stmts } }
 
-        rule stmt_list -> Vec<Stmt> =
+        rule stmt_list -> Vec<Spanned<Stmt>> =
             stmts:stmt* -> { stmts }
 
-        rule stmt -> Stmt =
-            l:let_stmt -> { l }
-          | f:for_stmt -> { f }
-          | a:assign_stmt -> { a }
-          | e:expr_stmt -> { e }
+        rule stmt -> Spanned<Stmt> @=
+            l:let_stmt -> { Spanned::new(l, _span) }
+          | f:for_stmt -> { Spanned::new(f, _span) }
+          | a:assign_stmt -> { Spanned::new(a, _span) }
+          | e:expr_stmt -> { Spanned::new(e, _span) }
 
         rule kw_mut -> () = "mut" -> { () }
 
@@ -852,7 +859,7 @@ grammar! {
 fn lower_program(parsed: &Parsed) -> Result<BridgeModule> {
     let mut items = Vec::new();
     for item in &parsed.program.items {
-        if let Some(bridge_item) = lower_item(parsed, item)? {
+        if let Some(bridge_item) = lower_item(parsed, &item.node, item.span.clone())? {
             items.push(bridge_item);
         }
     }
@@ -863,14 +870,14 @@ fn lower_program(parsed: &Parsed) -> Result<BridgeModule> {
     })
 }
 
-fn lower_item(parsed: &Parsed, item: &ast::Item) -> Result<Option<BridgeItem>> {
+fn lower_item(parsed: &Parsed, item: &ast::Item, span: ast::Span) -> Result<Option<BridgeItem>> {
     match item {
         ast::Item::Fn { name, body, .. } => Ok(Some(BridgeItem::Function(BridgeFunction {
             name: parsed.text(*name).to_string(),
             args: vec![],
             ret_type: None,
             body: lower_block(parsed, body)?,
-            span: 0..0,
+            span,
         }))),
         // A grammar is not a Bridge item: it lowers onto the parser backend,
         // which is the `rust` emitter's job. Dropping it silently would compile
@@ -886,18 +893,18 @@ fn lower_item(parsed: &Parsed, item: &ast::Item) -> Result<Option<BridgeItem>> {
 fn lower_block(parsed: &Parsed, block: &ast::Block) -> Result<BridgeBlock> {
     let mut stmts = Vec::new();
     for stmt in &block.stmts {
-        stmts.push(lower_stmt(parsed, stmt)?);
+        stmts.push(lower_stmt(parsed, &stmt.node, stmt.span.clone())?);
     }
     Ok(BridgeBlock { stmts, span: 0..0 })
 }
 
-fn lower_stmt(parsed: &Parsed, stmt: &ast::Stmt) -> Result<BridgeStmt> {
+fn lower_stmt(parsed: &Parsed, stmt: &ast::Stmt, span: ast::Span) -> Result<BridgeStmt> {
     match stmt {
         ast::Stmt::Let { name, value, .. } => Ok(BridgeStmt::Let(BridgeLetStmt {
             name: parsed.text(*name).to_string(),
             ty: None,
             init: Some(lower_expr(parsed, value)?),
-            span: 0..0,
+            span,
         })),
         ast::Stmt::Expr(expr) => Ok(BridgeStmt::Expr(lower_expr(parsed, expr)?)),
         _ => Err(anyhow::anyhow!("Unsupported statement type")),

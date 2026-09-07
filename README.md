@@ -112,7 +112,9 @@ This is currently a **Specification (Version 0.0.7)**. We are in the bootstrap p
   - [x] The grammar protocol: `grammar` onto `grammar!`, `@frame` onto `#[frame]`, and
     `dsl … from …` onto the parallel piece driver, with the profile choosing the
     parallelism ([ADR-011](docs/specification/adr/adr-011.md)).
-  - [ ] `impl` blocks and methods, `throws`/`catch`, string interpolation, spans.
+  - [x] Diagnostics on the `.nika` line that caused them, for every error class at once
+    ([ADR-012](docs/specification/adr/adr-012.md)).
+  - [ ] `impl` blocks and methods, `throws`/`catch`, string interpolation.
 - [ ] **Runtime Integration:** Binding `tokio` (Current-Thread & Thread-Pool).
 - [ ] **Self-Hosting:** The compiler compiles itself.
 

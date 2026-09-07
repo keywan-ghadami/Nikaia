@@ -51,7 +51,8 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 ### Phase 2: Compiler Robustness (Middle-end)
 
 *   [ ] **Error Reporting**: Replace generic `anyhow` errors with specific, span-aware error messages using `miette` or `codespan`.
-    *   *Requirement*: Propagate source spans correctly through AST -> Bridge IR.
+    *   *Done (ADR-012)*: the AST carries spans, the `rust` backend emits a source map, and `nikaia --explain` reports rustc's JSON diagnostics - including the parser backend's frame check - on the `.nika` line that caused them.
+    *   *Open*: expression-level spans (a type error is reported on its statement), and the compiler's own `anyhow` errors, which are still text without a position.
 *   [ ] **Type Checking (Frontend)**: Implement a basic type checker in the frontend *before* lowering to Bridge IR to catch errors early.
     *   *Current*: We rely on `rustc` to catch type errors, which gives poor UX for Nikaia users.
 *   [ ] **Macro Expansion (JIT)**: Implement the "Phase 2" JIT interpreter mentioned in ADR-003 to handle macros and compile-time execution.

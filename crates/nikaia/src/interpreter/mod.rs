@@ -23,7 +23,7 @@ impl Interpreter {
         println!("[Nikaia Kernel] Interpreter Init...");
         // Entry point lookup: find 'main' function
         for item in &program.items {
-            if let Item::Fn { name, body, .. } = item {
+            if let Item::Fn { name, body, .. } = &item.node {
                 if self.text(name) == "main" {
                     println!("[Nikaia Kernel] Executing 'main'...");
                     self.eval_block(body);
@@ -36,7 +36,7 @@ impl Interpreter {
 
     fn eval_block(&self, block: &Block) {
         for stmt in &block.stmts {
-            self.eval_stmt(stmt);
+            self.eval_stmt(&stmt.node);
         }
     }
 
