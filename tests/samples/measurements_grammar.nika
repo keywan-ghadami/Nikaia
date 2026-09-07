@@ -1,0 +1,31 @@
+// The grammar half of examples/1brc.nika: what the compiler must be able to
+// read before it can lower anything onto the parser backend.
+
+grammar Measurements {
+
+    rule NAME -> &str = s:until(";" | frame_end) -> { s }
+
+    rule TENTHS -> i32 =
+        neg:"-"? whole:digit{1,2} "." frac:digit
+        -> {
+            let mut value = 0
+            for d in whole { value = value * 10 + d.to_digit() }
+            value = value * 10 + frac.to_digit()
+            if neg.is_some() { -value } else { value }
+        }
+
+    @frame(boundary: "\n")
+    rule MEASUREMENT -> Reading =
+        name:NAME ";" => temp:TENTHS frame_end
+        -> { Reading { name, temp } }
+
+    pub rule file -> Summary =
+        par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) },
+                 Summary::merge)
+}
+
+@borrowed
+pub struct Reading {
+    name: &str,
+    temp: i32,
+}

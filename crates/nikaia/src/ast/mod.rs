@@ -34,6 +34,10 @@ pub enum Item {
         name: Ident,
         generics: Vec<GenericParam>,
         fields: Vec<FieldDef>,
+        is_public: bool,
+        // ADR-008, D6: `@borrowed` asserts that no value of this type escapes
+        // the buffer it points into.
+        is_borrowed: bool,
     },
 
     // Kap 4.3: enum Message { ... }
@@ -62,14 +66,15 @@ pub enum Item {
     },
 
     // Part II, Kap 10.1: grammar ColorParser { ... }
-    Grammar {
-        name: Ident,
-        content: String, // Simplified from TokenStream
-    },
+    //
+    // The rules are parsed, not kept as text: the whole point of this item is
+    // that the compiler lowers it onto the parser backend (`grammar!`), and it
+    // cannot check a frame or generate a fold driver from a string.
+    Grammar(GrammarDef),
 
     // Kap 9.2: use std::http
     Import {
-        path: String,
+        path: Vec<Ident>,
     },
 }
 
@@ -94,6 +99,13 @@ pub enum Stmt {
     Assign {
         target: Expr,
         value: Expr,
+    },
+
+    // Kap 3.3: for x in xs { ... }
+    For {
+        binding: Ident,
+        iter: Expr,
+        body: Block,
     },
 
     // Ein "nackter" Ausdruck (z.B. Funktionsaufruf oder Return-Value)
@@ -139,6 +151,59 @@ pub enum Expr {
         content: String,        // Simplified from TokenStream
     },
 
+    // Part II, Kap 10.2/10.5: dsl Json from input
+    //
+    // The other half of the grammar protocol: `from` runs a named grammar over
+    // an input that is already a value, rather than over a foreign-syntax block.
+    DslFrom {
+        grammar: Ident,
+        input: Box<Expr>,
+    },
+
+    // Ein qualifizierter Pfad: Summary::new, u8::from_str_radix
+    Path(Vec<Ident>),
+
+    // Methodenaufruf: acc.record(m)
+    MethodCall {
+        receiver: Box<Expr>,
+        method: Ident,
+        args: Vec<Expr>,
+    },
+
+    // Feldzugriff: self.min
+    Field {
+        base: Box<Expr>,
+        name: Ident,
+    },
+
+    // Struct-Literal: Reading { name, temp }
+    StructLit {
+        name: Ident,
+        fields: Vec<FieldInit>,
+    },
+
+    // Kap 5.2: fn(acc, m) { ... } - ein Lambda ohne Namen
+    Closure {
+        params: Vec<Ident>,
+        body: Block,
+    },
+
+    // -value, !flag
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
+
+    // a + b, a < b
+    Binary {
+        op: BinaryOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+
+    // Kap 7.1: expr?
+    Try(Box<Expr>),
+
     // Part III, Kap 16: unsafe asm { Bindings } { Body }
     Asm {
         bindings: Vec<AsmBinding>, // Block 1
@@ -164,6 +229,10 @@ pub enum Expr {
 pub struct Type {
     pub name: Ident,
     pub generics: Vec<Type>, // Recursive: Shared[Locked[T]]
+    // Part II, 10.6 / ADR-008: `&str` is a view marker, not a lifetime. The
+    // flag records that the source said `&`; what it lowers to is the emitter's
+    // business.
+    pub is_view: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -203,4 +272,121 @@ pub struct AsmBinding {
     pub direction: String, // "out", "in", "inout"
     pub location: String,  // "reg", "mem"
     pub variable: Ident,   // result
+}
+
+/// `Reading { name, temp }` - a field with no value is shorthand for `name: name`.
+#[derive(Debug, Clone)]
+pub struct FieldInit {
+    pub name: Ident,
+    pub value: Option<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
+    Ref,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+}
+
+// --- Part II, Kapitel 10: Grammatiken ---
+
+/// `grammar Measurements { ... }`
+#[derive(Debug, Clone)]
+pub struct GrammarDef {
+    pub name: Ident,
+    pub rules: Vec<GrammarRule>,
+}
+
+/// `@frame(boundary: "\n") pub rule MEASUREMENT -> Reading = ... -> { ... }`
+#[derive(Debug, Clone)]
+pub struct GrammarRule {
+    pub name: Ident,
+    pub is_public: bool,
+    /// Part II, 10.7: the rule is a resynchronization unit.
+    pub frame: Option<FrameAttr>,
+    pub ret_type: Option<Type>,
+    pub alts: Vec<GrammarAlt>,
+}
+
+/// The keyed attribute of ADR-009 D1: `@frame`, `@frame(boundary: "\n")`,
+/// `@frame(boundary: "\n", unchecked)`. A bare `@frame` leaves `boundary`
+/// empty and the boundary is inferred downstream from the trailing literal.
+#[derive(Debug, Clone, Default)]
+pub struct FrameAttr {
+    pub boundary: Option<String>,
+    pub unchecked: bool,
+}
+
+/// One alternative of a rule: a pattern and the action that builds its value.
+#[derive(Debug, Clone)]
+pub struct GrammarAlt {
+    pub pattern: Pattern,
+    pub action: Option<Block>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// `a b c` - matched in order.
+    Seq(Vec<Pattern>),
+    /// `a | b` - first match wins.
+    Choice(Vec<Pattern>),
+    /// `name:pattern` - binds the result for the action block.
+    Bind { name: Ident, pat: Box<Pattern> },
+    /// `";"`
+    Literal(String),
+    /// A rule reference (`NAME`), a built-in (`digit`, `frame_end`), or a call
+    /// to either (`until(";" | frame_end)`, `list(pair, ",")`). One node,
+    /// because the grammar cannot tell them apart and does not need to.
+    Ref { name: Ident, args: Vec<Pattern> },
+    /// `p*`, `p+`, `p?`, `p{1,2}`
+    Repeat { pat: Box<Pattern>, rep: Repeat },
+    /// `( ... )` - grouping only, never a delimiter.
+    Group(Box<Pattern>),
+    /// `=>` - the commit point (Part II, 10.1).
+    Cut,
+    /// `fold(...)` / `par_fold(...)`
+    Fold(Box<FoldSpec>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Repeat {
+    Star,
+    Plus,
+    Optional,
+    /// `p{n}`
+    Exactly(u32),
+    /// `p{n,}`
+    AtLeast(u32),
+    /// `p{n,m}`
+    Between(u32, u32),
+}
+
+/// `fold(rule, init, step)` and `par_fold(rule, init, step, merge)`.
+///
+/// The merge is what separates them: ADR-009 D2 - parallel parsing is a frame
+/// plus a monoid, and the monoid is exactly this merge.
+#[derive(Debug, Clone)]
+pub struct FoldSpec {
+    pub parallel: bool,
+    pub rule: Ident,
+    pub init: Expr,
+    pub step: Expr,
+    pub merge: Option<Expr>,
 }

@@ -54,6 +54,12 @@ impl Interpreter {
             Stmt::Assign { .. } => {
                 println!("[Nikaia Runtime] Assignment (Skipped)");
             }
+            Stmt::For { body, .. } => {
+                // No iteration yet: the loop body is walked once so that calls
+                // inside it are still visible.
+                println!("[Nikaia Runtime] For loop (single pass)");
+                self.eval_block(body);
+            }
         }
     }
 

@@ -5,5 +5,6 @@
 // of this; nothing here depends on `rustc_private`.
 
 pub mod ast;
+pub mod emit;
 pub mod interpreter;
 pub mod parser;
