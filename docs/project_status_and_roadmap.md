@@ -38,10 +38,8 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Rust backend*: emits struct definitions, with the input lifetime where a field is a view (ADR-011 D6).
     *   *Bridge IR*: Add `BridgeStruct` and `BridgeEnum` definitions.
     *   *Executor*: Generate Rust struct/enum definitions.
-*   [ ] **Methods & Impl Blocks**: Support `impl` blocks and method calls (`x.foo()`).
-    *   *Parser*: dot notation parses; the `impl` keyword does not.
-    *   *Lowering*: Desugar method calls to function calls with `self`.
-    *   *Blocks*: `examples/1brc.nika` as a whole, and the fold-adapter question of ADR-011 D2.
+*   [x] **Methods & Impl Blocks** (ADR-013): `impl` blocks, receivers, the anonymous constructor, and the fold adapter that ADR-011 D2 deferred until the receivers were known.
+    *   *Open*: traits, generics on impls, and operators as methods.
 *   [ ] **Generics**: Fully support generic type parameters (`<T>`) across functions and structs.
     *   *Status*: Parser has basic support (using `[...]`), but lowering and bridge need full integration.
 *   [ ] **Modules & Imports**: Implement `use` and multi-file compilation support.

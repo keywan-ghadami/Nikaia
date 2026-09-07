@@ -114,7 +114,10 @@ This is currently a **Specification (Version 0.0.7)**. We are in the bootstrap p
     parallelism ([ADR-011](docs/specification/adr/adr-011.md)).
   - [x] Diagnostics on the `.nika` line that caused them, for every error class at once
     ([ADR-012](docs/specification/adr/adr-012.md)).
-  - [ ] `impl` blocks and methods, `throws`/`catch`, string interpolation.
+  - [x] `impl` blocks and methods, `throws`/`catch`/`??`, string interpolation, and a
+    `std` for what the examples call ([ADR-013](docs/specification/adr/adr-013.md)) — enough
+    that **`examples/1brc.nika` compiles and runs**.
+  - [ ] A type checker: everything Stage 0 cannot infer, the example has to say (ADR-013 D7).
 - [ ] **Runtime Integration:** Binding `tokio` (Current-Thread & Thread-Pool).
 - [ ] **Self-Hosting:** The compiler compiles itself.
 

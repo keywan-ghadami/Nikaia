@@ -1,0 +1,8 @@
+[package]
+name = "nikaia-std"
+version = "0.1.0"
+edition = "2021"
+
+# Deliberately no dependencies: everything here is either std or a few lines of
+# glue. `fs::map` is the one place that will want `memmap2`, and it says so.
+[dependencies]

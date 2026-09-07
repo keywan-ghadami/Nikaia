@@ -81,12 +81,16 @@ mod digits {
     /// has to accept it and a test can run it.
     /// `a_sequential_entry_rule_gets_no_piece_driver` is what keeps this copy
     /// and the emitter's output the same code.
+    // `&*` is redundant for a `&str` and necessary for everything else the
+    // emitter has to accept there - a mapping, an owned string - so the copy
+    // keeps it and clippy is told why.
+    #[allow(clippy::borrow_deref_ref)]
     pub fn sequential_driver(data: &str) -> Result<Pair, winnow_grammar::ParseError> {
         Ok({
             use winnow::Parser;
             let mut stream = winnow_grammar::ParseInput::<()> {
                 state: winnow_grammar::ParseContext::<()>::default(),
-                input: winnow::stream::LocatingSlice::new(data),
+                input: winnow::stream::LocatingSlice::new(&*data),
             };
             Digits::parse_pair().parse_next(&mut stream)?
         })
@@ -192,13 +196,13 @@ fn the_profile_chooses_the_parallelism_and_nothing_else() {
 
     assert!(
         advanced.contains(
-            "Measurements::parse_file_pieces(data, ParseContext::<()>::default, Parallelism::Auto)?"
+            "Measurements::parse_file_pieces(&*data, ParseContext::<()>::default, Parallelism::Auto)?"
         ),
         "{advanced}"
     );
     assert!(
         lite.contains(
-            "Measurements::parse_file_pieces(data, ParseContext::<()>::default, Parallelism::Off)?"
+            "Measurements::parse_file_pieces(&*data, ParseContext::<()>::default, Parallelism::Off)?"
         ),
         "{lite}"
     );
@@ -224,7 +228,7 @@ fn a_sequential_entry_rule_gets_no_piece_driver() {
                 use winnow::Parser;
                 let mut stream = winnow_grammar::ParseInput::<()> {
                     state: winnow_grammar::ParseContext::<()>::default(),
-                    input: winnow::stream::LocatingSlice::new(data),
+                    input: winnow::stream::LocatingSlice::new(&*data),
                 };
                 Digits::parse_pair().parse_next(&mut stream)?
             }"#

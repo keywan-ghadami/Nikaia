@@ -23,7 +23,12 @@ impl Interpreter {
         println!("[Nikaia Kernel] Interpreter Init...");
         // Entry point lookup: find 'main' function
         for item in &program.items {
-            if let Item::Fn { name, body, .. } = &item.node {
+            if let Item::Fn {
+                name: Some(name),
+                body,
+                ..
+            } = &item.node
+            {
                 if self.text(name) == "main" {
                     println!("[Nikaia Kernel] Executing 'main'...");
                     self.eval_block(body);
@@ -53,6 +58,9 @@ impl Interpreter {
             }
             Stmt::Assign { .. } => {
                 println!("[Nikaia Runtime] Assignment (Skipped)");
+            }
+            Stmt::Return(_) => {
+                println!("[Nikaia Runtime] Return (Skipped)");
             }
             Stmt::For { body, .. } => {
                 // No iteration yet: the loop body is walked once so that calls

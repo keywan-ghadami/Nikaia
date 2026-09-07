@@ -20,7 +20,7 @@ fn test_advanced_hello_world_compilation() {
     assert_eq!(program.items.len(), 1, "Should have 1 main function");
 
     if let Item::Fn { name, body, .. } = &program.items[0].node {
-        assert_eq!(parsed.text(*name), "main");
+        assert_eq!(parsed.text(name.expect("a named function")), "main");
         assert_eq!(body.stmts.len(), 2, "Main should have 2 statements");
 
         // Verify println("Hello Nikaia")

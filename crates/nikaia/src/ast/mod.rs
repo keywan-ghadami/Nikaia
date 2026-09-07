@@ -48,12 +48,18 @@ pub struct Program {
 pub enum Item {
     // Kap 5.1: fn add(a: i32) -> i32 { ... }
     Fn {
-        name: Ident,
+        /// `None` for the anonymous constructor of Kap 4.2 - a `pub fn` with no
+        /// name inside an `impl`, called as `Type(…)`.
+        name: Option<Ident>,
         generics: Vec<GenericParam>, // Kap 4.5: [T]
+        /// Kap 4.2/5.1: `&self`, `&mut self` or `self`, when this is a method.
+        receiver: Option<Receiver>,
         args: Vec<FnArg>,
         ret_type: Option<Type>,
         body: Block,
-        is_sync: bool, // Kap 12.1: sync keyword
+        is_sync: bool,   // Kap 12.1: sync keyword
+        is_public: bool, // Kap 9.2
+        throws: bool,    // Kap 7.1
     },
 
     // Kap 4.1: struct User { ... }
@@ -77,7 +83,7 @@ pub enum Item {
     // Kap 4.2: impl User { ... }
     Impl {
         target: Type,
-        methods: Vec<Item>, // Enthält Item::Fn
+        methods: Vec<Spanned<Item>>, // Enthält Item::Fn
     },
 
     // Part III, Kap 14.1: test "Name" { ... }
@@ -122,18 +128,23 @@ pub enum Stmt {
         value: Expr,
     },
 
-    // Kap 2.1: x = 20
+    // Kap 2.1: x = 20, und x += 1
     Assign {
         target: Expr,
+        /// `Some(Add)` for `+=`; `None` for a plain assignment.
+        op: Option<BinaryOp>,
         value: Expr,
     },
 
-    // Kap 3.3: for x in xs { ... }
+    // Kap 3.3: for x in xs { ... }, for (k, v) in map { ... }
     For {
-        binding: Ident,
+        bindings: Vec<Ident>,
         iter: Expr,
         body: Block,
     },
+
+    // Kap 7.1: return, return value
+    Return(Option<Expr>),
 
     // Ein "nackter" Ausdruck (z.B. Funktionsaufruf oder Return-Value)
     Expr(Expr),
@@ -209,9 +220,11 @@ pub enum Expr {
         fields: Vec<FieldInit>,
     },
 
-    // Kap 5.2: fn(acc, m) { ... } - ein Lambda ohne Namen
+    // Kap 5.2/5.3: `fn(acc, m) { ... }`, and the implicit form `fn: a + b`,
+    // whose parameters are the `a`, `b`, `c` its body uses.
     Closure {
         params: Vec<Ident>,
+        implicit: bool,
         body: Block,
     },
 
@@ -230,6 +243,27 @@ pub enum Expr {
 
     // Kap 7.1: expr?
     Try(Box<Expr>),
+
+    // Kap 2.2: 10.0
+    LitFloat(String),
+
+    // Kap 4.5: map[key]
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
+
+    // `self.sum as f64`
+    Cast {
+        expr: Box<Expr>,
+        ty: Type,
+    },
+
+    // Kap 3.5: value ?? fallback
+    Coalesce {
+        value: Box<Expr>,
+        fallback: Box<Expr>,
+    },
 
     // Part III, Kap 16: unsafe asm { Bindings } { Body }
     Asm {
@@ -426,4 +460,18 @@ pub struct FoldSpec {
     pub init: Expr,
     pub step: Expr,
     pub merge: Option<Expr>,
+}
+
+/// Kap 4.2: what a method takes as its subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Receiver {
+    pub is_ref: bool,
+    pub is_mut: bool,
+}
+
+/// What a function declaration takes: an optional subject and the rest.
+#[derive(Debug, Clone, Default)]
+pub struct FnParams {
+    pub receiver: Option<Receiver>,
+    pub args: Vec<FnArg>,
 }

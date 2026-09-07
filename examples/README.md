@@ -1,14 +1,22 @@
 # Nikaia Examples
 
 Programs here are **specification-level**: they show what Nikaia 0.0.7 is meant to look like.
-The bootstrap compiler (`crates/nikaia`) cannot compile them yet. What it does handle:
-functions, `let`, assignment, `for`, `if`, calls, method calls, field access, struct literals,
-lambdas, operators, `struct` and `use` items, `spawn` and blocks — and, since
-[ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules, patterns,
-`@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
-`1brc.nika`'s grammar half therefore lowers to Rust today (`nikaia --backend rust`), and a test
-takes it out of this directory to prove it. Its `impl` blocks, `throws`/`catch` and string
-interpolation do not.
+
+**`1brc.nika` compiles and runs** ([ADR-013](../docs/specification/adr/adr-013.md)):
+`nikaia --input examples/1brc.nika --backend rust` produces Rust that prints what the benchmark
+asks for, and `crates/nikaia/tests/one_brc.rs` checks that by running it. Two of its claims are
+not true yet and are named in ADR-013 §4 — `fs::map` reads rather than maps, and the pieces of the
+parallel parse run in sequence.
+
+`fortunes.nika` does not: its gaps are `std::http` (G6) and template escaping (G7), below.
+
+What the bootstrap compiler handles: functions and methods, `impl` blocks, `struct` and `use`
+items, `let`, assignment, `for`, `if`, `return`, calls, field access, indexing, casts, struct
+literals and constructors, lambdas, operators, `throws`/`catch`/`??`, string interpolation — and,
+since [ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules,
+patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
+Errors are reported on the `.nika` line that caused them
+([ADR-012](../docs/specification/adr/adr-012.md)). There is no type checker.
 
 That is deliberate, and it is what these files are *for*. Writing a real program against the
 spec is the cheapest way to find out which parts of the spec are underspecified. The gaps each

@@ -5,12 +5,14 @@ members = [
     "crates/bridge-orchestrator",
     "crates/rustc-executor",
     "crates/nikaia",
+    "crates/nikaia-std",
 ]
 
 [workspace.dependencies]
 bridge-ir = { path = "crates/bridge-ir" }
 bridge-orchestrator = { path = "crates/bridge-orchestrator" }
 rustc-executor = { path = "crates/rustc-executor" }
+nikaia-std = { path = "crates/nikaia-std" }
 winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main", version = "0.1.0" }
 winnow = "0.7"
 serde = { version = "1.0", features = ["derive"] }

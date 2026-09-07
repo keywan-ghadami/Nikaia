@@ -13,16 +13,22 @@
 // Build:  nikaia build --profile=advanced --release
 // Run:    ./1brc measurements.txt
 //
-// NOTE: this does not compile yet - see examples/README.md. The gaps it
-// depended on are specified (G3 in ADR-008, G4 in ADR-009) and the grammar
-// features they need exist in the parser backend (`@frame`, `par_fold`, the
-// bounded repetition `digit{1,2}`, the word-at-a-time scan behind `until`).
+// This runs:
 //
-// The `grammar Measurements` block below and `Reading` now lower onto them
-// (ADR-011; `nikaia --input examples/1brc.nika --backend rust` once the rest
-// parses, and `crates/nikaia/tests/grammar_lowering.rs` lowers that half of
-// this very file today). What is left is the other half: `impl` blocks and
-// their methods, `throws`/`catch`/`??`, and string interpolation.
+//     nikaia --input examples/1brc.nika --backend rust
+//
+// and `crates/nikaia/tests/one_brc.rs` compiles the result and checks what it
+// prints, on this file rather than a copy of it.
+//
+// Two things it claims are not true yet, and ADR-013 §4 says so: `fs::map`
+// reads the file rather than mapping it, and `Parallelism::Auto` cuts the input
+// and merges the pieces but runs them in sequence, because `winnow-grammar`'s
+// `rayon` feature is not enabled here. The parse is real; the threads are not.
+//
+// Where this file says something explicitly that a later Nikaia will infer -
+// `as i64`, `&path`, `fn { … }` instead of `fn:` - the reason is in ADR-013 D7.
+// Stage 0 has no type checker, and a printer that guessed would be worse than
+// a source that says what it means.
 
 use std::fs
 use std::cli
@@ -70,8 +76,8 @@ grammar Measurements {
         neg:"-"? whole:digit{1,2} "." frac:digit
         -> {
             let mut value = 0
-            for d in whole { value = value * 10 + d.to_digit() }
-            value = value * 10 + frac.to_digit()
+            for d in whole { value = value * 10 + digit_value(d) }
+            value = value * 10 + digit_value(frac)
             if neg.is_some() { -value } else { value }
         }
 
@@ -141,7 +147,7 @@ pub struct Stats {
 
 impl Stats {
     pub fn(first: i32) -> Stats {
-        return Stats(min: first, max: first, sum: first, count: 1)
+        return Stats(min: first, max: first, sum: first as i64, count: 1)
     }
 
     // `sync` (Part II, 12.1): pure computation, cannot pause, cannot do I/O.
@@ -150,7 +156,7 @@ impl Stats {
     fn add(&mut self, temp: i32) sync {
         if temp < self.min { self.min = temp }
         if temp > self.max { self.max = temp }
-        self.sum += temp
+        self.sum += temp as i64
         self.count += 1
     }
 
@@ -183,15 +189,15 @@ impl Summary {
     fn record(&mut self, m: Reading) sync {
         self.stations
             .entry(m.name)
-            .and_modify fn: a.add(m.temp)
-            .or_insert_with fn: Stats(m.temp)
+            .and_modify fn { a.add(m.temp) }
+            .or_insert_with fn { Stats(m.temp) }
     }
 
-    fn merge(&mut self, other: &Summary) sync {
+    fn merge(&mut self, other: Summary) sync {
         for (name, stats) in other.stations {
             self.stations
                 .entry(name)
-                .and_modify fn: a.merge(&stats)
+                .and_modify fn { a.merge(&stats) }
                 .or_insert(stats)
         }
     }
@@ -216,7 +222,7 @@ fn main() throws {
     // constant-memory alternative. The Advanced profile is chosen here so the
     // grammar's `par_fold` uses every core, not for the mapping - and under
     // Lite the same program still runs, on one core.
-    let data = fs::map(path) catch {
+    let data = fs::map(&path) catch {
         eprintln("cannot open {path}: {error}")
         return
     }
@@ -239,11 +245,15 @@ fn main() throws {
     names.sort()
 
     let body = names
-        .map fn: {
-            let s = totals.stations[a]
-            "{a}={s.min / 10.0}/{s.mean()}/{s.max / 10.0}"
+        .map fn {
+            let s = &totals.stations[a]
+            // 1BRC prints one decimal; a hole may say how it is written, after
+            // the colon, as a format string does anywhere else.
+            "{a}={s.min as f64 / 10.0:.1}/{s.mean():.1}/{s.max as f64 / 10.0:.1}"
         }
         .join(", ")
 
-    println("{{body}}")
+    // `{{` and `}}` are literal braces, as in any format string; 1BRC wants the
+    // whole line wrapped in one pair.
+    println("{{{body}}}")
 }
