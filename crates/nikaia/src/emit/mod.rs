@@ -66,6 +66,18 @@ impl Profile {
 /// marker, never an annotation the user writes.
 const INPUT_LIFETIME: &str = "'a";
 
+/// Where a type is being written, which is all that decides how a view's
+/// lifetime is spelled. The source never says either way (ADR-008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lifetimes {
+    /// Inside the grammar module and on the structs it builds, where `'a` is
+    /// the input's lifetime and has to be named to tie the two together.
+    Named,
+    /// In a function signature, where Rust elides it and naming a lifetime that
+    /// the signature does not declare would not compile.
+    Elided,
+}
+
 pub fn emit_program(parsed: &Parsed, profile: Profile) -> Result<String> {
     Emitter::new(parsed, profile).program()
 }
@@ -181,7 +193,7 @@ impl<'p> Emitter<'p> {
                     out.push_str(&format!(
                         "    pub {}: {},\n",
                         self.text(field.name),
-                        self.ty(&field.ty)
+                        self.ty(&field.ty, Lifetimes::Named)
                     ));
                 }
                 out.push_str("}\n");
@@ -203,11 +215,17 @@ impl<'p> Emitter<'p> {
                 }
                 let params = args
                     .iter()
-                    .map(|a| format!("{}: {}", self.text(a.name), self.ty(&a.ty)))
+                    .map(|a| {
+                        format!(
+                            "{}: {}",
+                            self.text(a.name),
+                            self.ty(&a.ty, Lifetimes::Elided)
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 let ret = match ret_type {
-                    Some(ty) => format!(" -> {}", self.ty(ty)),
+                    Some(ty) => format!(" -> {}", self.ty(ty, Lifetimes::Elided)),
                     None => String::new(),
                 };
                 out.push_str(&format!("fn {}({params}){ret} ", self.text(*name)));
@@ -255,7 +273,7 @@ impl<'p> Emitter<'p> {
 
         let vis = if rule.is_public { "pub " } else { "" };
         let ret = match &rule.ret_type {
-            Some(ty) => format!(" -> {}", self.ty(ty)),
+            Some(ty) => format!(" -> {}", self.ty(ty, Lifetimes::Named)),
             None => String::new(),
         };
         out.push_str(&format!(
@@ -348,27 +366,34 @@ impl<'p> Emitter<'p> {
 
     // --- Types ---
 
-    fn ty(&self, ty: &Type) -> String {
-        let name = self.text(ty.name);
+    fn ty(&self, ty: &Type, lifetimes: Lifetimes) -> String {
+        let lifetime = match lifetimes {
+            Lifetimes::Named => INPUT_LIFETIME,
+            Lifetimes::Elided => "'_",
+        };
+
         let mut out = String::new();
 
         // A view is a borrow of the parser's input, and that is where the
         // lifetime comes from - the source never writes one (ADR-008).
         if ty.is_view {
-            out.push_str(&format!("&{INPUT_LIFETIME} "));
+            match lifetimes {
+                Lifetimes::Named => out.push_str(&format!("&{INPUT_LIFETIME} ")),
+                Lifetimes::Elided => out.push('&'),
+            }
         }
-        out.push_str(name);
+        out.push_str(self.text(ty.name));
 
-        let mut params: Vec<String> = ty.generics.iter().map(|g| self.ty(g)).collect();
+        let mut params: Vec<String> = ty.generics.iter().map(|g| self.ty(g, lifetimes)).collect();
         // A struct that holds a view carries the input lifetime with it.
         if self.borrowing.contains(&ty.name) {
-            params.insert(0, INPUT_LIFETIME.to_string());
+            params.insert(0, lifetime.to_string());
         }
         if !params.is_empty() {
             out.push_str(&format!("<{}>", params.join(", ")));
         }
 
-        out.replace("& ", "&")
+        out
     }
 
     // --- Statements and expressions ---
@@ -416,7 +441,7 @@ impl<'p> Emitter<'p> {
             } => {
                 let mutable = if *mutable { "mut " } else { "" };
                 let annotation = match ty {
-                    Some(ty) => format!(": {}", self.ty(ty)),
+                    Some(ty) => format!(": {}", self.ty(ty, Lifetimes::Elided)),
                     None => String::new(),
                 };
                 format!(

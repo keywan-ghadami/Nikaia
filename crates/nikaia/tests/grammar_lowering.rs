@@ -1,60 +1,97 @@
 //! The lowering, checked against its own output - and by running it.
 //!
-//! `fixtures/measurements_expected.rs` is what the emitter produces for
-//! `fixtures/measurements.nika`. This file does two things with it that a
-//! snapshot alone cannot: it `include!`s it, so the parser backend has to
-//! accept every line of it, and it drives the `par_fold` driver the lowering
-//! generated to check that the answer does not depend on the number of pieces.
+//! The two files under `fixtures/` ending in `_expected.rs` are what the
+//! emitter produces for the `.nika` files beside them. This test does two
+//! things with them that a snapshot alone cannot: it `include!`s them, so the
+//! parser backend has to accept every line, and it drives the code they
+//! generate.
+//!
+//! Each generated file goes in a module of its own, because each is a whole
+//! compilation unit and brings its own imports.
 
 use nikaia::emit::{emit_program, Profile};
 use nikaia::parser::parse_to_ast;
-use winnow_grammar::rt::Parallelism;
-use winnow_grammar::ParseContext;
-
-// The generated code. `grammar!` expands it here, so a lowering that produces
-// something the backend rejects fails to compile rather than to compare.
-include!("fixtures/measurements_expected.rs");
-
-// Names the .nika file uses without declaring: the grammar module is generated
-// with `use super::*`, so they resolve where the grammar is placed.
-
-fn digit_value(c: char) -> i32 {
-    c as i32 - '0' as i32
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Summary {
-    pub count: i64,
-    pub tenths: i64,
-}
-
-impl Summary {
-    fn new() -> Summary {
-        Summary::default()
-    }
-
-    fn record(self, m: Reading<'_>) -> Summary {
-        Summary {
-            count: self.count + 1,
-            tenths: self.tenths + i64::from(m.temp),
-        }
-    }
-
-    fn merge(a: Summary, b: Summary) -> Summary {
-        Summary {
-            count: a.count + b.count,
-            tenths: a.tenths + b.tenths,
-        }
-    }
-}
 
 const FIXTURE: &str = include_str!("fixtures/measurements.nika");
 const EXPECTED: &str = include_str!("fixtures/measurements_expected.rs");
+const DIGITS: &str = include_str!("fixtures/digits.nika");
 
 fn emit(source: &str, profile: Profile) -> String {
     let parsed = parse_to_ast(source).expect("the fixture parses");
     emit_program(&parsed, profile).expect("the fixture lowers")
 }
+
+/// Compare emitted code by its tokens rather than its indentation, for the one
+/// place where the same code is written at two different depths.
+fn squashed(code: &str) -> String {
+    code.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+// --- What the emitter produced, compiled ---
+
+mod measurements {
+    //! The names `measurements.nika` uses without declaring live here: the
+    //! grammar module is generated with `use super::*`, so they resolve where
+    //! the grammar is placed.
+
+    include!("fixtures/measurements_expected.rs");
+
+    pub fn digit_value(c: char) -> i32 {
+        c as i32 - '0' as i32
+    }
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    pub struct Summary {
+        pub count: i64,
+        pub tenths: i64,
+        /// Only here to read the view: `NAME` is a slice of the input, and a
+        /// summary that never touched it would not notice if it were wrong.
+        pub name_bytes: i64,
+    }
+
+    impl Summary {
+        fn new() -> Summary {
+            Summary::default()
+        }
+
+        fn record(self, m: Reading<'_>) -> Summary {
+            Summary {
+                count: self.count + 1,
+                tenths: self.tenths + i64::from(m.temp),
+                name_bytes: self.name_bytes + m.name.len() as i64,
+            }
+        }
+
+        fn merge(a: Summary, b: Summary) -> Summary {
+            Summary {
+                count: a.count + b.count,
+                tenths: a.tenths + b.tenths,
+                name_bytes: a.name_bytes + b.name_bytes,
+            }
+        }
+    }
+}
+
+mod digits {
+    include!("fixtures/digits_expected.rs");
+
+    /// What `dsl Digits from data` lowers to, written out so that the compiler
+    /// has to accept it and a test can run it.
+    /// `a_sequential_entry_rule_gets_no_piece_driver` is what keeps this copy
+    /// and the emitter's output the same code.
+    pub fn sequential_driver(data: &str) -> Result<Pair, winnow_grammar::ParseError> {
+        Ok({
+            use winnow::Parser;
+            let mut stream = winnow_grammar::ParseInput::<()> {
+                state: winnow_grammar::ParseContext::<()>::default(),
+                input: winnow::stream::LocatingSlice::new(data),
+            };
+            Digits::parse_pair().parse_next(&mut stream)?
+        })
+    }
+}
+
+// --- The emitted text ---
 
 #[test]
 fn the_emitted_rust_is_the_file_this_test_compiles() {
@@ -107,6 +144,26 @@ fn a_bare_par_fold_gets_the_binding_its_rule_needs() {
     assert!(emitted.contains("-> { folded }"), "{emitted}");
 }
 
+#[test]
+fn operators_keep_their_meaning_and_lose_their_noise() {
+    // Nikaia and Rust bind these the same way, so the emitter parenthesises
+    // only where the source's own grouping demands it.
+    let source = r#"
+fn arithmetic() {
+    let flat = a * 10 + b
+    let grouped = (a + b) * c
+    let right = a - (b - c)
+    let mixed = a + b < c && d
+}
+"#;
+    let emitted = emit(source, Profile::Advanced);
+
+    assert!(emitted.contains("let flat = a * 10 + b;"), "{emitted}");
+    assert!(emitted.contains("let grouped = (a + b) * c;"), "{emitted}");
+    assert!(emitted.contains("let right = a - (b - c);"), "{emitted}");
+    assert!(emitted.contains("let mixed = a + b < c && d;"), "{emitted}");
+}
+
 // --- The driver ---
 
 const WITH_DSL: &str = r#"
@@ -153,22 +210,25 @@ fn the_profile_chooses_the_parallelism_and_nothing_else() {
 
 #[test]
 fn a_sequential_entry_rule_gets_no_piece_driver() {
-    // Without a `par_fold` there is nothing to cut and nothing to merge, so
-    // the lowering drives the rule's own parser over the whole input.
-    let source = r#"
-grammar Digits {
-    pub rule value -> i32 = v:i32 -> { v }
-}
+    // Without a `par_fold` there is nothing to cut and nothing to merge, so the
+    // lowering drives the rule's own parser over the whole input (ADR-011 D4).
+    let source = format!("{DIGITS}\n\nfn read() {{\n    let p = dsl Digits from data\n}}\n");
+    let emitted = emit(&source, Profile::Advanced);
 
-fn read() {
-    let n = dsl Digits from data
-}
-"#;
-    let emitted = emit(source, Profile::Advanced);
     assert!(!emitted.contains("_pieces("), "{emitted}");
     assert!(
-        emitted.contains("Digits::parse_value().parse_next(&mut stream)?"),
-        "{emitted}"
+        squashed(&emitted).contains(&squashed(
+            r#"{
+                use winnow::Parser;
+                let mut stream = winnow_grammar::ParseInput::<()> {
+                    state: winnow_grammar::ParseContext::<()>::default(),
+                    input: winnow::stream::LocatingSlice::new(data),
+                };
+                Digits::parse_pair().parse_next(&mut stream)?
+            }"#
+        )),
+        "the emitted driver and the one `digits::sequential_driver` compiles \
+         have drifted:\n{emitted}"
     );
 }
 
@@ -178,9 +238,16 @@ const MEASUREMENTS: &str = "Hamburg;12.0\nAbha;-23.0\nSaint-Pierre;9.1\nHamburg;
 
 #[test]
 fn the_generated_parser_gives_the_same_answer_however_it_is_cut() {
+    use measurements::{Measurements, Summary};
+    use winnow_grammar::rt::Parallelism;
+    use winnow_grammar::ParseContext;
+
     let expected = Summary {
         count: 4,
         tenths: 120 - 230 + 91 - 4,
+        // "Hamburg", "Abha", "Saint-Pierre", "Hamburg" - the station names are
+        // slices of the input, and a cut in the wrong place would show here.
+        name_bytes: 7 + 4 + 12 + 7,
     };
 
     for how in [
@@ -198,6 +265,10 @@ fn the_generated_parser_gives_the_same_answer_however_it_is_cut() {
 
 #[test]
 fn a_frame_that_does_not_parse_is_rejected_whatever_the_cut() {
+    use measurements::Measurements;
+    use winnow_grammar::rt::Parallelism;
+    use winnow_grammar::ParseContext;
+
     let broken = "Hamburg;12.0\nAbha;not-a-temperature\n";
 
     for how in [Parallelism::Off, Parallelism::Pieces(2), Parallelism::Auto] {
@@ -206,6 +277,13 @@ fn a_frame_that_does_not_parse_is_rejected_whatever_the_cut() {
             "{how:?} accepted a broken frame"
         );
     }
+}
+
+#[test]
+fn the_sequential_driver_runs() {
+    let pair = digits::sequential_driver("12,30").expect("parses");
+    assert_eq!((pair.left, pair.right), (12, 30));
+    assert!(digits::sequential_driver("12;30").is_err());
 }
 
 // --- The example this exists for ---
@@ -262,24 +340,4 @@ fn the_grammar_half_of_the_1brc_example_lowers() {
     );
     assert!(emitted.contains("s:until(\";\" | frame_end)"), "{emitted}");
     assert!(emitted.contains("whole:digit{1,2}"), "{emitted}");
-}
-
-#[test]
-fn operators_keep_their_meaning_and_lose_their_noise() {
-    // Nikaia and Rust bind these the same way, so the emitter parenthesises
-    // only where the source's own grouping demands it.
-    let source = r#"
-fn arithmetic() {
-    let flat = a * 10 + b
-    let grouped = (a + b) * c
-    let right = a - (b - c)
-    let mixed = a + b < c && d
-}
-"#;
-    let emitted = emit(source, Profile::Advanced);
-
-    assert!(emitted.contains("let flat = a * 10 + b;"), "{emitted}");
-    assert!(emitted.contains("let grouped = (a + b) * c;"), "{emitted}");
-    assert!(emitted.contains("let right = a - (b - c);"), "{emitted}");
-    assert!(emitted.contains("let mixed = a + b < c && d;"), "{emitted}");
 }

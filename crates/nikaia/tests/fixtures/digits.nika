@@ -1,0 +1,15 @@
+// crates/nikaia/tests/fixtures/digits.nika
+//
+// A grammar with no frame and no fold. There is nothing to cut and nothing to
+// merge, so `dsl … from …` drives the rule's own parser over the whole input -
+// the other half of ADR-011 D4.
+
+grammar Digits {
+    pub rule pair -> Pair =
+        left:i32 "," right:i32 -> { Pair { left, right } }
+}
+
+pub struct Pair {
+    left: i32,
+    right: i32,
+}
