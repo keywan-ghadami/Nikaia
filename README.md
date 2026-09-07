@@ -109,6 +109,10 @@ This is currently a **Specification (Version 0.0.7)**. We are in the bootstrap p
 - [x] **Spec 0.0.7:** Scannerless Grammar Protocol, DSLs as expressions, hardware instructions as libraries.
 - [x] **Manifesto:** Defining the soul and philosophy of the project.
 - [ ] **Bootstrap Compiler:** A transpiler written in Rust (Stage 0).
+  - [x] The grammar protocol: `grammar` onto `grammar!`, `@frame` onto `#[frame]`, and
+    `dsl … from …` onto the parallel piece driver, with the profile choosing the
+    parallelism ([ADR-011](docs/specification/adr/adr-011.md)).
+  - [ ] `impl` blocks and methods, `throws`/`catch`, string interpolation, spans.
 - [ ] **Runtime Integration:** Binding `tokio` (Current-Thread & Thread-Pool).
 - [ ] **Self-Hosting:** The compiler compiles itself.
 

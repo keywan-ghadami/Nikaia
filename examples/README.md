@@ -1,8 +1,14 @@
 # Nikaia Examples
 
 Programs here are **specification-level**: they show what Nikaia 0.0.7 is meant to look like.
-The bootstrap parser (`crates/nikaia`) cannot compile them yet — it currently handles
-functions, `let`, calls, literals, `spawn` and blocks, and nothing else.
+The bootstrap compiler (`crates/nikaia`) cannot compile them yet. What it does handle:
+functions, `let`, assignment, `for`, `if`, calls, method calls, field access, struct literals,
+lambdas, operators, `struct` and `use` items, `spawn` and blocks — and, since
+[ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules, patterns,
+`@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
+`1brc.nika`'s grammar half therefore lowers to Rust today (`nikaia --backend rust`), and a test
+takes it out of this directory to prove it. Its `impl` blocks, `throws`/`catch` and string
+interpolation do not.
 
 That is deliberate, and it is what these files are *for*. Writing a real program against the
 spec is the cheapest way to find out which parts of the spec are underspecified. The gaps each

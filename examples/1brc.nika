@@ -16,8 +16,13 @@
 // NOTE: this does not compile yet - see examples/README.md. The gaps it
 // depended on are specified (G3 in ADR-008, G4 in ADR-009) and the grammar
 // features they need exist in the parser backend (`@frame`, `par_fold`, the
-// bounded repetition `digit{1,2}`, the word-at-a-time scan behind `until`);
-// what is left is the Nikaia compiler that lowers this file onto them.
+// bounded repetition `digit{1,2}`, the word-at-a-time scan behind `until`).
+//
+// The `grammar Measurements` block below and `Reading` now lower onto them
+// (ADR-011; `nikaia --input examples/1brc.nika --backend rust` once the rest
+// parses, and `crates/nikaia/tests/grammar_lowering.rs` lowers that half of
+// this very file today). What is left is the other half: `impl` blocks and
+// their methods, `throws`/`catch`/`??`, and string interpolation.
 
 use std::fs
 use std::cli

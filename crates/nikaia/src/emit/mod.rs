@@ -526,14 +526,17 @@ impl<'p> Emitter<'p> {
                 format!("|{params}| {}", self.block(body, depth)?)
             }
             Expr::Unary { op, expr } => {
-                format!("{}{}", unary_op(*op), self.expr_at(expr, depth)?)
+                format!("{}{}", unary_op(*op), self.nested(expr, u8::MAX, depth)?)
             }
-            Expr::Binary { op, lhs, rhs } => format!(
-                "({} {} {})",
-                self.expr_at(lhs, depth)?,
-                binary_op(*op),
-                self.expr_at(rhs, depth)?
-            ),
+            Expr::Binary { op, lhs, rhs } => {
+                // Parenthesised only where precedence needs it: the operators
+                // mean the same in both languages, so `value * 10 + n` should
+                // come out the way it went in.
+                let here = precedence(*op);
+                let lhs = self.nested(lhs, here, depth)?;
+                let rhs = self.nested(rhs, here + 1, depth)?;
+                format!("{lhs} {} {rhs}", binary_op(*op))
+            }
             Expr::Try(inner) => format!("{}?", self.expr_at(inner, depth)?),
             Expr::Spawn { .. } => {
                 // Part II, 11.2. The runtime binding is the next roadmap line.
@@ -543,6 +546,16 @@ impl<'p> Emitter<'p> {
             }
             Expr::DslFrom { grammar, input } => self.dsl_from(*grammar, input, depth)?,
             other => return Err(anyhow!("cannot emit expression yet: {other:?}")),
+        })
+    }
+
+    /// An operand of an operator, parenthesised only where it binds looser
+    /// than the position it stands in.
+    fn nested(&self, expr: &Expr, needs: u8, depth: usize) -> Result<String> {
+        let text = self.expr_at(expr, depth)?;
+        Ok(match expr {
+            Expr::Binary { op, .. } if precedence(*op) < needs => format!("({text})"),
+            _ => text,
         })
     }
 
@@ -632,6 +645,19 @@ fn unary_op(op: UnaryOp) -> &'static str {
         UnaryOp::Neg => "-",
         UnaryOp::Not => "!",
         UnaryOp::Ref => "&",
+    }
+}
+
+/// Rust's binding strength, which Nikaia shares.
+fn precedence(op: BinaryOp) -> u8 {
+    match op {
+        BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 10,
+        BinaryOp::Add | BinaryOp::Sub => 9,
+        BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+            7
+        }
+        BinaryOp::And => 4,
+        BinaryOp::Or => 3,
     }
 }
 

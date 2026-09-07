@@ -17,6 +17,8 @@ We have successfully implemented a "Vertical Slice" of the compiler that can com
     *   *Note*: Code compiles (`cargo check`), but running the binary requires `RUSTFLAGS="-C prefer-dynamic"` and correct environment setup due to `rustc_private` dynamic linking requirements.
 *   ✅ **Executor**: Generates valid Rust source from the internal AST (Transpilation for Debug) using `rustc_ast_pretty`.
 *   ⚠️ **End-to-End Execution**: Currently blocked by `std` linkage conflicts when running via `cargo run`. Requires environment configuration for dynamic linking of `rustc_driver`.
+*   ✅ **Grammar Lowering (Stage 0 transpiler, ADR-011)**: `--backend rust` lowers `grammar` items onto `winnow-grammar`'s `grammar!`: rules, patterns, the commit point, bounded repetition, `@frame` -> `#[frame]`, `fold`/`par_fold`, and `dsl … from …` onto the generated piece driver with the `Parallelism` the `--profile` asks for. Checked by compiling and running the emitter's own output (`crates/nikaia/tests/grammar_lowering.rs`).
+    *   *Scope*: syntactic. There is no type checker, so `impl` methods used as a fold's step or merge are emitted as written and rejected by `rustc` rather than adapted (ADR-011 D2, §4).
 
 ---
 
@@ -27,16 +29,19 @@ We have successfully implemented a "Vertical Slice" of the compiler that can com
 To make Nikaia usable for real-world programming, we need to expand the frontend capabilities.
 
 *   [ ] **Control Flow**: Implement `if/else`, `loop`, `while`, `for`.
-    *   *Parser*: Add grammar rules.
-    *   *AST*: Add `If`, `Loop` variants to `Expr`.
-    *   *Lowering*: Map to Rust equivalents in Bridge IR.
+    *   *Parser*: `if/else` and `for` parse; `loop` and `while` do not.
+    *   *AST*: `Expr::If` and `Stmt::For` exist; `Loop` does not.
+    *   *Rust backend*: both are emitted.
+    *   *Lowering*: Map to Rust equivalents in Bridge IR - still open, the Bridge path carries neither.
 *   [ ] **Data Structures**: Implement `struct` and `enum` definitions.
-    *   *Parser*: Support struct fields and enum variants.
+    *   *Parser*: `struct` fields parse (with `@borrowed`); enum variants do not.
+    *   *Rust backend*: emits struct definitions, with the input lifetime where a field is a view (ADR-011 D6).
     *   *Bridge IR*: Add `BridgeStruct` and `BridgeEnum` definitions.
     *   *Executor*: Generate Rust struct/enum definitions.
 *   [ ] **Methods & Impl Blocks**: Support `impl` blocks and method calls (`x.foo()`).
-    *   *Parser*: Handle dot notation and `impl` keyword.
+    *   *Parser*: dot notation parses; the `impl` keyword does not.
     *   *Lowering*: Desugar method calls to function calls with `self`.
+    *   *Blocks*: `examples/1brc.nika` as a whole, and the fold-adapter question of ADR-011 D2.
 *   [ ] **Generics**: Fully support generic type parameters (`<T>`) across functions and structs.
     *   *Status*: Parser has basic support (using `[...]`), but lowering and bridge need full integration.
 *   [ ] **Modules & Imports**: Implement `use` and multi-file compilation support.

@@ -207,3 +207,79 @@ fn a_frame_that_does_not_parse_is_rejected_whatever_the_cut() {
         );
     }
 }
+
+// --- The example this exists for ---
+
+/// The `grammar` item and the struct it builds, taken out of the real
+/// `examples/1brc.nika` rather than copied - a copy would drift, and the point
+/// of this test is that the example itself lowers.
+fn one_brc_grammar_half() -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/1brc.nika");
+    let source = std::fs::read_to_string(&path).expect("examples/1brc.nika");
+
+    let mut out = String::new();
+    let mut inside = false;
+    for line in source.lines() {
+        if line.starts_with("grammar Measurements {") || line.starts_with("@borrowed") {
+            inside = true;
+        }
+        if inside {
+            out.push_str(line);
+            out.push('\n');
+        }
+        if inside && line == "}" {
+            inside = false;
+        }
+    }
+
+    assert!(
+        out.contains("par_fold(MEASUREMENT"),
+        "the extraction missed the grammar:\n{out}"
+    );
+    out
+}
+
+#[test]
+fn the_grammar_half_of_the_1brc_example_lowers() {
+    // ADR-011 §3: the file as a whole does not compile yet - its `impl` blocks,
+    // `throws`/`catch` and string interpolation are not lowered. Its grammar
+    // does, and that is the half this work was about.
+    let emitted = emit(&one_brc_grammar_half(), Profile::Advanced);
+
+    assert!(
+        emitted.contains(r#"#[frame(boundary = "\n")]"#),
+        "{emitted}"
+    );
+    assert!(
+        emitted.contains("rule MEASUREMENT -> Reading<'a> ="),
+        "{emitted}"
+    );
+    assert!(
+        emitted.contains(
+            "par_fold(MEASUREMENT, Summary::new, |acc, m| { acc.record(m) }, Summary::merge)"
+        ),
+        "{emitted}"
+    );
+    assert!(emitted.contains("s:until(\";\" | frame_end)"), "{emitted}");
+    assert!(emitted.contains("whole:digit{1,2}"), "{emitted}");
+}
+
+#[test]
+fn operators_keep_their_meaning_and_lose_their_noise() {
+    // Nikaia and Rust bind these the same way, so the emitter parenthesises
+    // only where the source's own grouping demands it.
+    let source = r#"
+fn arithmetic() {
+    let flat = a * 10 + b
+    let grouped = (a + b) * c
+    let right = a - (b - c)
+    let mixed = a + b < c && d
+}
+"#;
+    let emitted = emit(source, Profile::Advanced);
+
+    assert!(emitted.contains("let flat = a * 10 + b;"), "{emitted}");
+    assert!(emitted.contains("let grouped = (a + b) * c;"), "{emitted}");
+    assert!(emitted.contains("let right = a - (b - c);"), "{emitted}");
+    assert!(emitted.contains("let mixed = a + b < c && d;"), "{emitted}");
+}
