@@ -160,34 +160,48 @@ above touches it.
 
 ---
 
-## 4. Also open, in the order last agreed
+## 4. Also open
 
-Error messages first, performance after — that was the instruction.
+Error messages first, performance after — that was the instruction, and the
+messages are done: **all twenty-one failing corpus rows say what a reader
+needs** (§3). What is left, in the order it is worth doing.
 
-1. **The character-class scan threshold.** Upstream `024e3d3` scans a class
-   eight bytes at a time (ADR 23). On 1BRC's `digit{1,2}` and `digit` it is a
-   loss: `out_mask` costs a fixed ~30 instructions per call against ~4-5 per
+1. **The character-class scan threshold.** Upstream scans a class eight bytes
+   at a time (ADR 23). On 1BRC's `digit{1,2}` and `digit` it is a loss:
+   `out_mask` costs a fixed ~30 instructions per call against ~4-5 per
    character, so break-even is around six to eight characters. Measured with
    branches and caches simulated, not instructions alone — the scan does buy
    14 067 fewer mispredicts (~0.28 M cycles) for 12.7 M more instructions
    (~3.2 M cycles at IPC 4), about elevenfold against. **Next step:** measure
    where the crossover actually is, and propose a threshold in the code
-   generator (`{1,2}` is known at compile time). Detail in
+   generator (`{1,2}` is known at compile time). Upstream `TODO.md` §5 and
    `docs/upstream/winnow-grammar-findings.md` §2.
-2. ~~**`dec(p)` and `text(p)` cannot appear inside a `#[frame]`**~~ — **done**,
-   on the upstream branch above. The frame check had no arm for them, so
-   `_ => true`; they are now excepted with the reasoning `intern(p)` already
-   carried, and `tests/ui/frames.rs` upstream pins that an argument which *can*
-   consume the boundary is still rejected. `examples/1brc.nika` can drop its
-   `unchecked` once Nikaia is on that backend. Findings note §3.
-3. **The intern cache is sized for identifiers** — 512 direct-mapped slots, no
-   collision handling. At 413 keys it costs 617 instructions per row against 514
-   for a plain fast-hashed map. Making `InternCache::BITS` settable per context
-   would close it. Findings note §4.
-4. **Input provenance (ADR-010) is specified and not implemented**, and Stage 0
+2. **Sizing the intern cache for 1BRC, now that it can be sized.**
+   `ParseContext::expect_distinct_keys(n)` exists upstream (`TODO.md` §6,
+   closed) and Nikaia does not call it: the emitter builds the context and
+   nothing tells it how many keys a parse will see. The measurement that
+   rejected keying the station table by `Symbol` — 617 instructions per row
+   against 514 — was taken with the *unsized* cache, so it is worth taking
+   again before that rejection is treated as final.
+3. **Input provenance (ADR-010) is specified and not implemented**, and Stage 0
    cannot implement it — choosing a map's hasher needs dataflow the emitter must
    not invent (ADR-011 D2). Costs 22 % of the flagship's instructions.
    ADR-011 §4 has the measurement and why no `.nika` file gains an annotation.
+   This is the first thing that wants a type checker (ADR-013 D7).
+4. **What the language still cannot say**, from `examples/README.md`: enums
+   (G12 — `calc.nika` carries an operator as a `&str` because two operators are
+   exactly what a sum type is), `std::http`'s request argument (G6) and template
+   escaping (G7), which are what `fortunes.nika` waits on.
+
+### Closed since this file was written
+
+* `dec(p)` and `text(p)` inside a `#[frame]` — upstream, with `tests/ui/frames.rs`
+  pinning that an argument which *can* consume the boundary is still rejected.
+  `examples/1brc.nika` can drop its `unchecked`.
+* The intern cache's fixed size — `expect_distinct_keys` upstream; see 2 above
+  for what is left *here*.
+* Tuples (G10), ordered output over a map (G5), and a rejected parse saying
+  where it failed (G11).
 
 ### Do not re-propose these — they were measured and lost
 
