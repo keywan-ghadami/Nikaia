@@ -167,13 +167,37 @@ them by trying to break the compiler on purpose.
 five do not. The five sort into three groups, and each needs a different
 mechanism:
 
-1. **Trivia winning on *progress*** — A4, B1, G1. The whitespace skip runs at
-   the start of every rule, so it reaches offsets nothing else did, and progress
-   is decided before any ranking or label. The obvious fix — taking trivia out
-   of the progress race with a second `furthest` slot — was tried upstream and
-   reverted: it made B1 far worse, seventeen expectations in the headline and
-   twenty-two in a note, with the position on a token that was correct. Whatever
-   replaces it has to keep the position right. **This is the open one.**
+1. **An alternative that loses takes its error with it** — A4, B1, G1. These
+   read as a trivia problem and are not; tracing A4 says what they are.
+
+   ```nika
+   fn f() {
+       let xs = [1, 2
+   }
+   ```
+
+   `let` parses as an expression statement, and so does `xs` — Nikaia has no
+   list literal, so nothing in the language can start at the `[`. The statement
+   that *would* have said `expected expression` there is abandoned when the
+   shorter parse succeeds, and `alt` drops what a losing alternative found. The
+   only error left at that offset is the implicit whitespace skip, which is
+   therefore the furthest thing that failed, and progress is compared before
+   any ranking or label. Hence ``expected one of: `//`, whitespace``.
+
+   Two fixes were tried and both reverted, which is why this row is still here:
+
+   * **Recording every failing alternative** — the treatment `x?` and `x*`
+     already get — fixes A4 and loses `in item 1` from the rule stack upstream
+     (`diagnostics.rs` p03, p12), because the alternative's record reaches
+     `furthest` before the enclosing repetition's and the merge keeps the first
+     stack.
+   * **Keeping trivia in a slot of its own**, so it never wins the progress
+     race, gives A4 ``expected `}` `` *at the `=`* — a wrong position with a
+     plausible expectation, which is worse than a useless expectation at the
+     right one. It is a symptom fix; this is the cause.
+
+   The untried third is recording only alternatives that **consumed input**
+   before failing. Upstream `TODO.md` §5 carries it. **This is the open one.**
 2. **The position is wrong, not the text** — F1, and half of F3. An
    unterminated string reports the end of the file; what a reader needs is the
    opening quote. F3 now names the `}` it wants and still cannot say where the

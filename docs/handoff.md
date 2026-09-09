@@ -106,16 +106,19 @@ point:** the diff is the change in the reader's terms. Read it, then regenerate.
 
 | group | rows | what it needs |
 | :--- | :--- | :--- |
-| trivia winning on *progress* | A4, B1, G1 | unknown; the obvious fix was tried and reverted |
+| an alternative that loses takes its error with it | A4, B1, G1 | record the ones that consumed input — upstream TODO §5 |
 | the position is wrong, not the text | F1, half of F3 | remember the opening delimiter |
 | a name the grammar does not have | C2 | a grammar question, not a message one |
 
-The first is the open one. The whitespace skip runs at the start of every rule,
-so it reaches offsets nothing else did, and **progress is decided before any
-ranking or label**. Taking trivia out of the progress race with a second
-`furthest` slot was tried upstream and reverted: B1 came out with seventeen
-expectations in the headline, twenty-two in a note, and the position on a token
-that was correct. Whatever replaces it has to keep the position right.
+The first is the open one, and it is not what it looks like. `let xs = [1, 2`
+reports whitespace because `let` and `xs` each parse as an expression statement
+and the alternative that would have said `expected expression` at the `[` is
+abandoned — `alt` drops what a losing alternative found, so the only error left
+at that offset is the whitespace skip, and progress is compared before any
+ranking. Two fixes were tried and reverted (recording *every* alternative loses
+`in item 1` upstream; keeping trivia in its own slot puts the message on a
+token that was correct), and the untried third — recording only alternatives
+that consumed input — is upstream `TODO.md` §5 with both post-mortems.
 
 The second is a mechanism rather than a ranking. `let s = "unterminated`
 reports the end of the file; the reader needs the opening quote. F3 now names
