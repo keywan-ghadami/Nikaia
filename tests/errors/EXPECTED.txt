@@ -185,18 +185,12 @@ in program
 
 === C2
 Parse error:
-expected digits; found unexpected token `n` at line 2, column 32
-note: also possible here: `//`
-in number
-in g_bounds
-in g_repeat
-in g_postfix
-in g_bind
-in g_elem
-in g_seq
+expected `->`; found unexpected token `{` at line 2, column 30
+note: also possible here: `"`, `(`, `//`, `=>`, `fold`, `par_fold`, identifier
 in g_alt
 in g_alts
 in grammar_rule
+in item 1
 in grammar_item
 in item
 in program
@@ -249,9 +243,8 @@ in program
 
 === E1
 Parse error:
-expected one of: `}`, digits; found unexpected token `-` at line 2, column 32
-note: also possible here: `//`
-in number
+expected `}`; found unexpected token `-` at line 2, column 32
+note: also possible here: `//`, digits
 in g_bounds
 in g_repeat
 in g_postfix

@@ -526,16 +526,19 @@ grammar! {
           | "?" -> { Repeat::Optional }
           | r:g_bounds -> { r }
 
+        // A brace group is a bound only when its content starts with a digit,
+        // which is the rule the backend states for the same ambiguity
+        // (SYNTAX.md, "Braces"). Without the lookahead, `n:digit1 { n }` - an
+        // action block someone forgot the `->` in front of - is read as a
+        // bound and reported as `expected digits`, which is true of the parser
+        // and no help to the reader.
         rule g_bounds -> Repeat =
-            "{" n:number "," m:number "}" -> {
-                Repeat::Between(n, m)
-            }
-          | "{" n:number "," "}" -> {
-                Repeat::AtLeast(n)
-            }
-          | "{" n:number "}" -> {
-                Repeat::Exactly(n)
-            }
+            peek(("{" digit)) "{" b:g_bound_body "}" -> { b }
+
+        rule g_bound_body -> Repeat =
+            n:number "," m:number -> { Repeat::Between(n, m) }
+          | n:number "," -> { Repeat::AtLeast(n) }
+          | n:number -> { Repeat::Exactly(n) }
 
         rule number -> u32 =
             d:digit1 -> { d.parse().unwrap_or(0) }

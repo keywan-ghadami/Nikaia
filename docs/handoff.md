@@ -102,11 +102,9 @@ cargo run -p nikaia --example errors > tests/errors/EXPECTED.txt   # regenerate
 **A backend bump that changes a message makes `errors.rs` fail, and that is the
 point:** the diff is the change in the reader's terms. Read it, then regenerate.
 
-**One row is left.** C2 reports `expected digits` where the reader needs `->`,
-and that is a grammar question rather than a message one: `digits` comes from
-the built-in name table and the rule really is looking at a repetition there.
+**No row is left.** All twenty-one failing rows say what a reader needs.
 
-What closed the other twenty, upstream, each measured against this corpus:
+What closed them, upstream, each measured against this corpus:
 
 | change | what it closed |
 | :--- | :--- |
@@ -114,14 +112,21 @@ What closed the other twenty, upstream, each measured against this corpus:
 | a rule may name itself (#5) | `expected expression`, `expected type` |
 | an element that *began* is a requirement (#6) | A3, F3, and the second expectation in A1, A2, C3, C5, E3 |
 | a losing alternative keeps its error (#8) | A4, B1, G1, F1 |
+| a failing lookahead is not an expectation (#10) | C2, with the grammar change below |
 
-The last one is worth reading before touching this area again. A4, B1 and G1
+Two of them are worth reading before touching this area again. A4, B1 and G1
 were filed twice as "trivia wins on progress" and were never that: `alt` drops
 what a losing alternative found, so where a *shorter* alternative wins - `let`
 and `xs` each parse as an expression statement in `let xs = [1, 2` - nothing
 survives at the position the input actually goes wrong except the whitespace
 skip. Two repairs were tried against this file and reverted before the third
 worked, and `docs/error-corpus.md` keeps all three.
+
+C2 needed a change here as well as upstream: `{ n }` is an action block whose
+`->` was forgotten, and the grammar read it as a repetition bound. A brace
+group is a bound only when its content starts with a digit - the rule the
+backend already states for the same ambiguity - and `peek(("{" digit))` is how
+the grammar says it.
 
 **One tick has a footnote.** F1 names the `"` it is missing, and its position
 is still the end of the file rather than the opening quote. Remembering the
