@@ -1,0 +1,19 @@
+// crates/nikaia-std/src/text.nika
+//
+// `std::text`, written in Nikaia.
+//
+// This file is compiled to Rust by the Stage 0 compiler when `nikaia-std` is
+// built (`build.rs`), and the result is what `nikaia_std::text` is. It is the
+// first piece of Nikaia's own standard library that is Nikaia rather than Rust,
+// and it is small on purpose: what a Nikaia file can be here is exactly what
+// Stage 0 can lower, and the moment that grows, so can this (ADR-014).
+
+// The value of a decimal digit: '7' is 7.
+//
+// A free function rather than a method on the character: Rust's own
+// `char::to_digit` has this name with a different shape, an inherent method
+// wins over anything a library adds, and a call that resolves to the wrong
+// thing is worse than a name that reads differently (ADR-013 D1).
+pub fn digit_value(c: char) -> i32 {
+    return c as i32 - 48
+}

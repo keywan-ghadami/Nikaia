@@ -1,0 +1,4 @@
+struct S {
+    name: &str
+    temp: i32
+}

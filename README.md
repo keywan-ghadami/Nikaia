@@ -319,10 +319,14 @@ compiler. Concretely:
   earlier decision.
 * 🚧 **0.0.8 (unreleased)** — tethered slices in user structs, parallel parsing, input
   provenance. See the [CHANGELOG](CHANGELOG.md).
-* 🚧 **Bootstrap compiler (Stage 0)** — a Rust front-end that parses `fn`, `let`, calls,
-  literals, `spawn` and blocks, lowers to a Bridge IR, and drives `rustc` to produce a binary.
-  Control flow, structs and methods are next.
-* ❌ **Not yet** — the standard library, the runtime binding to `tokio`, the LSP, self-hosting.
+* 🚧 **Bootstrap compiler (Stage 0)** — a Rust front-end that lowers to a Bridge IR and drives
+  `rustc` to produce a binary. It handles functions and methods, `impl`, `struct` and `use`,
+  control flow, `throws`/`catch`/`??`, string interpolation — and the whole `grammar` construct,
+  `@frame` and `dsl … from …` included. **`examples/1brc.nika` compiles, runs and is a test.**
+  A type checker is what it does not have.
+* ❌ **Not yet** — a type checker, the runtime binding to `tokio`, the LSP, self-hosting. The
+  standard library exists in the narrow sense the examples need, and one of its files is
+  already written in Nikaia.
 
 Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 
@@ -333,6 +337,24 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 - [x] **Spec 0.0.7:** scannerless grammar protocol, DSLs as expressions, hardware instructions as libraries.
 - [x] **Manifesto:** the soul and philosophy of the project.
 - [ ] **Bootstrap compiler:** the transpiler in Rust (Stage 0).
+  - [x] The grammar protocol: `grammar` onto `grammar!`, `@frame` onto `#[frame]`, and
+    `dsl … from …` onto the parallel piece driver, with the profile choosing the parallelism
+    ([ADR-011](docs/specification/adr/adr-011.md)).
+  - [x] Diagnostics on the `.nika` line that caused them, for every error class at once
+    ([ADR-012](docs/specification/adr/adr-012.md)).
+  - [x] `impl` blocks and methods, `throws`/`catch`/`??`, string interpolation, and a `std` for
+    what the examples call ([ADR-013](docs/specification/adr/adr-013.md)) — enough that
+    **`examples/1brc.nika` compiles and runs**.
+  - [x] `fs::map` is a memory mapping and the parallel driver runs on every core
+    ([ADR-014](docs/specification/adr/adr-014.md)): 8M lines, 4 cores, 0.52 s → 0.14 s.
+  - [x] The parser backend's lazy diagnostics, and the measurement they made possible
+    ([ADR-015](docs/specification/adr/adr-015.md)): **659 instructions per row against 688 for
+    the same aggregation hand-tuned in Rust**, and 840 for it written naively — a generated
+    parser below hand-written code on the workload the spec picked to be judged by.
+  - [x] `fs::map`'s UTF-8 check divided across the cores rather than skipped
+    ([ADR-016](docs/specification/adr/adr-016.md)): 3.9× on the check, and what is left to gain
+    by removing it altogether is 10 ms of a 140 ms program.
+  - [ ] A type checker: everything Stage 0 cannot infer, the example has to say (ADR-013 D7).
 - [ ] **Runtime integration:** binding `tokio` (current-thread & thread-pool).
 - [ ] **Interop:** `extern "C"` in the compiler (Chapter 15 specifies it) and Python bindings —
       so a Nikaia core can be dropped into an existing stack as a hot loop, without anyone
@@ -340,6 +362,10 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 - [ ] **Prompt bundle:** a single-file specification digest for Claude Projects, Copilot
       instructions and system prompts, so a model can write correct Nikaia from context.
 - [ ] **Self-hosting:** the compiler compiles itself.
+  - [x] The first `.nika` file the toolchain runs on: `crates/nikaia-std/src/text.nika`,
+    compiled into `std` by Stage 0 when `std` is built
+    ([ADR-014](docs/specification/adr/adr-014.md) D1). What a `std` file may contain is exactly
+    what the compiler can lower; the share grows as it does.
 
 ### Where to start reading
 

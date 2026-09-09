@@ -1,0 +1,48 @@
+// crates/nikaia/tests/fixtures/measurements.nika
+//
+// The grammar half of examples/1brc.nika, cut down to what Stage 0 can lower
+// end to end. The Rust this produces is checked into
+// `fixtures/measurements_expected.rs` and compiled by `grammar_lowering.rs` -
+// so the test does not only compare text, it hands the output to the parser
+// backend and runs it.
+//
+// `digit_value` and `Summary` are Rust-side: the grammar module is generated
+// with `use super::*`, so a name the .nika file does not declare is resolved
+// where the grammar is placed.
+
+grammar Measurements {
+
+    // Up to the semicolon - or to the end of the frame, whichever comes first.
+    // A plain `until(";")` would run through the newline, and under a frame the
+    // compiler rejects that rather than quietly repairing it (ADR-009 D1).
+    rule NAME -> &str = s:until(";" | frame_end) -> { s }
+
+    // The width the format fixes, stated (ADR-009 D5): -99.9 ..= 99.9.
+    rule TENTHS -> i32 =
+        neg:"-"? whole:digit{1,2} "." frac:digit
+        -> {
+            let mut value = 0
+            for d in whole.chars() { value = value * 10 + digit_value(d) }
+            value = value * 10 + digit_value(frac)
+            if neg.is_some() { -value } else { value }
+        }
+
+    // A measurement can be found from any offset by scanning to the next "\n",
+    // which is what lets the file be cut blindly.
+    @frame(boundary: "\n")
+    rule MEASUREMENT -> Reading =
+        name:NAME ";" => temp:TENTHS frame_end
+        -> { Reading { name, temp } }
+
+    // A frame plus a monoid is a parallel parse (ADR-009 D2), and that is the
+    // whole of what the user writes down.
+    pub rule file -> Summary =
+        par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) },
+                 Summary::merge)
+}
+
+@borrowed
+pub struct Reading {
+    name: &str,
+    temp: i32,
+}

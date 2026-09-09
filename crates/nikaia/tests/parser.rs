@@ -19,12 +19,12 @@ fn test_advanced_hello_world_compilation() {
     // 2. Execute Verification (Inspect AST)
     assert_eq!(program.items.len(), 1, "Should have 1 main function");
 
-    if let Item::Fn { name, body, .. } = &program.items[0] {
-        assert_eq!(parsed.text(*name), "main");
+    if let Item::Fn { name, body, .. } = &program.items[0].node {
+        assert_eq!(parsed.text(name.expect("a named function")), "main");
         assert_eq!(body.stmts.len(), 2, "Main should have 2 statements");
 
         // Verify println("Hello Nikaia")
-        match &body.stmts[0] {
+        match &body.stmts[0].node {
             Stmt::Expr(Expr::Call { func, args }) => {
                 if let Expr::Variable(fname) = &**func {
                     assert_eq!(parsed.text(*fname), "println");
@@ -43,7 +43,7 @@ fn test_advanced_hello_world_compilation() {
         }
 
         // Verify spawn({ ... })
-        match &body.stmts[1] {
+        match &body.stmts[1].node {
             Stmt::Expr(Expr::Spawn {
                 body: spawn_body,
                 is_move,

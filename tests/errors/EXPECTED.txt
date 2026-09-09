@@ -1,0 +1,370 @@
+=== A1
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `temp` at line 3, column 5
+in COMMENT
+in item 1
+in WS
+in struct_item
+in item
+in program
+
+=== A2
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `b` at line 1, column 13
+in COMMENT
+in item 1
+in WS
+in fn_params
+in fn_item
+in item
+in program
+
+=== A3
+Parse error:
+unexpected end of input, expected one of: `!=`, `!`, `*`, `+`, `-`, `.`, `//`, `/`, `==`, `[`, `dsl`, `false`, `let`, `return`, `spawn`, `true`, whitespace at line 3, column 1
+in COMMENT
+in item 1
+in WS
+in block
+in fn_item
+in item
+in program
+
+=== A4
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `[` at line 2, column 14
+in COMMENT
+in item 1
+in WS
+in paren_expr
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in coalesce_expr
+in catch_expr
+in expr
+in assign_stmt
+in stmt
+in stmt_list
+in block
+in fn_item
+in item
+in program
+
+=== A5
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `,` at line 2, column 12
+in COMMENT
+in item 1
+in WS
+in struct_item
+in item
+in program
+
+=== B1
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `}` at line 4, column 1
+in COMMENT
+in item 1
+in WS
+in paren_expr
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in coalesce_expr
+in catch_expr
+in expr
+in assign_stmt
+in stmt
+in stmt_list
+in block
+in fn_item
+in item
+in program
+
+=== B2
+Parse error:
+expected one of: `!`, `-`, `//`, `dsl`, `false`, `spawn`, `true`, whitespace; found unexpected token `}` at line 3, column 1
+in bool_lit
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_tail
+in item 1
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in coalesce_expr
+in catch_expr
+in expr
+in let_stmt
+in stmt
+in stmt_list
+in block
+in fn_item
+in item
+in program
+
+=== B3
+(parses)
+
+=== B4
+Parse error:
+expected one of: `!`, `-`, `//`, `dsl`, `false`, `spawn`, `true`, whitespace; found unexpected token `)` at line 2, column 18
+in bool_lit
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in coalesce_expr
+in catch_expr
+in expr
+in call_args_tail
+in item 1
+in call_args
+in call_arg_list
+in path_expr
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in coalesce_expr
+in catch_expr
+in expr
+in let_stmt
+in stmt
+in stmt_list
+in block
+in fn_item
+in item
+in program
+
+=== B5
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `=` at line 2, column 12
+in COMMENT
+in item 1
+in WS
+in type_ref
+in type_annotation
+in let_stmt
+in stmt
+in stmt_list
+in block
+in fn_item
+in item
+in program
+
+=== C1
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `&` at line 2, column 10
+in COMMENT
+in item 2
+in WS
+in field_def
+in field_defs
+in struct_item
+in item
+in program
+
+=== C2
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `n` at line 2, column 32
+in COMMENT
+in item 1
+in WS
+in number
+in g_bounds
+in g_repeat
+in g_postfix
+in g_bind
+in g_elem
+in g_seq
+in g_alt
+in g_alts
+in grammar_rule
+in grammar_item
+in item
+in program
+
+=== C3
+Parse error:
+expected one of: `&`, `//`, `self`, whitespace; found unexpected token `{` at line 1, column 10
+in COMMENT
+in item 1
+in WS
+in fn_params
+in fn_item
+in item
+in program
+
+=== C4
+(parses)
+
+=== C5
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `struct` at line 2, column 5
+in COMMENT
+in item 1
+in WS
+in impl_item
+in item
+in program
+
+=== D1
+Parse error:
+expected one of: `//`, `grammar`, `struct`, whitespace; found unexpected token `/` at line 3, column 1
+in COMMENT
+in item 2
+in WS
+
+=== D2
+(parses)
+
+=== D3
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `C` at line 2, column 28
+in COMMENT
+in item 1
+in WS
+in block
+in g_alt
+in g_alts
+in grammar_rule
+in grammar_item
+in item
+in program
+
+=== E1
+Parse error:
+expected one of: `//`, `}`, digits, whitespace; found unexpected token `-` at line 2, column 32
+in number
+in g_bounds
+in g_repeat
+in g_postfix
+in g_bind
+in g_elem
+in g_seq
+in g_alt
+in g_alts
+in grammar_rule
+in grammar_item
+in item
+in program
+
+=== E2
+(parses)
+
+=== E3
+Parse error:
+expected one of: `*`, `+`, `//`, `=>`, `fold`, `par_fold`, identifier, whitespace; found unexpected token `}` at line 3, column 1
+in COMMENT
+in item 1
+in WS
+in g_alt
+in g_alts
+in grammar_rule
+in grammar_item
+in item
+in program
+
+=== F1
+Parse error:
+unexpected end of input, expected one of: `\`, any character at line 4, column 1
+in STR_CHAR
+in item 16
+in STRING
+in str_lit
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in coalesce_expr
+in catch_expr
+in expr
+in assign_stmt
+in stmt
+in stmt_list
+in block
+in fn_item
+in item
+in program
+
+=== F2
+Parse error:
+expected one of: `//`, `grammar`, `struct`, whitespace; found unexpected token `}` at line 3, column 1
+in COMMENT
+in item 2
+in WS
+
+=== F3
+Parse error:
+unexpected end of input, expected one of: `!=`, `!`, `*`, `+`, `-`, `.`, `//`, `/`, `==`, `[`, `dsl`, `false`, `let`, `return`, `spawn`, `true`, whitespace at line 4, column 1
+in COMMENT
+in item 1
+in WS
+in block
+in fn_item
+in item
+in program
+
+=== G1
+Parse error:
+expected one of: `//`, whitespace; found unexpected token `“` at line 2, column 13
+in COMMENT
+in item 1
+in WS
+in paren_expr
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in coalesce_expr
+in catch_expr
+in expr
+in assign_stmt
+in stmt
+in stmt_list
+in block
+in fn_item
+in item
+in program
+
+=== G2
+(parses)
+

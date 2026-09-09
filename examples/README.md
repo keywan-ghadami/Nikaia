@@ -1,8 +1,23 @@
 # Nikaia Examples
 
 Programs here are **specification-level**: they show what Nikaia 0.0.7 is meant to look like.
-The bootstrap parser (`crates/nikaia`) cannot compile them yet — it currently handles
-functions, `let`, calls, literals, `spawn` and blocks, and nothing else.
+
+**`1brc.nika` compiles and runs** ([ADR-013](../docs/specification/adr/adr-013.md)):
+`nikaia --input examples/1brc.nika --backend rust` produces Rust that prints what the benchmark
+asks for, and `crates/nikaia/tests/one_brc.rs` checks that by running it. It maps the file and
+parses it on every core ([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines, 4
+cores, 0.52 s → 0.14 s, identical output), and one function it calls for every digit is written in
+Nikaia and compiled into `std` by the compiler itself.
+
+`fortunes.nika` does not: its gaps are `std::http` (G6) and template escaping (G7), below.
+
+What the bootstrap compiler handles: functions and methods, `impl` blocks, `struct` and `use`
+items, `let`, assignment, `for`, `if`, `return`, calls, field access, indexing, casts, struct
+literals and constructors, lambdas, operators, `throws`/`catch`/`??`, string interpolation — and,
+since [ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules,
+patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
+Errors are reported on the `.nika` line that caused them
+([ADR-012](../docs/specification/adr/adr-012.md)). There is no type checker.
 
 That is deliberate, and it is what these files are *for*. Writing a real program against the
 spec is the cheapest way to find out which parts of the spec are underspecified. The gaps each

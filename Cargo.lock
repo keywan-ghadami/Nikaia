@@ -154,6 +154,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
+name = "crossbeam-deque"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "622f3fc73690be383c7214310406f28a90e6edeadc3cea882f9d71e495b9711a"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc74980687109a3b14c72fd458107bf0baa1da1a1a805e178d15501ba9b86d9d"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -270,6 +289,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "nikaia"
 version = "0.1.0"
 dependencies = [
@@ -277,9 +305,21 @@ dependencies = [
  "bridge-ir",
  "bridge-orchestrator",
  "clap",
+ "nikaia-std",
  "rustc-executor",
  "serde_json",
  "winnow",
+ "winnow-grammar",
+]
+
+[[package]]
+name = "nikaia-std"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "memmap2",
+ "nikaia",
+ "rayon",
  "winnow-grammar",
 ]
 
@@ -330,6 +370,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "rayon"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -594,12 +654,13 @@ dependencies = [
 [[package]]
 name = "winnow-grammar"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#27bbb92cf88a748a8701aec95ae4a7278d0c9b7c"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#024e3d3419a5762e6942dab1e75eee7558d4e66b"
 dependencies = [
  "lasso",
  "paste",
  "proc-macro2",
  "quote",
+ "rayon",
  "winnow",
  "winnow-grammar-macros",
 ]
@@ -607,7 +668,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-macros"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#27bbb92cf88a748a8701aec95ae4a7278d0c9b7c"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#024e3d3419a5762e6942dab1e75eee7558d4e66b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -618,7 +679,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-model"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#27bbb92cf88a748a8701aec95ae4a7278d0c9b7c"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?branch=main#024e3d3419a5762e6942dab1e75eee7558d4e66b"
 dependencies = [
  "proc-macro2",
  "quote",
