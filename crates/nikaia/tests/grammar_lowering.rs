@@ -358,6 +358,19 @@ fn parentheses_without_a_comma_are_still_grouping() {
     assert!(!emitted.contains("((1 + 2))"), "{emitted}");
 }
 
+/// A lambda's implicit arguments are read off which of `a`, `b`, `c` its body
+/// mentions - and a string's holes are the one place a body can mention one
+/// without the AST showing it, because a literal keeps its text and the holes
+/// are parsed when it is emitted.
+#[test]
+fn an_implicit_lambda_sees_the_names_in_a_string_hole() {
+    let source =
+        "fn f(xs: List) -> String {\n    return xs.map fn { \"{a.0}={a.1}\" }.join(\",\")\n}\n";
+    let emitted = emit(source, Profile::Advanced);
+    assert!(emitted.contains("map(|a|"), "{emitted}");
+    assert!(!emitted.contains("map(||"), "{emitted}");
+}
+
 // --- Running what was generated ---
 
 const MEASUREMENTS: &str = "Hamburg;12.0\nAbha;-23.0\nSaint-Pierre;9.1\nHamburg;-0.4\n";

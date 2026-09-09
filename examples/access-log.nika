@@ -157,14 +157,30 @@ fn main() throws {
 
     println("{report.requests} requests, {report.failures} failed")
 
+    // A map has no order to borrow - ADR-010 seeds an untrusted one randomly,
+    // so its iteration order differs between runs - and a report has to say
+    // which order it wants.
     let mut names = report.paths.keys().collect()
     names.sort()
 
-    let body = names
-        .map fn {
-            let c = &report.paths[a]
-            "{a} {c.hits} {c.bytes}"
-        }
+    // One row per path, as a tuple: the name and the two numbers. Sorting the
+    // rows rather than the names is what lets the key be a number without
+    // looking anything up.
+    let mut rows = names.map fn {
+        // Not `c`: inside a lambda with implicit arguments, `a`, `b` and `c`
+        // are the arguments (Part I, 5.2), and a local of that name would be
+        // read as one more of them.
+        let counts = &report.paths[a]
+        (a, counts.hits, counts.bytes)
+    }
+
+    // Two passes, because `sort` is stable (Part I, 4.5): the names are in
+    // order already, so sorting by hits leaves paths with the same count in
+    // name order underneath. That is a compound order without a comparator.
+    rows.sort_by_key fn { -a.1 }
+
+    let body = rows
+        .map fn { "{a.0} {a.1} {a.2}" }
         .join("\n")
 
     println("{body}")

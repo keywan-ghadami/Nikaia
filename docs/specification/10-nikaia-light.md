@@ -268,6 +268,17 @@ Nikaia includes built-in types for storing groups of data.
     ```nika
     let numbers = [1, 2, 3, 4]
     ```
+    A list keeps the order it was given, and that order can be changed:
+    `xs.sort()` puts the elements in their natural order, `xs.sort_by_key fn: …`
+    in the order of whatever the closure returns. **Both are stable** — elements
+    the key does not separate keep the order they had — which is what makes two
+    passes say a compound order without a comparator:
+    ```nika
+    names.sort()                                  // by name
+    names.sort_by_key fn: -report[a].hits         // then by hits, descending
+    ```
+    That matters because of the line below: a map has no order to borrow, so a
+    program that prints one says which.
 * **Tuple:** A fixed number of values of *different* types, with no name for
     the group and no names for the parts. Written and read by position:
     ```nika
@@ -368,7 +379,12 @@ When logic requires multiple steps, use a Block Lambda. You can choose between i
 **Option A: Implicit Arguments (The Default)**
 Use this for short blocks where context is obvious.
 * **Syntax:** `fn { ... }`
-* **Args:** `a` (1st), `b` (2nd)...
+* **Args:** `a` (1st), `b` (2nd), `c` (3rd)
+* **The three names belong to the lambda.** A body that binds one of them —
+  `let c = …` — is asking for a third argument rather than shadowing anything,
+  because how many arguments the lambda takes is read off which of the names
+  its body mentions. Where a local wants one of those names, use **Option B**
+  and name the arguments.
 
 ```nika
 let complex = users.map fn {
