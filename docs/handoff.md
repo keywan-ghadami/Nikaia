@@ -102,27 +102,30 @@ cargo run -p nikaia --example errors > tests/errors/EXPECTED.txt   # regenerate
 **A backend bump that changes a message makes `errors.rs` fail, and that is the
 point:** the diff is the change in the reader's terms. Read it, then regenerate.
 
-**Five rows are left**, and they sort into three groups:
+**One row is left.** C2 reports `expected digits` where the reader needs `->`,
+and that is a grammar question rather than a message one: `digits` comes from
+the built-in name table and the rule really is looking at a repetition there.
 
-| group | rows | what it needs |
-| :--- | :--- | :--- |
-| an alternative that loses takes its error with it | A4, B1, G1 | record the ones that consumed input — upstream TODO §5 |
-| the position is wrong, not the text | F1, half of F3 | remember the opening delimiter |
-| a name the grammar does not have | C2 | a grammar question, not a message one |
+What closed the other twenty, upstream, each measured against this corpus:
 
-The first is the open one, and it is not what it looks like. `let xs = [1, 2`
-reports whitespace because `let` and `xs` each parse as an expression statement
-and the alternative that would have said `expected expression` at the `[` is
-abandoned — `alt` drops what a losing alternative found, so the only error left
-at that offset is the whitespace skip, and progress is compared before any
-ranking. Two fixes were tried and reverted (recording *every* alternative loses
-`in item 1` upstream; keeping trivia in its own slot puts the message on a
-token that was correct), and the untried third — recording only alternatives
-that consumed input — is upstream `TODO.md` §5 with both post-mortems.
+| change | what it closed |
+| :--- | :--- |
+| ranking by requirement (winnow-grammar#4) | the whitespace skip out of the headline |
+| a rule may name itself (#5) | `expected expression`, `expected type` |
+| an element that *began* is a requirement (#6) | A3, F3, and the second expectation in A1, A2, C3, C5, E3 |
+| a losing alternative keeps its error (#8) | A4, B1, G1, F1 |
 
-The second is a mechanism rather than a ranking. `let s = "unterminated`
-reports the end of the file; the reader needs the opening quote. F3 now names
-the `}` it wants and still cannot say where the `{` was.
+The last one is worth reading before touching this area again. A4, B1 and G1
+were filed twice as "trivia wins on progress" and were never that: `alt` drops
+what a losing alternative found, so where a *shorter* alternative wins - `let`
+and `xs` each parse as an expression statement in `let xs = [1, 2` - nothing
+survives at the position the input actually goes wrong except the whitespace
+skip. Two repairs were tried against this file and reverted before the third
+worked, and `docs/error-corpus.md` keeps all three.
+
+**One tick has a footnote.** F1 names the `"` it is missing, and its position
+is still the end of the file rather than the opening quote. Remembering the
+opening delimiter is a separate mechanism and is not done.
 
 ### The label obstacle, and how it was removed
 

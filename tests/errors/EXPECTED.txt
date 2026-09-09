@@ -2,40 +2,35 @@
 Parse error:
 expected `}`; found unexpected token `temp` at line 3, column 5
 note: also possible here: `,`, `//`
-in COMMENT
-in item 1
-in WS
 in struct_item
 in item
+in item 1
 in program
 
 === A2
 Parse error:
 expected `)`; found unexpected token `b` at line 1, column 13
 note: also possible here: `,`, `//`
-in COMMENT
-in item 1
-in WS
 in fn_params
 in fn_item
 in item
+in item 1
 in program
 
 === A3
 Parse error:
 unexpected end of input, expected `}` at line 3, column 1
 note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `{`, `||`, digits, identifier, statement
-in COMMENT
-in item 1
-in WS
 in block
 in fn_item
 in item
+in item 1
 in program
 
 === A4
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `[` at line 2, column 14
+expected expression; found unexpected token `[` at line 2, column 14
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -62,8 +57,8 @@ in program
 
 === A5
 Parse error:
-expected one of: `}`, identifier; found unexpected token `,` at line 2, column 12
-note: also possible here: `//`
+expected `}`; found unexpected token `,` at line 2, column 12
+note: also possible here: `//`, identifier
 in struct_item
 in item
 in item 1
@@ -71,7 +66,8 @@ in program
 
 === B1
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `}` at line 4, column 1
+expected expression; found unexpected token `}` at line 4, column 1
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -191,9 +187,6 @@ in program
 Parse error:
 expected digits; found unexpected token `n` at line 2, column 32
 note: also possible here: `//`
-in COMMENT
-in item 1
-in WS
 in number
 in g_bounds
 in g_repeat
@@ -212,12 +205,10 @@ in program
 Parse error:
 expected `)`; found unexpected token `{` at line 1, column 10
 note: also possible here: `&`, `//`, `self`, identifier
-in COMMENT
-in item 1
-in WS
 in fn_params
 in fn_item
 in item
+in item 1
 in program
 
 === C4
@@ -227,11 +218,9 @@ in program
 Parse error:
 expected `}`; found unexpected token `struct` at line 2, column 5
 note: also possible here: `//`, `fn`, `pub`
-in COMMENT
-in item 1
-in WS
 in impl_item
 in item
+in item 1
 in program
 
 === D1
@@ -249,13 +238,11 @@ in WS
 Parse error:
 expected `{`; found unexpected token `C` at line 2, column 28
 note: also possible here: `//`
-in COMMENT
-in item 1
-in WS
 in block
 in g_alt
 in g_alts
 in grammar_rule
+in item 1
 in grammar_item
 in item
 in program
@@ -264,9 +251,7 @@ in program
 Parse error:
 expected one of: `}`, digits; found unexpected token `-` at line 2, column 32
 note: also possible here: `//`
-in COMMENT
-in item 2
-in WS
+in number
 in g_bounds
 in g_repeat
 in g_postfix
@@ -287,19 +272,18 @@ in program
 Parse error:
 expected `->`; found unexpected token `}` at line 3, column 1
 note: also possible here: `"`, `(`, `*`, `+`, `//`, `=>`, `?`, `fold`, `par_fold`, `{`, identifier
-in COMMENT
-in item 1
-in WS
 in g_alt
 in g_alts
 in grammar_rule
+in item 1
 in grammar_item
 in item
 in program
 
 === F1
 Parse error:
-unexpected end of input, expected one of: `\`, any character at line 4, column 1
+unexpected end of input, expected `"` at line 4, column 1
+note: also possible here: `\`, any character
 in STR_CHAR
 in item 16
 in STRING
@@ -336,17 +320,16 @@ in WS
 Parse error:
 unexpected end of input, expected `}` at line 4, column 1
 note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `{`, `||`, digits, identifier, statement
-in COMMENT
-in item 1
-in WS
 in block
 in fn_item
 in item
+in item 1
 in program
 
 === G1
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `“` at line 2, column 13
+expected expression; found unexpected token `“` at line 2, column 13
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS

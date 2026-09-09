@@ -24,7 +24,11 @@ measured against this file:
    own grammar labels `expr`, `unary_expr`, `stmt`, `item` and `type_ref`;
 3. **an element that *began* is not an optional continuation**
    (winnow-grammar#6) — an unfinished item's missing `}` outranks the
-   continuations of the expression before it.
+   continuations of the expression before it;
+4. **a losing alternative keeps its error, and between two requirements the
+   one open longest leads** (winnow-grammar#8) — what a shorter parse
+   abandoned is no longer lost, and a guess made a token ago no longer
+   outranks the structure the reader is inside.
 
 A message today can carry a second line, `note: also possible here: …`, holding
 what the grammar would have accepted but did not require. The columns below
@@ -42,8 +46,8 @@ to a row, the row says so.
 | A1 | `struct S { name: &str` ⏎ `temp: i32 }` | `,` or `}` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `,` in the note |
 | A2 | `fn f(a: i32 b: i32) {}` | `,` or `)` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` ``, `,` in the note |
 | A3 | `fn f() {` ⏎ `let x = 1` | `}` at end of input | ⚠️ 17 tokens | ✅ ``expected `}` `` |
-| A4 | `let xs = [1, 2` | `,` or `]` | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
-| A5 | `struct S { a: i32,, b: i32 }` | a field name | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `}`, identifier `` |
+| A4 | `let xs = [1, 2` | `,` or `]` | ⚠️ `` `//`, whitespace `` | ✅ `expected expression`, at the `[` |
+| A5 | `struct S { a: i32,, b: i32 }` | a field name | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, identifier in the note |
 
 A1 and A2 are the honest answers rather than the ideal ones, and worth saying
 plainly: at that position the grammar does **not** require a comma. It requires
@@ -65,7 +69,7 @@ it is trivially the furthest thing that failed.
 
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
-| B1 | `let y = ` | **`expected expression`** | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
+| B1 | `let y = ` | **`expected expression`** | ⚠️ `` `//`, whitespace `` | ✅ `expected expression` |
 | B2 | `let y = 1 + ` | `expected expression` | ⚠️ 8 tokens | ✅ `expected expression` |
 | B3 | `if { }` | `expected expression` | ○ **parses** | ○ |
 | B4 | `f(1, )` | `expected expression` | ⚠️ 8 tokens | ✅ `expected expression` |
@@ -134,7 +138,7 @@ and unhelpful. Recorded so the trade is visible, not to argue it.
 
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
-| F1 | `let s = "unterminated` | the **opening quote** | ⚠️ EOF, `` `\`, any character `` | ⚠️ unchanged |
+| F1 | `let s = "unterminated` | the **opening quote** | ⚠️ EOF, `` `\`, any character `` | ✅ ``expected `"` `` — at EOF, not at the quote |
 | F2 | a stray `}` at top level | `unexpected '}'` | ⚠️ 4 tokens | ✅ `expected end of input` |
 | F3 | one unclosed `fn` | `}`, and where the `{` was | ⚠️ 17 tokens | ⚠️ ``expected `}` ``, not where the `{` was |
 
@@ -147,7 +151,7 @@ so the two are not confused.
 
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
-| G1 | `let x = “hi”` | the quote named, column right | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
+| G1 | `let x = “hi”` | the quote named, column right | ⚠️ `` `//`, whitespace `` | ✅ `expected expression`, column right |
 | G2 | `let café = 1` | accepted | ○ **parses** | ○ |
 
 The column in G1 is right in both states, which is worth knowing: the offsets
@@ -163,56 +167,37 @@ to `fs::map` ([ADR-016](specification/adr/adr-016.md)) and is tested there.
 things the grammar admits that probably should not be — and the corpus found
 them by trying to break the compiler on purpose.
 
-**Sixteen of the twenty-one failing rows now say what a reader needs**, and
-five do not. The five sort into three groups, and each needs a different
-mechanism:
+**Twenty of the twenty-one failing rows now say what a reader needs.** One
+does not:
 
-1. **An alternative that loses takes its error with it** — A4, B1, G1. These
-   read as a trivia problem and are not; tracing A4 says what they are.
-
-   ```nika
-   fn f() {
-       let xs = [1, 2
-   }
-   ```
-
-   `let` parses as an expression statement, and so does `xs` — Nikaia has no
-   list literal, so nothing in the language can start at the `[`. The statement
-   that *would* have said `expected expression` there is abandoned when the
-   shorter parse succeeds, and `alt` drops what a losing alternative found. The
-   only error left at that offset is the implicit whitespace skip, which is
-   therefore the furthest thing that failed, and progress is compared before
-   any ranking or label. Hence ``expected one of: `//`, whitespace``.
-
-   Two fixes were tried and both reverted, which is why this row is still here:
-
-   * **Recording every failing alternative** — the treatment `x?` and `x*`
-     already get — fixes A4 and loses `in item 1` from the rule stack upstream
-     (`diagnostics.rs` p03, p12), because the alternative's record reaches
-     `furthest` before the enclosing repetition's and the merge keeps the first
-     stack.
-   * **Keeping trivia in a slot of its own**, so it never wins the progress
-     race, gives A4 ``expected `}` `` *at the `=`* — a wrong position with a
-     plausible expectation, which is worse than a useless expectation at the
-     right one. It is a symptom fix; this is the cause.
-
-   The untried third is recording only alternatives that **consumed input**
-   before failing. Upstream `TODO.md` §5 carries it. **This is the open one.**
-2. **The position is wrong, not the text** — F1, and half of F3. An
-   unterminated string reports the end of the file; what a reader needs is the
-   opening quote. F3 now names the `}` it wants and still cannot say where the
-   `{` was. Both need the opening delimiter remembered, which is a mechanism
-   and not a ranking.
-3. **A name the grammar does not have** — C2. `digits` comes from the built-in
+1. **A name the grammar does not have** — C2. `digits` comes from the built-in
    table (`digit1 => "digits"`) and the rule really is looking at a repetition
-   there. A grammar question, not a message question.
+   there. A grammar question, not a message question, and the only row left.
 
-What closed the other eleven, in the order the changes landed: the ranking by
+What A4, B1 and G1 turned out to be is worth keeping, because they were filed
+as something else for two rounds. They reported whitespace and were never a
+trivia problem: in `let xs = [1, 2` — Nikaia has no list literal, so nothing
+can start at the `[` — `let` and `xs` each parse as an expression statement,
+and the alternative that *would* have said `expected expression` there is
+abandoned when the shorter parse wins. `alt` drops what a losing alternative
+found, so the only error left at that offset was the whitespace skip, which
+is then the furthest thing that failed. Two repairs were tried against this
+file and reverted before the third worked; upstream `TODO.md` carried all
+three, and winnow-grammar#8 is the one that landed.
+
+What closed the twenty, in the order the changes landed: the ranking by
 requirement (winnow-grammar#4) took the whitespace skip out of the headline;
-the rule label (#5) turned lists of spellings into `expression` and `type`; and
+the rule label (#5) turned lists of spellings into `expression` and `type`;
 "an element that began is a requirement" (#6) let a missing `}` outrank the
-continuations of the expression before it, which is A3, F3's headline, and the
-second expectation in A1, A2, C3, C5 and E3.
+continuations of the expression before it — A3, F3, and the second expectation
+in A1, A2, C3, C5 and E3; and keeping a losing alternative's error (#8) closed
+A4, B1, G1 and F1, with the tie-break by *how long each requirement has been
+open* keeping A3 and F3 from regressing when it did.
+
+One tick deserves a footnote. **F1** now names the `"` it is missing, which is
+what a reader acts on, but the position is still the end of the file rather
+than the opening quote. The text is right and the position is not; remembering
+the opening delimiter is a separate mechanism and is not done.
 
 **No parse error shows the source line.** Every row above is a one-line headline
 plus `in <rule>` lines. A rustc diagnostic routed through `nikaia --explain`
