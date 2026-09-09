@@ -11,9 +11,9 @@ use anyhow::{Context, Result};
 use bridge_ir::BridgeModule;
 use bridge_orchestrator::LanguageFrontend;
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{sync, Ledger, STD};
 use nikaia::emit::{self, Profile};
 use nikaia::{diagnostics, interpreter, parser};
 
@@ -54,6 +54,34 @@ pub struct Cli {
     /// recommended CI line, and the reason the file is committed.
     #[arg(long)]
     pub locked: bool,
+}
+
+/// Part II 12.1, checked: a `sync` function may only call `sync` functions.
+///
+/// The ledger is what makes this possible across the `std` boundary - a call to
+/// `io::read_to_string` is only a violation if something says that function can
+/// pause, and `std.contracts` is where it says so (ADR-020).
+fn check_sync(parsed: &parser::Parsed, path: &Path, source: &str) -> Result<()> {
+    let own = Ledger::infer(parsed);
+    let library = Ledger::parse(STD).context("std's shipped ledger")?;
+    let violations = sync::check(parsed, &own, &library);
+
+    if violations.is_empty() {
+        return Ok(());
+    }
+
+    let path = path.display().to_string();
+    for violation in &violations {
+        eprint!(
+            "{}",
+            diagnostics::render_sync_violation(violation, &path, source)
+        );
+    }
+    anyhow::bail!(
+        "{} call{} a `sync` function may not make",
+        violations.len(),
+        if violations.len() == 1 { "" } else { "s" }
+    )
 }
 
 /// Write the ledger, or - under `--locked` - check that it did not need
@@ -162,6 +190,7 @@ pub fn main() -> Result<()> {
         // only through here - the Bridge IR has no macro to carry it.
         let profile = Profile::parse(&args.profile)?;
         let parsed = parser::parse_to_ast(&source)?;
+        check_sync(&parsed, &args.input, &source)?;
         let lowered = emit::emit_program(&parsed, profile)?;
 
         let output_path = args

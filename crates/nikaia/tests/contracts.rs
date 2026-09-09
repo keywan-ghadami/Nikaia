@@ -178,3 +178,97 @@ fn every_std_module_is_in_the_shipped_ledger() {
         );
     }
 }
+
+// --- Part II 12.1, checked ---------------------------------------------------
+
+use nikaia::contracts::{sync, STD};
+
+fn violations(source: &str) -> Vec<sync::Violation> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger parses");
+    sync::check(&parsed, &own, &library)
+}
+
+/// The rule ADR-019 D2 rests on: a `sync` function may not reach standard
+/// input, and the answer comes from the library's ledger rather than from
+/// anything this program says.
+#[test]
+fn a_sync_function_may_not_call_into_std_io() {
+    let found = violations(
+        "use std::io\n\
+         fn tally() -> i64 sync { let t = io::read_to_string() catch { return 0 } return 1 }",
+    );
+
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].caller, "tally");
+    assert_eq!(found[0].callee, "io::read_to_string");
+    assert!(found[0].from_library);
+}
+
+/// … and may call what the ledger says is `sync`.
+#[test]
+fn a_sync_function_may_call_a_sync_one() {
+    let found = violations(
+        "fn helper(a: i32) -> i32 sync { return a + 1 }\n\
+         fn outer(a: i32) -> i32 sync { return helper(a) }",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// A function that is not `sync` promises nothing and is checked for nothing.
+#[test]
+fn a_function_that_is_not_sync_may_call_anything() {
+    let found = violations(
+        "use std::io\n\
+         fn read() -> i64 { let t = io::read_to_string() catch { return 0 } return 1 }",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// The anonymous constructor is a function like any other, and reached under
+/// the name the lowering gives it.
+///
+/// This is what the check found in `1brc.nika` and `access-log.nika` on its
+/// first run: a `sync` method building a value through a constructor that never
+/// said it was `sync` either.
+#[test]
+fn a_constructor_makes_the_same_promise_or_does_not() {
+    let plain = "pub struct S { n: i64 }\n\
+                 impl S {\n\
+                     pub fn(n: i64) -> S { return S(n: n) }\n\
+                     fn use_it(&self) sync { let x = S(1) }\n\
+                 }";
+    let found = violations(plain);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].callee, "S::new");
+    assert!(!found[0].from_library);
+
+    let declared = plain.replace("-> S {", "-> S sync {");
+    assert!(violations(&declared).is_empty());
+}
+
+/// A trailing lambda runs during the call it is given to, so what it calls, the
+/// function around it calls.
+#[test]
+fn a_lambda_is_part_of_the_function_that_writes_it() {
+    let found = violations(
+        "use std::io\n\
+         fn f(xs: Vec[i32]) -> i32 sync { xs.map fn { io::read() catch { 0 } } return 1 }",
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].callee, "io::read");
+}
+
+/// What the check cannot resolve it does not reject.
+///
+/// With no type checker there is no receiver type, so a method call cannot be
+/// looked up. The check is therefore conservative in the permissive direction:
+/// it never rejects a program the rule allows, and it does not yet catch every
+/// program the rule forbids. Worth having and worth saying - an unchecked
+/// promise catches nothing at all.
+#[test]
+fn a_call_that_cannot_be_resolved_is_not_a_violation() {
+    let found = violations("fn f(s: String) -> usize sync { return s.len() }");
+    assert!(found.is_empty(), "{found:?}");
+}

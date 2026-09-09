@@ -531,7 +531,7 @@ impl<'p> Emitter<'p> {
         let pad = "    ".repeat(depth);
         if *is_sync {
             out.push(&format!(
-                "// sync (Part II, 12.1): pure CPU, cannot pause. Not checked yet.\n{pad}"
+                "// sync (Part II, 12.1): pure CPU, cannot pause. Checked before\n{pad}// this was written - see `contracts::sync`.\n{pad}"
             ));
         }
 

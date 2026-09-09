@@ -758,7 +758,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | :--- | :--- | :--- |
 | `NK1xxx` | Syntax & types | — |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` in Advanced (Part II, 12.7). |
-| `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). |
+| `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Borrow contracts | `NK2401` a contract change broke a caller, narrated from the ledger diff (13.5). |
 | `NK25xx` | Profile portability | Reserved: Advanced `Send`-rules reported under Lite as a portability lint, so Lite libraries stay Advanced-compatible. |

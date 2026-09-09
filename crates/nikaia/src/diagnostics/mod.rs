@@ -161,6 +161,50 @@ pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path:
     out
 }
 
+/// A finding of the compiler's own, reported the way it reports rustc's.
+///
+/// The `.nika` file, the line it is about with a caret under it, then the
+/// reasons and a way out. `--explain` has shown rustc's diagnostics in this
+/// shape since ADR-012; a rule the compiler checks itself should not look
+/// different from one it relays.
+pub fn render_sync_violation(
+    violation: &crate::contracts::sync::Violation,
+    path: &str,
+    source: &str,
+) -> String {
+    let (line, column) = winnow_grammar::span::line_column(source, violation.span.start);
+    let ledger = if violation.from_library {
+        "`std`'s ledger"
+    } else {
+        "this program's contracts"
+    };
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "error[NK2202]: `{}` is `sync`, and `{}` can pause\n",
+        violation.caller, violation.callee
+    ));
+    out.push_str(&format!("  --> {path}:{line}:{column}\n"));
+    out.push_str(&winnow_grammar::span::caret(
+        source,
+        violation.span.start,
+        1,
+    ));
+    out.push('\n');
+    out.push_str(
+        "     = a `sync` function promises it cannot pause and does no I/O (Part II, 12.1)\n",
+    );
+    out.push_str(&format!(
+        "     = `{}` carries no `sync` in {ledger}\n",
+        violation.callee
+    ));
+    out.push_str(&format!(
+        "     help: drop `sync` from `{}`, or move the call out of it\n",
+        violation.caller
+    ));
+    out
+}
+
 /// Byte offset -> line and column, computed once per file.
 struct LineIndex {
     /// Byte offset of the start of each line.
