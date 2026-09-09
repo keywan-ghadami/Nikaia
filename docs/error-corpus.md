@@ -151,10 +151,20 @@ twenty-six rows and may be worth more than any of the three groups above.
 
 ## Keeping this honest
 
-The inputs are not checked in yet, on purpose — the list is meant to be edited
-first. Once it settles they become `tests/errors/*.nika` beside the existing
-`tests/samples/`, with the rendered messages in one checked-in file so that a
-change to the ranking is a diff rather than a memory. The conventions are
-already in the repo: `crates/nikaia/tests/samples.rs` walks a directory, and
-`grammar_lowering.rs` compares a whole golden file in one assertion and says how
-to regenerate it.
+The inputs are `tests/errors/*.nika`, beside the existing `tests/samples/`, and
+`tests/errors/EXPECTED.txt` holds what each produces **today, against the
+shipped backend** — so the suite is green as checked in and the wrong messages
+are on the record rather than in a memory.
+
+```bash
+cargo run -p nikaia --example errors > tests/errors/EXPECTED.txt
+```
+
+`crates/nikaia/tests/errors.rs` compares the whole file in one assertion, the
+shape `grammar_lowering.rs` already uses. Applying the pending backend patch
+(`docs/upstream/0001-expectations-by-requirement.patch`) makes that test fail,
+and that is the point: the diff is the twelve rows it moves. Read it, then
+regenerate.
+
+The list itself is still meant to be argued with. A row struck or added here
+should be a file added or removed there, and the golden regenerated.
