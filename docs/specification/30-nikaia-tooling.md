@@ -413,6 +413,28 @@ fn main() {
 }
 ```
 
+**`std::html`**
+
+The escaping a template's contract rests on ([ADR-017](adr/adr-017.md)).
+
+```nika
+pub fn escape(text: &str) -> String        // for a text node or a quoted attribute
+pub struct Raw                             // "this is already markup"
+pub fn Raw::new(markup: String) -> Raw     // the audit point, and the only constructor
+```
+
+A template grammar escapes **every hole, unconditionally** — there is no flag at a hole that
+turns it off, and no exemption for data provenance calls trusted, because provenance is evidence
+about where bytes came from and escaping is not a place to spend evidence. The one way to say a
+value is already markup is to give it the type `Raw`, so that the decision is made where the
+value is built rather than at each of the places it is used.
+
+`escape` handles the five characters that change what HTML means in a text node or a quoted
+attribute value — `&`, `<`, `>`, `"`, `'` — and returns its input unchanged when none of them are
+present. It does **not** make text safe inside `<script>`, inside CSS, in an unquoted attribute or
+in a URL: those need different escaping, which is why a hole in one of those positions is a
+compile error naming the position rather than a call to this function.
+
 **`std::fs` (Compiler Magic)**
 File system access is designed to look **blocking** (synchronous) for ease of use. However, the compiler automatically transforms these calls into **non-blocking** state machines backed by the runtime's reactor. You never block the thread, but you never have to write "callback hell".
 

@@ -286,12 +286,18 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 parameter or set a status code. `fortunes` happens not to need either, which is why this went
 unnoticed — the other six TechEmpower tests do need it.
 
-**G7 — HTML escaping belongs in the template grammar's contract.** A template DSL that lets an
-un-escaped value through a hole is an XSS hole with extra steps, and the compiler is the only
-place that can enforce it for every hole, every time. That makes it a property of the grammar
-(ADR-007, D4/D5), not of the caller's discipline. ADR-010 D8 adds the boundary condition for when
-this is specified: provenance may supply evidence and lints, but escaping at a hole must stay
-**unconditional** — an analysis that skips escaping on "trusted" data turns one wrong
-`trusted: true` into an XSS hole.
+**G7 — HTML escaping belongs in the template grammar's contract.** *Decided*
+([ADR-017](../docs/specification/adr/adr-017.md)), *not yet enforced*. Every hole is escaped,
+unconditionally — no flag at the hole, and no exemption for "trusted" data, because provenance is
+evidence about where bytes came from and one wrong `trusted: true` upstream becomes an XSS hole
+downstream (ADR-010 D8). The one way to say "this is already markup" is the type `html::Raw`,
+because a flag is a property of the call site while a type travels with the value and `Raw::new`
+is one line to grep for. And a hole is only legal in a position the grammar can escape *for*: a
+hole inside `<script>` or in a URL is a compile error naming the position, because a promise that
+holds only in some positions would have to be qualified everywhere.
+
+`std::html::escape` exists and is tested (`crates/nikaia-std/src/html.rs`) — it returns its input
+unallocated when nothing needs escaping, so the contract costs a scan rather than a copy. What is
+left is the `html` grammar and the per-hole position check.
 
 

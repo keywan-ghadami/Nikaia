@@ -38,10 +38,14 @@ pub struct Fortune {
 // and unlike a SQL placeholder. The template is fixed at the call site; there
 // is nothing to reuse it over, so baking the binding in is correct here.
 //
-// [G7] Escaping must be part of this grammar's contract rather than the
-// caller's discipline. A template DSL that lets an un-escaped value through is
-// an XSS hole with extra steps - and the compiler is the only place that can
-// enforce it for every hole, every time.
+// Escaping is part of this grammar's contract rather than the caller's
+// discipline, and what that means is decided:
+// [ADR-017](../docs/specification/adr/adr-017.md). Every hole is escaped,
+// every time, with no flag at the hole that turns it off; the one way to say
+// "this is already markup" is the type `html::Raw`; and a hole in a position
+// the grammar cannot escape for - inside `<script>`, in a URL - is a compile
+// error naming the position rather than a promise that quietly does not hold.
+// What is left for [G7] is the `html` grammar itself.
 fn render(rows: List[Fortune]) -> String {
     return dsl html {
         <!DOCTYPE html>
