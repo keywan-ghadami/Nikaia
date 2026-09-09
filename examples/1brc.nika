@@ -22,7 +22,7 @@
 //
 // It does what it says: `fs::map` maps the file (ADR-014 D2), and under the
 // Advanced profile the pieces are parsed on every core (D3) - 8 million lines
-// on 4 cores took 0.19 s against 0.57 s sequentially, with identical output.
+// on 4 cores took 0.14 s against 0.52 s sequentially, with identical output.
 // Sequentially it is 659 instructions per row, against 840 for the same
 // aggregation written naively in Rust and 688 for it hand-tuned (ADR-015 D3).
 // `digit_value`, called for every digit below, is itself written in Nikaia and

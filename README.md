@@ -118,11 +118,14 @@ This is currently a **Specification (Version 0.0.7)**. We are in the bootstrap p
     `std` for what the examples call ([ADR-013](docs/specification/adr/adr-013.md)) — enough
     that **`examples/1brc.nika` compiles and runs**.
   - [x] `fs::map` is a memory mapping and the parallel driver runs on every core
-    ([ADR-014](docs/specification/adr/adr-014.md)): 8M lines, 4 cores, 0.57 s → 0.19 s.
+    ([ADR-014](docs/specification/adr/adr-014.md)): 8M lines, 4 cores, 0.52 s → 0.14 s.
   - [x] The parser backend's lazy diagnostics, and the measurement they made possible
     ([ADR-015](docs/specification/adr/adr-015.md)): **659 instructions per row against 688 for
     the same aggregation hand-tuned in Rust**, and 840 for it written naively — a generated
     parser below hand-written code on the workload the spec picked to be judged by.
+  - [x] `fs::map`'s UTF-8 check divided across the cores rather than skipped
+    ([ADR-016](docs/specification/adr/adr-016.md)): 3.9× on the check, and what is left to gain
+    by removing it altogether is 10 ms of a 140 ms program.
   - [ ] A type checker: everything Stage 0 cannot infer, the example has to say (ADR-013 D7).
 - [ ] **Runtime Integration:** Binding `tokio` (Current-Thread & Thread-Pool).
 - [ ] **Self-Hosting:** The compiler compiles itself.

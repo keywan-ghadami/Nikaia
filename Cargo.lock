@@ -319,6 +319,7 @@ dependencies = [
  "anyhow",
  "memmap2",
  "nikaia",
+ "rayon",
  "winnow-grammar",
 ]
 
