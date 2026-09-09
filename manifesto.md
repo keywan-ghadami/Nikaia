@@ -1,50 +1,78 @@
 # Nikaia: Philosophy & Origin
 
-**Für Nika.**
-*Weil die Zukunft denen gehört, die sie bauen.*
+**For Nika.**
+*Because the future belongs to those who build it.*
 
 ---
 
-## 1. Der Name und das Herz
-Der Name **Nikaia** (altgriechisch: Νίκαια) trägt eine doppelte Bedeutung.
+## 1. The Name and the Heart
+At the centre is **Nika** — my daughter's name. Everything else comes after that.
 
-Historisch leitet er sich von **Nike** (Νίκη) ab, der griechischen Göttin des Sieges. Aber im Kern steht der Name **Nika** – der Name meiner Tochter.
-Diese Sprache ist ihr gewidmet. Sie ist der Versuch, eine technologische Welt zu hinterlassen, die weniger von unnötigen Hürden und mehr von kreativer Freiheit geprägt ist. Nikaia ist das Versprechen, dass der Mensch über die Maschine siegt, nicht umgekehrt.
+The name carries more than one lineage, and the deeper one is not the Greek: in Persian, *nik*
+means **good** — virtuous, good the way a person is good and not the way a product is. The
+motto is that name with a verb added: **Good wins.**
 
-In der Softwareentwicklung ist der tägliche Kampf oft zermürbend: Ein Kampf gegen den Compiler, gegen Race Conditions und gegen die eigene kognitive Belastungsgrenze. **Nikaia steht für den Sieg über diese Komplexität.**
+Not over anyone. What the sentence denies is something else: that good and fast are opposites,
+and that being decent to the person writing the code has to be paid for at runtime. Here it is
+the other way round. Because the language never makes you write `Arc`, lifetimes or lock orders,
+those decisions belong to the compiler — and only because they belong to it can it choose `Rc`
+under Lite and `Arc` under Advanced, order the locks, and infer borrow contracts across a whole
+program. A stricter language would have to take your word for it. Good is not the price of fast
+here; it is the reason for it.
 
-## 2. Die Historie: Das Ende des Schismas
-Die antike Stadt Nikaia ist bekannt für das **Konzil**, einen Ort des Konsenses. Wir erleben heute ein Schisma in der Programmierung:
+The ancient city of **Nikaia** (Νίκαια), which the name also points to, supplies the second
+image — more on that in the next section.
 
-* Die **"Scripting-Fraktion"** (Python, JS): Schnell, flexibel, aber oft fragil.
-* Die **"Systems-Fraktion"** (Rust, C++): Mächtig, sicher, aber oft kognitiv belastend.
+This language is dedicated to her. It is an attempt to leave behind a technological world shaped
+less by unnecessary hurdles and more by the freedom to create.
 
-Nikaia ist das technische Konzil. Es beendet die Spaltung durch eine **Unified Core Architecture**.
+Because so much of software development costs effort that has nothing to do with the actual
+problem: the compiler that holds you up, race conditions that only surface under load, the limit
+of what one person can hold in their head. This is not a war, and nobody has to be defeated for
+it. **Nikaia stands for not conquering that complexity, but moving it where it belongs: into the
+compiler.**
 
-## 3. Die Architektur der Stadt
-Eine antike Polis musste zwei Dinge leisten, genau wie Nikaia:
+## 2. The History: The End of the Schism
+The ancient city of Nikaia is known for its **council** — a place of consensus. We are living
+through a schism in programming today:
 
-1.  **Der Marktplatz (Agora) – Nikaia Lite:**
-    Hier herrscht reges Treiben. Handel, Austausch, Flow. Alles ist "non-blocking".
-    *Optimiert für:* I/O-Dichte, Web-Services, Rapid Prototyping.
-2.  **Die Festung (Citadel) – Nikaia Standard:**
-    Hier geht es um Schutz und Stabilität. Die Mauern halten jeder Belastung stand.
-    *Optimiert für:* Compute-Power, Thread-Safety, System-Level Security.
+* The **"scripting faction"** (Python, JS): fast, flexible, but often fragile.
+* The **"systems faction"** (Rust, C++): powerful, safe, but often cognitively heavy.
 
-## 4. Das Manifest
+Nikaia is the technical council. It ends the split with a **Unified Core Architecture**.
 
-Lange Zeit glaubten wir, wir müssten wählen.
+## 3. The Agora and the Swarm
+Nikaia needs two images, and only one of them is a place.
 
-Wir bauten unsere Wolkenkratzer auf Sand, weil der Beton zu schwer zu mischen war. Wir schrieben Software, die sich gut anfühlte, aber nachts zusammenbrach. Oder wir schmiedeten Systeme aus purem Stahl, die ewig hielten, aber deren Bau uns unsere Freude kostete.
+1.  **The Marketplace (Agora) — Nikaia Lite:**
+    One square, in constant movement. Trade, exchange, flow. Nobody stands still waiting for
+    anybody else: everything is "non-blocking".
+    *Optimised for:* I/O density, web services, rapid prototyping.
+2.  **The Swarm — Nikaia Advanced:**
+    Not a place, and not a fortress. Ask what concurrency actually looks like and the answer is
+    a swarm: no centre, no commander, no walls to defend. Every worker takes what is in front of
+    it, and when it runs out it takes work from a neighbour. The order comes from the rules
+    everyone follows, not from anyone giving orders — which is precisely what a work-stealing
+    runtime is, and why safety here is a property of the rules rather than of everybody's
+    discipline.
+    *Optimised for:* compute power, thread safety, every core busy.
 
-Wir akzeptierten das Dogma: *"Einfach ist langsam. Schnell ist schwer."*
+## 4. The Manifesto
 
-Doch dann stellten wir die Frage: Was, wenn die Schwere nicht im Werkzeug liegt, sondern in der Art, wie wir es halten? Was, wenn der Compiler nicht unser Aufseher ist, sondern unser Architekt?
+For a long time we believed we had to choose.
 
-Wir nannten das Projekt **Nikaia**.
+We built our skyscrapers on sand because the concrete was too hard to mix. We wrote software
+that felt good and collapsed in the night. Or we forged systems out of pure steel that lasted
+forever, but whose construction cost us our joy.
 
-Weil es den Sieg der Intention über die Implementation bedeutet. Weil es die Mauern einreißt zwischen dem Code, den wir träumen, und dem Code, den die Maschine versteht.
+We accepted the dogma: *"Simple is slow. Fast is hard."*
 
-**Nikaia: Build the Victory.**
+And then we asked the question: what if the weight is not in the tool, but in the way we hold
+it? What if the compiler is not our overseer, but our architect?
 
+We called the project **Nikaia**.
 
+Because intent should count again, and not implementation. Because it tears down the walls
+between the code we dream and the code the machine understands.
+
+**Nikaia: Good wins.**
