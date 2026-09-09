@@ -371,6 +371,74 @@ fn an_implicit_lambda_sees_the_names_in_a_string_hole() {
     assert!(!emitted.contains("map(||"), "{emitted}");
 }
 
+/// Kap 4.4: the three shapes a variant can have, and no others.
+#[test]
+fn an_enum_lowers_its_three_variant_shapes() {
+    let source = concat!(
+        "pub enum Message {\n",
+        "    Quit,\n",
+        "    Write(String),\n",
+        "    Move { x: i32, y: i32 },\n",
+        "}\n"
+    );
+    let emitted = emit(source, Profile::Advanced);
+    assert!(emitted.contains("pub enum Message {"), "{emitted}");
+    assert!(emitted.contains("    Quit,"), "{emitted}");
+    assert!(emitted.contains("    Write(String),"), "{emitted}");
+    assert!(
+        emitted.contains("    Move { x: i32, y: i32 },"),
+        "{emitted}"
+    );
+}
+
+/// An enum holds views the same way a struct does, so it takes the input
+/// lifetime the same way (ADR-008, and `borrowing_structs`).
+#[test]
+fn an_enum_that_carries_a_view_takes_the_input_lifetime() {
+    let source = "enum Token {\n    End,\n    Word(&str),\n}\n";
+    let emitted = emit(source, Profile::Advanced);
+    assert!(emitted.contains("enum Token<'a>"), "{emitted}");
+    assert!(emitted.contains("Word(&'a str)"), "{emitted}");
+}
+
+/// Kap 3.4: every pattern shape, and each is the shape the language below
+/// spells the same way - a transcription rather than a translation.
+#[test]
+fn a_match_lowers_every_pattern_shape() {
+    let source = concat!(
+        "fn describe(m: Message) -> i32 {\n",
+        "    return match m {\n",
+        "        Message::Quit => 0,\n",
+        "        Message::Write(text) => 1,\n",
+        "        Message::Move { x, y } => 2,\n",
+        "        7 => 3,\n",
+        "        other => 4,\n",
+        "        _ => 5,\n",
+        "    }\n",
+        "}\n"
+    );
+    let emitted = emit(source, Profile::Advanced);
+    for arm in [
+        "Message::Quit => 0,",
+        "Message::Write(text) => 1,",
+        "Message::Move { x, y } => 2,",
+        "7 => 3,",
+        "other => 4,",
+        "_ => 5,",
+    ] {
+        assert!(emitted.contains(arm), "missing `{arm}`:\n{emitted}");
+    }
+}
+
+/// `match value {` must not read `value { … }` as a struct literal - the same
+/// trap `if`'s condition has, and the same answer.
+#[test]
+fn a_match_value_is_not_read_as_a_struct_literal() {
+    let source = "fn f(v: i32) -> i32 {\n    return match v {\n        _ => 1,\n    }\n}\n";
+    let emitted = emit(source, Profile::Advanced);
+    assert!(emitted.contains("match v {"), "{emitted}");
+}
+
 // --- Running what was generated ---
 
 const MEASUREMENTS: &str = "Hamburg;12.0\nAbha;-23.0\nSaint-Pierre;9.1\nHamburg;-0.4\n";

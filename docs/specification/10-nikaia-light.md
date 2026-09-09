@@ -155,6 +155,31 @@ match value {
 }
 ```
 
+A pattern is one of five things, and each is read the way it is written:
+
+| pattern | matches |
+| :--- | :--- |
+| `_` | anything, and binds nothing |
+| `1`, `"text"`, `true` | that value |
+| `Op::Times` | that variant |
+| `Message::Write(text)` | that variant, binding what it carries |
+| `Message::Move { x, y }` | that variant, binding its fields by name |
+| `other` | anything, and **binds it** to that name |
+
+The last two lines are one rule: a path with `::` in it names a variant, and a
+bare name binds. That is the same line the enum's own syntax draws — `Quit` is
+a variant *of* `Message`, never on its own — so a pattern never has to be read
+twice to see which of the two it is.
+
+An arm's body is an expression or a block:
+
+```nika
+match step.0 {
+    Op::Times  => { value = value * step.1 }
+    Op::Divide => { value = value / step.1 }
+}
+```
+
 ### 3.5. Null Safety Operators
 Accessing members of a Nullable Type requires handling the potential `null` case.
 
@@ -255,11 +280,17 @@ An **Enum** (Enumeration) is a type that can be one of several distinct variants
 
 ```nika
 enum Message {
-    Quit,
-    Move { x: i32, y: i32 },
-    Write(String),
+    Quit,                        // carries nothing
+    Move { x: i32, y: i32 },     // named fields, read by name
+    Write(String),               // positional, read by position
 }
 ```
+
+Use one where a value is **one of a fixed set of things**: two operators, four
+directions, the three states a connection can be in. A string would say the
+same and check nothing — `"tiems"` is a value a string type accepts and an enum
+does not. Reading one back is `match` (3.4), which is where the fixed set pays:
+an arm per variant and no arm for a case that cannot happen.
 
 ### 4.5. Collections
 Nikaia includes built-in types for storing groups of data.

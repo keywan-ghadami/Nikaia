@@ -62,6 +62,13 @@ pub enum Item {
         throws: bool,    // Kap 7.1
     },
 
+    // Kap 4.4: enum Message { Quit, Move { x: i32 }, Write(String) }
+    Enum {
+        name: Ident,
+        variants: Vec<EnumVariant>,
+        is_public: bool,
+    },
+
     // Kap 4.1: struct User { ... }
     Struct {
         name: Ident,
@@ -71,13 +78,6 @@ pub enum Item {
         // ADR-008, D6: `@borrowed` asserts that no value of this type escapes
         // the buffer it points into.
         is_borrowed: bool,
-    },
-
-    // Kap 4.3: enum Message { ... }
-    Enum {
-        name: Ident,
-        generics: Vec<GenericParam>,
-        variants: Vec<EnumVariant>,
     },
 
     // Kap 4.2: impl User { ... }
@@ -155,6 +155,12 @@ pub enum Stmt {
 pub enum Expr {
     // Primitive
     LitInt(i64),
+    /// Kap 3.4: `match value { 1 => …, _ => … }`. An expression, like `if`.
+    Match {
+        value: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+
     /// `(a, b)` - Kap 4.5. Two or more values of different types, with no
     /// name for the pair and none for its parts.
     Tuple(Vec<Expr>),
@@ -279,12 +285,6 @@ pub enum Expr {
         expr: Box<Expr>,
         handler: Block, // Der Block mit 'error' Variable
     },
-
-    // Kap 3.4: match value { ... }
-    Match {
-        expr: Box<Expr>,
-        arms: Vec<MatchArm>,
-    },
 }
 
 // --- Helper Strukturen ---
@@ -305,6 +305,56 @@ pub struct Type {
     pub is_tuple: bool,
 }
 
+/// One variant of an enum (Kap 4.4).
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: Ident,
+    pub fields: VariantFields,
+}
+
+/// What a variant carries. The three shapes Kap 4.4 shows, and no others.
+#[derive(Debug, Clone)]
+pub enum VariantFields {
+    /// `Quit`
+    Unit,
+    /// `Write(String)` - positional, read by position.
+    Tuple(Vec<Type>),
+    /// `Move { x: i32, y: i32 }` - named, read by name.
+    Named(Vec<FieldDef>),
+}
+
+/// One arm of a `match` (Kap 3.4).
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: Expr,
+}
+
+/// What an arm matches. Deliberately small: every shape here is one the
+/// language it lowers to spells the same way, so the lowering stays name for
+/// name (ADR-011 D2) and no pattern means something different in the two.
+#[derive(Debug, Clone)]
+pub enum MatchPattern {
+    /// `_`
+    Wildcard,
+    /// `1`, `"text"`, `true`
+    Literal(Expr),
+    /// `Op::Times`, and a bare name - which *binds*, as it does in the
+    /// language below. One rule, drawn in one place.
+    Path(Vec<Ident>),
+    /// `Message::Write(text)`
+    Tuple {
+        path: Vec<Ident>,
+        bindings: Vec<Ident>,
+    },
+    /// `Message::Move { x, y }` - shorthand only, because a rename is a `let`
+    /// in the arm and needs no syntax of its own.
+    Named {
+        path: Vec<Ident>,
+        bindings: Vec<Ident>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct GenericParam {
     pub name: Ident,
@@ -321,18 +371,6 @@ pub struct FnArg {
 pub struct FieldDef {
     pub name: Ident,
     pub ty: Type,
-}
-
-#[derive(Debug, Clone)]
-pub struct EnumVariant {
-    pub name: Ident,
-    pub data: Option<Vec<FieldDef>>, // Für: Variant { x: i32 }
-}
-
-#[derive(Debug, Clone)]
-pub struct MatchArm {
-    pub pattern: Expr, // Vereinfacht
-    pub body: Expr,
 }
 
 // Part III, Kap 16.1: $dst = out(reg) result

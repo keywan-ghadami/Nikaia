@@ -251,6 +251,15 @@ a type. Tuples now exist: `(A, B)` as a type, `(a, b)` as a value, `t.0` to read
 walked a type's arguments — the view analysis of ADR-008 among them — walks a tuple's parts
 without knowing about tuples. `mul_tail` yields `(&str, i64)` and `struct Step` is gone.
 
+**G12 — no sum type.** `calc.nika` has exactly two operators to carry, and an `enum` is what
+says that. Part I 4.4 specified enums and the bootstrap compiler did not lower them, so the
+example carried the operator as a `&str` and compared it — one typo away from a bug the
+compiler cannot see. Enums and `match` now lower: the three variant shapes (`Quit`,
+`Write(String)`, `Move { x, y }`), and five pattern shapes, each one the language below spells
+the same way so the lowering stays a transcription. `calc.nika`'s `mul_tail` yields
+`(Op, i64)`. An enum that carries a view takes the input lifetime exactly as a struct does,
+which is what lets one appear in a grammar rule's return type.
+
 **G11 — a rejected parse said what was expected and never where.** Found by writing
 `access-log.nika`, whose `catch` prints the failure: the message read
 ``expected a digit; found unexpected token ` ` `` with the rule stack under it, and no
@@ -271,12 +280,6 @@ next to it was handed the value it was meant to inspect and nothing compiled. Bo
 in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
-
-**G12 — no sum type.** `calc.nika` has exactly two operators to carry, and an `enum` is what
-says that. Stage 0 has none — Part I 4.4 specifies enums and the bootstrap compiler does not
-lower them — so the example carries the operator as a `&str` and compares it. That is a
-smaller gap than G10 was, and the same kind: the language says something the compiler cannot
-yet hear.
 
 **G6 — the HTTP handler cannot see the request.** `std::http`'s signature (17.1) is
 `.route("/") fn: "Hello World"` with no request argument, so a handler cannot read a query

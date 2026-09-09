@@ -20,7 +20,7 @@ in program
 === A3
 Parse error:
 unexpected end of input, expected `}` at line 3, column 1
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -30,7 +30,7 @@ in program
 === A4
 Parse error:
 expected expression; found unexpected token `[` at line 2, column 14
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -67,7 +67,7 @@ in program
 === B1
 Parse error:
 expected expression; found unexpected token `}` at line 4, column 1
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -95,7 +95,7 @@ in program
 === B2
 Parse error:
 expected expression; found unexpected token `}` at line 3, column 1
-note: also possible here: `"`, `&`, `(`, `//`, `if`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `(`, `//`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -127,7 +127,7 @@ in program
 === B4
 Parse error:
 expected expression; found unexpected token `)` at line 2, column 18
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in expr
 in call_args_tail
 in item 1
@@ -220,7 +220,7 @@ in program
 === D1
 Parse error:
 expected end of input; found unexpected token `/` at line 3, column 1
-note: also possible here: `//`, `@borrowed`, `fn`, `impl`, `pub`, `use`, item
+note: also possible here: `//`, `@borrowed`, `enum`, `fn`, `impl`, `pub`, `use`, item
 in COMMENT
 in item 2
 in WS
@@ -304,7 +304,7 @@ in program
 === F2
 Parse error:
 expected end of input; found unexpected token `}` at line 3, column 1
-note: also possible here: `//`, `@borrowed`, `fn`, `impl`, `pub`, `use`, item
+note: also possible here: `//`, `@borrowed`, `enum`, `fn`, `impl`, `pub`, `use`, item
 in COMMENT
 in item 2
 in WS
@@ -312,7 +312,7 @@ in WS
 === F3
 Parse error:
 unexpected end of input, expected `}` at line 4, column 1
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -322,7 +322,7 @@ in program
 === G1
 Parse error:
 expected expression; found unexpected token `“` at line 2, column 13
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS

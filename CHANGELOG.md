@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added (0.0.8 - enums and `match`, which Part I specified and Stage 0 could not hear)
+- **`enum` lowers**, in all three shapes Kap 4.4 shows: `Quit`, `Write(String)`, `Move { x: i32, y: i32 }`. An enum that carries a **view** takes the input lifetime exactly as a struct does - the analysis walks a variant's field types the way it walks a struct's - which is what lets one appear in a grammar rule's return type.
+- **`match` lowers**, with five pattern shapes: `_`, a literal, a variant path (`Op::Times`), a variant with positional bindings (`Message::Write(text)`), and one with named bindings (`Message::Move { x, y }`). A bare name **binds**, which is one rule rather than two: a path with `::` names a variant, a name without one binds, and that is the line the enum's own syntax already draws. Every shape is one the language below spells the same way, so the lowering is a transcription rather than a translation (ADR-011 D2).
+- The value is a `head_expr`, for the reason `if`'s condition is one: `match value {` would otherwise read `value { … }` as a struct literal and take the arms for fields.
+- **Specified while implementing**: Kap 3.4 gains the table of what a pattern can be and what an arm's body may be; Kap 4.4 gains what an enum is *for* - a value that is one of a fixed set of things, where a string would say the same and check nothing.
+- **`examples/calc.nika` closes G12 with it.** Its two operators were a `&str` and a comparison; they are an `Op` and a `match` now, and `mul_tail` yields `(Op, i64)`. The AST had carried stub definitions for `Item::Enum` and `Expr::Match` since an early draft - both unreachable, one of them mislabelled Kap 4.3 - and they are replaced rather than extended.
+
 ### Added (0.0.8 - a list can be put in an order, and the spec says so)
 - **Part I 4.5 specifies `sort()` and `sort_by_key`, and that both are stable** - which closes G5. A map has no order to borrow: ADR-010 D6 seeds an untrusted one randomly, so its iteration order differs between runs, and a program that prints one has to say which. Stability is what makes two passes state a compound order without a comparator: `names.sort()` then `rows.sort_by_key fn: -a.1` is by hits descending, ties in name order. `examples/access-log.nika` prints its paths that way, and builds the rows as tuples so the key can be a number without looking anything up.
 
