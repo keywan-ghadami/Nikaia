@@ -531,7 +531,7 @@ impl<'p> Emitter<'p> {
         let pad = "    ".repeat(depth);
         if *is_sync {
             out.push(&format!(
-                "// sync (Part II, 12.1): pure CPU, cannot pause. Not checked yet.\n{pad}"
+                "// sync (Part II, 12.1): pure CPU, cannot pause. Checked before\n{pad}// this was written - see `contracts::sync`.\n{pad}"
             ));
         }
 
@@ -949,6 +949,35 @@ impl<'p> Emitter<'p> {
     /// an expression block (Part I, 3.1) and for a function that returns
     /// something; a function with no return type has no value to leave behind,
     /// so its last statement is a statement like any other.
+    /// `if c { … } else { … }`, where `tail` says whether the whole thing is in
+    /// value position.
+    ///
+    /// It decides what the last statement of each branch means. In an
+    /// expression - `let x = if c { a } else { b }` - the branches *are* the
+    /// value and their last statement is written as one. As a statement they
+    /// are not, and a `return` in one has to stay a `return`.
+    #[allow(clippy::too_many_arguments)]
+    fn if_expr(
+        &self,
+        out: &mut Out,
+        cond: &Expr,
+        then_branch: &Block,
+        else_branch: Option<&Block>,
+        depth: usize,
+        flow: Flow,
+        tail: bool,
+    ) -> Result<()> {
+        out.push("if ");
+        self.expr(out, cond, depth, flow)?;
+        out.push(" ");
+        self.block(out, then_branch, depth, flow, tail)?;
+        if let Some(block) = else_branch {
+            out.push(" else ");
+            self.block(out, block, depth, flow, tail)?;
+        }
+        Ok(())
+    }
+
     fn block(
         &self,
         out: &mut Out,
@@ -1076,6 +1105,25 @@ impl<'p> Emitter<'p> {
                     (None, false) => out.push("return;"),
                 }
             }
+            // An `if` in *statement* position is not a value, and its branches
+            // are not tails. Emitting them as tails is right for
+            // `let x = if c { a } else { b }` and wrong here: a `return` at the
+            // end of a branch would be written as the branch's value and stop
+            // returning - `if seq.len() < k { return counts }` came out as
+            // `if seq.len() < k { counts }`, which is a different program.
+            Stmt::Expr(Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            }) => self.if_expr(
+                out,
+                cond,
+                then_branch,
+                else_branch.as_ref(),
+                depth,
+                flow,
+                is_tail,
+            )?,
             Stmt::Expr(expr) => {
                 self.expr(out, expr, depth, flow)?;
                 // `if x { … };` is legal and noisy; a block-shaped statement
@@ -1094,6 +1142,16 @@ impl<'p> Emitter<'p> {
             Expr::LitInt(v) => out.push(&v.to_string()),
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr(_) => self.string(out, expr, depth, flow)?,
+            Expr::LitChar(c) => out.push(&format!("'{c}'")),
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.expr(out, start, depth, flow)?;
+                out.push(if *inclusive { "..=" } else { ".." });
+                self.expr(out, end, depth, flow)?;
+            }
             Expr::LitBool(b) => out.push(&b.to_string()),
             Expr::Variable(name) => out.push(self.text(*name)),
             Expr::Path(segments) => out.push(
@@ -1108,23 +1166,22 @@ impl<'p> Emitter<'p> {
                 cond,
                 then_branch,
                 else_branch,
-            } => {
-                out.push("if ");
-                self.expr(out, cond, depth, flow)?;
-                out.push(" ");
-                self.block(out, then_branch, depth, flow, true)?;
-                if let Some(block) = else_branch {
-                    out.push(" else ");
-                    self.block(out, block, depth, flow, true)?;
-                }
-            }
+            } => self.if_expr(
+                out,
+                cond,
+                then_branch,
+                else_branch.as_ref(),
+                depth,
+                flow,
+                true,
+            )?,
             Expr::Call { func, args } => self.call(out, func, args, depth, flow)?,
             Expr::MethodCall {
                 receiver,
                 method,
                 args,
             } => {
-                self.expr(out, receiver, depth, flow)?;
+                self.postfix_base(out, receiver, depth, flow)?;
                 out.push(&format!(".{}", self.text(*method)));
                 // Nikaia's `collect` builds a List; Rust's needs to be told
                 // what to build, and with no types here that is `Vec<_>`.
@@ -1161,11 +1218,11 @@ impl<'p> Emitter<'p> {
                 out.push(")");
             }
             Expr::Field { base, name } => {
-                self.expr(out, base, depth, flow)?;
+                self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!(".{}", self.text(*name)));
             }
             Expr::Index { base, index } => {
-                self.expr(out, base, depth, flow)?;
+                self.postfix_base(out, base, depth, flow)?;
                 out.push("[");
                 self.expr(out, index, depth, flow)?;
                 out.push("]");
@@ -1245,7 +1302,7 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(",\n{close}}}"));
             }
             Expr::Try(inner) => {
-                self.expr(out, inner, depth, flow)?;
+                self.postfix_base(out, inner, depth, flow)?;
                 out.push("?");
             }
             Expr::Spawn { .. } => {
@@ -1276,9 +1333,12 @@ impl<'p> Emitter<'p> {
         if let Expr::Variable(name) = func {
             let text = self.text(*name);
 
-            // `println` and `eprintln` are macros in Rust, and their argument
-            // is an interpolated string, which is a format string already.
-            if matches!(text, "println" | "eprintln") {
+            // `println`, `print` and their `stderr` halves are macros in
+            // Rust, and their argument is an interpolated string, which is a
+            // format string already. `print` is here because output composed
+            // piece by piece - a pretty-printer, a progress line - cannot be
+            // written with the newline attached.
+            if matches!(text, "println" | "eprintln" | "print" | "eprint") {
                 if let [Expr::LitStr(literal)] = args {
                     out.push(&format!("{text}!("));
                     self.format_string(out, literal, depth, flow)?;
@@ -1369,6 +1429,41 @@ impl<'p> Emitter<'p> {
             MatchPattern::Named { path: p, bindings } => {
                 out.push(&format!("{} {{ {} }}", path(p), names(bindings)));
             }
+        }
+        Ok(())
+    }
+
+    /// The thing a `.` or a `[` is applied to, parenthesised where it binds
+    /// looser than the postfix does.
+    ///
+    /// A postfix binds tighter than everything except another postfix in both
+    /// languages, so `(a as f64).sqrt()` and `(a + b).len()` need their
+    /// parentheses back: the parser drops them - a group is not a node, it is
+    /// how the tree was written - and without them the emitted Rust means
+    /// something else and often still compiles.
+    fn postfix_base(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow) -> Result<()> {
+        let parenthesise = matches!(
+            expr,
+            Expr::Binary { .. }
+                | Expr::Unary { .. }
+                | Expr::Cast { .. }
+                | Expr::Range { .. }
+                | Expr::If { .. }
+                | Expr::Match { .. }
+                | Expr::Block(_)
+                | Expr::Closure { .. }
+                | Expr::TryCatch { .. }
+                | Expr::Dsl { .. }
+                | Expr::DslFrom { .. }
+                | Expr::Asm { .. }
+        );
+
+        if parenthesise {
+            out.push("(");
+        }
+        self.expr(out, expr, depth, flow)?;
+        if parenthesise {
+            out.push(")");
         }
         Ok(())
     }
@@ -1580,7 +1675,7 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 /// Part II, 10.6: a view is a slice of the input, so a struct holding one is
 /// tied to the input as well - transitively, which is why this is a fixpoint
 /// and not one pass.
-fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
+pub(crate) fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
     let mut fields_of: HashMap<Symbol, Vec<&Type>> = HashMap::new();
     let mut borrowing = HashSet::new();
 
@@ -1627,11 +1722,11 @@ fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
     }
 }
 
-fn holds_view(ty: &Type) -> bool {
+pub(crate) fn holds_view(ty: &Type) -> bool {
     ty.is_view || ty.generics.iter().any(holds_view)
 }
 
-fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
+pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
     borrowing.contains(&ty.name) || ty.generics.iter().any(|g| names_borrowing(g, borrowing))
 }
 
@@ -1731,6 +1826,25 @@ fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
 
     while let Some(c) = chars.next() {
         match c {
+            // An escape is copied whole, and the `{` inside `\u{…}` is part of
+            // one. The body arrives here as it was written - the parser keeps a
+            // string's escapes rather than decoding them - so a scanner that
+            // does not know that reads `"\u{0041}"` as a hole named `0041`.
+            '\\' => {
+                format.push('\\');
+                let Some(escape) = chars.next() else {
+                    return Err(anyhow!("string ends in a `\\`: \"{literal}\""));
+                };
+                format.push(escape);
+                if escape == 'u' && chars.peek() == Some(&'{') {
+                    for c in chars.by_ref() {
+                        format.push(c);
+                        if c == '}' {
+                            break;
+                        }
+                    }
+                }
+            }
             '{' if chars.peek() == Some(&'{') => {
                 chars.next();
                 format.push_str("{{");

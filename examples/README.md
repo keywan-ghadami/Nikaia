@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Four of the five programs here compile, run, and are checked by `cargo test`. The fifth is
+Seven of the eight programs here compile, run, and are checked by `cargo test`. The eighth is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -10,9 +10,12 @@ needs is listed under *Gaps* below.
 | [`calc.nika`](calc.nika) | a four-function calculator: the grammar protocol at its smallest | ✅ `crates/nikaia/tests/examples.rs` |
 | [`access-log.nika`](access-log.nika) | a web log summarised: several fields per line, a report at the end | ✅ `crates/nikaia/tests/examples.rs` |
 | [`config.nika`](config.nika) | an INI file with comments: a grammar that defines its own whitespace | ✅ `crates/nikaia/tests/examples.rs` |
+| [`json.nika`](json.nika) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `crates/nikaia/tests/examples.rs` |
+| [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
+| [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the four is compiled and run **under both profiles**, and their output must be
+Each of the seven is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -33,6 +36,23 @@ They are deliberately different shapes.
   the one that defines its own `WS` so that `#` comments are legal everywhere a blank is
   without another rule mentioning them. It is also the counterpart to 1BRC's fold: `setting*`
   collects, which is right for a configuration file and wrong at a billion rows.
+* **`k-nucleotide.nika`** is the one that reads **standard input**, and the difference a pipe
+  makes is the point of it. `1brc.nika` maps its file and copies nothing at all; here there are
+  no pages to point at, because the bytes do not exist until they are read — so the program owns
+  its buffer, and everything after that first copy is the same. The fragments it counts are
+  thousands of views into that buffer, not strings.
+* **`n-body.nika`** is the one with **no grammar in it at all**. Five programs in a row that
+  all begin with a DSL would say Nikaia is a parser generator; this one is arithmetic in a
+  loop — `sync` methods, `&mut self`, indices and floats — and it is the only example here
+  whose numbers are directly comparable against other languages, because the CLBG publishes
+  the same program in some thirty of them with an exact expected output. Ours matches it to
+  the digit.
+* **`json.nika`** is the first input whose shape the *grammar* does not fix. `config.nika`'s
+  tree is two levels deep because the grammar says so; a JSON value contains values, to
+  whatever depth the document happens to go. An `enum` is that tree — six variants, and every
+  walk over it is a `match` the compiler checks for completeness — and this is also the example
+  where zero-copy stops and says so: a JSON string is not a slice of the input, so `Text` holds
+  the **raw** body and decoding waits until a program asks about it.
 
 An example that is added has to be declared: either it runs and says what it prints, or it is
 specification-level and its gaps are here. `crates/nikaia/tests/examples.rs` fails on a file
@@ -119,9 +139,12 @@ CoreMark (embedded C microbenchmark).
 
 ### Suggested order
 
-1. `1brc` — validates the 0.0.7 claims, needs only file IO.
-2. CLBG `n-body` — first comparable number against other languages.
+1. `1brc` — validates the 0.0.7 claims, needs only file IO. ✅ [`1brc.nika`](1brc.nika)
+2. CLBG `n-body` — first comparable number against other languages. ✅
+   [`n-body.nika`](n-body.nika), matching the published output for n = 1000 to the digit.
 3. CLBG `reverse-complement` and `k-nucleotide` — stdin/stdout IO with exact expected output.
+   ✅ [`k-nucleotide.nika`](k-nucleotide.nika); `reverse-complement` needs binary output, which
+   `std::io` specifies as `bytes` and does not yet have.
 4. TechEmpower `fortunes` — once an HTTP stack and a DB driver exist.
 
 ---
@@ -259,6 +282,55 @@ compiler cannot see. Enums and `match` now lower: the three variant shapes (`Qui
 the same way so the lowering stays a transcription. `calc.nika`'s `mul_tail` yields
 `(Op, i64)`. An enum that carries a view takes the input lifetime exactly as a struct does,
 which is what lets one appear in a grammar rule's return type.
+
+**G15 — a program could not read standard input.** Part III 17.1 specified `std::fs` down to
+`seek` and `Cleanup` and said nothing about the input a program in a pipeline has. Decided and
+implemented: [ADR-019](../docs/specification/adr/adr-019.md). A stream is not a file, and the
+surface says so — no `map`, no `seek`, no length, no second read — because `fs::map`'s zero-copy
+story rests on pages that exist before the program asks, and a pipe's bytes do not. The rest is
+the rule `std::fs` already had: no `async`, no `await`, and **a `sync` function cannot call it**,
+which is what keeps a `par_iter` body from waiting on a pipe. Provenance is Trusted, as for a
+file, with `trusted: false` at the entry for the request-body case. `read_to_string` and `read`
+are implemented; `lines` and `bytes` are specified and are not, exactly as `fs::open` is.
+
+**The bug it found, and this one was silent.** An `if` in *statement* position had its branches
+emitted as tails — right for `let x = if c { a } else { b }`, wrong for a guard. The last
+statement of a branch was written as the branch's *value*, so `if n < k { return counts }` came
+out as `if n < k { counts }` and the function carried on. Here the types happened to disagree and
+`rustc` said so; in a function returning nothing it would have compiled and quietly done the
+wrong thing.
+
+**G14 — arithmetic did not read like arithmetic.** Found by `n-body.nika`, which is nothing
+but arithmetic and so found four things at once. **A range was not an expression**: Part I 3.3
+shows `for i in 0..5` and the bootstrap compiler could not parse it, so an index loop had no
+way to be written. `..=` comes with it, and a range binds looser than the arithmetic in it —
+`0..n - 1` ends at `n - 1`. **A float could not carry an exponent**, so
+`9.54791938424326609e-04` had to be spelled out in zeroes, which is how a digit gets lost.
+
+The two beneath those were bugs rather than gaps, and both were **silently wrong**. A group is
+not a node — the parser drops it, because that is how the tree was written rather than part of
+it — so `(a as f64).sqrt()` came out as `a as f64.sqrt()`, a cast to a type nobody named. And
+the compiler's identifier accepted a **leading digit**, because the backend's `ident` does and
+a grammar that wants otherwise has to say so: `1.5` parsed as the field `5` of a variable
+called `1`. That one printed back identically, which is exactly why it survived — the emitted
+text read the same right up until there was more after it, and `1.5e-4` was where it stopped.
+
+**G13 — no character literal, and three things that followed.** Found by `json.nika`, whose
+`unescape` has to ask what a character is: `'n'` was not an expression the language had, and
+`char` was not in the table of primitive types (Part I, 2.2) either — the type was reachable
+only because a type is a name. Decoding an escape is exactly the shape a `match` over
+characters has, so the literal is a **pattern** as well as an expression (3.4), and the body is
+kept **as written**: the language below spells `'\n'` the same way, so nothing decides twice
+what it means.
+
+Writing the same function found the two beside it. A string could not hold a `\u{…}` escape —
+the interpolation scanner read the `{` as a hole and emitted a `format!` with an argument
+nobody wrote — because a string's body reaches the emitter as it was typed and the scanner did
+not know an escape when it saw one. And output could not be composed piece by piece: `println`
+was the only way to write, so a pretty-printer that indents a tree had no way to put a fragment
+on a line without ending it. `print` and `eprint` are now what `println` and `eprintln` always
+were, minus the newline (Part III, 17.1). Part I gains **2.5** while it is at it: string
+interpolation was in every example and in no chapter.
 
 **G11 — a rejected parse said what was expected and never where.** Found by writing
 `access-log.nika`, whose `catch` prints the failure: the message read

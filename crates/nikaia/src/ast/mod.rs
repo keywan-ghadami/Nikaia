@@ -161,10 +161,23 @@ pub enum Expr {
         arms: Vec<MatchArm>,
     },
 
+    /// Kap 3.3: `0..n` and `0..=n`. What a `for` counts over, and the reason
+    /// the loop needs no index arithmetic of its own.
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        /// `..=`, which includes its end.
+        inclusive: bool,
+    },
+
     /// `(a, b)` - Kap 4.5. Two or more values of different types, with no
     /// name for the pair and none for its parts.
     Tuple(Vec<Expr>),
     LitStr(String),
+    /// Kap 2.2: `'a'`, `'\n'`. The body is kept **as written**, escape and
+    /// all: the language below spells a character literal the same way, so the
+    /// lowering is a transcription and nothing has to decode it twice.
+    LitChar(String),
     LitBool(bool),
     Variable(Ident),
 

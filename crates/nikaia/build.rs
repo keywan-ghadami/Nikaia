@@ -23,7 +23,7 @@ fn main() {
         std::env::var("RUSTC").unwrap_or("rustc".into())
     );
 
-    // The toolchain identity that goes into the build cache key (ADR-019 D2).
+    // The toolchain identity that goes into the build cache key (ADR-021 D2).
     // Resolved here rather than at run time: it is the rustc that built this
     // emitter, which is the one whose output the cache would be serving, and
     // asking for it once at compile time costs no subprocess per build.

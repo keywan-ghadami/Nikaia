@@ -7,14 +7,15 @@
 // every shared crate "shows up twice" and linking fails.
 extern crate rustc_driver;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use bridge_ir::BridgeModule;
 use bridge_orchestrator::cache::{Cache, Choices, Layout};
 use bridge_orchestrator::LanguageFrontend;
 use clap::Parser;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use nikaia::contracts::{sync, Ledger, STD};
 use nikaia::emit::{self, Profile};
 use nikaia::{diagnostics, interpreter, parser};
 
@@ -27,19 +28,9 @@ pub struct Cli {
     /// `interpreter`, `rust` or `bridge`.
     ///
     /// `cranelift` and `llvm` are named by ADR-002 but not implemented; they
-    /// are rejected rather than silently treated as `bridge` (ADR-019 D9).
+    /// are rejected rather than silently treated as `bridge` (ADR-021 D9).
     #[arg(long, default_value = "bridge")]
     pub backend: String,
-
-    /// Lower from scratch, ignoring the build cache (ADR-019).
-    ///
-    /// The cache is **on**: reusing an unchanged lowering is the difference in
-    /// feel between a Nikaia build and a Rust one, and a default nobody types
-    /// is not that. This flag exists for the times that matters less than
-    /// seeing the emitter run - debugging it, or comparing its output against
-    /// what the cache holds.
-    #[arg(long)]
-    pub no_cache: bool,
 
     /// Which runtime the program is compiled for (Part I/II).
     ///
@@ -60,6 +51,93 @@ pub struct Cli {
     /// rebuilt from `--input` here rather than written out and kept in step.
     #[arg(long)]
     pub explain: bool,
+
+    /// Verify the Borrow Contract Ledger instead of updating it (Part III,
+    /// 13.5).
+    ///
+    /// The ledger is a pure function of source and toolchain, so this compares
+    /// bytes: any difference fails the build and prints what changed. The
+    /// recommended CI line, and the reason the file is committed.
+    #[arg(long)]
+    pub locked: bool,
+
+    /// Lower from scratch, ignoring the build cache (ADR-021).
+    ///
+    /// The cache is **on**: reusing an unchanged lowering is the difference in
+    /// feel between a Nikaia build and a Rust one, and a default nobody types
+    /// is not that. This flag exists for the times that matters less than
+    /// seeing the emitter run - debugging it, or comparing its output against
+    /// what the cache holds.
+    #[arg(long)]
+    pub no_cache: bool,
+}
+
+/// Part II 12.1, checked: a `sync` function may only call `sync` functions.
+///
+/// The ledger is what makes this possible across the `std` boundary - a call to
+/// `io::read_to_string` is only a violation if something says that function can
+/// pause, and `std.contracts` is where it says so (ADR-020).
+fn check_sync(parsed: &parser::Parsed, path: &Path, source: &str) -> Result<()> {
+    let own = Ledger::infer(parsed);
+    let library = Ledger::parse(STD).context("std's shipped ledger")?;
+    let violations = sync::check(parsed, &own, &library);
+
+    if violations.is_empty() {
+        return Ok(());
+    }
+
+    let path = path.display().to_string();
+    for violation in &violations {
+        eprint!(
+            "{}",
+            diagnostics::render_sync_violation(violation, &path, source)
+        );
+    }
+    anyhow::bail!(
+        "{} call{} a `sync` function may not make",
+        violations.len(),
+        if violations.len() == 1 { "" } else { "s" }
+    )
+}
+
+/// Write the ledger, or - under `--locked` - check that it did not need
+/// writing.
+///
+/// The determinism guarantee (13.5) is what lets this compare bytes rather than
+/// meanings: the same sources and the same compiler produce the same file, so a
+/// difference is a change in a contract and never in the formatting.
+fn contracts(path: &std::path::Path, ledger: &str, locked: bool) -> Result<()> {
+    if !locked {
+        std::fs::write(path, ledger)?;
+        return Ok(());
+    }
+
+    let committed = std::fs::read_to_string(path).with_context(|| {
+        format!(
+            "--locked, but {} is not there; run without --locked to write it",
+            path.display()
+        )
+    })?;
+
+    if committed != *ledger {
+        let changed: Vec<&str> = ledger
+            .lines()
+            .filter(|line| !committed.lines().any(|c| c == *line))
+            .collect();
+        anyhow::bail!(
+            "--locked: the contracts changed and {} does not say so.\n\
+             What the build inferred and the ledger does not have:\n{}\n\
+             Run without --locked to record it, and read the diff.",
+            path.display(),
+            changed
+                .iter()
+                .map(|l| format!("    {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    Ok(())
 }
 
 struct NikaiaFrontend;
@@ -111,8 +189,11 @@ fn explain(args: &Cli, source: &str) -> Result<()> {
 /// Stage 0: the transpiler. A `grammar` item reaches the parser backend only
 /// through here - the Bridge IR has no macro to carry it.
 ///
-/// With `--cache`, an unchanged unit is served from the store instead of being
-/// lowered again (ADR-019).
+/// The build cache (ADR-021) sits around the *lowering* and nothing else. The
+/// parse, the `sync` check and the ledger run on every build, hit or miss: they
+/// are checks, and a cache that skipped a check would be a cache that turned
+/// one off. That is the failure ADR-021 D5 refuses in the profile case, and it
+/// reads the same here.
 fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     let profile = Profile::parse(&args.profile)?;
     let output_path = args
@@ -122,17 +203,17 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
 
     // `Layout` decides where the lock and the store go, and guarantees that
     // outside a `nikaia.toml` project nothing is written into the source tree
-    // at all - which is what makes caching-by-default something other than
-    // littering. It also names the unit relative to its root: an absolute path
-    // is D7's first failure direction, a key that moves with the checkout.
+    // - which is what makes caching-by-default something other than littering.
+    // It also names the unit relative to its root: an absolute path is D7's
+    // first failure direction, a key that moves with the checkout.
     let layout = Layout::resolve(&args.input);
     let unit = layout.unit_name(&args.input);
     let choices = Choices::new(&args.profile, "rust");
 
-    // A cache that cannot be opened is a slower build, never a failed one.
-    // That distinction only starts to matter once the cache is the default:
-    // a read-only checkout or a full disk must not turn a build that would
-    // have succeeded into one that does not.
+    // A cache that cannot be opened is a slower build, never a failed one
+    // (D12). Once the cache is the default, a read-only checkout or a full
+    // disk must not turn a build that would have succeeded into one that does
+    // not.
     let mut cache = if args.no_cache {
         None
     } else {
@@ -150,41 +231,50 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         }
     };
 
-    if let Some(cache) = &cache {
-        if let Some(cached) = cache.lookup(&unit, source, &choices, &layout.root) {
-            std::fs::write(&output_path, &cached)?;
-            println!(
-                "Reused {} for {} (profile: {}, from cache)",
-                output_path.display(),
-                args.input.display(),
-                args.profile
-            );
-            return Ok(());
-        }
-    }
-
     let parsed = parser::parse_to_ast(source)?;
-    let lowered = emit::emit_program(&parsed, profile)?;
-    std::fs::write(&output_path, &lowered.rust)?;
+    check_sync(&parsed, &args.input, source)?;
 
-    if let Some(cache) = &mut cache {
-        // Nothing reports assets yet: compile-time I/O (`from "schema.sql"`)
-        // is specified and not implemented. The dimension travels through the
-        // key regardless, so switching it on later does not reshape the key.
-        let stored = cache
-            .record(&unit, source, BTreeMap::new(), &choices, &lowered.rust)
-            .and_then(|()| cache.save());
-        if let Err(error) = stored {
-            // The artifact is already written; only the next build is slower.
-            eprintln!("warning: the build cache could not be updated: {error:#}");
+    let cached = cache
+        .as_ref()
+        .and_then(|cache| cache.lookup(&unit, source, &choices, &layout.root));
+    let reused = cached.is_some();
+
+    let rust = match cached {
+        Some(rust) => rust,
+        None => {
+            let lowered = emit::emit_program(&parsed, profile)?;
+            if let Some(cache) = &mut cache {
+                // Nothing reports assets yet: compile-time I/O
+                // (`from "schema.sql"`) is specified and not implemented. The
+                // dimension travels through the key regardless, so switching it
+                // on later does not reshape the key.
+                let stored = cache
+                    .record(&unit, source, BTreeMap::new(), &choices, &lowered.rust)
+                    .and_then(|()| cache.save());
+                if let Err(error) = stored {
+                    // The artifact is in hand; only the next build is slower.
+                    eprintln!("warning: the build cache could not be updated: {error:#}");
+                }
+            }
+            lowered.rust
         }
-    }
+    };
+
+    std::fs::write(&output_path, &rust)?;
+
+    // The ledger goes beside the output, because that is where a build puts
+    // what it produced. Part III 13.5 says the project root, which is what this
+    // is once the orchestrator compiles a project rather than a file.
+    let ledger_path = output_path.with_file_name("nikaia.contracts");
+    let ledger = Ledger::infer(&parsed).render();
+    contracts(&ledger_path, &ledger, args.locked)?;
 
     println!(
-        "Lowered {} to {} (profile: {})",
+        "Lowered {} to {} (profile: {}{})",
         args.input.display(),
         output_path.display(),
-        args.profile
+        args.profile,
+        if reused { ", lowering from cache" } else { "" }
     );
 
     Ok(())
@@ -209,6 +299,7 @@ pub fn main() -> Result<()> {
         }
         "rust" => lower_to_rust(&args, &source),
         "bridge" => {
+            // For compilation backends we use the orchestrator flow (or similar)
             let bridge_module = NikaiaFrontend.parse(&source)?;
 
             // Output name based on input
@@ -228,7 +319,7 @@ pub fn main() -> Result<()> {
         // `bridge` without saying so. Accepting a flag and quietly doing
         // something else is worse than either implementing or refusing it.
         backend @ ("cranelift" | "llvm") => bail!(
-            "backend `{backend}` is not implemented (ADR-019 D9 records it as an \
+            "backend `{backend}` is not implemented (ADR-021 D9 records it as an \
              open item); available backends are interpreter, rust and bridge"
         ),
         other => bail!("unknown backend `{other}` (expected interpreter, rust or bridge)"),

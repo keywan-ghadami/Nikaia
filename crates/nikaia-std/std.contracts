@@ -1,0 +1,66 @@
+# The Borrow Contract Ledger of Nikaia's standard library.
+#
+# Part III 13.5 says a published package ships its ledger, so that a consumer
+# builds against contracts rather than guesses. This is that file for `std`, and
+# it is the one a program's compiler reads when the program calls `io::…` or
+# `fs::…` - what a caller has to know about a function it cannot see the body
+# of: whether it may pause (`sync`), whether it may fail (`throws`), and what its
+# result may point into (`returns`).
+#
+# **Two origins, and the difference is not hidden.** The entries for modules
+# written in Nikaia are *inferred* by the Stage 0 compiler from their source,
+# and `crates/nikaia/tests/contracts.rs` regenerates them and fails if this file
+# has drifted. The entries for the modules that are still Rust cannot be
+# inferred by a compiler that does not read Rust, so they are **written here and
+# reviewed like code**. That is the honest shape of a library whose
+# implementation is half in another language, and the share that is written by
+# hand shrinks as more of `std` becomes Nikaia (ADR-014).
+#
+# An absent `sync` means *not* sync - which is the promise this file exists to
+# make. An absent *entry* means nothing is known, and a caller may not assume.
+version = 1
+toolchain = "nikaia 0.1.0"
+inference = "stage0-signatures"
+
+# --- Written by hand: the modules that are still Rust ------------------------
+
+[fn."cli::args"]
+pub = true
+
+[fn."fs::map"]
+pub = true
+throws = true
+
+[fn."fs::Mapped::deref"]
+pub = true
+sync = true
+returns = "borrows(self)"
+
+[fn."fs::read_to_string"]
+pub = true
+throws = true
+
+[fn."html::escape"]
+pub = true
+sync = true
+returns = "borrows(text)"
+
+[fn."io::read"]
+pub = true
+throws = true
+
+[fn."io::read_to_string"]
+pub = true
+throws = true
+
+[fn."list::ListExt::map"]
+pub = true
+
+# --- Inferred from `src/*.nika` ----------------------------------------------
+
+[fn."text::digit_value"]
+pub = true
+sync = true
+
+[type."fs::Mapped"]
+pub = true

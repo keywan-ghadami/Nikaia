@@ -1,6 +1,6 @@
 //! The build orchestrator.
 //!
-//! Its caching half is implemented in [`cache`] and specified by ADR-019. The
+//! Its caching half is implemented in [`cache`] and specified by ADR-021. The
 //! other half - wrapping `cargo`, injecting `RUSTC_WORKSPACE_WRAPPER` and
 //! managing the build graph (ADR-003) - is not built yet; [`Orchestrator::run`]
 //! below is still the placeholder it always was.

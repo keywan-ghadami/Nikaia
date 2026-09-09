@@ -1,0 +1,263 @@
+// examples/json.nika
+//
+// A JSON document, parsed into a tree and printed back.
+//
+// Run:
+//
+//     nikaia --input examples/json.nika --backend rust
+//     ./json data.json
+//
+// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
+// itself rather than a copy of it.
+//
+// Why it is here beside the others. `calc.nika` is one expression, `1brc.nika`
+// and `access-log.nika` are one record repeated to the end of the file, and
+// `config.nika` is a tree exactly two levels deep. JSON is the first input
+// whose shape is *not* fixed by the grammar: a value contains values, to
+// whatever depth the document happens to go. Three things follow from that,
+// and none of the others shows them.
+//
+//   * **An enum is the tree.** A JSON value is one of six things, which is
+//     what a sum type says (Part I, 4.4). Every walk over the document below
+//     is a `match` with six arms, and the compiler is the one that checks none
+//     is missing - the check a `kind: &str` field cannot have.
+//   * **Mutual recursion between a rule and a type.** `value` reaches `value`
+//     again through `[` and `{`, and `Json` holds a `Vec[Json]` and a
+//     `Vec[Member]` that holds a `Json`. Both cycles are fine and neither is
+//     declared: the rule recurses because a PEG may, and the view analysis of
+//     Part II 10.6 walks the type cycle to a fixed point rather than into it.
+//   * **Where zero-copy stops, and what to do about it.** A JSON string is not
+//     a slice of the input: `"a\nb"` is five characters in the file and three
+//     in the value. `Text` therefore holds the **raw** body - still a view -
+//     and `unescape` is called on the strings a program actually asks about.
+//     That is deferred decoding, the same argument `dec[T]` makes for numbers,
+//     and it pays twice here: printing the document back needs the raw text,
+//     so the common case never decodes at all.
+
+use std::fs
+use std::cli
+
+// Six variants, and `Text` carries a view - so `Json` is tied to the input it
+// was parsed from, and so is `Member`, through the `Json` it holds. Neither
+// says `@borrowed`: the analysis reaches both through the cycle.
+enum Json {
+    Null,
+    Bool(bool),
+    Number(f64),
+    Text(&str),
+    Array(Vec[Json]),
+    Object(Vec[Member]),
+}
+
+// A member is a pair with names, which is what a struct is for. The key is a
+// raw body like any other string.
+@borrowed
+pub struct Member {
+    key: &str,
+    value: Json,
+}
+
+grammar Json_ {
+
+    // Lowercase, so the whitespace between the elements is the backend's
+    // business - which is the whole of why nothing below mentions blanks, and
+    // why `[1, 2]` and a document spread over forty lines parse the same.
+    //
+    // The order of the alternatives is the order they are tried: `[` `]` has
+    // to come before `[` value-list `]`, or the empty array reaches a rule
+    // that requires a value and fails on the `]`.
+    pub rule value -> Json =
+          "null" -> { Json::Null }
+        | "true" -> { Json::Bool(true) }
+        | "false" -> { Json::Bool(false) }
+        | n:NUMBER -> { Json::Number(n) }
+        | s:TEXT -> { Json::Text(s) }
+        | "[" "]" -> { Json::Array(Vec::new()) }
+        | "[" items:values "]" -> { Json::Array(items) }
+        | "{" "}" -> { Json::Object(Vec::new()) }
+        | "{" members:members "}" -> { Json::Object(members) }
+
+    // A comma-separated list, written the way `calc.nika` writes its operand
+    // tails: a head and a repetition, collected in the action. A PEG cannot
+    // say `values = values "," value` - that does not terminate - and this is
+    // the standard repair.
+    rule values -> Vec[Json] =
+        head:value tail:value_tail* -> {
+            let mut all = Vec::new()
+            all.push(head)
+            for v in tail { all.push(v) }
+            all
+        }
+
+    rule value_tail -> Json = "," v:value -> { v }
+
+    rule members -> Vec[Member] =
+        head:member tail:member_tail* -> {
+            let mut all = Vec::new()
+            all.push(head)
+            for m in tail { all.push(m) }
+            all
+        }
+
+    rule member_tail -> Member = "," m:member -> { m }
+
+    rule member -> Member = k:TEXT ":" v:value -> { Member { key: k, value: v } }
+
+    // Uppercase, so this is lexical and the sign, the digits and the fraction
+    // are one run with nothing allowed between them. `dec[f64](…)` reads the
+    // text the pattern matched, so the number is parsed once, by the same code
+    // that would have to check it anyway.
+    rule NUMBER -> f64 =
+        n:dec[f64](text("-"? digit+ ("." digit+)? )) -> { n }
+
+    // The body between the quotes, raw. Two things can appear in it and both
+    // consume at least one character, which is what keeps the repetition from
+    // standing still: an escape is a backslash and whatever follows it, and
+    // anything else is a character that is neither a quote nor a backslash.
+    //
+    // `text(…)` hands back the input the repetition covered instead of a list
+    // of what it matched - a view, one slice, no allocation.
+    rule TEXT -> &str = "\"" s:text((ESC | PLAIN)*) "\"" -> { s }
+
+    rule ESC = "\\" any -> { }
+    rule PLAIN = not("\"") not("\\") any -> { }
+}
+
+// The document, printed back with two spaces per level.
+//
+// Six arms, no default: a variant added to `Json` above makes this a compile
+// error rather than a document that silently prints nothing. That is the check
+// a `kind: &str` field cannot have, and the reason the tree is an enum.
+//
+// The two string cases print the **raw** body back, unchanged. That is the
+// second half of holding it raw: re-escaping a decoded string would be a
+// second copy of the same table, and one of the two would be wrong.
+fn show(value: Json, indent: i32) {
+    let pad = "  ".repeat(indent as usize)
+    let inner = "  ".repeat((indent + 1) as usize)
+
+    match value {
+        Json::Null => { print("null") }
+        Json::Bool(b) => { if b { print("true") } else { print("false") } }
+        Json::Number(n) => { print("{n}") }
+        Json::Text(raw) => { print("\"{raw}\"") }
+
+        Json::Array(items) => {
+            if items.len() == 0 {
+                print("[]")
+            } else {
+                print("[\n")
+                let mut first = true
+                for item in items {
+                    if !first { print(",\n") }
+                    first = false
+                    print("{inner}")
+                    show(item, indent + 1)
+                }
+                print("\n{pad}]")
+            }
+        }
+
+        // `{{` is a literal brace, as in any format string - the same rule
+        // `println` follows, because an interpolated string *is* one.
+        Json::Object(fields) => {
+            if fields.len() == 0 {
+                print("{{}}")
+            } else {
+                print("{{\n")
+                let mut first = true
+                for field in fields {
+                    if !first { print(",\n") }
+                    first = false
+                    print("{inner}\"{field.key}\": ")
+                    show(field.value, indent + 1)
+                }
+                print("\n{pad}}}")
+            }
+        }
+    }
+}
+
+// What a JSON escape means. This is the *only* place a string is decoded, and
+// printing a document back never reaches it - which is what keeping the body
+// raw is for.
+//
+// `\u` is not here, and this says so rather than pretending: four hex digits,
+// a surrogate pair rule, and a decision about what a lone surrogate is worth
+// are a specification of their own.
+fn unescape(raw: &str) -> String {
+    let mut out = String::new()
+    let mut escaped = false
+
+    for c in raw.chars() {
+        if escaped {
+            match c {
+                'n' => { out.push('\n') }
+                't' => { out.push('\t') }
+                'r' => { out.push('\r') }
+                'b' => { out.push_str("\u{0008}") }
+                'f' => { out.push_str("\u{000C}") }
+                // `\"`, `\\` and `\/` stand for themselves.
+                _ => { out.push(c) }
+            }
+            escaped = false
+        } else {
+            if c == '\\' { escaped = true } else { out.push(c) }
+        }
+    }
+
+    return out
+}
+
+// The longest decoded string in the document, in characters - the one thing
+// here that has to decode. It takes the tree by reference because `main` still
+// wants to print it afterwards; `show` takes it by value, being the last to
+// look.
+fn longest(value: &Json) -> i64 {
+    match value {
+        Json::Text(raw) => { return unescape(raw).chars().count() as i64 }
+
+        Json::Array(items) => {
+            let mut best = 0
+            for item in items {
+                let n = longest(item)
+                if n > best { best = n }
+            }
+            return best
+        }
+
+        Json::Object(fields) => {
+            let mut best = 0
+            for field in fields {
+                let n = longest(&field.value)
+                if n > best { best = n }
+            }
+            return best
+        }
+
+        _ => { return 0 }
+    }
+}
+
+fn main() throws {
+    let path = cli::args().nth(1) ?? "data.json"
+
+    let text = fs::read_to_string(&path) catch {
+        eprintln("cannot read {path}: {error}")
+        return
+    }
+
+    // One entry rule over the whole document. There is no `par_fold` here and
+    // there could not be: a JSON document has no boundary a cutter could find
+    // without parsing it, which is the shape ADR-009's frames are *not* for.
+    let document = dsl Json_ from text catch {
+        eprintln("{path}: {error}")
+        return
+    }
+
+    let widest = longest(&document)
+
+    show(document, 0)
+    println("")
+    println("longest string: {widest} characters")
+}

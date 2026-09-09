@@ -13,13 +13,13 @@ A modern programming language is more than just a compiler. It requires a suite 
 When you create a new project (`nikaia new my_project`), the following structure is generated:
 
 * `nikaia.toml`: The **Manifest**. It describes the project, its authors, and its dependencies.
-* `nikaia.lock`: The **Lockfile**. It records *everything that determines the build*, and is therefore also the **Cache Key** ([ADR-019](adr/adr-019.md)). One file, because a reproducibility record that omits an input cannot tell you it is incomplete.
+* `nikaia.lock`: The **Lockfile**. It records *everything that determines the build*, and is therefore also the **Cache Key** ([ADR-021](adr/adr-021.md)). One file, because a reproducibility record that omits an input cannot tell you it is incomplete.
     * **Asset Hashing:** If a macro or grammar reads an external file (e.g., `from "schema.sql"`), the compiler stores the file's SHA256 hash here.
     * **Source Hashing:** The SHA256 of each `.nika` source that took part, so an unchanged module skips parsing and expansion entirely.
-    * **Resolved Versions:** The exact dependency versions, the toolchain version actually used, and the **Nikaia compiler's own version** - a changed emitter produces different output from identical input, so leaving it out makes the cache serve stale artifacts (ADR-019 D3).
+    * **Resolved Versions:** The exact dependency versions, the toolchain version actually used, and the **Nikaia compiler's own version** - a changed emitter produces different output from identical input, so leaving it out makes the cache serve stale artifacts (ADR-021 D3).
     * **Declaration vs. record:** `nikaia.toml` states what the project *requires*; `nikaia.lock` records what was *resolved and used* - the same relationship `Cargo.toml` has with `Cargo.lock`.
-    * **Not in the lockfile:** build-time choices (profile, opt-level, backend). They are hashed into the cache key but never written, or every profile switch would rewrite a committed file for no reason (ADR-019 D5).
-    * **Instant Builds:** On subsequent builds, if the hashes on disk haven't changed, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/` (git-ignored; the lockfile holds inputs, the store holds outputs). Keys are per translation unit, so one changed asset invalidates that unit, not the project (ADR-019 D6).
+    * **Not in the lockfile:** build-time choices (profile, opt-level, backend). They are hashed into the cache key but never written, or every profile switch would rewrite a committed file for no reason (ADR-021 D5).
+    * **Instant Builds:** On subsequent builds, if the hashes on disk haven't changed, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/` (git-ignored; the lockfile holds inputs, the store holds outputs). Keys are per translation unit, so one changed asset invalidates that unit, not the project (ADR-021 D6).
 * `nikaia.contracts`: The **Borrow Contract Ledger** (generated, commit it like the lockfile). Records the borrow contracts the compiler inferred for your functions and the tether relationships of your structs. It is both an incremental-build cache and the basis for the compiler's "what changed and what broke" error messages. Details in Chapter 13.5.
 * `src/`: The folder containing your source code.
     * `main.nika`: The entry point.
@@ -111,7 +111,7 @@ tethered = ["text -> source buffer"]
 
 **Build semantics.** On every build the compiler infers fresh contracts and diffs them against the ledger:
 
-1. **Unchanged** → fast path. Callers of unchanged contracts are not re-checked; the ledger acts as an incremental-compilation cache key. This is a *different* mechanism from `nikaia.lock`'s, despite the shared name ([ADR-019](adr/adr-019.md) D10): the lock is consulted **before** any work and answers *do I need to start at all?*, while the ledger can only be compared **after** inference has run and answers *which callers must be re-checked?* The two are complementary stages of one build. They also stay separate files, because the ledger ships with published packages while a lockfile does not, and because `--locked` means opposite things for them - regenerate-and-compare for the ledger, do-not-re-resolve for the lock.
+1. **Unchanged** → fast path. Callers of unchanged contracts are not re-checked; the ledger acts as an incremental-compilation cache key. This is a *different* mechanism from `nikaia.lock`'s, despite the shared name ([ADR-021](adr/adr-021.md) D10): the lock is consulted **before** any work and answers *do I need to start at all?*, while the ledger can only be compared **after** inference has run and answers *which callers must be re-checked?* The two are complementary stages of one build. They also stay separate files, because the ledger ships with published packages while a lockfile does not, and because `--locked` means opposite things for them - regenerate-and-compare for the ledger, do-not-re-resolve for the lock.
 2. **Changed, all callers still valid** → the ledger is updated automatically and the build proceeds. The change is noted in the build output.
 3. **Changed, and a caller breaks** → the compiler uses the diff to narrate the *cause chain* instead of pointing at a mysterious distant line:
 
@@ -137,7 +137,22 @@ error[NK2401]: a change in `longest` broke its caller `report`
 
 **Trait methods.** Dynamic dispatch requires one contract per trait method. The ledger stores it as the join of all implementations; an implementation that broadens the contract produces a ledger diff and, where callers break, the same narrated error.
 
-**Distribution.** Published packages ship their ledger, so downstream projects build against stable contracts and receive identical diff-based explanations when a dependency upgrade changes one.
+**What the ledger records.** Not only borrows. The question it answers is *what must a caller know about a body it cannot see*, and "may it pause" and "may it fail" are two more answers to it ([ADR-020](adr/adr-020.md) D2):
+
+| key | on | meaning |
+| :--- | :--- | :--- |
+| `pub` | fn, type | reachable from outside the unit that declares it |
+| `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O |
+| `throws` | fn | Kap 7.1: it may fail |
+| `returns` | fn | what the result may point into — `borrows(a \| b)` |
+| `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
+| `tethered` | type | the fields that hold a view, directly or through another type that does |
+
+Only what is *true* is written: a `sync = false` on every entry would treble the file and say nothing, and a diff should show a promise being made or withdrawn. **An absent `sync` therefore means not `sync`** — while an absent *entry* means nothing is known and a caller may not assume. That distinction is what makes the file worth shipping rather than deriving.
+
+**Which inference wrote it.** The header carries `inference`, because a ledger produced by reading signatures is not one produced by reading bodies and must not be mistaken for it. Today's bootstrap compiler writes `stage0-signatures`: `sync` and `throws` are declared in the source and recorded exactly, and the borrow contract is the widest one the signature supports — a result that is a view may point into any view it was given. The `toolchain` recorded is **Nikaia's** version, not `rustc`'s: these contracts are decided by this compiler and never by the one it emits code for.
+
+**Distribution.** Published packages ship their ledger, so downstream projects build against stable contracts and receive identical diff-based explanations when a dependency upgrade changes one. `std` ships `std.contracts`, and it is the file a program's compiler reads when the program calls `io::…` or `fs::…`. A library whose implementation is partly in another language cannot have all of its contracts inferred, so those are **written in the ledger and reviewed like code**, marked as such, while the ones that can be inferred are regenerated and checked against the sources by the library's own tests ([ADR-020](adr/adr-020.md) D5).
 
 **Version control.** Commit `nikaia.contracts`. Merge conflicts resolve like lockfile conflicts: accept either side and run `nikaia build` to regenerate. The recorded `toolchain` hash lets the compiler detect when a toolchain upgrade (not your code) changed inference results; in that case the build output states explicitly that the contract changes were caused by the toolchain update, not by your code.
 
@@ -398,6 +413,60 @@ Unlike languages that prefer a minimal core, Nikaia pursues immediate productivi
 
 ### 17.1. Universal Modules
 These modules rely on Unified Types and function identically in both Lite and Advanced profiles, though their internal implementation differs significantly to match the runtime model.
+
+**`std::io` — standard input**
+
+A stream is not a file, and the surface says so ([ADR-019](adr/adr-019.md)): no `map`, no `seek`,
+no length, and no second read of the same bytes. `fs::map` hands back pages that existed before
+the program asked for them; standard input's bytes do not exist until they are read, so a program
+that wants views into its input owns the buffer first.
+
+```nika
+pub fn read_to_string() -> String throws   // all of it, UTF-8 validated
+pub fn read() -> Bytes throws              // all of it, as bytes
+pub fn lines() -> Lines throws             // one line at a time
+pub fn bytes() -> ByteStream throws        // chunks as they arrive
+```
+
+It is `std::fs`'s shape minus what a stream cannot keep, and the same "looks blocking, is not"
+applies: no `async` on the signature, no `await` at the call. Under Lite the event loop runs
+another task while the pipe is empty; under Advanced the read may resume on a different thread.
+What *is* visible is the rule that matters — **a `sync` function cannot call it** (Part II, 12.1),
+which is what keeps a `par_iter` body from waiting on a pipe.
+
+`lines()` yields **owned** text where `fs::lines` yields views: a file's line can be a view
+because the file is still there to point at, and a stream's bytes are gone once consumed. Keeping
+them would be `read_to_string` with extra steps.
+
+There is one standard input, so these are functions rather than a handle — a handle that can be
+held invites two tasks to hold it, and two readers of one pipe get interleaved halves of lines.
+Reading it a second time yields what the operating system says, which is nothing.
+
+**Provenance** follows the rule files follow: **Trusted**, because the operator chose what to
+connect to the pipe exactly as they chose which path to open. The case that argues otherwise — a
+request body arriving on standard input — is the uploaded-file case and has the same answer in
+the same place: `io::read_to_string(trusted: false)`.
+
+Output stays `print` and `println` below; `std::io` is here because there was no way to *read*
+standard input.
+
+**Writing output**
+
+`println(text)` writes a line to standard output, `print(text)` writes without the newline, and
+`eprintln` / `eprint` are the same two on standard error. They are in the prelude rather than in
+a module, because a program that says nothing is rare enough not to plan for.
+
+The argument is an ordinary interpolated string (Part I, 2.5), so a hole is written where the
+value goes and `{{` is a literal brace:
+
+```nika
+print("{name}: ")
+println("{count} rows")
+```
+
+`print` exists for output composed piece by piece — a pretty-printer that indents a tree, a
+progress line rewritten in place — where a newline after every fragment would be wrong.
+`examples/json.nika` is the first program here that needs it.
 
 **`std::http`**
 A production-ready HTTP/1.1 and HTTP/2 server and client.
@@ -693,7 +762,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | :--- | :--- | :--- |
 | `NK1xxx` | Syntax & types | — |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` in Advanced (Part II, 12.7). |
-| `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). |
+| `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Borrow contracts | `NK2401` a contract change broke a caller, narrated from the ledger diff (13.5). |
 | `NK25xx` | Profile portability | Reserved: Advanced `Send`-rules reported under Lite as a portability lint, so Lite libraries stay Advanced-compatible. |

@@ -149,7 +149,7 @@ pub struct Stats {
 }
 
 impl Stats {
-    pub fn(first: i32) -> Stats {
+    pub fn(first: i32) -> Stats sync {
         return Stats(min: first, max: first, sum: first as i64, count: 1)
     }
 
@@ -185,7 +185,7 @@ pub struct Summary {
 }
 
 impl Summary {
-    pub fn() -> Summary {
+    pub fn() -> Summary sync {
         return Summary(stations: HashMap::new())
     }
 

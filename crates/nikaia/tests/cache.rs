@@ -1,4 +1,4 @@
-//! The build cache, driven by the real emitter (ADR-019).
+//! The build cache, driven by the real emitter (ADR-021).
 //!
 //! `bridge-orchestrator` unit-tests the key's dimensions against synthetic
 //! records. What it cannot check from there is the thing the ADR is actually
@@ -82,7 +82,7 @@ fn an_unchanged_unit_comes_back_from_the_cache_unchanged() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// ADR-019 D5. The profile is in the key, so each profile gets its own entry
+/// ADR-021 D5. The profile is in the key, so each profile gets its own entry
 /// and neither is ever served the other's.
 #[test]
 fn the_two_profiles_never_serve_each_others_artifacts() {
@@ -272,7 +272,10 @@ fn the_cache_is_on_by_default_and_writes_nothing_beside_the_source() {
         "and --no-cache is the way out"
     );
 
-    // The whole point of the default: nothing but the source and its output.
+    // The whole point of the default: the build's own outputs are welcome
+    // beside the source - the emitted Rust, and the ledger ADR-020 writes
+    // where a build puts what it produced - but nothing belonging to the
+    // *cache* may appear there when no project owns a lockfile.
     let mut left: Vec<String> = std::fs::read_dir(&src)
         .expect("read src")
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -280,8 +283,12 @@ fn the_cache_is_on_by_default_and_writes_nothing_beside_the_source() {
     left.sort();
     assert_eq!(
         left,
-        vec!["hello.nika", "hello.rs"],
-        "nothing may be written into the source directory"
+        vec!["hello.nika", "hello.rs", "nikaia.contracts"],
+        "only the source and what the build produced"
+    );
+    assert!(
+        !src.join("nikaia.lock").exists() && !src.join("target").exists(),
+        "no cache artifact may be written beside the source outside a project"
     );
 
     std::fs::remove_dir_all(&dir).ok();

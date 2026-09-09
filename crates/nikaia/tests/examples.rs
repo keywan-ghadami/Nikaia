@@ -34,6 +34,9 @@ struct Example {
     /// A file written into the scratch directory first. `{input}` in `args`
     /// stands for its path.
     input: Option<Input>,
+    /// Fed to the program on **standard input**, for the examples that read it
+    /// (ADR-019). A pipe is not a path, so this is not `input` with a flag.
+    stdin: Option<&'static str>,
     args: &'static [&'static str],
     /// Compared after trimming, so a trailing newline is not a test.
     expected: &'static str,
@@ -49,6 +52,7 @@ const RUNNABLE: &[Example] = &[
     Example {
         file: "calc.nika",
         input: None,
+        stdin: None,
         args: &["2 + 3 * (10 - 4) / 2"],
         expected: "2 + 3 * (10 - 4) / 2 = 11",
     },
@@ -64,6 +68,7 @@ const RUNNABLE: &[Example] = &[
 203.0.113.7 GET /index.html 200 5120
 ",
         }),
+        stdin: None,
         args: &["{input}"],
         // Sorted by path; /index.html was hit twice, and the 404 is the one
         // failure. The counts are what makes the merge visible: under Advanced
@@ -95,6 +100,7 @@ max_body = 1048576
 timeout = 30s
 ",
         }),
+        stdin: None,
         args: &["{input}"],
         expected: "\
 2 sections
@@ -104,6 +110,93 @@ timeout = 30s
 [limits]
   max_body = 1048576
   timeout = 30s",
+    },
+    Example {
+        file: "json.nika",
+        input: Some(Input {
+            name: "data.json",
+            contents: "{\"name\": \"a\\nb\", \"tags\": [1, 2.5, true, null], \"empty\": {}}\n",
+        }),
+        stdin: None,
+        args: &["{input}"],
+        // The document back, two spaces a level, with the string bodies
+        // printed raw - and one line that had to decode one: `a\nb` is four
+        // characters in the file and three in the value.
+        expected: "\
+{
+  \"name\": \"a\\nb\",
+  \"tags\": [
+    1,
+    2.5,
+    true,
+    null
+  ],
+  \"empty\": {}
+}
+longest string: 3 characters",
+    },
+    Example {
+        file: "n-body.nika",
+        input: None,
+        stdin: None,
+        args: &["1000"],
+        // The Computer Language Benchmarks Game's published output for
+        // n = 1000, to the digit. That is what makes this example worth
+        // having: the number is not ours to choose, so the arithmetic either
+        // agrees with thirty other languages or it does not.
+        expected: "\
+-0.169075164
+-0.169087605",
+    },
+    Example {
+        file: "k-nucleotide.nika",
+        input: None,
+        // On a pipe, which is the point of the example (ADR-019). Three
+        // sections so that picking the third is a real choice, and the second
+        // in lower case so that the uppercasing is doing something.
+        stdin: Some(
+            ">ONE Homo sapiens alu\n\
+             GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG\n\
+             GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA\n\
+             >TWO IUB ambiguity codes\n\
+             cttBtatcatatgctaKggNcataaaSatgtaaaDcDRtBggDtctttataattcBgtcg\n\
+             >THREE Homo sapiens frequency\n\
+             aacacttcaccaggtatcgtgaaggctcaagattacccagagaacctttgcaatataaga\n\
+             atatgtatgcagcattaccctaagtaattatattctttttctgactcaaagtgacaagcc\n\
+             ctagtgtatattaaatcggtatatttgggaaattcctcaaactatcctaatcaggtagcc\n",
+        ),
+        args: &[],
+        // The benchmark's own report, on 180 characters instead of 25 MB:
+        // every single character and every pair as a percentage, most frequent
+        // first with ties in alphabetical order, then five named fragments.
+        expected: "\
+A 33.333
+T 30.000
+C 20.556
+G 16.111
+
+TA 11.173
+AA 10.615
+AT 10.615
+TT 8.380
+AG 7.263
+CA 6.704
+CC 6.145
+CT 6.145
+TC 6.145
+AC 5.028
+GT 5.028
+GA 4.469
+TG 4.469
+GC 3.352
+GG 3.352
+CG 1.117
+
+3\tGGT
+3\tGGTA
+0\tGGTATT
+0\tGGTATTTTAATT
+0\tGGTATTTTAATTTATAGT",
     },
 ];
 
@@ -335,10 +428,30 @@ fn build_and_run(example: &Example, profile: Profile) -> String {
         .map(|arg| substitute(arg, input_path.as_deref()))
         .collect();
 
-    let run = Command::new(&binary)
-        .args(&args)
-        .output()
-        .expect("run the compiled example");
+    let mut command = Command::new(&binary);
+    command.args(&args);
+
+    let run = match example.stdin {
+        None => command.output().expect("run the compiled example"),
+        Some(text) => {
+            // A pipe, not a redirected file: what the program sees is what
+            // ADR-019 is about.
+            let mut child = command
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn the compiled example");
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .expect("the child's stdin")
+                .write_all(text.as_bytes())
+                .expect("write to the child's stdin");
+            child.wait_with_output().expect("run the compiled example")
+        }
+    };
     assert!(
         run.status.success(),
         "{} failed under {profile:?}: {}",

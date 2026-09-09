@@ -14,6 +14,9 @@
 // `char::to_digit` has this name with a different shape, an inherent method
 // wins over anything a library adds, and a call that resolves to the wrong
 // thing is worse than a name that reads differently (ADR-013 D1).
-pub fn digit_value(c: char) -> i32 {
+// `sync` (Part II, 12.1): pure computation, it cannot pause and does no I/O.
+// Saying so is what puts it in the ledger, and the ledger is what lets a
+// `sync` caller in another program use it (Part III, 13.5).
+pub fn digit_value(c: char) -> i32 sync {
     return c as i32 - 48
 }
