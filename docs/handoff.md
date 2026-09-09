@@ -176,16 +176,24 @@ Error messages first, performance after — that was the instruction, and the
 messages are done: **all twenty-one failing corpus rows say what a reader
 needs** (§3). What is left, in the order it is worth doing.
 
-1. **The character-class scan threshold.** Upstream scans a class eight bytes
-   at a time (ADR 23). On 1BRC's `digit{1,2}` and `digit` it is a loss:
-   `out_mask` costs a fixed ~30 instructions per call against ~4-5 per
-   character, so break-even is around six to eight characters. Measured with
-   branches and caches simulated, not instructions alone — the scan does buy
-   14 067 fewer mispredicts (~0.28 M cycles) for 12.7 M more instructions
-   (~3.2 M cycles at IPC 4), about elevenfold against. **Next step:** measure
-   where the crossover actually is, and propose a threshold in the code
-   generator (`{1,2}` is known at compile time). Upstream `TODO.md` §5 and
-   `docs/upstream/winnow-grammar-findings.md` §2.
+1. **The character-class scan threshold — closed, and not with a threshold.**
+   Upstream scans a class eight bytes at a time (ADR 23), and this item said
+   that on 1BRC's short runs it loses, with break-even estimated at six to
+   eight characters and a threshold in the code generator as the fix. Measured
+   with callgrind, the per-character loop costs ~7 instructions a character and
+   the word path's fixed cost is 9 above it: **the crossover is at three**, so a
+   threshold would buy at most 9 instructions on a one-character run — and a
+   class that always matches exactly one is written as `digit`, which is a
+   `one_of` and never reaches that code.
+
+   The cost was in the case nobody had measured: a run of **length zero**, which
+   cost the same as a run of eight. The implicit whitespace skip runs between
+   every pair of elements of every syntactic rule and most of those find
+   nothing, so `run` now tests the first byte first (winnow-grammar#12).
+   **Nikaia's own compiler parsing 2 000 small functions: 281.6 M instructions
+   -> 233.7 M, 17%.** 1BRC over 200 000 rows: 123.6 M -> 120.0 M, against
+   119.4 M for a build with no word scan at all.
+
 2. **Sizing the intern cache for 1BRC, now that it can be sized.**
    `ParseContext::expect_distinct_keys(n)` exists upstream (`TODO.md` §6,
    closed) and Nikaia does not call it: the emitter builds the context and
