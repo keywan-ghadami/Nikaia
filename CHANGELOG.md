@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added (0.0.8 - a list can be put in an order, and the spec says so)
+- **Part I 4.5 specifies `sort()` and `sort_by_key`, and that both are stable** - which closes G5. A map has no order to borrow: ADR-010 D6 seeds an untrusted one randomly, so its iteration order differs between runs, and a program that prints one has to say which. Stability is what makes two passes state a compound order without a comparator: `names.sort()` then `rows.sort_by_key fn: -a.1` is by hits descending, ties in name order. `examples/access-log.nika` prints its paths that way, and builds the rows as tuples so the key can be a number without looking anything up.
+
+### Fixed (0.0.8 - a lambda that reaches for `a` inside a string)
+- **An implicit lambda whose body mentions `a` only inside a string hole was generated with no arguments at all.** How many arguments such a lambda takes is read off which of `a`, `b`, `c` its body mentions, and a string literal keeps its *text* - the holes are parsed when it is emitted, so the scan never saw them. `xs.map fn { "{a.0}={a.1}" }` came out as `map(|| …)` and did not compile. The scan now parses the holes as the emitter does.
+- **Part I 5.2 says what the three names are**: they belong to the lambda, and a body that binds one - `let c = …` - is asking for a third argument rather than shadowing anything. Telling a use from a shadowing binding needs scope analysis Stage 0 does not have; where a local wants one of those names, the explicit form names the arguments. `examples/access-log.nika` renames a local for exactly this reason, and says so.
+
 ### Fixed (0.0.8 - the last corpus row: all twenty-one say what a reader needs)
 - **A brace group is a repetition bound only when its content starts with a digit.** `rule A -> i32 = n:digit1 { n }` - an action block whose `->` was forgotten - reported `expected digits`, because the grammar read `{ n }` as a bound and a bound wants a number. That is true of the parser and no help to the reader. The lookahead `peek(("{" digit))` says the rule the backend already states for the same ambiguity (SYNTAX.md, "Braces"), and C2 now reports ``expected `->` ``.
 - **Dependency**: `winnow-grammar` `fd17a8c` -> `e222ae8` (upstream #10), which is the other half of it: with the lookahead alone, *every* brace group that was not a bound reported `expected a digit`. A `peek(…)` consumes nothing and demands nothing - an alternative whose lookahead says no simply does not apply - so what fails inside one is a test that said no rather than an expectation, and it is no longer recorded. Without that it also *won*, because a lookahead is tried one token further along than the thing that actually belongs there.

@@ -232,6 +232,15 @@ missing too (only the greedy `digit1` existed, which would have swallowed the ru
 could count anything). `1brc.nika`'s `TENTHS` now states its width and rejects a three-digit
 temperature.
 
+**G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name, and
+`access-log.nika` wants its paths by hit count; neither an ordered map nor a way to say an order
+over a list was specified. ADR-010 D6 is why it cannot be left to the map: an untrusted one is
+seeded randomly, so its iteration order differs between runs. The answer is the explicit form,
+and now it is written down — Part I 4.5 specifies `sort()` and `sort_by_key`, and says both are
+**stable**, which is what lets two passes state a compound order without a comparator:
+`names.sort()` then `names.sort_by_key fn: -hits` is hits descending, ties by name.
+`access-log.nika` prints that way.
+
 **G10 — no tuple.** Found by `calc.nika`, which has to carry an operator alongside the operand
 it applies to (`3 * 4`, where the `*` must survive until the fold). A pair of values of
 different types with no name for the group is a *tuple*, and Stage 0 had no way to write one:
@@ -268,12 +277,6 @@ says that. Stage 0 has none — Part I 4.4 specifies enums and the bootstrap com
 lower them — so the example carries the operator as a `&str` and compares it. That is a
 smaller gap than G10 was, and the same kind: the language says something the compiler cannot
 yet hear.
-
-**G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name; neither
-an ordered map nor `sort_by` over map entries is specified. ADR-010 D6 raises the stakes: an
-untrusted map is seeded randomly, so its iteration order differs between runs, and the spec now
-says so — which makes the explicit ordered form the only correct answer rather than merely the
-tidy one.
 
 **G6 — the HTTP handler cannot see the request.** `std::http`'s signature (17.1) is
 `.route("/") fn: "Hello World"` with no request argument, so a handler cannot read a query

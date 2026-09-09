@@ -68,10 +68,12 @@ const RUNNABLE: &[Example] = &[
         // Sorted by path; /index.html was hit twice, and the 404 is the one
         // failure. The counts are what makes the merge visible: under Advanced
         // the five lines are parsed by several accumulators and added up.
+        // By hits, descending; ties keep the name order the first sort put
+        // them in - which is the compound order two stable sorts state.
         expected: "\
 5 requests, 1 failed
-/api/order 1 512
 /index.html 2 10240
+/api/order 1 512
 /missing 1 0
 /style.css 1 1024",
     },

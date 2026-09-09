@@ -834,14 +834,37 @@ impl<'p> Emitter<'p> {
 
     /// Kap 5.2: the implicit arguments are `a`, `b`, `c`, and a lambda takes as
     /// many of them as its body reaches for.
+    ///
+    /// *Reaches for* is any mention, a local of the same name included - which
+    /// is why the three names are the lambda's and a body must not bind them
+    /// (Part I, 5.2). Telling a use from a shadowing binding would need the
+    /// scope analysis Stage 0 does not have, and guessing wrong either way
+    /// produces a closure whose arity does not match its call.
     fn implicit_params(&self, body: &Block) -> Vec<String> {
         const NAMES: [&str; 3] = ["a", "b", "c"];
 
         let mut used = [false; 3];
-        visit_block(body, &mut |expr| {
+        let mut mark = |expr: &Expr| {
             if let Expr::Variable(name) = expr {
                 if let Some(i) = NAMES.iter().position(|n| *n == self.text(*name)) {
                     used[i] = true;
+                }
+            }
+        };
+        visit_block(body, &mut |expr| {
+            mark(expr);
+            // A string's holes are expressions too, and they are the one place
+            // a body can reach for `a` without the AST showing it: a literal
+            // keeps its text and the holes are parsed when it is emitted. A
+            // lambda whose whole body is `"{a.0} {a.1}"` would otherwise be
+            // generated with no parameters at all.
+            if let Expr::LitStr(literal) = expr {
+                if let Ok((_, holes)) = interpolation(literal) {
+                    for hole in holes {
+                        if let Ok(inner) = parse_expression(&self.parsed.interner, &hole) {
+                            visit_expr(&inner, &mut mark);
+                        }
+                    }
                 }
             }
         });
