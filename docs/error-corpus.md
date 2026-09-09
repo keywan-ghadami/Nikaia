@@ -28,7 +28,11 @@ measured against this file:
 4. **a losing alternative keeps its error, and between two requirements the
    one open longest leads** (winnow-grammar#8) — what a shorter parse
    abandoned is no longer lost, and a guess made a token ago no longer
-   outranks the structure the reader is inside.
+   outranks the structure the reader is inside;
+5. **what fails inside a lookahead is a test that said no**
+   (winnow-grammar#10) — a `peek(…)` demands nothing, so its failure is not an
+   expectation, and the grammar can use one to tell a repetition bound apart
+   from a brace group without the test ending up in every message.
 
 A message today can carry a second line, `note: also possible here: …`, holding
 what the grammar would have accepted but did not require. The columns below
@@ -93,7 +97,7 @@ any ranking, so no label helps.
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | C1 | `struct S { name &str }` | `:` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `:` `` |
-| C2 | `rule A -> i32 = n:digit1 { n }` | `->` | ⚠️ `` `//`, whitespace `` | ⚠️ `expected digits` |
+| C2 | `rule A -> i32 = n:digit1 { n }` | `->` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `->` `` |
 | C3 | `fn main( {` | `)` or a parameter | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` `` |
 | C4 | `let 5 = x` | a name | ○ **parses** | ○ |
 | C5 | `impl S { struct T {} }` | a method | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `fn`/`pub` in the note |
@@ -101,9 +105,16 @@ any ranking, so no label helps.
 C1 is the best row in the corpus and worth keeping as the example: `expected ':'`
 is exactly what a reader can act on.
 
-C2 does not improve, and the reason is not the ranking: `digits` comes from the
-built-in name table (`digit1 => "digits"`), and the rule really is looking at a
-repetition there. It is a grammar question, not a message question.
+C2 was a grammar question *and* a message question, and needed both answered.
+`{ n }` is an action block whose `->` was forgotten, and the grammar read it as
+a repetition bound - so `digits` was true of the parser and no help. A brace
+group is a bound only when its content starts with a digit, which is the rule
+the backend already states for the same ambiguity, and `peek(("{" digit))` is
+how a grammar says it. That alone reported `expected a digit` for every brace
+group that is not a bound, because a failing lookahead was recorded like any
+other error and won on progress - so the second half is upstream: a lookahead
+demands nothing, and what fails inside one is not an expectation
+(winnow-grammar#10).
 
 C3 now names `)`. An empty parameter list is a real alternative, and the `(`
 was already matched, so the parameter list had begun — its missing `)` is a
@@ -130,7 +141,7 @@ and unhelpful. Recorded so the trade is visible, not to argue it.
 
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
-| E1 | `d:digit{1, -> { 1 }` | a number or `}` | ⚠️ incl. `//` | ✅ `` expected one of: `}`, digits `` |
+| E1 | `d:digit{1, -> { 1 }` | a number or `}` | ⚠️ incl. `//` | ✅ ``expected `}` ``, digits in the note |
 | E2 | `d:nosuchbuiltin` | the backend rejects it | ○ parses, as intended | ○ |
 | E3 | `par_fold(M, init)` | `,` — arity is the backend's | ⚠️ incl. `//` | ✅ ``expected `->` `` |
 
@@ -167,12 +178,7 @@ to `fs::map` ([ADR-016](specification/adr/adr-016.md)) and is tested there.
 things the grammar admits that probably should not be — and the corpus found
 them by trying to break the compiler on purpose.
 
-**Twenty of the twenty-one failing rows now say what a reader needs.** One
-does not:
-
-1. **A name the grammar does not have** — C2. `digits` comes from the built-in
-   table (`digit1 => "digits"`) and the rule really is looking at a repetition
-   there. A grammar question, not a message question, and the only row left.
+**All twenty-one failing rows now say what a reader needs.**
 
 What A4, B1 and G1 turned out to be is worth keeping, because they were filed
 as something else for two rounds. They reported whitespace and were never a
@@ -190,9 +196,11 @@ requirement (winnow-grammar#4) took the whitespace skip out of the headline;
 the rule label (#5) turned lists of spellings into `expression` and `type`;
 "an element that began is a requirement" (#6) let a missing `}` outrank the
 continuations of the expression before it — A3, F3, and the second expectation
-in A1, A2, C3, C5 and E3; and keeping a losing alternative's error (#8) closed
+in A1, A2, C3, C5 and E3; keeping a losing alternative's error (#8) closed
 A4, B1, G1 and F1, with the tie-break by *how long each requirement has been
-open* keeping A3 and F3 from regressing when it did.
+open* keeping A3 and F3 from regressing when it did; and a failing lookahead
+no longer being an expectation (#10) closed C2, together with the grammar
+saying that a brace group is a bound only when it starts with a digit.
 
 One tick deserves a footnote. **F1** now names the `"` it is missing, which is
 what a reader acts on, but the position is still the end of the file rather
