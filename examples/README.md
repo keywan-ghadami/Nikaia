@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Six of the seven programs here compile, run, and are checked by `cargo test`. The seventh is
+Seven of the eight programs here compile, run, and are checked by `cargo test`. The eighth is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -12,9 +12,10 @@ needs is listed under *Gaps* below.
 | [`config.nika`](config.nika) | an INI file with comments: a grammar that defines its own whitespace | ✅ `crates/nikaia/tests/examples.rs` |
 | [`json.nika`](json.nika) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `crates/nikaia/tests/examples.rs` |
 | [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
+| [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the six is compiled and run **under both profiles**, and their output must be
+Each of the seven is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -35,6 +36,11 @@ They are deliberately different shapes.
   the one that defines its own `WS` so that `#` comments are legal everywhere a blank is
   without another rule mentioning them. It is also the counterpart to 1BRC's fold: `setting*`
   collects, which is right for a configuration file and wrong at a billion rows.
+* **`k-nucleotide.nika`** is the one that reads **standard input**, and the difference a pipe
+  makes is the point of it. `1brc.nika` maps its file and copies nothing at all; here there are
+  no pages to point at, because the bytes do not exist until they are read — so the program owns
+  its buffer, and everything after that first copy is the same. The fragments it counts are
+  thousands of views into that buffer, not strings.
 * **`n-body.nika`** is the one with **no grammar in it at all**. Five programs in a row that
   all begin with a DSL would say Nikaia is a parser generator; this one is arithmetic in a
   loop — `sync` methods, `&mut self`, indices and floats — and it is the only example here
@@ -137,6 +143,8 @@ CoreMark (embedded C microbenchmark).
 2. CLBG `n-body` — first comparable number against other languages. ✅
    [`n-body.nika`](n-body.nika), matching the published output for n = 1000 to the digit.
 3. CLBG `reverse-complement` and `k-nucleotide` — stdin/stdout IO with exact expected output.
+   ✅ [`k-nucleotide.nika`](k-nucleotide.nika); `reverse-complement` needs binary output, which
+   `std::io` specifies as `bytes` and does not yet have.
 4. TechEmpower `fortunes` — once an HTTP stack and a DB driver exist.
 
 ---
@@ -274,6 +282,23 @@ compiler cannot see. Enums and `match` now lower: the three variant shapes (`Qui
 the same way so the lowering stays a transcription. `calc.nika`'s `mul_tail` yields
 `(Op, i64)`. An enum that carries a view takes the input lifetime exactly as a struct does,
 which is what lets one appear in a grammar rule's return type.
+
+**G15 — a program could not read standard input.** Part III 17.1 specified `std::fs` down to
+`seek` and `Cleanup` and said nothing about the input a program in a pipeline has. Decided and
+implemented: [ADR-019](../docs/specification/adr/adr-019.md). A stream is not a file, and the
+surface says so — no `map`, no `seek`, no length, no second read — because `fs::map`'s zero-copy
+story rests on pages that exist before the program asks, and a pipe's bytes do not. The rest is
+the rule `std::fs` already had: no `async`, no `await`, and **a `sync` function cannot call it**,
+which is what keeps a `par_iter` body from waiting on a pipe. Provenance is Trusted, as for a
+file, with `trusted: false` at the entry for the request-body case. `read_to_string` and `read`
+are implemented; `lines` and `bytes` are specified and are not, exactly as `fs::open` is.
+
+**The bug it found, and this one was silent.** An `if` in *statement* position had its branches
+emitted as tails — right for `let x = if c { a } else { b }`, wrong for a guard. The last
+statement of a branch was written as the branch's *value*, so `if n < k { return counts }` came
+out as `if n < k { counts }` and the function carried on. Here the types happened to disagree and
+`rustc` said so; in a function returning nothing it would have compiled and quietly done the
+wrong thing.
 
 **G14 — arithmetic did not read like arithmetic.** Found by `n-body.nika`, which is nothing
 but arithmetic and so found four things at once. **A range was not an expression**: Part I 3.3

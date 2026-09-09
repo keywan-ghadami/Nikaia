@@ -395,6 +395,42 @@ Unlike languages that prefer a minimal core, Nikaia pursues immediate productivi
 ### 17.1. Universal Modules
 These modules rely on Unified Types and function identically in both Lite and Advanced profiles, though their internal implementation differs significantly to match the runtime model.
 
+**`std::io` — standard input**
+
+A stream is not a file, and the surface says so ([ADR-019](adr/adr-019.md)): no `map`, no `seek`,
+no length, and no second read of the same bytes. `fs::map` hands back pages that existed before
+the program asked for them; standard input's bytes do not exist until they are read, so a program
+that wants views into its input owns the buffer first.
+
+```nika
+pub fn read_to_string() -> String throws   // all of it, UTF-8 validated
+pub fn read() -> Bytes throws              // all of it, as bytes
+pub fn lines() -> Lines throws             // one line at a time
+pub fn bytes() -> ByteStream throws        // chunks as they arrive
+```
+
+It is `std::fs`'s shape minus what a stream cannot keep, and the same "looks blocking, is not"
+applies: no `async` on the signature, no `await` at the call. Under Lite the event loop runs
+another task while the pipe is empty; under Advanced the read may resume on a different thread.
+What *is* visible is the rule that matters — **a `sync` function cannot call it** (Part II, 12.1),
+which is what keeps a `par_iter` body from waiting on a pipe.
+
+`lines()` yields **owned** text where `fs::lines` yields views: a file's line can be a view
+because the file is still there to point at, and a stream's bytes are gone once consumed. Keeping
+them would be `read_to_string` with extra steps.
+
+There is one standard input, so these are functions rather than a handle — a handle that can be
+held invites two tasks to hold it, and two readers of one pipe get interleaved halves of lines.
+Reading it a second time yields what the operating system says, which is nothing.
+
+**Provenance** follows the rule files follow: **Trusted**, because the operator chose what to
+connect to the pipe exactly as they chose which path to open. The case that argues otherwise — a
+request body arriving on standard input — is the uploaded-file case and has the same answer in
+the same place: `io::read_to_string(trusted: false)`.
+
+Output stays `print` and `println` below; `std::io` is here because there was no way to *read*
+standard input.
+
 **Writing output**
 
 `println(text)` writes a line to standard output, `print(text)` writes without the newline, and

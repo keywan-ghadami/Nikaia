@@ -124,3 +124,44 @@ fn a_number_is_not_an_identifier() {
     // same, and the exponent did not.
     assert!(emit("fn main() { let a = 1.5e-4 }").contains("let a = 1.5e-4;"));
 }
+
+/// An `if` in statement position is not a value, so a `return` in one of its
+/// branches has to stay a `return`.
+///
+/// The branches of an `if` were emitted as tails unconditionally, which is
+/// right for `let x = if c { a } else { b }` and wrong for a guard: the last
+/// statement of a branch was written as the branch's *value*, so
+/// `if n < k { return counts }` came out as `if n < k { counts }` and the
+/// function carried on. Found by `examples/k-nucleotide.nika`, where the types
+/// happened to disagree; in a function returning nothing it would have
+/// compiled.
+#[test]
+fn a_return_inside_an_if_statement_still_returns() {
+    let emitted = emit(
+        "fn f(n: i32, k: i32) -> i32 {\n\
+         if n < k { return 0 }\n\
+         return n - k\n\
+         }",
+    );
+    assert!(emitted.contains("return 0;"), "{emitted}");
+
+    // …and the case it was right for keeps working: in value position the
+    // branches *are* the value.
+    let value = emit("fn f(c: bool) -> i32 { let x = if c { 1 } else { 2 } return x }");
+    assert!(value.contains("if c { 1 } else { 2 }"), "{value}");
+    assert!(!value.contains("return 1"), "{value}");
+}
+
+/// The same for an `if` whose branch ends in a `return` inside a `throws`
+/// function, where a bare tail would have been wrapped in `Ok` by the caller
+/// and a `return` must wrap itself.
+#[test]
+fn a_return_inside_an_if_wraps_itself_when_the_function_throws() {
+    let emitted = emit(
+        "fn f(n: i32) -> i32 throws {\n\
+         if n < 0 { return 0 }\n\
+         return n\n\
+         }",
+    );
+    assert!(emitted.contains("return Ok(0);"), "{emitted}");
+}

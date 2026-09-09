@@ -17,6 +17,7 @@
 pub mod cli;
 pub mod fs;
 pub mod html;
+pub mod io;
 pub mod list;
 
 /// The parser backend a generated program's grammars run on.
@@ -33,6 +34,7 @@ pub mod prelude {
     pub use crate::cli;
     pub use crate::fs;
     pub use crate::html;
+    pub use crate::io;
     pub use crate::list::ListExt;
     pub use crate::text::digit_value;
     pub use std::collections::HashMap;
