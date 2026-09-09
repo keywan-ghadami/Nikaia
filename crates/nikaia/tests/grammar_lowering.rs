@@ -85,15 +85,19 @@ mod digits {
     // emitter has to accept there - a mapping, an owned string - so the copy
     // keeps it and clippy is told why.
     #[allow(clippy::borrow_deref_ref)]
-    pub fn sequential_driver(data: &str) -> Result<Pair, winnow_grammar::ParseError> {
-        Ok({
-            use winnow::Parser;
-            let mut stream = winnow_grammar::ParseInput::<()> {
-                state: winnow_grammar::ParseContext::<()>::default(),
-                input: winnow::stream::LocatingSlice::new(&*data),
-            };
-            Digits::parse_pair().parse_next(&mut stream)?
-        })
+    pub fn sequential_driver(data: &str) -> Result<Pair, String> {
+        use winnow::Parser;
+        let _source = &*data;
+        let mut stream = winnow_grammar::ParseInput::<()> {
+            state: winnow_grammar::ParseContext::<()>::default(),
+            input: winnow::stream::LocatingSlice::new(_source),
+        };
+        // The emitted form is this block followed by `?`, in a `throws`
+        // function; here it is the return value, which is the same code with
+        // one fewer wrapper - clippy objects to `Ok(…?)` and is right.
+        Digits::parse_pair()
+            .parse_next(&mut stream)
+            .map_err(|error| error.render(_source))
     }
 }
 
@@ -196,13 +200,13 @@ fn the_profile_chooses_the_parallelism_and_nothing_else() {
 
     assert!(
         advanced.contains(
-            "Measurements::parse_file_pieces(&*data, &ParseContext::<()>::default(), Parallelism::Auto)?"
+            "Measurements::parse_file_pieces(_source, &ParseContext::<()>::default(), Parallelism::Auto)"
         ),
         "{advanced}"
     );
     assert!(
         lite.contains(
-            "Measurements::parse_file_pieces(&*data, &ParseContext::<()>::default(), Parallelism::Off)?"
+            "Measurements::parse_file_pieces(_source, &ParseContext::<()>::default(), Parallelism::Off)"
         ),
         "{lite}"
     );
@@ -226,15 +230,54 @@ fn a_sequential_entry_rule_gets_no_piece_driver() {
         squashed(&emitted).contains(&squashed(
             r#"{
                 use winnow::Parser;
+                let _source = &*data;
                 let mut stream = winnow_grammar::ParseInput::<()> {
                     state: winnow_grammar::ParseContext::<()>::default(),
-                    input: winnow::stream::LocatingSlice::new(&*data),
+                    input: winnow::stream::LocatingSlice::new(_source),
                 };
-                Digits::parse_pair().parse_next(&mut stream)?
-            }"#
+                Digits::parse_pair()
+                    .parse_next(&mut stream)
+                    .map_err(|error| error.render(_source))
+            }?"#
         )),
         "the emitted driver and the one `digits::sequential_driver` compiles \
          have drifted:\n{emitted}"
+    );
+}
+
+/// `dsl … from …` propagates its failure on its own, and a `catch` beside it
+/// is the one place that wants the `Result` instead. Emitting the `?` there
+/// too produced `match <value> { Ok(..) => .., Err(..) => .. }` - a handler
+/// matching on something already unwrapped, which is not a message about a
+/// program but a compiler bug (Kap 7.1).
+#[test]
+fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
+    let source = format!(
+        "{DIGITS}\n\nfn read() throws {{\n    \
+         let p = dsl Digits from data catch {{\n        return\n    }}\n}}\n"
+    );
+    let emitted = emit(&source, Profile::Advanced);
+
+    assert!(
+        emitted.contains("Ok(value) => value"),
+        "the catch should match on the parse:\n{emitted}"
+    );
+    assert!(
+        !emitted.contains("}? {"),
+        "the catch is matching on an unwrapped value:\n{emitted}"
+    );
+}
+
+/// A `ParseError` knows an offset and not the text it came from, so only the
+/// driver can turn one into a line and a column - and it is the only place
+/// that has both. Without this a program that rejects a file says *what* was
+/// expected and never *where* (ADR-009 D3, `docs/error-corpus.md`).
+#[test]
+fn a_rejected_parse_is_rendered_against_the_input_it_parsed() {
+    let emitted = emit(WITH_DSL, Profile::Advanced);
+    assert!(
+        emitted.contains(".map_err(|error| error.render(_source))"),
+        "{emitted}"
     );
 }
 

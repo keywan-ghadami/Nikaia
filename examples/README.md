@@ -1,15 +1,34 @@
 # Nikaia Examples
 
-Programs here are **specification-level**: they show what Nikaia 0.0.7 is meant to look like.
+Three of the four programs here compile, run, and are checked by `cargo test`. The fourth is
+written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
+needs is listed under *Gaps* below.
 
-**`1brc.nika` compiles and runs** ([ADR-013](../docs/specification/adr/adr-013.md)):
-`nikaia --input examples/1brc.nika --backend rust` produces Rust that prints what the benchmark
-asks for, and `crates/nikaia/tests/one_brc.rs` checks that by running it. It maps the file and
-parses it on every core ([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines, 4
-cores, 0.52 s → 0.14 s, identical output), and one function it calls for every digit is written in
-Nikaia and compiled into `std` by the compiler itself.
+| | what it is | runs |
+| :--- | :--- | :--- |
+| [`1brc.nika`](1brc.nika) | the One Billion Row Challenge: a frame, a parallel fold, a billion rows | ✅ `crates/nikaia/tests/one_brc.rs` |
+| [`calc.nika`](calc.nika) | a four-function calculator: the grammar protocol at its smallest | ✅ `crates/nikaia/tests/examples.rs` |
+| [`access-log.nika`](access-log.nika) | a web log summarised: several fields per line, a report at the end | ✅ `crates/nikaia/tests/examples.rs` |
+| [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-`fortunes.nika` does not: its gaps are `std::http` (G6) and template escaping (G7), below.
+Each of the three is compiled and run **under both profiles**, and their output must be
+identical — that is the claim the profiles rest on, and a test is where it belongs rather than
+in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
+an example cannot drift from what is checked.
+
+They are deliberately different shapes. `1brc.nika` is the protocol at scale — `@frame`,
+`par_fold`, a memory-mapped file, one accumulator per core
+([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines, 4 cores, 0.52 s → 0.14 s,
+identical output), and one function it calls for every digit is written in Nikaia and compiled
+into `std` by the compiler itself. `calc.nika` is the same protocol with none of that: no
+frame, no fold, no I/O, one `pub rule` that returns a number — recursion and precedence, which
+is what a grammar can say and a chain of combinators cannot. `access-log.nika` is the shape
+most real work has: a line with several fields of different kinds, a record built from them,
+and a report at the end — including what a *rejected* line looks like.
+
+An example that is added has to be declared: either it runs and says what it prints, or it is
+specification-level and its gaps are here. `crates/nikaia/tests/examples.rs` fails on a file
+that is neither.
 
 What the bootstrap compiler handles: functions and methods, `impl` blocks, `struct` and `use`
 items, `let`, assignment, `for`, `if`, `return`, calls, field access, indexing, casts, struct
@@ -23,9 +42,10 @@ That is deliberate, and it is what these files are *for*. Writing a real program
 spec is the cheapest way to find out which parts of the spec are underspecified. The gaps each
 example exposed are listed below; they read as a roadmap.
 
-Programs that the bootstrap parser *can* handle live in `tests/samples/` and are checked by
-`cargo test` (`crates/nikaia/tests/samples.rs`). When the parser catches up with an example,
-move it there so it stops being a wish and starts being a test.
+`tests/samples/` holds smaller programs that only have to *parse* — one construct each, checked
+by `crates/nikaia/tests/samples.rs`. An example graduates the other way: when the compiler
+catches up with one, it stays here and gains a row in `RUNNABLE`, because what makes it worth
+having is that it is a whole program.
 
 ---
 
@@ -204,7 +224,35 @@ missing too (only the greedy `digit1` existed, which would have swallowed the ru
 could count anything). `1brc.nika`'s `TENTHS` now states its width and rejects a three-digit
 temperature.
 
+**G11 — a rejected parse said what was expected and never where.** Found by writing
+`access-log.nika`, whose `catch` prints the failure: the message read
+``expected a digit; found unexpected token ` ` `` with the rule stack under it, and no
+position at all. A `ParseError` carries an offset and not the text it came from, so only the
+code that has both can turn 1042 into *line 2, column 26* — and that is the driver
+`dsl … from …` lowers to, which is the one place holding the input and the error together. It
+now binds the input and renders against it, so the same message reads
+``expected a digit; found unexpected token ` ` at line 2, column 26``.
+
+Worth keeping apart from the two things it resembles. `docs/error-corpus.md` is about the
+compiler's messages for `.nika` source, which have carried a line and a column all along; its
+closing finding is that none of them shows the *line itself*, with a caret, the way a rustc
+diagnostic routed through `--explain` does. This was smaller and worse: a program Nikaia
+generates had no position at all.
+
+The same example found the bug beside it: `dsl … from …` emitted its own `?`, so a `catch`
+next to it was handed the value it was meant to inspect and nothing compiled. Both are pinned
+in `crates/nikaia/tests/grammar_lowering.rs`.
+
 ### Open
+
+**G10 — no tuple, and no sum type.** `calc.nika` needs to carry an operator alongside the
+operand it applies to (`3 * 4`, where the `*` must survive until the fold). A tuple would say
+it — `(&str, i64)` — and an enum would say it better, since there are exactly two operators.
+Stage 0 has neither: a type is a name with optional generic arguments, so the example declares
+a two-field `struct Step` to say what one line of a tail rule should have said. It costs
+nothing at runtime and it is the first thing in these examples that is *worse* written in
+Nikaia than in the language it lowers to, which is why it is written down here rather than
+worked around quietly. Subtraction avoids it by being addition of a negation; division cannot.
 
 **G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name; neither
 an ordered map nor `sort_by` over map entries is specified. ADR-010 D6 raises the stakes: an
