@@ -66,48 +66,83 @@ because the code generator puts it between every pair of tokens.
 
 ### A shape that fits both
 
-Two defects, so two changes, and they are independent:
+The criterion is not taste. **An expectation is worth reporting only if
+satisfying it can move the parse past this position.** Whitespace fails it: the
+skip is greedy and has already taken everything available at this offset, so
+inserting more produces the same failure at offset + n. Telling the reader
+"expected whitespace" asks them to make an edit that cannot work.
 
-**(i) Stop discarding.** At equal offset, union `expected` instead of returning
-one side. Priority then decides only the *message*, the *rule stack* and label
-replacement — not which expectations survive.
+That criterion has a mechanical form, and the code already draws the line —
+`repeat_recording_bounded`, one branch:
 
-Unchanged, deliberately: an **authoritative** error keeps its set as it is —
-`fail("…")` (`PRIO_STRUCTURAL`) and a label, which `labelled()` already clears
-and replaces on purpose.
-
-**(ii) Class the expectations, and split the message.** Each expectation is
-`Syntax` or `Trivia`. `headline()` lists the `Syntax` set; a second line lists
-the rest:
-
+```rust
+Err(ErrMode::Backtrack(e)) => {
+    let e = e.item(items.len() + 1);
+    if items.len() < min {
+        return Err(ErrMode::Backtrack(e));   // required: the error itself
+    }
+    e.record(&mut input.state);              // optional: merely recorded
+    input.reset(&cp);
+    break;
+}
 ```
-expected `,`; found unexpected token `temp` at line 3, column 5
-note: also allowed here: `//`, whitespace
-in field_def_tail / in field_defs / in struct_item / in item / in program
-```
 
-If the `Syntax` set is empty the `Trivia` set becomes the headline, so nothing
-is ever silently absent.
+An error that is **returned** is a requirement: the grammar demanded something
+here. An error that is **recorded** by a repetition that has met its minimum,
+or by `opt_recording`, is an **optional continuation**: the grammar would have
+accepted more and does not insist. `x+` below its minimum returns, so it stays
+a requirement — which is why nothing here suppresses a repetition.
+
+So the ranking needs no new classification, no declaration and no magic rule
+names:
+
+1. **Headline** — the requirements at the furthest offset.
+2. **Note** — the optional continuations.
+3. **Dropped** — an optional continuation that is whitespace, by the criterion
+   above. (A *required* whitespace — `space1` below its minimum — is returned,
+   so it is a requirement and stays.)
+
+And the two changes are still independent: **stop discarding** (union at equal
+offset instead of returning one side, with `fail(…)` and labels staying
+authoritative), and **rank by requirement rather than by how many alternatives
+an error happens to carry**.
+
+Worked through:
+
+| input | today | proposed |
+| :--- | :--- | :--- |
+| `temp i32` in a struct | `expected one of: '//', whitespace` | `expected '}'` — note: also possible: `,`, `//` |
+| `1 2 x` against `item* "."` | `expected one of: '#', integer literal` | `expected '.'` — note: also possible: `#`, integer literal |
+| ` /broken comment` | whatever is required, with `//` discarded | `expected …` — note: also possible: `//` |
+
+The struct line is the honest one rather than the ideal one, and worth saying
+plainly: at that position the grammar does **not** require a comma. It requires
+`}` or accepts another field, and a parser cannot know the author meant the
+second. `expected '}'` with `,` in the note is true and complete; guessing the
+intent is not on offer.
+
+This also subsumes "deprioritise comments for now": a comment is an optional
+continuation, so it lands in the note by construction, with no special case for
+it and no list of rule names anywhere.
+
+A near-miss — the found input sharing a prefix with a trivia expectation, `/`
+against `//` — would promote that expectation to the headline and is the one
+place a heuristic would earn its keep. It is a refinement of this, not a
+prerequisite.
+
+**What it costs to implement.** `state.furthest` is one `ParseError`, so keeping
+requirements and optional continuations apart needs either a flag per
+expectation or a second slot. That is the whole of it; the classification itself
+is free, being a branch the runtime already takes.
 
 ### Against the existing tests in `tests/diagnostics.rs`
 
 | | why it is unaffected |
 | :--- | :--- |
 | p06 `let ?;` → `expected one of: number, string` | the label is authoritative; nothing unions into it |
-| p07 `let "abc;` → label's own message stays | the two errors are at **different offsets** — the string alternative made progress — so the offset comparison decides before priority is consulted |
+| p07 `let "abc;` → the label's own message stays | the two errors are at **different offsets** — the string alternative made progress — so the offset comparison decides before priority is consulted |
 | p08 `fail(..)` wins on a tie | authoritative; `headline()` returns `message` |
 | p09 progress beats `fail(..)` | offset first, unchanged |
-
-### Two questions that are taste, and not ours
-
-* **When to show the note.** Always is noise: whitespace is allowed almost
-  everywhere. Perhaps only when the trivia set holds something other than plain
-  whitespace — a comment form the reader may not know the grammar has — or when
-  the syntax set is empty.
-* **How an expectation is classed `Trivia`.** The code generator knows which
-  `WS(…)` calls it inserted, which covers the common case with no annotation. A
-  grammar that wants something else marked would need to say so; a `trivia`
-  declaration beside `state T;` and `interner I;` would fit the existing shape.
 
 **Not verified against the full suite.** Cargo fingerprints a git dependency on
 its commit, so editing the vendored checkout has no effect, and this is a design
