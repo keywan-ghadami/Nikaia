@@ -413,6 +413,38 @@ fn main() {
 }
 ```
 
+**The handler and the request** ([ADR-018](adr/adr-018.md)). A handler is a lambda, so the rule
+about its arguments is the one Part I 5.3 already gives: it takes as many implicit arguments as
+its body reaches for. The first — and only — one is the request.
+
+```nika
+.route("/")         fn: "Hello World"                      // mentions none, takes none
+.route("/hello")    fn: "Hello, {a.query("name") ?? "world"}"
+.route("/fortunes") fn(request) { render(request) }         // or name it
+```
+
+What a handler returns is what answers the request:
+
+| returns | becomes |
+| :--- | :--- |
+| `String` | 200, `text/plain; charset=utf-8` |
+| `html::Raw` | 200, `text/html; charset=utf-8` |
+| `Response` | itself |
+| `T throws` | the value on success; on failure **500 with a generic body**, the error logged |
+
+The last row is a decision: an error's message is written for the operator, and a handler that
+returns one to the client is how internal paths and driver messages end up in a bug report. A
+status code, a header or a body of one's own is a `Response`, built where it is returned —
+`http::Response(status: 400, body: "id is required")`.
+
+The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
+and `query(name)` yield `&str`, so a parameter used inside the request's scope costs nothing and
+one kept past it has to be owned (Part I, 6.6). `query` and `header` return the nullable type of
+Part I 3.5 rather than an empty string, and `method()` returns an enum rather than a string.
+
+A handler does I/O, so it is not `sync`; it carries no `async` marker and no `await`, and the
+profile chooses the executor and nothing else.
+
 **`std::html`**
 
 The escaping a template's contract rests on ([ADR-017](adr/adr-017.md)).

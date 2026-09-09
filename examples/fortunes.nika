@@ -100,10 +100,13 @@ fn main() throws {
     // this line changes (Part II, 12.2).
     let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")?
 
-    // [G6] The spec's handler signature (17.1) takes no request argument, so a
-    // handler cannot read a query parameter or set a status code. `fortunes`
-    // does not need either, which is exactly why this gap went unnoticed - the
-    // other six TechEmpower tests do need it.
+    // A handler sees the request as its first implicit argument, under the
+    // rule the language already has for lambdas
+    // ([ADR-018](../docs/specification/adr/adr-018.md)): one that mentions `a`
+    // receives it, one that does not takes nothing. `fortunes` is the second
+    // kind, which is exactly why this gap went unnoticed here - the other six
+    // TechEmpower tests need a query parameter or a status code. What is left
+    // for [G6] is the runtime binding this cannot run without.
     http::Server::new()
         .route("/fortunes") fn: fortunes(db)
         .listen(":8080")

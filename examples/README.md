@@ -281,10 +281,17 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
 
-**G6 — the HTTP handler cannot see the request.** `std::http`'s signature (17.1) is
-`.route("/") fn: "Hello World"` with no request argument, so a handler cannot read a query
-parameter or set a status code. `fortunes` happens not to need either, which is why this went
-unnoticed — the other six TechEmpower tests do need it.
+**G6 — the HTTP handler cannot see the request.** *Decided*
+([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime
+binding. The request is the handler's **first implicit argument**, under the rule Part I 5.3
+already has: a lambda takes as many implicit arguments as its body reaches for, so
+`fn: "Hello World"` keeps working unchanged and `fn: a.query("name")` reads one. Nothing is added
+to the language. A handler *returns* what answers the request — a `String` is 200 text/plain, an
+`html::Raw` is 200 text/html (ADR-017 D2 read from the other end: the type that says "this is
+markup" is the type that may be sent as markup), a `Response` is itself, and a `throws` that fails
+is 500 with a **generic** body and the error in the log, because an error message is written for
+the operator. The request's strings are views into the connection buffer (ADR-008), so a parameter
+used inside the request's scope costs nothing and one kept past it has to be owned.
 
 **G7 — HTML escaping belongs in the template grammar's contract.** *Decided*
 ([ADR-017](../docs/specification/adr/adr-017.md)), *not yet enforced*. Every hole is escaped,
