@@ -174,7 +174,10 @@ driver knows the input, not where it came from) and `= help:` lines.
 
 Error messages first, performance after — that was the instruction, and the
 messages are done: **all twenty-one failing corpus rows say what a reader
-needs** (§3). What is left, in the order it is worth doing.
+needs**, and they show the reader the line (§3). The two performance items are
+closed too, and both closed by measuring rather than by building: one was a
+real cost in a place nobody had looked, the other was not a cost at all. What
+is left is 3 and 4, and neither is a performance question.
 
 1. **The character-class scan threshold — closed, and not with a threshold.**
    Upstream scans a class eight bytes at a time (ADR 23), and this item said
@@ -194,13 +197,22 @@ needs** (§3). What is left, in the order it is worth doing.
    -> 233.7 M, 17%.** 1BRC over 200 000 rows: 123.6 M -> 120.0 M, against
    119.4 M for a build with no word scan at all.
 
-2. **Sizing the intern cache for 1BRC, now that it can be sized.**
-   `ParseContext::expect_distinct_keys(n)` exists upstream (`TODO.md` §6,
-   closed) and Nikaia does not call it: the emitter builds the context and
-   nothing tells it how many keys a parse will see. The measurement that
-   rejected keying the station table by `Symbol` — 617 instructions per row
-   against 514 — was taken with the *unsized* cache, so it is worth taking
-   again before that rejection is treated as final.
+2. **Sizing the intern cache for 1BRC — closed, and it changes nothing.**
+   `ParseContext::expect_distinct_keys(n)` exists upstream and Nikaia does not
+   call it; the question was whether the measurement that rejected keying the
+   station table by `Symbol` — 617 instructions per row against 514 for a plain
+   fast-hashed map — had been an artefact of the *unsized* cache. It was not.
+
+   Callgrind over `intern(until(";"))` on 100 000 rows, sized against unsized:
+   at **413** distinct keys, 1BRC's station count, sizing saves **one**
+   instruction per row; at 5 000 it saves 60. The default 512 slots already
+   holds 413 keys without thrashing. So the rejection stands on its own, Nikaia
+   needs no way to say a key count for this program, and the surface that would
+   let a `.nika` file say one — an attribute on the grammar, since the count is
+   the author's knowledge and not the emitter's — is worth designing when a
+   program wants thousands of distinct keys and not before. Upstream
+   winnow-grammar#13 records the numbers where the method is documented.
+
 3. **Input provenance (ADR-010) is specified and not implemented**, and Stage 0
    cannot implement it — choosing a map's hasher needs dataflow the emitter must
    not invent (ADR-011 D2). Costs 22 % of the flagship's instructions.
