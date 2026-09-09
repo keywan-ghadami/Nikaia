@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Measured (0.0.8 - the intern cache does not want sizing for 1BRC)
+
+- **`docs/handoff.md` §4's second open item closes without a change.** The question was whether the measurement that rejected keying 1BRC's station table by `Symbol` - 617 instructions per row against 514 for a plain fast-hashed map - had been an artefact of an *unsized* interning cache, since `ParseContext::expect_distinct_keys(n)` exists upstream and Nikaia does not call it. It was not. Callgrind over `intern(until(";"))` on 100 000 rows, sized against unsized: at **413** distinct keys, 1BRC's station count, sizing saves **one** instruction per row; at 5 000 it saves 60. The default 512 slots already holds 413 keys without thrashing.
+- **So there is nothing to add to the language for it.** A `.nika` file would need a way to say a key count - an attribute on the grammar, the count being the author's knowledge and not the emitter's to invent (ADR-011 D2) - and that is worth designing when a program wants thousands of distinct keys, not before. Upstream winnow-grammar#13 puts the numbers where the method is documented, so the next person reads them before calling it.
+- With this and the item above, **both performance items in the handoff are closed, and both closed by measuring rather than by building**: one was a real cost in a place nobody had looked, the other was not a cost at all.
+
 ### Changed (0.0.8 - the compiler parses 17% fewer instructions)
 
 - **Dependency**: `winnow-grammar` `9180b3d` -> `d431ed1` (upstream #12). A class scan is a run of nothing more often than it is a run of anything: the implicit whitespace skip runs between every pair of elements of every syntactic rule, and in a language written without gratuitous blanks most of those find nothing. The scan paid its whole eight-bytes-at-a-time setup to report that the first byte was not in the class; it tests that byte first now.
