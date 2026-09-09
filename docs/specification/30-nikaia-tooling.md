@@ -133,7 +133,22 @@ error[NK2401]: a change in `longest` broke its caller `report`
 
 **Trait methods.** Dynamic dispatch requires one contract per trait method. The ledger stores it as the join of all implementations; an implementation that broadens the contract produces a ledger diff and, where callers break, the same narrated error.
 
-**Distribution.** Published packages ship their ledger, so downstream projects build against stable contracts and receive identical diff-based explanations when a dependency upgrade changes one.
+**What the ledger records.** Not only borrows. The question it answers is *what must a caller know about a body it cannot see*, and "may it pause" and "may it fail" are two more answers to it ([ADR-020](adr/adr-020.md) D2):
+
+| key | on | meaning |
+| :--- | :--- | :--- |
+| `pub` | fn, type | reachable from outside the unit that declares it |
+| `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O |
+| `throws` | fn | Kap 7.1: it may fail |
+| `returns` | fn | what the result may point into — `borrows(a \| b)` |
+| `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
+| `tethered` | type | the fields that hold a view, directly or through another type that does |
+
+Only what is *true* is written: a `sync = false` on every entry would treble the file and say nothing, and a diff should show a promise being made or withdrawn. **An absent `sync` therefore means not `sync`** — while an absent *entry* means nothing is known and a caller may not assume. That distinction is what makes the file worth shipping rather than deriving.
+
+**Which inference wrote it.** The header carries `inference`, because a ledger produced by reading signatures is not one produced by reading bodies and must not be mistaken for it. Today's bootstrap compiler writes `stage0-signatures`: `sync` and `throws` are declared in the source and recorded exactly, and the borrow contract is the widest one the signature supports — a result that is a view may point into any view it was given. The `toolchain` recorded is **Nikaia's** version, not `rustc`'s: these contracts are decided by this compiler and never by the one it emits code for.
+
+**Distribution.** Published packages ship their ledger, so downstream projects build against stable contracts and receive identical diff-based explanations when a dependency upgrade changes one. `std` ships `std.contracts`, and it is the file a program's compiler reads when the program calls `io::…` or `fs::…`. A library whose implementation is partly in another language cannot have all of its contracts inferred, so those are **written in the ledger and reviewed like code**, marked as such, while the ones that can be inferred are regenerated and checked against the sources by the library's own tests ([ADR-020](adr/adr-020.md) D5).
 
 **Version control.** Commit `nikaia.contracts`. Merge conflicts resolve like lockfile conflicts: accept either side and run `nikaia build` to regenerate. The recorded `toolchain` hash lets the compiler detect when a toolchain upgrade (not your code) changed inference results; in that case the build output states explicitly that the contract changes were caused by the toolchain update, not by your code.
 
