@@ -19,6 +19,10 @@ rustc-backend = ["dep:rustc-executor"]
 name = "nikaia"
 required-features = ["rustc-backend"]
 
+[build-dependencies]
+# `build.rs` fingerprints the compiler's own sources for the cache key.
+sha2 = "0.10"
+
 [dependencies]
 bridge-orchestrator = { workspace = true }
 bridge-ir = { workspace = true }

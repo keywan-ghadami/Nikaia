@@ -52,27 +52,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub struct Choices {
     pub profile: String,
     pub backend: String,
-    /// The provenance of the unit's input (ADR-010), which decides the hash its
-    /// maps get and therefore the code that comes out.
-    ///
-    /// A choice like the other two, and here for the same reason: it is a
-    /// function of the source *and* of what `std`'s ledger says about the
-    /// sources that source calls. Editing that ledger changes the lowering
-    /// without changing the source, and a key that did not carry this would
-    /// hand back an artifact hashed the other way.
-    pub provenance: String,
 }
 
 impl Choices {
-    pub fn new(
-        profile: impl Into<String>,
-        backend: impl Into<String>,
-        provenance: impl Into<String>,
-    ) -> Self {
+    pub fn new(profile: impl Into<String>, backend: impl Into<String>) -> Self {
         Self {
             profile: profile.into(),
             backend: backend.into(),
-            provenance: provenance.into(),
         }
     }
 }
@@ -190,7 +176,6 @@ impl Key {
         b.field("toolchain", toolchain);
         b.field("profile", &choices.profile);
         b.field("backend", &choices.backend);
-        b.field("provenance", &choices.provenance);
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same
@@ -235,6 +220,38 @@ impl KeyBuilder {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect()
+    }
+}
+
+/// Everything one cached build produced, under names the caller chooses.
+///
+/// A build makes more than the emitted Rust - ADR-020's contract ledger is an
+/// output too, and a later stage may add more. Storing them under separate keys
+/// would let a "hit" be half a build: the Rust present, the ledger missing, and
+/// nothing to notice it. One envelope per key keeps a hit meaning what it says.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Artifacts(BTreeMap<String, String>);
+
+impl Artifacts {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with(mut self, name: impl Into<String>, content: impl Into<String>) -> Self {
+        self.0.insert(name.into(), content.into());
+        self
+    }
+
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(String::as_str)
+    }
+
+    /// Whether every name the caller needs is present. A build that asks for
+    /// more than an older entry holds must miss rather than proceed with a
+    /// gap - which is what makes adding an artifact a safe change.
+    pub fn has_all(&self, names: &[&str]) -> bool {
+        names.iter().all(|name| self.0.contains_key(*name))
     }
 }
 
@@ -330,14 +347,20 @@ impl Cache {
         })
     }
 
-    /// The skip decision. `Some(artifact)` means nothing has to be built.
+    /// The skip decision. `Some(artifacts)` means nothing has to be built -
+    /// not the lowering, and not the checks that ran before it, because only a
+    /// build that passed them was ever recorded (D13).
+    ///
+    /// A stored entry that cannot be decoded reads as a miss: it was written by
+    /// a different version of this format, and rebuilding is always the right
+    /// answer to not understanding what is there.
     pub fn lookup(
         &self,
         unit: &str,
         source: &str,
         choices: &Choices,
         asset_root: &Path,
-    ) -> Option<String> {
+    ) -> Option<Artifacts> {
         let record = self.current_record(unit, source, asset_root)?;
         let key = Key::build(
             &self.lock.compiler,
@@ -346,19 +369,22 @@ impl Cache {
             unit,
             &record,
         );
-        self.store.get(&key)
+        serde_json::from_str(&self.store.get(&key)?).ok()
     }
 
-    /// Records a freshly built unit: its inputs into the lockfile, its output
-    /// into the store. `assets` is what the build actually read - an empty map
-    /// is correct for a unit that read nothing.
+    /// Records a freshly built unit: its inputs into the lockfile, everything
+    /// it produced into the store. `assets` is what the build actually read -
+    /// an empty map is correct for a unit that read nothing.
+    ///
+    /// Only ever called for a build that succeeded, which is what lets a later
+    /// hit skip the checks as well as the work (D13).
     pub fn record(
         &mut self,
         unit: &str,
         source: &str,
         assets: BTreeMap<String, String>,
         choices: &Choices,
-        artifact: &str,
+        artifacts: &Artifacts,
     ) -> Result<()> {
         let record = UnitRecord {
             source: sha256_hex(source.as_bytes()),
@@ -371,7 +397,8 @@ impl Cache {
             unit,
             &record,
         );
-        self.store.put(&key, artifact)?;
+        let encoded = serde_json::to_string(artifacts).context("failed to encode artifacts")?;
+        self.store.put(&key, &encoded)?;
         self.lock.units.insert(unit.to_string(), record);
         Ok(())
     }
@@ -492,7 +519,11 @@ mod tests {
     use super::*;
 
     fn choices() -> Choices {
-        Choices::new("advanced", "rust", "trusted")
+        Choices::new("advanced", "rust")
+    }
+
+    fn emitted() -> Artifacts {
+        Artifacts::new().with("rust", "EMITTED")
     }
 
     fn record(source: &str) -> UnitRecord {
@@ -518,28 +549,11 @@ mod tests {
     /// artifact against itself.
     #[test]
     fn the_profile_changes_the_key() {
-        let lite = Choices::new("lite", "rust", "trusted");
-        let advanced = Choices::new("advanced", "rust", "trusted");
+        let lite = Choices::new("lite", "rust");
+        let advanced = Choices::new("advanced", "rust");
         assert_ne!(
             key_with("0.1.0", "rustc-x", &lite, "a.nika", "src"),
             key_with("0.1.0", "rustc-x", &advanced, "a.nika", "src"),
-        );
-    }
-
-    /// The provenance of the input decides the hash a map gets (ADR-010 D5), so
-    /// it decides the code - and a key that did not carry it would hand back an
-    /// artifact hashed the other way.
-    ///
-    /// It is not a function of the source alone: what `std`'s ledger says about
-    /// the sources a program calls decides it too, and that file can change
-    /// without the source changing.
-    #[test]
-    fn the_provenance_changes_the_key() {
-        let trusted = Choices::new("advanced", "rust", "trusted");
-        let untrusted = Choices::new("advanced", "rust", "untrusted");
-        assert_ne!(
-            key_with("0.1.0", "rustc-x", &trusted, "a.nika", "src"),
-            key_with("0.1.0", "rustc-x", &untrusted, "a.nika", "src"),
         );
     }
 
@@ -567,14 +581,14 @@ mod tests {
             key_with(
                 "0.1.0",
                 "rustc-x",
-                &Choices::new("advanced", "rust", "trusted"),
+                &Choices::new("advanced", "rust"),
                 "a",
                 "s"
             ),
             key_with(
                 "0.1.0",
                 "rustc-x",
-                &Choices::new("advanced", "bridge", "trusted"),
+                &Choices::new("advanced", "bridge"),
                 "a",
                 "s"
             ),
@@ -585,8 +599,8 @@ mod tests {
     /// next would leave the digest unchanged.
     #[test]
     fn fields_cannot_run_into_one_another() {
-        let ab = Choices::new("ab", "c", "t");
-        let a_bc = Choices::new("a", "bc", "t");
+        let ab = Choices::new("ab", "c");
+        let a_bc = Choices::new("a", "bc");
         assert_ne!(
             key_with("0.1.0", "t", &ab, "u", "s"),
             key_with("0.1.0", "t", &a_bc, "u", "s"),
@@ -747,13 +761,13 @@ mod tests {
                 "fn main() {}",
                 BTreeMap::new(),
                 &choices(),
-                "EMITTED",
+                &emitted(),
             )
             .unwrap();
 
         assert_eq!(
             cache.lookup("a.nika", "fn main() {}", &choices(), &dir),
-            Some("EMITTED".to_string())
+            Some(emitted())
         );
         // A changed source is a different unit as far as the key is concerned.
         assert!(cache
@@ -764,7 +778,7 @@ mod tests {
             .lookup(
                 "a.nika",
                 "fn main() {}",
-                &Choices::new("lite", "rust", "trusted"),
+                &Choices::new("lite", "rust"),
                 &dir
             )
             .is_none());
@@ -785,7 +799,7 @@ mod tests {
                 "fn main() {}",
                 BTreeMap::new(),
                 &choices(),
-                "EMITTED",
+                &emitted(),
             )
             .unwrap();
         cache.save().unwrap();
@@ -825,12 +839,12 @@ mod tests {
         let mut assets = BTreeMap::new();
         assets.insert("schema.sql".to_string(), sha256_hex(b"CREATE TABLE a;"));
         cache
-            .record("a.nika", "src", assets, &choices(), "EMITTED")
+            .record("a.nika", "src", assets, &choices(), &emitted())
             .unwrap();
 
         assert_eq!(
             cache.lookup("a.nika", "src", &choices(), &dir),
-            Some("EMITTED".to_string())
+            Some(emitted())
         );
 
         std::fs::write(&asset, "CREATE TABLE b;").unwrap();

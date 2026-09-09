@@ -371,6 +371,11 @@ fn a_source_is_found_inside_a_nested_block() {
 
 /// The provenance decides the map, which is the only thing it decides
 /// (ADR-010 D5): same table, same API, a different hash.
+///
+/// It is not in the build cache's key and does not need to be: it is a function
+/// of the source and of what `std`'s ledger says about the sources that source
+/// calls, and the compiler's fingerprint covers `std.contracts` by name
+/// (`crates/nikaia/build.rs`).
 #[test]
 fn the_provenance_chooses_the_map() {
     use nikaia::emit::{emit_program_with_trust, Profile};

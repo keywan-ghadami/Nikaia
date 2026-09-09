@@ -14,12 +14,18 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-use bridge_orchestrator::cache::{Cache, Choices};
+use bridge_orchestrator::cache::{Artifacts, Cache, Choices};
 use nikaia::emit::{emit_program, Profile};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// The tests store only the emitted Rust; what a real build also puts in the
+/// envelope (ADR-020's ledger) is exercised through the binary further down.
+fn rust(emitted: &str) -> Artifacts {
+    Artifacts::new().with("rust", emitted)
 }
 
 /// Lowers `source` the way the `rust` backend does.
@@ -58,7 +64,7 @@ fn a_profile_sensitive_example() -> String {
 fn an_unchanged_unit_comes_back_from_the_cache_unchanged() {
     let dir = common::scratch_dir("cache-roundtrip");
     let source = a_profile_sensitive_example();
-    let choices = Choices::new("advanced", "rust", "trusted");
+    let choices = Choices::new("advanced", "rust");
     let expected = lower(&source, Profile::Advanced);
 
     let mut cache = cache_in(&dir);
@@ -68,13 +74,20 @@ fn an_unchanged_unit_comes_back_from_the_cache_unchanged() {
     );
 
     cache
-        .record("1brc.nika", &source, BTreeMap::new(), &choices, &expected)
+        .record(
+            "1brc.nika",
+            &source,
+            BTreeMap::new(),
+            &choices,
+            &rust(&expected),
+        )
         .expect("record");
 
     assert_eq!(
         cache
             .lookup("1brc.nika", &source, &choices, &dir)
-            .as_deref(),
+            .as_ref()
+            .and_then(|artifacts| artifacts.get("rust")),
         Some(expected.as_str()),
         "the cached artifact is what the emitter produced"
     );
@@ -89,14 +102,20 @@ fn the_two_profiles_never_serve_each_others_artifacts() {
     let dir = common::scratch_dir("cache-profiles");
     let source = a_profile_sensitive_example();
 
-    let lite = Choices::new("lite", "rust", "trusted");
-    let advanced = Choices::new("advanced", "rust", "trusted");
+    let lite = Choices::new("lite", "rust");
+    let advanced = Choices::new("advanced", "rust");
     let lowered_lite = lower(&source, Profile::Lite);
     let lowered_advanced = lower(&source, Profile::Advanced);
 
     let mut cache = cache_in(&dir);
     cache
-        .record("1brc.nika", &source, BTreeMap::new(), &lite, &lowered_lite)
+        .record(
+            "1brc.nika",
+            &source,
+            BTreeMap::new(),
+            &lite,
+            &rust(&lowered_lite),
+        )
         .expect("record lite");
     cache
         .record(
@@ -104,21 +123,25 @@ fn the_two_profiles_never_serve_each_others_artifacts() {
             &source,
             BTreeMap::new(),
             &advanced,
-            &lowered_advanced,
+            &rust(&lowered_advanced),
         )
         .expect("record advanced");
 
     // Same unit, same source, two profiles - and each has to come back as
     // itself. Recording the second must not have displaced the first.
     assert_eq!(
-        cache.lookup("1brc.nika", &source, &lite, &dir).as_deref(),
+        cache
+            .lookup("1brc.nika", &source, &lite, &dir)
+            .as_ref()
+            .and_then(|artifacts| artifacts.get("rust")),
         Some(lowered_lite.as_str()),
         "lite is served lite"
     );
     assert_eq!(
         cache
             .lookup("1brc.nika", &source, &advanced, &dir)
-            .as_deref(),
+            .as_ref()
+            .and_then(|artifacts| artifacts.get("rust")),
         Some(lowered_advanced.as_str()),
         "advanced is served advanced"
     );
@@ -132,7 +155,7 @@ fn the_two_profiles_never_serve_each_others_artifacts() {
 fn an_edited_source_misses() {
     let dir = common::scratch_dir("cache-edit");
     let source = a_profile_sensitive_example();
-    let choices = Choices::new("advanced", "rust", "trusted");
+    let choices = Choices::new("advanced", "rust");
 
     let mut cache = cache_in(&dir);
     cache
@@ -141,7 +164,7 @@ fn an_edited_source_misses() {
             &source,
             BTreeMap::new(),
             &choices,
-            &lower(&source, Profile::Advanced),
+            &rust(&lower(&source, Profile::Advanced)),
         )
         .expect("record");
 
@@ -168,8 +191,8 @@ fn the_lockfile_survives_a_round_trip_and_holds_no_choices() {
             "1brc.nika",
             &source,
             BTreeMap::new(),
-            &Choices::new("lite", "rust", "trusted"),
-            &lower(&source, Profile::Lite),
+            &Choices::new("lite", "rust"),
+            &rust(&lower(&source, Profile::Lite)),
         )
         .expect("record");
     cache.save().expect("save");
@@ -289,6 +312,70 @@ fn the_cache_is_on_by_default_and_writes_nothing_beside_the_source() {
     assert!(
         !src.join("nikaia.lock").exists() && !src.join("target").exists(),
         "no cache artifact may be written beside the source outside a project"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A hit skips the parse, the `sync` check, the lowering and the inference -
+/// but the ledger still lands, because it is in the envelope with the Rust
+/// (ADR-021 D13), and `--locked` still runs, because "does the committed file
+/// still match" is the user's question and not the compiler's.
+#[test]
+fn a_hit_still_writes_the_ledger_and_still_answers_locked() {
+    let dir = common::scratch_dir("cache-hit-ledger");
+    let home = dir.join("cache");
+    let input = dir.join("hello.nika");
+    std::fs::copy(repo_root().join("tests/samples/hello_world.nika"), &input).expect("sample");
+    let output = dir.join("out.rs");
+    let ledger = dir.join("nikaia.contracts");
+
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .args(["--input", input.to_str().unwrap()])
+            .args(["--backend", "rust"])
+            .args(["--output", output.to_str().unwrap()])
+            .args(args)
+            .env("NIKAIA_CACHE_DIR", &home)
+            .output()
+            .expect("the nikaia binary runs")
+    };
+
+    let first = run(&[]);
+    assert!(first.status.success());
+    let fresh = std::fs::read_to_string(&ledger).expect("a fresh build writes the ledger");
+
+    // Remove it, so the second run can only produce it from the envelope.
+    std::fs::remove_file(&ledger).expect("remove");
+
+    let second = run(&[]);
+    assert!(second.status.success());
+    assert!(
+        String::from_utf8_lossy(&second.stdout).contains("from cache"),
+        "the second run has to be a hit for this test to mean anything"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&ledger).expect("a cached build writes it too"),
+        fresh,
+        "the ledger comes back byte for byte, from the cache rather than from inference"
+    );
+
+    // And --locked is still a real check on a hit: tamper with the committed
+    // file and the build has to refuse.
+    std::fs::write(&ledger, format!("{fresh}\n# hand-edited\n")).expect("tamper");
+    let locked = run(&["--locked"]);
+    assert!(
+        !locked.status.success(),
+        "--locked must still fail on a cache hit\nstdout: {}",
+        String::from_utf8_lossy(&locked.stdout)
+    );
+
+    // Restored, --locked passes again - so the failure was the tampering and
+    // not the cache path being broken.
+    std::fs::write(&ledger, &fresh).expect("restore");
+    assert!(
+        run(&["--locked"]).status.success(),
+        "--locked passes once the committed ledger matches again"
     );
 
     std::fs::remove_dir_all(&dir).ok();

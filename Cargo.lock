@@ -380,6 +380,7 @@ dependencies = [
  "nikaia-std",
  "rustc-executor",
  "serde_json",
+ "sha2",
  "winnow 0.7.15",
  "winnow-grammar",
 ]
