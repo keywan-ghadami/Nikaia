@@ -943,6 +943,7 @@ grammar! {
         // PEG keeps the first alternative that matches.
         rule primary_expr -> Expr =
             sp:spawn_expr -> { sp }
+          | d:dsl_block_expr -> { d }
           | d:dsl_from_expr -> { d }
           | i:if_expr -> { i }
           | m:match_expr -> { m }
@@ -1072,8 +1073,17 @@ grammar! {
             }
 
         // Part II, 10.2/10.5: `dsl Json from input` - a named grammar run over
-        // a value. The other `dsl` form takes a foreign-syntax block and is not
-        // parsed here.
+        // Part II, 10.5: a DSL block ends with `} eod`, and the end cannot be
+        // found by counting braces - the body is foreign syntax where a `}` may
+        // be a string character or absent entirely. So the body is what lies
+        // before the marker, taken verbatim; what it *means* is the target
+        // grammar's business and is decided when it is lowered.
+        rule dsl_block_expr -> Expr =
+            "dsl" name:NAME "{" body:until("} eod") "} eod" -> {
+                Expr::Dsl { target: name, context: None, content: body.to_string() }
+            }
+
+        // a value. The other `dsl` form takes a foreign-syntax block.
         rule dsl_from_expr -> Expr =
             // The binding is `source`, not `input`: the generated parser's own
             // closure takes a parameter called `input`, and a binding of that

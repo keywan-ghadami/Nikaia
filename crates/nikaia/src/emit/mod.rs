@@ -24,6 +24,8 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
+
+pub mod template;
 use winnow_grammar::Symbol;
 
 use crate::ast::{
@@ -942,6 +944,83 @@ impl<'p> Emitter<'p> {
 
     // --- Types ---
 
+    /// `dsl html { … } eod`, compiled here (ADR-017).
+    ///
+    /// `html` is the only target the bootstrap compiler knows. A `dsl sql { … }`
+    /// is a *deferred-parameter* DSL (ADR-007 D4) that has to reach a driver
+    /// with the statement intact, and saying so is better than lowering it to
+    /// something that reads like a template and is not one.
+    fn template(
+        &self,
+        out: &mut Out,
+        target: Symbol,
+        context: Option<&Symbol>,
+        content: &str,
+        depth: usize,
+        flow: Flow,
+    ) -> Result<()> {
+        let name = self.text(target);
+        if name != "html" {
+            return Err(anyhow!(
+                "`dsl {name} {{ … }}` is not lowered yet: the bootstrap compiler \
+                 compiles the `html` template (ADR-017) and nothing else. A DSL \
+                 whose block is a statement for a driver - `sql`, `postgres` - \
+                 needs the deferred-parameter binding of ADR-007 D4."
+            ));
+        }
+        if let Some(context) = context {
+            return Err(anyhow!(
+                "`dsl html` takes no context, and `{}` was given one",
+                self.text(*context)
+            ));
+        }
+
+        // The framing whitespace is not markup: the newline after `{` and the
+        // indentation before `} eod` are there because the template is written
+        // in a file, and a block form that kept them would make every value it
+        // produces carry the indentation of the function it was written in.
+        // Whitespace *inside* the body is kept exactly.
+        let segments = template::split(content.trim())?;
+
+        // ADR-017 D3. Every hole that escaping cannot make safe, at once: a
+        // template with three of them should say so three times rather than
+        // once per build.
+        let illegal = template::illegal(&segments);
+        if !illegal.is_empty() {
+            let mut message = String::from("the template has holes escaping cannot make safe\n");
+            for (expr, at) in &illegal {
+                message.push_str(&format!("  {}\n", template::illegal_message(expr, *at)));
+            }
+            return Err(anyhow!(message));
+        }
+
+        let pad = "    ".repeat(depth + 1);
+        let close = "    ".repeat(depth);
+        out.push(&format!("{{\n{pad}let mut __html = String::new();\n"));
+
+        for segment in &segments {
+            match segment {
+                template::Segment::Text(text) => {
+                    out.push(&format!("{pad}__html.push_str({});\n", rust_string(text)));
+                }
+                template::Segment::Hole { expr, .. } => {
+                    // Parsed as Nikaia and emitted as Nikaia: a hole holds an
+                    // expression of this language, not a foreign one.
+                    let parsed = parse_expression(&self.parsed.interner, expr)
+                        .map_err(|e| anyhow!("in the template hole `{{{expr}}}`: {e}"))?;
+                    out.push(&format!(
+                        "{pad}__html.push_str(&::nikaia_std::html::Render::render(&"
+                    ));
+                    self.expr(out, &parsed, depth + 1, flow)?;
+                    out.push("));\n");
+                }
+            }
+        }
+
+        out.push(&format!("{pad}__html\n{close}}}"));
+        Ok(())
+    }
+
     /// A path, with the map it names chosen the same way its type is.
     ///
     /// `HashMap::new` has no counterpart on a map with a hasher of its own -
@@ -1215,6 +1294,15 @@ impl<'p> Emitter<'p> {
             }
             Expr::LitBool(b) => out.push(&b.to_string()),
             Expr::Variable(name) => out.push(self.text(*name)),
+            // ADR-017: the template is compiled where it is written. What comes
+            // out is the string building a hand-written renderer would do, with
+            // `html::Render` at every hole - which is what makes the escaping a
+            // property of the template rather than of whoever filled it in.
+            Expr::Dsl {
+                target,
+                content,
+                context,
+            } => self.template(out, *target, context.as_ref(), content, depth, flow)?,
             Expr::Path(segments) => {
                 let path: Vec<&str> = segments.iter().map(|s| self.text(*s)).collect();
                 out.push(&self.path(&path));
@@ -1786,6 +1874,28 @@ pub(crate) fn holds_view(ty: &Type) -> bool {
 
 pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
     borrowing.contains(&ty.name) || ty.generics.iter().any(|g| names_borrowing(g, borrowing))
+}
+
+/// A Rust string literal for text the template wrote itself.
+///
+/// The text is markup by definition - the template author typed it - so nothing
+/// is escaped here; what is quoted is what Rust needs quoted to read the same
+/// bytes back.
+fn rust_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Walk every expression in a block, including the ones inside statements.
