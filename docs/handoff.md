@@ -188,16 +188,28 @@ needs** (§3). What is left, in the order it is worth doing.
    not invent (ADR-011 D2). Costs 22 % of the flagship's instructions.
    ADR-011 §4 has the measurement and why no `.nika` file gains an annotation.
    This is the first thing that wants a type checker (ADR-013 D7).
-4. **What the language still cannot say**, from `examples/README.md`: enums
-   (G12 — `calc.nika` carries an operator as a `&str` because two operators are
-   exactly what a sum type is), `std::http`'s request argument (G6) and template
-   escaping (G7), which are what `fortunes.nika` waits on.
+4. **What `fortunes.nika` waits on, now that it is decided.** G6 and G7 are no
+   longer open questions: [ADR-018](specification/adr/adr-018.md) says the
+   request is the handler's first *implicit* argument and what a handler's
+   return type answers with, and [ADR-017](specification/adr/adr-017.md) says a
+   template escapes every hole unconditionally, that `html::Raw` is the only way
+   to say "already markup", and that a hole in a position the grammar cannot
+   escape *for* is a compile error. `std::html::escape` is implemented and
+   tested. What is left is **implementation, in this order**: the `html` grammar
+   itself with the per-hole position check (G7), and the runtime binding a
+   server cannot exist without (G6) — which is the roadmap line after the
+   bootstrap compiler, not a language change.
 
 ### Closed since this file was written
 
 * `dec(p)` and `text(p)` inside a `#[frame]` — upstream, with `tests/ui/frames.rs`
   pinning that an argument which *can* consume the boundary is still rejected.
   `examples/1brc.nika` can drop its `unchecked`.
+* **G12, enums and `match`** — Part I 4.4 specified them and Stage 0 could not
+  lower them, so `calc.nika` carried an operator as a `&str` and compared it.
+  Three variant shapes and five pattern shapes lower now, each one the language
+  below spells the same way; an enum carrying a view takes the input lifetime as
+  a struct does, so one may be a grammar rule's return type.
 * The intern cache's fixed size — `expect_distinct_keys` upstream; see 2 above
   for what is left *here*.
 * Tuples (G10), ordered output over a map (G5), and a rejected parse saying
