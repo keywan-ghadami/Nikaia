@@ -9,7 +9,7 @@ extern crate rustc_driver;
 
 use anyhow::{bail, Context, Result};
 use bridge_ir::BridgeModule;
-use bridge_orchestrator::cache::{Cache, Choices, Layout};
+use bridge_orchestrator::cache::{Artifacts, Cache, Choices, Layout};
 use bridge_orchestrator::LanguageFrontend;
 use clap::Parser;
 use std::collections::BTreeMap;
@@ -189,11 +189,16 @@ fn explain(args: &Cli, source: &str) -> Result<()> {
 /// Stage 0: the transpiler. A `grammar` item reaches the parser backend only
 /// through here - the Bridge IR has no macro to carry it.
 ///
-/// The build cache (ADR-021) sits around the *lowering* and nothing else. The
-/// parse, the `sync` check and the ledger run on every build, hit or miss: they
-/// are checks, and a cache that skipped a check would be a cache that turned
-/// one off. That is the failure ADR-021 D5 refuses in the profile case, and it
-/// reads the same here.
+/// The build cache (ADR-021) covers the whole of it: on a hit nothing is
+/// parsed, checked, lowered or inferred, because only a build that passed every
+/// check was recorded and the key holds everything those checks depend on
+/// (D13). What a hit does *not* skip is `--locked`: comparing the committed
+/// ledger against what this build determined is the user's check, not the
+/// compiler's, and skipping it would change what the flag means.
+/// The names `lower_to_rust` stores its outputs under.
+const RUST: &str = "rust";
+const CONTRACTS: &str = "contracts";
+
 fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     let profile = Profile::parse(&args.profile)?;
     let output_path = args
@@ -221,7 +226,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
             &layout.lock,
             &layout.store,
             env!("NIKAIA_RUSTC_VERSION"),
-            env!("CARGO_PKG_VERSION"),
+            env!("NIKAIA_COMPILER"),
         ) {
             Ok(cache) => Some(cache),
             Err(error) => {
@@ -231,32 +236,42 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         }
     };
 
-    let parsed = parser::parse_to_ast(source)?;
-    check_sync(&parsed, &args.input, source)?;
-
+    // An entry that predates an artifact this build needs is a miss, not a
+    // gap: adding an output stays a safe change.
     let cached = cache
         .as_ref()
-        .and_then(|cache| cache.lookup(&unit, source, &choices, &layout.root));
+        .and_then(|cache| cache.lookup(&unit, source, &choices, &layout.root))
+        .filter(|artifacts| artifacts.has_all(&[RUST, CONTRACTS]));
     let reused = cached.is_some();
 
-    let rust = match cached {
-        Some(rust) => rust,
+    let (rust, ledger) = match &cached {
+        Some(artifacts) => (
+            artifacts.get(RUST).expect("checked above").to_string(),
+            artifacts.get(CONTRACTS).expect("checked above").to_string(),
+        ),
         None => {
+            let parsed = parser::parse_to_ast(source)?;
+            check_sync(&parsed, &args.input, source)?;
             let lowered = emit::emit_program(&parsed, profile)?;
+            let ledger = Ledger::infer(&parsed).render();
+
             if let Some(cache) = &mut cache {
                 // Nothing reports assets yet: compile-time I/O
                 // (`from "schema.sql"`) is specified and not implemented. The
                 // dimension travels through the key regardless, so switching it
                 // on later does not reshape the key.
+                let artifacts = Artifacts::new()
+                    .with(RUST, &lowered.rust)
+                    .with(CONTRACTS, &ledger);
                 let stored = cache
-                    .record(&unit, source, BTreeMap::new(), &choices, &lowered.rust)
+                    .record(&unit, source, BTreeMap::new(), &choices, &artifacts)
                     .and_then(|()| cache.save());
                 if let Err(error) = stored {
-                    // The artifact is in hand; only the next build is slower.
+                    // The outputs are in hand; only the next build is slower.
                     eprintln!("warning: the build cache could not be updated: {error:#}");
                 }
             }
-            lowered.rust
+            (lowered.rust, ledger)
         }
     };
 
@@ -265,8 +280,11 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     // The ledger goes beside the output, because that is where a build puts
     // what it produced. Part III 13.5 says the project root, which is what this
     // is once the orchestrator compiles a project rather than a file.
+    //
+    // This runs on a hit too: `--locked` asks whether the *committed* file
+    // still matches, and a cached build has as much to answer for there as a
+    // fresh one.
     let ledger_path = output_path.with_file_name("nikaia.contracts");
-    let ledger = Ledger::infer(&parsed).render();
     contracts(&ledger_path, &ledger, args.locked)?;
 
     println!(

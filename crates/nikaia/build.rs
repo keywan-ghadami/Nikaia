@@ -23,6 +23,15 @@ fn main() {
         std::env::var("RUSTC").unwrap_or("rustc".into())
     );
 
+    // The compiler's own identity for the cache key (ADR-021 D3), as a
+    // fingerprint of the sources that decide the output rather than as a
+    // version string. `CARGO_PKG_VERSION` stays "0.1.0" across every edit to
+    // the emitter, so keying on it would leave the key still while the thing
+    // it identifies moved - D7's second failure direction, where the cache
+    // serves the previous emitter's output and calls it fresh. It lands only
+    // on compiler developers, which is exactly why it would survive.
+    println!("cargo:rustc-env=NIKAIA_COMPILER={}", compiler_fingerprint());
+
     // The toolchain identity that goes into the build cache key (ADR-021 D2).
     // Resolved here rather than at run time: it is the rustc that built this
     // emitter, which is the one whose output the cache would be serving, and
@@ -36,4 +45,54 @@ fn main() {
         .map(|v| v.trim().to_string())
         .unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=NIKAIA_RUSTC_VERSION={version}");
+}
+
+/// SHA256 over everything that decides what the compiler emits: its own
+/// sources, and the `std` ledger `contracts::STD` bakes in with `include_str!`.
+/// Deterministic - the files are visited in sorted order and each is hashed
+/// with its path, length-prefixed so two different file sets cannot agree.
+fn compiler_fingerprint() -> String {
+    use sha2::{Digest, Sha256};
+
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let mut inputs = Vec::new();
+    collect(&manifest.join("src"), &mut inputs);
+    inputs.push(manifest.join("../nikaia-std/std.contracts"));
+    inputs.sort();
+
+    let mut hasher = Sha256::new();
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    for path in &inputs {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let name = path
+            .strip_prefix(&manifest)
+            .unwrap_or(path)
+            .to_string_lossy();
+        hasher.update((name.len() as u64).to_le_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(&bytes);
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
 }
