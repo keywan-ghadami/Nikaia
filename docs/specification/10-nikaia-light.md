@@ -61,7 +61,10 @@ Nikaia provides basic types to represent simple values.
     * `i32`: A standard integer (32-bit). Used for most numbers.
     * `i64`: A large integer (64-bit). Used for very large numbers.
 * **Floats:** Numbers with decimal points.
-    * `f64`: Double precision floating-point number.
+    * `f64`: Double precision floating-point number. A literal may carry an
+      **exponent** — `1.5e-4`, `2e3`, `9.54791938424326609e-04` — which is how a
+      program about physical quantities is written; the same number spelled out
+      in zeroes is how a digit gets lost.
 * **Booleans:** Logic values.
     * `bool`: Can only be `true` or `false`.
 * **Text:**
@@ -164,6 +167,12 @@ for i in 0..5 {
     println("Index: {i}")
 }
 ```
+
+`a..b` excludes its end and `a..=b` includes it. A range is an ordinary
+expression — it may be given a name, passed, or indexed with — and it binds
+**looser than every operator in it**, so `0..n - 1` is a range ending at
+`n - 1` rather than a range with something subtracted from it. That is the
+reading a loop head wants and the only one that is ever useful.
 
 ### 3.4. Pattern Matching (`match`)
 The `match` expression compares a value against a series of patterns. It is similar to a "switch" statement in other languages but ensures that every possible case is handled.

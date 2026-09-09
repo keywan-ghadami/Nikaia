@@ -224,7 +224,7 @@ grammar! {
         rule fn_item -> Item =
             vis:kw_pub?
             "fn"
-            name:ident?
+            name:NAME?
             generics:generic_list?
             params:fn_params
             sync_before:kw_sync?
@@ -273,13 +273,13 @@ grammar! {
 
         // Kap 9.2: use std::fs
         rule use_item -> Item =
-            "use" head:ident tail:path_segment* -> {
+            "use" head:NAME tail:path_segment* -> {
                 let mut path = vec![head];
                 path.extend(tail);
                 Item::Import { path }
             }
 
-        rule path_segment -> Symbol = "::" n:ident -> { n }
+        rule path_segment -> Symbol = "::" n:NAME -> { n }
 
         // --- Structs ---
         //
@@ -289,7 +289,7 @@ grammar! {
             borrowed:at_borrowed?
             vis:kw_pub?
             "struct"
-            name:ident
+            name:NAME
             generics:generic_list?
             "{"
             fields:field_defs?
@@ -310,7 +310,7 @@ grammar! {
         // name, a name with positional types, a name with named fields.
         rule enum_item -> Item =
             vis:kw_pub?
-            "enum" name:ident
+            "enum" name:NAME
             "{" variants:enum_variants "}"
             -> {
                 Item::Enum { name, variants, is_public: vis.is_some() }
@@ -326,13 +326,13 @@ grammar! {
         rule enum_variant_tail -> EnumVariant = "," v:enum_variant -> { v }
 
         rule enum_variant -> EnumVariant =
-            name:ident "(" types:type_refs ")" -> {
+            name:NAME "(" types:type_refs ")" -> {
                 EnumVariant { name, fields: VariantFields::Tuple(types) }
             }
-          | name:ident "{" fields:field_defs "}" -> {
+          | name:NAME "{" fields:field_defs "}" -> {
                 EnumVariant { name, fields: VariantFields::Named(fields) }
             }
-          | name:ident -> {
+          | name:NAME -> {
                 EnumVariant { name, fields: VariantFields::Unit }
             }
 
@@ -346,7 +346,7 @@ grammar! {
         rule field_def_tail -> FieldDef = "," f:field_def -> { f }
 
         rule field_def -> FieldDef =
-            name:ident ":" ty:type_ref -> {
+            name:NAME ":" ty:type_ref -> {
                 FieldDef { name, ty }
             }
 
@@ -365,7 +365,7 @@ grammar! {
         rule fn_arg_def_tail -> FnArg = "," arg:fn_arg_def -> { arg }
 
         rule fn_arg_def -> FnArg =
-            name:ident ":" ty:type_ref -> {
+            name:NAME ":" ty:type_ref -> {
                 FnArg { name, ty }
             }
 
@@ -386,14 +386,14 @@ grammar! {
         rule generic_param_tail -> GenericParam = "," p:generic_param -> { p }
 
         rule generic_param -> GenericParam =
-            name:ident
+            name:NAME
             -> { GenericParam { name } }
 
         // `&str` is a view marker (Part II, 10.6), not a lifetime - the `&` is
         // recorded and the emitter decides what it becomes.
         rule type_ref -> Type # "type" =
             view:amp?
-            name:ident
+            name:NAME
             generics:generic_type_args?
             -> {
                 Type {
@@ -432,7 +432,7 @@ grammar! {
         // --- Part II, Kapitel 10: Grammatiken ---
 
         rule grammar_item -> Item =
-            "grammar" name:ident
+            "grammar" name:NAME
             "{" rules:grammar_rule* "}"
             -> { Item::Grammar(GrammarDef { name, rules }) }
 
@@ -440,7 +440,7 @@ grammar! {
             frame:frame_attr?
             vis:kw_pub?
             "rule"
-            name:ident
+            name:NAME
             ret:return_type_arrow?
             label:rule_label?
             "="
@@ -537,7 +537,7 @@ grammar! {
         rule g_cut -> Spanned<Pattern> @= "=>" -> { Spanned::new(Pattern::Cut, _span) }
 
         rule g_bind -> Spanned<Pattern> @=
-            name:ident ":" p:g_postfix -> {
+            name:NAME ":" p:g_postfix -> {
                 Spanned::new(Pattern::Bind { name, pat: Box::new(p) }, _span)
             }
 
@@ -590,7 +590,7 @@ grammar! {
         // cannot tell them apart, and does not need to: what a name means is
         // the backend's question.
         rule g_ref -> Spanned<Pattern> @=
-            name:ident generics:generic_type_args? args:g_args? -> {
+            name:NAME generics:generic_type_args? args:g_args? -> {
                 Spanned::new(
                     Pattern::Ref {
                         name,
@@ -629,7 +629,7 @@ grammar! {
         // answer to them.
         rule g_fold -> Spanned<Pattern> @=
             "par_fold" "("
-            r:ident ","
+            r:NAME ","
             init:expr ","
             step:expr ","
             merge:expr ")"
@@ -643,7 +643,7 @@ grammar! {
                 })), _span)
             }
           | "fold" "("
-            r:ident ","
+            r:NAME ","
             init:expr ","
             step:expr ")"
             -> {
@@ -681,7 +681,7 @@ grammar! {
         rule let_stmt -> Stmt =
             "let"
             mutable:kw_mut?
-            name:ident
+            name:NAME
             ty:type_annotation?
             "="
             val:expr
@@ -709,14 +709,14 @@ grammar! {
             }
 
         rule for_bindings -> Vec<Symbol> =
-            "(" head:ident tail:ident_tail* ")" -> {
+            "(" head:NAME tail:ident_tail* ")" -> {
                 let mut names = vec![head];
                 names.extend(tail);
                 names
             }
-          | n:ident -> { vec![n] }
+          | n:NAME -> { vec![n] }
 
-        rule ident_tail -> Symbol = "," n:ident -> { n }
+        rule ident_tail -> Symbol = "," n:NAME -> { n }
 
         rule assign_stmt -> Stmt =
             target:postfix_expr op:assign_op value:expr ";"?
@@ -754,7 +754,7 @@ grammar! {
 
         // Kap 3.5: `value ?? fallback`.
         rule coalesce_expr -> Expr =
-            value:or_expr fallback:coalesce_tail? -> {
+            value:range_expr fallback:coalesce_tail? -> {
                 match fallback {
                     Some(fallback) => Expr::Coalesce {
                         value: Box::new(value),
@@ -782,13 +782,34 @@ grammar! {
             }
 
         rule closure_params -> Vec<Symbol> =
-            head:ident tail:closure_param_tail* -> {
+            head:NAME tail:closure_param_tail* -> {
                 let mut params = vec![head];
                 params.extend(tail);
                 params
             }
 
-        rule closure_param_tail -> Symbol = "," p:ident -> { p }
+        rule closure_param_tail -> Symbol = "," p:NAME -> { p }
+
+        // Kap 3.3. It binds looser than every operator below it, so `0..n - 1`
+        // is a range ending at `n - 1` rather than a range subtracted from -
+        // which is the reading a `for` head wants and the only one that is ever
+        // useful. `..=` is tried first, or its `=` would be read as the start
+        // of a comparison.
+        rule range_expr -> Expr =
+            start:or_expr end:range_tail? -> {
+                match end {
+                    Some((inclusive, end)) => Expr::Range {
+                        start: Box::new(start),
+                        end: Box::new(end),
+                        inclusive,
+                    },
+                    None => start,
+                }
+            }
+
+        rule range_tail -> (bool, Expr) =
+            "..=" e:or_expr -> { (true, e) }
+          | ".." e:or_expr -> { (false, e) }
 
         rule or_expr -> Expr =
             head:and_expr tail:or_tail* -> { fold_binary(head, tail) }
@@ -869,10 +890,10 @@ grammar! {
         // parentheses, so the plain method rule would stop before the `fn:` and
         // leave it stranded.
         rule postfix_tail -> Postfix =
-            "." name:ident lambda:trailing_lambda -> {
+            "." name:NAME lambda:trailing_lambda -> {
                 Postfix::Method(name, vec![lambda])
             }
-          | "." name:ident args:call_arg_list? -> {
+          | "." name:NAME args:call_arg_list? -> {
                 match args {
                     Some(args) => Postfix::Method(name, args),
                     None => Postfix::Field(name),
@@ -942,7 +963,7 @@ grammar! {
         // told apart by requiring the first field to carry a value - otherwise
         // `Stats(x)` would read as a struct with one shorthand field.
         rule ctor_lit -> Expr =
-            name:ident "(" head:named_field_init
+            name:NAME "(" head:named_field_init
             tail:field_init_tail* ","? ")"
             -> {
                 let mut fields = vec![head];
@@ -951,18 +972,52 @@ grammar! {
             }
 
         rule named_field_init -> FieldInit =
-            name:ident ":" value:expr -> {
+            name:NAME ":" value:expr -> {
                 FieldInit { name, value: Some(value) }
             }
 
         rule float_lit -> Expr =
-            whole:digits "." frac:digits -> {
-                Expr::LitFloat(format!("{whole}.{frac}"))
+            f:FLOAT -> { Expr::LitFloat(f) }
+
+        // Uppercase, so this is lexical: `1 . 5` is not a number, and neither
+        // is `1.0 e5`. The exponent is what a program about physical
+        // quantities is written in - `9.54791938424326609e-04` beside a `1.0`
+        // is the mass of Jupiter, and spelling it out in zeroes is how a digit
+        // gets lost. The text is kept as written and handed to the language
+        // below, which spells a float literal the same way.
+        rule FLOAT -> String =
+            w:digit1 "." f:digit1 e:EXPONENT? -> {
+                format!("{w}.{f}{}", e.unwrap_or_default())
             }
+          | w:digit1 e:EXPONENT -> { format!("{w}{e}") }
+
+        rule EXPONENT -> String =
+            "e" "-" d:digit1 -> { format!("e-{d}") }
+          | "e" "+" d:digit1 -> { format!("e+{d}") }
+          | "e" d:digit1 -> { format!("e{d}") }
+          | "E" "-" d:digit1 -> { format!("E-{d}") }
+          | "E" "+" d:digit1 -> { format!("E+{d}") }
+          | "E" d:digit1 -> { format!("E{d}") }
 
         // The same set without the two brace-led forms, for the head of an
         // `if` or a `for`, where a `{` is the body.
         rule head_expr -> Expr =
+            start:head_cmp end:head_range_tail? -> {
+                match end {
+                    Some((inclusive, end)) => Expr::Range {
+                        start: Box::new(start),
+                        end: Box::new(end),
+                        inclusive,
+                    },
+                    None => start,
+                }
+            }
+
+        rule head_range_tail -> (bool, Expr) =
+            "..=" e:head_cmp -> { (true, e) }
+          | ".." e:head_cmp -> { (false, e) }
+
+        rule head_cmp -> Expr =
             head:head_add tail:cmp_head_tail? -> {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
@@ -1023,7 +1078,7 @@ grammar! {
             // The binding is `source`, not `input`: the generated parser's own
             // closure takes a parameter called `input`, and a binding of that
             // name shadows it for the rest of the action.
-            "dsl" name:ident "from" source:head_expr -> {
+            "dsl" name:NAME "from" source:head_expr -> {
                 Expr::DslFrom { grammar: name, input: Box::new(source) }
             }
 
@@ -1056,6 +1111,20 @@ grammar! {
             }
           | path:pattern_path -> { MatchPattern::Path(path) }
 
+        // The compiler's identifier.
+        //
+        // The backend's `ident` accepts a **leading digit** - `1` is an
+        // identifier to it, and a grammar that wants otherwise says so, which
+        // is what this rule is. Without it `1.5` parses as the field `5` of a
+        // variable called `1`: harmless while the emitted text happens to read
+        // back the same, and wrong the moment there is more after it -
+        // `1.5e-4` came out as `1.5e - 4`, and `(2.0).sqrt()` would have been
+        // a field access too.
+        //
+        // `not(digit)` consumes nothing and demands nothing, so it costs a
+        // character comparison at the start of every name.
+        rule NAME -> Symbol = not(digit) n:ident -> { n }
+
         rule pattern_lit -> Expr =
             b:bool_lit -> { b }
           | s:str_lit -> { s }
@@ -1063,14 +1132,14 @@ grammar! {
           | n:int_lit -> { n }
 
         rule pattern_path -> Vec<Symbol> =
-            head:ident tail:path_segment* -> {
+            head:NAME tail:path_segment* -> {
                 let mut path = vec![head];
                 path.extend(tail);
                 path
             }
 
         rule ident_list -> Vec<Symbol> =
-            head:ident tail:ident_tail* -> {
+            head:NAME tail:ident_tail* -> {
                 let mut names = vec![head];
                 names.extend(tail);
                 names
@@ -1094,7 +1163,7 @@ grammar! {
             b:block -> { Expr::Block(b) }
 
         rule struct_lit -> Expr =
-            name:ident "{" fields:field_inits "}" -> {
+            name:NAME "{" fields:field_inits "}" -> {
                 Expr::StructLit { name, fields }
             }
 
@@ -1108,14 +1177,14 @@ grammar! {
         rule field_init_tail -> FieldInit = "," f:field_init -> { f }
 
         rule field_init -> FieldInit =
-            name:ident ":" value:expr -> {
+            name:NAME ":" value:expr -> {
                 FieldInit { name, value: Some(value) }
             }
-          | name:ident -> { FieldInit { name, value: None } }
+          | name:NAME -> { FieldInit { name, value: None } }
 
         // `Summary::new` is a path; `println(...)` a call; `acc` a variable.
         rule path_expr -> Expr =
-            head:ident tail:path_segment* args:call_arg_list? -> {
+            head:NAME tail:path_segment* args:call_arg_list? -> {
                 let mut segments = vec![head];
                 segments.extend(tail);
                 let base = if segments.len() == 1 {

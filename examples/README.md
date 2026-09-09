@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Five of the six programs here compile, run, and are checked by `cargo test`. The sixth is
+Six of the seven programs here compile, run, and are checked by `cargo test`. The seventh is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -11,9 +11,10 @@ needs is listed under *Gaps* below.
 | [`access-log.nika`](access-log.nika) | a web log summarised: several fields per line, a report at the end | ✅ `crates/nikaia/tests/examples.rs` |
 | [`config.nika`](config.nika) | an INI file with comments: a grammar that defines its own whitespace | ✅ `crates/nikaia/tests/examples.rs` |
 | [`json.nika`](json.nika) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `crates/nikaia/tests/examples.rs` |
+| [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the five is compiled and run **under both profiles**, and their output must be
+Each of the six is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -34,6 +35,12 @@ They are deliberately different shapes.
   the one that defines its own `WS` so that `#` comments are legal everywhere a blank is
   without another rule mentioning them. It is also the counterpart to 1BRC's fold: `setting*`
   collects, which is right for a configuration file and wrong at a billion rows.
+* **`n-body.nika`** is the one with **no grammar in it at all**. Five programs in a row that
+  all begin with a DSL would say Nikaia is a parser generator; this one is arithmetic in a
+  loop — `sync` methods, `&mut self`, indices and floats — and it is the only example here
+  whose numbers are directly comparable against other languages, because the CLBG publishes
+  the same program in some thirty of them with an exact expected output. Ours matches it to
+  the digit.
 * **`json.nika`** is the first input whose shape the *grammar* does not fix. `config.nika`'s
   tree is two levels deep because the grammar says so; a JSON value contains values, to
   whatever depth the document happens to go. An `enum` is that tree — six variants, and every
@@ -126,8 +133,9 @@ CoreMark (embedded C microbenchmark).
 
 ### Suggested order
 
-1. `1brc` — validates the 0.0.7 claims, needs only file IO.
-2. CLBG `n-body` — first comparable number against other languages.
+1. `1brc` — validates the 0.0.7 claims, needs only file IO. ✅ [`1brc.nika`](1brc.nika)
+2. CLBG `n-body` — first comparable number against other languages. ✅
+   [`n-body.nika`](n-body.nika), matching the published output for n = 1000 to the digit.
 3. CLBG `reverse-complement` and `k-nucleotide` — stdin/stdout IO with exact expected output.
 4. TechEmpower `fortunes` — once an HTTP stack and a DB driver exist.
 
@@ -266,6 +274,21 @@ compiler cannot see. Enums and `match` now lower: the three variant shapes (`Qui
 the same way so the lowering stays a transcription. `calc.nika`'s `mul_tail` yields
 `(Op, i64)`. An enum that carries a view takes the input lifetime exactly as a struct does,
 which is what lets one appear in a grammar rule's return type.
+
+**G14 — arithmetic did not read like arithmetic.** Found by `n-body.nika`, which is nothing
+but arithmetic and so found four things at once. **A range was not an expression**: Part I 3.3
+shows `for i in 0..5` and the bootstrap compiler could not parse it, so an index loop had no
+way to be written. `..=` comes with it, and a range binds looser than the arithmetic in it —
+`0..n - 1` ends at `n - 1`. **A float could not carry an exponent**, so
+`9.54791938424326609e-04` had to be spelled out in zeroes, which is how a digit gets lost.
+
+The two beneath those were bugs rather than gaps, and both were **silently wrong**. A group is
+not a node — the parser drops it, because that is how the tree was written rather than part of
+it — so `(a as f64).sqrt()` came out as `a as f64.sqrt()`, a cast to a type nobody named. And
+the compiler's identifier accepted a **leading digit**, because the backend's `ident` does and
+a grammar that wants otherwise has to say so: `1.5` parsed as the field `5` of a variable
+called `1`. That one printed back identically, which is exactly why it survived — the emitted
+text read the same right up until there was more after it, and `1.5e-4` was where it stopped.
 
 **G13 — no character literal, and three things that followed.** Found by `json.nika`, whose
 `unescape` has to ask what a character is: `'n'` was not an expression the language had, and

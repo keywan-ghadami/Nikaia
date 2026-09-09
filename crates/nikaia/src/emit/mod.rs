@@ -1095,6 +1095,15 @@ impl<'p> Emitter<'p> {
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr(_) => self.string(out, expr, depth, flow)?,
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.expr(out, start, depth, flow)?;
+                out.push(if *inclusive { "..=" } else { ".." });
+                self.expr(out, end, depth, flow)?;
+            }
             Expr::LitBool(b) => out.push(&b.to_string()),
             Expr::Variable(name) => out.push(self.text(*name)),
             Expr::Path(segments) => out.push(
@@ -1125,7 +1134,7 @@ impl<'p> Emitter<'p> {
                 method,
                 args,
             } => {
-                self.expr(out, receiver, depth, flow)?;
+                self.postfix_base(out, receiver, depth, flow)?;
                 out.push(&format!(".{}", self.text(*method)));
                 // Nikaia's `collect` builds a List; Rust's needs to be told
                 // what to build, and with no types here that is `Vec<_>`.
@@ -1162,11 +1171,11 @@ impl<'p> Emitter<'p> {
                 out.push(")");
             }
             Expr::Field { base, name } => {
-                self.expr(out, base, depth, flow)?;
+                self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!(".{}", self.text(*name)));
             }
             Expr::Index { base, index } => {
-                self.expr(out, base, depth, flow)?;
+                self.postfix_base(out, base, depth, flow)?;
                 out.push("[");
                 self.expr(out, index, depth, flow)?;
                 out.push("]");
@@ -1246,7 +1255,7 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(",\n{close}}}"));
             }
             Expr::Try(inner) => {
-                self.expr(out, inner, depth, flow)?;
+                self.postfix_base(out, inner, depth, flow)?;
                 out.push("?");
             }
             Expr::Spawn { .. } => {
@@ -1373,6 +1382,41 @@ impl<'p> Emitter<'p> {
             MatchPattern::Named { path: p, bindings } => {
                 out.push(&format!("{} {{ {} }}", path(p), names(bindings)));
             }
+        }
+        Ok(())
+    }
+
+    /// The thing a `.` or a `[` is applied to, parenthesised where it binds
+    /// looser than the postfix does.
+    ///
+    /// A postfix binds tighter than everything except another postfix in both
+    /// languages, so `(a as f64).sqrt()` and `(a + b).len()` need their
+    /// parentheses back: the parser drops them - a group is not a node, it is
+    /// how the tree was written - and without them the emitted Rust means
+    /// something else and often still compiles.
+    fn postfix_base(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow) -> Result<()> {
+        let parenthesise = matches!(
+            expr,
+            Expr::Binary { .. }
+                | Expr::Unary { .. }
+                | Expr::Cast { .. }
+                | Expr::Range { .. }
+                | Expr::If { .. }
+                | Expr::Match { .. }
+                | Expr::Block(_)
+                | Expr::Closure { .. }
+                | Expr::TryCatch { .. }
+                | Expr::Dsl { .. }
+                | Expr::DslFrom { .. }
+                | Expr::Asm { .. }
+        );
+
+        if parenthesise {
+            out.push("(");
+        }
+        self.expr(out, expr, depth, flow)?;
+        if parenthesise {
+            out.push(")");
         }
         Ok(())
     }

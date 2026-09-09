@@ -128,6 +128,18 @@ timeout = 30s
 }
 longest string: 3 characters",
     },
+    Example {
+        file: "n-body.nika",
+        input: None,
+        args: &["1000"],
+        // The Computer Language Benchmarks Game's published output for
+        // n = 1000, to the digit. That is what makes this example worth
+        // having: the number is not ours to choose, so the arithmetic either
+        // agrees with thirty other languages or it does not.
+        expected: "\
+-0.169075164
+-0.169087605",
+    },
 ];
 
 /// Written at specification level: they say what the language is meant to look
