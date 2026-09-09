@@ -14,9 +14,10 @@
 // Run:    ./1brc measurements.txt
 //
 // NOTE: this does not compile yet - see examples/README.md. The gaps it
-// depended on are specified now (G3 in ADR-008, G4 in ADR-009); what is left is
-// a compiler that implements them, plus the bounded repetition of ADR-009 D5,
-// which only makes the temperature parse faster and is not needed to run.
+// depended on are specified (G3 in ADR-008, G4 in ADR-009) and the grammar
+// features they need exist in the parser backend (`@frame`, `par_fold`, the
+// bounded repetition `digit{1,2}`, the word-at-a-time scan behind `until`);
+// what is left is the Nikaia compiler that lowers this file onto them.
 
 use std::fs
 use std::cli
@@ -43,20 +44,31 @@ grammar Measurements {
     // The name is a slice into the input buffer, never a copy (Part II, 10.6).
     // At a billion rows, copying each name into a String is the difference
     // between seconds and minutes.
-    rule NAME -> &str = s:until(";") -> { s }
+    //
+    // Up to the semicolon - or to the end of the frame, whichever comes first.
+    // `frame_end` is the boundary of the frame this rule is reached from
+    // (MEASUREMENT below), written once there and referenced here. It has to
+    // be said: a plain `until(";")` would run through a newline, and the
+    // compiler rejects that under a frame rather than quietly fixing it
+    // (ADR-009 D1). Either way it is one machine-word-at-a-time scan.
+    rule NAME -> &str = s:until(";" | frame_end) -> { s }
 
     // Temperatures always carry exactly one decimal, so they are parsed as
     // tenths and the whole aggregation stays in integer arithmetic. Floating
     // point comes back only when printing.
+    //
+    // `digit{1,2}` states the width the format fixes (-99.9 ..= 99.9). That
+    // is what lets the parser treat this as a fixed-width field rather than
+    // scan for where the digits stop - and a three-digit temperature is a
+    // parse error, as it should be (ADR-009 D5).
     rule TENTHS -> i32 =
-        neg:"-"? whole:DIGITS "." frac:DIGIT
+        neg:"-"? whole:digit{1,2} "." frac:digit
         -> {
-            let value = whole * 10 + frac
+            let mut value = 0
+            for d in whole { value = value * 10 + d.to_digit() }
+            value = value * 10 + frac.to_digit()
             if neg.is_some() { -value } else { value }
         }
-
-    rule DIGITS -> i32 = d:digit+ -> { d }
-    rule DIGIT  -> i32 = d:digit  -> { d }
 
     // The commit point (`=>`) says: once the separator is there, this line *is*
     // a measurement. A malformed temperature after it is an error to report,
@@ -67,15 +79,18 @@ grammar Measurements {
     // so the file can be cut blindly and each piece repairs its own start. The
     // compiler does not take that on trust - it checks that no rule reachable
     // from here can consume a "\n" in the middle, which is exactly what would
-    // make this wrong for, say, CSV with quoted fields.
-    @frame
-    rule measurement -> Reading =
-        name:NAME ";" => temp:TENTHS "\n"
+    // make this wrong for, say, CSV with quoted fields. Uppercase, because a
+    // frame is lexical: the implicit whitespace of a syntactic rule would eat
+    // the very newline the file is cut at - and `Hamburg ; 12.0` is not a
+    // measurement anyway.
+    @frame(boundary: "\n")
+    rule MEASUREMENT -> Reading =
+        name:NAME ";" => temp:TENTHS frame_end
         -> { Reading { name, temp } }
 
     // The entry rule *is* the file.
     //
-    // Writing `measurement*` here would be wrong at this size: it collects, and
+    // Writing `MEASUREMENT*` here would be wrong at this size: it collects, and
     // a billion Readings do not fit in memory. A fold threads an accumulator
     // through instead, so the parser consumes one measurement at a time and
     // nothing is ever collected - the parse runs in constant space.
@@ -91,7 +106,7 @@ grammar Measurements {
     // aggregation runs entirely in i64 tenths and only becomes f64 at print
     // time. Under --profile=lite the same grammar runs as a sequential fold.
     pub rule file -> Summary =
-        par_fold(measurement, Summary::new, fn(acc, m) { acc.record(m) },
+        par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) },
                  Summary::merge)
 }
 
@@ -206,7 +221,8 @@ fn main() throws {
     // file may be cut, `par_fold` says how the pieces combine. One parser per
     // core, one accumulator each, nothing shared and nothing locked until the
     // merge - and a billion rows collapse to a few thousand stations, so that
-    // merge costs nothing (ADR-009).
+    // merge costs nothing. A bad row in piece seven is reported at its line in
+    // the file, not in piece seven (ADR-009 D3).
     //
     // Parsing is pure computation, so this satisfies the `sync` rule (12.1) the
     // parallel form requires. Had a `println` found its way into an action

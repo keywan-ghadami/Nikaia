@@ -220,37 +220,51 @@ Note the commit point (`=>`): once the opening brace matched, this *is* a block,
 
 A parser that reads a file end to end uses one core. For a multi-gigabyte input that is the whole cost of the program. Nikaia parallelises the *parse itself* — but only when the grammar has said the two things that make it safe.
 
-**First: where may the file be cut?** A rule marked `@frame` declares that it can be found from an arbitrary offset by scanning to the next boundary, with no knowledge of what came before:
+**First: where may the file be cut?** A rule marked `@frame` declares that it can be found from an arbitrary offset by scanning to the next **boundary**, with no knowledge of what came before:
 
 ```nika
-@frame
-rule measurement -> Reading =
-    name:NAME ";" => temp:TENTHS "\n" -> { Reading { name, temp } }
+// Up to ";" - or to the end of the frame, whichever comes first. `frame_end`
+// is the boundary of the frame this rule is reached from: written once, in
+// the attribute below, and referenced here.
+rule NAME -> &str = s:until(";" | frame_end) -> { s }
+
+@frame(boundary: "\n")
+rule MEASUREMENT -> Reading =
+    name:NAME ";" => temp:TENTHS frame_end -> { Reading { name, temp } }
 ```
 
-The boundary is taken from the rule's trailing literal, or given explicitly as `@frame("\n")`.
+A bare `@frame` takes the boundary from the rule's trailing literal; a frame that ends in `frame_end` names it in the attribute. A frame must end in its boundary, and it is written **lexical** (uppercase) — the implicit whitespace of a syntactic rule would eat newlines, and a data format with no whitespace between its fields is lexical anyway.
 
-**This is checked, not believed.** Cutting at the next boundary is only correct if the boundary cannot appear *inside* a frame. The compiler works out which text the rule can consume and rejects the marker when the boundary can occur in the middle — the classic case is CSV with quoted fields, where a newline inside `"…"` would put the cut in the middle of a record. You get an error naming the rule that can swallow the boundary, rather than a wrong total on some inputs and not others.
+**This is checked, not believed — and never rewritten.** Cutting at the next boundary is only correct if the boundary cannot appear *inside* a frame. The compiler walks everything the rule can reach, and what consumes input is one of two things:
 
-**Second: how do two halves combine?** The entry rule folds with a **merge**:
+* **Safe** — a literal without the boundary in it; a built-in that cannot produce it (`digit1`, `ident`); lookahead; an `until(…)` whose terminator *covers* the boundary, as `NAME` above does with `frame_end`.
+* **Rejected**, with the rule and the pattern named — a literal that contains the boundary (the classic case is CSV with quoted fields, where a newline inside `"…"` would put the cut in the middle of a record); a built-in that can consume it (`any`, `multispace0`); a syntactic rule; an `until(…)` that does not cover the boundary, where the error says what to add; and `recover(…)`, whose skip cannot be kept inside a frame — recover per frame instead: `(item | until(frame_end)) frame_end`.
+
+Nothing here changes what a pattern means. `until(";")` consumes up to the next `;` wherever it is written; inside a frame that is a mistake, and the compiler says so and says what to write. The parser generated for a rule is the same whether or not a frame reaches it. You get a compile error, rather than a wrong total on some inputs and not others.
+
+**When the check cannot see through the format.** A boundary is a byte string, and some formats cannot be cut by searching for one — CSV with quoted newlines, records recognisable by how they *start*, escaped boundaries. `@frame(boundary: "\n", unchecked)` skips the check: you assert the invariant, as with `unsafe`, and the word is there to grep for. The attribute is a keyed list so that each of those formats can get its own key later (`quote`, `start`, `escape`, `scan`) without changing what the existing ones mean.
+
+**Second: how do two pieces combine?** The entry rule folds with a **merge**:
 
 ```nika
 pub rule file -> Summary =
-    par_fold(measurement, Summary::new, fn(acc, m) { acc.record(m) }, Summary::merge)
+    par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) }, Summary::merge)
 ```
 
-`par_fold` is `fold` plus that merge. With both declarations in hand the compiler generates the rest: the file is cut into one piece per core, each piece repairs its own start to the next boundary so that every frame belongs to exactly one worker, each worker folds into its own accumulator with nothing shared, and the accumulators are merged at the end. Nothing about chunks appears in your program:
+`par_fold` is `fold` plus that merge, and it must be the whole body of its rule. With both declarations in hand the compiler generates the rest: the file is cut into one piece per core, each piece repairs its own start to the next boundary so that every frame belongs to exactly one worker, each worker folds into its own accumulator with nothing shared, and the accumulators are merged at the end. A failing piece reports its error at its position in the whole file. Nothing about chunks appears in your program:
 
 ```nika
 let data = fs::map(path)
 let totals = dsl Measurements from data
 ```
 
+**Pieces and the whole agree — always.** A `par_fold` rule's parser is the per-piece parser, so it skips no whitespace at its entry, unlike every other rule: whitespace skipped there would be skipped at every cut rather than once. A frame that begins with a space keeps it; whitespace-only text between two frames is an error, in pieces and in one go alike. That is what makes the number of cores unable to change the answer — on inputs the grammar accepts and on inputs it rejects.
+
 **Why you have to ask for it.** The compiler will not turn a `fold` into a `par_fold` on its own, even when it looks associative. Adding `f64` is not associative, so the number of cores would quietly change the answer. Writing `par_fold` is you saying that a different chunk count is the same result to you — for an aggregation over integers, as above, it is.
 
 Under the **Lite** profile `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
 
-**What you get for free.** Because the grammar states the format, the generated parser is allowed to exploit it: scanning for a separator or a frame boundary works a machine word at a time rather than byte by byte, on every target and with no `unsafe` in sight. See [ADR-009](adr/adr-009.md).
+**What you get for free.** Because the grammar states the format, the generated parser is allowed to exploit it: scanning for a separator or a frame boundary works a machine word at a time rather than byte by byte, on every target and with no `unsafe` in sight — and a terminator with up to three alternatives, like `until(";" | frame_end)`, is still one scan. See [ADR-009](adr/adr-009.md).
 
 ## Chapter 11: Nikaia Advanced Profile (The Compute Engine)
 
