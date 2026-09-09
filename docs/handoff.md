@@ -113,6 +113,7 @@ What closed them, upstream, each measured against this corpus:
 | an element that *began* is a requirement (#6) | A3, F3, and the second expectation in A1, A2, C3, C5, E3 |
 | a losing alternative keeps its error (#8) | A4, B1, G1, F1 |
 | a failing lookahead is not an expectation (#10) | C2, with the grammar change below |
+| the message shows the line, with a caret (#11) | the closing finding — all twenty-six rows |
 
 Two of them are worth reading before touching this area again. A4, B1 and G1
 were filed twice as "trivia wins on progress" and were never that: `alt` drops
@@ -150,13 +151,22 @@ Nikaia's own grammar labels `expr`, `unary_expr`, `stmt`, `item` and
 reason worth keeping: `1 + ` fails inside `add_tail`, whose operand is a
 `mul_expr`, so the label on `expr` never sees it.
 
-### The finding that may be worth more than all of it
+### The finding that was worth more than all of it — closed
 
-**No parse error shows the source line.** Every message is a headline plus
-`in <rule>` lines. A *rustc* diagnostic routed through `nikaia --explain` gets a
-snippet and a caret (ADR-012, `diagnostics::render`). A reader of
-`at line 3, column 5` never sees line 3. This applies to all 26 rows and nothing
-above touches it.
+**No parse error showed the source line.** Every message was a headline plus
+`in <rule>` lines, and a reader of `at line 3, column 5` never saw line 3, while
+a *rustc* diagnostic routed through `nikaia --explain` got a snippet and a caret
+(ADR-012, `diagnostics::render`). It applied to all 26 rows and nothing else in
+this file touched it.
+
+`ParseError::render(source)` now prints the line with a caret under the token
+(winnow-grammar#11, ADR 15 point 13). It lands in both places at once, because
+both go through the same call: the compiler's messages for `.nika` files, and
+the errors a *generated* program prints about its own input — the `catch` in
+`examples/access-log.nika` shows the rejected line and points at the character,
+which `crates/nikaia/tests/examples.rs` checks end to end. What is still not
+there, against a rustc diagnostic: a file name in front of the message (the
+driver knows the input, not where it came from) and `= help:` lines.
 
 ---
 

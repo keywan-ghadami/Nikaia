@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed (0.0.8 - every error message shows the line it is about)
+
+- **Dependency**: `winnow-grammar` `e222ae8` -> `9180b3d` (upstream #11), and `tests/errors/EXPECTED.txt` regenerated. This is `docs/error-corpus.md`'s **closing finding**, and the only one that applied to all twenty-six rows at once: every message was a headline plus `in <rule>` lines, so a reader of `at line 3, column 5` never saw line 3 - while a rustc diagnostic routed through `nikaia --explain` had carried a snippet and a caret since ADR-012. A position a reader still has to go and look up is half a diagnostic.
+
+```text
+expected `}`; found unexpected token `temp` at line 3, column 5
+   3 |     temp: i32
+           ^^^^
+note: also possible here: `,`, `//`
+in struct_item
+```
+
+- **It reaches two places at once**, because both go through the same `render`: the compiler's own messages for `.nika` source, which is every corpus row, and the errors a **generated program** prints about *its* input. `examples/access-log.nika`'s `catch` now shows the rejected log line and points at the character the parse stopped at, and `crates/nikaia/tests/examples.rs` checks that end to end - a Nikaia program compiled, run on a broken file, and its message read.
+- **The caret is as wide as the token that was found**, and a line too long to print is windowed around the position rather than scrolled off the terminal. What is still missing against a rustc diagnostic is a file name in front of the message - the driver knows the input and not where it came from - and `= help:` lines.
+
 ### Decided (0.0.8 - ADR-018: the handler sees the request, because the lambda already could)
 - **[ADR-018](docs/specification/adr/adr-018.md)** closes G6's *decision*. Part III 17.1's server takes a handler that takes nothing - `.route("/") fn: "Hello World"` - so a handler could read no query parameter and set no status code. `fortunes.nika` never noticed, because the fortunes benchmark needs neither; the other six TechEmpower tests need both.
 - **The request is the handler's first argument, under the rule the language already has.** A block lambda takes as many implicit arguments as its body reaches for (Part I, 5.3), so `fn: "Hello World"` keeps working *unchanged and for the same reason it worked before*, and `fn: a.query("name") ?? "world"` reads one. Nothing is added to the language, and there is no second implicit argument: a response is returned, not filled in.

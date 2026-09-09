@@ -1,6 +1,8 @@
 === A1
 Parse error:
 expected `}`; found unexpected token `temp` at line 3, column 5
+   3 |     temp: i32
+           ^^^^
 note: also possible here: `,`, `//`
 in struct_item
 in item
@@ -10,6 +12,8 @@ in program
 === A2
 Parse error:
 expected `)`; found unexpected token `b` at line 1, column 13
+   1 | fn f(a: i32 b: i32) {
+                   ^
 note: also possible here: `,`, `//`
 in fn_params
 in fn_item
@@ -20,6 +24,8 @@ in program
 === A3
 Parse error:
 unexpected end of input, expected `}` at line 3, column 1
+   3 | 
+       ^
 note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
@@ -30,6 +36,8 @@ in program
 === A4
 Parse error:
 expected expression; found unexpected token `[` at line 2, column 14
+   2 |     let xs = [1, 2
+                    ^
 note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
@@ -58,6 +66,8 @@ in program
 === A5
 Parse error:
 expected `}`; found unexpected token `,` at line 2, column 12
+   2 |     a: i32,,
+                  ^
 note: also possible here: `//`, identifier
 in struct_item
 in item
@@ -67,6 +77,8 @@ in program
 === B1
 Parse error:
 expected expression; found unexpected token `}` at line 4, column 1
+   4 | }
+       ^
 note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
@@ -95,6 +107,8 @@ in program
 === B2
 Parse error:
 expected expression; found unexpected token `}` at line 3, column 1
+   3 | }
+       ^
 note: also possible here: `"`, `&`, `(`, `//`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
@@ -127,6 +141,8 @@ in program
 === B4
 Parse error:
 expected expression; found unexpected token `)` at line 2, column 18
+   2 |     let z = f(1, )
+                        ^
 note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in expr
 in call_args_tail
@@ -156,6 +172,8 @@ in program
 === B5
 Parse error:
 expected type; found unexpected token `=` at line 2, column 12
+   2 |     let x: = 1
+                  ^
 note: also possible here: `&`, `//`
 in COMMENT
 in item 1
@@ -173,6 +191,8 @@ in program
 === C1
 Parse error:
 expected `:`; found unexpected token `&` at line 2, column 10
+   2 |     name &str,
+                ^
 note: also possible here: `//`
 in COMMENT
 in item 2
@@ -186,6 +206,8 @@ in program
 === C2
 Parse error:
 expected `->`; found unexpected token `{` at line 2, column 30
+   2 |     rule A -> i32 = n:digit1 { n }
+                                    ^
 note: also possible here: `"`, `(`, `//`, `=>`, `fold`, `par_fold`, identifier
 in g_alt
 in g_alts
@@ -198,6 +220,8 @@ in program
 === C3
 Parse error:
 expected `)`; found unexpected token `{` at line 1, column 10
+   1 | fn main( {
+                ^
 note: also possible here: `&`, `//`, `self`, identifier
 in fn_params
 in fn_item
@@ -211,6 +235,8 @@ in program
 === C5
 Parse error:
 expected `}`; found unexpected token `struct` at line 2, column 5
+   2 |     struct T { }
+           ^^^^^^
 note: also possible here: `//`, `fn`, `pub`
 in impl_item
 in item
@@ -220,6 +246,8 @@ in program
 === D1
 Parse error:
 expected end of input; found unexpected token `/` at line 3, column 1
+   3 | / ein kaputter Kommentar
+       ^
 note: also possible here: `//`, `@borrowed`, `enum`, `fn`, `impl`, `pub`, `use`, item
 in COMMENT
 in item 2
@@ -231,6 +259,8 @@ in WS
 === D3
 Parse error:
 expected `{`; found unexpected token `C` at line 2, column 28
+   2 |     rule A -> i32 = a:B -> C -> { 1 }
+                                  ^
 note: also possible here: `//`
 in block
 in g_alt
@@ -244,6 +274,8 @@ in program
 === E1
 Parse error:
 expected `}`; found unexpected token `-` at line 2, column 32
+   2 |     rule A -> i32 = d:digit{1, -> { 1 }
+                                      ^
 note: also possible here: `//`, digits
 in g_bounds
 in g_repeat
@@ -264,6 +296,8 @@ in program
 === E3
 Parse error:
 expected `->`; found unexpected token `}` at line 3, column 1
+   3 | }
+       ^
 note: also possible here: `"`, `(`, `*`, `+`, `//`, `=>`, `?`, `fold`, `par_fold`, `{`, identifier
 in g_alt
 in g_alts
@@ -276,6 +310,8 @@ in program
 === F1
 Parse error:
 unexpected end of input, expected `"` at line 4, column 1
+   4 | 
+       ^
 note: also possible here: `\`, any character
 in STR_CHAR
 in item 16
@@ -304,6 +340,8 @@ in program
 === F2
 Parse error:
 expected end of input; found unexpected token `}` at line 3, column 1
+   3 | }
+       ^
 note: also possible here: `//`, `@borrowed`, `enum`, `fn`, `impl`, `pub`, `use`, item
 in COMMENT
 in item 2
@@ -312,6 +350,8 @@ in WS
 === F3
 Parse error:
 unexpected end of input, expected `}` at line 4, column 1
+   4 | 
+       ^
 note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
@@ -322,6 +362,8 @@ in program
 === G1
 Parse error:
 expected expression; found unexpected token `“` at line 2, column 13
+   2 |     let x = “hi”
+                   ^
 note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
