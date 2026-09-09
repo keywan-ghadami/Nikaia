@@ -196,13 +196,13 @@ fn the_profile_chooses_the_parallelism_and_nothing_else() {
 
     assert!(
         advanced.contains(
-            "Measurements::parse_file_pieces(&*data, ParseContext::<()>::default, Parallelism::Auto)?"
+            "Measurements::parse_file_pieces(&*data, &ParseContext::<()>::default(), Parallelism::Auto)?"
         ),
         "{advanced}"
     );
     assert!(
         lite.contains(
-            "Measurements::parse_file_pieces(&*data, ParseContext::<()>::default, Parallelism::Off)?"
+            "Measurements::parse_file_pieces(&*data, &ParseContext::<()>::default(), Parallelism::Off)?"
         ),
         "{lite}"
     );
@@ -263,8 +263,9 @@ fn the_generated_parser_gives_the_same_answer_however_it_is_cut() {
         Parallelism::Pieces(64),
         Parallelism::Auto,
     ] {
-        let got = Measurements::parse_file_pieces(MEASUREMENTS, ParseContext::<()>::default, how)
-            .unwrap_or_else(|e| panic!("{how:?}: {}", e.render(MEASUREMENTS)));
+        let got =
+            Measurements::parse_file_pieces(MEASUREMENTS, &ParseContext::<()>::default(), how)
+                .unwrap_or_else(|e| panic!("{how:?}: {}", e.render(MEASUREMENTS)));
         assert_eq!(got, expected, "{how:?}");
     }
 }
@@ -279,7 +280,7 @@ fn a_frame_that_does_not_parse_is_rejected_whatever_the_cut() {
 
     for how in [Parallelism::Off, Parallelism::Pieces(2), Parallelism::Auto] {
         assert!(
-            Measurements::parse_file_pieces(broken, ParseContext::<()>::default, how).is_err(),
+            Measurements::parse_file_pieces(broken, &ParseContext::<()>::default(), how).is_err(),
             "{how:?} accepted a broken frame"
         );
     }

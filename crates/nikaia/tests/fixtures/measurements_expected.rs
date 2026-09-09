@@ -14,7 +14,7 @@ grammar! {
             neg:"-"? whole:digit{1,2} "." frac:digit
             -> {
                 let mut value = 0;
-                for d in whole { value = value * 10 + digit_value(d); }
+                for d in whole.chars() { value = value * 10 + digit_value(d); }
                 value = value * 10 + digit_value(frac);
                 if neg.is_some() { -value } else { value }
             }

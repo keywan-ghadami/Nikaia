@@ -1268,7 +1268,7 @@ impl<'p> Emitter<'p> {
             out.push(&format!("{name}::parse_{rule_name}_pieces(&*"));
             self.expr(out, input, depth, flow)?;
             out.push(&format!(
-                ", ParseContext::<()>::default, {})?",
+                ", &ParseContext::<()>::default(), {})?",
                 self.profile.parallelism()
             ));
             return Ok(());

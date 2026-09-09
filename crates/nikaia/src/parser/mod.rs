@@ -989,8 +989,11 @@ grammar! {
         // a value. The other `dsl` form takes a foreign-syntax block and is not
         // parsed here.
         rule dsl_from_expr -> Expr =
-            "dsl" _sp:skip_ws name:ident _sp2:skip_ws "from" _sp3:skip_ws input:head_expr -> {
-                Expr::DslFrom { grammar: name, input: Box::new(input) }
+            // The binding is `source`, not `input`: the generated parser's own
+            // closure takes a parameter called `input`, and a binding of that
+            // name shadows it for the rest of the action.
+            "dsl" _sp:skip_ws name:ident _sp2:skip_ws "from" _sp3:skip_ws source:head_expr -> {
+                Expr::DslFrom { grammar: name, input: Box::new(source) }
             }
 
         rule if_expr -> Expr =

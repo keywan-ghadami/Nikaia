@@ -22,7 +22,9 @@
 //
 // It does what it says: `fs::map` maps the file (ADR-014 D2), and under the
 // Advanced profile the pieces are parsed on every core (D3) - 8 million lines
-// on 4 cores took 1.05 s against 3.99 s sequentially, with identical output.
+// on 4 cores took 0.19 s against 0.57 s sequentially, with identical output.
+// Sequentially it is 659 instructions per row, against 840 for the same
+// aggregation written naively in Rust and 688 for it hand-tuned (ADR-015 D3).
 // `digit_value`, called for every digit below, is itself written in Nikaia and
 // compiled into `std` by this compiler (D1).
 //
@@ -77,7 +79,7 @@ grammar Measurements {
         neg:"-"? whole:digit{1,2} "." frac:digit
         -> {
             let mut value = 0
-            for d in whole { value = value * 10 + digit_value(d) }
+            for d in whole.chars() { value = value * 10 + digit_value(d) }
             value = value * 10 + digit_value(frac)
             if neg.is_some() { -value } else { value }
         }
