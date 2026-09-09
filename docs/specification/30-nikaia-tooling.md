@@ -413,6 +413,60 @@ fn main() {
 }
 ```
 
+**The handler and the request** ([ADR-018](adr/adr-018.md)). A handler is a lambda, so the rule
+about its arguments is the one Part I 5.3 already gives: it takes as many implicit arguments as
+its body reaches for. The first — and only — one is the request.
+
+```nika
+.route("/")         fn: "Hello World"                      // mentions none, takes none
+.route("/hello")    fn: "Hello, {a.query("name") ?? "world"}"
+.route("/fortunes") fn(request) { render(request) }         // or name it
+```
+
+What a handler returns is what answers the request:
+
+| returns | becomes |
+| :--- | :--- |
+| `String` | 200, `text/plain; charset=utf-8` |
+| `html::Raw` | 200, `text/html; charset=utf-8` |
+| `Response` | itself |
+| `T throws` | the value on success; on failure **500 with a generic body**, the error logged |
+
+The last row is a decision: an error's message is written for the operator, and a handler that
+returns one to the client is how internal paths and driver messages end up in a bug report. A
+status code, a header or a body of one's own is a `Response`, built where it is returned —
+`http::Response(status: 400, body: "id is required")`.
+
+The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
+and `query(name)` yield `&str`, so a parameter used inside the request's scope costs nothing and
+one kept past it has to be owned (Part I, 6.6). `query` and `header` return the nullable type of
+Part I 3.5 rather than an empty string, and `method()` returns an enum rather than a string.
+
+A handler does I/O, so it is not `sync`; it carries no `async` marker and no `await`, and the
+profile chooses the executor and nothing else.
+
+**`std::html`**
+
+The escaping a template's contract rests on ([ADR-017](adr/adr-017.md)).
+
+```nika
+pub fn escape(text: &str) -> String        // for a text node or a quoted attribute
+pub struct Raw                             // "this is already markup"
+pub fn Raw::new(markup: String) -> Raw     // the audit point, and the only constructor
+```
+
+A template grammar escapes **every hole, unconditionally** — there is no flag at a hole that
+turns it off, and no exemption for data provenance calls trusted, because provenance is evidence
+about where bytes came from and escaping is not a place to spend evidence. The one way to say a
+value is already markup is to give it the type `Raw`, so that the decision is made where the
+value is built rather than at each of the places it is used.
+
+`escape` handles the five characters that change what HTML means in a text node or a quoted
+attribute value — `&`, `<`, `>`, `"`, `'` — and returns its input unchanged when none of them are
+present. It does **not** make text safe inside `<script>`, inside CSS, in an unquoted attribute or
+in a URL: those need different escaping, which is why a hole in one of those positions is a
+compile error naming the position rather than a call to this function.
+
 **`std::fs` (Compiler Magic)**
 File system access is designed to look **blocking** (synchronous) for ease of use. However, the compiler automatically transforms these calls into **non-blocking** state machines backed by the runtime's reactor. You never block the thread, but you never have to write "callback hell".
 
