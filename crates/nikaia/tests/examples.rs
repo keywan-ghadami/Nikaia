@@ -234,6 +234,18 @@ fn a_malformed_line_is_reported_and_no_summary_is_printed() {
         "the message should say which rule wanted it: {reported}"
     );
 
+    // …and it shows the line, with a caret under the character it stopped at.
+    // A position a reader has to go and look up is half a diagnostic, and the
+    // program prints this where a person will see it.
+    assert!(
+        reported.contains("   2 | 198.51.100.4 GET /oops 20 512"),
+        "the message should show the line: {reported}"
+    );
+    assert!(
+        reported.lines().any(|l| l.trim_start().starts_with('^')),
+        "the message should point at the character: {reported}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 

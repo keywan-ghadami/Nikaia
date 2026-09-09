@@ -13,8 +13,8 @@ by a test. Every path taken from here should show its effect on all
 twenty-six at once.
 
 **Two columns, because there are two states.** *Before* is `winnow-grammar`
-`024e3d3` — what a user got when this corpus was written. *Today* is `f609cea`
-and is what a user gets now. Three changes lie between them, and each was
+`024e3d3` — what a user got when this corpus was written. *Today* is `9180b3d`
+and is what a user gets now. Six changes lie between them, and each was
 measured against this file:
 
 1. **an expectation is ranked by whether the grammar required it**
@@ -33,6 +33,9 @@ measured against this file:
    (winnow-grammar#10) — a `peek(…)` demands nothing, so its failure is not an
    expectation, and the grammar can use one to tell a repetition bound apart
    from a brace group without the test ending up in every message.
+6. **the message shows the line it is about, with a caret under the token**
+   (winnow-grammar#11) — the last finding this corpus turned up on its own, and
+   the only one that applies to all twenty-six rows at once.
 
 A message today can carry a second line, `note: also possible here: …`, holding
 what the grammar would have accepted but did not require. The columns below
@@ -207,11 +210,34 @@ what a reader acts on, but the position is still the end of the file rather
 than the opening quote. The text is right and the position is not; remembering
 the opening delimiter is a separate mechanism and is not done.
 
-**No parse error shows the source line.** Every row above is a one-line headline
-plus `in <rule>` lines. A rustc diagnostic routed through `nikaia --explain`
-gets a snippet and a caret ([ADR-012](specification/adr/adr-012.md)); a parse
-error gets `at line 3, column 5` and no line 3. That asymmetry applies to all
-twenty-six rows and may be worth more than any of the three groups above.
+**No parse error showed the source line — closed.** Every row above used to be a
+one-line headline plus `in <rule>` lines. A rustc diagnostic routed through
+`nikaia --explain` got a snippet and a caret
+([ADR-012](specification/adr/adr-012.md)); a parse error got `at line 3, column
+5` and no line 3. That asymmetry applied to all twenty-six rows and was worth
+more than any single group above, because a position a reader still has to go
+and look up is half a diagnostic.
+
+`render(source)` now prints the line under the headline with a caret under the
+token (winnow-grammar#11, ADR 15 point 13):
+
+```text
+expected `}`; found unexpected token `temp` at line 3, column 5
+   3 |     temp: i32
+           ^^^^
+note: also possible here: `,`, `//`
+in struct_item
+```
+
+It reaches two places at once, because both go through the same `render`: the
+compiler's own messages for `.nika` files, which is every row here, and the
+errors a *generated* program prints for its own input — `examples/access-log.nika`
+shows the rejected log line and points at the character, and
+`crates/nikaia/tests/examples.rs` checks that end to end. The caret is as wide
+as the token that was found; a line too long to print is windowed around the
+position. The two remaining asymmetries with a rustc diagnostic are that this
+one has no file name in front of it (it is rendered by the driver, which knows
+the input and not where it came from) and no `= help:` lines.
 
 ## Keeping this honest
 
