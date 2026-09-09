@@ -651,8 +651,22 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("\"{text}\""));
                 Ok(())
             }
-            Pattern::Ref { name, args } => {
+            Pattern::Ref {
+                name,
+                generics,
+                args,
+            } => {
                 out.push(self.text(*name));
+                // `dec[i32](…)` -> `dec::<i32>(…)`? No: the backend's builtin
+                // takes its type between angles, not after a turbofish, and a
+                // grammar body is the backend's syntax once it is emitted.
+                if !generics.is_empty() {
+                    let params: Vec<String> = generics
+                        .iter()
+                        .map(|g| self.ty(g, Lifetimes::NAMED))
+                        .collect();
+                    out.push(&format!("<{}>", params.join(", ")));
+                }
                 if !args.is_empty() {
                     out.push("(");
                     self.patterns(out, args, ", ")?;

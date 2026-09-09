@@ -348,3 +348,25 @@ fn the_grammar_half_of_the_1brc_example_lowers() {
     assert!(emitted.contains("s:until(\";\" | frame_end)"), "{emitted}");
     assert!(emitted.contains("whole:digit{1,2}"), "{emitted}");
 }
+
+// --- Type arguments to a built-in ---
+
+#[test]
+fn a_type_argument_is_written_with_brackets_and_emitted_with_angles() {
+    // Kap 4.3: Nikaia spells a type argument with brackets everywhere, which
+    // is what keeps `<` free elsewhere in the language. The backend's
+    // built-ins take theirs between angles, and the emitter is the one place
+    // the two meet - the source never writes the backend's spelling.
+    let source = r#"
+grammar Ids {
+    rule N -> i32 = n:dec[i32](digit{1,2}) -> { n }
+    rule T -> &str = t:text(alpha1 digit*) -> { t }
+    pub rule entry -> i32 = n:N -> { n }
+}
+"#;
+    let emitted = emit(source, Profile::Advanced);
+
+    assert!(emitted.contains("n:dec<i32>(digit{1,2})"), "{emitted}");
+    // A built-in without type arguments keeps its call exactly as written.
+    assert!(emitted.contains("t:text(alpha1 digit*)"), "{emitted}");
+}

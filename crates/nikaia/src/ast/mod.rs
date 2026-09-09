@@ -419,8 +419,14 @@ pub enum Pattern {
     /// A rule reference (`NAME`), a built-in (`digit`, `frame_end`), or a call
     /// to either (`until(";" | frame_end)`, `list(pair, ",")`). One node,
     /// because the grammar cannot tell them apart and does not need to.
+    ///
+    /// `generics` is what `dec[i32](digit{1,2})` writes between the name and
+    /// the arguments. Nikaia spells a type argument with brackets everywhere
+    /// (Kap 4.3), and the backend spells it with angles; the emitter is where
+    /// the two meet.
     Ref {
         name: Ident,
+        generics: Vec<Type>,
         args: Vec<Spanned<Pattern>>,
     },
     /// `p*`, `p+`, `p?`, `p{1,2}`

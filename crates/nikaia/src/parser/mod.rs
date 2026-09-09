@@ -564,8 +564,15 @@ grammar! {
         // cannot tell them apart, and does not need to: what a name means is
         // the backend's question.
         rule g_ref -> Spanned<Pattern> @=
-            name:ident args:g_args? -> {
-                Spanned::new(Pattern::Ref { name, args: args.unwrap_or_default() }, _span)
+            name:ident generics:generic_type_args? args:g_args? -> {
+                Spanned::new(
+                    Pattern::Ref {
+                        name,
+                        generics: generics.unwrap_or_default(),
+                        args: args.unwrap_or_default(),
+                    },
+                    _span,
+                )
             }
 
         rule g_args -> Vec<Spanned<Pattern>> =
