@@ -153,9 +153,7 @@ grammar! {
         // --- Entry Point ---
         // Rule 'program' -> generates 'parse_program'
         pub rule program -> Program =
-            _start:skip_ws
             items:item*
-            _end:skip_ws
             -> {
                 Program { items }
             }
@@ -189,8 +187,6 @@ grammar! {
 
         // The explicit form, for the leading and trailing positions where there
         // is no preceding token for the implicit `WS` to follow.
-        rule skip_ws -> () = _w:WS -> { () }
-
         // --- Top-Level Items ---
         //
         // `grammar` and `struct` come before `fn`: all three are keyword-led,
@@ -208,12 +204,11 @@ grammar! {
 
         // Kap 4.2: behaviour lives in an `impl`, never in the struct.
         rule impl_item -> Item =
-            "impl" _sp:skip_ws target:type_ref _sp2:skip_ws
-            "{" _sp3:skip_ws methods:impl_method* _sp4:skip_ws "}"
+            "impl" target:type_ref
+            "{" methods:impl_method* "}"
             -> { Item::Impl { target, methods } }
 
-        rule impl_method -> Spanned<Item> @=
-            _sp:skip_ws f:fn_item -> { Spanned::new(f, _span) }
+        rule impl_method -> Spanned<Item> @= f:fn_item -> { Spanned::new(f, _span) }
 
         rule kw_sync -> () = "sync" -> { () }
         rule kw_pub -> () = "pub" -> { () }
@@ -222,22 +217,14 @@ grammar! {
         // Part II writes `fn add(…) sync`, Part I `fn f(…) -> String throws`.
         rule fn_item -> Item =
             vis:kw_pub?
-            _sp0:skip_ws
             "fn"
-            _sp:skip_ws
             name:ident?
-            _sp2:skip_ws
             generics:generic_list?
             params:fn_params
-            _sp3:skip_ws
             sync_before:kw_sync?
-            _sp4:skip_ws
             ret:return_type_arrow?
-            _sp5:skip_ws
             sync_after:kw_sync?
-            _sp6:skip_ws
             throws:kw_throws?
-            _sp7:skip_ws
             body:block
             -> {
                 Item::Fn {
@@ -257,7 +244,7 @@ grammar! {
 
         // Kap 4.2: `&mut self`, `&self`, `self` - the subject, when there is one.
         rule fn_params -> FnParams =
-            "(" _sp:skip_ws body:fn_params_body? _sp2:skip_ws ")" -> {
+            "(" body:fn_params_body? ")" -> {
                 body.unwrap_or_default()
             }
 
@@ -272,22 +259,21 @@ grammar! {
             }
 
         rule receiver -> Receiver =
-            "&" _sp:skip_ws "mut" _sp2:skip_ws "self" -> {
+            "&" "mut" "self" -> {
                 Receiver { is_ref: true, is_mut: true }
             }
-          | "&" _sp:skip_ws "self" -> { Receiver { is_ref: true, is_mut: false } }
+          | "&" "self" -> { Receiver { is_ref: true, is_mut: false } }
           | "self" -> { Receiver { is_ref: false, is_mut: false } }
 
         // Kap 9.2: use std::fs
         rule use_item -> Item =
-            "use" _sp:skip_ws head:ident tail:path_segment* -> {
+            "use" head:ident tail:path_segment* -> {
                 let mut path = vec![head];
                 path.extend(tail);
                 Item::Import { path }
             }
 
-        rule path_segment -> Symbol =
-            _sp:skip_ws "::" _sp2:skip_ws n:ident -> { n }
+        rule path_segment -> Symbol = "::" n:ident -> { n }
 
         // --- Structs ---
         //
@@ -295,19 +281,12 @@ grammar! {
         // of the item, not a comment.
         rule struct_item -> Item =
             borrowed:at_borrowed?
-            _sp:skip_ws
             vis:kw_pub?
-            _sp2:skip_ws
             "struct"
-            _sp3:skip_ws
             name:ident
-            _sp4:skip_ws
             generics:generic_list?
-            _sp5:skip_ws
             "{"
-            _sp6:skip_ws
             fields:field_defs?
-            _sp7:skip_ws
             "}"
             -> {
                 Item::Struct {
@@ -322,24 +301,23 @@ grammar! {
         rule at_borrowed -> () = "@borrowed" -> { () }
 
         rule field_defs -> Vec<FieldDef> =
-            head:field_def tail:field_def_tail* _sp:skip_ws ","? -> {
+            head:field_def tail:field_def_tail* ","? -> {
                 let mut fields = vec![head];
                 fields.extend(tail);
                 fields
             }
 
-        rule field_def_tail -> FieldDef =
-            _sp:skip_ws "," _sp2:skip_ws f:field_def -> { f }
+        rule field_def_tail -> FieldDef = "," f:field_def -> { f }
 
         rule field_def -> FieldDef =
-            name:ident _sp:skip_ws ":" _sp2:skip_ws ty:type_ref -> {
+            name:ident ":" ty:type_ref -> {
                 FieldDef { name, ty }
             }
 
         // --- Argumente & Typen ---
 
         rule fn_arg_list -> Vec<FnArg> =
-            "(" _sp:skip_ws args:fn_arg_defs? _sp2:skip_ws ")" -> { args.unwrap_or_default() }
+            "(" args:fn_arg_defs? ")" -> { args.unwrap_or_default() }
 
         rule fn_arg_defs -> Vec<FnArg> =
             head:fn_arg_def tail:fn_arg_def_tail* -> {
@@ -348,20 +326,19 @@ grammar! {
                 args
             }
 
-        rule fn_arg_def_tail -> FnArg =
-            _sp:skip_ws "," _sp2:skip_ws arg:fn_arg_def -> { arg }
+        rule fn_arg_def_tail -> FnArg = "," arg:fn_arg_def -> { arg }
 
         rule fn_arg_def -> FnArg =
-            name:ident _sp:skip_ws ":" _sp2:skip_ws ty:type_ref -> {
+            name:ident ":" ty:type_ref -> {
                 FnArg { name, ty }
             }
 
         rule return_type_arrow -> Type =
-            "->" _sp:skip_ws ty:type_ref -> { ty }
+            "->" ty:type_ref -> { ty }
 
         // USING [ ] SYNTAX directly for testing
         rule generic_list -> Vec<GenericParam> =
-            [ _sp:skip_ws params:generic_params? _sp2:skip_ws ] -> { params.unwrap_or_default() }
+            [ params:generic_params? ] -> { params.unwrap_or_default() }
 
         rule generic_params -> Vec<GenericParam> =
             head:generic_param tail:generic_param_tail* -> {
@@ -370,8 +347,7 @@ grammar! {
                 params
             }
 
-        rule generic_param_tail -> GenericParam =
-            _sp:skip_ws "," _sp2:skip_ws p:generic_param -> { p }
+        rule generic_param_tail -> GenericParam = "," p:generic_param -> { p }
 
         rule generic_param -> GenericParam =
             name:ident
@@ -381,7 +357,6 @@ grammar! {
         // recorded and the emitter decides what it becomes.
         rule type_ref -> Type =
             view:amp?
-            _sp:skip_ws
             name:ident
             generics:generic_type_args?
             -> {
@@ -392,7 +367,7 @@ grammar! {
 
         // USING [ ] SYNTAX directly for testing
         rule generic_type_args -> Vec<Type> =
-            [ _sp:skip_ws args:type_refs? _sp2:skip_ws ] -> { args.unwrap_or_default() }
+            [ args:type_refs? ] -> { args.unwrap_or_default() }
 
         rule type_refs -> Vec<Type> =
             head:type_ref tail:type_ref_tail* -> {
@@ -401,30 +376,22 @@ grammar! {
                 args
             }
 
-        rule type_ref_tail -> Type =
-            _sp:skip_ws "," _sp2:skip_ws t:type_ref -> { t }
+        rule type_ref_tail -> Type = "," t:type_ref -> { t }
 
         // --- Part II, Kapitel 10: Grammatiken ---
 
         rule grammar_item -> Item =
-            "grammar" _sp:skip_ws name:ident _sp2:skip_ws
-            "{" _sp3:skip_ws rules:grammar_rule* _sp4:skip_ws "}"
+            "grammar" name:ident
+            "{" rules:grammar_rule* "}"
             -> { Item::Grammar(GrammarDef { name, rules }) }
 
         rule grammar_rule -> GrammarRule @=
-            _sp:skip_ws
             frame:frame_attr?
-            _sp2:skip_ws
             vis:kw_pub?
-            _sp3:skip_ws
             "rule"
-            _sp4:skip_ws
             name:ident
-            _sp5:skip_ws
             ret:return_type_arrow?
-            _sp6:skip_ws
             "="
-            _sp7:skip_ws
             alts:g_alts
             -> {
                 GrammarRule {
@@ -442,12 +409,12 @@ grammar! {
         // so that every future cut-point key (quote, start, escape, scan) has
         // room without changing what the existing ones mean.
         rule frame_attr -> FrameAttr =
-            "@frame" _sp:skip_ws args:frame_args? -> {
+            "@frame" args:frame_args? -> {
                 args.unwrap_or_default()
             }
 
         rule frame_args -> FrameAttr =
-            "(" _sp:skip_ws head:frame_arg tail:frame_arg_tail* _sp2:skip_ws ")" -> {
+            "(" head:frame_arg tail:frame_arg_tail* ")" -> {
                 let mut attr = head;
                 for a in tail {
                     if a.boundary.is_some() { attr.boundary = a.boundary; }
@@ -456,11 +423,10 @@ grammar! {
                 attr
             }
 
-        rule frame_arg_tail -> FrameAttr =
-            _sp:skip_ws "," _sp2:skip_ws a:frame_arg -> { a }
+        rule frame_arg_tail -> FrameAttr = "," a:frame_arg -> { a }
 
         rule frame_arg -> FrameAttr =
-            "boundary" _sp:skip_ws ":" _sp2:skip_ws b:STRING -> {
+            "boundary" ":" b:STRING -> {
                 FrameAttr { boundary: Some(b), unchecked: false }
             }
           | "unchecked" -> {
@@ -474,15 +440,14 @@ grammar! {
                 alts
             }
 
-        rule g_alt_tail -> GrammarAlt =
-            _sp:skip_ws "|" _sp2:skip_ws a:g_alt -> { a }
+        rule g_alt_tail -> GrammarAlt = "|" a:g_alt -> { a }
 
         // An action block is required today (Part II, 10.1, note) - with one
         // exception that is not an omission: a `par_fold` must be the whole
         // body of its rule (ADR-009 D2), so there is nothing for an action to
         // add. The emitter supplies the binding such a rule needs.
         rule g_alt -> GrammarAlt =
-            p:g_seq _sp:skip_ws "->" _sp2:skip_ws action:block -> {
+            p:g_seq "->" action:block -> {
                 GrammarAlt { pattern: p, action: Some(action) }
             }
           | f:g_fold -> {
@@ -501,8 +466,7 @@ grammar! {
                 }
             }
 
-        rule g_elem_tail -> Spanned<Pattern> =
-            _sp:skip_ws e:g_elem -> { e }
+        rule g_elem_tail -> Spanned<Pattern> = e:g_elem -> { e }
 
         rule g_elem -> Spanned<Pattern> =
             c:g_cut -> { c }
@@ -535,13 +499,13 @@ grammar! {
           | r:g_bounds -> { r }
 
         rule g_bounds -> Repeat =
-            "{" _sp:skip_ws n:number _sp2:skip_ws "," _sp3:skip_ws m:number _sp4:skip_ws "}" -> {
+            "{" n:number "," m:number "}" -> {
                 Repeat::Between(n, m)
             }
-          | "{" _sp:skip_ws n:number _sp2:skip_ws "," _sp3:skip_ws "}" -> {
+          | "{" n:number "," "}" -> {
                 Repeat::AtLeast(n)
             }
-          | "{" _sp:skip_ws n:number _sp2:skip_ws "}" -> {
+          | "{" n:number "}" -> {
                 Repeat::Exactly(n)
             }
 
@@ -555,7 +519,7 @@ grammar! {
           | r:g_ref -> { r }
 
         rule g_group -> Spanned<Pattern> @=
-            "(" _sp:skip_ws p:g_choice _sp2:skip_ws ")" -> {
+            "(" p:g_choice ")" -> {
                 Spanned::new(Pattern::Group(Box::new(p)), _span)
             }
 
@@ -576,14 +540,13 @@ grammar! {
             }
 
         rule g_args -> Vec<Spanned<Pattern>> =
-            "(" _sp:skip_ws head:g_choice tail:g_arg_tail* _sp2:skip_ws ")" -> {
+            "(" head:g_choice tail:g_arg_tail* ")" -> {
                 let mut args = vec![head];
                 args.extend(tail);
                 args
             }
 
-        rule g_arg_tail -> Spanned<Pattern> =
-            _sp:skip_ws "," _sp2:skip_ws p:g_choice -> { p }
+        rule g_arg_tail -> Spanned<Pattern> = "," p:g_choice -> { p }
 
         rule g_choice -> Spanned<Pattern> @=
             head:g_seq tail:g_choice_tail* -> {
@@ -596,19 +559,18 @@ grammar! {
                 }
             }
 
-        rule g_choice_tail -> Spanned<Pattern> =
-            _sp:skip_ws "|" _sp2:skip_ws p:g_seq -> { p }
+        rule g_choice_tail -> Spanned<Pattern> = "|" p:g_seq -> { p }
 
         // ADR-009 D2: parallel parsing is a frame plus a monoid. `fold` is the
         // accumulator; the merge is what makes it parallelisable, and asking
         // for it is how the user says a different chunk count is the same
         // answer to them.
         rule g_fold -> Spanned<Pattern> @=
-            "par_fold" _sp:skip_ws "(" _sp2:skip_ws
-            r:ident _sp3:skip_ws "," _sp4:skip_ws
-            init:expr _sp5:skip_ws "," _sp6:skip_ws
-            step:expr _sp7:skip_ws "," _sp8:skip_ws
-            merge:expr _sp9:skip_ws ")"
+            "par_fold" "("
+            r:ident ","
+            init:expr ","
+            step:expr ","
+            merge:expr ")"
             -> {
                 Spanned::new(Pattern::Fold(Box::new(FoldSpec {
                     parallel: true,
@@ -618,10 +580,10 @@ grammar! {
                     merge: Some(merge),
                 })), _span)
             }
-          | "fold" _sp:skip_ws "(" _sp2:skip_ws
-            r:ident _sp3:skip_ws "," _sp4:skip_ws
-            init:expr _sp5:skip_ws "," _sp6:skip_ws
-            step:expr _sp7:skip_ws ")"
+          | "fold" "("
+            r:ident ","
+            init:expr ","
+            step:expr ")"
             -> {
                 Spanned::new(Pattern::Fold(Box::new(FoldSpec {
                     parallel: false,
@@ -635,7 +597,7 @@ grammar! {
         // --- Statements & Blocks ---
 
         rule block -> Block =
-            "{" _sp:skip_ws stmts:stmt_list _sp2:skip_ws "}" -> { Block { stmts } }
+            "{" stmts:stmt_list "}" -> { Block { stmts } }
 
         rule stmt_list -> Vec<Spanned<Stmt>> =
             stmts:stmt* -> { stmts }
@@ -648,7 +610,7 @@ grammar! {
           | e:expr_stmt -> { Spanned::new(e, _span) }
 
         rule return_stmt -> Stmt =
-            "return" _sp:skip_ws value:expr? _sp2:skip_ws ";"? _sp3:skip_ws -> {
+            "return" value:expr? ";"? -> {
                 Stmt::Return(value)
             }
 
@@ -656,19 +618,12 @@ grammar! {
 
         rule let_stmt -> Stmt =
             "let"
-            _sp:skip_ws
             mutable:kw_mut?
-            _sp2:skip_ws
             name:ident
-            _sp3:skip_ws
             ty:type_annotation?
-            _sp4:skip_ws
             "="
-            _sp5:skip_ws
             val:expr
-            _sp6:skip_ws
             ";"?
-            _sp7:skip_ws
             -> {
                 Stmt::Let {
                     name,
@@ -679,32 +634,30 @@ grammar! {
             }
 
         rule type_annotation -> Type =
-            ":" _sp:skip_ws ty:type_ref -> { ty }
+            ":" ty:type_ref -> { ty }
 
         // Kap 3.3. The head is parsed with the brace-free expression grammar:
         // in `for d in whole { ... }` the brace opens the body, never a struct
         // literal - the same restriction Rust puts on this position.
         rule for_stmt -> Stmt =
-            "for" _sp:skip_ws bindings:for_bindings _sp2:skip_ws "in" _sp3:skip_ws
-            iter:head_expr _sp4:skip_ws body:block _sp5:skip_ws ";"? _sp6:skip_ws
+            "for" bindings:for_bindings "in"
+            iter:head_expr body:block ";"?
             -> {
                 Stmt::For { bindings, iter, body }
             }
 
         rule for_bindings -> Vec<Symbol> =
-            "(" _sp:skip_ws head:ident tail:ident_tail* _sp2:skip_ws ")" -> {
+            "(" head:ident tail:ident_tail* ")" -> {
                 let mut names = vec![head];
                 names.extend(tail);
                 names
             }
           | n:ident -> { vec![n] }
 
-        rule ident_tail -> Symbol =
-            _sp:skip_ws "," _sp2:skip_ws n:ident -> { n }
+        rule ident_tail -> Symbol = "," n:ident -> { n }
 
         rule assign_stmt -> Stmt =
-            target:postfix_expr _sp:skip_ws op:assign_op _sp2:skip_ws value:expr
-            _sp3:skip_ws ";"? _sp4:skip_ws
+            target:postfix_expr op:assign_op value:expr ";"?
             -> { Stmt::Assign { target, op, value } }
 
         // The compound forms first: a bare `=` would take the first character
@@ -717,7 +670,7 @@ grammar! {
           | "=" -> { None }
 
         rule expr_stmt -> Stmt =
-            e:expr _sp:skip_ws ";"? _sp2:skip_ws -> { Stmt::Expr(e) }
+            e:expr ";"? -> { Stmt::Expr(e) }
 
         // --- Expressions ---
 
@@ -727,7 +680,7 @@ grammar! {
 
         // Kap 7.1: `fs::map(path) catch { … }` - the error is `error` inside.
         rule catch_expr -> Expr =
-            value:coalesce_expr _sp:skip_ws handler:catch_tail? -> {
+            value:coalesce_expr handler:catch_tail? -> {
                 match handler {
                     Some(handler) => Expr::TryCatch { expr: Box::new(value), handler },
                     None => value,
@@ -735,11 +688,11 @@ grammar! {
             }
 
         rule catch_tail -> Block =
-            "catch" _sp:skip_ws b:block -> { b }
+            "catch" b:block -> { b }
 
         // Kap 3.5: `value ?? fallback`.
         rule coalesce_expr -> Expr =
-            value:or_expr _sp:skip_ws fallback:coalesce_tail? -> {
+            value:or_expr fallback:coalesce_tail? -> {
                 match fallback {
                     Some(fallback) => Expr::Coalesce {
                         value: Box::new(value),
@@ -750,12 +703,11 @@ grammar! {
             }
 
         rule coalesce_tail -> Expr =
-            "??" _sp:skip_ws e:or_expr -> { e }
+            "??" e:or_expr -> { e }
 
         // Kap 5.2/5.3: a lambda, with its arguments named or implicit.
         rule closure_expr -> Expr =
-            "fn" _sp:skip_ws "(" _sp2:skip_ws params:closure_params? _sp3:skip_ws ")"
-            _sp4:skip_ws body:block
+            "fn" "(" params:closure_params? ")" body:block
             -> {
                 Expr::Closure {
                     params: params.unwrap_or_default(),
@@ -763,7 +715,7 @@ grammar! {
                     body,
                 }
             }
-          | "fn" _sp:skip_ws body:block -> {
+          | "fn" body:block -> {
                 Expr::Closure { params: Vec::new(), implicit: true, body }
             }
 
@@ -774,28 +726,24 @@ grammar! {
                 params
             }
 
-        rule closure_param_tail -> Symbol =
-            _sp:skip_ws "," _sp2:skip_ws p:ident -> { p }
+        rule closure_param_tail -> Symbol = "," p:ident -> { p }
 
         rule or_expr -> Expr =
             head:and_expr tail:or_tail* -> { fold_binary(head, tail) }
 
-        rule or_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws "||" _sp2:skip_ws e:and_expr -> { (BinaryOp::Or, e) }
+        rule or_tail -> (BinaryOp, Expr) = "||" e:and_expr -> { (BinaryOp::Or, e) }
 
         rule and_expr -> Expr =
             head:cmp_expr tail:and_tail* -> { fold_binary(head, tail) }
 
-        rule and_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws "&&" _sp2:skip_ws e:cmp_expr -> { (BinaryOp::And, e) }
+        rule and_tail -> (BinaryOp, Expr) = "&&" e:cmp_expr -> { (BinaryOp::And, e) }
 
         rule cmp_expr -> Expr =
             head:add_expr tail:cmp_tail? -> {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
 
-        rule cmp_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws op:cmp_op _sp2:skip_ws e:add_expr -> { (op, e) }
+        rule cmp_tail -> (BinaryOp, Expr) = op:cmp_op e:add_expr -> { (op, e) }
 
         // `<=` before `<`: the shorter one would win otherwise and leave `=`
         // to be read as an assignment.
@@ -810,8 +758,7 @@ grammar! {
         rule add_expr -> Expr =
             head:mul_expr tail:add_tail* -> { fold_binary(head, tail) }
 
-        rule add_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws op:add_op _sp2:skip_ws e:mul_expr -> { (op, e) }
+        rule add_tail -> (BinaryOp, Expr) = op:add_op e:mul_expr -> { (op, e) }
 
         rule add_op -> BinaryOp =
             "+" -> { BinaryOp::Add }
@@ -820,8 +767,7 @@ grammar! {
         rule mul_expr -> Expr =
             head:cast_expr tail:mul_tail* -> { fold_binary(head, tail) }
 
-        rule mul_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws op:mul_op _sp2:skip_ws e:cast_expr -> { (op, e) }
+        rule mul_tail -> (BinaryOp, Expr) = op:mul_op e:cast_expr -> { (op, e) }
 
         rule cast_expr -> Expr =
             head:unary_expr casts:cast_tail* -> {
@@ -831,8 +777,7 @@ grammar! {
                 })
             }
 
-        rule cast_tail -> Type =
-            _sp:skip_ws "as" _sp2:skip_ws ty:type_ref -> { ty }
+        rule cast_tail -> Type = "as" ty:type_ref -> { ty }
 
         rule mul_op -> BinaryOp =
             "*" -> { BinaryOp::Mul }
@@ -840,7 +785,7 @@ grammar! {
           | "%" -> { BinaryOp::Rem }
 
         rule unary_expr -> Expr =
-            op:unary_op _sp:skip_ws e:unary_expr -> {
+            op:unary_op e:unary_expr -> {
                 Expr::Unary { op, expr: Box::new(e) }
             }
           | e:postfix_expr -> { e }
@@ -857,7 +802,7 @@ grammar! {
         // parentheses, so the plain method rule would stop before the `fn:` and
         // leave it stranded.
         rule postfix_tail -> Postfix =
-            "." name:ident _sp:skip_ws lambda:trailing_lambda -> {
+            "." name:ident lambda:trailing_lambda -> {
                 Postfix::Method(name, vec![lambda])
             }
           | "." name:ident args:call_arg_list? -> {
@@ -866,7 +811,7 @@ grammar! {
                     None => Postfix::Field(name),
                 }
             }
-          | "[" _sp:skip_ws index:expr _sp2:skip_ws "]" -> {
+          | "[" index:expr "]" -> {
                 Postfix::Index(Box::new(index))
             }
           // `not("?")`: `??` is the null-coalescing operator (Kap 3.5), and a
@@ -877,7 +822,7 @@ grammar! {
         // and which of them the body actually uses is settled when it is
         // emitted rather than guessed here.
         rule trailing_lambda -> Expr =
-            "fn" _sp:skip_ws ":" _sp2:skip_ws body:expr -> {
+            "fn" ":" body:expr -> {
                 Expr::Closure {
                     params: Vec::new(),
                     implicit: true,
@@ -886,12 +831,12 @@ grammar! {
                     },
                 }
             }
-          | "fn" _sp:skip_ws body:block -> {
+          | "fn" body:block -> {
                 Expr::Closure { params: Vec::new(), implicit: true, body }
             }
 
         rule call_arg_list -> Vec<Expr> =
-            "(" _sp:skip_ws args:call_args? _sp2:skip_ws ")" -> { args.unwrap_or_default() }
+            "(" args:call_args? ")" -> { args.unwrap_or_default() }
 
         rule call_args -> Vec<Expr> =
             head:expr tail:call_args_tail* -> {
@@ -900,8 +845,7 @@ grammar! {
                 args
             }
 
-        rule call_args_tail -> Expr =
-            _sp:skip_ws "," _sp2:skip_ws e:expr -> { e }
+        rule call_args_tail -> Expr = "," e:expr -> { e }
 
         // Keyword-led forms first, then the struct literal, then a plain path:
         // `Reading { .. }` must be tried before `Reading` on its own, because a
@@ -925,8 +869,8 @@ grammar! {
         // told apart by requiring the first field to carry a value - otherwise
         // `Stats(x)` would read as a struct with one shorthand field.
         rule ctor_lit -> Expr =
-            name:ident _sp:skip_ws "(" _sp2:skip_ws head:named_field_init
-            tail:field_init_tail* _sp3:skip_ws ","? _sp4:skip_ws ")"
+            name:ident "(" head:named_field_init
+            tail:field_init_tail* ","? ")"
             -> {
                 let mut fields = vec![head];
                 fields.extend(tail);
@@ -934,7 +878,7 @@ grammar! {
             }
 
         rule named_field_init -> FieldInit =
-            name:ident _sp:skip_ws ":" _sp2:skip_ws value:expr -> {
+            name:ident ":" value:expr -> {
                 FieldInit { name, value: Some(value) }
             }
 
@@ -950,23 +894,20 @@ grammar! {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
 
-        rule cmp_head_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws op:cmp_op _sp2:skip_ws e:head_add -> { (op, e) }
+        rule cmp_head_tail -> (BinaryOp, Expr) = op:cmp_op e:head_add -> { (op, e) }
 
         rule head_add -> Expr =
             head:head_mul tail:head_add_tail* -> { fold_binary(head, tail) }
 
-        rule head_add_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws op:add_op _sp2:skip_ws e:head_mul -> { (op, e) }
+        rule head_add_tail -> (BinaryOp, Expr) = op:add_op e:head_mul -> { (op, e) }
 
         rule head_mul -> Expr =
             head:head_unary tail:head_mul_tail* -> { fold_binary(head, tail) }
 
-        rule head_mul_tail -> (BinaryOp, Expr) =
-            _sp:skip_ws op:mul_op _sp2:skip_ws e:head_unary -> { (op, e) }
+        rule head_mul_tail -> (BinaryOp, Expr) = op:mul_op e:head_unary -> { (op, e) }
 
         rule head_unary -> Expr =
-            op:unary_op _sp:skip_ws e:head_unary -> {
+            op:unary_op e:head_unary -> {
                 Expr::Unary { op, expr: Box::new(e) }
             }
           | e:head_postfix -> { e }
@@ -984,11 +925,11 @@ grammar! {
           | p:paren_expr -> { p }
 
         rule paren_expr -> Expr =
-            "(" _sp:skip_ws e:expr _sp2:skip_ws ")" -> { e }
+            "(" e:expr ")" -> { e }
 
         // Part I, 8.2: spawn takes a block lambda - `spawn({ ... })`.
         rule spawn_expr -> Expr =
-            "spawn" _sp:skip_ws "(" _sp2:skip_ws body:expr _sp3:skip_ws ")" -> {
+            "spawn" "(" body:expr ")" -> {
                 Expr::Spawn { body: Box::new(body), is_move: false }
             }
 
@@ -999,13 +940,12 @@ grammar! {
             // The binding is `source`, not `input`: the generated parser's own
             // closure takes a parameter called `input`, and a binding of that
             // name shadows it for the rest of the action.
-            "dsl" _sp:skip_ws name:ident _sp2:skip_ws "from" _sp3:skip_ws source:head_expr -> {
+            "dsl" name:ident "from" source:head_expr -> {
                 Expr::DslFrom { grammar: name, input: Box::new(source) }
             }
 
         rule if_expr -> Expr =
-            "if" _sp:skip_ws cond:head_expr _sp2:skip_ws then_branch:block
-            _sp3:skip_ws otherwise:else_branch?
+            "if" cond:head_expr then_branch:block otherwise:else_branch?
             -> {
                 Expr::If {
                     cond: Box::new(cond),
@@ -1015,29 +955,28 @@ grammar! {
             }
 
         rule else_branch -> Block =
-            "else" _sp:skip_ws b:block -> { b }
+            "else" b:block -> { b }
 
         // Blocks are expressions (Part I, 3.1).
         rule block_expr -> Expr =
             b:block -> { Expr::Block(b) }
 
         rule struct_lit -> Expr =
-            name:ident _sp:skip_ws "{" _sp2:skip_ws fields:field_inits _sp3:skip_ws "}" -> {
+            name:ident "{" fields:field_inits "}" -> {
                 Expr::StructLit { name, fields }
             }
 
         rule field_inits -> Vec<FieldInit> =
-            head:field_init tail:field_init_tail* _sp:skip_ws ","? -> {
+            head:field_init tail:field_init_tail* ","? -> {
                 let mut fields = vec![head];
                 fields.extend(tail);
                 fields
             }
 
-        rule field_init_tail -> FieldInit =
-            _sp:skip_ws "," _sp2:skip_ws f:field_init -> { f }
+        rule field_init_tail -> FieldInit = "," f:field_init -> { f }
 
         rule field_init -> FieldInit =
-            name:ident _sp:skip_ws ":" _sp2:skip_ws value:expr -> {
+            name:ident ":" value:expr -> {
                 FieldInit { name, value: Some(value) }
             }
           | name:ident -> { FieldInit { name, value: None } }
