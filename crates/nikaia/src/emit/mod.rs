@@ -815,6 +815,7 @@ impl<'p> Emitter<'p> {
                                 name: *owner,
                                 generics: Vec::new(),
                                 is_view: false,
+                                is_tuple: false,
                             },
                             Lifetimes::NAMED,
                         );
@@ -853,6 +854,12 @@ impl<'p> Emitter<'p> {
 
     fn ty(&self, ty: &Type, lifetimes: Lifetimes) -> String {
         let mut out = String::new();
+
+        // `(A, B)` in both languages, and the parts are the arguments.
+        if ty.is_tuple {
+            let parts: Vec<String> = ty.generics.iter().map(|g| self.ty(g, lifetimes)).collect();
+            return format!("({})", parts.join(", "));
+        }
 
         // A view is a borrow of the parser's input, and that is where the
         // lifetime comes from - the source never writes one (ADR-008).
@@ -1063,6 +1070,16 @@ impl<'p> Emitter<'p> {
                 }
                 out.push("(");
                 self.args(out, args, depth, flow)?;
+                out.push(")");
+            }
+            Expr::Tuple(parts) => {
+                out.push("(");
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        out.push(", ");
+                    }
+                    self.expr(out, part, depth, flow)?;
+                }
                 out.push(")");
             }
             Expr::Field { base, name } => {
@@ -1534,6 +1551,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_expr(receiver, f);
             args.iter().for_each(|a| visit_expr(a, f));
         }
+        Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
         Expr::Field { base, .. } => visit_expr(base, f),
         Expr::StructLit { fields, .. } => fields
             .iter()

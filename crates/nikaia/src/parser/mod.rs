@@ -365,7 +365,22 @@ grammar! {
             name:ident
             generics:generic_type_args?
             -> {
-                Type { name, generics: generics.unwrap_or_default(), is_view: view.is_some() }
+                Type {
+                    name,
+                    generics: generics.unwrap_or_default(),
+                    is_view: view.is_some(),
+                    is_tuple: false,
+                }
+            }
+          // `(A, B)`. The parts go where a named type's arguments go, so
+          // everything that walks a type's arguments walks a tuple's parts.
+          | "(" parts:type_refs ")" -> {
+                Type {
+                    name: _state.intern("tuple"),
+                    generics: parts,
+                    is_view: false,
+                    is_tuple: true,
+                }
             }
 
         rule amp -> () = "&" -> { () }
@@ -833,6 +848,9 @@ grammar! {
                 Postfix::Index(Box::new(index))
             }
           // `not("?")`: `??` is the null-coalescing operator (Kap 3.5), and a
+          // `t.0` - a tuple's parts are numbered, and the number is a field
+          // name like any other, so nothing downstream has to know.
+          | "." index:digits -> { Postfix::Field(_state.intern(&index)) }
           // greedy `?` would take it apart into two error propagations.
           | "?" not("?") -> { Postfix::Try }
 
@@ -880,6 +898,7 @@ grammar! {
           | f:float_lit -> { f }
           | i:int_lit -> { i }
           | b:block_expr -> { b }
+          | t:tuple_expr -> { t }
           | p:paren_expr -> { p }
 
         // Kap 4.2: `Stats(min: first, max: first)` builds the struct, while
@@ -941,6 +960,15 @@ grammar! {
           | f:float_lit -> { f }
           | i:int_lit -> { i }
           | p:paren_expr -> { p }
+
+        // `(a, b)` before `(a)`: a PEG keeps the first alternative that
+        // matches, and a tuple is a parenthesised expression until the comma.
+        rule tuple_expr -> Expr =
+            "(" head:expr tail:call_args_tail+ ","? ")" -> {
+                let mut parts = vec![head];
+                parts.extend(tail);
+                Expr::Tuple(parts)
+            }
 
         rule paren_expr -> Expr =
             "(" e:expr ")" -> { e }

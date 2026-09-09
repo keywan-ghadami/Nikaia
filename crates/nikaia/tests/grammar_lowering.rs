@@ -310,6 +310,54 @@ fn a_rule_without_a_label_gains_nothing() {
     assert!(!emitted.contains('#'), "{emitted}");
 }
 
+/// `(A, B)` as a type, `(a, b)` as a value, `t.0` to read a part - Part I 4.5.
+///
+/// The parts of a tuple type live where a named type's arguments live, which is
+/// what lets the view analysis reach them: a `(&str, i64)` in a struct field
+/// ties that struct to the input exactly as a bare `&str` would.
+#[test]
+fn a_tuple_is_a_type_a_value_and_a_field_access() {
+    let source = concat!(
+        "fn pair() -> (i64, i64) {\n",
+        "    let p = (1, 2)\n",
+        "    return (p.0, p.1)\n",
+        "}\n"
+    );
+    let emitted = emit(source, Profile::Advanced);
+    assert!(emitted.contains("fn pair() -> (i64, i64)"), "{emitted}");
+    assert!(emitted.contains("let p = (1, 2);"), "{emitted}");
+    // A trailing `return` is the block's value, so it comes out unwrapped.
+    assert!(emitted.contains("(p.0, p.1)"), "{emitted}");
+}
+
+/// A tuple in a struct field carries the input lifetime the same way a bare
+/// view does - the analysis walks the parts because they sit where arguments
+/// sit (ADR-008, and `a_view_takes_the_input_lifetime_and_the_struct_with_it`).
+#[test]
+fn a_tuple_of_views_ties_its_struct_to_the_input() {
+    let source = concat!(
+        "@borrowed\n",
+        "pub struct Pair {\n",
+        "    both: (&str, i64),\n",
+        "}\n"
+    );
+    let emitted = emit(source, Profile::Advanced);
+    assert!(
+        emitted.contains("pub struct Pair<'a>") && emitted.contains("(&'a str, i64)"),
+        "{emitted}"
+    );
+}
+
+/// `(a)` is still a parenthesised expression, not a one-part tuple: the comma
+/// is what makes a tuple, in Nikaia as in the language it lowers to.
+#[test]
+fn parentheses_without_a_comma_are_still_grouping() {
+    let source = "fn f() -> i64 {\n    return (1 + 2) * 3\n}\n";
+    let emitted = emit(source, Profile::Advanced);
+    assert!(emitted.contains("(1 + 2) * 3"), "{emitted}");
+    assert!(!emitted.contains("((1 + 2))"), "{emitted}");
+}
+
 // --- Running what was generated ---
 
 const MEASUREMENTS: &str = "Hamburg;12.0\nAbha;-23.0\nSaint-Pierre;9.1\nHamburg;-0.4\n";

@@ -232,6 +232,16 @@ missing too (only the greedy `digit1` existed, which would have swallowed the ru
 could count anything). `1brc.nika`'s `TENTHS` now states its width and rejects a three-digit
 temperature.
 
+**G10 — no tuple.** Found by `calc.nika`, which has to carry an operator alongside the operand
+it applies to (`3 * 4`, where the `*` must survive until the fold). A pair of values of
+different types with no name for the group is a *tuple*, and Stage 0 had no way to write one:
+a type was a name with optional generic arguments, so the example declared a two-field
+`struct Step` to say what one line of a tail rule should have said — a struct pretending to be
+a type. Tuples now exist: `(A, B)` as a type, `(a, b)` as a value, `t.0` to read a part
+(Part I, 4.5). The parts live where a named type's arguments live, so everything that already
+walked a type's arguments — the view analysis of ADR-008 among them — walks a tuple's parts
+without knowing about tuples. `mul_tail` yields `(&str, i64)` and `struct Step` is gone.
+
 **G11 — a rejected parse said what was expected and never where.** Found by writing
 `access-log.nika`, whose `catch` prints the failure: the message read
 ``expected a digit; found unexpected token ` ` `` with the rule stack under it, and no
@@ -253,14 +263,11 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
 
-**G10 — no tuple, and no sum type.** `calc.nika` needs to carry an operator alongside the
-operand it applies to (`3 * 4`, where the `*` must survive until the fold). A tuple would say
-it — `(&str, i64)` — and an enum would say it better, since there are exactly two operators.
-Stage 0 has neither: a type is a name with optional generic arguments, so the example declares
-a two-field `struct Step` to say what one line of a tail rule should have said. It costs
-nothing at runtime and it is the first thing in these examples that is *worse* written in
-Nikaia than in the language it lowers to, which is why it is written down here rather than
-worked around quietly. Subtraction avoids it by being addition of a negation; division cannot.
+**G12 — no sum type.** `calc.nika` has exactly two operators to carry, and an `enum` is what
+says that. Stage 0 has none — Part I 4.4 specifies enums and the bootstrap compiler does not
+lower them — so the example carries the operator as a `&str` and compares it. That is a
+smaller gap than G10 was, and the same kind: the language says something the compiler cannot
+yet hear.
 
 **G5 — ordered iteration over a map.** 1BRC's output must be sorted by station name; neither
 an ordered map nor `sort_by` over map entries is specified. ADR-010 D6 raises the stakes: an

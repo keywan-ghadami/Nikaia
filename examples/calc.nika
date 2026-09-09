@@ -29,6 +29,9 @@
 //     Writing `expr = expr "-" term` would be the natural way to say it and
 //     does not terminate; this is the standard repair and the reason the rules
 //     below read as they do.
+//   * **A tuple where a pair belongs.** `mul_tail` yields `(&str, i64)` - the
+//     operator and its operand - because naming that pair would have been a
+//     struct pretending to be a type.
 
 use std::cli
 
@@ -52,21 +55,22 @@ grammar Calc {
 
     // Division cannot be folded that way - it is neither commutative nor
     // recoverable from a sign - so the operator has to travel with the operand.
-    // `Step` is what carries it. This is the one place where the language is
-    // visibly missing something: a tuple or an enum would say it without a
-    // struct, and Stage 0 has neither (`examples/README.md`, G10).
+    // A tuple carries it: two values of different types, with no name for the
+    // pair, which is exactly what a struct here would have been pretending to
+    // be. (An enum would say it better still - there are exactly two operators
+    // - and Stage 0 has none; `examples/README.md`, G12.)
     rule term -> i64 =
         head:factor tail:mul_tail* -> {
             let mut value = head
             for step in tail {
-                if step.op == "*" { value = value * step.value }
-                else { value = value / step.value }
+                if step.0 == "*" { value = value * step.1 }
+                else { value = value / step.1 }
             }
             value
         }
 
-    rule mul_tail -> Step =
-        op:mul_op f:factor -> { Step(op: op, value: f) }
+    rule mul_tail -> (&str, i64) =
+        op:mul_op f:factor -> { (op, f) }
 
     rule mul_op -> &str =
           "*" -> { "*" }
@@ -94,15 +98,6 @@ grammar Calc {
     // value `i64` cannot hold is a parse error rather than a silent wrap.
     rule NUMBER -> i64 =
         n:dec[i64](digit+) -> { n }
-}
-
-// The operator and the operand it applies to. `op` is a view into neither the
-// input nor anything else - it is one of two literals this file writes - but
-// the field is a `&str` all the same, and the compiler ties `Step` to the
-// input's lifetime because it cannot know that (Part II, 10.6).
-pub struct Step {
-    op: &str,
-    value: i64,
 }
 
 fn main() throws {

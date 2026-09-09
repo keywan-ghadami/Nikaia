@@ -132,26 +132,10 @@ in program
 Parse error:
 expected expression; found unexpected token `)` at line 2, column 18
 note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
-in COMMENT
-in item 1
-in WS
-in paren_expr
-in primary_expr
-in postfix_expr
-in unary_expr
-in cast_expr
-in mul_expr
-in add_expr
-in cmp_expr
-in and_expr
-in or_expr
-in coalesce_expr
-in catch_expr
 in expr
 in call_args_tail
-in call_args
-in call_arg_list
-in path_expr
+in item 1
+in tuple_expr
 in primary_expr
 in postfix_expr
 in unary_expr
@@ -164,8 +148,9 @@ in or_expr
 in coalesce_expr
 in catch_expr
 in expr
-in let_stmt
+in expr_stmt
 in stmt
+in item 2
 in stmt_list
 in block
 in fn_item
