@@ -89,7 +89,7 @@ pub struct Counts {
 }
 
 impl Counts {
-    pub fn(bytes: i64) -> Counts {
+    pub fn(bytes: i64) -> Counts sync {
         return Counts(hits: 1, bytes: bytes)
     }
 
@@ -111,7 +111,7 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn() -> Report {
+    pub fn() -> Report sync {
         return Report(paths: HashMap::new(), requests: 0, failures: 0)
     }
 

@@ -16,6 +16,8 @@
 // different name there, and `--locked` will say so rather than quietly
 // accepting the weaker answer.
 
+pub mod sync;
+
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
@@ -23,6 +25,14 @@ use anyhow::{anyhow, Result};
 use crate::ast::Item;
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
+
+/// The contracts `std` ships, as the library ships them.
+///
+/// Part III 13.5 has a consumer read a package's ledger from the package.
+/// Stage 0's compiler and `std` ship together, so the file is embedded here
+/// rather than looked up - the same file, read at build time instead of at run
+/// time, and the same one a reviewer reads.
+pub const STD: &str = include_str!("../../../nikaia-std/std.contracts");
 
 /// The inference this ledger was produced by.
 ///
