@@ -1,39 +1,34 @@
 # Handoff — open work on error messages and the parser backend
 
 Written at the end of a session that could not finish, because the change it
-depends on lived in a repository that session had no push access to. That part
-is done; what is still open is below. Read this file first.
+depends on lived in a repository that session had no push access to. That
+change is merged and Nikaia is on it; what is still open is below. Read this
+file first.
 
 ---
 
-## 1. The blocked thing — no longer blocked
+## 1. The blocked thing — landed
 
-The `winnow-grammar` change is **pushed**, on branch
-`claude/nika-2-branches-offene-aufgaben-kd77u1`, based on upstream `024e3d3`:
+The `winnow-grammar` change is **merged upstream** (winnow-grammar#4, `e1b0e33`)
+and Nikaia is on it: `Cargo.lock` names that commit and
+`tests/errors/EXPECTED.txt` is regenerated against it, so the corpus is green
+as checked in and its rows now describe what a user actually gets.
 
-    https://github.com/keywan-ghadami/winnow-grammar/tree/claude/nika-2-branches-offene-aufgaben-kd77u1
-
-`docs/upstream/0001-expectations-by-requirement.patch` is that branch's first
-commit and stays here as the record of what was handed over. The branch is
-five commits:
+`docs/upstream/0001-expectations-by-requirement.patch` stays here as the record
+of what was handed over — it is the first of the five commits that landed:
 
 * the ranking itself (the patch, unchanged but for a clippy lint in its test),
 * SYNTAX.md and CHANGELOG.md, which the patch had not touched — the documented
   order of message selection was still progress-then-priority,
 * two documentation errors that had `cargo doc` failing on upstream `main`
-  since `54acc33`, so the branch's own CI can say something,
+  since `54acc33`,
 * `text(p)`/`dec<T>(p)` inside a `#[frame]` — §4.2 below, now closed,
 * the remaining findings, as TODO items §5 and §6 upstream.
 
-281 tests pass on it, `cargo fmt --check`, clippy and `cargo doc -D warnings`
-are clean.
+Twelve of the twenty-one failing corpus rows moved. The nine that did not are
+§3, and they are the open work on messages.
 
-**What is still to do here:** when that branch lands on upstream `main`, bump
-`Cargo.lock` to it and regenerate `tests/errors/EXPECTED.txt` — §3 says how,
-and the diff is the improvement. Until then Nikaia stays on `024e3d3` and the
-corpus is green as checked in.
-
-### To test against Nikaia before upstream merges
+### To test a further backend change against Nikaia
 
 Append to `Cargo.toml` (and **remove it again before committing** — it must not
 be checked in):
@@ -95,20 +90,19 @@ failure to offset + n.
 ## 3. The corpus — where to start
 
 `docs/error-corpus.md` is 26 broken inputs, what a reader needs from each, and
-what the compiler says, in two columns (shipped, and with the patch above).
+what the compiler says, in two columns — before the ranking change and today.
 `tests/errors/*.nika` are the inputs and `tests/errors/EXPECTED.txt` is what
-they produce **today, against the shipped backend**, so the suite is green as
+they produce against the backend `Cargo.lock` names, so the suite is green as
 checked in.
 
 ```bash
 cargo run -p nikaia --example errors > tests/errors/EXPECTED.txt   # regenerate
 ```
 
-**Applying the patch will make `errors.rs` fail, and that is the point:** the
-diff is the improvement, twelve of twenty-one failing rows. Read it, then
-regenerate.
+**A backend bump that changes a message makes `errors.rs` fail, and that is the
+point:** the diff is the change in the reader's terms. Read it, then regenerate.
 
-The nine rows the patch does not fix sort into three groups, each needing a
+The nine rows the ranking did not fix sort into three groups, each needing a
 different mechanism:
 
 | group | rows | what it needs |
