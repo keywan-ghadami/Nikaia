@@ -949,6 +949,35 @@ impl<'p> Emitter<'p> {
     /// an expression block (Part I, 3.1) and for a function that returns
     /// something; a function with no return type has no value to leave behind,
     /// so its last statement is a statement like any other.
+    /// `if c { … } else { … }`, where `tail` says whether the whole thing is in
+    /// value position.
+    ///
+    /// It decides what the last statement of each branch means. In an
+    /// expression - `let x = if c { a } else { b }` - the branches *are* the
+    /// value and their last statement is written as one. As a statement they
+    /// are not, and a `return` in one has to stay a `return`.
+    #[allow(clippy::too_many_arguments)]
+    fn if_expr(
+        &self,
+        out: &mut Out,
+        cond: &Expr,
+        then_branch: &Block,
+        else_branch: Option<&Block>,
+        depth: usize,
+        flow: Flow,
+        tail: bool,
+    ) -> Result<()> {
+        out.push("if ");
+        self.expr(out, cond, depth, flow)?;
+        out.push(" ");
+        self.block(out, then_branch, depth, flow, tail)?;
+        if let Some(block) = else_branch {
+            out.push(" else ");
+            self.block(out, block, depth, flow, tail)?;
+        }
+        Ok(())
+    }
+
     fn block(
         &self,
         out: &mut Out,
@@ -1076,6 +1105,25 @@ impl<'p> Emitter<'p> {
                     (None, false) => out.push("return;"),
                 }
             }
+            // An `if` in *statement* position is not a value, and its branches
+            // are not tails. Emitting them as tails is right for
+            // `let x = if c { a } else { b }` and wrong here: a `return` at the
+            // end of a branch would be written as the branch's value and stop
+            // returning - `if seq.len() < k { return counts }` came out as
+            // `if seq.len() < k { counts }`, which is a different program.
+            Stmt::Expr(Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            }) => self.if_expr(
+                out,
+                cond,
+                then_branch,
+                else_branch.as_ref(),
+                depth,
+                flow,
+                is_tail,
+            )?,
             Stmt::Expr(expr) => {
                 self.expr(out, expr, depth, flow)?;
                 // `if x { … };` is legal and noisy; a block-shaped statement
@@ -1118,16 +1166,15 @@ impl<'p> Emitter<'p> {
                 cond,
                 then_branch,
                 else_branch,
-            } => {
-                out.push("if ");
-                self.expr(out, cond, depth, flow)?;
-                out.push(" ");
-                self.block(out, then_branch, depth, flow, true)?;
-                if let Some(block) = else_branch {
-                    out.push(" else ");
-                    self.block(out, block, depth, flow, true)?;
-                }
-            }
+            } => self.if_expr(
+                out,
+                cond,
+                then_branch,
+                else_branch.as_ref(),
+                depth,
+                flow,
+                true,
+            )?,
             Expr::Call { func, args } => self.call(out, func, args, depth, flow)?,
             Expr::MethodCall {
                 receiver,
