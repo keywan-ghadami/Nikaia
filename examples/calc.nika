@@ -1,0 +1,112 @@
+// examples/calc.nika
+//
+// A four-function calculator: the grammar protocol at its smallest.
+//
+// Run:
+//
+//     nikaia --input examples/calc.nika --backend rust
+//     ./calc "2 + 3 * (10 - 4) / 2"
+//     2 + 3 * (10 - 4) / 2 = 11
+//
+// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
+// itself rather than a copy of it.
+//
+// Why it is here beside 1brc: that example is the grammar protocol at scale -
+// a frame, a parallel fold, a billion rows. This one is the same protocol with
+// none of that. No `@frame`, no `par_fold`, no `sync`, no I/O: one `pub rule`
+// that returns a number, entered once over one string. If the protocol only
+// paid off at 13 GB it would be a benchmark trick rather than a way to write
+// programs, so the small case is worth showing too.
+//
+// What it does show:
+//
+//   * **Recursion.** `factor` reaches `expr` again through `( … )`, which is
+//     what a grammar can say and a chain of iterator combinators cannot.
+//   * **Precedence as structure.** `*` binds tighter than `+` because `term`
+//     sits between `expr` and `factor` - three rules, no precedence table.
+//   * **Left association without left recursion.** `a - b - c` is `(a - b) - c`
+//     because the tails are collected and folded in the action, left to right.
+//     Writing `expr = expr "-" term` would be the natural way to say it and
+//     does not terminate; this is the standard repair and the reason the rules
+//     below read as they do.
+
+use std::cli
+
+grammar Calc {
+
+    // Lowercase, so this is a *syntactic* rule: the backend skips whitespace
+    // between the elements of the sequence. That is the whole of why
+    // "2+3", "2 + 3" and "2  +  3" all parse and nothing here mentions blanks.
+    pub rule expr -> i64 =
+        head:term tail:add_tail* -> {
+            let mut value = head
+            for t in tail { value = value + t }
+            value
+        }
+
+    // Subtraction is addition of a negation, so both alternatives can yield a
+    // number and the fold above needs no operator at all.
+    rule add_tail -> i64 =
+          "+" t:term -> { t }
+        | "-" t:term -> { -t }
+
+    // Division cannot be folded that way - it is neither commutative nor
+    // recoverable from a sign - so the operator has to travel with the operand.
+    // `Step` is what carries it. This is the one place where the language is
+    // visibly missing something: a tuple or an enum would say it without a
+    // struct, and Stage 0 has neither (`examples/README.md`, G10).
+    rule term -> i64 =
+        head:factor tail:mul_tail* -> {
+            let mut value = head
+            for step in tail {
+                if step.op == "*" { value = value * step.value }
+                else { value = value / step.value }
+            }
+            value
+        }
+
+    rule mul_tail -> Step =
+        op:mul_op f:factor -> { Step(op: op, value: f) }
+
+    rule mul_op -> &str =
+          "*" -> { "*" }
+        | "/" -> { "/" }
+
+    // The recursion. `expr` is reached again inside the parentheses, and the
+    // whole precedence climb starts over there - which is why `(10 - 4)` is a
+    // factor and multiplies like one.
+    rule factor -> i64 =
+          "(" e:expr ")" -> { e }
+        | "-" f:factor -> { -f }
+        | n:NUMBER -> { n }
+
+    // Uppercase, so this is *lexical*: no whitespace between the digits.
+    // Without that, "1 2" would be one number - the implicit skip of a
+    // syntactic rule sits between every pair of elements, digits included.
+    //
+    // `dec[i64](…)` reads the digits the pattern matched as a number, and a
+    // value `i64` cannot hold is a parse error rather than a silent wrap.
+    rule NUMBER -> i64 =
+        n:dec[i64](digit+) -> { n }
+}
+
+// The operator and the operand it applies to. `op` is a view into neither the
+// input nor anything else - it is one of two literals this file writes - but
+// the field is a `&str` all the same, and the compiler ties `Step` to the
+// input's lifetime because it cannot know that (Part II, 10.6).
+pub struct Step {
+    op: &str,
+    value: i64,
+}
+
+fn main() throws {
+    // The expression to evaluate, or one that shows what this is.
+    let source = cli::args().nth(1) ?? "2 + 3 * (10 - 4) / 2"
+
+    // One line: the grammar is the parser, and `dsl … from …` is how a program
+    // runs it. There is no `par_fold` here, so the compiler drives the entry
+    // rule over the whole string once instead of cutting it into pieces.
+    let value = dsl Calc from source
+
+    println("{source} = {value}")
+}

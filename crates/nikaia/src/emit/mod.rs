@@ -239,6 +239,16 @@ impl Flow {
     const PLAIN: Flow = Flow { throws: false };
 }
 
+/// Whether a `dsl … from …` hands its failure to the enclosing function or to
+/// a `catch` beside it. Everywhere else the parse propagates - `catch` is the
+/// one place that wants the `Result` itself, and asking for it there is the
+/// whole difference (Kap 7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Propagate {
+    Yes,
+    No,
+}
+
 impl<'p> Emitter<'p> {
     fn new(parsed: &'p Parsed, profile: Profile) -> Self {
         let mut grammars = HashMap::new();
@@ -1116,7 +1126,15 @@ impl<'p> Emitter<'p> {
             Expr::TryCatch { expr, handler } => {
                 // Kap 7.1: the handler sees the error as `error`.
                 out.push("match ");
-                self.expr(out, expr, depth, flow)?;
+                // `catch` needs the `Result`, not the value: a `dsl … from …`
+                // propagates on its own everywhere else, and here the handler
+                // is what handles it.
+                match expr.as_ref() {
+                    Expr::DslFrom { grammar, input } => {
+                        self.dsl_from(out, *grammar, input, depth, flow, Propagate::No)?
+                    }
+                    _ => self.expr(out, expr, depth, flow)?,
+                }
                 let pad = "    ".repeat(depth + 1);
                 let close = "    ".repeat(depth);
                 out.push(&format!(
@@ -1135,7 +1153,9 @@ impl<'p> Emitter<'p> {
                     "`spawn` needs the runtime integration; not emitted yet"
                 ));
             }
-            Expr::DslFrom { grammar, input } => self.dsl_from(out, *grammar, input, depth, flow)?,
+            Expr::DslFrom { grammar, input } => {
+                self.dsl_from(out, *grammar, input, depth, flow, Propagate::Yes)?
+            }
             other => return Err(anyhow!("cannot emit expression yet: {other:?}")),
         }
         Ok(())
@@ -1264,7 +1284,12 @@ impl<'p> Emitter<'p> {
         input: &Expr,
         depth: usize,
         flow: Flow,
+        propagate: Propagate,
     ) -> Result<()> {
+        let question = match propagate {
+            Propagate::Yes => "?",
+            Propagate::No => "",
+        };
         let name = self.text(grammar);
         let def = self
             .grammars
@@ -1275,14 +1300,26 @@ impl<'p> Emitter<'p> {
             .ok_or_else(|| anyhow!("grammar `{name}` has no `pub` rule to enter through"))?;
         let rule_name = self.text(rule.name);
 
-        // `&*` because the parser takes the text: a mapping, an owned string
-        // and a view all reach it the same way, and none of them has to be
-        // named here.
+        let pad = "    ".repeat(depth + 1);
+        let close = "    ".repeat(depth);
+
+        // The input is bound before it is parsed, because it is needed twice:
+        // once to parse and once to say *where* a failure was. A `ParseError`
+        // knows the offset and not the text, so only `render` can turn "at
+        // 1042" into "at line 37, column 9" - and a program that reports a
+        // rejected file without saying which line is not much better than one
+        // that panics. `&*` because the parser takes the text: a mapping, an
+        // owned string and a view all reach it the same way, and none of them
+        // has to be named here.
         if par_fold_of(rule).is_some() {
-            out.push(&format!("{name}::parse_{rule_name}_pieces(&*"));
+            out.push(&format!("{{\n{pad}let _source = &*"));
             self.expr(out, input, depth, flow)?;
             out.push(&format!(
-                ", &ParseContext::<()>::default(), {})?",
+                ";\n\
+                 {pad}{name}::parse_{rule_name}_pieces(_source, \
+                 &ParseContext::<()>::default(), {})\n\
+                 {pad}    .map_err(|error| error.render(_source))\n\
+                 {close}}}{question}",
                 self.profile.parallelism()
             ));
             return Ok(());
@@ -1290,21 +1327,20 @@ impl<'p> Emitter<'p> {
 
         // A sequential entry rule: no pieces to cut, so the parser is driven
         // over the whole input once.
-        let pad = "    ".repeat(depth + 1);
-        let close = "    ".repeat(depth);
         out.push(&format!(
-            "{{\n\
-             {pad}use winnow::Parser;\n\
-             {pad}let mut stream = winnow_grammar::ParseInput::<()> {{\n\
-             {pad}    state: winnow_grammar::ParseContext::<()>::default(),\n\
-             {pad}    input: winnow::stream::LocatingSlice::new(&*"
+            "{{\n{pad}use winnow::Parser;\n{pad}let _source = &*"
         ));
         self.expr(out, input, depth, flow)?;
         out.push(&format!(
-            "),\n\
+            ";\n\
+             {pad}let mut stream = winnow_grammar::ParseInput::<()> {{\n\
+             {pad}    state: winnow_grammar::ParseContext::<()>::default(),\n\
+             {pad}    input: winnow::stream::LocatingSlice::new(_source),\n\
              {pad}}};\n\
-             {pad}{name}::parse_{rule_name}().parse_next(&mut stream)?\n\
-             {close}}}"
+             {pad}{name}::parse_{rule_name}()\n\
+             {pad}    .parse_next(&mut stream)\n\
+             {pad}    .map_err(|error| error.render(_source))\n\
+             {close}}}{question}"
         ));
         Ok(())
     }

@@ -12,11 +12,15 @@ position on a token that was correct — which was caught by accident rather tha
 by a test. Every path taken from here should show its effect on all
 twenty-six at once.
 
-**Two columns, because there are two states.** *Shipped* is `winnow-grammar`
-`024e3d3`, what a user gets today. *Pending* is with the expectation-ranking
-change that is written and tested but not pushed (`claude/expectations-by-requirement`,
-279 tests; the branch has no push access yet). Where they differ, the difference
-is what pushing buys.
+**Two columns, because there are two states.** *Before* is `winnow-grammar`
+`024e3d3`. *Today* is `e1b0e33`, which ranks an expectation by whether the
+grammar required it (winnow-grammar#4) and is what a user gets now. Where they
+differ, the difference is what that change bought.
+
+A message today can carry a second line, `note: also possible here: …`, holding
+what the grammar would have accepted but did not require. The columns below
+quote the headline, which is the part a reader acts on; where the note matters
+to a row, the row says so.
 
 `✅` says what a reader needs · `⚠️` does not · `○` does not fail at all
 
@@ -24,11 +28,11 @@ is what pushing buys.
 
 ## A. A separator or terminator is missing
 
-| # | input | the reader needs | shipped | pending |
+| # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | A1 | `struct S { name: &str` ⏎ `temp: i32 }` | `,` or `}` | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `,`, `}` `` |
 | A2 | `fn f(a: i32 b: i32) {}` | `,` or `)` | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `)`, `,` `` |
-| A3 | `fn f() {` ⏎ `let x = 1` | `}` at end of input | ⚠️ 17 tokens | ⚠️ 16 tokens |
+| A3 | `fn f() {` ⏎ `let x = 1` | `}` at end of input | ⚠️ 17 tokens | ⚠️ 17 tokens, 22 in the note |
 | A4 | `let xs = [1, 2` | `,` or `]` | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
 | A5 | `struct S { a: i32,, b: i32 }` | a field name | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `}`, identifier `` |
 
@@ -38,7 +42,7 @@ it is trivially the furthest thing that failed.
 
 ## B. An operand is missing
 
-| # | input | the reader needs | shipped | pending |
+| # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | B1 | `let y = ` | **`expected expression`** | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
 | B2 | `let y = 1 + ` | `expected expression` | ⚠️ 8 tokens | ⚠️ 6 tokens |
@@ -56,7 +60,7 @@ label as it stands.
 
 ## C. The wrong token where the grammar knows what belongs
 
-| # | input | the reader needs | shipped | pending |
+| # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | C1 | `struct S { name &str }` | `:` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `:` `` |
 | C2 | `rule A -> i32 = n:digit1 { n }` | `->` | ⚠️ `` `//`, whitespace `` | ⚠️ `expected digits` |
@@ -76,7 +80,7 @@ is one alternative and the message shows the other one it was in the middle of.
 
 ## D. Almost the right token
 
-| # | input | the reader needs | shipped | pending |
+| # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | D1 | `/ a broken comment` at top level | `//` named | ⚠️ 4 tokens incl. `//` | ✅ `expected end of input` |
 | D2 | `if a = b { }` | open question | ○ **parses** | ○ |
@@ -88,7 +92,7 @@ and unhelpful. Recorded so the trade is visible, not to argue it.
 
 ## E. Inside a `grammar` block
 
-| # | input | the reader needs | shipped | pending |
+| # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | E1 | `d:digit{1, -> { 1 }` | a number or `}` | ⚠️ incl. `//` | ✅ `` expected one of: `}`, digits `` |
 | E2 | `d:nosuchbuiltin` | the backend rejects it | ○ parses, as intended | ○ |
@@ -96,11 +100,11 @@ and unhelpful. Recorded so the trade is visible, not to argue it.
 
 ## F. The cause is far from the symptom
 
-| # | input | the reader needs | shipped | pending |
+| # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | F1 | `let s = "unterminated` | the **opening quote** | ⚠️ EOF, `` `\`, any character `` | ⚠️ unchanged |
 | F2 | a stray `}` at top level | `unexpected '}'` | ⚠️ 4 tokens | ✅ `expected end of input` |
-| F3 | one unclosed `fn` | `}`, and where the `{` was | ⚠️ 17 tokens | ⚠️ 16 tokens |
+| F3 | one unclosed `fn` | `}`, and where the `{` was | ⚠️ 17 tokens | ⚠️ 17 tokens, 22 in the note |
 
 F1 and F3 are a *position* problem, not a ranking one, and no amount of work on
 expectations touches them. They need the opening delimiter remembered so the
@@ -109,7 +113,7 @@ so the two are not confused.
 
 ## G. Not ASCII
 
-| # | input | the reader needs | shipped | pending |
+| # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | G1 | `let x = “hi”` | the quote named, column right | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
 | G2 | `let café = 1` | accepted | ○ **parses** | ○ |
@@ -127,7 +131,7 @@ to `fs::map` ([ADR-016](specification/adr/adr-016.md)) and is tested there.
 things the grammar admits that probably should not be — and the corpus found
 them by trying to break the compiler on purpose.
 
-**The pending change moves twelve of twenty-one failing rows** and leaves nine.
+**The change moved twelve of twenty-one failing rows** and leaves nine.
 Those nine sort into exactly three groups, and each needs a different mechanism:
 
 1. **A list where a word belongs** — A3, B1, B2, B4, F3. A label, and the
@@ -141,6 +145,13 @@ Those nine sort into exactly three groups, and each needs a different mechanism:
    at the start of every rule, so it reaches offsets nothing else did, and
    progress is decided before any ranking. The obvious fix was tried and
    reverted: it made B1 far worse.
+
+   A3 and F3 show the second half of the same shape. Their headline no longer
+   names trivia, but it names seventeen tokens and the note names twenty-two
+   more — at end of input every continuation of every open rule is live at one
+   offset, and ranking cannot shorten a list where every entry is genuinely
+   possible. Only a label can (group 1), which is why they are counted there
+   too.
 3. **The position is wrong, not the text** — F1, F3.
 
 **No parse error shows the source line.** Every row above is a one-line headline
@@ -153,18 +164,17 @@ twenty-six rows and may be worth more than any of the three groups above.
 
 The inputs are `tests/errors/*.nika`, beside the existing `tests/samples/`, and
 `tests/errors/EXPECTED.txt` holds what each produces **today, against the
-shipped backend** — so the suite is green as checked in and the wrong messages
-are on the record rather than in a memory.
+backend in `Cargo.lock`** — so the suite is green as checked in and the messages
+that are still wrong are on the record rather than in a memory.
 
 ```bash
 cargo run -p nikaia --example errors > tests/errors/EXPECTED.txt
 ```
 
 `crates/nikaia/tests/errors.rs` compares the whole file in one assertion, the
-shape `grammar_lowering.rs` already uses. Applying the pending backend patch
-(`docs/upstream/0001-expectations-by-requirement.patch`) makes that test fail,
-and that is the point: the diff is the twelve rows it moves. Read it, then
-regenerate.
+shape `grammar_lowering.rs` already uses. A backend bump makes that test fail
+whenever it changes a message, which is the point: the diff is the change, in
+the reader's terms rather than the parser's. Read it, then regenerate.
 
 The list itself is still meant to be argued with. A row struck or added here
 should be a file added or removed there, and the golden regenerated.

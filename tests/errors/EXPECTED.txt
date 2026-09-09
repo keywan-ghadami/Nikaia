@@ -1,27 +1,26 @@
 === A1
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `temp` at line 3, column 5
-in COMMENT
-in item 1
-in WS
+expected one of: `,`, `}`; found unexpected token `temp` at line 3, column 5
+note: also possible here: `//`
 in struct_item
 in item
+in item 1
 in program
 
 === A2
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `b` at line 1, column 13
-in COMMENT
-in item 1
-in WS
+expected one of: `)`, `,`; found unexpected token `b` at line 1, column 13
+note: also possible here: `//`
 in fn_params
 in fn_item
 in item
+in item 1
 in program
 
 === A3
 Parse error:
-unexpected end of input, expected one of: `!=`, `!`, `*`, `+`, `-`, `.`, `//`, `/`, `==`, `[`, `dsl`, `false`, `let`, `return`, `spawn`, `true`, whitespace at line 3, column 1
+unexpected end of input, expected one of: `!=`, `!`, `(`, `*`, `+`, `-`, `.`, `/`, `::`, `==`, `[`, `dsl`, `false`, `let`, `return`, `spawn`, `true` at line 3, column 1
+note: also possible here: `"`, `%`, `&&`, `&`, `//`, `;`, `<=`, `<`, `>=`, `>`, `??`, `?`, `as`, `catch`, `fn`, `for`, `if`, `{`, `||`, `}`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -59,12 +58,11 @@ in program
 
 === A5
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `,` at line 2, column 12
-in COMMENT
-in item 1
-in WS
+expected one of: `}`, identifier; found unexpected token `,` at line 2, column 12
+note: also possible here: `//`
 in struct_item
 in item
+in item 1
 in program
 
 === B1
@@ -96,15 +94,18 @@ in program
 
 === B2
 Parse error:
-expected one of: `!`, `-`, `//`, `dsl`, `false`, `spawn`, `true`, whitespace; found unexpected token `}` at line 3, column 1
-in bool_lit
+expected one of: `!`, `-`, `dsl`, `false`, `spawn`, `true`; found unexpected token `}` at line 3, column 1
+note: also possible here: `"`, `&`, `(`, `//`, `if`, `{`, digits, identifier
+in COMMENT
+in item 1
+in WS
+in paren_expr
 in primary_expr
 in postfix_expr
 in unary_expr
 in cast_expr
 in mul_expr
 in add_tail
-in item 1
 in add_expr
 in cmp_expr
 in and_expr
@@ -125,8 +126,12 @@ in program
 
 === B4
 Parse error:
-expected one of: `!`, `-`, `//`, `dsl`, `false`, `spawn`, `true`, whitespace; found unexpected token `)` at line 2, column 18
-in bool_lit
+expected one of: `!`, `-`, `dsl`, `false`, `spawn`, `true`; found unexpected token `)` at line 2, column 18
+note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `{`, digits, identifier
+in COMMENT
+in item 1
+in WS
+in paren_expr
 in primary_expr
 in postfix_expr
 in unary_expr
@@ -140,7 +145,6 @@ in coalesce_expr
 in catch_expr
 in expr
 in call_args_tail
-in item 1
 in call_args
 in call_arg_list
 in path_expr
@@ -166,10 +170,8 @@ in program
 
 === B5
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `=` at line 2, column 12
-in COMMENT
-in item 1
-in WS
+expected one of: `&`, identifier; found unexpected token `=` at line 2, column 12
+note: also possible here: `//`
 in type_ref
 in type_annotation
 in let_stmt
@@ -182,7 +184,8 @@ in program
 
 === C1
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `&` at line 2, column 10
+expected `:`; found unexpected token `&` at line 2, column 10
+note: also possible here: `//`
 in COMMENT
 in item 2
 in WS
@@ -194,7 +197,8 @@ in program
 
 === C2
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `n` at line 2, column 32
+expected digits; found unexpected token `n` at line 2, column 32
+note: also possible here: `//`
 in COMMENT
 in item 1
 in WS
@@ -214,7 +218,8 @@ in program
 
 === C3
 Parse error:
-expected one of: `&`, `//`, `self`, whitespace; found unexpected token `{` at line 1, column 10
+expected one of: `&`, `self`; found unexpected token `{` at line 1, column 10
+note: also possible here: `)`, `//`, identifier
 in COMMENT
 in item 1
 in WS
@@ -228,7 +233,8 @@ in program
 
 === C5
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `struct` at line 2, column 5
+expected one of: `fn`, `pub`; found unexpected token `struct` at line 2, column 5
+note: also possible here: `//`, `}`
 in COMMENT
 in item 1
 in WS
@@ -238,7 +244,8 @@ in program
 
 === D1
 Parse error:
-expected one of: `//`, `grammar`, `struct`, whitespace; found unexpected token `/` at line 3, column 1
+expected end of input; found unexpected token `/` at line 3, column 1
+note: also possible here: `//`, `@borrowed`, `fn`, `grammar`, `impl`, `pub`, `struct`, `use`
 in COMMENT
 in item 2
 in WS
@@ -248,7 +255,8 @@ in WS
 
 === D3
 Parse error:
-expected one of: `//`, whitespace; found unexpected token `C` at line 2, column 28
+expected `{`; found unexpected token `C` at line 2, column 28
+note: also possible here: `//`
 in COMMENT
 in item 1
 in WS
@@ -262,8 +270,11 @@ in program
 
 === E1
 Parse error:
-expected one of: `//`, `}`, digits, whitespace; found unexpected token `-` at line 2, column 32
-in number
+expected one of: `}`, digits; found unexpected token `-` at line 2, column 32
+note: also possible here: `//`
+in COMMENT
+in item 2
+in WS
 in g_bounds
 in g_repeat
 in g_postfix
@@ -282,7 +293,8 @@ in program
 
 === E3
 Parse error:
-expected one of: `*`, `+`, `//`, `=>`, `fold`, `par_fold`, identifier, whitespace; found unexpected token `}` at line 3, column 1
+expected one of: `*`, `+`, `=>`, `fold`, `par_fold`, identifier; found unexpected token `}` at line 3, column 1
+note: also possible here: `"`, `(`, `->`, `//`, `?`, `{`
 in COMMENT
 in item 1
 in WS
@@ -322,14 +334,16 @@ in program
 
 === F2
 Parse error:
-expected one of: `//`, `grammar`, `struct`, whitespace; found unexpected token `}` at line 3, column 1
+expected end of input; found unexpected token `}` at line 3, column 1
+note: also possible here: `//`, `@borrowed`, `fn`, `grammar`, `impl`, `pub`, `struct`, `use`
 in COMMENT
 in item 2
 in WS
 
 === F3
 Parse error:
-unexpected end of input, expected one of: `!=`, `!`, `*`, `+`, `-`, `.`, `//`, `/`, `==`, `[`, `dsl`, `false`, `let`, `return`, `spawn`, `true`, whitespace at line 4, column 1
+unexpected end of input, expected one of: `!=`, `!`, `(`, `*`, `+`, `-`, `.`, `/`, `::`, `==`, `[`, `dsl`, `false`, `let`, `return`, `spawn`, `true` at line 4, column 1
+note: also possible here: `"`, `%`, `&&`, `&`, `//`, `;`, `<=`, `<`, `>=`, `>`, `??`, `?`, `as`, `catch`, `fn`, `for`, `if`, `{`, `||`, `}`, digits, identifier
 in COMMENT
 in item 1
 in WS
