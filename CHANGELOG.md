@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed (0.0.8 - the compiler parses 17% fewer instructions)
+
+- **Dependency**: `winnow-grammar` `9180b3d` -> `d431ed1` (upstream #12). A class scan is a run of nothing more often than it is a run of anything: the implicit whitespace skip runs between every pair of elements of every syntactic rule, and in a language written without gratuitous blanks most of those find nothing. The scan paid its whole eight-bytes-at-a-time setup to report that the first byte was not in the class; it tests that byte first now.
+- **Measured, not asserted.** Callgrind, same source and flags, so the numbers do not depend on the machine: **Nikaia's compiler parsing 2 000 small functions goes 281.6 M instructions to 233.7 M**, and `examples/1brc.nika` over 200 000 rows goes 123.6 M to 120.0 M - against 119.4 M for a build with no word scan at all, so the guard recovers seven eighths of what the scan costs there while keeping everything it buys on long runs.
+- **It closes `docs/handoff.md` §4's first open item, and not the way that item proposed.** The estimate was a break-even of six to eight characters and a threshold in the code generator; measured, the crossover is at **three**, and a class that always matches exactly one character is written as `digit`, which never reaches that code. The cost was in the row of the table nobody had measured.
+
 ### Added (0.0.8 - a sixth running example, with no grammar in it at all)
 
 - **`examples/n-body.nika`**: the Computer Language Benchmarks Game's five-body integration, and the first example here that parses nothing. Five programs in a row that all begin with a DSL would say Nikaia is a parser generator; this one is arithmetic in a loop - `sync` methods, `&mut self`, indices and floats - which is the other half of what a systems language is judged on. It is also the only example whose numbers are not ours to choose: the CLBG publishes the same program in some thirty languages with an exact expected output, and **ours matches it to the digit** (`-0.169075164` / `-0.169087605` at n = 1000), which `crates/nikaia/tests/examples.rs` checks under both profiles.
