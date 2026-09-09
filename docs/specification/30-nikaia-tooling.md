@@ -395,6 +395,24 @@ Unlike languages that prefer a minimal core, Nikaia pursues immediate productivi
 ### 17.1. Universal Modules
 These modules rely on Unified Types and function identically in both Lite and Advanced profiles, though their internal implementation differs significantly to match the runtime model.
 
+**Writing output**
+
+`println(text)` writes a line to standard output, `print(text)` writes without the newline, and
+`eprintln` / `eprint` are the same two on standard error. They are in the prelude rather than in
+a module, because a program that says nothing is rare enough not to plan for.
+
+The argument is an ordinary interpolated string (Part I, 2.5), so a hole is written where the
+value goes and `{{` is a literal brace:
+
+```nika
+print("{name}: ")
+println("{count} rows")
+```
+
+`print` exists for output composed piece by piece — a pretty-printer that indents a tree, a
+progress line rewritten in place — where a newline after every fragment would be wrong.
+`examples/json.nika` is the first program here that needs it.
+
 **`std::http`**
 A production-ready HTTP/1.1 and HTTP/2 server and client.
 * **Lite Profile:** Runs on a single-threaded Event Loop.

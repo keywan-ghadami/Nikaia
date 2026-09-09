@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Four of the five programs here compile, run, and are checked by `cargo test`. The fifth is
+Five of the six programs here compile, run, and are checked by `cargo test`. The sixth is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -10,9 +10,10 @@ needs is listed under *Gaps* below.
 | [`calc.nika`](calc.nika) | a four-function calculator: the grammar protocol at its smallest | ✅ `crates/nikaia/tests/examples.rs` |
 | [`access-log.nika`](access-log.nika) | a web log summarised: several fields per line, a report at the end | ✅ `crates/nikaia/tests/examples.rs` |
 | [`config.nika`](config.nika) | an INI file with comments: a grammar that defines its own whitespace | ✅ `crates/nikaia/tests/examples.rs` |
+| [`json.nika`](json.nika) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the four is compiled and run **under both profiles**, and their output must be
+Each of the five is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -33,6 +34,12 @@ They are deliberately different shapes.
   the one that defines its own `WS` so that `#` comments are legal everywhere a blank is
   without another rule mentioning them. It is also the counterpart to 1BRC's fold: `setting*`
   collects, which is right for a configuration file and wrong at a billion rows.
+* **`json.nika`** is the first input whose shape the *grammar* does not fix. `config.nika`'s
+  tree is two levels deep because the grammar says so; a JSON value contains values, to
+  whatever depth the document happens to go. An `enum` is that tree — six variants, and every
+  walk over it is a `match` the compiler checks for completeness — and this is also the example
+  where zero-copy stops and says so: a JSON string is not a slice of the input, so `Text` holds
+  the **raw** body and decoding waits until a program asks about it.
 
 An example that is added has to be declared: either it runs and says what it prints, or it is
 specification-level and its gaps are here. `crates/nikaia/tests/examples.rs` fails on a file
@@ -259,6 +266,23 @@ compiler cannot see. Enums and `match` now lower: the three variant shapes (`Qui
 the same way so the lowering stays a transcription. `calc.nika`'s `mul_tail` yields
 `(Op, i64)`. An enum that carries a view takes the input lifetime exactly as a struct does,
 which is what lets one appear in a grammar rule's return type.
+
+**G13 — no character literal, and three things that followed.** Found by `json.nika`, whose
+`unescape` has to ask what a character is: `'n'` was not an expression the language had, and
+`char` was not in the table of primitive types (Part I, 2.2) either — the type was reachable
+only because a type is a name. Decoding an escape is exactly the shape a `match` over
+characters has, so the literal is a **pattern** as well as an expression (3.4), and the body is
+kept **as written**: the language below spells `'\n'` the same way, so nothing decides twice
+what it means.
+
+Writing the same function found the two beside it. A string could not hold a `\u{…}` escape —
+the interpolation scanner read the `{` as a hole and emitted a `format!` with an argument
+nobody wrote — because a string's body reaches the emitter as it was typed and the scanner did
+not know an escape when it saw one. And output could not be composed piece by piece: `println`
+was the only way to write, so a pretty-printer that indents a tree had no way to put a fragment
+on a line without ending it. `print` and `eprint` are now what `println` and `eprintln` always
+were, minus the newline (Part III, 17.1). Part I gains **2.5** while it is at it: string
+interpolation was in every example and in no chapter.
 
 **G11 — a rejected parse said what was expected and never where.** Found by writing
 `access-log.nika`, whose `catch` prints the failure: the message read
