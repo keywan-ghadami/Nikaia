@@ -109,6 +109,18 @@ pub enum Segment {
     Text(String),
     /// `{ … }`: a Nikaia expression, and where it sits.
     Hole { expr: String, at: Position },
+    /// `<for row in :rows> … </for>`: the body, once per element.
+    ///
+    /// Written as an *element* because the file is markup and an editor that
+    /// highlights it keeps working; a second syntax in a file that already has
+    /// one is a second thing to know. The collection carries `:` because it is
+    /// captured from the enclosing scope (ADR-007 D4) - the colon is where the
+    /// template's names end and the program's begin.
+    For {
+        binding: String,
+        collection: String,
+        body: Vec<Segment>,
+    },
 }
 
 /// Split a template body into text and holes, deciding each hole's position.
@@ -119,65 +131,153 @@ pub enum Segment {
 /// what makes reading the position off the literal text sound rather than an
 /// approximation.
 pub fn split(body: &str) -> Result<Vec<Segment>> {
+    let mut scan = Scan::default();
+    let mut at = 0;
+    let segments = split_until(body, &mut at, &mut scan, None)?;
+    if at < body.len() {
+        return Err(anyhow!("`</for>` without a `<for …>` before it"));
+    }
+    Ok(segments)
+}
+
+/// The segments from `at` up to `end` - `Some("</for>")` inside a loop, `None`
+/// at the top - leaving `at` past the terminator it stopped on.
+///
+/// The HTML scan is threaded through rather than restarted per level: a `<for>`
+/// is not markup, so a loop written inside a `<table>` is still inside it, and a
+/// hole in the loop's body is in the position the surrounding markup put it.
+fn split_until(
+    body: &str,
+    at: &mut usize,
+    scan: &mut Scan,
+    end: Option<&str>,
+) -> Result<Vec<Segment>> {
     let mut segments = Vec::new();
     let mut text = String::new();
-    let mut scan = Scan::default();
-    let mut chars = body.char_indices().peekable();
 
-    while let Some((i, c)) = chars.next() {
-        match c {
-            '{' if chars.peek().map(|(_, c)| *c) == Some('{') => {
-                chars.next();
-                text.push('{');
+    while *at < body.len() {
+        let rest = &body[*at..];
+
+        if let Some(end) = end {
+            if rest.starts_with(end) {
+                *at += end.len();
+                if !text.is_empty() {
+                    segments.push(Segment::Text(text));
+                }
+                return Ok(segments);
             }
-            '}' if chars.peek().map(|(_, c)| *c) == Some('}') => {
-                chars.next();
+        }
+        if end.is_none() && rest.starts_with("</for>") {
+            return Ok(segments);
+        }
+
+        if let Some((binding, collection, len)) = loop_header(rest)? {
+            *at += len;
+            if !text.is_empty() {
+                segments.push(Segment::Text(std::mem::take(&mut text)));
+            }
+            let inner = split_until(body, at, scan, Some("</for>"))?;
+            segments.push(Segment::For {
+                binding,
+                collection,
+                body: inner,
+            });
+            continue;
+        }
+
+        let c = rest.chars().next().expect("non-empty");
+        let width = c.len_utf8();
+
+        match c {
+            '{' if rest[width..].starts_with('{') => {
+                text.push('{');
+                *at += width * 2;
+            }
+            '}' if rest[width..].starts_with('}') => {
                 text.push('}');
+                *at += width * 2;
             }
             '{' => {
-                let at = scan.position();
-                let mut expr = String::new();
-                let mut closed = false;
-                for (_, c) in chars.by_ref() {
-                    if c == '}' {
-                        closed = true;
-                        break;
-                    }
-                    expr.push(c);
-                }
-                if !closed {
-                    return Err(anyhow!("unclosed `{{` in the template, at byte {i}"));
-                }
+                let position = scan.position();
+                let Some(close) = rest.find('}') else {
+                    return Err(anyhow!("unclosed `{{` in the template, at byte {at}"));
+                };
                 if !text.is_empty() {
                     segments.push(Segment::Text(std::mem::take(&mut text)));
                 }
                 segments.push(Segment::Hole {
-                    expr: expr.trim().to_string(),
-                    at,
+                    expr: rest[width..close].trim().to_string(),
+                    at: position,
                 });
+                *at += close + 1;
             }
             _ => {
                 scan.feed(c);
                 text.push(c);
+                *at += width;
             }
         }
     }
 
+    if end.is_some() {
+        return Err(anyhow!("a `<for …>` in the template is never closed"));
+    }
     if !text.is_empty() {
         segments.push(Segment::Text(text));
     }
     Ok(segments)
 }
 
+/// `<for name in :collection>` at the start of `rest`, and how long it is.
+fn loop_header(rest: &str) -> Result<Option<(String, String, usize)>> {
+    if !rest.starts_with("<for") {
+        return Ok(None);
+    }
+    // `<format>` is an element and `<for>` without a body is not a loop: what
+    // makes this a directive is the blank after the keyword.
+    if !rest[4..].starts_with(|c: char| c.is_whitespace()) {
+        return Ok(None);
+    }
+    let Some(close) = rest.find('>') else {
+        return Err(anyhow!("`<for` in the template is never closed with `>`"));
+    };
+
+    let header = &rest[4..close];
+    let words: Vec<&str> = header.split_whitespace().collect();
+    let [binding, "in", collection] = words.as_slice() else {
+        return Err(anyhow!(
+            "a template loop is written `<for name in :collection>`, not `<for{header}>`"
+        ));
+    };
+    let Some(collection) = collection.strip_prefix(':') else {
+        return Err(anyhow!(
+            "`{collection}` is captured from the enclosing scope, so it is written \
+             `:{collection}` - the colon is where the template's names end and the \
+             program's begin (ADR-007 D4)"
+        ));
+    };
+
+    Ok(Some((
+        binding.to_string(),
+        collection.to_string(),
+        close + 1,
+    )))
+}
+
 /// Every hole that is somewhere escaping cannot make safe, with what to say.
+///
+/// Through a loop's body as well: what is legal inside one is what is legal
+/// outside, and a hole in a `<script>` does not become safe by being repeated.
 pub fn illegal(segments: &[Segment]) -> Vec<(String, Position)> {
-    segments
-        .iter()
-        .filter_map(|segment| match segment {
-            Segment::Hole { expr, at } if !at.escapable() => Some((expr.clone(), *at)),
-            _ => None,
-        })
-        .collect()
+    let mut found = Vec::new();
+    for segment in segments {
+        match segment {
+            Segment::Hole { expr, at } if !at.escapable() => found.push((expr.clone(), *at)),
+            Segment::For { body, .. } => found.extend(illegal(body)),
+            _ => {}
+        }
+    }
+    found
 }
 
 /// The message for one of them.

@@ -13,8 +13,10 @@
 //
 // Build:  nikaia build --profile=lite --release
 //
-// NOTE: this does not compile yet - see examples/README.md, where the gaps it
-// depends on are marked [G6] and [G7].
+// NOTE: this does not compile yet - see examples/README.md. [G7], the template
+// and its escaping, is done: `render` below lowers and runs. What is left is
+// [G6], the request the handler cannot see, and `fn:` in a method chain
+// (ADR-013 D5) - both of them in `main`.
 
 use std::http
 use std::db::postgres
@@ -39,13 +41,14 @@ pub struct Fortune {
 // is nothing to reuse it over, so baking the binding in is correct here.
 //
 // Escaping is part of this grammar's contract rather than the caller's
-// discipline, and what that means is decided:
-// [ADR-017](../docs/specification/adr/adr-017.md). Every hole is escaped,
+// discipline, and it is **built**
+// ([ADR-017](../docs/specification/adr/adr-017.md)): every hole is escaped,
 // every time, with no flag at the hole that turns it off; the one way to say
 // "this is already markup" is the type `html::Raw`; and a hole in a position
 // the grammar cannot escape for - inside `<script>`, in a URL - is a compile
 // error naming the position rather than a promise that quietly does not hold.
-// What is left for [G7] is the `html` grammar itself.
+// The `render` function below lowers and runs today; what this file still
+// waits on is [G6] and the `fn:` chaining of ADR-013 D5, both in `main`.
 fn render(rows: List[Fortune]) -> String {
     return dsl html {
         <!DOCTYPE html>

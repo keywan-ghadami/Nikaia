@@ -358,6 +358,19 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
 
+**G16 — a type could not be named by a path.** `Shared[postgres::Connection]` did not parse:
+a type was a name with optional arguments, and `postgres::Connection` is a name with a path in
+front of it. Found by `fortunes.nika` the moment its template stopped being the first thing that
+failed. The whole path is interned as one name, because that is what the name *is* to a compiler
+that lowers name for name (ADR-011 D2) — nothing here resolves a module, and a path can therefore
+never collide with a struct the file declares, which is correct.
+
+**A hole in an interpolated string could not hold a string literal.** `"{f(\"a\")}"` handed the
+parser `f(\"a\")`, which is not an expression. A hole is Nikaia source that was written *inside*
+a string literal, so the escaping it carries is that literal's: the two characters the enclosing
+string had to escape are undone before the hole is parsed, and every other escape keeps its
+meaning.
+
 **G6 — the HTTP handler cannot see the request.** *Decided*
 ([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime
 binding. The request is the handler's **first implicit argument**, under the rule Part I 5.3
@@ -387,8 +400,10 @@ cannot make safe is refused with the position named. The type decides what a hol
 is ADR-017 D2 put where `rustc` can act on it, so the Nikaia compiler needs no type checker to
 enforce it. `examples/escaping.nika` is the whole of it in one page.
 
-What is left is **control flow inside the markup**: `<for row in :rows>`, which D5 left out of
-scope. Until it exists, what a page repeats is a Nikaia `for` and the template is what one row
-looks like — which is why `fortunes.nika` still waits.
+**Control flow is there too**: `<for row in :rows> … </for>`, written as an *element* because
+the file is markup and an editor that highlights it keeps working, with `:rows` captured from the
+enclosing scope (ADR-007 D4). The position check runs through a loop's body, so nothing becomes
+safe by being repeated. `fortunes.nika`'s `render` lowers and runs today; what that file still
+waits on is **G6** and `fn:` in a method chain (ADR-013 D5), both of them in `main`.
 
 

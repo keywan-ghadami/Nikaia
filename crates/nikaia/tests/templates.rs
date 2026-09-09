@@ -161,3 +161,85 @@ fn another_dsl_target_says_what_it_needs() {
     let message = refuse("fn q() -> String { return dsl sql { SELECT 1 } eod }");
     assert!(message.contains("deferred-parameter"), "{message}");
 }
+
+// --- Control flow in the markup ---------------------------------------------
+
+/// `<for row in :rows> … </for>`: written as an *element*, because the file is
+/// markup and an editor that highlights it keeps working.
+#[test]
+fn a_loop_repeats_its_body() {
+    let emitted = emit(
+        "use std::html\n\
+         pub struct R { n: i32 }\n\
+         fn page(rows: Vec[R]) -> String {\n\
+             return dsl html { <table><for r in :rows><tr><td>{r.n}</td></tr></for></table> } eod\n\
+         }",
+    );
+    assert!(emitted.contains("for r in &rows {"), "{emitted}");
+    assert!(
+        emitted.contains("::nikaia_std::html::Render::render(&r.n)"),
+        "{emitted}"
+    );
+    // The directive itself is not markup and is not written out.
+    assert!(!emitted.contains("<for"), "{emitted}");
+    assert!(!emitted.contains("</for>"), "{emitted}");
+}
+
+/// The body is a template like any other, so a loop may hold a loop.
+#[test]
+fn a_loop_may_hold_a_loop() {
+    let segments = template::split("<for a in :xs><for b in :ys>{b}</for></for>").expect("splits");
+    let Segment::For { binding, body, .. } = &segments[0] else {
+        panic!("expected a loop: {segments:?}");
+    };
+    assert_eq!(binding, "a");
+    assert!(matches!(body[0], Segment::For { .. }), "{body:?}");
+}
+
+/// What is legal inside a loop is what is legal outside: a hole in a `<script>`
+/// does not become safe by being repeated, and the surrounding markup still
+/// decides the position because a `<for>` is not markup.
+#[test]
+fn the_position_check_runs_through_a_loop() {
+    let message = refuse(
+        "use std::html\n\
+         fn page(xs: Vec[i32]) -> String {\n\
+             return dsl html { <script><for x in :xs>{x}</for></script> } eod\n\
+         }",
+    );
+    assert!(message.contains("`<script>` body"), "{message}");
+}
+
+/// The collection carries `:` because it is captured from the enclosing scope
+/// (ADR-007 D4), and leaving it off is worth a sentence rather than a parse
+/// error about a missing angle bracket.
+#[test]
+fn the_capture_marker_is_required_and_explained() {
+    let message = format!(
+        "{:#}",
+        template::split("<for r in rows>{r}</for>").expect_err("refused")
+    );
+    assert!(message.contains(":rows"), "{message}");
+    assert!(message.contains("enclosing scope"), "{message}");
+}
+
+/// A loop that is never closed, and a `</for>` with nothing open, each say so.
+#[test]
+fn an_unbalanced_loop_is_refused() {
+    let open = format!(
+        "{:#}",
+        template::split("<for r in :rows>{r}").expect_err("refused")
+    );
+    assert!(open.contains("never closed"), "{open}");
+
+    let close = format!("{:#}", template::split("x</for>").expect_err("refused"));
+    assert!(close.contains("without a `<for"), "{close}");
+}
+
+/// An element whose name merely begins with `for` is an element.
+#[test]
+fn only_the_keyword_and_a_blank_make_a_directive() {
+    let segments = template::split("<form action=\"/x\">y</form>").expect("splits");
+    assert_eq!(segments.len(), 1, "{segments:?}");
+    assert!(matches!(segments[0], Segment::Text(_)));
+}

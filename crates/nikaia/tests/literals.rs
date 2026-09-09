@@ -95,3 +95,22 @@ fn print_is_a_macro_like_println() {
     assert!(emitted.contains(r#"print!("a")"#), "{emitted}");
     assert!(emitted.contains(r#"eprint!("b")"#), "{emitted}");
 }
+
+/// A hole is Nikaia source that was written **inside** a string literal, so the
+/// escaping it carries is that literal's and has to be undone before it is
+/// parsed.
+///
+/// Without this the parser is handed `f(\"a\")`, which is not an expression -
+/// and a program that wants to print the result of a call taking a string could
+/// not say so.
+#[test]
+fn a_hole_may_hold_a_string_literal() {
+    let emitted = emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println("{f(\"a\")}") }"#);
+    assert!(emitted.contains(r#"f("a")"#), "{emitted}");
+
+    // A backslash the inner text wants keeps its meaning: only the two
+    // characters the enclosing literal had to escape are undone.
+    let escaped =
+        emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println("{f(\"a\\nb\")}") }"#);
+    assert!(escaped.contains(r#"f("a\nb")"#), "{escaped}");
+}

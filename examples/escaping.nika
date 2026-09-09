@@ -34,16 +34,27 @@ use std::html
 pub struct Row {
     name: &str,
     note: &str,
+    shade: &str,
 }
 
-// One row. The two holes are in text nodes and the one in the class is in a
-// *quoted* attribute, which is the other position escaping is enough for.
+// The whole table, in one template. `<for row in :rows>` is written as an
+// *element* because this file is markup and an editor that highlights it keeps
+// working; `:rows` carries the colon because it is captured from the enclosing
+// scope (ADR-007 D4) - that is where the template's names end and the program's
+// begin.
+//
+// The two holes in the cells are in text nodes and the one in the class is in a
+// *quoted* attribute, which is the other position escaping is enough for. The
+// check runs through the loop's body, so nothing becomes safe by being
+// repeated.
 //
 // `{{` is a literal brace, the same rule an interpolated string follows - a
 // template shares the syntax rather than inventing a second one.
-fn row(r: Row, shade: &str) -> String {
+fn table(rows: Vec[Row]) -> String {
     return dsl html {
-        <tr class="{shade}"><td>{r.name}</td><td>{r.note}</td></tr>
+        <table>
+        <for r in :rows><tr class="{r.shade}"><td>{r.name}</td><td>{r.note}</td></tr></for>
+        </table>
     } eod
 }
 
@@ -65,25 +76,10 @@ fn emphasised(name: &str) -> String {
 
 fn main() {
     let mut rows = Vec::new()
-    rows.push(Row { name: "Ada", note: "fine" })
-    rows.push(Row { name: "a<b & c", note: "\"quoted\"" })
-    rows.push(Row { name: "O'Hara", note: "</td> is not a tag here" })
+    rows.push(Row { name: "Ada", note: "fine", shade: "odd" })
+    rows.push(Row { name: "a<b & c", note: "\"quoted\"", shade: "even" })
+    rows.push(Row { name: "O'Hara", note: "</td> is not a tag here", shade: "odd" })
 
-    // The template has no loop of its own: what a page repeats is a Nikaia
-    // `for`, and the template is what one row looks like. Control flow inside
-    // the markup is a separate decision and ADR-017 D5 left it open.
-    let mut body = String::new()
-    let mut odd = true
-    for r in rows {
-        let shade = if odd { "odd" } else { "even" }
-        body.push_str(&row(r, shade))
-        odd = !odd
-    }
-
-    let name = "Ada"
-
-    println("<table>")
-    println("{body}")
-    println("{emphasised(name)}")
-    println("</table>")
+    println("{table(rows)}")
+    println("{emphasised(\"Ada\")}")
 }
