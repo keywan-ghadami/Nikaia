@@ -76,6 +76,18 @@ pub fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
     })
 }
 
+/// A whole file, as text.
+///
+/// Part III, 17.1. The other half of `map`, and the one to reach for when the
+/// file is small or has to outlive the parse: this copies the bytes into a
+/// `String` the caller owns, where `map` hands back pages it does not.
+///
+/// Fails as the file system does, and additionally when the file is not
+/// UTF-8 - the same rule `map` follows, for the same reason.
+pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
+    std::fs::read_to_string(path)
+}
+
 /// Below this, the pool costs more than the check does.
 const CHUNKED_ABOVE: usize = 1 << 20;
 

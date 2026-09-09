@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Three of the four programs here compile, run, and are checked by `cargo test`. The fourth is
+Four of the five programs here compile, run, and are checked by `cargo test`. The fifth is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -9,22 +9,30 @@ needs is listed under *Gaps* below.
 | [`1brc.nika`](1brc.nika) | the One Billion Row Challenge: a frame, a parallel fold, a billion rows | ✅ `crates/nikaia/tests/one_brc.rs` |
 | [`calc.nika`](calc.nika) | a four-function calculator: the grammar protocol at its smallest | ✅ `crates/nikaia/tests/examples.rs` |
 | [`access-log.nika`](access-log.nika) | a web log summarised: several fields per line, a report at the end | ✅ `crates/nikaia/tests/examples.rs` |
+| [`config.nika`](config.nika) | an INI file with comments: a grammar that defines its own whitespace | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the three is compiled and run **under both profiles**, and their output must be
+Each of the four is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
 
-They are deliberately different shapes. `1brc.nika` is the protocol at scale — `@frame`,
-`par_fold`, a memory-mapped file, one accumulator per core
-([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines, 4 cores, 0.52 s → 0.14 s,
-identical output), and one function it calls for every digit is written in Nikaia and compiled
-into `std` by the compiler itself. `calc.nika` is the same protocol with none of that: no
-frame, no fold, no I/O, one `pub rule` that returns a number — recursion and precedence, which
-is what a grammar can say and a chain of combinators cannot. `access-log.nika` is the shape
-most real work has: a line with several fields of different kinds, a record built from them,
-and a report at the end — including what a *rejected* line looks like.
+They are deliberately different shapes.
+
+* **`1brc.nika`** is the protocol at scale — `@frame`, `par_fold`, a memory-mapped file, one
+  accumulator per core ([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines, 4
+  cores, 0.52 s → 0.14 s, identical output), and one function it calls for every digit is
+  written in Nikaia and compiled into `std` by the compiler itself.
+* **`calc.nika`** is the same protocol with none of that: no frame, no fold, no I/O, one
+  `pub rule` that returns a number — recursion and precedence, which is what a grammar can say
+  and a chain of combinators cannot.
+* **`access-log.nika`** is the shape most real work has: a line with several fields of
+  different kinds, a record built from them, a report at the end — including what a *rejected*
+  line looks like.
+* **`config.nika`** is the one whose result is a *tree* rather than a number or a tally, and
+  the one that defines its own `WS` so that `#` comments are legal everywhere a blank is
+  without another rule mentioning them. It is also the counterpart to 1BRC's fold: `setting*`
+  collects, which is right for a configuration file and wrong at a billion rows.
 
 An example that is added has to be declared: either it runs and says what it prints, or it is
 specification-level and its gaps are here. `crates/nikaia/tests/examples.rs` fails on a file
