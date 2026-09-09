@@ -155,6 +155,9 @@ pub enum Stmt {
 pub enum Expr {
     // Primitive
     LitInt(i64),
+    /// `(a, b)` - Kap 4.5. Two or more values of different types, with no
+    /// name for the pair and none for its parts.
+    Tuple(Vec<Expr>),
     LitStr(String),
     LitBool(bool),
     Variable(Ident),
@@ -294,6 +297,12 @@ pub struct Type {
     // flag records that the source said `&`; what it lowers to is the emitter's
     // business.
     pub is_view: bool,
+    /// `(A, B)`: the parts are in `generics` and `name` says nothing. A tuple
+    /// is a type with no name and a fixed number of parts, and putting the
+    /// parts where the arguments go is what lets the view analysis
+    /// (`holds_view`, `names_borrowing`) reach them without knowing about
+    /// tuples at all.
+    pub is_tuple: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +392,9 @@ pub struct GrammarRule {
     /// Part II, 10.7: the rule is a resynchronization unit.
     pub frame: Option<FrameAttr>,
     pub ret_type: Option<Type>,
+    /// `# "expression"`: what this rule is called in a message that fails at
+    /// its own start, instead of everything its alternatives could begin with.
+    pub label: Option<String>,
     pub alts: Vec<GrammarAlt>,
     pub span: Span,
 }

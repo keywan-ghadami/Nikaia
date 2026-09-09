@@ -204,6 +204,29 @@ For tethered slices the guarantee is stated positively: **the source text cannot
 
 > **Correction (0.0.7):** Drafts up to 0.0.6 justified zero-copy parsing by claiming "the borrow checker ensures you cannot use a token after the original text has been deleted." That has it backwards — the borrow checker would *reject* such a program, which is the problem tethering exists to solve, not evidence that it is already handled.
 
+**What a rule is called, when it fails where it began**
+
+A grammar rule with several alternatives fails by reporting what each of them
+could have started with. That is true and, past three or four alternatives,
+useless: `expected one of: "!", "-", "dsl", "false", "spawn", "true"` where
+the word *expression* belongs. A rule may therefore name itself, between its
+return type and its `=`:
+
+```nika
+rule expr -> Expr # "expression" =
+      c:closure_expr -> { c }
+    | e:catch_expr   -> { e }
+```
+
+The name replaces the list **only where the rule failed at its own starting
+position** — where none of its alternatives got anywhere and there is nothing
+more specific to say. A rule that got further was in the middle of something,
+and what it was in the middle of is the better message: `(1` reports the
+missing `)`, not `expected expression`.
+
+The same syntax after a single alternative names that alternative, which is
+the narrower case of the same thing.
+
 **Fault Tolerance (Recovery)**
 When building tools like Language Servers (LSP), the parser must not crash on the first error. It needs to recover and continue parsing the rest of the file. A grammar declares **synchronization points**: if a rule fails, the parser discards input until it reaches the sync token, then resumes.
 

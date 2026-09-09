@@ -195,7 +195,12 @@ grammar! {
         // `@=` puts the byte range this rule matched into `_span`, which is
         // how every node below gets the place in the `.nika` file it came from.
         // Without it a diagnostic can only name generated Rust.
-        rule item -> Spanned<Item> @=
+        // Labelled, here and below: where one of these fails at the position
+        // it started at, none of its alternatives got anywhere, and listing
+        // what each could have begun with says less than the word for what was
+        // expected. A rule that got *further* keeps its own message - the
+        // label only replaces the list (winnow-grammar `# "…"`).
+        rule item -> Spanned<Item> # "item" @=
             g:grammar_item -> { Spanned::new(g, _span) }
           | s:struct_item -> { Spanned::new(s, _span) }
           | im:impl_item -> { Spanned::new(im, _span) }
@@ -355,12 +360,27 @@ grammar! {
 
         // `&str` is a view marker (Part II, 10.6), not a lifetime - the `&` is
         // recorded and the emitter decides what it becomes.
-        rule type_ref -> Type =
+        rule type_ref -> Type # "type" =
             view:amp?
             name:ident
             generics:generic_type_args?
             -> {
-                Type { name, generics: generics.unwrap_or_default(), is_view: view.is_some() }
+                Type {
+                    name,
+                    generics: generics.unwrap_or_default(),
+                    is_view: view.is_some(),
+                    is_tuple: false,
+                }
+            }
+          // `(A, B)`. The parts go where a named type's arguments go, so
+          // everything that walks a type's arguments walks a tuple's parts.
+          | "(" parts:type_refs ")" -> {
+                Type {
+                    name: _state.intern("tuple"),
+                    generics: parts,
+                    is_view: false,
+                    is_tuple: true,
+                }
             }
 
         rule amp -> () = "&" -> { () }
@@ -391,6 +411,7 @@ grammar! {
             "rule"
             name:ident
             ret:return_type_arrow?
+            label:rule_label?
             "="
             alts:g_alts
             -> {
@@ -399,10 +420,17 @@ grammar! {
                     is_public: vis.is_some(),
                     frame,
                     ret_type: ret,
+                    label,
                     alts,
                     span: _span,
                 }
             }
+
+        // `rule expr -> Expr # "expression" = …`: what the rule is called when
+        // it fails where it began. Spelled as the backend spells it, because
+        // the lowering is name for name (ADR-011 D2) and a second spelling for
+        // the same thing would be one more thing to know.
+        rule rule_label -> String = "#" text:STRING -> { text }
 
         // ADR-009 D1: the attribute is keyed. `@frame`, `@frame(boundary: "\n")`,
         // `@frame(boundary: "\n", unchecked)`; the positional form is withdrawn,
@@ -602,7 +630,7 @@ grammar! {
         rule stmt_list -> Vec<Spanned<Stmt>> =
             stmts:stmt* -> { stmts }
 
-        rule stmt -> Spanned<Stmt> @=
+        rule stmt -> Spanned<Stmt> # "statement" @=
             l:let_stmt -> { Spanned::new(l, _span) }
           | r:return_stmt -> { Spanned::new(r, _span) }
           | f:for_stmt -> { Spanned::new(f, _span) }
@@ -674,7 +702,7 @@ grammar! {
 
         // --- Expressions ---
 
-        pub rule expr -> Expr =
+        pub rule expr -> Expr # "expression" =
             c:closure_expr -> { c }
           | e:catch_expr -> { e }
 
@@ -784,7 +812,12 @@ grammar! {
           | "/" -> { BinaryOp::Div }
           | "%" -> { BinaryOp::Rem }
 
-        rule unary_expr -> Expr =
+        // Labelled as well as `expr`, and for the operand rather than for the
+        // whole: `1 + ` fails inside `add_tail`, whose operand is a
+        // `mul_expr`, so the label on `expr` never sees it. Every operand
+        // chain bottoms out here at the position the operand should have
+        // started.
+        rule unary_expr -> Expr # "expression" =
             op:unary_op e:unary_expr -> {
                 Expr::Unary { op, expr: Box::new(e) }
             }
@@ -815,6 +848,9 @@ grammar! {
                 Postfix::Index(Box::new(index))
             }
           // `not("?")`: `??` is the null-coalescing operator (Kap 3.5), and a
+          // `t.0` - a tuple's parts are numbered, and the number is a field
+          // name like any other, so nothing downstream has to know.
+          | "." index:digits -> { Postfix::Field(_state.intern(&index)) }
           // greedy `?` would take it apart into two error propagations.
           | "?" not("?") -> { Postfix::Try }
 
@@ -862,6 +898,7 @@ grammar! {
           | f:float_lit -> { f }
           | i:int_lit -> { i }
           | b:block_expr -> { b }
+          | t:tuple_expr -> { t }
           | p:paren_expr -> { p }
 
         // Kap 4.2: `Stats(min: first, max: first)` builds the struct, while
@@ -923,6 +960,15 @@ grammar! {
           | f:float_lit -> { f }
           | i:int_lit -> { i }
           | p:paren_expr -> { p }
+
+        // `(a, b)` before `(a)`: a PEG keeps the first alternative that
+        // matches, and a tuple is a parenthesised expression until the comma.
+        rule tuple_expr -> Expr =
+            "(" head:expr tail:call_args_tail+ ","? ")" -> {
+                let mut parts = vec![head];
+                parts.extend(tail);
+                Expr::Tuple(parts)
+            }
 
         rule paren_expr -> Expr =
             "(" e:expr ")" -> { e }

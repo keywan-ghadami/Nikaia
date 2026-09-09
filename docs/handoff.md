@@ -102,31 +102,45 @@ cargo run -p nikaia --example errors > tests/errors/EXPECTED.txt   # regenerate
 **A backend bump that changes a message makes `errors.rs` fail, and that is the
 point:** the diff is the change in the reader's terms. Read it, then regenerate.
 
-The nine rows the ranking did not fix sort into three groups, each needing a
-different mechanism:
+**Five rows are left**, and they sort into three groups:
 
 | group | rows | what it needs |
 | :--- | :--- | :--- |
-| a list where one word belongs | A3, B1, B2, B4, F3 | a label — see below |
-| trivia still winning on progress | A4, B1, G1 | unknown; the obvious fix was reverted |
-| the position is wrong, not the text | F1, F3 | remember the opening delimiter |
+| an alternative that loses takes its error with it | A4, B1, G1 | record the ones that consumed input — upstream TODO §5 |
+| the position is wrong, not the text | F1, half of F3 | remember the opening delimiter |
+| a name the grammar does not have | C2 | a grammar question, not a message one |
 
-### The label obstacle, already investigated
+The first is the open one, and it is not what it looks like. `let xs = [1, 2`
+reports whitespace because `let` and `xs` each parse as an expression statement
+and the alternative that would have said `expected expression` at the `[` is
+abandoned — `alt` drops what a losing alternative found, so the only error left
+at that offset is the whitespace skip, and progress is compared before any
+ranking. Two fixes were tried and reverted (recording *every* alternative loses
+`in item 1` upstream; keeping trivia in its own slot puts the message on a
+token that was correct), and the untried third — recording only alternatives
+that consumed input — is upstream `TODO.md` §5 with both post-mortems.
 
-`expected expression` instead of six token spellings needs `# "…"`. Two
-constraints found by reading the backend:
+The second is a mechanism rather than a ranking. `let s = "unterminated`
+reports the end of the file; the reader needs the opening quote. F3 now names
+the `}` it wants and still cannot say where the `{` was.
 
-* `ParseError::labelled` substitutes **only when the alternative consumed
-  nothing** (`self.offset == start`).
-* The code generator wraps a label **only around a single-variant rule**
-  (`codegen/variants.rs:137-160`); a multi-variant rule gets a bare `alt((…))`
-  with nowhere to hang one.
+### The label obstacle, and how it was removed
 
-`primary_expr` has twelve alternatives, so this needs them collapsed into an
-inline group — `rule primary_expr -> Expr = (a | b | …) # "expression" -> {…}`.
-`parse_group_content` structurally supports it and **no upstream test covers
-it**. `type_ref` is already single-variant and can be labelled as it stands,
-which is the cheap first experiment (row B5).
+`expected expression` instead of six token spellings needed `# "…"` on a rule
+with many alternatives, and the backend could only label a *single* variant.
+Both halves are upstream now (winnow-grammar#5):
+
+* a rule may name itself between its return type and its `=`;
+* the leading whitespace skip of a labelled rule is hoisted **outside** the
+  label, because `ParseError::labelled` substitutes only when the error is at
+  the position the label started at - measured from inside the skip, it never
+  is.
+
+Nikaia's own grammar labels `expr`, `unary_expr`, `stmt`, `item` and
+`type_ref`; `.nika` grammars can use the same syntax (Part II, 10.6), and
+`examples/calc.nika` does. `unary_expr` is labelled as well as `expr` for a
+reason worth keeping: `1 + ` fails inside `add_tail`, whose operand is a
+`mul_expr`, so the label on `expr` never sees it.
 
 ### The finding that may be worth more than all of it
 

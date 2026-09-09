@@ -29,6 +29,9 @@
 //     Writing `expr = expr "-" term` would be the natural way to say it and
 //     does not terminate; this is the standard repair and the reason the rules
 //     below read as they do.
+//   * **A tuple where a pair belongs.** `mul_tail` yields `(&str, i64)` - the
+//     operator and its operand - because naming that pair would have been a
+//     struct pretending to be a type.
 
 use std::cli
 
@@ -52,21 +55,22 @@ grammar Calc {
 
     // Division cannot be folded that way - it is neither commutative nor
     // recoverable from a sign - so the operator has to travel with the operand.
-    // `Step` is what carries it. This is the one place where the language is
-    // visibly missing something: a tuple or an enum would say it without a
-    // struct, and Stage 0 has neither (`examples/README.md`, G10).
+    // A tuple carries it: two values of different types, with no name for the
+    // pair, which is exactly what a struct here would have been pretending to
+    // be. (An enum would say it better still - there are exactly two operators
+    // - and Stage 0 has none; `examples/README.md`, G12.)
     rule term -> i64 =
         head:factor tail:mul_tail* -> {
             let mut value = head
             for step in tail {
-                if step.op == "*" { value = value * step.value }
-                else { value = value / step.value }
+                if step.0 == "*" { value = value * step.1 }
+                else { value = value / step.1 }
             }
             value
         }
 
-    rule mul_tail -> Step =
-        op:mul_op f:factor -> { Step(op: op, value: f) }
+    rule mul_tail -> (&str, i64) =
+        op:mul_op f:factor -> { (op, f) }
 
     rule mul_op -> &str =
           "*" -> { "*" }
@@ -75,7 +79,13 @@ grammar Calc {
     // The recursion. `expr` is reached again inside the parentheses, and the
     // whole precedence climb starts over there - which is why `(10 - 4)` is a
     // factor and multiplies like one.
-    rule factor -> i64 =
+    //
+    // `# "expression"` is what this rule is called when it fails where it
+    // began. Every operand in the language bottoms out here, so `2 +` reports
+    // `expected expression` rather than the three ways an operand can start.
+    // It applies only at the rule's own starting position: `(1` got past the
+    // `(`, and the message naming the missing `)` says more (Part II, 10.6).
+    rule factor -> i64 # "expression" =
           "(" e:expr ")" -> { e }
         | "-" f:factor -> { -f }
         | n:NUMBER -> { n }
@@ -90,15 +100,6 @@ grammar Calc {
         n:dec[i64](digit+) -> { n }
 }
 
-// The operator and the operand it applies to. `op` is a view into neither the
-// input nor anything else - it is one of two literals this file writes - but
-// the field is a `&str` all the same, and the compiler ties `Step` to the
-// input's lifetime because it cannot know that (Part II, 10.6).
-pub struct Step {
-    op: &str,
-    value: i64,
-}
-
 fn main() throws {
     // The expression to evaluate, or one that shows what this is.
     let source = cli::args().nth(1) ?? "2 + 3 * (10 - 4) / 2"
@@ -106,7 +107,13 @@ fn main() throws {
     // One line: the grammar is the parser, and `dsl … from …` is how a program
     // runs it. There is no `par_fold` here, so the compiler drives the entry
     // rule over the whole string once instead of cutting it into pieces.
-    let value = dsl Calc from source
+    //
+    // `catch` turns a rejected input into a message rather than a stack trace:
+    // the parse is an expression, so its failure is a value like any other.
+    let value = dsl Calc from source catch {
+        eprintln("{source}: {error}")
+        return
+    }
 
     println("{source} = {value}")
 }

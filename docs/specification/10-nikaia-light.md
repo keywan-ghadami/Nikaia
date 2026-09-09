@@ -268,6 +268,18 @@ Nikaia includes built-in types for storing groups of data.
     ```nika
     let numbers = [1, 2, 3, 4]
     ```
+* **Tuple:** A fixed number of values of *different* types, with no name for
+    the group and no names for the parts. Written and read by position:
+    ```nika
+    let pair = ("*", 3)          // (&str, i64)
+    let op = pair.0
+    ```
+    A tuple is the answer when a pair of values belongs together for one step of
+    a computation and naming it would be a struct pretending to be a type — the
+    element of a grammar rule that yields an operator and its operand, the two
+    halves of a map entry in `for (name, value) in map`. Where the group has a
+    meaning that outlives the step, it wants a struct (4.1) and its fields want
+    names.
 * **Map (HashMap):** Stores key-value pairs.
     ```nika
     use std::collections::HashMap

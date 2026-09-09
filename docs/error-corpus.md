@@ -13,9 +13,18 @@ by a test. Every path taken from here should show its effect on all
 twenty-six at once.
 
 **Two columns, because there are two states.** *Before* is `winnow-grammar`
-`024e3d3`. *Today* is `e1b0e33`, which ranks an expectation by whether the
-grammar required it (winnow-grammar#4) and is what a user gets now. Where they
-differ, the difference is what that change bought.
+`024e3d3` — what a user got when this corpus was written. *Today* is `f609cea`
+and is what a user gets now. Three changes lie between them, and each was
+measured against this file:
+
+1. **an expectation is ranked by whether the grammar required it**
+   (winnow-grammar#4) — the whitespace skip stops speaking for the grammar;
+2. **a rule may name itself**, `rule expr -> Expr # "expression" = …`
+   (winnow-grammar#5) — a dozen token spellings become one word, and Nikaia's
+   own grammar labels `expr`, `unary_expr`, `stmt`, `item` and `type_ref`;
+3. **an element that *began* is not an optional continuation**
+   (winnow-grammar#6) — an unfinished item's missing `}` outranks the
+   continuations of the expression before it.
 
 A message today can carry a second line, `note: also possible here: …`, holding
 what the grammar would have accepted but did not require. The columns below
@@ -30,11 +39,23 @@ to a row, the row says so.
 
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
-| A1 | `struct S { name: &str` ⏎ `temp: i32 }` | `,` or `}` | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `,`, `}` `` |
-| A2 | `fn f(a: i32 b: i32) {}` | `,` or `)` | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `)`, `,` `` |
-| A3 | `fn f() {` ⏎ `let x = 1` | `}` at end of input | ⚠️ 17 tokens | ⚠️ 17 tokens, 22 in the note |
+| A1 | `struct S { name: &str` ⏎ `temp: i32 }` | `,` or `}` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `,` in the note |
+| A2 | `fn f(a: i32 b: i32) {}` | `,` or `)` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` ``, `,` in the note |
+| A3 | `fn f() {` ⏎ `let x = 1` | `}` at end of input | ⚠️ 17 tokens | ✅ ``expected `}` `` |
 | A4 | `let xs = [1, 2` | `,` or `]` | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
 | A5 | `struct S { a: i32,, b: i32 }` | a field name | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `}`, identifier `` |
+
+A1 and A2 are the honest answers rather than the ideal ones, and worth saying
+plainly: at that position the grammar does **not** require a comma. It requires
+`}` (or `)`) and would accept another field — the `,` is in the note, and
+guessing which the author meant is not on offer.
+
+A3 is the row that moved furthest. It was seventeen expectations in the
+headline and twenty-two in a note; the brace it needs was in the *note*,
+because `program = item*` makes every item optional and the unfinished item's
+error was recorded as one more "something else could have gone here". An
+element that read four tokens and did not finish is now a requirement, and the
+brace leads.
 
 A4 is the clearest remaining case of the whitespace skip winning on *progress*:
 it is tried at the start of every rule, so at a position no real parser reached
@@ -45,18 +66,23 @@ it is trivially the furthest thing that failed.
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | B1 | `let y = ` | **`expected expression`** | ⚠️ `` `//`, whitespace `` | ⚠️ unchanged |
-| B2 | `let y = 1 + ` | `expected expression` | ⚠️ 8 tokens | ⚠️ 6 tokens |
+| B2 | `let y = 1 + ` | `expected expression` | ⚠️ 8 tokens | ✅ `expected expression` |
 | B3 | `if { }` | `expected expression` | ○ **parses** | ○ |
-| B4 | `f(1, )` | `expected expression` | ⚠️ 8 tokens | ⚠️ 6 tokens |
-| B5 | `let x: = 1` | `expected type` | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `&`, identifier `` |
+| B4 | `f(1, )` | `expected expression` | ⚠️ 8 tokens | ✅ `expected expression` |
+| B5 | `let x: = 1` | `expected type` | ⚠️ `` `//`, whitespace `` | ✅ `expected type` |
 
-B1, B2 and B4 are the group this corpus was built around: no ranking makes a
-list of six token spellings into the word *expression*. That needs a label, and
-labels have a shape problem — see the note at the end.
+B2, B4 and B5 are what the label bought. `expr`, `unary_expr` and `type_ref`
+name themselves in the compiler's own grammar, so the list of spellings each
+could have started with is replaced by the word for what belongs there. B2 needs
+*two* labels to come out right and says why: `1 + ` fails inside `add_tail`,
+whose operand is a `mul_expr`, so the label on `expr` never sees it — every
+operand chain bottoms out at `unary_expr`, and that is where the second label
+sits.
 
-B5 comes out as ``&``-or-identifier rather than *type*, which is the same
-question one level down: `type_ref` is a single-variant rule and can carry a
-label as it stands.
+B1 does not move, and it is the last member of the trivia group: the failure is
+reported at the `}` on the line *after* the missing operand, where the
+whitespace skip reached further than any real parser. Progress is decided before
+any ranking, so no label helps.
 
 ## C. The wrong token where the grammar knows what belongs
 
@@ -64,9 +90,9 @@ label as it stands.
 | :-- | :--- | :--- | :--- | :--- |
 | C1 | `struct S { name &str }` | `:` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `:` `` |
 | C2 | `rule A -> i32 = n:digit1 { n }` | `->` | ⚠️ `` `//`, whitespace `` | ⚠️ `expected digits` |
-| C3 | `fn main( {` | `)` or a parameter | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `&`, `self` `` |
+| C3 | `fn main( {` | `)` or a parameter | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` `` |
 | C4 | `let 5 = x` | a name | ○ **parses** | ○ |
-| C5 | `impl S { struct T {} }` | a method | ⚠️ `` `//`, whitespace `` | ✅ `` expected one of: `fn`, `pub` `` |
+| C5 | `impl S { struct T {} }` | a method | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `fn`/`pub` in the note |
 
 C1 is the best row in the corpus and worth keeping as the example: `expected ':'`
 is exactly what a reader can act on.
@@ -75,8 +101,14 @@ C2 does not improve, and the reason is not the ranking: `digits` comes from the
 built-in name table (`digit1 => "digits"`), and the rule really is looking at a
 repetition there. It is a grammar question, not a message question.
 
-C3 names `&` and `self` but not `)`, which is honest — an empty parameter list
-is one alternative and the message shows the other one it was in the middle of.
+C3 now names `)`. An empty parameter list is a real alternative, and the `(`
+was already matched, so the parameter list had begun — its missing `)` is a
+requirement and the parameter spellings are the note.
+
+C5 says `}` where the reader arguably wants "a method". Both are true: an
+`impl` body is methods until the brace, and the brace is what the parser
+requires at that position with `fn`/`pub` in the note. It is the same trade as
+A1, and recorded here rather than argued away.
 
 ## D. Almost the right token
 
@@ -96,7 +128,7 @@ and unhelpful. Recorded so the trade is visible, not to argue it.
 | :-- | :--- | :--- | :--- | :--- |
 | E1 | `d:digit{1, -> { 1 }` | a number or `}` | ⚠️ incl. `//` | ✅ `` expected one of: `}`, digits `` |
 | E2 | `d:nosuchbuiltin` | the backend rejects it | ○ parses, as intended | ○ |
-| E3 | `par_fold(M, init)` | `,` — arity is the backend's | ⚠️ incl. `//` | ✅ 6 tokens, no trivia |
+| E3 | `par_fold(M, init)` | `,` — arity is the backend's | ⚠️ incl. `//` | ✅ ``expected `->` `` |
 
 ## F. The cause is far from the symptom
 
@@ -104,7 +136,7 @@ and unhelpful. Recorded so the trade is visible, not to argue it.
 | :-- | :--- | :--- | :--- | :--- |
 | F1 | `let s = "unterminated` | the **opening quote** | ⚠️ EOF, `` `\`, any character `` | ⚠️ unchanged |
 | F2 | a stray `}` at top level | `unexpected '}'` | ⚠️ 4 tokens | ✅ `expected end of input` |
-| F3 | one unclosed `fn` | `}`, and where the `{` was | ⚠️ 17 tokens | ⚠️ 17 tokens, 22 in the note |
+| F3 | one unclosed `fn` | `}`, and where the `{` was | ⚠️ 17 tokens | ⚠️ ``expected `}` ``, not where the `{` was |
 
 F1 and F3 are a *position* problem, not a ranking one, and no amount of work on
 expectations touches them. They need the opening delimiter remembered so the
@@ -131,28 +163,56 @@ to `fs::map` ([ADR-016](specification/adr/adr-016.md)) and is tested there.
 things the grammar admits that probably should not be — and the corpus found
 them by trying to break the compiler on purpose.
 
-**The change moved twelve of twenty-one failing rows** and leaves nine.
-Those nine sort into exactly three groups, and each needs a different mechanism:
+**Sixteen of the twenty-one failing rows now say what a reader needs**, and
+five do not. The five sort into three groups, and each needs a different
+mechanism:
 
-1. **A list where a word belongs** — A3, B1, B2, B4, F3. A label, and the
-   obstacle is documented: `ParseError::labelled` substitutes only when the
-   alternative consumed nothing, and the code generator can wrap only a
-   *single-variant* rule. `primary_expr` has twelve alternatives, so
-   `expected expression` needs them collapsed into an inline group
-   (`(a | b | …) # "expression"`), which the backend structurally supports and
-   no upstream test covers.
-2. **Trivia still winning on progress** — A4, B1, G1. The whitespace skip runs
-   at the start of every rule, so it reaches offsets nothing else did, and
-   progress is decided before any ranking. The obvious fix was tried and
-   reverted: it made B1 far worse.
+1. **An alternative that loses takes its error with it** — A4, B1, G1. These
+   read as a trivia problem and are not; tracing A4 says what they are.
 
-   A3 and F3 show the second half of the same shape. Their headline no longer
-   names trivia, but it names seventeen tokens and the note names twenty-two
-   more — at end of input every continuation of every open rule is live at one
-   offset, and ranking cannot shorten a list where every entry is genuinely
-   possible. Only a label can (group 1), which is why they are counted there
-   too.
-3. **The position is wrong, not the text** — F1, F3.
+   ```nika
+   fn f() {
+       let xs = [1, 2
+   }
+   ```
+
+   `let` parses as an expression statement, and so does `xs` — Nikaia has no
+   list literal, so nothing in the language can start at the `[`. The statement
+   that *would* have said `expected expression` there is abandoned when the
+   shorter parse succeeds, and `alt` drops what a losing alternative found. The
+   only error left at that offset is the implicit whitespace skip, which is
+   therefore the furthest thing that failed, and progress is compared before
+   any ranking or label. Hence ``expected one of: `//`, whitespace``.
+
+   Two fixes were tried and both reverted, which is why this row is still here:
+
+   * **Recording every failing alternative** — the treatment `x?` and `x*`
+     already get — fixes A4 and loses `in item 1` from the rule stack upstream
+     (`diagnostics.rs` p03, p12), because the alternative's record reaches
+     `furthest` before the enclosing repetition's and the merge keeps the first
+     stack.
+   * **Keeping trivia in a slot of its own**, so it never wins the progress
+     race, gives A4 ``expected `}` `` *at the `=`* — a wrong position with a
+     plausible expectation, which is worse than a useless expectation at the
+     right one. It is a symptom fix; this is the cause.
+
+   The untried third is recording only alternatives that **consumed input**
+   before failing. Upstream `TODO.md` §5 carries it. **This is the open one.**
+2. **The position is wrong, not the text** — F1, and half of F3. An
+   unterminated string reports the end of the file; what a reader needs is the
+   opening quote. F3 now names the `}` it wants and still cannot say where the
+   `{` was. Both need the opening delimiter remembered, which is a mechanism
+   and not a ranking.
+3. **A name the grammar does not have** — C2. `digits` comes from the built-in
+   table (`digit1 => "digits"`) and the rule really is looking at a repetition
+   there. A grammar question, not a message question.
+
+What closed the other eleven, in the order the changes landed: the ranking by
+requirement (winnow-grammar#4) took the whitespace skip out of the headline;
+the rule label (#5) turned lists of spellings into `expression` and `type`; and
+"an element that began is a requirement" (#6) let a missing `}` outrank the
+continuations of the expression before it, which is A3, F3's headline, and the
+second expectation in A1, A2, C3, C5 and E3.
 
 **No parse error shows the source line.** Every row above is a one-line headline
 plus `in <rule>` lines. A rustc diagnostic routed through `nikaia --explain`
@@ -172,9 +232,10 @@ cargo run -p nikaia --example errors > tests/errors/EXPECTED.txt
 ```
 
 `crates/nikaia/tests/errors.rs` compares the whole file in one assertion, the
-shape `grammar_lowering.rs` already uses. A backend bump makes that test fail
-whenever it changes a message, which is the point: the diff is the change, in
-the reader's terms rather than the parser's. Read it, then regenerate.
+shape `grammar_lowering.rs` already uses. A backend bump — or a label added to
+a rule — makes that test fail whenever it changes a message, which is the
+point: the diff is the change, in the reader's terms rather than the parser's.
+Read it, then regenerate.
 
 The list itself is still meant to be argued with. A row struck or added here
 should be a file added or removed there, and the golden regenerated.
