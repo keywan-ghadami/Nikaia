@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added (0.0.8 - a sixth running example, with no grammar in it at all)
+
+- **`examples/n-body.nika`**: the Computer Language Benchmarks Game's five-body integration, and the first example here that parses nothing. Five programs in a row that all begin with a DSL would say Nikaia is a parser generator; this one is arithmetic in a loop - `sync` methods, `&mut self`, indices and floats - which is the other half of what a systems language is judged on. It is also the only example whose numbers are not ours to choose: the CLBG publishes the same program in some thirty languages with an exact expected output, and **ours matches it to the digit** (`-0.169075164` / `-0.169087605` at n = 1000), which `crates/nikaia/tests/examples.rs` checks under both profiles.
+
+### Added (0.0.8 - arithmetic that reads like arithmetic)
+
+- **A range is an expression** (Part I, 3.3). Part I has shown `for i in 0..5` since the first draft and the bootstrap compiler could not parse it, so an index loop had no way to be written at all. `a..b` excludes its end, `a..=b` includes it, and a range **binds looser than every operator in it** - `0..n - 1` ends at `n - 1`, which is the reading a loop head wants and the only one that is ever useful.
+- **A float literal may carry an exponent** (Part I, 2.2): `1.5e-4`, `2e3`, `9.54791938424326609e-04`. That is how a program about physical quantities is written, and the same number spelled out in zeroes is how a digit gets lost in a diff. The rule is lexical, so `1 . 5` is still not a number.
+
+### Fixed (0.0.8 - two that were silently wrong)
+
+- **A postfix applied to something that binds looser lost its parentheses.** A group is not a node - the parser drops it, because that is how the tree was written rather than part of it - so `(a as f64).sqrt()` came out as `a as f64.sqrt()`, a cast to a type nobody named, and `(a + b).to_string()` as `a + b.to_string()`. Both often still compiled, which is what made this worth a test of its own. The receiver of a `.`, the base of a `[`, and the operand of a `?` are now parenthesised where they bind looser.
+- **The compiler's identifier accepted a leading digit**, so `1.5` parsed as the field `5` of a variable called `1`. The backend's `ident` accepts one by design and a grammar that wants otherwise says so, which the compiler's own grammar had never done. It printed back identically - which is exactly why it survived, and why the corpus never caught it: the emitted text read the same right up until there was more after it, and `1.5e-4` came out as `1.5e - 4`. `not(digit)` in front of the name costs a character comparison and closes it.
+
 ### Added (0.0.8 - a fifth running example, and the three things it found)
 
 - **`examples/json.nika`**: a JSON document, parsed into a tree and printed back. The first input whose shape the *grammar* does not fix - `config.nika`'s tree is two levels deep because its rules say so, and a JSON value contains values to whatever depth the document goes. Three things follow that no other example shows. **An `enum` is the tree**: six variants, and every walk over it is a `match` with six arms that the compiler checks for completeness - the check a `kind: &str` field cannot have. **Two cycles, neither declared**: `value` reaches `value` through `[` and `{`, and `Json` holds a `Vec[Json]` and a `Vec[Member]` that holds a `Json`; the view analysis of Part II 10.6 walks the type cycle to a fixed point rather than into it. And **where zero-copy stops**: a JSON string is not a slice of the input (`"a\nb"` is five characters in the file and three in the value), so `Text` holds the **raw** body - still a view - and `unescape` runs only on the strings a program asks about. That pays twice: printing the document back needs the raw text, so the common case never decodes at all. It is deferred decoding, the argument `dec[T]` already makes for numbers.
