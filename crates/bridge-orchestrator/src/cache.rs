@@ -366,6 +366,112 @@ impl Cache {
     }
 }
 
+/// Where the lockfile and the store live for a given input.
+///
+/// Caching is on by default - it is the difference in feel between a Nikaia
+/// build and a Rust one, and a default nobody types is not that. Being on by
+/// default is what makes *where* the files go a real question rather than a
+/// detail: nothing may be written next to a source file the user did not ask
+/// us to write next to.
+///
+/// So there are two shapes, and the manifest decides which:
+///
+/// * **In a project** (`nikaia.toml` found by walking up, as Cargo does) the
+///   lock is the committed record ADR-019 D2 describes, and the store sits in
+///   `target/` where build output belongs.
+/// * **Outside one** the invocation is a one-off transformation. A *committed*
+///   lockfile would be meaningless there, because there is no project to commit
+///   it to, so the input record moves into the user's cache directory next to
+///   the store and the source tree is left completely untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    /// The directory the unit is named relative to, and assets are resolved
+    /// against.
+    pub root: PathBuf,
+    pub lock: PathBuf,
+    pub store: PathBuf,
+    /// Whether a `nikaia.toml` was found. False means nothing is written into
+    /// the source tree.
+    pub in_project: bool,
+}
+
+impl Layout {
+    /// `NIKAIA_CACHE_DIR` overrides the user cache location. It moves *where*
+    /// artifacts are kept and never what they are keyed by, so it is not a
+    /// dimension in D7's sense - and tests need somewhere that is not the
+    /// developer's real cache.
+    fn user_cache_dir() -> PathBuf {
+        for var in ["NIKAIA_CACHE_DIR", "XDG_CACHE_HOME"] {
+            if let Some(dir) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+                let dir = PathBuf::from(dir);
+                return if var == "NIKAIA_CACHE_DIR" {
+                    dir
+                } else {
+                    dir.join("nikaia")
+                };
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+            return PathBuf::from(home).join(".cache").join("nikaia");
+        }
+        std::env::temp_dir().join("nikaia-cache")
+    }
+
+    pub fn resolve(input: &Path) -> Layout {
+        let start = input
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        // Canonicalised so that `./src/../src` and `src` are one directory, and
+        // so the record name below is stable. A failure here (the path does not
+        // exist yet) is not fatal - the uncanonicalised path still works.
+        let start = start.canonicalize().unwrap_or(start);
+
+        for dir in start.ancestors() {
+            if dir.join("nikaia.toml").is_file() {
+                return Layout {
+                    root: dir.to_path_buf(),
+                    lock: dir.join("nikaia.lock"),
+                    store: dir.join("target").join("nikaia").join("cache"),
+                    in_project: true,
+                };
+            }
+        }
+
+        let base = Self::user_cache_dir();
+        // One record per directory, named by a hash of the directory rather
+        // than placed in it. Two projects that both have a `main.nika` must not
+        // share a record - but they may share *store* entries, because the key
+        // is content-addressed and deliberately holds no path (D7).
+        let record = format!("{}.lock", sha256_hex(start.as_os_str().as_encoded_bytes()));
+        Layout {
+            root: start,
+            lock: base.join("records").join(record),
+            store: base.join("cache"),
+            in_project: false,
+        }
+    }
+
+    /// The unit's name: its path below the root, with forward slashes so that
+    /// a lockfile written on Windows and one written on Linux agree. Never an
+    /// absolute path - that is D7's first failure direction, a key that moves
+    /// with the checkout and therefore never hits.
+    pub fn unit_name(&self, input: &Path) -> String {
+        let canonical = input.canonicalize();
+        let path = canonical.as_deref().unwrap_or(input);
+        match path.strip_prefix(&self.root) {
+            Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+            // Outside the root entirely: fall back to the file name rather than
+            // leaking an absolute path into the key.
+            Err(_) => path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,6 +611,80 @@ mod tests {
             Key::build("0.1.0", "t", &choices(), "u", &one),
             Key::build("0.1.0", "t", &choices(), "u", &two),
         );
+    }
+
+    /// Caching is on by default, so this is the promise that makes it
+    /// acceptable: outside a `nikaia.toml` project, nothing goes into the
+    /// directory the source lives in.
+    ///
+    /// Asserted as "not under the input directory" rather than against a
+    /// specific fallback path, so the test neither depends on the environment
+    /// nor has to mutate it - `set_var` is process-global and these tests run
+    /// in parallel threads.
+    #[test]
+    fn outside_a_project_nothing_is_written_beside_the_source() {
+        let dir = scratch("layout-loose");
+        let input = dir.join("main.nika");
+        std::fs::write(&input, "fn main() {}").unwrap();
+
+        let layout = Layout::resolve(&input);
+        assert!(!layout.in_project);
+        let canonical = dir.canonicalize().unwrap();
+        assert!(
+            !layout.lock.starts_with(&canonical),
+            "the lock must not land beside the source: {}",
+            layout.lock.display()
+        );
+        assert!(
+            !layout.store.starts_with(&canonical),
+            "nor the store: {}",
+            layout.store.display()
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// In a project the lock is the committed record at the root, found by
+    /// walking up from the input the way Cargo finds `Cargo.toml`.
+    #[test]
+    fn a_manifest_makes_the_root_and_names_the_unit_below_it() {
+        let dir = scratch("layout-project");
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(dir.join("nikaia.toml"), "[package]\nname = \"demo\"\n").unwrap();
+        let input = src.join("main.nika");
+        std::fs::write(&input, "fn main() {}").unwrap();
+
+        let layout = Layout::resolve(&input);
+        let root = dir.canonicalize().unwrap();
+        assert!(layout.in_project);
+        assert_eq!(layout.root, root);
+        assert_eq!(layout.lock, root.join("nikaia.lock"));
+        assert_eq!(layout.store, root.join("target/nikaia/cache"));
+        // Relative to the root, so the key does not move with the checkout.
+        assert_eq!(layout.unit_name(&input), "src/main.nika");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A store that cannot be created reports an error rather than panicking,
+    /// so the caller can carry on with a slower build. Enforced with a *file*
+    /// where a directory would have to go, which even root cannot write into.
+    #[test]
+    fn an_unusable_store_reports_instead_of_panicking() {
+        let dir = scratch("store-blocked");
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "not a directory").unwrap();
+
+        let store = Store::new(blocker.join("cache"));
+        let key = Key::build("0.1.0", "t", &choices(), "a.nika", &record("src"));
+        assert!(store.get(&key).is_none(), "a missing entry reads as a miss");
+        assert!(
+            store.put(&key, "EMITTED").is_err(),
+            "an unusable store must surface an error, not unwind"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn scratch(name: &str) -> PathBuf {

@@ -9,11 +9,11 @@ extern crate rustc_driver;
 
 use anyhow::{bail, Result};
 use bridge_ir::BridgeModule;
-use bridge_orchestrator::cache::{Cache, Choices};
+use bridge_orchestrator::cache::{Cache, Choices, Layout};
 use bridge_orchestrator::LanguageFrontend;
 use clap::Parser;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use nikaia::emit::{self, Profile};
 use nikaia::{diagnostics, interpreter, parser};
@@ -31,15 +31,15 @@ pub struct Cli {
     #[arg(long, default_value = "bridge")]
     pub backend: String,
 
-    /// Reuse unchanged lowerings via the build cache (ADR-019).
+    /// Lower from scratch, ignoring the build cache (ADR-019).
     ///
-    /// Off by default while the CLI is a one-shot transpiler: it writes a
-    /// `nikaia.lock` beside the input and a store under `target/nikaia/`, and
-    /// a project root only becomes well defined once `nikaia.toml` and
-    /// `nikaia build` exist. It is the mechanism that is finished here, not
-    /// its default.
+    /// The cache is **on**: reusing an unchanged lowering is the difference in
+    /// feel between a Nikaia build and a Rust one, and a default nobody types
+    /// is not that. This flag exists for the times that matters less than
+    /// seeing the emitter run - debugging it, or comparing its output against
+    /// what the cache holds.
     #[arg(long)]
-    pub cache: bool,
+    pub no_cache: bool,
 
     /// Which runtime the program is compiled for (Part I/II).
     ///
@@ -120,31 +120,38 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         .clone()
         .unwrap_or_else(|| args.input.with_extension("rs"));
 
-    // The unit is named relative to its root rather than by absolute path. A
-    // path is exactly the kind of dimension ADR-019 D7 warns about: it varies
-    // between checkouts while nothing about the build has changed, and a key
-    // that moves with the directory never hits.
-    let root = args.input.parent().unwrap_or(Path::new("."));
-    let unit = args
-        .input
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| args.input.display().to_string());
+    // `Layout` decides where the lock and the store go, and guarantees that
+    // outside a `nikaia.toml` project nothing is written into the source tree
+    // at all - which is what makes caching-by-default something other than
+    // littering. It also names the unit relative to its root: an absolute path
+    // is D7's first failure direction, a key that moves with the checkout.
+    let layout = Layout::resolve(&args.input);
+    let unit = layout.unit_name(&args.input);
     let choices = Choices::new(&args.profile, "rust");
 
-    let mut cache = if args.cache {
-        Some(Cache::open(
-            root.join("nikaia.lock"),
-            root.join("target").join("nikaia").join("cache"),
+    // A cache that cannot be opened is a slower build, never a failed one.
+    // That distinction only starts to matter once the cache is the default:
+    // a read-only checkout or a full disk must not turn a build that would
+    // have succeeded into one that does not.
+    let mut cache = if args.no_cache {
+        None
+    } else {
+        match Cache::open(
+            &layout.lock,
+            &layout.store,
             env!("NIKAIA_RUSTC_VERSION"),
             env!("CARGO_PKG_VERSION"),
-        )?)
-    } else {
-        None
+        ) {
+            Ok(cache) => Some(cache),
+            Err(error) => {
+                eprintln!("warning: the build cache is unavailable: {error:#}");
+                None
+            }
+        }
     };
 
     if let Some(cache) = &cache {
-        if let Some(cached) = cache.lookup(&unit, source, &choices, root) {
+        if let Some(cached) = cache.lookup(&unit, source, &choices, &layout.root) {
             std::fs::write(&output_path, &cached)?;
             println!(
                 "Reused {} for {} (profile: {}, from cache)",
@@ -164,8 +171,13 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         // Nothing reports assets yet: compile-time I/O (`from "schema.sql"`)
         // is specified and not implemented. The dimension travels through the
         // key regardless, so switching it on later does not reshape the key.
-        cache.record(&unit, source, BTreeMap::new(), &choices, &lowered.rust)?;
-        cache.save()?;
+        let stored = cache
+            .record(&unit, source, BTreeMap::new(), &choices, &lowered.rust)
+            .and_then(|()| cache.save());
+        if let Err(error) = stored {
+            // The artifact is already written; only the next build is slower.
+            eprintln!("warning: the build cache could not be updated: {error:#}");
+        }
     }
 
     println!(
