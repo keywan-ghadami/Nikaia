@@ -75,6 +75,34 @@ const RUNNABLE: &[Example] = &[
 /missing 1 0
 /style.css 1 1024",
     },
+    Example {
+        file: "config.nika",
+        input: Some(Input {
+            name: "app.conf",
+            // A comment on its own line, one after a value, and a blank line:
+            // all three are `WS` here, which is what defining `WS` buys.
+            contents: "\
+# app.conf - the front door
+[server]
+host = 0.0.0.0
+port = 8080          # the usual one
+
+# what a request may cost
+[limits]
+max_body = 1048576
+timeout = 30s
+",
+        }),
+        args: &["{input}"],
+        expected: "\
+2 sections
+[server]
+  host = 0.0.0.0
+  port = 8080
+[limits]
+  max_body = 1048576
+  timeout = 30s",
+    },
 ];
 
 /// Written at specification level: they say what the language is meant to look

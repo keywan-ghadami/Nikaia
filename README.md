@@ -301,10 +301,10 @@ fn main() {
 ```
 
 Bigger, more revealing programs live in [`examples/`](examples/): the One Billion Row
-Challenge, a four-function calculator, a web access log summarised, and the TechEmpower
-`fortunes` benchmark. **The first three compile, run, and are checked by `cargo test` under
-both profiles**, with their output required to be identical; `fortunes` is still written at
-specification level. They are there because writing a real program against a spec is the
+Challenge, a four-function calculator, a web access log summarised, an INI file with comments,
+and the TechEmpower `fortunes` benchmark. **The first four compile, run, and are checked by
+`cargo test` under both profiles**, with their output required to be identical; `fortunes` is
+still written at specification level. They are there because writing a real program against a spec is the
 cheapest way to find out what the spec forgot, and
 [`examples/README.md`](examples/README.md) lists exactly which gaps each one exposed and
 which are still open. `tests/samples/` holds the smaller programs the bootstrap compiler can
