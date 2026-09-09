@@ -26,7 +26,7 @@ Parse error:
 unexpected end of input, expected `}` at line 3, column 1
    3 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -38,7 +38,7 @@ Parse error:
 expected expression; found unexpected token `[` at line 2, column 14
    2 |     let xs = [1, 2
                     ^
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -79,7 +79,7 @@ Parse error:
 expected expression; found unexpected token `}` at line 4, column 1
    4 | }
        ^
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -109,7 +109,7 @@ Parse error:
 expected expression; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `"`, `&`, `(`, `//`, `if`, `match`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -143,7 +143,7 @@ Parse error:
 expected expression; found unexpected token `)` at line 2, column 18
    2 |     let z = f(1, )
                         ^
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in expr
 in call_args_tail
 in item 1
@@ -352,7 +352,7 @@ Parse error:
 unexpected end of input, expected `}` at line 4, column 1
    4 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `.`, `//`, `/`, `::`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `?`, `[`, `as`, `catch`, `fn`, `for`, `if`, `match`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -364,7 +364,7 @@ Parse error:
 expected expression; found unexpected token `“` at line 2, column 13
    2 |     let x = “hi”
                    ^
-note: also possible here: `"`, `&`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `fn`, `if`, `match`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS

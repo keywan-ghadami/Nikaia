@@ -165,6 +165,10 @@ pub enum Expr {
     /// name for the pair and none for its parts.
     Tuple(Vec<Expr>),
     LitStr(String),
+    /// Kap 2.2: `'a'`, `'\n'`. The body is kept **as written**, escape and
+    /// all: the language below spells a character literal the same way, so the
+    /// lowering is a transcription and nothing has to decode it twice.
+    LitChar(String),
     LitBool(bool),
     Variable(Ident),
 

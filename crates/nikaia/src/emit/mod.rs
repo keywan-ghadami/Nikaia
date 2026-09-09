@@ -1094,6 +1094,7 @@ impl<'p> Emitter<'p> {
             Expr::LitInt(v) => out.push(&v.to_string()),
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr(_) => self.string(out, expr, depth, flow)?,
+            Expr::LitChar(c) => out.push(&format!("'{c}'")),
             Expr::LitBool(b) => out.push(&b.to_string()),
             Expr::Variable(name) => out.push(self.text(*name)),
             Expr::Path(segments) => out.push(
@@ -1276,9 +1277,12 @@ impl<'p> Emitter<'p> {
         if let Expr::Variable(name) = func {
             let text = self.text(*name);
 
-            // `println` and `eprintln` are macros in Rust, and their argument
-            // is an interpolated string, which is a format string already.
-            if matches!(text, "println" | "eprintln") {
+            // `println`, `print` and their `stderr` halves are macros in
+            // Rust, and their argument is an interpolated string, which is a
+            // format string already. `print` is here because output composed
+            // piece by piece - a pretty-printer, a progress line - cannot be
+            // written with the newline attached.
+            if matches!(text, "println" | "eprintln" | "print" | "eprint") {
                 if let [Expr::LitStr(literal)] = args {
                     out.push(&format!("{text}!("));
                     self.format_string(out, literal, depth, flow)?;
@@ -1731,6 +1735,25 @@ fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
 
     while let Some(c) = chars.next() {
         match c {
+            // An escape is copied whole, and the `{` inside `\u{…}` is part of
+            // one. The body arrives here as it was written - the parser keeps a
+            // string's escapes rather than decoding them - so a scanner that
+            // does not know that reads `"\u{0041}"` as a hole named `0041`.
+            '\\' => {
+                format.push('\\');
+                let Some(escape) = chars.next() else {
+                    return Err(anyhow!("string ends in a `\\`: \"{literal}\""));
+                };
+                format.push(escape);
+                if escape == 'u' && chars.peek() == Some(&'{') {
+                    for c in chars.by_ref() {
+                        format.push(c);
+                        if c == '}' {
+                            break;
+                        }
+                    }
+                }
+            }
             '{' if chars.peek() == Some(&'{') => {
                 chars.next();
                 format.push_str("{{");

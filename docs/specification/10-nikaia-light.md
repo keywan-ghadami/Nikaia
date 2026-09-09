@@ -67,6 +67,12 @@ Nikaia provides basic types to represent simple values.
 * **Text:**
     * `String`: A piece of text that can be modified and owns its memory.
     * `&str`: A "String Slice". A read-only view into an existing string.
+    * `char`: One character — a Unicode scalar value, not a byte. Written
+      between single quotes, with the escapes a string uses: `'a'`, `'\n'`,
+      `'\''`. It is what iterating a text yields (`for c in name.chars()`) and
+      what a `match` over one compares against (3.4); a text is not a list of
+      `char`, and turning one into the other is a decision a program makes
+      rather than something that happens to it.
 
 ### 2.3. Nullable Types (Null Safety)
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
@@ -86,6 +92,23 @@ Nikaia is **Statically Typed**, meaning the type of every variable is known at c
 let name = "Nikaia"  // Compiler knows this is a String
 let count = 42       // Compiler knows this is an i32
 ```
+
+### 2.5. String Interpolation
+A string may contain **holes**: `{` and `}` around an expression, whose value is written where
+the hole is.
+
+```nika
+let name = "Nikaia"
+println("hello, {name} - {name.len()} characters")
+```
+
+A hole holds an expression, not just a name: a field, a call, an index. What follows a `:` inside
+one says *how* to write the value rather than which value — the first colon that is not inside a
+call or an index separates the two, so `Point(x: 1)` in a hole keeps its own.
+
+Two braces stand for one: `{{` is a literal `{` and `}}` a literal `}`. An escape is not a hole —
+the `{` in `"\u{0041}"` belongs to the escape — and a `}` on its own is an error rather than a
+guess.
 
 ---
 
@@ -155,12 +178,12 @@ match value {
 }
 ```
 
-A pattern is one of five things, and each is read the way it is written:
+A pattern is one of six things, and each is read the way it is written:
 
 | pattern | matches |
 | :--- | :--- |
 | `_` | anything, and binds nothing |
-| `1`, `"text"`, `true` | that value |
+| `1`, `"text"`, `true`, `'n'` | that value |
 | `Op::Times` | that variant |
 | `Message::Write(text)` | that variant, binding what it carries |
 | `Message::Move { x, y }` | that variant, binding its fields by name |

@@ -930,6 +930,7 @@ grammar! {
           | b:bool_lit -> { b }
           | p:path_expr -> { p }
           | s:str_lit -> { s }
+          | c:char_lit -> { c }
           | f:float_lit -> { f }
           | i:int_lit -> { i }
           | b:block_expr -> { b }
@@ -992,6 +993,7 @@ grammar! {
           | b:bool_lit -> { b }
           | p:path_expr -> { p }
           | s:str_lit -> { s }
+          | c:char_lit -> { c }
           | f:float_lit -> { f }
           | i:int_lit -> { i }
           | p:paren_expr -> { p }
@@ -1057,6 +1059,7 @@ grammar! {
         rule pattern_lit -> Expr =
             b:bool_lit -> { b }
           | s:str_lit -> { s }
+          | c:char_lit -> { c }
           | n:int_lit -> { n }
 
         rule pattern_path -> Vec<Symbol> =
@@ -1132,6 +1135,23 @@ grammar! {
 
         rule str_lit -> Expr =
             s:STRING -> { Expr::LitStr(s) }
+
+        // Kap 2.2. Lexical, and the body is kept as written - a `'\n'` is two
+        // characters here and one in the value, and the language below reads
+        // the same two. Deciding what they mean would be decoding done twice.
+        rule CHAR -> String =
+            "'" c:CHAR_BODY "'" -> { c }
+
+        rule CHAR_BODY -> String =
+            "\\" c:any -> {
+                let mut s = String::from("\\");
+                s.push(c);
+                s
+            }
+          | not("'") c:any -> { c.to_string() }
+
+        rule char_lit -> Expr =
+            c:CHAR -> { Expr::LitChar(c) }
 
         rule int_lit -> Expr =
             d:digits -> {

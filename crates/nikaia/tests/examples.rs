@@ -105,6 +105,29 @@ timeout = 30s
   max_body = 1048576
   timeout = 30s",
     },
+    Example {
+        file: "json.nika",
+        input: Some(Input {
+            name: "data.json",
+            contents: "{\"name\": \"a\\nb\", \"tags\": [1, 2.5, true, null], \"empty\": {}}\n",
+        }),
+        args: &["{input}"],
+        // The document back, two spaces a level, with the string bodies
+        // printed raw - and one line that had to decode one: `a\nb` is four
+        // characters in the file and three in the value.
+        expected: "\
+{
+  \"name\": \"a\\nb\",
+  \"tags\": [
+    1,
+    2.5,
+    true,
+    null
+  ],
+  \"empty\": {}
+}
+longest string: 3 characters",
+    },
 ];
 
 /// Written at specification level: they say what the language is meant to look

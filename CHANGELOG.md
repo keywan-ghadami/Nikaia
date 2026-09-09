@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added (0.0.8 - a fifth running example, and the three things it found)
+
+- **`examples/json.nika`**: a JSON document, parsed into a tree and printed back. The first input whose shape the *grammar* does not fix - `config.nika`'s tree is two levels deep because its rules say so, and a JSON value contains values to whatever depth the document goes. Three things follow that no other example shows. **An `enum` is the tree**: six variants, and every walk over it is a `match` with six arms that the compiler checks for completeness - the check a `kind: &str` field cannot have. **Two cycles, neither declared**: `value` reaches `value` through `[` and `{`, and `Json` holds a `Vec[Json]` and a `Vec[Member]` that holds a `Json`; the view analysis of Part II 10.6 walks the type cycle to a fixed point rather than into it. And **where zero-copy stops**: a JSON string is not a slice of the input (`"a\nb"` is five characters in the file and three in the value), so `Text` holds the **raw** body - still a view - and `unescape` runs only on the strings a program asks about. That pays twice: printing the document back needs the raw text, so the common case never decodes at all. It is deferred decoding, the argument `dec[T]` already makes for numbers.
+
+### Added (0.0.8 - `char`, which the language could not say)
+
+- **A character literal is an expression and a pattern** (Part I, 2.2 and 3.4). `'n'` was not something the language had, and `char` was not in the table of primitive types either - the type was reachable only because a type is a name. Decoding an escape is exactly the shape a `match` over characters has, so both halves are needed and both are here. The body is kept **as written**: the language below spells `'\n'` the same way, so the lowering is a transcription (ADR-011 D2) and nothing decides twice what it means.
+- **`print` and `eprint`**, which are what `println` and `eprintln` always were minus the newline (Part III, 17.1). Output composed piece by piece had no way to be written: a pretty-printer that indents a tree cannot end a line after every fragment. `json.nika` is the first program here that needs it.
+- **Part I gains 2.5, string interpolation**, which was in every example and in no chapter: what a hole may hold, what a `:` inside one separates, that `{{` is a literal brace, and that an escape is not a hole.
+
+### Fixed (0.0.8 - a string could not hold a `\u{…}` escape)
+
+- **`"\u{0041}"` was read as a hole named `0041`** and emitted a `format!` with an argument nobody wrote. A string's body reaches the emitter as it was typed - the parser keeps the escapes rather than decoding them - and the interpolation scanner did not know an escape when it saw one. It now copies an escape whole, and the `{` of a `\u{…}` with it. Found by writing `examples/json.nika`, which is what the examples are for.
+
 ### Changed (0.0.8 - every error message shows the line it is about)
 
 - **Dependency**: `winnow-grammar` `e222ae8` -> `9180b3d` (upstream #11), and `tests/errors/EXPECTED.txt` regenerated. This is `docs/error-corpus.md`'s **closing finding**, and the only one that applied to all twenty-six rows at once: every message was a headline plus `in <rule>` lines, so a reader of `at line 3, column 5` never saw line 3 - while a rustc diagnostic routed through `nikaia --explain` had carried a snippet and a caret since ADR-012. A position a reader still has to go and look up is half a diagnostic.
