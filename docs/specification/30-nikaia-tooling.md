@@ -540,6 +540,32 @@ present. It does **not** make text safe inside `<script>`, inside CSS, in an unq
 in a URL: those need different escaping, which is why a hole in one of those positions is a
 compile error naming the position rather than a call to this function.
 
+**The template, and where it is compiled.** `dsl html { … } eod` is compiled *where it is
+written*: the body is known when the program is compiled, so it is split into literal markup and
+holes there, and what comes out is the string building a hand-written renderer would do. That is
+what makes the escaping a compile-time property rather than a call somebody has to remember.
+
+```nika
+fn row(name: &str, shade: &str) -> String {
+    return dsl html {
+        <tr class="{shade}"><td>{name}</td></tr>
+    } eod
+}
+```
+
+`{{` is a literal brace, the same rule an interpolated string follows. The framing whitespace —
+the newline after `{` and the indentation before `} eod` — is not markup and is removed;
+whitespace inside the body is kept exactly.
+
+What may go in a hole is decided by the **type**, through the `Render` trait: a `Raw` renders
+itself, text renders escaped, and a type with no impl cannot be placed in a template at all. The
+compiler emits the same call for every hole and has no way to emit a different one — choosing is
+what the type does, which is why this needs no type checker in the compiler and gets one from the
+language below.
+
+Control flow inside the markup (`<for>`) is not part of this: what a page repeats is a Nikaia
+`for`, and the template is what one row looks like.
+
 **`std::fs` (Compiler Magic)**
 File system access is designed to look **blocking** (synchronous) for ease of use. However, the compiler automatically transforms these calls into **non-blocking** state machines backed by the runtime's reactor. You never block the thread, but you never have to write "callback hell".
 
