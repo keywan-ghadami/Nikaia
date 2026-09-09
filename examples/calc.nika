@@ -75,7 +75,13 @@ grammar Calc {
     // The recursion. `expr` is reached again inside the parentheses, and the
     // whole precedence climb starts over there - which is why `(10 - 4)` is a
     // factor and multiplies like one.
-    rule factor -> i64 =
+    //
+    // `# "expression"` is what this rule is called when it fails where it
+    // began. Every operand in the language bottoms out here, so `2 +` reports
+    // `expected expression` rather than the three ways an operand can start.
+    // It applies only at the rule's own starting position: `(1` got past the
+    // `(`, and the message naming the missing `)` says more (Part II, 10.6).
+    rule factor -> i64 # "expression" =
           "(" e:expr ")" -> { e }
         | "-" f:factor -> { -f }
         | n:NUMBER -> { n }
@@ -106,7 +112,13 @@ fn main() throws {
     // One line: the grammar is the parser, and `dsl … from …` is how a program
     // runs it. There is no `par_fold` here, so the compiler drives the entry
     // rule over the whole string once instead of cutting it into pieces.
-    let value = dsl Calc from source
+    //
+    // `catch` turns a rejected input into a message rather than a stack trace:
+    // the parse is an expression, so its failure is a value like any other.
+    let value = dsl Calc from source catch {
+        eprintln("{source}: {error}")
+        return
+    }
 
     println("{source} = {value}")
 }

@@ -383,6 +383,9 @@ pub struct GrammarRule {
     /// Part II, 10.7: the rule is a resynchronization unit.
     pub frame: Option<FrameAttr>,
     pub ret_type: Option<Type>,
+    /// `# "expression"`: what this rule is called in a message that fails at
+    /// its own start, instead of everything its alternatives could begin with.
+    pub label: Option<String>,
     pub alts: Vec<GrammarAlt>,
     pub span: Span,
 }

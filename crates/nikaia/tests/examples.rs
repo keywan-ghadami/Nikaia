@@ -235,6 +235,42 @@ fn a_malformed_line_is_reported_and_no_summary_is_printed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The label in `calc.nika`'s `factor`, end to end.
+///
+/// A Nikaia grammar says what a rule is called (`# "expression"`), the emitter
+/// hands that to the backend in the backend's own spelling, the backend
+/// reports the word instead of the three ways an operand can start, and the
+/// driver renders it against the input the program parsed. Four pieces, one
+/// message, and this is the only place all four are exercised together.
+#[test]
+fn a_missing_operand_is_reported_as_an_expression() {
+    let (dir, binary) = build("calc.nika", Profile::Advanced);
+
+    let run = Command::new(&binary)
+        .arg("2 +")
+        .output()
+        .expect("run the compiled example");
+
+    assert!(run.status.success(), "it should report, not fail");
+    assert!(
+        String::from_utf8_lossy(&run.stdout).is_empty(),
+        "a rejected expression must not print a result: {}",
+        String::from_utf8_lossy(&run.stdout)
+    );
+
+    let reported = String::from_utf8_lossy(&run.stderr).into_owned();
+    assert!(
+        reported.contains("expected expression"),
+        "the label should be the expectation: {reported}"
+    );
+    assert!(
+        reported.contains("column 4"),
+        "and the position should be where the operand belongs: {reported}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Lower and compile. The example is the real file: it cannot drift.
 fn build(file: &str, profile: Profile) -> (PathBuf, PathBuf) {
     let source_path = repo_root().join("examples").join(file);

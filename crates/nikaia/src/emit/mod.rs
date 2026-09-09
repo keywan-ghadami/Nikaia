@@ -612,8 +612,14 @@ impl<'p> Emitter<'p> {
             Some(ty) => format!(" -> {}", self.ty(ty, Lifetimes::NAMED)),
             None => String::new(),
         };
+        // The label sits between the return type and the `=`, in both
+        // languages: `rule expr -> Expr # "expression" = …`.
+        let label = match &rule.label {
+            Some(text) => format!(" # {text:?}"),
+            None => String::new(),
+        };
         out.push(&format!(
-            "        {vis}rule {}{ret} =\n",
+            "        {vis}rule {}{ret}{label} =\n",
             self.text(rule.name)
         ));
 

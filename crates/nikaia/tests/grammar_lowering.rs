@@ -281,6 +281,35 @@ fn a_rejected_parse_is_rendered_against_the_input_it_parsed() {
     );
 }
 
+/// `# "…"` between a rule's return type and its `=`: what the rule is called
+/// when it fails where it began. The backend's own spelling, because the
+/// lowering is name for name (ADR-011 D2) and a second spelling for the same
+/// thing would be one more thing to know.
+#[test]
+fn a_rule_label_is_lowered_where_the_backend_expects_it() {
+    let source = concat!(
+        "grammar G {\n",
+        "    rule atom -> i32 # \"expression\" =\n",
+        "        n:digit1 -> { 1 }\n",
+        "      | \"(\" e:atom \")\" -> { e }\n",
+        "}\n"
+    );
+    let emitted = emit(source, Profile::Advanced);
+    assert!(
+        emitted.contains("rule atom -> i32 # \"expression\" ="),
+        "{emitted}"
+    );
+}
+
+/// A rule without one is emitted exactly as it was.
+#[test]
+fn a_rule_without_a_label_gains_nothing() {
+    let source = "grammar G {\n    rule atom -> i32 = n:digit1 -> { 1 }\n}\n";
+    let emitted = emit(source, Profile::Advanced);
+    assert!(emitted.contains("rule atom -> i32 ="), "{emitted}");
+    assert!(!emitted.contains('#'), "{emitted}");
+}
+
 // --- Running what was generated ---
 
 const MEASUREMENTS: &str = "Hamburg;12.0\nAbha;-23.0\nSaint-Pierre;9.1\nHamburg;-0.4\n";
