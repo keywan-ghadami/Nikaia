@@ -4,6 +4,12 @@ What Nikaia's use of the parser backend turned up, with a reproduction for each.
 Recorded here so it is not re-discovered, and so it can be handed over as one
 piece. Measured against `2f0d5da` and `024e3d3`.
 
+**Status — handed over.** All four are now with upstream, on
+`winnow-grammar` branch `claude/nika-2-branches-offene-aufgaben-kd77u1`:
+§1 is implemented there (with the documentation the patch had not carried),
+§3 is implemented there, and §2 and §4 are its TODO §5 and §6 with these
+measurements. This file stays as the reasoning behind them.
+
 ---
 
 ## 1. Two expectations beat one, and the one is thrown away

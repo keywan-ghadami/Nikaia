@@ -1,37 +1,39 @@
 # Handoff — open work on error messages and the parser backend
 
 Written at the end of a session that could not finish, because the change it
-depends on lives in a repository this session had no push access to. Everything
-needed to resume is in this repository. Read this file first.
+depends on lived in a repository that session had no push access to. That part
+is done; what is still open is below. Read this file first.
 
 ---
 
-## 1. The blocked thing, and how to unblock it
+## 1. The blocked thing — no longer blocked
 
-A change to `winnow-grammar` is **written, tested and committed, but only in a
-clone under `/tmp` that dies with the container.** It is preserved here:
+The `winnow-grammar` change is **pushed**, on branch
+`claude/nika-2-branches-offene-aufgaben-kd77u1`, based on upstream `024e3d3`:
 
-    docs/upstream/0001-expectations-by-requirement.patch
+    https://github.com/keywan-ghadami/winnow-grammar/tree/claude/nika-2-branches-offene-aufgaben-kd77u1
 
-542 lines, 7 files, based on upstream `024e3d3`. To resume:
+`docs/upstream/0001-expectations-by-requirement.patch` is that branch's first
+commit and stays here as the record of what was handed over. The branch is
+five commits:
 
-```bash
-git clone https://github.com/keywan-ghadami/winnow-grammar.git
-cd winnow-grammar && git checkout -b claude/expectations-by-requirement 024e3d3
-git am ../Nikaia/docs/upstream/0001-expectations-by-requirement.patch
-cargo test --workspace          # 279 tests passed when it was written
-```
+* the ranking itself (the patch, unchanged but for a clippy lint in its test),
+* SYNTAX.md and CHANGELOG.md, which the patch had not touched — the documented
+  order of message selection was still progress-then-priority,
+* two documentation errors that had `cargo doc` failing on upstream `main`
+  since `54acc33`, so the branch's own CI can say something,
+* `text(p)`/`dec<T>(p)` inside a `#[frame]` — §4.2 below, now closed,
+* the remaining findings, as TODO items §5 and §6 upstream.
 
-**The session needs both repositories in its sources.** Without that the git
-proxy refuses to inject a credential:
+281 tests pass on it, `cargo fmt --check`, clippy and `cargo doc -D warnings`
+are clean.
 
-> access denied by the git proxy: keywan-ghadami/winnow-grammar is not in this
-> session's authorized repository set
+**What is still to do here:** when that branch lands on upstream `main`, bump
+`Cargo.lock` to it and regenerate `tests/errors/EXPECTED.txt` — §3 says how,
+and the diff is the improvement. Until then Nikaia stays on `024e3d3` and the
+corpus is green as checked in.
 
-There is no tool to add it from inside a session — it is set when the session is
-created.
-
-### To test the patch against Nikaia before it is pushed
+### To test against Nikaia before upstream merges
 
 Append to `Cargo.toml` (and **remove it again before committing** — it must not
 be checked in):
@@ -156,9 +158,12 @@ Error messages first, performance after — that was the instruction.
    where the crossover actually is, and propose a threshold in the code
    generator (`{1,2}` is known at compile time). Detail in
    `docs/upstream/winnow-grammar-findings.md` §2.
-2. **`dec(p)` and `text(p)` cannot appear inside a `#[frame]`** — the frame
-   check has no arm for them, so `_ => true`. `intern(p)` is already excepted
-   with the reasoning that fits all three. Findings note §3.
+2. ~~**`dec(p)` and `text(p)` cannot appear inside a `#[frame]`**~~ — **done**,
+   on the upstream branch above. The frame check had no arm for them, so
+   `_ => true`; they are now excepted with the reasoning `intern(p)` already
+   carried, and `tests/ui/frames.rs` upstream pins that an argument which *can*
+   consume the boundary is still rejected. `examples/1brc.nika` can drop its
+   `unchecked` once Nikaia is on that backend. Findings note §3.
 3. **The intern cache is sized for identifiers** — 512 direct-mapped slots, no
    collision handling. At 413 keys it costs 617 instructions per row against 514
    for a plain fast-hashed map. Making `InternCache::BITS` settable per context
@@ -182,8 +187,14 @@ Error messages first, performance after — that was the instruction.
 
 ## 5. The state of the branch
 
-`claude/nikaia-compiler-lowering-zaqa0y`, and everything below it is pushed and
-green: 28 tests, `cargo fmt --check` clean, clippy clean.
+`claude/nikaia-compiler-lowering-zaqa0y` (PR #9), and everything below it is
+pushed and green: 28 tests, `cargo fmt --check` clean, clippy clean. This file
+is updated on `claude/nika-2-branches-offene-aufgaben-kd77u1`, which is that
+branch plus this note.
+
+ADR-009 no longer sits below it: its two commits landed on `main` on their own
+(PR #10), so what PR #9 still adds is the Stage 0 lowering and everything
+after it.
 
 * `Cargo.lock` is on upstream `024e3d3`. The measurements in ADR-011 §4 were
   taken on `2f0d5da` and say so.
