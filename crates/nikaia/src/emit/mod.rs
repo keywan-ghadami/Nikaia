@@ -1675,7 +1675,7 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 /// Part II, 10.6: a view is a slice of the input, so a struct holding one is
 /// tied to the input as well - transitively, which is why this is a fixpoint
 /// and not one pass.
-fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
+pub(crate) fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
     let mut fields_of: HashMap<Symbol, Vec<&Type>> = HashMap::new();
     let mut borrowing = HashSet::new();
 
@@ -1722,11 +1722,11 @@ fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
     }
 }
 
-fn holds_view(ty: &Type) -> bool {
+pub(crate) fn holds_view(ty: &Type) -> bool {
     ty.is_view || ty.generics.iter().any(holds_view)
 }
 
-fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
+pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
     borrowing.contains(&ty.name) || ty.generics.iter().any(|g| names_borrowing(g, borrowing))
 }
 

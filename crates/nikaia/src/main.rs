@@ -7,12 +7,13 @@
 // every shared crate "shows up twice" and linking fails.
 extern crate rustc_driver;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bridge_ir::BridgeModule;
 use bridge_orchestrator::LanguageFrontend;
 use clap::Parser;
 use std::path::PathBuf;
 
+use nikaia::contracts::Ledger;
 use nikaia::emit::{self, Profile};
 use nikaia::{diagnostics, interpreter, parser};
 
@@ -44,6 +45,55 @@ pub struct Cli {
     /// rebuilt from `--input` here rather than written out and kept in step.
     #[arg(long)]
     pub explain: bool,
+
+    /// Verify the Borrow Contract Ledger instead of updating it (Part III,
+    /// 13.5).
+    ///
+    /// The ledger is a pure function of source and toolchain, so this compares
+    /// bytes: any difference fails the build and prints what changed. The
+    /// recommended CI line, and the reason the file is committed.
+    #[arg(long)]
+    pub locked: bool,
+}
+
+/// Write the ledger, or - under `--locked` - check that it did not need
+/// writing.
+///
+/// The determinism guarantee (13.5) is what lets this compare bytes rather than
+/// meanings: the same sources and the same compiler produce the same file, so a
+/// difference is a change in a contract and never in the formatting.
+fn contracts(path: &std::path::Path, ledger: &str, locked: bool) -> Result<()> {
+    if !locked {
+        std::fs::write(path, ledger)?;
+        return Ok(());
+    }
+
+    let committed = std::fs::read_to_string(path).with_context(|| {
+        format!(
+            "--locked, but {} is not there; run without --locked to write it",
+            path.display()
+        )
+    })?;
+
+    if committed != *ledger {
+        let changed: Vec<&str> = ledger
+            .lines()
+            .filter(|line| !committed.lines().any(|c| c == *line))
+            .collect();
+        anyhow::bail!(
+            "--locked: the contracts changed and {} does not say so.\n\
+             What the build inferred and the ledger does not have:\n{}\n\
+             Run without --locked to record it, and read the diff.",
+            path.display(),
+            changed
+                .iter()
+                .map(|l| format!("    {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    Ok(())
 }
 
 struct NikaiaFrontend;
@@ -119,6 +169,14 @@ pub fn main() -> Result<()> {
             .clone()
             .unwrap_or_else(|| args.input.with_extension("rs"));
         std::fs::write(&output_path, &lowered.rust)?;
+
+        // The ledger goes beside the output, because that is where a build
+        // puts what it produced. Part III 13.5 says the project root, which is
+        // what this is once the orchestrator compiles a project rather than a
+        // file.
+        let ledger_path = output_path.with_file_name("nikaia.contracts");
+        let ledger = Ledger::infer(&parsed).render();
+        contracts(&ledger_path, &ledger, args.locked)?;
 
         println!(
             "Lowered {} to {} (profile: {})",
