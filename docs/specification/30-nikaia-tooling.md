@@ -563,8 +563,21 @@ compiler emits the same call for every hole and has no way to emit a different o
 what the type does, which is why this needs no type checker in the compiler and gets one from the
 language below.
 
-Control flow inside the markup (`<for>`) is not part of this: what a page repeats is a Nikaia
-`for`, and the template is what one row looks like.
+**Control flow is written as an element**, because the file is markup and an editor that
+highlights it keeps working — a second syntax in a file that already has one is a second thing to
+know:
+
+```nika
+<table>
+<for row in :rows><tr><td>{row.id}</td><td>{row.message}</td></tr></for>
+</table>
+```
+
+`:rows` carries the colon because it is **captured from the enclosing scope** (ADR-007 D4): that
+is where the template's names end and the program's begin. The loop becomes the loop of the
+language below, over the captured collection, so it borrows rather than copies exactly as it
+would in the function around the template. The position check runs through a loop's body — a hole
+in a `<script>` does not become safe by being repeated.
 
 **`std::fs` (Compiler Magic)**
 File system access is designed to look **blocking** (synchronous) for ease of use. However, the compiler automatically transforms these calls into **non-blocking** state machines backed by the runtime's reactor. You never block the thread, but you never have to write "callback hell".

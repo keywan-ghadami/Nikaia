@@ -393,7 +393,7 @@ grammar! {
         // recorded and the emitter decides what it becomes.
         rule type_ref -> Type # "type" =
             view:amp?
-            name:NAME
+            name:type_name
             generics:generic_type_args?
             -> {
                 Type {
@@ -419,6 +419,27 @@ grammar! {
         // USING [ ] SYNTAX directly for testing
         rule generic_type_args -> Vec<Type> =
             [ args:type_refs? ] -> { args.unwrap_or_default() }
+
+        // A type may be named by a path: `postgres::Connection`, `html::Raw`.
+        //
+        // The whole path is interned as one name, because that is what the name
+        // *is* to a compiler that lowers name for name (ADR-011 D2) - nothing
+        // here resolves a module, and a path can therefore never collide with a
+        // struct this file declares, which is correct.
+        rule type_name -> Symbol =
+            head:NAME tail:path_segment* -> {
+                if tail.is_empty() {
+                    head
+                } else {
+                    let mut path = String::new();
+                    path.push_str(_state.interner.resolve(head));
+                    for segment in tail {
+                        path.push_str("::");
+                        path.push_str(_state.interner.resolve(segment));
+                    }
+                    _state.intern(&path)
+                }
+            }
 
         rule type_refs -> Vec<Type> =
             head:type_ref tail:type_ref_tail* -> {

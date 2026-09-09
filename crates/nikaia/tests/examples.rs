@@ -211,11 +211,11 @@ CG 1.117
         // that made the promise.
         expected: "\
 <table>
-<tr class=\"odd\"><td>Ada</td><td>fine</td></tr>\
+        <tr class=\"odd\"><td>Ada</td><td>fine</td></tr>\
 <tr class=\"even\"><td>a&lt;b &amp; c</td><td>&quot;quoted&quot;</td></tr>\
 <tr class=\"odd\"><td>O&#39;Hara</td><td>&lt;/td&gt; is not a tag here</td></tr>
-<tr class=\"odd\"><td>Ada</td><td><em>Ada</em></td></tr>
-</table>",
+        </table>
+<tr class=\"odd\"><td>Ada</td><td><em>Ada</em></td></tr>",
     },
 ];
 

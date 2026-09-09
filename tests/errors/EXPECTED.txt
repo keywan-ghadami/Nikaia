@@ -3,7 +3,7 @@ Parse error:
 expected `}`; found unexpected token `temp` at line 3, column 5
    3 |     temp: i32
            ^^^^
-note: also possible here: `,`, `//`
+note: also possible here: `,`, `//`, `::`
 in struct_item
 in item
 in item 1
@@ -14,7 +14,7 @@ Parse error:
 expected `)`; found unexpected token `b` at line 1, column 13
    1 | fn f(a: i32 b: i32) {
                    ^
-note: also possible here: `,`, `//`
+note: also possible here: `,`, `//`, `::`
 in fn_params
 in fn_item
 in item
@@ -182,6 +182,7 @@ note: also possible here: `&`, `//`
 in COMMENT
 in item 1
 in WS
+in type_name
 in type_ref
 in type_annotation
 in let_stmt

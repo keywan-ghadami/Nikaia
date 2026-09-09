@@ -997,8 +997,22 @@ impl<'p> Emitter<'p> {
         let pad = "    ".repeat(depth + 1);
         let close = "    ".repeat(depth);
         out.push(&format!("{{\n{pad}let mut __html = String::new();\n"));
+        self.template_segments(out, &segments, depth + 1, flow)?;
+        out.push(&format!("{pad}__html\n{close}}}"));
+        Ok(())
+    }
 
-        for segment in &segments {
+    /// The pieces of a template, appended to `__html` in order.
+    fn template_segments(
+        &self,
+        out: &mut Out,
+        segments: &[template::Segment],
+        depth: usize,
+        flow: Flow,
+    ) -> Result<()> {
+        let pad = "    ".repeat(depth);
+
+        for segment in segments {
             match segment {
                 template::Segment::Text(text) => {
                     out.push(&format!("{pad}__html.push_str({});\n", rust_string(text)));
@@ -1011,13 +1025,23 @@ impl<'p> Emitter<'p> {
                     out.push(&format!(
                         "{pad}__html.push_str(&::nikaia_std::html::Render::render(&"
                     ));
-                    self.expr(out, &parsed, depth + 1, flow)?;
+                    self.expr(out, &parsed, depth, flow)?;
                     out.push("));\n");
+                }
+                // The loop of the language below, over the captured collection:
+                // it borrows rather than copies, exactly as it would in the
+                // function around the template.
+                template::Segment::For {
+                    binding,
+                    collection,
+                    body,
+                } => {
+                    out.push(&format!("{pad}for {binding} in &{collection} {{\n"));
+                    self.template_segments(out, body, depth + 1, flow)?;
+                    out.push(&format!("{pad}}}\n"));
                 }
             }
         }
-
-        out.push(&format!("{pad}__html\n{close}}}"));
         Ok(())
     }
 
@@ -2023,11 +2047,29 @@ fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
             }
             '{' => {
                 let mut hole = String::new();
-                let mut spec = None;
+                let mut spec: Option<String> = None;
                 let mut depth = 1;
                 let mut nesting = 0;
 
-                for c in chars.by_ref() {
+                while let Some(c) = chars.next() {
+                    // A hole is Nikaia source that was written *inside* a string
+                    // literal, so the escaping it carries is that literal's. The
+                    // two characters the enclosing string had to escape are the
+                    // two undone here - without this, `"{f(\"a\")}"` hands the
+                    // parser `f(\"a\")`, which is not an expression.
+                    if c == '\\' {
+                        match chars.peek() {
+                            Some('"') | Some('\\') => {
+                                let c = chars.next().expect("peeked");
+                                match &mut spec {
+                                    Some(spec) => spec.push(c),
+                                    None => hole.push(c),
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     match c {
                         '{' => depth += 1,
                         '}' => {
