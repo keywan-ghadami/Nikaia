@@ -29,11 +29,20 @@
 //     Writing `expr = expr "-" term` would be the natural way to say it and
 //     does not terminate; this is the standard repair and the reason the rules
 //     below read as they do.
-//   * **A tuple where a pair belongs.** `mul_tail` yields `(&str, i64)` - the
-//     operator and its operand - because naming that pair would have been a
-//     struct pretending to be a type.
+//   * **A tuple where a pair belongs, and an enum where a choice does.**
+//     `mul_tail` yields `(Op, i64)` - the operator and its operand. Naming the
+//     pair would have been a struct pretending to be a type; spelling the
+//     operator as text would have been a comparison the compiler cannot check.
 
 use std::cli
+
+// Two operators, and the type says two. A `match` over it has no arm for a
+// third and needs none - which is the difference between a sum type and a
+// string that happens to hold "*".
+enum Op {
+    Times,
+    Divide,
+}
 
 grammar Calc {
 
@@ -55,26 +64,27 @@ grammar Calc {
 
     // Division cannot be folded that way - it is neither commutative nor
     // recoverable from a sign - so the operator has to travel with the operand.
-    // A tuple carries it: two values of different types, with no name for the
-    // pair, which is exactly what a struct here would have been pretending to
-    // be. (An enum would say it better still - there are exactly two operators
-    // - and Stage 0 has none; `examples/README.md`, G12.)
+    // A tuple carries the pair, and the operator itself is an `enum`: there are
+    // exactly two, which is what a sum type says. Written as a `&str` it would
+    // be one comparison away from a typo the compiler cannot see.
     rule term -> i64 =
         head:factor tail:mul_tail* -> {
             let mut value = head
             for step in tail {
-                if step.0 == "*" { value = value * step.1 }
-                else { value = value / step.1 }
+                match step.0 {
+                    Op::Times => { value = value * step.1 }
+                    Op::Divide => { value = value / step.1 }
+                }
             }
             value
         }
 
-    rule mul_tail -> (&str, i64) =
+    rule mul_tail -> (Op, i64) =
         op:mul_op f:factor -> { (op, f) }
 
-    rule mul_op -> &str =
-          "*" -> { "*" }
-        | "/" -> { "/" }
+    rule mul_op -> Op =
+          "*" -> { Op::Times }
+        | "/" -> { Op::Divide }
 
     // The recursion. `expr` is reached again inside the parentheses, and the
     // whole precedence climb starts over there - which is why `(10 - 4)` is a

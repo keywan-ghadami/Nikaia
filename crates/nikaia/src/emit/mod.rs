@@ -27,8 +27,8 @@ use anyhow::{anyhow, Result};
 use winnow_grammar::Symbol;
 
 use crate::ast::{
-    BinaryOp, Block, Expr, FnArg, FoldSpec, FrameAttr, GrammarDef, GrammarRule, Item, Pattern,
-    Receiver, Repeat, Span, Spanned, Stmt, Type, UnaryOp,
+    BinaryOp, Block, Expr, FnArg, FoldSpec, FrameAttr, GrammarDef, GrammarRule, Item, MatchPattern,
+    Pattern, Receiver, Repeat, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
 use crate::parser::{parse_expression, Parsed};
 
@@ -385,6 +385,46 @@ impl<'p> Emitter<'p> {
     fn item(&self, out: &mut Out, item: &Item) -> Result<()> {
         match item {
             Item::Grammar(def) => self.grammar(out, def),
+            Item::Enum {
+                name,
+                variants,
+                is_public,
+            } => {
+                out.push("#[derive(Debug, Clone)]\n");
+                let vis = if *is_public { "pub " } else { "" };
+                let params = if self.borrowing.contains(name) {
+                    format!("<{INPUT_LIFETIME}>")
+                } else {
+                    String::new()
+                };
+                out.push(&format!("{vis}enum {}{params} {{\n", self.text(*name)));
+                for variant in variants {
+                    let name = self.text(variant.name);
+                    match &variant.fields {
+                        VariantFields::Unit => out.push(&format!("    {name},\n")),
+                        VariantFields::Tuple(types) => {
+                            let parts: Vec<String> =
+                                types.iter().map(|t| self.ty(t, Lifetimes::NAMED)).collect();
+                            out.push(&format!("    {name}({}),\n", parts.join(", ")));
+                        }
+                        VariantFields::Named(fields) => {
+                            let parts: Vec<String> = fields
+                                .iter()
+                                .map(|f| {
+                                    format!(
+                                        "{}: {}",
+                                        self.text(f.name),
+                                        self.ty(&f.ty, Lifetimes::NAMED)
+                                    )
+                                })
+                                .collect();
+                            out.push(&format!("    {name} {{ {} }},\n", parts.join(", ")));
+                        }
+                    }
+                }
+                out.push("}\n");
+                Ok(())
+            }
             Item::Struct {
                 name,
                 fields,
@@ -1095,6 +1135,21 @@ impl<'p> Emitter<'p> {
                 self.args(out, args, depth, flow)?;
                 out.push(")");
             }
+            Expr::Match { value, arms } => {
+                out.push("match ");
+                self.expr(out, value, depth, flow)?;
+                let pad = "    ".repeat(depth + 1);
+                let close = "    ".repeat(depth);
+                out.push(" {\n");
+                for arm in arms {
+                    out.push(&pad);
+                    self.match_pattern(out, &arm.pattern, depth + 1, flow)?;
+                    out.push(" => ");
+                    self.expr(out, &arm.body, depth + 1, flow)?;
+                    out.push(",\n");
+                }
+                out.push(&format!("{close}}}"));
+            }
             Expr::Tuple(parts) => {
                 out.push("(");
                 for (i, part) in parts.iter().enumerate() {
@@ -1278,6 +1333,42 @@ impl<'p> Emitter<'p> {
                 .map_err(|e| anyhow!("in the interpolated `{{{hole}}}`: {e}"))?;
             out.push(", ");
             self.expr(out, &expr, depth, flow)?;
+        }
+        Ok(())
+    }
+
+    /// One arm's pattern. Every shape is one the language below spells the
+    /// same way, so this is a transcription rather than a translation - a bare
+    /// name binds here because it binds there, and the rule is drawn once.
+    fn match_pattern(
+        &self,
+        out: &mut Out,
+        pattern: &MatchPattern,
+        depth: usize,
+        flow: Flow,
+    ) -> Result<()> {
+        let path = |p: &[Symbol]| {
+            p.iter()
+                .map(|s| self.text(*s).to_string())
+                .collect::<Vec<_>>()
+                .join("::")
+        };
+        let names = |b: &[Symbol]| {
+            b.iter()
+                .map(|s| self.text(*s).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        match pattern {
+            MatchPattern::Wildcard => out.push("_"),
+            MatchPattern::Literal(value) => self.expr(out, value, depth, flow)?,
+            MatchPattern::Path(p) => out.push(&path(p)),
+            MatchPattern::Tuple { path: p, bindings } => {
+                out.push(&format!("{}({})", path(p), names(bindings)));
+            }
+            MatchPattern::Named { path: p, bindings } => {
+                out.push(&format!("{} {{ {} }}", path(p), names(bindings)));
+            }
         }
         Ok(())
     }
@@ -1494,6 +1585,22 @@ fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
     let mut borrowing = HashSet::new();
 
     for item in &parsed.program.items {
+        // An enum holds views the same way a struct does - in the types of
+        // what its variants carry - so it is walked the same way.
+        if let Item::Enum { name, variants, .. } = &item.node {
+            let types: Vec<&Type> = variants
+                .iter()
+                .flat_map(|v| match &v.fields {
+                    VariantFields::Unit => Vec::new(),
+                    VariantFields::Tuple(types) => types.iter().collect(),
+                    VariantFields::Named(fields) => fields.iter().map(|f| &f.ty).collect(),
+                })
+                .collect();
+            if types.iter().any(|t| holds_view(t)) {
+                borrowing.insert(*name);
+            }
+            fields_of.insert(*name, types);
+        }
         if let Item::Struct { name, fields, .. } = &item.node {
             let types: Vec<&Type> = fields.iter().map(|f| &f.ty).collect();
             if types.iter().any(|t| holds_view(t)) {
@@ -1573,6 +1680,12 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
         Expr::MethodCall { receiver, args, .. } => {
             visit_expr(receiver, f);
             args.iter().for_each(|a| visit_expr(a, f));
+        }
+        Expr::Match { value, arms } => {
+            visit_expr(value, f);
+            for arm in arms {
+                visit_expr(&arm.body, f);
+            }
         }
         Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
         Expr::Field { base, .. } => visit_expr(base, f),

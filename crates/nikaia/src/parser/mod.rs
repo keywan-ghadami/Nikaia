@@ -203,6 +203,7 @@ grammar! {
         rule item -> Spanned<Item> # "item" @=
             g:grammar_item -> { Spanned::new(g, _span) }
           | s:struct_item -> { Spanned::new(s, _span) }
+          | e:enum_item -> { Spanned::new(e, _span) }
           | im:impl_item -> { Spanned::new(im, _span) }
           | u:use_item -> { Spanned::new(u, _span) }
           | i:fn_item -> { Spanned::new(i, _span) }
@@ -304,6 +305,36 @@ grammar! {
             }
 
         rule at_borrowed -> () = "@borrowed" -> { () }
+
+        // Kap 4.4. The three shapes the specification shows and no others: a
+        // name, a name with positional types, a name with named fields.
+        rule enum_item -> Item =
+            vis:kw_pub?
+            "enum" name:ident
+            "{" variants:enum_variants "}"
+            -> {
+                Item::Enum { name, variants, is_public: vis.is_some() }
+            }
+
+        rule enum_variants -> Vec<EnumVariant> =
+            head:enum_variant tail:enum_variant_tail* ","? -> {
+                let mut variants = vec![head];
+                variants.extend(tail);
+                variants
+            }
+
+        rule enum_variant_tail -> EnumVariant = "," v:enum_variant -> { v }
+
+        rule enum_variant -> EnumVariant =
+            name:ident "(" types:type_refs ")" -> {
+                EnumVariant { name, fields: VariantFields::Tuple(types) }
+            }
+          | name:ident "{" fields:field_defs "}" -> {
+                EnumVariant { name, fields: VariantFields::Named(fields) }
+            }
+          | name:ident -> {
+                EnumVariant { name, fields: VariantFields::Unit }
+            }
 
         rule field_defs -> Vec<FieldDef> =
             head:field_def tail:field_def_tail* ","? -> {
@@ -893,6 +924,7 @@ grammar! {
             sp:spawn_expr -> { sp }
           | d:dsl_from_expr -> { d }
           | i:if_expr -> { i }
+          | m:match_expr -> { m }
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
@@ -991,6 +1023,54 @@ grammar! {
             // name shadows it for the rest of the action.
             "dsl" name:ident "from" source:head_expr -> {
                 Expr::DslFrom { grammar: name, input: Box::new(source) }
+            }
+
+        // Kap 3.4. The value is a `head_expr` for the reason `if`'s condition is
+        // one: `match value {` would otherwise read `value { … }` as a struct
+        // literal and take the arms for fields.
+        rule match_expr -> Expr =
+            "match" value:head_expr "{" arms:match_arm+ "}" -> {
+                Expr::Match { value: Box::new(value), arms }
+            }
+
+        rule match_arm -> MatchArm =
+            pattern:match_pattern "=>" body:match_arm_body ","? -> {
+                MatchArm { pattern, body }
+            }
+
+        rule match_arm_body -> Expr =
+            b:block -> { Expr::Block(b) }
+          | e:expr -> { e }
+
+        // `_` first, and only where no name follows it: `_name` is a name.
+        rule match_pattern -> MatchPattern =
+            "_" not(raw_ident) -> { MatchPattern::Wildcard }
+          | l:pattern_lit -> { MatchPattern::Literal(l) }
+          | path:pattern_path "(" bindings:ident_list ")" -> {
+                MatchPattern::Tuple { path, bindings }
+            }
+          | path:pattern_path "{" bindings:ident_list "}" -> {
+                MatchPattern::Named { path, bindings }
+            }
+          | path:pattern_path -> { MatchPattern::Path(path) }
+
+        rule pattern_lit -> Expr =
+            b:bool_lit -> { b }
+          | s:str_lit -> { s }
+          | n:int_lit -> { n }
+
+        rule pattern_path -> Vec<Symbol> =
+            head:ident tail:path_segment* -> {
+                let mut path = vec![head];
+                path.extend(tail);
+                path
+            }
+
+        rule ident_list -> Vec<Symbol> =
+            head:ident tail:ident_tail* -> {
+                let mut names = vec![head];
+                names.extend(tail);
+                names
             }
 
         rule if_expr -> Expr =
