@@ -187,7 +187,30 @@ impl Out {
 }
 
 pub fn emit_program(parsed: &Parsed, profile: Profile) -> Result<Lowered> {
-    Emitter::new(parsed, profile).program()
+    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    emit_program_with_trust(parsed, profile, trust.provenance)
+}
+
+/// The same, with the provenance already decided.
+///
+/// The CLI analyses once and prints the answer under `--trust`; this is what it
+/// hands back in so the emitted code and the explanation cannot disagree.
+pub fn emit_program_with_trust(
+    parsed: &Parsed,
+    profile: Profile,
+    provenance: crate::contracts::Provenance,
+) -> Result<Lowered> {
+    Emitter::new(parsed, profile, provenance).program()
+}
+
+/// `std`'s shipped contracts, parsed once.
+///
+/// A malformed ledger is a bug in this repository rather than in a user's
+/// program, and the tests read the same file - so failing to parse it here
+/// means treating the input as untrusted, which is the safe direction
+/// (ADR-010 D1) and never a silent upgrade.
+fn std_ledger() -> crate::contracts::Ledger {
+    crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default()
 }
 
 struct Emitter<'p> {
@@ -209,6 +232,9 @@ struct Emitter<'p> {
     by_name: HashMap<Symbol, Option<Method>>,
     /// Whether the program imports anything from `std`.
     uses_std: bool,
+    /// ADR-010: nobody outside the program chose the bytes its maps are keyed
+    /// by, so a map may have the fast hash.
+    trusted_input: bool,
 }
 
 /// What an `impl` says about a method. Enough to adapt a `&mut self` method to
@@ -250,7 +276,7 @@ enum Propagate {
 }
 
 impl<'p> Emitter<'p> {
-    fn new(parsed: &'p Parsed, profile: Profile) -> Self {
+    fn new(parsed: &'p Parsed, profile: Profile, provenance: crate::contracts::Provenance) -> Self {
         let mut grammars = HashMap::new();
         let mut structs = HashSet::new();
         let mut methods = HashMap::new();
@@ -313,6 +339,7 @@ impl<'p> Emitter<'p> {
             methods,
             by_name,
             uses_std,
+            trusted_input: provenance == crate::contracts::Provenance::Trusted,
         }
     }
 
@@ -915,6 +942,40 @@ impl<'p> Emitter<'p> {
 
     // --- Types ---
 
+    /// A path, with the map it names chosen the same way its type is.
+    ///
+    /// `HashMap::new` has no counterpart on a map with a hasher of its own -
+    /// `new` exists only for the default one - so the trusted map is built with
+    /// `default`, which is what every `HashMap<_, _, S>` is built with.
+    fn path(&self, segments: &[&str]) -> String {
+        if let [container, "new"] = segments {
+            let chosen = self.map_name(container);
+            if chosen != *container {
+                return format!("{chosen}::default");
+            }
+        }
+        segments
+            .iter()
+            .map(|s| self.map_name(s))
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
+    /// `HashMap` under the name the provenance of this program's input picked
+    /// (ADR-010 D5).
+    ///
+    /// Trusted keys get a fast, fixed-seed hash; untrusted keys keep the keyed,
+    /// randomly seeded one `std` gives every map by default. Nothing else about
+    /// the map changes - same table, same API, same full-content equality - so
+    /// this is a name and not a translation.
+    fn map_name<'n>(&self, name: &'n str) -> &'n str {
+        match (name, self.trusted_input) {
+            ("HashMap", true) => "TrustedMap",
+            ("HashSet", true) => "TrustedSet",
+            _ => name,
+        }
+    }
+
     fn ty(&self, ty: &Type, lifetimes: Lifetimes) -> String {
         let mut out = String::new();
 
@@ -929,7 +990,7 @@ impl<'p> Emitter<'p> {
         if ty.is_view {
             out.push_str(lifetimes.reference);
         }
-        out.push_str(self.text(ty.name));
+        out.push_str(self.map_name(self.text(ty.name)));
 
         let mut params: Vec<String> = ty.generics.iter().map(|g| self.ty(g, lifetimes)).collect();
         // A struct that holds a view carries the input lifetime with it.
@@ -1154,13 +1215,10 @@ impl<'p> Emitter<'p> {
             }
             Expr::LitBool(b) => out.push(&b.to_string()),
             Expr::Variable(name) => out.push(self.text(*name)),
-            Expr::Path(segments) => out.push(
-                &segments
-                    .iter()
-                    .map(|s| self.text(*s))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-            ),
+            Expr::Path(segments) => {
+                let path: Vec<&str> = segments.iter().map(|s| self.text(*s)).collect();
+                out.push(&self.path(&path));
+            }
             Expr::Block(block) => self.block(out, block, depth, flow, true)?,
             Expr::If {
                 cond,

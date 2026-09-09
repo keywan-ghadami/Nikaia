@@ -649,7 +649,17 @@ let data = fs::map(path; trusted: false)
 
 The reverse (`trusted: true`) exists for the case where you know the peer. Both are recorded in `nikaia.contracts`, so "every place this program declared something safe" is one list in one file, and it shows up in review when it changes. A grammar for a wire format can also pin the floor for everyone who uses it — `@untrusted grammar HttpHeaders` — so no application can lower it by accident (Part II, 10.7 and [ADR-010](adr/adr-010.md)).
 
-`nikaia explain --trust` prints where every buffer came from and which hasher each map got. And because untrusted maps are seeded randomly, **iteration order is not stable between runs** — when order matters, ask for it explicitly rather than relying on what a map happens to do today.
+`nikaia --trust` prints where the program's bytes came from, which source said so, and which hasher its maps got:
+
+```text
+$ nikaia --input 1brc.nika --backend rust --trust
+input provenance: trusted
+    cli::args is trusted
+    fs::map is trusted
+hash for a map keyed by the input: fast, fixed seed - no adversary chooses these keys
+```
+
+What the bootstrap compiler's analysis is, exactly, so that a later one is not mistaken for it: **one buffer**, because ADR-008 gives a compilation unit one input lifetime — so the join over the sources a program calls *is* the per-buffer answer, for the one buffer this representation can express. The build cache needs no separate key field for it: provenance is a function of the source and of what `std`'s ledger says about the sources that source calls, and the compiler's fingerprint already hashes that ledger (13.6). And because untrusted maps are seeded randomly, **iteration order is not stable between runs** — when order matters, ask for it explicitly rather than relying on what a map happens to do today.
 
 **Other Key Modules:**
 * **`std::json`**: High-performance serialization using compile-time code generation (zero-allocation parsing where possible).
