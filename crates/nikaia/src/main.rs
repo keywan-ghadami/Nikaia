@@ -15,7 +15,7 @@ use clap::Parser;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use nikaia::contracts::{sync, Ledger, STD};
+use nikaia::contracts::{self, sync, Ledger, STD};
 use nikaia::emit::{self, Profile};
 use nikaia::{diagnostics, interpreter, parser};
 
@@ -70,6 +70,14 @@ pub struct Cli {
     /// what the cache holds.
     #[arg(long)]
     pub no_cache: bool,
+
+    /// Print where this program's bytes came from and which hash its maps got
+    /// (ADR-010 D7).
+    ///
+    /// The choice is visible, never a mystery: this names every source the
+    /// program reads and what each one contributed.
+    #[arg(long)]
+    pub trust: bool,
 }
 
 /// Part II 12.1, checked: a `sync` function may only call `sync` functions.
@@ -208,7 +216,19 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     // first failure direction, a key that moves with the checkout.
     let layout = Layout::resolve(&args.input);
     let unit = layout.unit_name(&args.input);
-    let choices = Choices::new(&args.profile, "rust");
+    let parsed = parser::parse_to_ast(source)?;
+    check_sync(&parsed, &args.input, source)?;
+
+    // Analysed once, printed under `--trust`, and carried into the cache key -
+    // so what the explanation says, what the code got, and what a later build
+    // reuses cannot disagree (ADR-010 D7).
+    let library = Ledger::parse(STD).context("std's shipped ledger")?;
+    let trust = contracts::trust::analyse(&parsed, &library);
+    if args.trust {
+        print!("{}", contracts::trust::render(&trust));
+    }
+
+    let choices = Choices::new(&args.profile, "rust", trust.provenance.as_str());
 
     // A cache that cannot be opened is a slower build, never a failed one
     // (D12). Once the cache is the default, a read-only checkout or a full
@@ -231,9 +251,6 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         }
     };
 
-    let parsed = parser::parse_to_ast(source)?;
-    check_sync(&parsed, &args.input, source)?;
-
     let cached = cache
         .as_ref()
         .and_then(|cache| cache.lookup(&unit, source, &choices, &layout.root));
@@ -242,7 +259,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     let rust = match cached {
         Some(rust) => rust,
         None => {
-            let lowered = emit::emit_program(&parsed, profile)?;
+            let lowered = emit::emit_program_with_trust(&parsed, profile, trust.provenance)?;
             if let Some(cache) = &mut cache {
                 // Nothing reports assets yet: compile-time I/O
                 // (`from "schema.sql"`) is specified and not implemented. The

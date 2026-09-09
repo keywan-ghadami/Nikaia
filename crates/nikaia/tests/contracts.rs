@@ -272,3 +272,121 @@ fn a_call_that_cannot_be_resolved_is_not_a_violation() {
     let found = violations("fn f(s: String) -> usize sync { return s.len() }");
     assert!(found.is_empty(), "{found:?}");
 }
+
+// --- ADR-010: where the bytes came from --------------------------------------
+
+use nikaia::contracts::{trust, Provenance};
+
+fn provenance(source: &str) -> trust::Trust {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let library = Ledger::parse(STD).expect("std's ledger parses");
+    trust::analyse(&parsed, &library)
+}
+
+/// Every source `std` has today is the operator's own, so a program that reads
+/// a file it was pointed at is trusted - and its maps may have the fast hash.
+#[test]
+fn a_program_that_reads_a_file_is_trusted() {
+    let t = provenance(
+        "use std::fs\n\
+         fn main() throws { let data = fs::map(\"x\")? }",
+    );
+    assert_eq!(t.provenance, Provenance::Trusted);
+    assert_eq!(t.reasons.len(), 1);
+    assert_eq!(t.reasons[0].source, "fs::map");
+}
+
+/// A program that reads nothing has no input to distrust: its maps are keyed by
+/// what it wrote itself, which is the compiled-in case of ADR-010 D2.
+#[test]
+fn a_program_that_reads_nothing_is_trusted_and_says_why() {
+    let t = provenance("fn main() { println(\"hello\") }");
+    assert_eq!(t.provenance, Provenance::Trusted);
+    assert!(t.reasons.is_empty());
+    assert!(
+        trust::render(&t).contains("no source is read"),
+        "{}",
+        trust::render(&t)
+    );
+}
+
+/// The join is over every source, so one untrusted input decides the answer -
+/// conservative in the safe direction, always (ADR-010 D1).
+///
+/// `std` has no untrusted source yet: `http`, `net` and `db` arrive with the
+/// modules that have them. This checks the lattice on a ledger that does, so
+/// that the join is tested rather than assumed on the day one appears.
+#[test]
+fn one_untrusted_source_decides() {
+    let library = Ledger::parse(
+        "version = 1\n\
+         toolchain = \"t\"\n\
+         inference = \"stage0-signatures\"\n\
+         [fn.\"fs::map\"]\n\
+         provenance = \"trusted\"\n\
+         [fn.\"http::body\"]\n\
+         provenance = \"untrusted\"\n",
+    )
+    .expect("the test ledger parses");
+
+    let parsed = parse_to_ast(
+        "use std::fs\n\
+         fn main() throws { let a = fs::map(\"x\")? let b = http::body() }",
+    )
+    .expect("parses");
+
+    let t = trust::analyse(&parsed, &library);
+    assert_eq!(t.provenance, Provenance::Untrusted);
+    assert_eq!(t.reasons.len(), 2);
+
+    let rendered = trust::render(&t);
+    assert!(rendered.contains("http::body is untrusted"), "{rendered}");
+    assert!(
+        rendered.contains("keyed, per-process random seed"),
+        "{rendered}"
+    );
+}
+
+/// The lattice, on its own terms.
+#[test]
+fn the_join_is_conservative() {
+    use Provenance::{Trusted, Untrusted};
+    assert_eq!(Trusted.join(Trusted), Trusted);
+    assert_eq!(Trusted.join(Untrusted), Untrusted);
+    assert_eq!(Untrusted.join(Trusted), Untrusted);
+    assert_eq!(Untrusted.join(Untrusted), Untrusted);
+}
+
+/// A source is a source wherever it is called from, including inside a nested
+/// block - the walk is the same one the `sync` check uses.
+#[test]
+fn a_source_is_found_inside_a_nested_block() {
+    let t = provenance(
+        "use std::io\n\
+         fn main() { for i in 0..2 { let t = io::read_to_string() catch { return } } }",
+    );
+    assert_eq!(t.reasons.len(), 1);
+    assert_eq!(t.reasons[0].source, "io::read_to_string");
+}
+
+/// The provenance decides the map, which is the only thing it decides
+/// (ADR-010 D5): same table, same API, a different hash.
+#[test]
+fn the_provenance_chooses_the_map() {
+    use nikaia::emit::{emit_program_with_trust, Profile};
+
+    let source = "fn main() { let m: HashMap[&str, i64] = HashMap::new() }";
+    let parsed = parse_to_ast(source).expect("parses");
+
+    let trusted = emit_program_with_trust(&parsed, Profile::Advanced, Provenance::Trusted)
+        .expect("lowers")
+        .rust;
+    assert!(trusted.contains("TrustedMap<&str, i64>"), "{trusted}");
+    assert!(trusted.contains("TrustedMap::default()"), "{trusted}");
+
+    let untrusted = emit_program_with_trust(&parsed, Profile::Advanced, Provenance::Untrusted)
+        .expect("lowers")
+        .rust;
+    assert!(untrusted.contains("HashMap<&str, i64>"), "{untrusted}");
+    assert!(untrusted.contains("HashMap::new()"), "{untrusted}");
+}

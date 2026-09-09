@@ -52,13 +52,27 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub struct Choices {
     pub profile: String,
     pub backend: String,
+    /// The provenance of the unit's input (ADR-010), which decides the hash its
+    /// maps get and therefore the code that comes out.
+    ///
+    /// A choice like the other two, and here for the same reason: it is a
+    /// function of the source *and* of what `std`'s ledger says about the
+    /// sources that source calls. Editing that ledger changes the lowering
+    /// without changing the source, and a key that did not carry this would
+    /// hand back an artifact hashed the other way.
+    pub provenance: String,
 }
 
 impl Choices {
-    pub fn new(profile: impl Into<String>, backend: impl Into<String>) -> Self {
+    pub fn new(
+        profile: impl Into<String>,
+        backend: impl Into<String>,
+        provenance: impl Into<String>,
+    ) -> Self {
         Self {
             profile: profile.into(),
             backend: backend.into(),
+            provenance: provenance.into(),
         }
     }
 }
@@ -176,6 +190,7 @@ impl Key {
         b.field("toolchain", toolchain);
         b.field("profile", &choices.profile);
         b.field("backend", &choices.backend);
+        b.field("provenance", &choices.provenance);
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same
@@ -477,7 +492,7 @@ mod tests {
     use super::*;
 
     fn choices() -> Choices {
-        Choices::new("advanced", "rust")
+        Choices::new("advanced", "rust", "trusted")
     }
 
     fn record(source: &str) -> UnitRecord {
@@ -503,11 +518,28 @@ mod tests {
     /// artifact against itself.
     #[test]
     fn the_profile_changes_the_key() {
-        let lite = Choices::new("lite", "rust");
-        let advanced = Choices::new("advanced", "rust");
+        let lite = Choices::new("lite", "rust", "trusted");
+        let advanced = Choices::new("advanced", "rust", "trusted");
         assert_ne!(
             key_with("0.1.0", "rustc-x", &lite, "a.nika", "src"),
             key_with("0.1.0", "rustc-x", &advanced, "a.nika", "src"),
+        );
+    }
+
+    /// The provenance of the input decides the hash a map gets (ADR-010 D5), so
+    /// it decides the code - and a key that did not carry it would hand back an
+    /// artifact hashed the other way.
+    ///
+    /// It is not a function of the source alone: what `std`'s ledger says about
+    /// the sources a program calls decides it too, and that file can change
+    /// without the source changing.
+    #[test]
+    fn the_provenance_changes_the_key() {
+        let trusted = Choices::new("advanced", "rust", "trusted");
+        let untrusted = Choices::new("advanced", "rust", "untrusted");
+        assert_ne!(
+            key_with("0.1.0", "rustc-x", &trusted, "a.nika", "src"),
+            key_with("0.1.0", "rustc-x", &untrusted, "a.nika", "src"),
         );
     }
 
@@ -535,14 +567,14 @@ mod tests {
             key_with(
                 "0.1.0",
                 "rustc-x",
-                &Choices::new("advanced", "rust"),
+                &Choices::new("advanced", "rust", "trusted"),
                 "a",
                 "s"
             ),
             key_with(
                 "0.1.0",
                 "rustc-x",
-                &Choices::new("advanced", "bridge"),
+                &Choices::new("advanced", "bridge", "trusted"),
                 "a",
                 "s"
             ),
@@ -553,8 +585,8 @@ mod tests {
     /// next would leave the digest unchanged.
     #[test]
     fn fields_cannot_run_into_one_another() {
-        let ab = Choices::new("ab", "c");
-        let a_bc = Choices::new("a", "bc");
+        let ab = Choices::new("ab", "c", "t");
+        let a_bc = Choices::new("a", "bc", "t");
         assert_ne!(
             key_with("0.1.0", "t", &ab, "u", "s"),
             key_with("0.1.0", "t", &a_bc, "u", "s"),
@@ -732,7 +764,7 @@ mod tests {
             .lookup(
                 "a.nika",
                 "fn main() {}",
-                &Choices::new("lite", "rust"),
+                &Choices::new("lite", "rust", "trusted"),
                 &dir
             )
             .is_none());

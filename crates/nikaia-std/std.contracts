@@ -18,6 +18,13 @@
 #
 # An absent `sync` means *not* sync - which is the promise this file exists to
 # make. An absent *entry* means nothing is known, and a caller may not assume.
+#
+# `provenance` marks a **source**: a function whose result is bytes that entered
+# the program from outside, and who chose them (ADR-010 D2). Its absence is not
+# "trusted" - it is "this is not a source", which is what almost every function
+# is. Every source `std` has today is the operator's own: a file they named, a
+# pipe they connected, the arguments they typed. The untrusted ones - `http`,
+# `net`, `db` - arrive with the modules that have them.
 version = 1
 toolchain = "nikaia 0.1.0"
 inference = "stage0-signatures"
@@ -26,10 +33,12 @@ inference = "stage0-signatures"
 
 [fn."cli::args"]
 pub = true
+provenance = "trusted"
 
 [fn."fs::map"]
 pub = true
 throws = true
+provenance = "trusted"
 
 [fn."fs::Mapped::deref"]
 pub = true
@@ -39,6 +48,7 @@ returns = "borrows(self)"
 [fn."fs::read_to_string"]
 pub = true
 throws = true
+provenance = "trusted"
 
 [fn."html::escape"]
 pub = true
@@ -48,10 +58,12 @@ returns = "borrows(text)"
 [fn."io::read"]
 pub = true
 throws = true
+provenance = "trusted"
 
 [fn."io::read_to_string"]
 pub = true
 throws = true
+provenance = "trusted"
 
 [fn."list::ListExt::map"]
 pub = true

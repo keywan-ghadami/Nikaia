@@ -58,7 +58,7 @@ fn a_profile_sensitive_example() -> String {
 fn an_unchanged_unit_comes_back_from_the_cache_unchanged() {
     let dir = common::scratch_dir("cache-roundtrip");
     let source = a_profile_sensitive_example();
-    let choices = Choices::new("advanced", "rust");
+    let choices = Choices::new("advanced", "rust", "trusted");
     let expected = lower(&source, Profile::Advanced);
 
     let mut cache = cache_in(&dir);
@@ -89,8 +89,8 @@ fn the_two_profiles_never_serve_each_others_artifacts() {
     let dir = common::scratch_dir("cache-profiles");
     let source = a_profile_sensitive_example();
 
-    let lite = Choices::new("lite", "rust");
-    let advanced = Choices::new("advanced", "rust");
+    let lite = Choices::new("lite", "rust", "trusted");
+    let advanced = Choices::new("advanced", "rust", "trusted");
     let lowered_lite = lower(&source, Profile::Lite);
     let lowered_advanced = lower(&source, Profile::Advanced);
 
@@ -132,7 +132,7 @@ fn the_two_profiles_never_serve_each_others_artifacts() {
 fn an_edited_source_misses() {
     let dir = common::scratch_dir("cache-edit");
     let source = a_profile_sensitive_example();
-    let choices = Choices::new("advanced", "rust");
+    let choices = Choices::new("advanced", "rust", "trusted");
 
     let mut cache = cache_in(&dir);
     cache
@@ -168,7 +168,7 @@ fn the_lockfile_survives_a_round_trip_and_holds_no_choices() {
             "1brc.nika",
             &source,
             BTreeMap::new(),
-            &Choices::new("lite", "rust"),
+            &Choices::new("lite", "rust", "trusted"),
             &lower(&source, Profile::Lite),
         )
         .expect("record");

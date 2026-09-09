@@ -16,6 +16,7 @@
 
 pub mod cli;
 pub mod fs;
+pub mod hash;
 pub mod html;
 pub mod io;
 pub mod list;
@@ -33,6 +34,7 @@ pub mod text {
 pub mod prelude {
     pub use crate::cli;
     pub use crate::fs;
+    pub use crate::hash::{TrustedMap, TrustedSet};
     pub use crate::html;
     pub use crate::io;
     pub use crate::list::ListExt;

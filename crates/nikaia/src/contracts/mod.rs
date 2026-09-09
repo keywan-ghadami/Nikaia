@@ -17,6 +17,7 @@
 // accepting the weaker answer.
 
 pub mod sync;
+pub mod trust;
 
 use std::collections::BTreeMap;
 
@@ -44,6 +45,38 @@ pub const INFERENCE: &str = "stage0-signatures";
 /// The format version of the file itself.
 pub const VERSION: u32 = 1;
 
+/// Who supplied the bytes a source hands back (ADR-010 D1).
+///
+/// A two-state lattice, `Trusted ⊑ Untrusted`, joined in the safe direction:
+/// one untrusted input makes the result untrusted. Where provenance cannot be
+/// established the answer is `Untrusted`, never `Trusted` - an analysis that
+/// fails open is a vulnerability generator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Provenance {
+    /// The operator chose these bytes: files, arguments, the environment,
+    /// anything compiled in.
+    #[default]
+    Trusted,
+    /// Someone else chose these bytes: a remote peer, a socket, a database row
+    /// holding what a user stored yesterday.
+    Untrusted,
+}
+
+impl Provenance {
+    /// The more cautious of two, which is what a container takes from what goes
+    /// into it.
+    pub fn join(self, other: Self) -> Self {
+        self.max(other)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Provenance::Trusted => "trusted",
+            Provenance::Untrusted => "untrusted",
+        }
+    }
+}
+
 /// What a caller needs to know about one function.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FnContract {
@@ -58,6 +91,12 @@ pub struct FnContract {
     pub sync: bool,
     /// Kap 7.1: it may fail, so its result is a `Result`.
     pub throws: bool,
+    /// This function is a **source**: its result is bytes that entered the
+    /// program from outside, and this is who chose them (ADR-010 D2).
+    ///
+    /// `None` is not "trusted" - it is "this is not a source", which is what
+    /// almost every function is.
+    pub provenance: Option<Provenance>,
     /// The parameters the result may point into, in declaration order.
     ///
     /// Empty when the result holds no view. Stage 0 has one input lifetime, so
@@ -190,8 +229,32 @@ impl Ledger {
                 sync: *is_sync,
                 throws: *throws,
                 borrows,
+                // A source is where bytes enter the program from outside, and
+                // nothing a `.nika` file can write is one: `fs` and `io` are
+                // `std`, and `std` states its own (ADR-010 D2).
+                provenance: None,
             },
         )
+    }
+
+    /// A function by the name a caller wrote, or by the name the prelude makes
+    /// available unqualified.
+    ///
+    /// Matching on the last segment is name-for-name resolution (ADR-011 D2)
+    /// rather than import tracking, and it is what a compiler without a module
+    /// graph can honestly do.
+    pub fn lookup(&self, name: &str) -> Option<(String, &FnContract)> {
+        if let Some(contract) = self.functions.get(name) {
+            return Some((name.to_string(), contract));
+        }
+        if name.contains("::") {
+            return None;
+        }
+        let suffix = format!("::{name}");
+        self.functions
+            .iter()
+            .find(|(key, _)| key.ends_with(&suffix))
+            .map(|(key, contract)| (key.clone(), contract))
     }
 
     /// The file, as it is written out.
@@ -227,6 +290,9 @@ impl Ledger {
                     "returns = \"borrows({})\"\n",
                     contract.borrows.join(" | ")
                 ));
+            }
+            if let Some(provenance) = contract.provenance {
+                out.push_str(&format!("provenance = \"{}\"\n", provenance.as_str()));
             }
         }
 
@@ -306,6 +372,9 @@ impl Ledger {
                         "sync" => entry.sync = value == "true",
                         "throws" => entry.throws = value == "true",
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
+                        "provenance" => {
+                            entry.provenance = Some(provenance_of(&unquote(value, at())?, at())?)
+                        }
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
                     }
                 }
@@ -359,6 +428,16 @@ fn borrows_of(value: &str, at: usize) -> Result<Vec<String>> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+fn provenance_of(value: &str, at: usize) -> Result<Provenance> {
+    match value {
+        "trusted" => Ok(Provenance::Trusted),
+        "untrusted" => Ok(Provenance::Untrusted),
+        other => Err(anyhow!(
+            "line {at}: a provenance is `trusted` or `untrusted`, not `{other}`"
+        )),
+    }
 }
 
 fn string_list(value: &str, at: usize) -> Result<Vec<String>> {

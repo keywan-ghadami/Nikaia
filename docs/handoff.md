@@ -213,11 +213,22 @@ is left is 3 and 4, and neither is a performance question.
    program wants thousands of distinct keys and not before. Upstream
    winnow-grammar#13 records the numbers where the method is documented.
 
-3. **Input provenance (ADR-010) is specified and not implemented**, and Stage 0
-   cannot implement it — choosing a map's hasher needs dataflow the emitter must
-   not invent (ADR-011 D2). Costs 22 % of the flagship's instructions.
-   ADR-011 §4 has the measurement and why no `.nika` file gains an annotation.
-   This is the first thing that wants a type checker (ADR-013 D7).
+3. **Input provenance (ADR-010) — closed, and it was the biggest one.** A map
+   keyed by the input now gets the hash the provenance of that input picks:
+   `std`'s ledger says which of its calls are sources and who chose their bytes
+   (ADR-020), and `contracts::trust` joins them over the program. Callgrind on
+   200 000 rows, the same tree built twice with byte-identical output: **120.0 M
+   instructions hardened against 89.1 M chosen — 26 %.** `nikaia --trust` prints
+   the choice and what decided it.
+
+   What the analysis is, so a later one is not mistaken for it: **one buffer**,
+   because ADR-008 gives a compilation unit one input lifetime. The join over a
+   program's sources is not a coarsening of a per-buffer analysis — it is the
+   per-buffer analysis, for the one buffer this representation can express.
+   `std` has no untrusted source yet; `http`, `net` and `db` arrive with the
+   modules that have them, and the lattice is tested against a ledger that has
+   one so the join is checked rather than assumed on that day.
+
 4. **What `fortunes.nika` waits on, now that it is decided.** G6 and G7 are no
    longer open questions: [ADR-018](specification/adr/adr-018.md) says the
    request is the handler's first *implicit* argument and what a handler's
