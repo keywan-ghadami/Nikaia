@@ -111,7 +111,7 @@ tethered = ["text -> source buffer"]
 
 **Build semantics.** On every build the compiler infers fresh contracts and diffs them against the ledger:
 
-1. **Unchanged** → fast path. Callers of unchanged contracts are not re-checked; the ledger acts as an incremental-compilation cache key (the same role `nikaia.lock` plays for compile-time I/O).
+1. **Unchanged** → fast path. Callers of unchanged contracts are not re-checked; the ledger acts as an incremental-compilation cache key. This is a *different* mechanism from `nikaia.lock`'s, despite the shared name ([ADR-019](adr/adr-019.md) D10): the lock is consulted **before** any work and answers *do I need to start at all?*, while the ledger can only be compared **after** inference has run and answers *which callers must be re-checked?* The two are complementary stages of one build. They also stay separate files, because the ledger ships with published packages while a lockfile does not, and because `--locked` means opposite things for them - regenerate-and-compare for the ledger, do-not-re-resolve for the lock.
 2. **Changed, all callers still valid** → the ledger is updated automatically and the build proceeds. The change is noted in the build output.
 3. **Changed, and a caller breaks** → the compiler uses the diff to narrate the *cause chain* instead of pointing at a mysterious distant line:
 
