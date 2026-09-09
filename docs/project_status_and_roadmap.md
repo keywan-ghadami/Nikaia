@@ -65,9 +65,9 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 *   [ ] **Bridge Orchestrator (Cargo Wrapper)**: Implement the logic defined in ADR-003 to wrap `cargo build`.
     *   *Missing*: Setting `RUSTC_WORKSPACE_WRAPPER`, intercepting compiler calls, and delegating to `nikaia` frontend for `.nika` files vs `rustc` for `.rs` files.
     *   *Current*: Orchestrator is a simple CLI argument parser with backend selection scaffolding.
-*   [ ] **Incremental Compilation**: Implement hashing and caching in the Orchestrator.
-    *   *Goal*: Avoid recompiling unchanged files.
-    *   *Design*: Specified in [ADR-019](specification/adr/adr-019.md) - `nikaia.lock` is the cache key, one key per translation unit, artifacts in a content-addressed store under `target/nikaia/cache/`. No external cache (`sccache` was considered and rejected: it memoizes `rustc` calls, while the repeated work is macro evaluation and lowering, which happen before `rustc` is reached).
+*   [x] **Incremental Compilation (mechanism)**: `bridge_orchestrator::cache` implements it per [ADR-019](specification/adr/adr-019.md) - SHA256 input hashing, `nikaia.lock` as the committed record, one key per translation unit, and a content-addressed artifact store under `target/nikaia/cache/`. Every dimension of the key is enumerated in one function (`Key::build`); build-time choices reach the key and never the file. No external cache (`sccache` was considered and rejected: it memoizes `rustc` calls, while the repeated work is macro evaluation and lowering, which happen before `rustc` is reached).
+    *   *Reachable via*: `nikaia --backend rust --cache`. Opt-in for now, because a project root is only well defined once `nikaia.toml` and `nikaia build` exist.
+    *   *Missing*: nothing reports **assets** yet - compile-time I/O (`from "schema.sql"`) is specified but unimplemented, so the asset dimension is carried through the key and exercised by tests without a real producer. And the cache covers the *lowering* only; the `rustc` invocations in `rustc-executor` and the test harness are not cached yet, which is where the measured repetition actually is.
 *   [ ] **LSP Server**: Create a Language Server Protocol (LSP) implementation.
     *   *Benefit*: IDE support (syntax highlighting, go-to-definition) in editors like VS Code.
     *   *Reuse*: Reuse the parser and AST for this.
@@ -79,7 +79,7 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 *   [x] **Direct `rustc_driver` Integration (Code)**: Logic implemented and verified.
 *   [ ] **Direct `rustc_driver` Integration (Runtime)**: Fix `std` linkage issues to allow the compiler to run as a standalone binary linking against `rustc_driver` dylibs.
 *   [x] **LLVM / Cranelift Backend (investigation)**: Done - see [ADR-019](specification/adr/adr-019.md) D9 and its measurements. Cranelift is fully compatible with this workspace, `rustc_private` linkage included, and all 51 tests pass under it; it buys ~1s on an incremental rebuild and nothing on a full build. Supported option, not the default.
-*   [ ] **Backend selection is unimplemented**: `--backend cranelift` and `--backend llvm` are accepted and silently behave like `--backend bridge` (`crates/nikaia/src/main.rs` matches neither string). Implement them or reject them with an error.
+*   [x] **Backend selection rejects what it cannot do**: `--backend cranelift` and `--backend llvm` used to be accepted and silently behave like `bridge`. They now fail with a message naming the available backends, as does any unknown value ([ADR-019](specification/adr/adr-019.md) D9). Implementing them remains open; pretending to have done so no longer is.
 
 ---
 

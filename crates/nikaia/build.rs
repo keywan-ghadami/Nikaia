@@ -22,4 +22,18 @@ fn main() {
         "cargo:rustc-env=NIKAIA_RUSTC={}",
         std::env::var("RUSTC").unwrap_or("rustc".into())
     );
+
+    // The toolchain identity that goes into the build cache key (ADR-019 D2).
+    // Resolved here rather than at run time: it is the rustc that built this
+    // emitter, which is the one whose output the cache would be serving, and
+    // asking for it once at compile time costs no subprocess per build.
+    let version = std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()))
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|v| v.trim().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=NIKAIA_RUSTC_VERSION={version}");
 }

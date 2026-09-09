@@ -1,0 +1,192 @@
+//! The build cache, driven by the real emitter (ADR-019).
+//!
+//! `bridge-orchestrator` unit-tests the key's dimensions against synthetic
+//! records. What it cannot check from there is the thing the ADR is actually
+//! worried about: that the artifacts the cache hands back are the ones the
+//! emitter would have produced. That needs a real `.nika` file whose lowering
+//! *differs* between the profiles, or the check passes without checking
+//! anything - which is the failure mode D5 names by its own test,
+//! `the_profiles_agree_on_every_example`.
+
+mod common;
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use bridge_orchestrator::cache::{Cache, Choices};
+use nikaia::emit::{emit_program, Profile};
+use nikaia::parser::parse_to_ast;
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Lowers `source` the way the `rust` backend does.
+fn lower(source: &str, profile: Profile) -> String {
+    let parsed = parse_to_ast(source).expect("parse");
+    emit_program(&parsed, profile).expect("emit").rust
+}
+
+fn cache_in(dir: &std::path::Path) -> Cache {
+    Cache::open(
+        dir.join("nikaia.lock"),
+        dir.join("target/nikaia/cache"),
+        "test-toolchain",
+        "test-compiler",
+    )
+    .expect("open cache")
+}
+
+/// An example that lowers differently under Lite and Advanced, so that a cache
+/// which confused the two would be caught. `1brc.nika` is the one the
+/// specification leans on for exactly this difference (ADR-009's `par_fold`).
+fn a_profile_sensitive_example() -> String {
+    let path = repo_root().join("examples/1brc.nika");
+    let source = std::fs::read_to_string(&path).expect("1brc.nika is readable");
+    assert_ne!(
+        lower(&source, Profile::Lite),
+        lower(&source, Profile::Advanced),
+        "this test is only meaningful while {} lowers differently per profile; \
+         if that changed, pick another example rather than deleting the check",
+        path.display()
+    );
+    source
+}
+
+#[test]
+fn an_unchanged_unit_comes_back_from_the_cache_unchanged() {
+    let dir = common::scratch_dir("cache-roundtrip");
+    let source = a_profile_sensitive_example();
+    let choices = Choices::new("advanced", "rust");
+    let expected = lower(&source, Profile::Advanced);
+
+    let mut cache = cache_in(&dir);
+    assert!(
+        cache.lookup("1brc.nika", &source, &choices, &dir).is_none(),
+        "nothing is cached before the first build"
+    );
+
+    cache
+        .record("1brc.nika", &source, BTreeMap::new(), &choices, &expected)
+        .expect("record");
+
+    assert_eq!(
+        cache
+            .lookup("1brc.nika", &source, &choices, &dir)
+            .as_deref(),
+        Some(expected.as_str()),
+        "the cached artifact is what the emitter produced"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// ADR-019 D5. The profile is in the key, so each profile gets its own entry
+/// and neither is ever served the other's.
+#[test]
+fn the_two_profiles_never_serve_each_others_artifacts() {
+    let dir = common::scratch_dir("cache-profiles");
+    let source = a_profile_sensitive_example();
+
+    let lite = Choices::new("lite", "rust");
+    let advanced = Choices::new("advanced", "rust");
+    let lowered_lite = lower(&source, Profile::Lite);
+    let lowered_advanced = lower(&source, Profile::Advanced);
+
+    let mut cache = cache_in(&dir);
+    cache
+        .record("1brc.nika", &source, BTreeMap::new(), &lite, &lowered_lite)
+        .expect("record lite");
+    cache
+        .record(
+            "1brc.nika",
+            &source,
+            BTreeMap::new(),
+            &advanced,
+            &lowered_advanced,
+        )
+        .expect("record advanced");
+
+    // Same unit, same source, two profiles - and each has to come back as
+    // itself. Recording the second must not have displaced the first.
+    assert_eq!(
+        cache.lookup("1brc.nika", &source, &lite, &dir).as_deref(),
+        Some(lowered_lite.as_str()),
+        "lite is served lite"
+    );
+    assert_eq!(
+        cache
+            .lookup("1brc.nika", &source, &advanced, &dir)
+            .as_deref(),
+        Some(lowered_advanced.as_str()),
+        "advanced is served advanced"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A changed source is a different build, and the previous artifact must not
+/// answer for it.
+#[test]
+fn an_edited_source_misses() {
+    let dir = common::scratch_dir("cache-edit");
+    let source = a_profile_sensitive_example();
+    let choices = Choices::new("advanced", "rust");
+
+    let mut cache = cache_in(&dir);
+    cache
+        .record(
+            "1brc.nika",
+            &source,
+            BTreeMap::new(),
+            &choices,
+            &lower(&source, Profile::Advanced),
+        )
+        .expect("record");
+
+    let edited = format!("{source}\n// a comment is still a change\n");
+    assert!(
+        cache.lookup("1brc.nika", &edited, &choices, &dir).is_none(),
+        "an edited source must not be answered by the old artifact"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The lockfile is the committed record (D2), and the build-time choices are
+/// deliberately not in it (D5) - otherwise switching profile would rewrite a
+/// tracked file for a diff that means nothing.
+#[test]
+fn the_lockfile_survives_a_round_trip_and_holds_no_choices() {
+    let dir = common::scratch_dir("cache-lockfile");
+    let source = a_profile_sensitive_example();
+
+    let mut cache = cache_in(&dir);
+    cache
+        .record(
+            "1brc.nika",
+            &source,
+            BTreeMap::new(),
+            &Choices::new("lite", "rust"),
+            &lower(&source, Profile::Lite),
+        )
+        .expect("record");
+    cache.save().expect("save");
+
+    let text = std::fs::read_to_string(dir.join("nikaia.lock")).expect("lockfile written");
+    assert!(text.contains("1brc.nika"), "the unit is recorded:\n{text}");
+    assert!(
+        !text.contains("lite"),
+        "the profile is a choice and must not be recorded:\n{text}"
+    );
+
+    // Reopening sees the same units, so a second invocation can look up what
+    // the first recorded.
+    let reopened = cache_in(&dir);
+    assert_eq!(
+        reopened.lockfile().units.keys().collect::<Vec<_>>(),
+        vec!["1brc.nika"]
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
