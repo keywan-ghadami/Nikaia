@@ -13,9 +13,13 @@ A modern programming language is more than just a compiler. It requires a suite 
 When you create a new project (`nikaia new my_project`), the following structure is generated:
 
 * `nikaia.toml`: The **Manifest**. It describes the project, its authors, and its dependencies.
-* `nikaia.lock`: The **Lockfile**. It records the exact versions of dependencies for reproducible builds. Additionally, it serves as a **Cache Key** for Compile-Time I/O.
+* `nikaia.lock`: The **Lockfile**. It records *everything that determines the build*, and is therefore also the **Cache Key** ([ADR-019](adr/adr-019.md)). One file, because a reproducibility record that omits an input cannot tell you it is incomplete.
     * **Asset Hashing:** If a macro or grammar reads an external file (e.g., `from "schema.sql"`), the compiler stores the file's SHA256 hash here.
-    * **Instant Builds:** On subsequent builds, if the hash on disk hasn't changed, the compiler skips re-processing the macro.
+    * **Source Hashing:** The SHA256 of each `.nika` source that took part, so an unchanged module skips parsing and expansion entirely.
+    * **Resolved Versions:** The exact dependency versions, the toolchain version actually used, and the **Nikaia compiler's own version** - a changed emitter produces different output from identical input, so leaving it out makes the cache serve stale artifacts (ADR-019 D3).
+    * **Declaration vs. record:** `nikaia.toml` states what the project *requires*; `nikaia.lock` records what was *resolved and used* - the same relationship `Cargo.toml` has with `Cargo.lock`.
+    * **Not in the lockfile:** build-time choices (profile, opt-level, backend). They are hashed into the cache key but never written, or every profile switch would rewrite a committed file for no reason (ADR-019 D5).
+    * **Instant Builds:** On subsequent builds, if the hashes on disk haven't changed, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/` (git-ignored; the lockfile holds inputs, the store holds outputs). Keys are per translation unit, so one changed asset invalidates that unit, not the project (ADR-019 D6).
 * `nikaia.contracts`: The **Borrow Contract Ledger** (generated, commit it like the lockfile). Records the borrow contracts the compiler inferred for your functions and the tether relationships of your structs. It is both an incremental-build cache and the basis for the compiler's "what changed and what broke" error messages. Details in Chapter 13.5.
 * `src/`: The folder containing your source code.
     * `main.nika`: The entry point.

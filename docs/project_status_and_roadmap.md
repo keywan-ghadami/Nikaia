@@ -67,6 +67,7 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Current*: Orchestrator is a simple CLI argument parser with backend selection scaffolding.
 *   [ ] **Incremental Compilation**: Implement hashing and caching in the Orchestrator.
     *   *Goal*: Avoid recompiling unchanged files.
+    *   *Design*: Specified in [ADR-019](specification/adr/adr-019.md) - `nikaia.lock` is the cache key, one key per translation unit, artifacts in a content-addressed store under `target/nikaia/cache/`. No external cache (`sccache` was considered and rejected: it memoizes `rustc` calls, while the repeated work is macro evaluation and lowering, which happen before `rustc` is reached).
 *   [ ] **LSP Server**: Create a Language Server Protocol (LSP) implementation.
     *   *Benefit*: IDE support (syntax highlighting, go-to-definition) in editors like VS Code.
     *   *Reuse*: Reuse the parser and AST for this.
@@ -77,7 +78,8 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 
 *   [x] **Direct `rustc_driver` Integration (Code)**: Logic implemented and verified.
 *   [ ] **Direct `rustc_driver` Integration (Runtime)**: Fix `std` linkage issues to allow the compiler to run as a standalone binary linking against `rustc_driver` dylibs.
-*   [ ] **LLVM / Cranelift Backend**: Investigate alternative backends for faster debug builds (e.g., using Cranelift directly via `bridge-ir`).
+*   [x] **LLVM / Cranelift Backend (investigation)**: Done - see [ADR-019](specification/adr/adr-019.md) D9 and its measurements. Cranelift is fully compatible with this workspace, `rustc_private` linkage included, and all 51 tests pass under it; it buys ~1s on an incremental rebuild and nothing on a full build. Supported option, not the default.
+*   [ ] **Backend selection is unimplemented**: `--backend cranelift` and `--backend llvm` are accepted and silently behave like `--backend bridge` (`crates/nikaia/src/main.rs` matches neither string). Implement them or reject them with an error.
 
 ---
 
