@@ -1022,7 +1022,21 @@ impl<'p> Emitter<'p> {
 
         let pad = "    ".repeat(depth + 1);
         let close = "    ".repeat(depth);
-        out.push(&format!("{{\n{pad}let mut __html = String::new();\n"));
+        // The compiler knows every literal byte of this template, so it knows
+        // what the result is at least as long as - and a `String` that starts
+        // that size does not double its way there
+        // (`docs/staging-candidates.md` §3).
+        //
+        // It is a *floor*, not a guess: the holes and the bodies of `<for>`
+        // add to it and never subtract, so reserving it can never be too much
+        // to be worth it, and this needs no threshold and no measurement to
+        // decide between two shapes. What it needed a measurement for is
+        // whether it is worth doing at all, and that is in
+        // `crates/nikaia/tests/measure.rs`.
+        out.push(&format!(
+            "{{\n{pad}let mut __html = String::with_capacity({});\n",
+            template::literal_length(&segments)
+        ));
         self.template_segments(out, &segments, depth + 1, flow)?;
         out.push(&format!("{pad}__html\n{close}}}"));
         Ok(())

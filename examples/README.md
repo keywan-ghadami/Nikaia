@@ -179,6 +179,19 @@ Writing the two programs surfaced spec questions that a real implementation must
 
 ### Resolved
 
+**G16 — a type could not be named by a path.** `Shared[postgres::Connection]` did not parse:
+a type was a name with optional arguments, and `postgres::Connection` is a name with a path in
+front of it. Found by `fortunes.nika` the moment its template stopped being the first thing that
+failed. The whole path is interned as one name, because that is what the name *is* to a compiler
+that lowers name for name (ADR-011 D2) — nothing here resolves a module, and a path can therefore
+never collide with a struct the file declares, which is correct.
+
+**A hole in an interpolated string could not hold a string literal.** `"{f(\"a\")}"` handed the
+parser `f(\"a\")`, which is not an expression. A hole is Nikaia source that was written *inside*
+a string literal, so the escaping it carries is that literal's: the two characters the enclosing
+string had to escape are undone before the hole is parsed, and every other escape keeps its
+meaning.
+
 **G18 — a function could not take named arguments with defaults.** *Implemented.* Part I 5.1
 specifies the *Subject ; Config* protocol — a `;` in a signature, positional data before it and
 named options after it — and nothing parsed it. Found by `fs::write`, whose specified surface is
@@ -422,19 +435,6 @@ next to it was handed the value it was meant to inspect and nothing compiled. Bo
 in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
-
-**G16 — a type could not be named by a path.** `Shared[postgres::Connection]` did not parse:
-a type was a name with optional arguments, and `postgres::Connection` is a name with a path in
-front of it. Found by `fortunes.nika` the moment its template stopped being the first thing that
-failed. The whole path is interned as one name, because that is what the name *is* to a compiler
-that lowers name for name (ADR-011 D2) — nothing here resolves a module, and a path can therefore
-never collide with a struct the file declares, which is correct.
-
-**A hole in an interpolated string could not hold a string literal.** `"{f(\"a\")}"` handed the
-parser `f(\"a\")`, which is not an expression. A hole is Nikaia source that was written *inside*
-a string literal, so the escaping it carries is that literal's: the two characters the enclosing
-string had to escape are undone before the hole is parsed, and every other escape keeps its
-meaning.
 
 **G6 — the HTTP handler cannot see the request.** *Decided*
 ([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime

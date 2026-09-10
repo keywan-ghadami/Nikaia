@@ -123,6 +123,30 @@ pub enum Segment {
     },
 }
 
+/// The literal bytes a template writes, whatever its holes turn out to be.
+///
+/// A **floor** on the result's length: every hole and every turn of a `<for>`
+/// adds to it and none of them subtracts, so a `String` that starts this size
+/// never reserves more than it uses. That is what makes it usable without a
+/// threshold - there is no crossover to measure, only the question of whether
+/// it is worth emitting at all (`docs/staging-candidates.md` §3).
+///
+/// A `<for>` body counts **once**, because the compiler knows what the body is
+/// and not how many elements the collection has. Counting it once is the floor;
+/// guessing a count would not be one.
+pub fn literal_length(segments: &[Segment]) -> usize {
+    segments
+        .iter()
+        .map(|segment| match segment {
+            Segment::Text(text) => text.len(),
+            // What a hole expands to is a value at run time, and escaping can
+            // only make it longer. Zero is the floor.
+            Segment::Hole { .. } => 0,
+            Segment::For { body, .. } => literal_length(body),
+        })
+        .sum()
+}
+
 /// Split a template body into text and holes, deciding each hole's position.
 ///
 /// The scan is a small HTML state machine over the *literal* text only: a hole

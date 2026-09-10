@@ -1,7 +1,7 @@
 # Tier-1 Staging: Candidates, Non-Candidates, and How to Measure One
 
 **Date:** September 10, 2026
-**Status:** findings, not decisions
+**Status:** findings; §3 is measured and built, §2 is open
 **Related:** [ADR-026](specification/adr/adr-026.md) §3 (the two tiers),
 [ADR-010](specification/adr/adr-010.md) (the shipped precedent),
 [upstream findings](upstream/winnow-grammar-findings.md)
@@ -11,7 +11,7 @@ applications live. This file is the survey that follows from it: where the oppor
 are in today's code, which ones are already closed, and what it costs to check one. Recorded here so
 it is not re-discovered, in the manner of `docs/upstream/winnow-grammar-findings.md`.
 
-Nothing here is implemented.
+§3 is implemented and measured. Everything else here is a finding.
 
 ---
 
@@ -82,23 +82,76 @@ analysis removes states*.
 
 ---
 
-## 3. Two candidates inside this repository
+## 3. Two candidates inside this repository — **both now measured**
 
-**`String::with_capacity` for `dsl html` templates.** `crates/nikaia/src/emit/mod.rs:999` emits
-`String::new()` and then a run of `push_str` (`:1018`). The emitter knows the exact byte length of
-every literal segment (`crates/nikaia/src/emit/template.rs:104`, `Segment::Text`) and discards it.
-About fifteen lines including recursion into `Segment::For` bodies, no semantic risk, exercised by
-`examples/escaping.nika` through `crates/nikaia/tests/examples.rs`. **The honest part: this is a small
-win, and saying so afterwards would look like an excuse.**
+Both are done, and the measurements are below because both of them **went against the intuition that
+proposed them**. That is the whole reason §6's rule exists, and it earned its keep on the first two
+candidates it was applied to.
 
-**`html::escape` scanning a five-element array per character** (`crates/nikaia-std/src/html.rs:89`,
-table at `:60-66`). The emitter *does* know each hole's `Position` (`emit/template.rs:32-48`) and
-discards it at `emit/mod.rs:1024-1028`, emitting the same `Render::render` everywhere.
+The harness is `crates/nikaia/tests/measure.rs`, ignored by default:
 
-> **Do not take the staging route here.** [ADR-010](specification/adr/adr-010.md) D8 requires escaping
-> at a hole to stay **unconditional**, and ADR-017 D1 is enforced at `emit/mod.rs:988-996`. A
-> position-specialised escape reads as weakening that, whatever its measured gain. Make `escape`
-> table-driven *inside* `std` and leave the emitter alone: same speed, no argument.
+```text
+cargo test -p nikaia --test measure -- --ignored --nocapture
+```
+
+Two workloads, in `benches/`, because a template has two shapes and they answer differently:
+`template.nika` is **one growing table** (a few dozen literal bytes, a megabyte of result) and
+`page.nika` is **a static page rendered many times** (the whole answer known but for two holes).
+
+### 3.1 `String::with_capacity` for `dsl html` templates — kept, and it depends on the shape
+
+The emitter knew the byte length of every literal segment and discarded it. It now reserves the
+**floor**: every hole and every turn of a `<for>` adds to the result and none subtracts, so the
+reservation is never too large and needs no threshold. A `<for>` body counts *once* — the compiler
+knows the body, not the element count.
+
+| workload | `String::new()` | `String::with_capacity` | |
+| :--- | ---: | ---: | ---: |
+| one growing table, 20 000 rows | 161,548,287 | 161,547,702 | **−0.0 %** |
+| a static page, 20 000 renders | 346,633,864 | 334,754,555 | **−3.4 %** |
+
+The zero is the more informative number, and it is structural rather than disappointing: for a
+loop-dominated template the floor is a few dozen bytes of a megabyte, so the string doubles its way
+up regardless and all that is saved is a constant 585 instructions — the same at 200 rows and at
+20 000. Where the compiler knows almost the whole answer it is worth 3.4 %.
+
+This ADR file predicted "a small win" and said saying so afterwards would look like an excuse. The
+honest version is finer than that: **it is worth nothing on one shape and 3.4 % on the other**, and
+which shape a program has is visible in its source.
+
+### 3.2 `html::escape` — the table was **16 % slower**, and a mask was 65 % faster
+
+The original scanned a five-element array per character, twice: once in `find` to decide whether to
+allocate, once per character while copying. This file's advice was "make `escape` table-driven
+*inside* `std`". Taken literally, that is a 256-entry `[&str; 256]` — and it is the worse answer:
+
+| variant | Ir | vs. original |
+| :--- | ---: | ---: |
+| original: char scan, linear find over five, per-character push | 466,227,851 | baseline |
+| 256-entry `[&str; 256]` table, copying runs | 541,727,867 | **+16 %** |
+| one-word bitmask, copying runs | 180,967,750 | −61 % |
+| **one-word bitmask, per-character push** | **161,547,659** | **−65 %** |
+
+*(`benches/template.nika`, 20 000 rows, 40 000 holes.)*
+
+Two findings, and neither would have survived being derived instead of measured.
+
+**A table of fat pointers is 4 KB to walk where a mask is a register.** All five characters are below
+64 — `"` 34, `&` 38, `'` 39, `<` 60, `>` 62 — so "is this one of the five" fits in a single `u64` and
+touches no memory at all. This is exactly the failure [ADR-026](specification/adr/adr-026.md) §3.1
+pre-registers as *"table-free is not automatically faster"*, met from the other side: table-**ful**
+was slower, on the first candidate that tried it.
+
+**Copying runs between escapes costs 12 %.** The shape that looks obviously better — `push_str` the
+span between two escapes rather than pushing characters — loses on text this size: the index
+arithmetic and the bounds check on each slice outweigh what the copies save. Measured against the
+same mask, so the two halves are separated rather than credited to one another.
+
+> The advice not to take the *staging* route here stands and is unaffected.
+> [ADR-010](specification/adr/adr-010.md) D8 requires escaping at a hole to stay **unconditional**
+> and ADR-017 D1 enforces it at `emit/mod.rs:988-996`; a position-specialised escape would read as
+> weakening that whatever it measured. Everything above happens inside `std`, and the emitter still
+> writes the same `Render::render` for every hole.
 
 ---
 
@@ -114,7 +167,7 @@ proposal that claims to be one.
 
 ---
 
-## 5. Measuring: the programs exist, the harness does not
+## 5. Measuring: the harness, and what it is for
 
 Both halves matter and they are easy to confuse.
 
@@ -122,10 +175,15 @@ Both halves matter and they are easy to confuse.
 `fortunes.nika`, and the rest, drawn from 1BRC, the Computer Language Benchmarks Game and
 TechEmpower.
 
-**No benchmark harness exists.** No `[[bench]]`, no criterion, no `Instant::now`, no timing script
-anywhere in `crates/`, `scripts/` or `tests/`. Nor is there a generator for large inputs.
+**A harness exists now**: `crates/nikaia/tests/measure.rs`, and the two workloads §3 used are in
+`benches/`. It lowers a `.nika` file with the real emitter, compiles it with `-O` through the same
+plumbing the example tests use, runs it under callgrind and prints instructions retired. Ignored by
+default, because a `cargo test` that shells out to valgrind is not a test suite.
 
-**And a harness is not a prerequisite,** because the project's own headline result was measured
+A workload lives in `benches/` rather than `examples/` on purpose: an example is a program someone
+reads to learn the language, and these are programs a compiler is weighed with.
+
+**A harness was never the prerequisite,** because the project's own headline result was measured
 without one. ADR-011 §193-206 records ADR-010's hasher under callgrind on 200 000 rows, the same tree
 built twice with byte-identical output: **120.0 M → 89.1 M instructions**, 600 → 446 per row.
 `valgrind` is installed. The reusable plumbing for build-and-run is
@@ -192,12 +250,14 @@ and the complexity is paid twice, once in the language surface and once in the g
 
 An order that reflects cost rather than appeal:
 
-1. `String::with_capacity` — smallest, in-repo, no risk, small reward. Good for establishing the
-   measurement loop on something whose outcome does not matter much.
-2. `html::escape` table inside `std` — real gain, no ADR argument, but it is a `std` optimisation and
-   does **not** demonstrate the Tier-1 thesis. Do not present it as one.
+1. ~~`String::with_capacity`~~ — **done** (§3.1). It did establish the measurement loop, which was
+   the reason for putting it first, and its outcome turned out to be two outcomes.
+2. ~~`html::escape` inside `std`~~ — **done** (§3.2), and it is still true that this is a `std`
+   optimisation and does **not** demonstrate the Tier-1 thesis. It demonstrated something else worth
+   more at this stage: that the intuition in this file was wrong twice, in opposite directions.
 3. First-byte or prefix dispatch for literal alternations — the actual prize, in the dependency,
-   needing a `[patch]` to test and §3.1's caveats to survive.
+   needing a `[patch]` to test and ADR-026 §3.1's caveats to survive. **Now the one that is left**,
+   and the harness above is what it should be measured with.
 
 And the thing worth saying plainly: **Tier 1 does not need Tier 2, and the applications people cite
 as the reason for Tier 2 are all in this list.**
