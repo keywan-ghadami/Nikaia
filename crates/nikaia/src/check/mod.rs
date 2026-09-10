@@ -511,7 +511,19 @@ impl<'a> Checker<'a> {
                 let inner = self.expr(expr, span);
                 match op {
                     UnaryOp::Neg => inner,
-                    UnaryOp::Not => Ty::named("bool"),
+                    // `!` is a `bool`'s, and the language below spells a
+                    // bitwise complement the same way. Nikaia has no bitwise
+                    // operator today, so this claims `bool` where the operand
+                    // agrees and claims nothing where it does not - rather than
+                    // insisting on `bool` and being wrong the day one arrives.
+                    UnaryOp::Not => {
+                        let boolean = Ty::named("bool");
+                        if inner.fits(&boolean) {
+                            boolean
+                        } else {
+                            Ty::Unknown
+                        }
+                    }
                     UnaryOp::Ref => view_of(&inner),
                 }
             }
@@ -531,15 +543,18 @@ impl<'a> Checker<'a> {
                     | BinaryOp::Le
                     | BinaryOp::Gt
                     | BinaryOp::Ge => Ty::named("bool"),
-                    // Arithmetic on two of the same thing is that thing. Which
-                    // one is known - if either is - is what the result is.
-                    _ => {
-                        if left.is_unknown() {
-                            right
-                        } else {
-                            left
-                        }
-                    }
+                    // Arithmetic on two of the same thing is that thing, and
+                    // a bare number is neither - so one known side decides. Two
+                    // known sides that disagree decide nothing: `a + b` over a
+                    // `String` and a `&str` is a concatenation in the language
+                    // below, and guessing which side names the result would be
+                    // the one guess this checker does not make.
+                    _ => match (left.is_unknown(), right.is_unknown()) {
+                        (true, _) => right,
+                        (_, true) => left,
+                        _ if left == right => left,
+                        _ => Ty::Unknown,
+                    },
                 }
             }
 

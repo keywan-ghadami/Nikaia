@@ -824,4 +824,26 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
 
+### C.4. What a Type Error Looks Like
+
+Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a literal in a `String` field:
+
+```text
+error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1
+  --> app.nika:11:5
+  11 |     let text = io::read_to_string("input.txt")?
+           ^
+     = `io::read_to_string() -> String`
+     help: call it as `io::read_to_string()`
+error[NK1106]: `Reading.name` is `String`, and this is `&str`
+  --> app.nika:12:5
+  12 |     let r = Reading { name: "Hamburg", temp: 12 }
+           ^
+     help: write `.to_string()` to make a `String` of it
+```
+
+Three things about that shape are deliberate. **The note is the contract**, quoted from the ledger — the compiler shows the caller what the callee promised, because that is the fact the caller was working from. **The caret is on the statement**, not the expression: expression-level spans are open work, and both this checker and `NK2202` report at statement granularity until they exist ([ADR-023](adr/adr-023.md) D7). And **the help is paste-ready**, as C.2 requires: `.to_string()` for text, `as i64` between numbers, and the field you probably meant when a name is close to one that exists.
+
+A message appears only where **both** sides are written down. Where a type is not known — a method on a receiver `std` has no signature for, what a `?` unwraps — the compiler says nothing, which is not the same as approving. That is the property that lets the checker be run on every build: it never rejects a program that is correct.
+
 
