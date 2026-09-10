@@ -228,6 +228,10 @@ struct Emitter<'p> {
     /// The `for` statements whose step can fail, by the byte they start at
     /// (ADR-025 D1).
     fallible_loops: std::collections::BTreeSet<usize>,
+    /// This unit's own contracts, and `std`'s. A call's options come from the
+    /// declaration, and a declaration is what a ledger records (Kap 5.1).
+    own_contracts: crate::contracts::Ledger,
+    library: crate::contracts::Ledger,
     /// What the program's `impl` blocks declare, which is what makes the fold
     /// adapter of D2 a lookup rather than a guess.
     methods: HashMap<(Symbol, Symbol), Method>,
@@ -351,6 +355,8 @@ impl<'p> Emitter<'p> {
             // have caught the one-line form and quietly missed
             // `let s = io::lines()` followed by `for line in s`.
             fallible_loops: crate::check::fallible_loops(parsed),
+            own_contracts: crate::contracts::Ledger::infer(parsed),
+            library: std_ledger(),
         }
     }
 
@@ -555,6 +561,7 @@ impl<'p> Emitter<'p> {
             name,
             receiver,
             args,
+            config,
             ret_type,
             body,
             is_sync,
@@ -587,6 +594,16 @@ impl<'p> Emitter<'p> {
         params.extend(
             args.iter()
                 .map(|a| format!("{}: {}", self.text(a.name), self.ty(&a.ty, lifetimes))),
+        );
+        // Kap 5.1: the language below has neither named arguments nor defaults,
+        // so an option becomes an ordinary parameter here - in declaration
+        // order, which is the order every call site fills in. The names stay
+        // the source's, so a `rustc` diagnostic about one still lands on the
+        // parameter the programmer wrote (ADR-012).
+        params.extend(
+            config
+                .iter()
+                .map(|c| format!("{}: {}", self.text(c.name), self.ty(&c.ty, lifetimes))),
         );
 
         // Kap 7.1: `throws` becomes a `Result` in the emitted Rust, over
@@ -1406,7 +1423,7 @@ impl<'p> Emitter<'p> {
                 flow,
                 true,
             )?,
-            Expr::Call { func, args } => self.call(out, func, args, depth, flow)?,
+            Expr::Call { func, args, config } => self.call(out, func, args, config, depth, flow)?,
             Expr::MethodCall {
                 receiver,
                 method,
@@ -1558,6 +1575,7 @@ impl<'p> Emitter<'p> {
         out: &mut Out,
         func: &Expr,
         args: &[Expr],
+        config: &[crate::ast::ConfigArg],
         depth: usize,
         flow: Flow,
     ) -> Result<()> {
@@ -1593,8 +1611,54 @@ impl<'p> Emitter<'p> {
         self.expr(out, func, depth, flow)?;
         out.push("(");
         self.args(out, args, depth, flow)?;
+
+        // Kap 5.1: the language below has no named arguments and no defaults,
+        // so the options become positional here, in the order the *declaration*
+        // gives - which is the only order there is, and the reason this needs
+        // the callee's contract rather than the call alone.
+        if let Some(options) = self.options_of(func) {
+            for option in options {
+                out.push(", ");
+                match config.iter().find(|a| self.text(a.name) == option.name) {
+                    Some(passed) => self.expr(out, &passed.value, depth, flow)?,
+                    // Not passed, so the declaration's default is the value.
+                    // It is a literal, and Nikaia spells a literal the way the
+                    // language below does (ADR-011 D2).
+                    None => out.push(&option.default),
+                }
+            }
+        }
+
         out.push(")");
         Ok(())
+    }
+
+    /// The options a call by name has, from the contract that declares them.
+    ///
+    /// This unit's own first, then `std`'s - the order every other name
+    /// resolution here uses. `None` where the callee has none, and where the
+    /// callee cannot be resolved at all: an unresolvable call has no options to
+    /// fill in, and the type checker is what says so in Nikaia's words.
+    fn options_of(&self, func: &Expr) -> Option<&[crate::contracts::ConfigContract]> {
+        let name = match func {
+            Expr::Variable(name) => self.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| self.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => return None,
+        };
+
+        let contract = self
+            .own_contracts
+            .functions
+            .get(&name)
+            .or_else(|| self.own_contracts.functions.get(&format!("{name}::new")))
+            .or_else(|| self.library.lookup(&name).map(|(_, c)| c))?;
+
+        let config = &contract.signature.as_ref()?.config;
+        (!config.is_empty()).then_some(config.as_slice())
     }
 
     /// A string literal, which is a format string when it has holes in it.
@@ -2021,7 +2085,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
                 visit_block(block, f);
             }
         }
-        Expr::Call { func, args } => {
+        Expr::Call { func, args, .. } => {
             visit_expr(func, f);
             args.iter().for_each(|a| visit_expr(a, f));
         }
@@ -2072,7 +2136,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
 /// `"{a}={s.mean()}"` becomes `("{}={}", ["a", "s.mean()"])`. Braces are
 /// doubled to be literal, as in every format string; the holes themselves are
 /// Nikaia expressions and are parsed as such by the caller.
-fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
+pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
     let mut format = String::new();
     let mut holes = Vec::new();
     let mut chars = literal.chars().peekable();

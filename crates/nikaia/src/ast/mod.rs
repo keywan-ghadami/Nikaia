@@ -55,6 +55,9 @@ pub enum Item {
         /// Kap 4.2/5.1: `&self`, `&mut self` or `self`, when this is a method.
         receiver: Option<Receiver>,
         args: Vec<FnArg>,
+        /// Kap 5.1: what stands after the `;` - options, named at the call and
+        /// never positional. Empty for a function that has no `;`.
+        config: Vec<ConfigParam>,
         ret_type: Option<Type>,
         body: Block,
         is_sync: bool,   // Kap 12.1: sync keyword
@@ -195,6 +198,11 @@ pub enum Expr {
     Call {
         func: Box<Expr>,
         args: Vec<Expr>,
+        /// Kap 5.1: what stands after the `;` at the call - `request(url;
+        /// timeout: 60)`. Named, in whatever order the caller wrote them;
+        /// putting them in the callee's order is the lowering's business,
+        /// because only the declaration knows what that order is.
+        config: Vec<ConfigArg>,
     },
 
     // Kap 8.2: spawn({ ... }) oder spawn(move { ... })
@@ -380,6 +388,31 @@ pub struct FnArg {
     pub ty: Type,
 }
 
+/// `timeout: 60` at a call site.
+#[derive(Debug, Clone)]
+pub struct ConfigArg {
+    pub name: Ident,
+    pub value: Expr,
+}
+
+/// Kap 5.1: one option, after the `;`.
+///
+/// It always has a default, which is what makes it an *option*: a caller may
+/// name it or leave it out, and leaving it out is never a question about what
+/// the value is. A parameter that must be passed belongs before the `;`.
+#[derive(Debug, Clone)]
+pub struct ConfigParam {
+    pub name: Ident,
+    pub ty: Type,
+    /// A **literal**, and only a literal.
+    ///
+    /// An option's default is a constant in every program anyone writes, and an
+    /// arbitrary expression would raise a question Stage 0 has no answer for -
+    /// whether it is evaluated where the function is declared or where it is
+    /// called. Deciding that is worth doing when something needs it.
+    pub default: Expr,
+}
+
 #[derive(Debug, Clone)]
 pub struct FieldDef {
     pub name: Ident,
@@ -543,4 +576,5 @@ pub struct Receiver {
 pub struct FnParams {
     pub receiver: Option<Receiver>,
     pub args: Vec<FnArg>,
+    pub config: Vec<ConfigParam>,
 }

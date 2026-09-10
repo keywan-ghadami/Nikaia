@@ -124,8 +124,26 @@ pub struct Signature {
     /// Name and type, in order. A `self` receiver is the first of them where
     /// there is one, named `self`.
     pub params: Vec<(String, ty::Ty)>,
+    /// Kap 5.1: what stands after the `;` - options, named at the call.
+    ///
+    /// A caller needs all three parts: the name, so it can be written; the
+    /// type, so it can be checked; and the **default**, because a call that
+    /// leaves an option out still passes a value, and only the declaration
+    /// knows which. That is what makes this a ledger key rather than something
+    /// a caller could work out.
+    pub config: Vec<ConfigContract>,
     /// What it hands back. `None` where it hands back nothing.
     pub result: Option<ty::Ty>,
+}
+
+/// One option of a function, as a caller has to know it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigContract {
+    pub name: String,
+    pub ty: ty::Ty,
+    /// The default, as the source writes it - a literal, and therefore text
+    /// that the language below spells the same way (ADR-011 D2).
+    pub default: String,
 }
 
 impl Signature {
@@ -147,7 +165,7 @@ impl Signature {
     }
 
     pub fn text(&self) -> String {
-        let params: Vec<String> = self
+        let mut params: Vec<String> = self
             .params
             .iter()
             .map(|(name, ty)| {
@@ -158,9 +176,19 @@ impl Signature {
                 }
             })
             .collect();
+        let mut inside = params.join(", ");
+        if !self.config.is_empty() {
+            let config: Vec<String> = self
+                .config
+                .iter()
+                .map(|c| format!("{}: {} = {}", c.name, c.ty.text(), c.default))
+                .collect();
+            inside = format!("{inside}; {}", config.join(", "));
+        }
+        params.clear();
         match &self.result {
-            Some(result) => format!("({}) -> {}", params.join(", "), result.text()),
-            None => format!("({})", params.join(", ")),
+            Some(result) => format!("({inside}) -> {}", result.text()),
+            None => format!("({inside})"),
         }
     }
 
@@ -175,7 +203,13 @@ impl Signature {
             .map(|t| &t[..close - 1])
             .ok_or_else(|| anyhow!("a signature starts with `(`, found `{text}`"))?;
 
-        let params = ty::split_args(inside)
+        // Kap 5.1: the `;` divides the subjects from the options.
+        let (positional, options) = match split_config(inside) {
+            (positional, Some(options)) => (positional, options),
+            (positional, None) => (positional, ""),
+        };
+
+        let params = ty::split_args(positional)
             .iter()
             .map(|part| match part.split_once(':') {
                 Some((name, ty)) => (name.trim().to_string(), ty::Ty::parse(ty)),
@@ -184,12 +218,33 @@ impl Signature {
             })
             .collect();
 
+        let config = ty::split_args(options)
+            .iter()
+            .map(|part| {
+                let (name, rest) = part
+                    .split_once(':')
+                    .ok_or_else(|| anyhow!("an option is `name: T = value`, found `{part}`"))?;
+                let (ty, default) = rest.split_once('=').ok_or_else(|| {
+                    anyhow!("an option needs a default: `{}: T = value`", name.trim())
+                })?;
+                Ok(ConfigContract {
+                    name: name.trim().to_string(),
+                    ty: ty::Ty::parse(ty),
+                    default: default.trim().to_string(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         let result = text[close + 1..]
             .trim()
             .strip_prefix("->")
             .map(ty::Ty::parse);
 
-        Ok(Signature { params, result })
+        Ok(Signature {
+            params,
+            config,
+            result,
+        })
     }
 }
 
@@ -324,6 +379,7 @@ impl Ledger {
             name,
             generics,
             args,
+            config,
             ret_type,
             is_sync,
             is_public,
@@ -386,6 +442,14 @@ impl Ledger {
                 throws: *throws,
                 signature: Some(Signature {
                     params,
+                    config: config
+                        .iter()
+                        .map(|c| ConfigContract {
+                            name: parsed.text(c.name).to_string(),
+                            ty: ty::Ty::from_ast(parsed, &c.ty).erase(&parameters),
+                            default: literal_text(parsed, &c.default),
+                        })
+                        .collect(),
                     result: ret_type
                         .as_ref()
                         .map(|t| ty::Ty::from_ast(parsed, t).erase(&parameters)),
@@ -457,7 +521,7 @@ impl Ledger {
                 out.push_str(&format!("provenance = \"{}\"\n", provenance.as_str()));
             }
             if let Some(signature) = &contract.signature {
-                out.push_str(&format!("signature = \"{}\"\n", signature.text()));
+                out.push_str(&format!("signature = \"{}\"\n", escape(&signature.text())));
             }
         }
 
@@ -618,6 +682,62 @@ fn toolchain() -> String {
     format!("nikaia {}", env!("CARGO_PKG_VERSION"))
 }
 
+/// A literal, written back the way the source wrote it.
+///
+/// Only a literal reaches here - the grammar allows nothing else as a default -
+/// and Nikaia spells every one of them the way the language below does
+/// (ADR-011 D2), which is what lets a ledger record the text and an emitter
+/// print it.
+fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
+    use crate::ast::{Expr, UnaryOp};
+    let _ = parsed;
+    match expr {
+        Expr::LitBool(true) => "true".to_string(),
+        Expr::LitBool(false) => "false".to_string(),
+        Expr::LitInt(n) => n.to_string(),
+        Expr::LitFloat(f) => f.clone(),
+        Expr::LitChar(c) => format!("'{c}'"),
+        Expr::LitStr(s) => format!("\"{s}\""),
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr,
+        } => format!("-{}", literal_text(parsed, expr)),
+        // The grammar admits nothing else, so this is unreachable rather than
+        // a case with an answer.
+        other => unreachable!("a default is a literal, found {other:?}"),
+    }
+}
+
+/// Split a parameter list on the `;` that is not inside a bracket.
+///
+/// A `;` cannot appear anywhere else in a signature, but a default can be a
+/// string, and a string can hold anything - so the depth is counted for the
+/// same reason `ty::split_args` counts it.
+fn split_config(text: &str) -> (&str, Option<&str>) {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (at, c) in text.char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '[' | '(' => depth += 1,
+            ']' | ')' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => return (&text[..at], Some(&text[at + 1..])),
+            _ => {}
+        }
+    }
+    (text, None)
+}
+
 fn quoted(rest: &str, close: &str, at: usize) -> Result<String> {
     rest.strip_suffix(close)
         .and_then(|r| r.strip_suffix('"'))
@@ -625,12 +745,30 @@ fn quoted(rest: &str, close: &str, at: usize) -> Result<String> {
         .ok_or_else(|| anyhow!("line {at}: unterminated section header"))
 }
 
+/// A value that may itself hold a quote - which a signature does, the moment an
+/// option's default is a string: `method: &str = "GET"`.
+fn escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 fn unquote(value: &str, at: usize) -> Result<String> {
-    value
+    let inner = value
         .strip_prefix('"')
         .and_then(|v| v.strip_suffix('"'))
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("line {at}: expected a quoted string, found `{value}`"))
+        .ok_or_else(|| anyhow!("line {at}: expected a quoted string, found `{value}`"))?;
+
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some(escaped) => out.push(escaped),
+                None => return Err(anyhow!("line {at}: a `\\` at the end of `{value}`")),
+            },
+            c => out.push(c),
+        }
+    }
+    Ok(out)
 }
 
 fn borrows_of(value: &str, at: usize) -> Result<Vec<String>> {

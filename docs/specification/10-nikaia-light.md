@@ -434,14 +434,33 @@ Arguments *after* the semicolon are options, flags, or modifiers.
 
 ```nika
 // Definition
-fn request(url: String; timeout: i32 = 30, method: String = "GET") { ... }
+fn request(url: &str; timeout: i32 = 30, method: &str = "GET") { ... }
 
-// Valid Calls
-request("https://api.com"; timeout: 60)
+// Valid calls
+request("https://api.com")                              // both options defaulted
+request("https://api.com"; timeout: 60)                 // one of them named
+request("https://api.com"; method: "POST", timeout: 5)  // in any order
 
-// Invalid Calls (Compiler Errors)
-// request("https://api.com", 60)         // Error: Positional arg in named zone
+// Invalid calls
+// request("https://api.com", 60)      // a positional argument in the named zone
+// request("https://api.com"; timout: 5)  // error[NK1109]: no option `timout`
 ```
+
+**Every configuration parameter has a default**, and that is what makes it an
+*option*: a caller may leave it out, and leaving it out is never a question
+about what the value is. A parameter that has to be passed belongs before the
+`;`. Writing one without a default is a parse error that says so.
+
+**A default is a literal.** An option's default is a constant in every program
+anyone writes, and an arbitrary expression would raise a question with no
+obvious answer — whether it is evaluated where the function is declared or where
+it is called. That is worth deciding when something needs it.
+
+**Order is the declaration's**, not the call's: `method` written first above is
+still passed second, because only the declaration knows what the order is. This
+is also why the ledger records an option's name, type *and* default (Part III,
+13.5) — a call that leaves an option out still passes a value, and a consumer
+compiling against a library cannot work out which.
 
 **Optional Parentheses**
 For functions defined without configuration or arguments, parentheses may be omitted to match the block lambda style.

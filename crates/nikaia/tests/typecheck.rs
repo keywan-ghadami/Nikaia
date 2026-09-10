@@ -246,6 +246,86 @@ fn a_loop_binds_the_element_type_of_a_list() {
     assert_eq!(message, "`Row` has no field `idd`");
 }
 
+// --- the subject ; config protocol (Kap 5.1) ---------------------------------
+
+/// An option the callee does not have, with the one that was probably meant.
+#[test]
+fn an_option_that_does_not_exist_is_reported() {
+    let (code, message) = one("fn request(url: &str; timeout: i32 = 30) { }\n\
+         fn main() { request(\"x\"; timout: 5) }");
+    assert_eq!(code, "NK1109");
+    assert_eq!(message, "`request` has no option `timout`");
+    assert_eq!(
+        findings(
+            "fn request(url: &str; timeout: i32 = 30) { }\n\
+             fn main() { request(\"x\"; timout: 5) }"
+        )[0]
+        .help
+        .as_deref(),
+        Some("did you mean `timeout`?")
+    );
+}
+
+/// …and one passed to a function that has no `;` at all.
+#[test]
+fn an_option_on_a_function_that_takes_none_is_reported() {
+    let (code, _) = one("fn plain(a: i32) { }\n\
+         fn main() { plain(1; loud: true) }");
+    assert_eq!(code, "NK1109");
+}
+
+/// An option is checked by type like anything else.
+#[test]
+fn an_option_of_the_wrong_type_is_reported() {
+    let (code, message) = one("fn request(url: &str; timeout: i32 = 30) { }\n\
+         fn main() { request(\"x\"; timeout: \"soon\") }");
+    assert_eq!(code, "NK1106");
+    assert_eq!(
+        message,
+        "`request` takes `timeout: i32`, and this passes `&str`"
+    );
+}
+
+/// Options do not count towards the arity: leaving every one of them out is
+/// what a default is for.
+#[test]
+fn options_are_not_counted_as_arguments() {
+    assert!(findings(
+        "fn request(url: &str; timeout: i32 = 30, method: &str = \"GET\") { }\n\
+         fn main() {\n\
+         \x20   request(\"x\")\n\
+         \x20   request(\"x\"; timeout: 5)\n\
+         \x20   request(\"x\"; method: \"POST\", timeout: 5)\n\
+         }"
+    )
+    .is_empty());
+}
+
+/// `std`'s options are read from the ledger it ships, like everything else.
+#[test]
+fn an_option_of_a_library_function_is_checked_from_its_ledger() {
+    assert!(findings("fn main() throws { fs::write(\"o\", \"x\"; append: true) }").is_empty());
+
+    let (code, message) = one("fn main() throws { fs::write(\"o\", \"x\"; apend: true) }");
+    assert_eq!(code, "NK1109");
+    assert_eq!(message, "`fs::write` has no option `apend`");
+}
+
+/// An interpolated string is a `format!` in the emitted Rust, and a `format!`
+/// is a `String`. Two spellings in Nikaia, two types below - and the checker
+/// follows the lowering rather than the syntax.
+#[test]
+fn an_interpolated_string_is_a_string_and_a_plain_one_is_a_view() {
+    assert!(findings("fn label(n: i32) -> String { return \"{n} rows\" }").is_empty());
+
+    let (code, message) = one("fn label(n: i32) -> &str { return \"{n} rows\" }");
+    assert_eq!(code, "NK1104");
+    assert_eq!(
+        message,
+        "this returns `String`, and the function declares `&str`"
+    );
+}
+
 // --- a loop whose step can fail (ADR-025) ------------------------------------
 
 /// `NK2701`: a turn of the loop reads, a read can fail, and the function does

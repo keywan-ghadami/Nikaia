@@ -256,3 +256,55 @@ fn an_ordinary_loop_is_not_touched() {
     assert!(rust.contains("for i in 0..5"), "{rust}");
     assert!(!rust.contains("?;"), "{rust}");
 }
+
+/// Kap 5.1: the language below has neither named arguments nor defaults, so an
+/// option becomes an ordinary parameter - and a call fills in whatever it left
+/// out, in the order the *declaration* gives.
+#[test]
+fn an_option_becomes_a_positional_argument_in_declaration_order() {
+    let rust = emit(
+        "fn request(url: &str; timeout: i32 = 30, method: &str = \"GET\") -> i32 {\n\
+         \x20   return timeout\n\
+         }\n\
+         fn main() {\n\
+         \x20   request(\"a\")\n\
+         \x20   request(\"b\"; timeout: 60)\n\
+         \x20   request(\"c\"; method: \"POST\", timeout: 5)\n\
+         }",
+    );
+
+    assert!(
+        rust.contains("fn request(url: &str, timeout: i32, method: &str) -> i32"),
+        "the options are not parameters:\n{rust}"
+    );
+    assert!(
+        rust.contains(r#"request("a", 30, "GET")"#),
+        "a call that names none does not get the defaults:\n{rust}"
+    );
+    assert!(
+        rust.contains(r#"request("b", 60, "GET")"#),
+        "a call that names one does not keep the other's default:\n{rust}"
+    );
+    // Written `method` first, and it is `timeout` that goes first - because
+    // only the declaration knows what the order is.
+    assert!(
+        rust.contains(r#"request("c", 5, "POST")"#),
+        "the caller's order was not put into the callee's:\n{rust}"
+    );
+}
+
+/// …and `std`'s options come from the ledger `std` ships, by the same path.
+#[test]
+fn a_library_option_is_filled_in_from_the_shipped_ledger() {
+    let rust = emit("fn main() throws { fs::write(\"o\", \"x\"; append: true) }");
+    assert!(
+        rust.contains(r#"fs::write("o", "x", true, true)"#),
+        "{rust}"
+    );
+
+    let rust = emit("fn main() throws { fs::write(\"o\", \"x\") }");
+    assert!(
+        rust.contains(r#"fs::write("o", "x", false, true)"#),
+        "{rust}"
+    );
+}

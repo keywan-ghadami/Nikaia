@@ -105,20 +105,53 @@ pub fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
 /// gives it `create: bool = true` as the default rather than as a decision at
 /// the call.
 ///
-/// The two options that specification also names (`append`, and `create: false`)
-/// are not here. Stage 0 has no named arguments — Part I 5.1's `;` config
-/// section does not parse yet — so shipping them would mean inventing a
-/// spelling in the meantime, and a spelling invented for one function is a
-/// spelling to keep or to break later. `examples/README.md` records it as a gap
-/// rather than as an absence nobody wrote down.
+/// A whole file, written.
+///
+/// Part III 17.1, in full:
+///
+/// ```nika
+/// fs::write(path, data)                        // create or truncate
+/// fs::write(path, data; append: true)          // add to the end
+/// fs::write(path, data; create: false)         // refuse to make a new file
+/// ```
+///
+/// `append` and `create` are Kap 5.1 **options** - after the `;`, named at the
+/// call, never positional. The lowering makes them ordinary parameters in
+/// declaration order and fills in the defaults a caller left out, so this
+/// signature is what a Nikaia call expands to rather than what it looks like.
+///
+/// The defaults are the ones the specification names, and they are what `write`
+/// means everywhere: create the file if it is not there, and truncate it if it
+/// is. `append` keeps what is there and adds; `create: false` refuses to make a
+/// file that does not exist, which is how a program says it means to overwrite
+/// something in particular.
 ///
 /// Takes anything that is bytes, so a Nikaia program hands it a `String`, a
 /// `&str` or a buffer without saying which it meant.
 ///
 /// It is not `sync` (Part II, 12.1) and it is not a source (ADR-010 D2): it
 /// does I/O, and the bytes travel out of the program rather than in.
-pub fn write(path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), std::io::Error> {
-    std::fs::write(path, data)
+pub fn write(
+    path: impl AsRef<Path>,
+    data: impl AsRef<[u8]>,
+    append: bool,
+    create: bool,
+) -> Result<(), std::io::Error> {
+    use std::io::Write;
+
+    // The common case is the one `std::fs::write` already is, and it is worth
+    // keeping on that path: one call, no handle to close.
+    if !append && create {
+        return std::fs::write(path, data);
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .create(create)
+        .open(path)?;
+    file.write_all(data.as_ref())
 }
 
 /// Below this, the pool costs more than the check does.
@@ -185,13 +218,13 @@ mod tests {
         let path = std::env::temp_dir().join(format!("nikaia-write-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
-        super::write(&path, "Hamburg;12.0\n").expect("write");
+        super::write(&path, "Hamburg;12.0\n", false, true).expect("write");
         assert_eq!(
             super::read_to_string(&path).expect("read back"),
             "Hamburg;12.0\n"
         );
 
-        super::write(&path, "Bremen;9.5\n").expect("write again");
+        super::write(&path, "Bremen;9.5\n", false, true).expect("write again");
         assert_eq!(
             super::read_to_string(&path).expect("read back"),
             "Bremen;9.5\n",
@@ -201,7 +234,7 @@ mod tests {
         // Bytes are bytes: what `read` hands back is what `write` was given,
         // with no check in between - which is the difference from
         // `read_to_string` and the reason both exist.
-        super::write(&path, [0xFFu8, 0x00, 0xFE]).expect("write bytes");
+        super::write(&path, [0xFFu8, 0x00, 0xFE], false, true).expect("write bytes");
         assert_eq!(super::read(&path).expect("read bytes"), [0xFF, 0x00, 0xFE]);
         assert!(
             super::read_to_string(&path).is_err(),
@@ -218,7 +251,35 @@ mod tests {
         let path = std::env::temp_dir()
             .join("nikaia-no-such-directory")
             .join("report.html");
-        assert!(super::write(&path, "x").is_err());
+        assert!(super::write(&path, "x", false, true).is_err());
+    }
+
+    /// The two options Part III 17.1 names, doing what it says they do.
+    #[test]
+    fn appending_adds_and_create_false_refuses_a_new_file() {
+        let path = std::env::temp_dir().join(format!("nikaia-options-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        super::write(&path, "one\n", false, true).expect("write");
+        super::write(&path, "two\n", true, true).expect("append");
+        assert_eq!(
+            super::read_to_string(&path).expect("read back"),
+            "one\ntwo\n",
+            "appending kept what was there"
+        );
+
+        // …and `create: false` is how a program says it means to overwrite
+        // something in particular, rather than to make a file.
+        let missing = std::env::temp_dir().join(format!("nikaia-absent-{}", std::process::id()));
+        let _ = std::fs::remove_file(&missing);
+        assert!(super::write(&missing, "x", false, false).is_err());
+        assert!(!missing.exists(), "`create: false` made the file anyway");
+
+        // On a file that *is* there it writes, and truncates as `write` does.
+        super::write(&path, "three\n", false, false).expect("overwrite");
+        assert_eq!(super::read_to_string(&path).expect("read back"), "three\n");
+
+        std::fs::remove_file(&path).expect("clean up");
     }
 
     /// What `validate` has to agree with, on every input.

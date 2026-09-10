@@ -230,7 +230,7 @@ fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
 fn visit_expr_blocks(expr: &Expr, f: &mut impl FnMut(&Block)) {
     match expr {
         Expr::Block(block) | Expr::Closure { body: block, .. } => f(block),
-        Expr::Call { func, args } => {
+        Expr::Call { func, args, .. } => {
             visit_expr_blocks(func, f);
             args.iter().for_each(|a| visit_expr_blocks(a, f));
         }
@@ -265,7 +265,7 @@ fn visit_expr_blocks(expr: &Expr, f: &mut impl FnMut(&Block)) {
 fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match expr {
-        Expr::Call { func, args } => {
+        Expr::Call { func, args, .. } => {
             visit_expr(func, f);
             args.iter().for_each(|a| visit_expr(a, f));
         }

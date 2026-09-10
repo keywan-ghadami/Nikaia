@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added (0.0.8 - Kap 5.1: the Subject ; Config protocol, G18)
+
+- **A function may take named options with defaults**, which Part I 5.1 has specified since 0.0.5 and nothing parsed. A `;` divides a signature: positional data before it, named options after it, and an option always has a default - which is what makes it an option rather than an argument that has to be passed at every call.
+
+  ```nika
+  fn request(url: &str; timeout: i32 = 30, method: &str = "GET") { … }
+
+  request("https://api.com")
+  request("https://api.com"; timeout: 60)
+  request("https://api.com"; method: "POST", timeout: 5)
+  ```
+- **The lowering is the interesting part.** The language below has neither named arguments nor defaults, so an option becomes an **ordinary parameter in declaration order** and a call fills in whatever it left out. That means the expansion needs the *callee's* declaration rather than the call - `method` written first above is still passed second - which is exactly what the ledger records. `signature` gained the options with their defaults, so `fs::write(path, data; append: true)` is checked and expanded from the file `std` ships.
+- **`fs::write` has the two options its specification names**, `append` and `create`, and they do what Part III 17.1 says: `append` keeps what is there, `create: false` refuses to make a file that is not there, which is how a program says it means to overwrite something in particular.
+- **A default is a literal.** An arbitrary expression would raise a question with no obvious answer - whether it is evaluated where the function is declared or where it is called - and that is worth deciding when something needs it. Writing a configuration parameter *without* a default is a parse error that says why.
+- **`NK1109`**: a call names an option the callee does not have, with the one that was probably meant. Also reported where the callee has no `;` at all, which is a different mistake and says so.
+- **The checker found one of its own bugs on the first program that used the feature.** An interpolated string was typed `&str`; it lowers to `format!`, and a `format!` is a `String`. Two spellings in Nikaia, two types below - and the checker follows the lowering rather than the syntax. Pinned by a test.
+- **`examples/tally.nika` uses both halves**: it declares an option and passes one to `fs::write`, appending its summary to a run log.
+
 ### Decided and built (0.0.8 - ADR-025: a loop can fail, and the rule was already written)
 
 - **G17 is closed, and it turned out to be two problems.** Trying to build `fs::lines` and `io::lines` produced [ADR-025](docs/specification/adr/adr-025.md): one half is about failure, the other about ownership, and only the first was a question about the language.
