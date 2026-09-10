@@ -238,6 +238,7 @@ grammar! {
                     generics: generics.unwrap_or_default(),
                     receiver: params.receiver,
                     args: params.args,
+                    config: params.config,
                     ret_type: ret,
                     body,
                     is_sync: sync_before.is_some() || sync_after.is_some(),
@@ -255,14 +256,59 @@ grammar! {
             }
 
         rule fn_params_body -> FnParams =
-            r:receiver args:fn_arg_def_tail* -> {
-                FnParams { receiver: Some(r), args }
+            r:receiver args:fn_arg_def_tail* config:config_zone? -> {
+                FnParams { receiver: Some(r), args, config: config.unwrap_or_default() }
             }
-          | head:fn_arg_def tail:fn_arg_def_tail* -> {
+          | head:fn_arg_def tail:fn_arg_def_tail* config:config_zone? -> {
                 let mut args = vec![head];
                 args.extend(tail);
-                FnParams { receiver: None, args }
+                FnParams { receiver: None, args, config: config.unwrap_or_default() }
             }
+          | config:config_zone -> {
+                FnParams { receiver: None, args: Vec::new(), config }
+            }
+
+        // Kap 5.1: everything after the `;` is an option. Named at the call,
+        // never positional - which is what the separator buys, and why it is a
+        // separator rather than a convention about where the flags go.
+        rule config_zone -> Vec<ConfigParam> =
+            ";" head:config_param tail:config_param_tail* -> {
+                let mut params = vec![head];
+                params.extend(tail);
+                params
+            }
+
+        rule config_param_tail -> ConfigParam = "," p:config_param -> { p }
+
+        // The default is required, and that is what makes this an *option*: a
+        // caller may leave it out, and leaving it out is never a question about
+        // what the value is. A parameter that must be passed belongs before the
+        // `;`.
+        rule config_param -> ConfigParam =
+            name:NAME ":" ty:type_ref "=" default:literal_expr -> {
+                ConfigParam { name, ty, default }
+            }
+          | name:NAME ":" ty:type_ref fail(
+                "a configuration parameter needs a default (Kap 5.1): write \
+                 `name: T = value`. Without one it has to be passed at every \
+                 call, and a parameter that has to be passed belongs before the \
+                 `;`."
+            ) -> {
+                ConfigParam { name, ty, default: Expr::LitBool(false) }
+            }
+
+        // A **literal**, and only a literal. An option's default is a constant
+        // in every program anyone writes, and an arbitrary expression would
+        // raise a question Stage 0 has no answer for: whether it is evaluated
+        // where the function is declared or where it is called.
+        rule literal_expr -> Expr =
+            b:bool_lit -> { b }
+          | s:str_lit -> { s }
+          | c:char_lit -> { c }
+          | "-" f:float_lit -> { Expr::Unary { op: UnaryOp::Neg, expr: Box::new(f) } }
+          | f:float_lit -> { f }
+          | "-" i:int_lit -> { Expr::Unary { op: UnaryOp::Neg, expr: Box::new(i) } }
+          | i:int_lit -> { i }
 
         rule receiver -> Receiver =
             "&" "mut" "self" -> {
@@ -916,7 +962,7 @@ grammar! {
             // the lambda is left over - which is the parse error this form did
             // not have a grammar for until ADR-022.
             "." name:NAME args:call_arg_list lambda:trailing_lambda -> {
-                let mut args = args;
+                let mut args = args.0;
                 args.push(lambda);
                 Postfix::Method(name, args)
             }
@@ -925,7 +971,7 @@ grammar! {
             }
           | "." name:NAME args:call_arg_list? -> {
                 match args {
-                    Some(args) => Postfix::Method(name, args),
+                    Some((args, _config)) => Postfix::Method(name, args),
                     None => Postfix::Field(name),
                 }
             }
@@ -960,8 +1006,13 @@ grammar! {
                 }
             }
 
-        rule call_arg_list -> Vec<Expr> =
-            "(" args:call_args? ")" -> { args.unwrap_or_default() }
+        // Kap 5.1: subjects, then a `;`, then options by name. The separator
+        // is the whole protocol - what is before it is data and may be
+        // positional, what is after it is configuration and may not.
+        rule call_arg_list -> (Vec<Expr>, Vec<ConfigArg>) =
+            "(" args:call_args? config:config_args? ")" -> {
+                (args.unwrap_or_default(), config.unwrap_or_default())
+            }
 
         rule call_args -> Vec<Expr> =
             head:expr tail:call_args_tail* -> {
@@ -971,6 +1022,18 @@ grammar! {
             }
 
         rule call_args_tail -> Expr = "," e:expr -> { e }
+
+        rule config_args -> Vec<ConfigArg> =
+            ";" head:config_arg tail:config_arg_tail* -> {
+                let mut args = vec![head];
+                args.extend(tail);
+                args
+            }
+
+        rule config_arg_tail -> ConfigArg = "," a:config_arg -> { a }
+
+        rule config_arg -> ConfigArg =
+            name:NAME ":" value:expr -> { ConfigArg { name, value } }
 
         // Keyword-led forms first, then the struct literal, then a plain path:
         // `Reading { .. }` must be tried before `Reading` on its own, because a
@@ -1237,7 +1300,11 @@ grammar! {
                     Expr::Path(segments)
                 };
                 match args {
-                    Some(args) => Expr::Call { func: Box::new(base), args },
+                    Some((args, config)) => Expr::Call {
+                        func: Box::new(base),
+                        args,
+                        config,
+                    },
                     None => base,
                 }
             }
@@ -1342,7 +1409,7 @@ fn lower_expr(parsed: &Parsed, expr: &ast::Expr) -> Result<BridgeExpr> {
         ast::Expr::LitInt(i) => Ok(BridgeExpr::Literal(BridgeLiteral::Int(*i))),
         ast::Expr::LitStr(s) => Ok(BridgeExpr::Literal(BridgeLiteral::String(s.clone()))),
         ast::Expr::Variable(id) => Ok(BridgeExpr::Variable(parsed.text(*id).to_string())),
-        ast::Expr::Call { func, args } => {
+        ast::Expr::Call { func, args, .. } => {
             let mut bridge_args = Vec::new();
             for arg in args {
                 bridge_args.push(lower_expr(parsed, arg)?);

@@ -396,8 +396,19 @@ impl<'a> Checker<'a> {
             Expr::LitInt(_) | Expr::LitFloat(_) => Ty::Unknown,
             // Part I 2.4 calls a string literal a `String`; Stage 0 emits a
             // Rust string literal, which is a view of static text. The checker
-            // says what is emitted - see ADR-024.
-            Expr::LitStr(_) => Ty::view("str"),
+            // says what is emitted - see ADR-024 D5.
+            //
+            // **Unless it has a hole in it.** `"{a} rows"` is not a literal in
+            // the emitted Rust, it is a `format!`, and a `format!` is a
+            // `String`. Two spellings in Nikaia, two types below, and the
+            // checker follows the lowering rather than the syntax.
+            Expr::LitStr(text) => match crate::emit::interpolation(text) {
+                Ok((_, holes)) if !holes.is_empty() => Ty::named("String"),
+                Ok(_) => Ty::view("str"),
+                // A literal the emitter will refuse. It reports that in its own
+                // words; this one says nothing rather than guessing.
+                Err(_) => Ty::Unknown,
+            },
             Expr::LitChar(_) => Ty::named("char"),
             Expr::LitBool(_) => Ty::named("bool"),
 
@@ -464,7 +475,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Call { func, args } => self.call(func, args, span),
+            Expr::Call { func, args, config } => self.call(func, args, config, span),
 
             Expr::MethodCall {
                 receiver,
@@ -480,7 +491,7 @@ impl<'a> Checker<'a> {
                 let Some((key, contract)) = self.method(&key) else {
                     return Ty::Unknown;
                 };
-                self.arguments(&key, contract, &found, span)
+                self.arguments(&key, contract, &found, &[], span)
             }
 
             Expr::Field { base, name } => {
@@ -649,9 +660,18 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`.
-    fn call(&mut self, func: &Expr, args: &[Expr], span: &Span) -> Ty {
+    /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`, `write(p, d; append: true)`.
+    fn call(&mut self, func: &Expr, args: &[Expr], config: &[ast::ConfigArg], span: &Span) -> Ty {
         let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
+        let passed: Vec<(String, Ty)> = config
+            .iter()
+            .map(|a| {
+                (
+                    self.parsed.text(a.name).to_string(),
+                    self.expr(&a.value, span),
+                )
+            })
+            .collect();
 
         let name = match func {
             Expr::Variable(name) => self.parsed.text(*name).to_string(),
@@ -684,12 +704,19 @@ impl<'a> Checker<'a> {
             .strip_suffix("::new")
             .filter(|_| !name.ends_with("::new"))
             .map(Ty::named);
-        let result = self.arguments(&key, contract, &found, span);
+        let result = self.arguments(&key, contract, &found, &passed, span);
         constructed.unwrap_or(result)
     }
 
     /// The count and the types of what a call passes, against what it takes.
-    fn arguments(&mut self, key: &str, contract: &FnContract, found: &[Ty], span: &Span) -> Ty {
+    fn arguments(
+        &mut self,
+        key: &str,
+        contract: &FnContract,
+        found: &[Ty],
+        passed: &[(String, Ty)],
+        span: &Span,
+    ) -> Ty {
         // No signature is no claim. The hand-written half of `std.contracts`
         // has some, and an entry that says nothing is checked against nothing.
         let Some(signature) = contract.signature.clone() else {
@@ -720,6 +747,25 @@ impl<'a> Checker<'a> {
                 }),
             });
             return signature.result_or_unit();
+        }
+
+        // Kap 5.1: an option is named, so it is checked by name - that it
+        // exists, and that what is passed is what it takes.
+        for (name, found) in passed {
+            match signature.config.iter().find(|c| c.name == *name) {
+                Some(option) => {
+                    if found.fits(&option.ty) {
+                        continue;
+                    }
+                    let (want, ty) = (option.ty.clone(), option.ty.text());
+                    let name = name.clone();
+                    let key = key.to_string();
+                    self.expect(found, &want, span.clone(), "field", move |found, _| {
+                        format!("`{key}` takes `{name}: {ty}`, and this passes `{found}`")
+                    });
+                }
+                None => self.no_such_option(key, name, &signature, span),
+            }
         }
 
         for ((name, want), found) in wanted.iter().zip(found) {
@@ -829,6 +875,34 @@ impl<'a> Checker<'a> {
                  function, exactly as a failing call would"
             )],
             help: Some("declare the error: add `throws` to this function".to_string()),
+        });
+    }
+
+    /// An option the callee does not have (Kap 5.1).
+    fn no_such_option(
+        &mut self,
+        key: &str,
+        name: &str,
+        signature: &crate::contracts::Signature,
+        span: &Span,
+    ) {
+        let names: Vec<&str> = signature.config.iter().map(|c| c.name.as_str()).collect();
+        let near = nearest(name, &names);
+        self.checked.findings.push(Finding {
+            span: span.clone(),
+            code: "NK1109",
+            message: format!("`{key}` has no option `{name}`"),
+            notes: vec![match names.is_empty() {
+                true => format!("`{key}` takes no options at all - it has no `;`"),
+                false => format!("`{key}` takes {}", list(&names)),
+            }],
+            help: Some(match near {
+                Some(near) => format!("did you mean `{near}`?"),
+                None if names.is_empty() => {
+                    "everything before the `;` is positional (Part I, 5.1)".to_string()
+                }
+                None => "name one of the options it has".to_string(),
+            }),
         });
     }
 

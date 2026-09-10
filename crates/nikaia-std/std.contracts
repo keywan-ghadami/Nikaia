@@ -70,7 +70,7 @@ signature = "(path: ?) -> String"
 [fn."fs::write"]
 pub = true
 throws = true
-signature = "(path: ?, data: ?)"
+signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
 
 [fn."html::escape"]
 pub = true

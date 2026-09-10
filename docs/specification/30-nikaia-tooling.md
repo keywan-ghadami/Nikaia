@@ -145,7 +145,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O |
 | `throws` | fn | Kap 7.1: it may fail |
 | `returns` | fn | what the result may point into — `borrows(a \| b)` |
-| `signature` | fn | its parameters and its result, as the source writes them: `"(path: &str) -> String"`. A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one |
+| `signature` | fn | its parameters, its **options** and its result, as the source writes them: `"(path: ?, data: ?; append: bool = false, create: bool = true)"`. An option carries its default, because a call that leaves one out still passes a value and only the declaration knows which (Part I, 5.1). A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one |
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
 | `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
@@ -614,11 +614,9 @@ pub fn read_to_string(path: Path) -> String throws            // whole file, UTF
 pub fn write(path: Path, data: &[u8]; append: bool = false, create: bool = true) throws
 ```
 
-**What Stage 0 has of this today.** `read`, `read_to_string`, `write` and `map`. `write` takes the
-path and the data and nothing else: the `;` config section above does not parse yet
-(`examples/README.md`, G18), so `append` and `create` have no spelling at a call and are not in
-`std` rather than being there under an invented one. `lines`, `bytes`, `open`/`File`, and the
-directory functions are not here either — `lines` and `bytes` for a reason of their own, below.
+**What Stage 0 has of this today.** `read`, `read_to_string`, `write` — with both of its options,
+since Part I 5.1's `;` section parses — and `map`. `open`/`File` and the directory functions are
+not here yet; `lines` and `bytes` are gone for a reason of their own, below.
 
 `read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 
@@ -842,7 +840,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 
 | Range | Domain | Examples defined so far |
 | :--- | :--- | :--- |
-| `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. All eight are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). |
+| `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. `NK1109` a call names an option the callee does not have (Part I, 5.1). All nine are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` in Advanced (Part II, 12.7). |
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |

@@ -41,6 +41,17 @@
 // truncated stream becomes a shorter stream and the tally is quietly wrong.
 
 use std::io
+use std::fs
+use std::cli
+
+// One line of summary, and where it goes.
+//
+// `separator` is a Kap 5.1 **option**: it stands after the `;`, it is named at
+// the call, and it has a default - which is what makes it an option rather than
+// an argument. Nothing that calls this has to know it exists.
+fn summary(lines: i64, blank: i64; separator: &str = " ") -> String {
+    return "{lines}{separator}{blank}"
+}
 
 fn main() throws {
     let mut lines = 0
@@ -63,4 +74,20 @@ fn main() throws {
     println("{lines} lines, {blank} blank")
     println("longest: {longest.len()} characters")
     println("{longest}")
+
+    // A run log, if the caller named one. `append: true` is the other half of
+    // Kap 5.1 - an option at a *call*, and the reason `fs::write` has one:
+    // truncating here would make a log of one line.
+    //
+    // The default is `append: false`, so a call that says nothing overwrites -
+    // which is what `write` means everywhere, and why the option exists rather
+    // than a second function.
+    let log = cli::args().nth(1) ?? ""
+    if log.len() > 0 {
+        let row = summary(lines, blank; separator: "\t")
+        fs::write(&log, "{row}\n"; append: true) catch {
+            eprintln("cannot append to {log}: {error}")
+            return
+        }
+    }
 }

@@ -25,7 +25,7 @@ fn test_advanced_hello_world_compilation() {
 
         // Verify println("Hello Nikaia")
         match &body.stmts[0].node {
-            Stmt::Expr(Expr::Call { func, args }) => {
+            Stmt::Expr(Expr::Call { func, args, .. }) => {
                 if let Expr::Variable(fname) = &**func {
                     assert_eq!(parsed.text(*fname), "println");
                 } else {
