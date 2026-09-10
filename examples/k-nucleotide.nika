@@ -132,8 +132,8 @@ fn report_frequencies(seq: &str, k: usize) {
         rows.push((fragment, tally.n))
     }
 
-    rows.sort_by_key fn: a.0
-    rows.sort_by_key fn: -a.1
+    rows.sort_by_key fn { a.0 }
+    rows.sort_by_key fn { -a.1 }
 
     for row in rows {
         let percent = (row.1 as f64) * 100.0 / (total as f64)
@@ -146,8 +146,8 @@ fn report_frequencies(seq: &str, k: usize) {
 // length, so the table is built for exactly the width being asked about.
 fn report_fragment(seq: &str, fragment: &str) {
     let counts = count(seq, fragment.len())
-    // The trailing-lambda form (`fn:`) is for the *last* argument, outside the
-    // parentheses; a lambda in any other position is written out.
+    // A trailing lambda goes outside the parentheses and is the last
+    // argument; a lambda in any other position is written out.
     let n = counts.get(fragment).map_or(0, fn(t) { t.n })
     println("{n}\t{fragment}")
 }

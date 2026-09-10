@@ -266,7 +266,7 @@ over a list was specified. ADR-010 D6 is why it cannot be left to the map: an un
 seeded randomly, so its iteration order differs between runs. The answer is the explicit form,
 and now it is written down — Part I 4.5 specifies `sort()` and `sort_by_key`, and says both are
 **stable**, which is what lets two passes state a compound order without a comparator:
-`names.sort()` then `names.sort_by_key fn: -hits` is hits descending, ties by name.
+`names.sort()` then `names.sort_by_key fn { -hits }` is hits descending, ties by name.
 `access-log.nika` prints that way.
 
 **G10 — no tuple.** Found by `calc.nika`, which has to carry an operator alongside the operand
@@ -375,7 +375,7 @@ meaning.
 ([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime
 binding. The request is the handler's **first implicit argument**, under the rule Part I 5.3
 already has: a lambda takes as many implicit arguments as its body reaches for, so
-`fn: "Hello World"` keeps working unchanged and `fn: a.query("name")` reads one. Nothing is added
+`fn { "Hello World" }` keeps working unchanged and `fn { a.query("name") }` reads one. Nothing is added
 to the language. A handler *returns* what answers the request — a `String` is 200 text/plain, an
 `html::Raw` is 200 text/html (ADR-017 D2 read from the other end: the type that says "this is
 markup" is the type that may be sent as markup), a `Response` is itself, and a `throws` that fails
@@ -404,6 +404,7 @@ enforce it. `examples/escaping.nika` is the whole of it in one page.
 the file is markup and an editor that highlights it keeps working, with `:rows` captured from the
 enclosing scope (ADR-007 D4). The position check runs through a loop's body, so nothing becomes
 safe by being repeated. `fortunes.nika`'s `render` lowers and runs today; what that file still
-waits on is **G6** and `fn:` in a method chain (ADR-013 D5), both of them in `main`.
+waits on is the `postgres` block and **G6**'s runtime binding — since
+[ADR-022](../docs/specification/adr/adr-022.md) removed the `fn:` form, the whole file parses.
 
 

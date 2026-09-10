@@ -165,3 +165,49 @@ fn a_return_inside_an_if_wraps_itself_when_the_function_throws() {
     );
     assert!(emitted.contains("return Ok(0);"), "{emitted}");
 }
+
+// --- ADR-022: one lambda form -----------------------------------------------
+
+/// A method may take arguments **and** a trailing lambda, and the chain
+/// continues after it.
+///
+/// This form had no grammar at all: there was a rule for a method with
+/// arguments and one for a method with a trailing lambda, and none for both.
+#[test]
+fn a_method_takes_arguments_and_a_trailing_lambda() {
+    let emitted = emit(
+        "fn main() {\n\
+         let s = Server::new()\n\
+         .route(\"/x\") fn { handler(db) }\n\
+         .listen(\":8080\")\n\
+         }",
+    );
+    assert!(
+        emitted.contains(r#".route("/x", || { handler(db) }).listen(":8080")"#),
+        "{emitted}"
+    );
+}
+
+/// The trailing lambda without arguments still works, and so does a chain
+/// after it - a block ends at its `}`, so there is nothing to swallow.
+#[test]
+fn a_block_lambda_does_not_swallow_the_chain() {
+    let emitted = emit("fn main() { let n = xs.map fn { a.id } .len() }");
+    assert!(emitted.contains(".map(|a| { a.id }).len()"), "{emitted}");
+}
+
+/// `fn: …` is gone, and says so.
+///
+/// The form was in the specification and in three examples, so a parse error
+/// at the colon would be true and useless. What it did wrong is in the message,
+/// because that is the part a reader cannot see from the code in front of them.
+#[test]
+fn the_expression_lambda_says_it_was_removed() {
+    let message = format!(
+        "{:#}",
+        parse_to_ast("fn main() { let ids = users.map fn: a.id }").expect_err("refused")
+    );
+    assert!(message.contains("ADR-022"), "{message}");
+    assert!(message.contains("`fn { … }`"), "{message}");
+    assert!(message.contains("inside* the lambda"), "{message}");
+}
