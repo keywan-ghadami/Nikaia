@@ -66,18 +66,71 @@ const ESCAPES: [(char, &str); 5] = [
     ('\'', "&#39;"),
 ];
 
+/// The five, as a bit per byte value.
+///
+/// Built from `ESCAPES` rather than written out, so the characters are declared
+/// once and this cannot drift from them. Every one of them is below 64 - `"` is
+/// 34, `&` is 38, `'` is 39, `<` is 60, `>` is 62 - so the whole question fits
+/// in **one machine word** and asking it touches no memory at all.
+///
+/// That is the second thing measured here and it is the one that mattered: a
+/// 256-entry table of `&str` was **16 % slower** than the five compares it
+/// replaced, because a fat pointer per byte is 4 KB of cache to walk where a
+/// mask is a register (`docs/staging-candidates.md` §3).
+///
+/// **A byte scan is sound because all five are ASCII.** A byte of a multi-byte
+/// UTF-8 character is always `0x80` or above, so it can never be one of these -
+/// which is what lets the scan work on bytes and copy whole runs, rather than
+/// decode every character to compare it with five others.
+const NEEDS_ESCAPE: u64 = {
+    let mut mask = 0u64;
+    let mut i = 0;
+    while i < ESCAPES.len() {
+        let from = ESCAPES[i].0 as u32;
+        assert!(from < 64, "an escape must fit the mask");
+        mask |= 1 << from;
+        i += 1;
+    }
+    mask
+};
+
+/// Whether this byte is one of the five. No memory is touched.
+#[inline]
+fn needs_escape(byte: u8) -> bool {
+    byte < 64 && NEEDS_ESCAPE & (1 << byte) != 0
+}
+
+/// What it becomes. Only reached on a hit, which is the rare case.
+#[inline]
+fn replacement(byte: u8) -> &'static str {
+    match byte {
+        b'&' => "&amp;",
+        b'<' => "&lt;",
+        b'>' => "&gt;",
+        b'"' => "&quot;",
+        b'\'' => "&#39;",
+        _ => unreachable!("only a byte the mask matched reaches here"),
+    }
+}
+
 /// `text`, safe to place in an HTML text node or a quoted attribute value.
 ///
 /// Returns the input unchanged - and unallocated - when nothing needs
 /// escaping, which is the common case for the column of a database table. The
 /// scan is one pass either way.
 ///
+/// **65 % cheaper than the version this replaced**, measured under callgrind on
+/// 40 000 holes (`crates/nikaia/tests/measure.rs`,
+/// `docs/staging-candidates.md` §3.2). Two of the three things tried made it
+/// *worse*, which is why both are written down where they were tried.
+///
 /// It does **not** make text safe for every position: a `<script>` body, a CSS
 /// block, an unquoted attribute and a URL each need something else, which is
 /// why ADR-017 D3 makes a hole in those positions a compile error rather than a
 /// call to this function.
 pub fn escape(text: &str) -> Cow<'_, str> {
-    let Some(first) = text.find(|c| ESCAPES.iter().any(|(from, _)| *from == c)) else {
+    let bytes = text.as_bytes();
+    let Some(first) = bytes.iter().position(|&b| needs_escape(b)) else {
         return Cow::Borrowed(text);
     };
 
@@ -85,12 +138,24 @@ pub fn escape(text: &str) -> Cow<'_, str> {
     // apostrophe is the ordinary case, not a message that is all apostrophes.
     let mut escaped = String::with_capacity(text.len() + 16);
     escaped.push_str(&text[..first]);
+
+    // One character at a time, and that was **measured** rather than assumed.
+    // Copying the runs between two escapes with `push_str` - the shape that
+    // looks obviously better, and that this function was first written with -
+    // costs 12 % more here: the index arithmetic and the bounds check on each
+    // slice outweigh what the copies save on text this size
+    // (`docs/staging-candidates.md` §3).
     for c in text[first..].chars() {
-        match ESCAPES.iter().find(|(from, _)| *from == c) {
-            Some((_, to)) => escaped.push_str(to),
-            None => escaped.push(c),
+        // `c as u32` first: a character above the mask's range is never one of
+        // the five, and this is the ordinary case.
+        let byte = c as u32;
+        if byte < 64 && needs_escape(byte as u8) {
+            escaped.push_str(replacement(byte as u8));
+        } else {
+            escaped.push(c);
         }
     }
+
     Cow::Owned(escaped)
 }
 
@@ -119,6 +184,33 @@ mod tests {
     fn the_ampersand_is_escaped_first() {
         assert_eq!(escape("<b>"), "&lt;b&gt;");
         assert_eq!(escape("&lt;"), "&amp;lt;");
+    }
+
+    /// The byte scan rests on all five being ASCII: a byte of a multi-byte
+    /// character is `0x80` or above and can never be mistaken for one of them.
+    /// `ESCAPED` asserts it at compile time; this says why it matters, and
+    /// checks the property the assertion protects.
+    #[test]
+    fn text_that_is_not_ascii_passes_through_whole() {
+        assert_eq!(escape("Ünïcödé — 日本語 — 🎉"), "Ünïcödé — 日本語 — 🎉");
+        assert!(matches!(escape("日本語"), Cow::Borrowed(_)));
+        // …and a multi-byte character beside an escape keeps both.
+        assert_eq!(escape("日<本>語"), "日&lt;本&gt;語");
+        assert_eq!(escape("a & 日"), "a &amp; 日");
+    }
+
+    /// The boundaries a scan gets wrong: an escape first, last, doubled and
+    /// alone. Written when this copied runs rather than characters, and kept
+    /// after that lost its measurement - the cases are the same either way,
+    /// and a test that survives a rewrite of what it tests is the useful kind.
+    #[test]
+    fn an_escape_at_either_end_and_beside_itself() {
+        assert_eq!(escape("<a"), "&lt;a");
+        assert_eq!(escape("a<"), "a&lt;");
+        assert_eq!(escape("<<"), "&lt;&lt;");
+        assert_eq!(escape("<"), "&lt;");
+        assert_eq!(escape("a<b<c"), "a&lt;b&lt;c");
+        assert_eq!(escape(""), "");
     }
 
     #[test]

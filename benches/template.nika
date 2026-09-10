@@ -1,0 +1,43 @@
+// benches/template.nika
+//
+// What a template costs to render, and nothing else.
+//
+// A table of `n` rows through `dsl html`, and the length of what came out - so
+// that nothing can be optimised away and the number printed is a function of
+// the work. `n` is the first argument, because a crossover is a curve and one
+// point is not one.
+//
+// Measured by `crates/nikaia/tests/measure.rs`, which is where the numbers and
+// the A/B live. This file is only the workload: it is here rather than in
+// `examples/` because an example is a program someone reads to learn the
+// language, and this is a program a compiler is weighed with.
+
+use std::cli
+use std::html
+
+@borrowed
+pub struct Row {
+    name: &str,
+    note: &str,
+}
+
+fn table(rows: Vec[Row]) -> String {
+    return dsl html {
+        <table>
+        <for r in :rows><tr class="row"><td>{r.name}</td><td>{r.note}</td></tr></for>
+        </table>
+    } eod
+}
+
+fn main() {
+    let count = cli::args().nth(1) ?? "2000"
+    let n: i32 = count.parse() catch { 2000 }
+
+    let mut rows = Vec::new()
+    for i in 0..n {
+        rows.push(Row { name: "Hamburg", note: "a note with <angles> & an ampersand" })
+    }
+
+    let markup = table(rows)
+    println("{markup.len()}")
+}
