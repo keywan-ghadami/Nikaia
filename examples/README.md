@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Eight of the nine programs here compile, run, and are checked by `cargo test`. The ninth is
+Nine of the ten programs here compile, run, and are checked by `cargo test`. The tenth is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -14,9 +14,10 @@ needs is listed under *Gaps* below.
 | [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
 | [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
 | [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
+| [`report.nika`](report.nika) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the eight is compiled and run **under both profiles**, and their output must be
+Each of the nine is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -41,6 +42,13 @@ They are deliberately different shapes.
   escapes every hole, the type `html::Raw` is the only way to say a value is already markup, and
   a hole in a position escaping cannot make safe is a compile error naming the position. It is
   the smallest program that shows all three.
+* **`report.nika`** is the one whose result is a **file**. Every other example here ends at
+  `println`, and a program that cannot produce a file is not a tool: this one reads a stock
+  list, orders it, renders a page with the `html` template and writes it with `fs::write`
+  (Part III, 17.1). It is also `escaping.nika`'s claim tested against data that was not written
+  to make the point — the `&`, the `"` and the `<` come out of the *input file*, which is where
+  they come from in every program that has ever had an escaping bug. The test reads the page
+  back rather than the line the program printed, because the page is what it produced.
 * **`k-nucleotide.nika`** is the one that reads **standard input**, and the difference a pipe
   makes is the point of it. `1brc.nika` maps its file and copies nothing at all; here there are
   no pages to point at, because the bytes do not exist until they are read — so the program owns
@@ -360,6 +368,33 @@ next to it was handed the value it was meant to inspect and nothing compiled. Bo
 in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
+
+**G17 — a stream of lines that can fail while it is being read.** Found by trying to build
+`fs::lines` and `io::lines`, which Part III 17.1 specifies and neither of which is here. The
+surface says `pub fn lines(path: Path) -> Lines throws`, as if the failure happened when the
+stream was opened; it does not. A read fails *mid-iteration*, and Nikaia has no form that says
+so. Three ways out, and each costs something that has to be decided rather than picked:
+
+* **yield the text and treat a read error as the end** — a truncated file becomes a shorter
+  file, silently, which is the worst outcome an aggregation can have;
+* **yield something that may be a failure**, and every loop over a stream unwraps — which is
+  the shape the language spent Chapter 7 avoiding;
+* **hand the loop body to the stream** (`fs::lines(path) fn { … }`), so the failure is the
+  call's and `throws` covers it as it covers everything else — a different shape from `for`,
+  and one more thing to know.
+
+What is *not* blocked by this: the semantics Part III 17.1 promises `fs::lines` — tethered
+`&str`, no allocation per line, constant memory — are what `fs::map(path)` and `.lines()` already
+give, and `1brc.nika` is built on them. So the gap is the failure model of a stream, not the
+streaming.
+
+**G18 — a function cannot take named arguments with defaults.** Part I 5.1 specifies
+`fn request(url: String; timeout: i32 = 30, method: String = "GET")` — a subject, a `;`, and a
+config section whose parameters have names and defaults at the call. Nothing parses it. Found by
+`fs::write`, whose specification is
+`write(path: Path, data: &[u8]; append: bool = false, create: bool = true)`: the two options are
+not in `std` because there is no way to write a call that passes one, and inventing a spelling
+for one function is a spelling to keep or to break later.
 
 **G16 — a type could not be named by a path.** `Shared[postgres::Connection]` did not parse:
 a type was a name with optional arguments, and `postgres::Connection` is a name with a path in

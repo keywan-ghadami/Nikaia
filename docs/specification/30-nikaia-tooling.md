@@ -432,6 +432,8 @@ pub fn lines() -> Lines throws             // one line at a time
 pub fn bytes() -> ByteStream throws        // chunks as they arrive
 ```
 
+`read_to_string` and `read` are implemented; `lines` and `bytes` wait on the same open question `fs::lines` waits on — what a loop over a stream does when the next read fails (G17, below `std::fs`).
+
 It is `std::fs`'s shape minus what a stream cannot keep, and the same "looks blocking, is not"
 applies: no `async` on the signature, no `await` at the call. Under Lite the event loop runs
 another task while the pipe is empty; under Advanced the read may resume on a different thread.
@@ -598,6 +600,12 @@ pub fn read_to_string(path: Path) -> String throws            // whole file, UTF
 pub fn write(path: Path, data: &[u8]; append: bool = false, create: bool = true) throws
 ```
 
+**What Stage 0 has of this today.** `read`, `read_to_string`, `write` and `map`. `write` takes the
+path and the data and nothing else: the `;` config section above does not parse yet
+(`examples/README.md`, G18), so `append` and `create` have no spelling at a call and are not in
+`std` rather than being there under an invented one. `lines`, `bytes`, `open`/`File`, and the
+directory functions are not here either — `lines` and `bytes` for a reason of their own, below.
+
 `read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 
 **Streaming**
@@ -610,6 +618,10 @@ pub fn bytes(path: Path) -> ByteStream throws   // yields chunks as they arrive
 ```
 
 Both are **immediate contexts** (Part I, 5.4) when iterated, so the loop body borrows rather than moves. Neither holds the whole file in memory.
+
+**Neither is implemented, and the reason is a hole in this specification rather than in the compiler** (`examples/README.md`, G17). The signature says `-> Lines throws`, which places the failure where the stream is *opened*. A read fails **mid-iteration**, and nothing in Chapter 7 says what a loop over a stream does when the next line does not arrive. Answering it is a language decision with three candidates and no default: yield the text and let a truncated file become a shorter file silently; yield something that may be a failure, and unwrap in every loop; or hand the loop body to the stream — `fs::lines(path) fn { … }` — so that the failure belongs to the call and `throws` covers it as it covers everything else.
+
+What is *not* waiting on that: the properties this section promises `lines` — tethered `&str`, no allocation per line, constant memory — are exactly what `map` gives, and `examples/1brc.nika` is built on them. The gap is a stream's failure model, not streaming.
 
 **Handles**
 

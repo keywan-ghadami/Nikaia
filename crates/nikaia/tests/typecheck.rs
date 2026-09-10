@@ -307,6 +307,25 @@ fn a_loop_over_pairs_binds_nothing() {
     .is_empty());
 }
 
+/// A parameter whose Rust type is a *bound* rather than a type is `?` in the
+/// ledger, and this is why: `fs::write` accepts a `String`, a `&str` and a
+/// buffer, so a claim of `&str` there would refuse a correct program.
+#[test]
+fn a_parameter_that_accepts_several_types_claims_none() {
+    assert!(findings(
+        "fn main() throws {\n\
+         \x20   let text = io::read_to_string()\n\
+         \x20   let path = \"out.txt\"\n\
+         \x20   fs::write(path, text)\n\
+         }"
+    )
+    .is_empty());
+
+    // …and the arity is still checked, which is the half that survives.
+    let (code, _) = one("fn main() throws { fs::write(\"out.txt\") }");
+    assert_eq!(code, "NK1101");
+}
+
 /// Both directions of the rule at once: an unknown on either side fits.
 #[test]
 fn a_value_from_an_unwritten_signature_fits_anywhere() {

@@ -19,6 +19,13 @@
 # An absent `sync` means *not* sync - which is the promise this file exists to
 # make. An absent *entry* means nothing is known, and a caller may not assume.
 #
+# **A parameter whose Rust type is a bound rather than a type is recorded `?`.**
+# `fs::write(path: impl AsRef<Path>, data: impl AsRef<[u8]>)` accepts a `String`
+# and a `&str` and a buffer, so writing `&str` here would make the type checker
+# reject `fs::write(path, text)` for a `String` - a correct program, refused.
+# `?` is the absence of a claim (ADR-024 D1) and it is the true one: the arity
+# is still checked, and the type is not claimed because there is no one type.
+#
 # `provenance` marks a **source**: a function whose result is bytes that entered
 # the program from outside, and who chose them (ADR-010 D2). Its absence is not
 # "trusted" - it is "this is not a source", which is what almost every function
@@ -40,7 +47,7 @@ signature = "() -> ?"
 pub = true
 throws = true
 provenance = "trusted"
-signature = "(path: &str) -> Mapped"
+signature = "(path: ?) -> Mapped"
 
 [fn."fs::Mapped::deref"]
 pub = true
@@ -48,11 +55,22 @@ sync = true
 returns = "borrows(self)"
 signature = "(&Mapped) -> &str"
 
+[fn."fs::read"]
+pub = true
+throws = true
+provenance = "trusted"
+signature = "(path: ?) -> Vec[u8]"
+
 [fn."fs::read_to_string"]
 pub = true
 throws = true
 provenance = "trusted"
-signature = "(path: &str) -> String"
+signature = "(path: ?) -> String"
+
+[fn."fs::write"]
+pub = true
+throws = true
+signature = "(path: ?, data: ?)"
 
 [fn."html::escape"]
 pub = true
