@@ -326,7 +326,7 @@ compiler. Concretely:
   `rustc` to produce a binary. It handles functions and methods, `impl`, `struct` and `use`,
   control flow, `throws`/`catch`/`??`, string interpolation — and the whole `grammar` construct,
   `@frame` and `dsl … from …` included. **`examples/1brc.nika` compiles, runs and is a test.**
-  Since [ADR-023](docs/specification/adr/adr-023.md) it also **checks types** — everything the
+  Since [ADR-024](docs/specification/adr/adr-024.md) it also **checks types** — everything the
   ledger writes down, and nothing it does not.
 * ❌ **Not yet** — the runtime binding to `tokio`, the LSP, self-hosting. The standard library
   exists in the narrow sense the examples need, and one of its files is already written in
@@ -358,7 +358,7 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
   - [x] `fs::map`'s UTF-8 check divided across the cores rather than skipped
     ([ADR-016](docs/specification/adr/adr-016.md)): 3.9× on the check, and what is left to gain
     by removing it altogether is 10 ms of a 140 ms program.
-  - [x] A type checker ([ADR-023](docs/specification/adr/adr-023.md)): arity, arguments, `let`,
+  - [x] A type checker ([ADR-024](docs/specification/adr/adr-024.md)): arity, arguments, `let`,
     `return`, assignment, struct fields and conditions, answered from the ledger — with `?`
     meaning *no claim*, so it never rejects a program that is correct, and it catches more as
     more of `std` is written down.

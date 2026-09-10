@@ -89,7 +89,7 @@ maybe_string = "World"             // Valid (`mut`, as in 2.1)
 ```
 
 A literal is a **view** of text the program was compiled with, not a `String` — see 6.6, where
-an allocation happens only where you wrote that you wanted one, and [ADR-023](adr/adr-023.md) D5.
+an allocation happens only where you wrote that you wanted one, and [ADR-024](adr/adr-024.md) D5.
 `.to_string()` is how you say you want one.
 
 ### 2.4. Type Inference

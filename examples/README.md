@@ -70,7 +70,7 @@ since [ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` const
 patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
 Errors are reported on the `.nika` line that caused them
 ([ADR-012](../docs/specification/adr/adr-012.md)), and since
-[ADR-023](../docs/specification/adr/adr-023.md) types are checked before any Rust is emitted -
+[ADR-024](../docs/specification/adr/adr-024.md) types are checked before any Rust is emitted -
 everything the ledger writes down, and nothing it does not. Every file here is part of that
 checker's guard: the build fails if any of them produces a finding.
 

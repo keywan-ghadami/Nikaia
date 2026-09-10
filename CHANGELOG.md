@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Added (0.0.8 - ADR-023: the type checker)
+### Added (0.0.8 - ADR-024: the type checker)
 
 - **Nikaia checks its own types**, in its own vocabulary, before it emits a line of Rust. Eight codes, and the `NK1xxx` family - *Syntax & types* - had been empty since the catalogue was written: `NK1101` a call passing the wrong number of arguments, `NK1102` an argument that is not what the parameter takes, `NK1103` a `let` that says one type and is given another, `NK1104` a `return` (or a body's last expression) that is not what was declared, `NK1105` an assignment, `NK1106` a struct literal's field, `NK1107` a field that is not there, `NK1108` a condition that is not a `bool`.
 - **The whole design is one value: `?`, the absence of a claim.** Half of `std` is still Rust ([ADR-014](docs/specification/adr/adr-014.md)) and a Nikaia program calls `push_str`, `entry`, `chars` and `nth` freely. A checker that had to answer for those would need a second frontend that reads Rust, or a guess - and a type checker that guesses reports errors that are not there, which is worse than one that says less. So every rule has the same shape: infer both sides, and report only where **both are known and they disagree**. The promise that buys is the one worth having: **it never rejects a program that is correct**, and what it catches grows as the ledger grows, without the checker changing.

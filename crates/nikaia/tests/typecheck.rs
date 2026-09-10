@@ -1,4 +1,4 @@
-//! The type checker (ADR-023).
+//! The type checker (ADR-024).
 //!
 //! Two halves, and the first is the one that decides whether the tool is worth
 //! running: **every program in the repository must produce no findings.** A

@@ -359,7 +359,7 @@ impl<'a> Checker<'a> {
             Expr::LitInt(_) | Expr::LitFloat(_) => Ty::Unknown,
             // Part I 2.4 calls a string literal a `String`; Stage 0 emits a
             // Rust string literal, which is a view of static text. The checker
-            // says what is emitted - see ADR-023.
+            // says what is emitted - see ADR-024.
             Expr::LitStr(_) => Ty::view("str"),
             Expr::LitChar(_) => Ty::named("char"),
             Expr::LitBool(_) => Ty::named("bool"),
