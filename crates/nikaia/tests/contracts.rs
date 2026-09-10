@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{Ledger, Sync};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -18,7 +18,8 @@ fn ledger(source: &str) -> Ledger {
     Ledger::infer(&parse_to_ast(source).expect("the source parses"))
 }
 
-/// `sync` and `throws` are declared, so they are recorded exactly.
+/// `throws` is declared, so it is recorded exactly; `sync` is declared *or*
+/// earned, and the ledger says which (ADR-027).
 #[test]
 fn a_declaration_is_recorded_as_it_was_written() {
     let l = ledger(
@@ -28,13 +29,125 @@ fn a_declaration_is_recorded_as_it_was_written() {
     );
 
     let pure = &l.functions["pure"];
-    assert!(pure.public && pure.sync && !pure.throws);
+    assert!(pure.public && !pure.throws);
+    assert_eq!(pure.sync, Sync::Asserted, "the source wrote the word");
 
+    // Neither of these says `sync`, and neither of them calls anything, so
+    // neither of them can pause. Before ADR-027 the ledger recorded that as
+    // "not `sync`" - a claim about a body it had already read and knew better
+    // about. `throws` and `sync` are orthogonal: a function may fail without
+    // pausing, and `risky` is one.
     let risky = &l.functions["risky"];
-    assert!(!risky.public && !risky.sync && risky.throws);
+    assert!(!risky.public && risky.throws);
+    assert_eq!(risky.sync, Sync::Inferred);
 
     let plain = &l.functions["plain"];
-    assert!(!plain.public && !plain.sync && !plain.throws);
+    assert!(!plain.public && !plain.throws);
+    assert_eq!(plain.sync, Sync::Inferred);
+}
+
+/// The inference claims `sync` only where it can prove it, and a call it cannot
+/// resolve is not a proof.
+///
+/// This is the polarity that matters: the entry is **shipped**, and a consumer
+/// reads it and puts the function inside `access`. So an unresolvable call
+/// costs the claim rather than being waved through - the opposite of what the
+/// *check* does with the same call, and for the opposite reason.
+#[test]
+fn what_cannot_be_resolved_is_not_inferred_sync() {
+    let l = ledger(
+        "use std::io\n\
+         fn pure(a: i32) -> i32 { return a + 1 }\n\
+         fn method(s: String) -> usize { return s.len() }\n\
+         fn reads() -> String throws { return io::read_to_string()? }\n\
+         fn calls_pure(a: i32) -> i32 { return pure(a) }\n\
+         fn calls_reader() -> String throws { return reads()? }",
+    );
+
+    assert_eq!(l.functions["pure"].sync, Sync::Inferred);
+    // A method call needs the receiver's type, which Stage 0 does not have.
+    assert_eq!(l.functions["method"].sync, Sync::No);
+    // `std`'s ledger says `io::read_to_string` can pause.
+    assert_eq!(l.functions["reads"].sync, Sync::No);
+    // Transitive, in both directions.
+    assert_eq!(l.functions["calls_pure"].sync, Sync::Inferred);
+    assert_eq!(l.functions["calls_reader"].sync, Sync::No);
+}
+
+/// A pure helper nobody annotated is callable from a `sync` function.
+///
+/// This is what ADR-027 is *for*. `access`, `access_all` and `par_iter` all
+/// demand a `sync` lambda (Part II, 12.2), and while `sync` was opt-in the set
+/// of things such a lambda could call was "whatever someone remembered to
+/// annotate". Now it is "whatever provably cannot pause".
+#[test]
+fn a_sync_function_may_call_a_helper_that_never_said_sync() {
+    let found = violations(
+        "fn helper(a: i32) -> i32 { return a + 1 }\n\
+         fn locked(a: i32) -> i32 sync { return helper(a) }",
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// Mutual recursion between pure functions keeps the claim.
+///
+/// The fixpoint is a greatest one - start from "everything is `sync`" and take
+/// the claim away - which is what gets this right. A least fixpoint would never
+/// give either of them the promise, because each is waiting on the other.
+#[test]
+fn mutual_recursion_between_pure_functions_stays_sync() {
+    let l = ledger(
+        "fn even(n: i32) -> bool { if n == 0 { return true } return odd(n - 1) }\n\
+         fn odd(n: i32) -> bool { if n == 0 { return false } return even(n - 1) }",
+    );
+
+    assert_eq!(l.functions["even"].sync, Sync::Inferred);
+    assert_eq!(l.functions["odd"].sync, Sync::Inferred);
+}
+
+/// … and mutual recursion that reaches I/O loses it, on both sides.
+#[test]
+fn mutual_recursion_that_reaches_io_is_not_sync() {
+    let l = ledger(
+        "use std::io\n\
+         fn ping(n: i32) -> i32 throws { if n == 0 { return io::read_to_string()?.len() } return pong(n - 1)? }\n\
+         fn pong(n: i32) -> i32 throws { return ping(n - 1)? }",
+    );
+
+    assert_eq!(l.functions["ping"].sync, Sync::No);
+    assert_eq!(l.functions["pong"].sync, Sync::No);
+}
+
+/// The answer does not depend on the order the source declared things in.
+///
+/// 13.5 makes the ledger a pure function of (source, toolchain) and `--locked`
+/// compares it byte for byte, so an inference that walked the call graph in
+/// declaration order would be a determinism bug waiting for someone to move a
+/// function.
+#[test]
+fn the_inference_does_not_depend_on_declaration_order() {
+    let forwards = "fn a(n: i32) -> i32 { return b(n) }\n\
+                    fn b(n: i32) -> i32 { return c(n) }\n\
+                    fn c(n: i32) -> i32 { return n }";
+    let backwards = "fn c(n: i32) -> i32 { return n }\n\
+                     fn b(n: i32) -> i32 { return c(n) }\n\
+                     fn a(n: i32) -> i32 { return b(n) }";
+
+    for source in [forwards, backwards] {
+        let l = ledger(source);
+        for name in ["a", "b", "c"] {
+            assert_eq!(l.functions[name].sync, Sync::Inferred, "{name} in {source}");
+        }
+    }
+}
+
+/// A task's body runs later and elsewhere, so a function that starts one is not
+/// the pure CPU task 12.1 describes - whatever the task turns out to do.
+#[test]
+fn starting_a_task_is_not_pure_computation() {
+    // Part I 8.2's form as the parser takes it today: `spawn(fn { … })`.
+    let l = ledger("fn go(n: i32) { spawn(fn { n + 1 }) }");
+    assert_eq!(l.functions["go"].sync, Sync::No);
 }
 
 /// The borrow contract, in the spec's own spelling: a result that is a view may
@@ -91,7 +204,7 @@ fn a_method_is_named_the_way_it_is_called() {
     );
 
     assert!(l.functions.contains_key("Stats::new"), "{:?}", l.functions);
-    assert!(l.functions["Stats::add"].sync);
+    assert_eq!(l.functions["Stats::add"].sync, Sync::Asserted);
 }
 
 /// The file is a pure function of source and toolchain, which is what lets
@@ -232,20 +345,35 @@ fn a_function_that_is_not_sync_may_call_anything() {
 /// This is what the check found in `1brc.nika` and `access-log.nika` on its
 /// first run: a `sync` method building a value through a constructor that never
 /// said it was `sync` either.
+///
+/// **ADR-027 changed the answer here, and it is the change worth looking at.**
+/// The constructor builds a struct literal and calls nothing, so it cannot
+/// pause, so it is `sync` whether or not anyone wrote the word - and the caller
+/// that used to be rejected is now accepted. What the check was reporting was
+/// never a program that could pause; it was a missing annotation. The rule it
+/// enforces has not moved an inch: what a `sync` function may call is what
+/// cannot pause. Only the ledger's answer to "can this pause" got better.
 #[test]
 fn a_constructor_makes_the_same_promise_or_does_not() {
-    let plain = "pub struct S { n: i64 }\n\
-                 impl S {\n\
-                     pub fn(n: i64) -> S { return S(n: n) }\n\
-                     fn use_it(&self) sync { let x = S(1) }\n\
-                 }";
-    let found = violations(plain);
+    let pure = "pub struct S { n: i64 }\n\
+                impl S {\n\
+                    pub fn(n: i64) -> S { return S(n: n) }\n\
+                    fn use_it(&self) sync { let x = S(1) }\n\
+                }";
+    assert!(violations(pure).is_empty(), "{:?}", violations(pure));
+
+    // The guarantee itself is unchanged, and this is it: a constructor that
+    // really can pause still takes the caller's promise down with it.
+    let pausing = "use std::io\n\
+                   pub struct S { n: i64 }\n\
+                   impl S {\n\
+                       pub fn(n: i64) -> S throws { let t = io::read_to_string()? return S(n: n) }\n\
+                       fn use_it(&self) sync { let x = S(1) }\n\
+                   }";
+    let found = violations(pausing);
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].callee, "S::new");
     assert!(!found[0].from_library);
-
-    let declared = plain.replace("-> S {", "-> S sync {");
-    assert!(violations(&declared).is_empty());
 }
 
 /// A trailing lambda runs during the call it is given to, so what it calls, the

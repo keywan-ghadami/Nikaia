@@ -19,6 +19,14 @@
 # An absent `sync` means *not* sync - which is the promise this file exists to
 # make. An absent *entry* means nothing is known, and a caller may not assume.
 #
+# **Present, `sync` says which kind of promise it is** (ADR-027). `sync = true`
+# is one the source made and the compiler checked; `sync = "inferred"` is one
+# the body implies, derived from the calls it makes. A caller uses them
+# identically - both mean "this cannot pause" - and a *diff* must not, because
+# withdrawing a promise someone wrote is a decision and losing an inferred one
+# is a consequence of an edit somewhere else. Every entry below that is written
+# by hand is `true` by definition: a promise about a Rust body, made here.
+#
 # **A parameter whose Rust type is a bound rather than a type is recorded `?`.**
 # `fs::write(path: impl AsRef<Path>, data: impl AsRef<[u8]>)` accepts a `String`
 # and a `&str` and a buffer, so writing `&str` here would make the type checker
@@ -34,7 +42,7 @@
 # `net`, `db` - arrive with the modules that have them.
 version = 1
 toolchain = "nikaia 0.1.0"
-inference = "stage0-signatures"
+inference = "stage0-signatures+sync-bodies"
 
 # --- Written by hand: the modules that are still Rust ------------------------
 

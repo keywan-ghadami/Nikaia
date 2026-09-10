@@ -160,24 +160,61 @@ fn contracts(path: &std::path::Path, ledger: &str, locked: bool) -> Result<()> {
     })?;
 
     if committed != *ledger {
-        let changed: Vec<&str> = ledger
-            .lines()
-            .filter(|line| !committed.lines().any(|c| c == *line))
-            .collect();
         anyhow::bail!(
             "--locked: the contracts changed and {} does not say so.\n\
              What the build inferred and the ledger does not have:\n{}\n\
              Run without --locked to record it, and read the diff.",
             path.display(),
-            changed
-                .iter()
-                .map(|l| format!("    {l}"))
-                .collect::<Vec<_>>()
-                .join("\n")
+            changed_lines(ledger, &committed).join("\n")
         );
     }
 
     Ok(())
+}
+
+/// The lines the build produced that the committed ledger does not have, each
+/// under the entry it belongs to.
+///
+/// Naming the entry is the whole point. A contract line is short and repeats -
+/// `sync = true` says nothing on its own, and since ADR-027 it is the commonest
+/// line in the file - so a bare list of them tells you that *something* changed
+/// and leaves you to find out what. 13.5 asks this diff to narrate a cause; it
+/// cannot do that without saying whose contract moved.
+fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut entry: Option<&str> = None;
+    let mut named: Option<&str> = None;
+
+    for line in ledger.lines() {
+        if line.starts_with('[') {
+            entry = Some(line);
+            named = None;
+        }
+        if line.is_empty() || line.starts_with('#') || committed.lines().any(|c| c == line) {
+            continue;
+        }
+        match entry.filter(|e| *e != line) {
+            // A line inside an entry, under the entry's name - printed once,
+            // however many of its lines changed.
+            Some(entry) => {
+                if named != Some(entry) {
+                    out.push(format!("  {entry}"));
+                    named = Some(entry);
+                }
+                out.push(format!("      {line}"));
+            }
+            // The line *is* the entry - a whole contract that is new - or it is
+            // a header line, which belongs to no entry. Either way it names
+            // itself, and an entry that has named itself must not be named
+            // again by the lines that follow it.
+            None => {
+                out.push(format!("  {line}"));
+                named = entry;
+            }
+        }
+    }
+
+    out
 }
 
 struct NikaiaFrontend;
@@ -396,5 +433,75 @@ pub fn main() -> Result<()> {
              open item); available backends are interpreter, rust and bridge"
         ),
         other => bail!("unknown backend `{other}` (expected interpreter, rust or bridge)"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::changed_lines;
+
+    /// `--locked` names the entry a changed line belongs to.
+    ///
+    /// A contract line is short and repeats; since ADR-027 `sync` is the
+    /// commonest line in the file. Reporting three bare `sync = true` lines
+    /// tells a reader that something moved and leaves them to find out what,
+    /// which is not the narrated diff 13.5 asks for.
+    #[test]
+    fn a_locked_diff_says_whose_contract_moved() {
+        let committed = "version = 1\n\n[fn.\"a\"]\nsync = true\n\n[fn.\"b\"]\n";
+        let built = "version = 1\n\n[fn.\"a\"]\nsync = true\n\n[fn.\"b\"]\nsync = \"inferred\"\n";
+
+        assert_eq!(
+            changed_lines(built, committed),
+            ["  [fn.\"b\"]", "      sync = \"inferred\""]
+        );
+    }
+
+    /// An entry is named once, however many of its lines changed.
+    #[test]
+    fn an_entry_is_named_once_for_all_of_its_changes() {
+        let committed = "version = 1\n\n[fn.\"a\"]\n";
+        let built = "version = 1\n\n[fn.\"a\"]\nsync = \"inferred\"\nthrows = true\n";
+
+        assert_eq!(
+            changed_lines(built, committed),
+            [
+                "  [fn.\"a\"]",
+                "      sync = \"inferred\"",
+                "      throws = true"
+            ]
+        );
+    }
+
+    /// A wholly new entry names itself, and is not named twice.
+    ///
+    /// The entry line and the lines under it are both new here, so the naming
+    /// has to notice that the entry has already introduced itself.
+    #[test]
+    fn a_new_entry_names_itself_once() {
+        let committed = "version = 1\n";
+        let built = "version = 1\n\n[fn.\"z\"]\nsync = \"inferred\"\nthrows = true\n";
+
+        assert_eq!(
+            changed_lines(built, committed),
+            [
+                "  [fn.\"z\"]",
+                "      sync = \"inferred\"",
+                "      throws = true"
+            ]
+        );
+    }
+
+    /// A header line belongs to no entry and is reported on its own - which is
+    /// what a toolchain upgrade changing the inference looks like.
+    #[test]
+    fn a_changed_header_is_reported_without_an_entry() {
+        let committed = "version = 1\ninference = \"stage0-signatures\"\n";
+        let built = "version = 1\ninference = \"stage0-signatures+sync-bodies\"\n";
+
+        assert_eq!(
+            changed_lines(built, committed),
+            ["  inference = \"stage0-signatures+sync-bodies\""]
+        );
     }
 }

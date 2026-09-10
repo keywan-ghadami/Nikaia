@@ -2,28 +2,43 @@
 //
 // Part II 12.1: a `sync` function may only call `sync` functions.
 //
-// The keyword has parsed and been carried in the AST since ADR-013, and the
-// emitter has written `// sync … Not checked yet.` above every one of them.
-// This is the check, and it is possible now for one reason: the ledger
-// (ADR-020) says what a function promises, including the functions in `std`
-// that this compiler cannot see the bodies of.
+// Two analyses of one rule, running in **opposite directions**, and keeping
+// them apart is the whole design (ADR-027).
 //
-// **What it can and cannot resolve, stated rather than implied.** With no type
-// checker there is no receiver type, so `a.method()` cannot be looked up and is
+// `check` verifies an assertion. Someone wrote `sync`, and this reports the
+// calls that contradict it (`NK2202`). It is conservative in the **permissive**
+// direction: with no receiver types, `a.method()` cannot be looked up, so it is
 // not an error. What *can* be looked up is a call by name - a function in this
 // unit, or a path like `io::read_to_string` into a library's ledger - and that
-// is exactly where the rule earns its keep: `fs::` and `io::` are what a `sync`
-// function must not reach, and they are named, not called on a receiver.
+// is where the rule earns its keep, because `fs::` and `io::` are named rather
+// than called on a receiver. The check never rejects a program the rule allows,
+// and does not yet catch every program the rule forbids. An unchecked promise
+// catches nothing at all, so that is worth having and worth saying.
 //
-// So the check is conservative in the permissive direction. It never rejects a
-// program the rule allows, and it does not yet catch every program the rule
-// forbids. That is worth having and worth saying: an unchecked promise catches
-// nothing at all.
+// `infer` makes a claim, and therefore runs the other way. It writes `sync`
+// into the ledger for a function nobody annotated, and that entry is **shipped**
+// (Part III 13.5): a consumer reads it and puts the function inside `access`.
+// So it is conservative in the **restrictive** direction - a call it cannot
+// resolve is a call it cannot vouch for, and the function does not get the
+// promise. The ledger settled this polarity once already, for provenance: "an
+// analysis that fails open is a vulnerability generator". Inferring `sync` from
+// a body full of calls one cannot see would be exactly that.
+//
+// **Why infer at all.** Before this, `sync` was opt-in, so almost nothing was
+// `sync`, so `access`, `access_all`, `par_iter` and the panic hook - everything
+// Part II 12.2 makes safe by demanding a `sync` lambda - could call almost
+// nothing. The restrictive side of the language was the unusable one, and the
+// way out was to annotate a chain of pure helpers by hand. Now a body that
+// provably cannot pause says so on its own, and `sync` in the source becomes
+// what `@borrowed` is in Part I 6.6: an **assertion you write where you want it
+// held**, checked against the body, rather than a mode you have to enter.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Span, Stmt};
 use crate::parser::Parsed;
 
-use super::Ledger;
+use super::{Ledger, Sync};
 
 /// One call that a `sync` function may not make.
 #[derive(Debug, Clone)]
@@ -66,6 +81,154 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Violation> 
 
     found.sort_by_key(|v| v.span.start);
     found
+}
+
+/// What one function's body does to its own claim to be `sync`.
+#[derive(Debug, Default)]
+struct Reach {
+    /// It calls something that can pause, or something that cannot be resolved.
+    /// Either way the claim is off the table and no fixpoint will bring it back.
+    blocked: bool,
+    /// The functions in this unit it calls. Its claim holds only while all of
+    /// theirs do.
+    calls: BTreeSet<String>,
+}
+
+/// Give every function in the ledger the `sync` its body earns.
+///
+/// Runs after the entries exist, and only ever *adds* [`Sync::Inferred`]: an
+/// assertion in the source is what the source said and is left exactly as it
+/// was written, so that `NK2202` still has something to contradict.
+///
+/// The fixpoint is a greatest one - start from "every candidate is `sync`" and
+/// take the claim away from anything that reaches a function without it. Two
+/// consequences worth naming. Mutual recursion between pure functions keeps the
+/// claim, which is correct and is what a least fixpoint would have got wrong.
+/// And the iteration walks a `BTreeMap` and repeats until nothing changes, so
+/// the answer does not depend on the order the source declared things in -
+/// which it must not, because 13.5 makes this file a pure function of (source,
+/// toolchain) and `--locked` compares it byte for byte.
+pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
+    let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
+
+    for item in &parsed.program.items {
+        match &item.node {
+            Item::Fn { .. } => {
+                if let Some((name, reach)) = reach_of(parsed, &item.node, None, ledger, library) {
+                    graph.insert(name, reach);
+                }
+            }
+            Item::Impl { target, methods } => {
+                let target = parsed.text(target.name).to_string();
+                for method in methods {
+                    if let Some((name, reach)) =
+                        reach_of(parsed, &method.node, Some(&target), ledger, library)
+                    {
+                        graph.insert(name, reach);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Start optimistic, then take the claim away until nothing changes.
+    let mut holds: BTreeMap<&str, bool> = graph
+        .iter()
+        .map(|(name, reach)| (name.as_str(), !reach.blocked))
+        .collect();
+
+    loop {
+        let mut changed = false;
+        for (name, reach) in &graph {
+            if !holds[name.as_str()] {
+                continue;
+            }
+            // A call to something this unit does not declare was already
+            // resolved against the library above and folded into `blocked`;
+            // what is left here is this unit's own, and an unknown name among
+            // them would be a bug in `reach_of` rather than a licence to assume.
+            let reaches_pausing = reach
+                .calls
+                .iter()
+                .any(|callee| !holds.get(callee.as_str()).copied().unwrap_or(false));
+            if reaches_pausing {
+                holds.insert(name.as_str(), false);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for (name, holds) in holds {
+        if !holds {
+            continue;
+        }
+        if let Some(contract) = ledger.functions.get_mut(name) {
+            if contract.sync == Sync::No {
+                contract.sync = Sync::Inferred;
+            }
+        }
+    }
+}
+
+/// One function's calls, split into what settles the question now and what
+/// depends on the rest of the unit.
+///
+/// `None` where the item is not a function. A function whose body cannot be
+/// seen at all would be `blocked`, not absent - but Stage 0 has no such thing.
+fn reach_of(
+    parsed: &Parsed,
+    item: &Item,
+    target: Option<&str>,
+    own: &Ledger,
+    library: &Ledger,
+) -> Option<(String, Reach)> {
+    let Item::Fn { name, body, .. } = item else {
+        return None;
+    };
+    let own_name = match name {
+        Some(name) => parsed.text(*name).to_string(),
+        None => "new".to_string(),
+    };
+    let key = match target {
+        Some(target) => format!("{target}::{own_name}"),
+        None => own_name,
+    };
+
+    let mut reach = Reach::default();
+    collect_reach(parsed, body, own, library, &mut reach);
+    Some((key, reach))
+}
+
+fn collect_reach(
+    parsed: &Parsed,
+    block: &Block,
+    own: &Ledger,
+    library: &Ledger,
+    reach: &mut Reach,
+) {
+    for stmt in &block.stmts {
+        visit_stmt(
+            &stmt.node,
+            &mut |expr| match reached(parsed, expr, own, library) {
+                Some(Reached::Own(name)) => {
+                    reach.calls.insert(name);
+                }
+                Some(Reached::Library { sync: false, .. }) | Some(Reached::Opaque) => {
+                    reach.blocked = true
+                }
+                Some(Reached::Library { sync: true, .. }) | None => {}
+            },
+        );
+        // The same walk the check uses: a nested block, and the body of a
+        // trailing lambda, are part of the function that writes them.
+        visit_stmt_blocks(&stmt.node, &mut |inner| {
+            collect_reach(parsed, inner, own, library, reach)
+        });
+    }
 }
 
 fn walk_fn(
@@ -130,31 +293,59 @@ fn walk_block(
     }
 }
 
-/// The name a call resolves to, when a ledger has something to say about it.
+/// What one expression tells either analysis, where it is a call at all.
 ///
-/// `None` covers three different things and the difference does not matter
-/// here: it is not a call, it is a call this compiler cannot resolve, or it
-/// resolves to something a ledger says is `sync`.
-fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Option<(String, bool)> {
-    let Expr::Call { func, .. } = expr else {
-        return None;
-    };
+/// One resolution rule, written once. The check and the inference disagree
+/// about what to *do* with `Opaque` - the first shrugs, the second refuses -
+/// and that disagreement is the design. Having them disagree about what a call
+/// even resolves to would just be a bug waiting to happen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Reached {
+    /// A function this unit declares, by the name the ledger records it under.
+    Own(String),
+    /// A function in a library, and what that library's ledger says about it.
+    Library { key: String, sync: bool },
+    /// A call whose target this compiler cannot name: a method, whose receiver
+    /// type Stage 0 does not have, or a name no ledger knows.
+    ///
+    /// Also everything that is not a plain call but still *runs* something -
+    /// `spawn`, a `dsl` - because a body containing one is not the pure CPU
+    /// task Part II 12.1 describes, whatever the thing it runs turns out to do.
+    Opaque,
+}
 
-    let name = match &**func {
-        Expr::Variable(name) => parsed.text(*name).to_string(),
-        Expr::Path(segments) => segments
-            .iter()
-            .map(|s| parsed.text(*s))
-            .collect::<Vec<_>>()
-            .join("::"),
+/// What a call resolves to, by the same rule for both analyses.
+///
+/// `None` means the expression is not a call at all, which is the one case
+/// neither analysis has anything to say about.
+fn reached(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Option<Reached> {
+    let name = match expr {
+        Expr::Call { func, .. } => match &**func {
+            Expr::Variable(name) => parsed.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| parsed.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            // A call through anything else is a target we cannot name.
+            _ => return Some(Reached::Opaque),
+        },
         // A method call needs the receiver's type, which Stage 0 does not have.
+        // It becomes resolvable the day a signature is written for the receiver,
+        // without either analysis changing (ADR-024).
+        Expr::MethodCall { .. } => return Some(Reached::Opaque),
+        // Starts a task, or runs a grammar whose actions are arbitrary Nikaia.
+        // Neither is pure computation this compiler can see the end of.
+        Expr::Spawn { .. } | Expr::Dsl { .. } | Expr::DslFrom { .. } => {
+            return Some(Reached::Opaque)
+        }
         _ => return None,
     };
 
     // This unit first: a program's own functions are what it mostly calls, and
     // a local name shadows nothing in a library.
-    if let Some(contract) = own.functions.get(&name) {
-        return (!contract.sync).then_some((name, false));
+    if own.functions.contains_key(&name) {
+        return Some(Reached::Own(name));
     }
 
     // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
@@ -162,17 +353,37 @@ fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Optio
     // constructor is a function like any other and makes the same promise or
     // does not.
     let constructed = format!("{name}::new");
-    if let Some(contract) = own.functions.get(&constructed) {
-        return (!contract.sync).then_some((constructed, false));
+    if own.functions.contains_key(&constructed) {
+        return Some(Reached::Own(constructed));
     }
 
     // Then the library, by the name the caller wrote or the one the prelude
     // makes available unqualified.
     if let Some((key, contract)) = library.lookup(&name) {
-        return (!contract.sync).then_some((key, true));
+        return Some(Reached::Library {
+            key,
+            sync: contract.sync.is_sync(),
+        });
     }
 
-    None
+    Some(Reached::Opaque)
+}
+
+/// The name a call resolves to, when a ledger says it can pause.
+///
+/// `None` covers three different things and the difference does not matter to
+/// the *check*: it is not a call, it is a call this compiler cannot resolve, or
+/// it resolves to something a ledger says is `sync`. The permissive direction,
+/// stated as code.
+fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Option<(String, bool)> {
+    match reached(parsed, expr, own, library)? {
+        Reached::Own(name) => {
+            let contract = own.functions.get(&name)?;
+            (!contract.sync.is_sync()).then_some((name, false))
+        }
+        Reached::Library { key, sync } => (!sync).then_some((key, true)),
+        Reached::Opaque => None,
+    }
 }
 
 /// Every call by name in a block and the blocks inside it.

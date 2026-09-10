@@ -361,6 +361,42 @@ fn calculate_physics(obj: Object) sync {
 particles.par_iter().for_each fn { calculate_physics(a) }
 ```
 
+**You do not have to write the word for the rule to be satisfied.** A function
+that calls nothing which can pause *is* a pure CPU task, and the compiler works
+that out from the body rather than waiting to be told ([ADR-027](adr/adr-027.md)).
+So the helper below needs no annotation to be callable from a `sync` one, from
+`access` (12.2), or from a `par_iter` body:
+
+```nika
+fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `sync`, and cannot pause
+
+fn total(p: &Player) -> i32 sync {
+    return p.score + bonus(p.score)             // fine: `bonus` provably cannot pause
+}
+```
+
+This matters more than it looks. Every construct in this chapter that makes
+concurrency safe does it by demanding a `sync` lambda — `access`, `access_all`,
+`par_iter`, a scope's tasks under Advanced, the panic hook. If `sync` were
+something you had to *enter*, the set of things those lambdas could call would
+be "whatever somebody remembered to annotate", and the safe path would be the
+narrow one. It is the other way round: the safe path is open by default, and it
+closes only where something really can pause.
+
+**So what is the keyword for?** The same thing `@borrowed` is for in Part I,
+6.6: saying a property out loud so that losing it becomes an error rather than a
+silent change. Write `sync` where the promise matters to you — the inner loop
+that must not acquire an I/O dependency, the API you publish as pure — and the
+compiler holds the body to it (`NK2202`). Write nothing, and a body that
+qualifies still gets the benefit; a body that stops qualifying just stops, at
+the call that now needs it.
+
+Where the compiler **cannot tell**, it does not guess in your favour: a call it
+cannot resolve costs the function its inferred promise, because that promise is
+written into the ledger and shipped, and a wrong one puts a pausing body inside
+somebody's lock. Writing `sync` yourself is how you overrule that — an
+assertion, checked as far as the compiler can see, and yours where it cannot.
+
 ### 12.2. The Dual Nature of `Locked[T]`
 To share mutable data, you use the `Locked[T]` type. Its implementation changes entirely based on the profile, providing "Zero Cost Abstraction" relative to the requirements.
 

@@ -8,13 +8,19 @@
 // written, committed like a lockfile, and **shipped with a published package**
 // so that a consumer builds against contracts instead of guesses.
 //
-// This is that file, for what Stage 0 knows. `sync` and `throws` are *declared*
-// in the source and are recorded exactly; the borrow contract is *inferred*,
-// and Stage 0's inference is the signature rather than the whole-program
-// analysis ADR-005 D3 describes - which is why the header names the inference
-// that produced the ledger. A later compiler that infers more will write a
-// different name there, and `--locked` will say so rather than quietly
-// accepting the weaker answer.
+// This is that file, for what Stage 0 knows, and the three answers come from
+// three different places.
+//
+// `throws` is *declared* in the source and recorded exactly. The borrow
+// contract is *inferred from the signature* - the widest one a signature can
+// support - rather than by the whole-program analysis ADR-005 D3 describes.
+// `sync` is *inferred from the body* (ADR-027): a function that provably cannot
+// pause gets the promise whether or not anyone wrote the word, and where the
+// word is written it stays an assertion for `NK2202` to check.
+//
+// That is why the header names the inference that produced the ledger. A later
+// compiler that infers more will write a different name there, and `--locked`
+// will say so rather than quietly accepting the weaker answer.
 
 pub mod sync;
 pub mod trust;
@@ -38,10 +44,13 @@ pub const STD: &str = include_str!("../../../nikaia-std/std.contracts");
 
 /// The inference this ledger was produced by.
 ///
-/// Recorded in the header so that a ledger can say what it knows. Stage 0 reads
-/// signatures; the whole-program analysis of ADR-005 D3 will read bodies, and
-/// its ledgers must not be mistaken for these.
-pub const INFERENCE: &str = "stage0-signatures";
+/// Recorded in the header so that a ledger can say what it knows, and a ledger
+/// produced by reading signatures must not be mistaken for one produced by
+/// reading bodies. Stage 0 reads signatures for the borrow contract and for
+/// `throws`; since ADR-027 it reads **bodies** for `sync`, and the name says
+/// which half is which. The whole-program analysis of ADR-005 D3 will read
+/// bodies for the borrow contract too and will write a different name again.
+pub const INFERENCE: &str = "stage0-signatures+sync-bodies";
 
 /// The format version of the file itself.
 pub const VERSION: u32 = 1;
@@ -78,6 +87,49 @@ impl Provenance {
     }
 }
 
+/// What the ledger knows about a function's suspension behaviour (Part II, 12.1).
+///
+/// **Three states, and the third one is why this is not a `bool`.** A function
+/// may be `sync` because someone wrote the word, or because nothing it calls
+/// can pause. Both are true, and a caller uses them the same way - but a
+/// **diff** must not treat them alike. Losing an asserted `sync` is a promise
+/// being withdrawn and someone has to have meant it; losing an inferred one is
+/// a consequence of an edit somewhere else, and the compiler should say which
+/// happened rather than print the same line for both (ADR-027 D3).
+///
+/// The two also fail differently. An assertion is *checked* - `NK2202` reports
+/// the calls that contradict it - and the check is conservative in the
+/// permissive direction: it rejects only what it can prove wrong. The inference
+/// runs the other way and claims `sync` only where it can prove it right. That
+/// is deliberate and it is the whole safety argument: a wrong `sync` in a
+/// shipped ledger lets a caller put a pausing body inside `access`, and the
+/// ledger has said before what to do about an analysis that cannot decide -
+/// "an analysis that fails open is a vulnerability generator" (`Provenance`,
+/// above). So it fails closed, and the gap between the two polarities is
+/// exactly where a person writes `sync` by hand and gets it checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Sync {
+    /// Not `sync`: something it calls can pause, or something it calls cannot
+    /// be resolved and therefore cannot be vouched for.
+    #[default]
+    No,
+    /// Nothing it calls can pause, and every call it makes was resolvable.
+    /// Derived from the body, so an edit elsewhere can take it away.
+    Inferred,
+    /// Written in the source. `NK2202` is what happens when the body
+    /// contradicts it.
+    Asserted,
+}
+
+impl Sync {
+    /// Whether a caller may treat it as `sync` - which is the question every
+    /// caller actually has, and the one place the two positive states are
+    /// deliberately the same.
+    pub fn is_sync(self) -> bool {
+        !matches!(self, Sync::No)
+    }
+}
+
 /// What a caller needs to know about one function.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FnContract {
@@ -89,7 +141,9 @@ pub struct FnContract {
     /// **Absent means not `sync`.** That is the whole of what makes this file
     /// worth shipping: a caller that finds no `sync` here knows the callee may
     /// pause, where a caller that finds no *entry* knows nothing at all.
-    pub sync: bool,
+    ///
+    /// Present, it says which of the two kinds it is - see [`Sync`].
+    pub sync: Sync,
     /// Kap 7.1: it may fail, so its result is a `Result`.
     pub throws: bool,
     /// This function is a **source**: its result is bytes that entered the
@@ -287,6 +341,18 @@ pub struct Ledger {
 
 impl Ledger {
     /// The contracts of a parsed program.
+    ///
+    /// Two passes, because the second needs the first to have finished. The
+    /// item loop records what each declaration *says*; then [`sync::infer`]
+    /// reads the bodies and gives `sync` to what earns it, which it can only do
+    /// once every function in the unit has an entry to be looked up in.
+    ///
+    /// The library it resolves calls against is `std`'s shipped ledger, and it
+    /// is not a parameter on purpose. 13.5 makes this file a pure function of
+    /// (source, toolchain); a ledger inferred against a *different* library
+    /// would be a different file for the same source, and `--locked` compares
+    /// bytes. The compiler and `std` ship together, so there is exactly one
+    /// answer here and no way to pass the wrong one.
     pub fn infer(parsed: &Parsed) -> Self {
         let mut ledger = Ledger {
             version: VERSION,
@@ -364,6 +430,7 @@ impl Ledger {
             }
         }
 
+        sync::infer(&mut ledger, parsed, std_ledger());
         ledger
     }
 
@@ -438,7 +505,11 @@ impl Ledger {
             key,
             FnContract {
                 public: *is_public,
-                sync: *is_sync,
+                // What the *declaration* says. `sync::infer` reads the body
+                // afterwards and may raise a `No` to `Inferred`; it never
+                // touches this one, because an assertion is what `NK2202`
+                // exists to contradict.
+                sync: if *is_sync { Sync::Asserted } else { Sync::No },
                 throws: *throws,
                 signature: Some(Signature {
                     params,
@@ -505,8 +576,13 @@ impl Ledger {
             if contract.public {
                 out.push_str("pub = true\n");
             }
-            if contract.sync {
-                out.push_str("sync = true\n");
+            // `true` is the promise the source made, `"inferred"` the one the
+            // body implies. Absent is still "not `sync`", so a reader that only
+            // asks `is_sync` reads this file exactly as it did before.
+            match contract.sync {
+                Sync::Asserted => out.push_str("sync = true\n"),
+                Sync::Inferred => out.push_str("sync = \"inferred\"\n"),
+                Sync::No => {}
             }
             if contract.throws {
                 out.push_str("throws = true\n");
@@ -612,7 +688,7 @@ impl Ledger {
                     let entry = ledger.functions.entry(name.clone()).or_default();
                     match key {
                         "pub" => entry.public = value == "true",
-                        "sync" => entry.sync = value == "true",
+                        "sync" => entry.sync = sync_of(value, at())?,
                         "throws" => entry.throws = value == "true",
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
                         "provenance" => {
@@ -660,6 +736,17 @@ impl Ledger {
 
         Ok(ledger)
     }
+}
+
+/// `std`'s ledger, parsed once.
+///
+/// Embedded at build time and parsed on first use rather than on every
+/// inference. It failing to parse is a broken compiler, not a broken program:
+/// `crates/nikaia/tests/contracts.rs` reads the same bytes and would have said
+/// so long before a user got here.
+fn std_ledger() -> &'static Ledger {
+    static PARSED: std::sync::OnceLock<Ledger> = std::sync::OnceLock::new();
+    PARSED.get_or_init(|| Ledger::parse(STD).expect("std ships a ledger this compiler can read"))
 }
 
 /// The receiver's type, as a caller sees it: the type the `impl` is for, with
@@ -782,6 +869,24 @@ fn borrows_of(value: &str, at: usize) -> Result<Vec<String>> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+/// `sync = true` is a promise the source made, `sync = "inferred"` one the body
+/// implies.
+///
+/// `false` is accepted and means the same as leaving the key out - a ledger is
+/// generated and never writes it, but a file that says it should not be
+/// rejected for saying something true.
+fn sync_of(value: &str, at: usize) -> Result<Sync> {
+    match value {
+        "true" => Ok(Sync::Asserted),
+        "false" => Ok(Sync::No),
+        "\"inferred\"" => Ok(Sync::Inferred),
+        other => Err(anyhow!(
+            "line {at}: `sync` is `true` (the source says so) or `\"inferred\"` \
+             (the body implies it), not `{other}`"
+        )),
+    }
 }
 
 fn provenance_of(value: &str, at: usize) -> Result<Provenance> {
