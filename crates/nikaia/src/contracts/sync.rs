@@ -38,6 +38,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{Block, Expr, Item, Span, Stmt};
 use crate::parser::Parsed;
 
+use crate::check::MethodCalls;
+
 use super::{Ledger, Sync};
 
 /// One call that a `sync` function may not make.
@@ -108,22 +110,39 @@ struct Reach {
 /// the answer does not depend on the order the source declared things in -
 /// which it must not, because 13.5 makes this file a pure function of (source,
 /// toolchain) and `--locked` compares it byte for byte.
-pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
+///
+/// `resolved` is the type checker's answer to the one question this walk cannot
+/// ask: what a method call goes to (ADR-028). Handing it in rather than
+/// computing it here keeps one type checker in the compiler; the alternative
+/// was a second, worse one living in this file.
+pub fn infer(
+    ledger: &mut Ledger,
+    parsed: &Parsed,
+    library: &Ledger,
+    resolved: &BTreeMap<String, MethodCalls>,
+) {
     let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
 
     for item in &parsed.program.items {
         match &item.node {
             Item::Fn { .. } => {
-                if let Some((name, reach)) = reach_of(parsed, &item.node, None, ledger, library) {
+                if let Some((name, reach)) =
+                    reach_of(parsed, &item.node, None, ledger, library, resolved)
+                {
                     graph.insert(name, reach);
                 }
             }
             Item::Impl { target, methods } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
-                    if let Some((name, reach)) =
-                        reach_of(parsed, &method.node, Some(&target), ledger, library)
-                    {
+                    if let Some((name, reach)) = reach_of(
+                        parsed,
+                        &method.node,
+                        Some(&target),
+                        ledger,
+                        library,
+                        resolved,
+                    ) {
                         graph.insert(name, reach);
                     }
                 }
@@ -185,6 +204,7 @@ fn reach_of(
     target: Option<&str>,
     own: &Ledger,
     library: &Ledger,
+    resolved: &BTreeMap<String, MethodCalls>,
 ) -> Option<(String, Reach)> {
     let Item::Fn { name, body, .. } = item else {
         return None;
@@ -200,6 +220,31 @@ fn reach_of(
 
     let mut reach = Reach::default();
     collect_reach(parsed, body, own, library, &mut reach);
+
+    // What the walk above left to somebody else: every method call this
+    // function makes, as the type checker resolved it (ADR-028). The two are
+    // merged rather than reconciled - the walk skips method calls entirely and
+    // this covers exactly those - so nothing is counted twice and nothing is
+    // dropped.
+    if let Some(methods) = resolved.get(&key) {
+        // One method whose receiver is not known is enough. It is the absence
+        // of an answer, and D2's polarity says what to do with one.
+        reach.blocked |= methods.unresolved;
+        for callee in &methods.resolved {
+            if own.functions.contains_key(callee) {
+                reach.calls.insert(callee.clone());
+            } else if !library
+                .functions
+                .get(callee)
+                .is_some_and(|contract| contract.sync.is_sync())
+            {
+                // A library method that can pause, or one that resolved to a
+                // name this ledger does not carry after all.
+                reach.blocked = true;
+            }
+        }
+    }
+
     Some((key, reach))
 }
 
@@ -220,6 +265,9 @@ fn collect_reach(
                 Some(Reached::Library { sync: false, .. }) | Some(Reached::Opaque) => {
                     reach.blocked = true
                 }
+                // Answered per function by the type checker, and merged in by
+                // `reach_of` once this walk is done.
+                Some(Reached::Method) => {}
                 Some(Reached::Library { sync: true, .. }) | None => {}
             },
         );
@@ -305,8 +353,17 @@ enum Reached {
     Own(String),
     /// A function in a library, and what that library's ledger says about it.
     Library { key: String, sync: bool },
-    /// A call whose target this compiler cannot name: a method, whose receiver
-    /// type Stage 0 does not have, or a name no ledger knows.
+    /// A method call. Neither analysis here can resolve one: `stats.add(5)`
+    /// names `add` and says nothing about what `stats` is.
+    ///
+    /// The **type checker** can, and does (ADR-028). So this is not "unknown"
+    /// but "asked elsewhere", and the two callers of `reached` take it
+    /// differently: the inference merges in the checker's answer per function,
+    /// and the check looks the resolved name up the same way it looks up any
+    /// other. Collapsing this into `Opaque` was what threw the answer away.
+    Method,
+    /// A call whose target this compiler cannot name and nobody else can
+    /// either: a name no ledger knows.
     ///
     /// Also everything that is not a plain call but still *runs* something -
     /// `spawn`, a `dsl` - because a body containing one is not the pure CPU
@@ -330,10 +387,8 @@ fn reached(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Opti
             // A call through anything else is a target we cannot name.
             _ => return Some(Reached::Opaque),
         },
-        // A method call needs the receiver's type, which Stage 0 does not have.
-        // It becomes resolvable the day a signature is written for the receiver,
-        // without either analysis changing (ADR-024).
-        Expr::MethodCall { .. } => return Some(Reached::Opaque),
+        // Answered by the type checker rather than here (ADR-028).
+        Expr::MethodCall { .. } => return Some(Reached::Method),
         // Starts a task, or runs a grammar whose actions are arbitrary Nikaia.
         // Neither is pure computation this compiler can see the end of.
         Expr::Spawn { .. } | Expr::Dsl { .. } | Expr::DslFrom { .. } => {
@@ -382,7 +437,15 @@ fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Optio
             (!contract.sync.is_sync()).then_some((name, false))
         }
         Reached::Library { key, sync } => (!sync).then_some((key, true)),
-        Reached::Opaque => None,
+        // The check deliberately does not use ADR-028's resolution, and the
+        // reason is the diagnostic rather than the analysis. `NK2202` names one
+        // call and puts a caret under it; the checker answers per *function*,
+        // because `Symbol` carries no position and there is nothing to key a
+        // call site by. "Something in here pauses" is not a message Part III
+        // C.2 allows. So the check stays permissive here until expression-level
+        // spans exist, and the inference - which needs no caret - does not wait
+        // for them.
+        Reached::Method | Reached::Opaque => None,
     }
 }
 

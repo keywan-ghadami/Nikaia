@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use nikaia::contracts::{Ledger, Sync};
+use nikaia::contracts::{Ledger, Sync, STD};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -58,20 +58,115 @@ fn what_cannot_be_resolved_is_not_inferred_sync() {
     let l = ledger(
         "use std::io\n\
          fn pure(a: i32) -> i32 { return a + 1 }\n\
-         fn method(s: String) -> usize { return s.len() }\n\
          fn reads() -> String throws { return io::read_to_string()? }\n\
          fn calls_pure(a: i32) -> i32 { return pure(a) }\n\
          fn calls_reader() -> String throws { return reads()? }",
     );
 
     assert_eq!(l.functions["pure"].sync, Sync::Inferred);
-    // A method call needs the receiver's type, which Stage 0 does not have.
-    assert_eq!(l.functions["method"].sync, Sync::No);
     // `std`'s ledger says `io::read_to_string` can pause.
     assert_eq!(l.functions["reads"].sync, Sync::No);
     // Transitive, in both directions.
     assert_eq!(l.functions["calls_pure"].sync, Sync::Inferred);
     assert_eq!(l.functions["calls_reader"].sync, Sync::No);
+}
+
+/// A method call is resolved by the **type checker**, and the inference uses
+/// its answer (ADR-028).
+///
+/// Before this, every method call was an unknown and cost the function its
+/// claim - which is what made the restrictive polarity above so expensive, and
+/// why `Summary::record` in `1brc.nika` could not earn a `sync` it deserved.
+/// The receiver's type is what was missing, and the checker had it all along.
+#[test]
+fn a_method_call_is_resolved_through_the_receiver() {
+    let l = ledger(
+        "fn counted(s: String) -> usize { return s.len() }\n\
+         fn shouty(s: String) -> String { return s.to_uppercase() }",
+    );
+
+    // `String::len` is in `std`'s ledger and says `sync`.
+    assert_eq!(l.functions["counted"].sync, Sync::Inferred);
+    // `String::to_uppercase` is not, and an absent entry is the absence of an
+    // answer rather than permission to assume one.
+    assert_eq!(l.functions["shouty"].sync, Sync::No);
+}
+
+/// A method that runs a lambda carries no `sync`, so a caller of one does not
+/// get the promise either.
+///
+/// `Entry::and_modify` does whatever its lambda does. Until a ledger can say
+/// `sync = "from(f)"` (ADR-027 §7), the honest entry is one with no `sync` on
+/// it, and this is what that costs: the type resolves, and the claim still does
+/// not follow.
+#[test]
+fn a_higher_order_method_does_not_hand_on_a_promise() {
+    let l = ledger(
+        "use std::collections::HashMap\n\
+         fn bump(m: HashMap[&str, i64]) { m.entry(\"x\").or_insert(0) }\n\
+         fn tweak(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }",
+    );
+
+    // `entry` and `or_insert` are both plain computation.
+    assert_eq!(l.functions["bump"].sync, Sync::Inferred);
+    // `and_modify` runs what it is given, and says so by saying nothing.
+    assert_eq!(l.functions["tweak"].sync, Sync::No);
+}
+
+/// The type checker does not depend on the `sync` it helps infer.
+///
+/// This is the invariant the whole of ADR-028 rests on. `Ledger::infer` reads
+/// the declarations, runs the checker against *that* ledger to resolve method
+/// calls, and then infers `sync` using the answers. That is sound only because
+/// the checker reads `signature`, `fields` and `iterates` and never `sync` - so
+/// resolving a method against the half-finished ledger gives what resolving it
+/// against the finished one would.
+///
+/// Were it ever to read `sync`, this ordering would become a guess about a
+/// fixpoint and the ledger would stop being a pure function of its source.
+/// Checking it by hand means reading the module; this checks it by running.
+#[test]
+fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
+    let source = "use std::io\n\
+                  fn pure(a: i32) -> i32 { return a + 1 }\n\
+                  fn counted(s: String) -> usize { return s.len() }\n\
+                  fn reads() -> String throws { return io::read_to_string()? }\n\
+                  pub struct S { n: i64 }\n\
+                  impl S {\n\
+                      pub fn(n: i64) -> S { return S(n: n) }\n\
+                      fn use_it(&self) -> i64 sync { return self.n }\n\
+                  }";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let library = Ledger::parse(STD).expect("std's ledger parses");
+
+    let (finished, from_declarations) = Ledger::infer_checked(&parsed);
+
+    // The ledger really did gain something in the second pass - otherwise this
+    // test would pass by proving nothing.
+    assert!(
+        finished
+            .functions
+            .values()
+            .any(|c| c.sync == Sync::Inferred),
+        "nothing was inferred, so there is no difference to be insensitive to"
+    );
+
+    // Run the checker again, this time against the *finished* ledger.
+    let from_finished = nikaia::check::check(&parsed, &finished, &library);
+
+    assert_eq!(
+        from_declarations.methods, from_finished.methods,
+        "method resolution changed once `sync` was filled in"
+    );
+    assert_eq!(
+        from_declarations.fallible_loops, from_finished.fallible_loops,
+        "which loops can fail changed once `sync` was filled in"
+    );
+    assert_eq!(
+        from_declarations.findings.len(),
+        from_finished.findings.len(),
+        "the findings changed once `sync` was filled in"
+    );
 }
 
 /// A pure helper nobody annotated is callable from a `sync` function.
@@ -294,7 +389,7 @@ fn every_std_module_is_in_the_shipped_ledger() {
 
 // --- Part II 12.1, checked ---------------------------------------------------
 
-use nikaia::contracts::{sync, STD};
+use nikaia::contracts::sync;
 
 fn violations(source: &str) -> Vec<sync::Violation> {
     let parsed = parse_to_ast(source).expect("the source parses");

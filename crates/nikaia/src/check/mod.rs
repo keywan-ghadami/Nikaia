@@ -46,6 +46,22 @@ pub struct Finding {
     pub help: Option<String>,
 }
 
+/// Where one function's method calls went (ADR-028).
+///
+/// A method call is the one shape neither `sync.rs` analysis can resolve on its
+/// own: `stats.add(5)` names `add` and says nothing about what `stats` is, and
+/// only a type checker knows. This is that answer, handed over.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MethodCalls {
+    /// The ledger keys its method calls resolved to.
+    pub resolved: BTreeSet<String>,
+    /// It calls a method whose receiver type is not known, or one no ledger
+    /// has an entry for. **Not the same as calling nothing** - it is the
+    /// absence of an answer, and an analysis that claims a property must treat
+    /// it as such (ADR-027 D2).
+    pub unresolved: bool,
+}
+
 /// What one pass of the checker learned.
 #[derive(Debug, Clone, Default)]
 pub struct Checked {
@@ -60,6 +76,19 @@ pub struct Checked {
     /// followed by `for line in stream` has to be the same as the one-line
     /// form, which matching on a name would not give (ADR-025 D7).
     pub fallible_loops: BTreeSet<usize>,
+    /// Per function - by the name the ledger records it under - where its
+    /// method calls went (ADR-028).
+    ///
+    /// The second thing the checker answers for somebody else, after
+    /// `fallible_loops`, and for the same reason: the question is about types,
+    /// and this is the module that has them.
+    ///
+    /// **A `spawn` body's method calls land on the function around it**, where
+    /// `sync.rs` would not walk into one at all. That is harmless rather than
+    /// agreed: a function containing a `spawn` has already lost its claim to be
+    /// `sync` on the strength of the `spawn`, so nothing is decided by what the
+    /// task's body calls.
+    pub methods: BTreeMap<String, MethodCalls>,
 }
 
 /// Every type mistake the ledgers are enough to see, and every loop that can
@@ -74,6 +103,7 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
         scope: Vec::new(),
         expected: None,
         throwing: false,
+        current: None,
         checked: Checked::default(),
     };
     checker.collect_types();
@@ -112,6 +142,12 @@ struct Checker<'a> {
     /// Whether it declared `throws` - which is what says a failure may leave
     /// it, whether the failing call was written or implicit (ADR-025 D1).
     throwing: bool,
+    /// The function being walked, by the name the ledger records it under.
+    ///
+    /// `None` inside a grammar action, a `test` or a `bench` - code that
+    /// belongs to no function a caller can name, and whose method calls
+    /// therefore have nowhere to be recorded.
+    current: Option<String>,
     checked: Checked,
 }
 
@@ -239,6 +275,7 @@ impl<'a> Checker<'a> {
 
     fn function(&mut self, item: &Item, target: Option<&str>) {
         let Item::Fn {
+            name,
             generics,
             receiver,
             args,
@@ -250,6 +287,20 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
+
+        // The same key the ledger uses, arrived at the same way - the anonymous
+        // constructor of Kap 4.2 included, which a caller reaches as
+        // `Type::new`. Two spellings of one name would silently drop every
+        // method call in a constructor.
+        let own_name = match name {
+            Some(name) => self.parsed.text(*name).to_string(),
+            None => "new".to_string(),
+        };
+        let key = match target {
+            Some(target) => format!("{target}::{own_name}"),
+            None => own_name,
+        };
+        let outer_current = self.current.replace(key);
 
         let mut parameters: BTreeSet<String> = generics
             .iter()
@@ -296,6 +347,7 @@ impl<'a> Checker<'a> {
 
         self.expected = outer;
         self.throwing = outer_throwing;
+        self.current = outer_current;
     }
 
     // --- statements ---------------------------------------------------------
@@ -485,12 +537,20 @@ impl<'a> Checker<'a> {
                 let on = self.expr(receiver, span);
                 let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
                 let Ty::Named { name, .. } = &on else {
+                    // The receiver's type is not known, so neither is what this
+                    // calls. Recorded, because "I could not find out" is an
+                    // answer somebody downstream has to act on.
+                    self.reached_method(None);
                     return Ty::Unknown;
                 };
                 let key = format!("{name}::{}", self.parsed.text(*method));
                 let Some((key, contract)) = self.method(&key) else {
+                    // The type is known and no ledger describes this method of
+                    // it - `HashMap::entry` until something writes it down.
+                    self.reached_method(None);
                     return Ty::Unknown;
                 };
+                self.reached_method(Some(&key));
                 self.arguments(&key, contract, &found, &[], span)
             }
 
@@ -625,10 +685,32 @@ impl<'a> Checker<'a> {
                 self.expr(fallback, span);
                 Ty::Unknown
             }
+            // Indexing a container yields what the container holds - but only
+            // where the container's type says so.
+            //
+            // This claimed nothing at all until ADR-028, and the cost was not
+            // the missing type but everything downstream of it: in
+            // `n-body.nika`, `let b = &self.bodies[i]` made `b` unknown, so
+            // `b.x` was unknown, so `dx * dx + dy * dy` was unknown, so
+            // `.sqrt()` could not be resolved and `energy` could not be shown
+            // to be pure computation. One `Unknown` at the bottom of an
+            // expression erases everything built on it.
+            //
+            // A shape it does not recognise still claims nothing: `s[i]` over
+            // text is a slice in some languages and a byte in others, and
+            // Nikaia has not said. `?` is the absence of a claim (ADR-024 D1).
             Expr::Index { base, index } => {
-                self.expr(base, span);
+                let on = self.expr(base, span);
                 self.expr(index, span);
-                Ty::Unknown
+                let Ty::Named { name, args, .. } = &on else {
+                    return Ty::Unknown;
+                };
+                match (name.as_str(), args.as_slice()) {
+                    ("Vec" | "List", [item]) => item.clone(),
+                    // A map is indexed by its key and yields its value.
+                    ("HashMap" | "Map", [_, value]) => value.clone(),
+                    _ => Ty::Unknown,
+                }
             }
             Expr::Range { start, end, .. } => {
                 self.expr(start, span);
@@ -954,6 +1036,24 @@ impl<'a> Checker<'a> {
     /// under. A library writes the module in front of it (`fs::Mapped::deref`)
     /// and the receiver's type does not carry one, so the suffix is what
     /// matches - name-for-name resolution, as everywhere else.
+    /// Note where a method call in the function being walked went (ADR-028).
+    ///
+    /// `None` is "I could not find out", and it is recorded rather than
+    /// dropped: an analysis that claims a property has to be able to tell that
+    /// apart from a body that called nothing.
+    fn reached_method(&mut self, key: Option<&str>) {
+        let Some(current) = &self.current else {
+            return;
+        };
+        let entry = self.checked.methods.entry(current.clone()).or_default();
+        match key {
+            Some(key) => {
+                entry.resolved.insert(key.to_string());
+            }
+            None => entry.unresolved = true,
+        }
+    }
+
     fn method(&self, key: &str) -> Option<(String, &'a FnContract)> {
         if let Some(contract) = self.own.functions.get(key) {
             return Some((key.to_string(), contract));

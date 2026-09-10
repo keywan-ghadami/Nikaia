@@ -354,6 +354,31 @@ impl Ledger {
     /// bytes. The compiler and `std` ship together, so there is exactly one
     /// answer here and no way to pass the wrong one.
     pub fn infer(parsed: &Parsed) -> Self {
+        Self::infer_checked(parsed).0
+    }
+
+    /// The contracts, and the type checker's pass that helped produce them.
+    ///
+    /// Three steps, and the order is forced:
+    ///
+    /// 1. read the declarations, so every function has an entry to be looked
+    ///    up in;
+    /// 2. run the **type checker** against that, which resolves each method
+    ///    call to the function it goes to (ADR-028);
+    /// 3. infer `sync` from the bodies, using both.
+    ///
+    /// **Step 2 does not depend on step 3, and that is what makes this sound
+    /// rather than circular.** The checker reads `signature`, `fields` and
+    /// `iterates` from a ledger and never `sync`, so resolving a method against
+    /// the step-1 ledger gives the same answer as resolving it against the
+    /// finished one. `the_checker_does_not_depend_on_the_sync_it_helps_infer`
+    /// in `tests/contracts.rs` is that invariant, held to.
+    ///
+    /// The pass is handed back rather than thrown away because the compiler
+    /// wants it too - it carries the findings and the fallible loops - and
+    /// running the checker twice per build to get one of them would be waste,
+    /// not caution.
+    pub fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked) {
         let mut ledger = Ledger {
             version: VERSION,
             toolchain: toolchain(),
@@ -430,8 +455,9 @@ impl Ledger {
             }
         }
 
-        sync::infer(&mut ledger, parsed, std_ledger());
-        ledger
+        let checked = crate::check::check(parsed, &ledger, std_ledger());
+        sync::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
+        (ledger, checked)
     }
 
     /// One function's entry, named as a caller would reach it.

@@ -107,6 +107,157 @@ signature = "() -> String"
 pub = true
 signature = "(?, f: ?) -> ?"
 
+# --- Written by hand: the collections and text the language below provides ---
+#
+# `Vec`, `HashMap`, `str` and `String` are Rust's, reached through Nikaia's
+# spellings, and a compiler that does not read Rust cannot infer them. They are
+# here because ADR-028 gave them a second job: the type checker resolves
+# `xs.push(x)` only if it knows what `xs` is, and the `sync` inference (ADR-027)
+# can only vouch for a method call the checker resolved. Every one of these was
+# **observed being asked for** by a program in this repository; none is here
+# speculatively, because a wrong entry does not merely fail to help - it makes
+# the checker reject a correct program.
+#
+# Types are `?` wherever the honest answer is "no one type" (ADR-024 D1). What
+# an entry does claim is its **arity**, which is checked - so the risk of being
+# wrong here is real and the corpus is what holds it down.
+#
+# **A higher-order method carries no `sync`, deliberately.** Whether
+# `and_modify` pauses depends on the lambda it is given, and a ledger cannot say
+# "it depends" yet: `sync = "from(f)"` is the shape that would, and it is not
+# decided (ADR-027 §7). Claiming `sync = true` here would be a promise about
+# somebody else's code. So these resolve for the type checker and still cost a
+# caller its inferred `sync`, which is the correct answer until the shape exists.
+
+[fn."f64::abs"]
+pub = true
+sync = true
+signature = "(f64) -> f64"
+
+[fn."f64::sqrt"]
+pub = true
+sync = true
+signature = "(f64) -> f64"
+
+[fn."HashMap::entry"]
+pub = true
+sync = true
+signature = "(&HashMap[?, ?], key: ?) -> Entry"
+
+[fn."HashMap::get"]
+pub = true
+sync = true
+signature = "(&HashMap[?, ?], key: ?) -> ?"
+
+[fn."HashMap::keys"]
+pub = true
+sync = true
+signature = "(&HashMap[?, ?]) -> ?"
+
+[fn."HashMap::len"]
+pub = true
+sync = true
+signature = "(&HashMap[?, ?]) -> usize"
+
+[fn."HashMap::new"]
+pub = true
+sync = true
+signature = "() -> HashMap[?, ?]"
+
+[fn."HashMap::values"]
+pub = true
+sync = true
+signature = "(&HashMap[?, ?]) -> ?"
+
+# Runs the lambda it is given, so what it does is what the lambda does. No
+# `sync` here until a ledger can say `from(f)`.
+[fn."Entry::and_modify"]
+pub = true
+signature = "(Entry, f: ?) -> Entry"
+
+[fn."Entry::or_insert"]
+pub = true
+sync = true
+signature = "(Entry, value: ?) -> ?"
+
+# Also runs its lambda. Same reason, same omission.
+[fn."Entry::or_insert_with"]
+pub = true
+signature = "(Entry, f: ?) -> ?"
+
+[fn."String::chars"]
+pub = true
+sync = true
+returns = "borrows(self)"
+signature = "(&String) -> ?"
+
+[fn."String::len"]
+pub = true
+sync = true
+signature = "(&String) -> usize"
+
+[fn."String::push_str"]
+pub = true
+sync = true
+signature = "(&String, text: ?)"
+
+[fn."Vec::is_empty"]
+pub = true
+sync = true
+signature = "(&Vec[?]) -> bool"
+
+[fn."Vec::len"]
+pub = true
+sync = true
+signature = "(&Vec[?]) -> usize"
+
+[fn."Vec::new"]
+pub = true
+sync = true
+signature = "() -> Vec[?]"
+
+[fn."Vec::push"]
+pub = true
+sync = true
+signature = "(&Vec[?], value: ?)"
+
+[fn."Vec::sort"]
+pub = true
+sync = true
+signature = "(&Vec[?])"
+
+[fn."str::chars"]
+pub = true
+sync = true
+returns = "borrows(self)"
+signature = "(&str) -> ?"
+
+[fn."str::len"]
+pub = true
+sync = true
+signature = "(&str) -> usize"
+
+[fn."str::repeat"]
+pub = true
+sync = true
+signature = "(&str, n: ?) -> String"
+
+[fn."str::starts_with"]
+pub = true
+sync = true
+signature = "(&str, prefix: ?) -> bool"
+
+[fn."str::to_string"]
+pub = true
+sync = true
+signature = "(&str) -> String"
+
+[fn."str::trim"]
+pub = true
+sync = true
+returns = "borrows(self)"
+signature = "(&str) -> &str"
+
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
 [fn."text::digit_value"]
