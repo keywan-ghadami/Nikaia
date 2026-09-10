@@ -34,45 +34,54 @@ inference = "stage0-signatures"
 [fn."cli::args"]
 pub = true
 provenance = "trusted"
+signature = "() -> ?"
 
 [fn."fs::map"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "(path: &str) -> Mapped"
 
 [fn."fs::Mapped::deref"]
 pub = true
 sync = true
 returns = "borrows(self)"
+signature = "(&Mapped) -> &str"
 
 [fn."fs::read_to_string"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "(path: &str) -> String"
 
 [fn."html::escape"]
 pub = true
 sync = true
 returns = "borrows(text)"
+signature = "(text: &str) -> ?"
 
 [fn."io::read"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "() -> Vec[u8]"
 
 [fn."io::read_to_string"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "() -> String"
 
 [fn."list::ListExt::map"]
 pub = true
+signature = "(?, f: ?) -> ?"
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
 [fn."text::digit_value"]
 pub = true
 sync = true
+signature = "(c: char) -> i32"
 
 [type."fs::Mapped"]
 pub = true

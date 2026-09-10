@@ -145,8 +145,12 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O |
 | `throws` | fn | Kap 7.1: it may fail |
 | `returns` | fn | what the result may point into — `borrows(a \| b)` |
+| `signature` | fn | its parameters and its result, as the source writes them: `"(path: &str) -> String"`. A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one |
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
+| `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
+
+`signature` and `fields` are what make a *type* checker possible across a boundary whose bodies are not visible — the `NK1xxx` diagnostics above are all answered from them ([ADR-024](adr/adr-024.md)). They are also where the ledger's `?` earns its keep: it is **the absence of a claim**, and a checker reports a mismatch only where both sides are written down, so a contract that says less makes the compiler quieter and never wronger.
 
 Only what is *true* is written: a `sync = false` on every entry would treble the file and say nothing, and a diff should show a promise being made or withdrawn. **An absent `sync` therefore means not `sync`** — while an absent *entry* means nothing is known and a caller may not assume. That distinction is what makes the file worth shipping rather than deriving.
 
@@ -560,8 +564,9 @@ whitespace inside the body is kept exactly.
 What may go in a hole is decided by the **type**, through the `Render` trait: a `Raw` renders
 itself, text renders escaped, and a type with no impl cannot be placed in a template at all. The
 compiler emits the same call for every hole and has no way to emit a different one — choosing is
-what the type does, which is why this needs no type checker in the compiler and gets one from the
-language below.
+what the type does. So this rule holds without the Nikaia compiler having to know what a hole's
+value is: it is enforced by the language below, on every hole, including the ones the checker of
+[ADR-024](adr/adr-024.md) records as `?`.
 
 **Control flow is written as an element**, because the file is markup and an editor that
 highlights it keeps working — a second syntax in a file that already has one is a second thing to
@@ -809,7 +814,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 
 | Range | Domain | Examples defined so far |
 | :--- | :--- | :--- |
-| `NK1xxx` | Syntax & types | — |
+| `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. All eight are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` in Advanced (Part II, 12.7). |
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
@@ -818,5 +823,27 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | `NK26xx` | Resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). |
 
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
+
+### C.4. What a Type Error Looks Like
+
+Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a literal in a `String` field:
+
+```text
+error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1
+  --> app.nika:11:5
+  11 |     let text = io::read_to_string("input.txt")?
+           ^
+     = `io::read_to_string() -> String`
+     help: call it as `io::read_to_string()`
+error[NK1106]: `Reading.name` is `String`, and this is `&str`
+  --> app.nika:12:5
+  12 |     let r = Reading { name: "Hamburg", temp: 12 }
+           ^
+     help: write `.to_string()` to make a `String` of it
+```
+
+Three things about that shape are deliberate. **The note is the contract**, quoted from the ledger — the compiler shows the caller what the callee promised, because that is the fact the caller was working from. **The caret is on the statement**, not the expression: expression-level spans are open work, and both this checker and `NK2202` report at statement granularity until they exist ([ADR-024](adr/adr-024.md) D7). And **the help is paste-ready**, as C.2 requires: `.to_string()` for text, `as i64` between numbers, and the field you probably meant when a name is close to one that exists.
+
+A message appears only where **both** sides are written down. Where a type is not known — a method on a receiver `std` has no signature for, what a `?` unwraps — the compiler says nothing, which is not the same as approving. That is the property that lets the checker be run on every build: it never rejects a program that is correct.
 
 

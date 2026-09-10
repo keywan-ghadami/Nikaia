@@ -92,7 +92,7 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
     let mut rows = all.fetch(db)
 
     // The benchmark requires one extra row added in memory, not in the query.
-    rows.push(Fortune(id: 0, message: "Additional fortune added at request time."))
+    rows.push(Fortune(id: 0, message: "Additional fortune added at request time.".to_string()))
 
     // `sort_by` is @immediate (Part I, 5.4), so the comparison borrows `rows`
     // rather than moving it - no clone needed.

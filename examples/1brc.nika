@@ -31,8 +31,8 @@
 // Where this file says something explicitly that a later Nikaia will infer -
 // `as i64`, `&path`, `fn { … }` instead of `fn:` - the reason is in ADR-013 D7,
 // and that last rewrite is why the `fn:` form is gone entirely (ADR-022).
-// Stage 0 has no type checker, and a printer that guessed would be worse than
-// a source that says what it means.
+// The compiler checks types (ADR-024) but converts nothing on its own: a
+// printer that guessed would be worse than a source that says what it means.
 
 use std::fs
 use std::cli

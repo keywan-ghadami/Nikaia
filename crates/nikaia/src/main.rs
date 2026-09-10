@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use nikaia::contracts::{self, sync, Ledger, STD};
 use nikaia::emit::{self, Profile};
-use nikaia::{diagnostics, interpreter, parser};
+use nikaia::{check, diagnostics, interpreter, parser};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -80,32 +80,53 @@ pub struct Cli {
     pub trust: bool,
 }
 
-/// Part II 12.1, checked: a `sync` function may only call `sync` functions.
+/// Everything the compiler decides for itself, before it emits a line of Rust.
 ///
-/// The ledger is what makes this possible across the `std` boundary - a call to
-/// `io::read_to_string` is only a violation if something says that function can
-/// pause, and `std.contracts` is where it says so (ADR-020).
-fn check_sync(parsed: &parser::Parsed, path: &Path, source: &str) -> Result<()> {
+/// Two rules today, and one mechanism under both: the ledger (ADR-020) is what
+/// makes either possible across the `std` boundary. A call to
+/// `io::read_to_string` is a `sync` violation only if something says that
+/// function can pause, and it takes the wrong number of arguments only if
+/// something says how many it takes - `std.contracts` is where both are said.
+///
+/// Types are reported before suspension because a call that passes the wrong
+/// thing is usually why the rest of the file reads strangely.
+fn check(parsed: &parser::Parsed, path: &Path, source: &str) -> Result<()> {
     let own = Ledger::infer(parsed);
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
-    let violations = sync::check(parsed, &own, &library);
 
-    if violations.is_empty() {
+    let findings = check::check(parsed, &own, &library);
+    let violations = sync::check(parsed, &own, &library);
+    if findings.is_empty() && violations.is_empty() {
         return Ok(());
     }
 
     let path = path.display().to_string();
+    for finding in &findings {
+        eprint!("{}", diagnostics::render_finding(finding, &path, source));
+    }
     for violation in &violations {
         eprint!(
             "{}",
             diagnostics::render_sync_violation(violation, &path, source)
         );
     }
-    anyhow::bail!(
-        "{} call{} a `sync` function may not make",
-        violations.len(),
-        if violations.len() == 1 { "" } else { "s" }
-    )
+
+    let mut refused = Vec::new();
+    if !findings.is_empty() {
+        refused.push(format!(
+            "{} type error{}",
+            findings.len(),
+            if findings.len() == 1 { "" } else { "s" }
+        ));
+    }
+    if !violations.is_empty() {
+        refused.push(format!(
+            "{} call{} a `sync` function may not make",
+            violations.len(),
+            if violations.len() == 1 { "" } else { "s" }
+        ));
+    }
+    anyhow::bail!("{}", refused.join(", "))
 }
 
 /// Write the ledger, or - under `--locked` - check that it did not need
@@ -274,7 +295,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         ),
         None => {
             let parsed = parser::parse_to_ast(source)?;
-            check_sync(&parsed, &args.input, source)?;
+            check(&parsed, &args.input, source)?;
             let lowered = emit::emit_program(&parsed, profile)?;
             let ledger = Ledger::infer(&parsed).render();
 
