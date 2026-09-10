@@ -202,6 +202,13 @@ pub struct TypeContract {
     /// Every field, with its type - what a checker needs to say that `r.nmae`
     /// is not a field of `Row`.
     pub fields: Vec<(String, ty::Ty)>,
+    /// Iterating a value of this type can **fail** (ADR-025 D6).
+    ///
+    /// A `for` over one is a place the enclosing function can fail from, and
+    /// the compiler makes that function declare `throws` (D1). It is recorded
+    /// here rather than inferred because the types that have it are `std`'s and
+    /// their bodies are Rust - which is the whole reason this file exists.
+    pub iterates_fallibly: bool,
     /// The fields that hold a view, directly or through another type that
     /// does. A struct with none of these is free of the input; one with any is
     /// tied to it for as long as it lives (Part II, 10.6).
@@ -290,6 +297,10 @@ impl Ledger {
                             public: *is_public,
                             borrowed: *is_borrowed,
                             fields: field_types,
+                            // Nothing a `.nika` file declares iterates at all
+                            // yet, let alone fallibly: the types that do are
+                            // `std`'s, and `std` writes them down (ADR-025 D6).
+                            iterates_fallibly: false,
                             tethered,
                         },
                     );
@@ -469,6 +480,9 @@ impl Ledger {
                         .join(", ")
                 ));
             }
+            if contract.iterates_fallibly {
+                out.push_str("iterates = \"throws\"\n");
+            }
             if !contract.tethered.is_empty() {
                 out.push_str(&format!(
                     "tethered = [{}]\n",
@@ -552,6 +566,17 @@ impl Ledger {
                         "pub" => entry.public = value == "true",
                         "borrowed" => entry.borrowed = value == "true",
                         "tethered" => entry.tethered = string_list(value, at())?,
+                        "iterates" => {
+                            let value = unquote(value, at())?;
+                            if value != "throws" {
+                                return Err(anyhow!(
+                                    "line {}: `iterates` is `throws` and nothing else, \
+                                     not `{value}` - a step that cannot fail says nothing",
+                                    at()
+                                ));
+                            }
+                            entry.iterates_fallibly = true;
+                        }
                         "fields" => {
                             entry.fields = string_list(value, at())?
                                 .iter()

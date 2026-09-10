@@ -265,6 +265,15 @@ is left is 3 and 4, and neither is a performance question.
   for what is left *here*.
 * Tuples (G10), ordered output over a map (G5), and a rejected parse saying
   where it failed (G11).
+* **G17, a stream that can fail while it is read** —
+  [ADR-025](specification/adr/adr-025.md). It was two problems. The failure half
+  was answered by a rule the language already had and had never stated
+  generally: Part I 6.4 makes a function declare `throws` because a resource's
+  cleanup at the *closing* brace can fail, and a `for`'s step at the top of the
+  block is the same implicit call. `NK2701`. The ownership half is why
+  `fs::lines` is **gone** rather than waiting — it would have had an iterator
+  hand out views into a buffer it owns, and the shape that works is two calls.
+  `io::lines()` exists and `examples/tally.nika` runs it.
 * **The type checker** — [ADR-024](specification/adr/adr-024.md). Eight `NK1xxx`
   codes, answered from the ledger, before a line of Rust is emitted. The design
   is one value: `?`, the absence of a claim. An error is reported only where

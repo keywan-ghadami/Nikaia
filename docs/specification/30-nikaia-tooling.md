@@ -432,7 +432,19 @@ pub fn lines() -> Lines throws             // one line at a time
 pub fn bytes() -> ByteStream throws        // chunks as they arrive
 ```
 
-`read_to_string` and `read` are implemented; `lines` and `bytes` wait on the same open question `fs::lines` waits on — what a loop over a stream does when the next read fails (G17, below `std::fs`).
+**A step of `lines` can fail, and the failure leaves the function** ([ADR-025](adr/adr-025.md) D1). A pipe is where this is unavoidable: its bytes do not exist until they are read, so the failure cannot be moved to the call the way `fs::map` moves it. Nothing marks the loop, for the reason nothing marks a failing call ([ADR-023](adr/adr-023.md) D8) — and the compiler is what makes the enclosing function declare `throws`:
+
+```nika
+fn tally() -> i64 throws {          // NK2701 without the `throws`
+    let mut n = 0
+    for line in io::lines() { n += 1 }
+    return n
+}
+```
+
+What must **not** happen is what a scanner that reports its error afterwards does: a failed read that is indistinguishable from the end of the input, so a truncated stream becomes a shorter one and the tally is quietly wrong. Part I 6.4 refuses that at the *closing* brace of a block; this is the same refusal at the top of a loop.
+
+`read_to_string`, `read` and `lines` are implemented. `bytes` is not, and needs nothing new — the rule above already covers it.
 
 It is `std::fs`'s shape minus what a stream cannot keep, and the same "looks blocking, is not"
 applies: no `async` on the signature, no `await` at the call. Under Lite the event loop runs
@@ -440,9 +452,11 @@ another task while the pipe is empty; under Advanced the read may resume on a di
 What *is* visible is the rule that matters — **a `sync` function cannot call it** (Part II, 12.1),
 which is what keeps a `par_iter` body from waiting on a pipe.
 
-`lines()` yields **owned** text where `fs::lines` yields views: a file's line can be a view
-because the file is still there to point at, and a stream's bytes are gone once consumed. Keeping
-them would be `read_to_string` with extra steps.
+`lines()` yields **owned** text, where a file's lines are views into the mapping they came from
+(`fs::map(path)` and `.lines()`, above): a file is still there to point at, and a stream's bytes
+are gone once consumed. Keeping them would be `read_to_string` with extra steps. It is also what
+makes the stream expressible at all — an iterator may hand out views into a buffer it does not
+own, and never into one it does ([ADR-025](adr/adr-025.md)).
 
 There is one standard input, so these are functions rather than a handle — a handle that can be
 held invites two tasks to hold it, and two readers of one pipe get interleaved halves of lines.
@@ -608,20 +622,22 @@ directory functions are not here either — `lines` and `bytes` for a reason of 
 
 `read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 
-**Streaming**
+**Reading a large file: `map`, and the grammar**
 
-Reading a large file whole is a mistake the API should not encourage, so streaming is a first-class form rather than an afterthought:
+There is no `fs::lines` and no `fs::bytes`. Earlier drafts of this chapter specified both, and [ADR-025](adr/adr-025.md) D3 removed them rather than deferring them. The reasons are worth stating where a reader will look for the functions:
+
+* **The specified shape cannot exist.** `lines(path)` was to open the file *and* yield tethered `&str` — so the returned value would own the buffer and hand out views into itself. That is the one thing an iterator may not do, and it is why the language below allocates a string per line when it offers the same function.
+* **The shape that works is two calls, and it is the model.** `fs::map(path)` owns the pages; `.lines()` borrows views of them. One value owns a buffer, another borrows from it, and Part I 6.6 and [ADR-008](adr/adr-008.md) rest on keeping those apart.
+* **The properties `lines` was for are properties of the mapping**: tethered `&str`, no allocation per line, constant memory. They come from `map`, not from the sequence.
 
 ```nika
-pub fn lines(path: Path) -> Lines throws        // yields tethered &str, one per line
-pub fn bytes(path: Path) -> ByteStream throws   // yields chunks as they arrive
+let data = fs::map(&path)
+for line in data.lines() { … }
 ```
 
-Both are **immediate contexts** (Part I, 5.4) when iterated, so the loop body borrows rather than moves. Neither holds the whole file in memory.
+And for a file that is a **record per line**, the language already has something better than a sequence of lines — the grammar protocol, where `@frame(boundary: "\n")` says exactly that and drives itself over the pages, in parallel where the profile allows (Part II, 10.7). `examples/1brc.nika`, `examples/access-log.nika` and `examples/config.nika` are all that shape; none of them iterates lines.
 
-**Neither is implemented, and the reason is a hole in this specification rather than in the compiler** (`examples/README.md`, G17). The signature says `-> Lines throws`, which places the failure where the stream is *opened*. A read fails **mid-iteration**, and nothing in Chapter 7 says what a loop over a stream does when the next line does not arrive. Answering it is a language decision with three candidates and no default: yield the text and let a truncated file become a shorter file silently; yield something that may be a failure, and unwrap in every loop; or hand the loop body to the stream — `fs::lines(path) fn { … }` — so that the failure belongs to the call and `throws` covers it as it covers everything else.
-
-What is *not* waiting on that: the properties this section promises `lines` — tethered `&str`, no allocation per line, constant memory — are exactly what `map` gives, and `examples/1brc.nika` is built on them. The gap is a stream's failure model, not streaming.
+The WASM question these functions were the answer to comes back with the target: `map` is a compile error there, and what `std::fs` offers instead on `wasm32-*` will be decided with it.
 
 **Handles**
 
@@ -676,7 +692,7 @@ Both profiles have the same `std::fs` surface; only the target changes it.
 | API | Native (any profile) | `wasm32-*` (any profile) |
 | :--- | :--- | :--- |
 | `read`, `read_to_string`, `write` | yes | yes — backed by OPFS |
-| `lines`, `bytes`, `open` | yes | yes — backed by OPFS |
+| `open` | yes | yes — backed by OPFS |
 | `map` | yes | **compile error** — the platform has no memory mapping |
 | `metadata`, `read_dir`, `create_dir`, `remove`, `rename`, `copy` | yes | yes — OPFS, within the origin's sandbox |
 
@@ -832,6 +848,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Borrow contracts | `NK2401` a contract change broke a caller, narrated from the ledger diff (13.5). |
 | `NK25xx` | Profile portability | Reserved: Advanced `Send`-rules reported under Lite as a portability lint, so Lite libraries stay Advanced-compatible. |
+| `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 | `NK26xx` | Resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). |
 
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
