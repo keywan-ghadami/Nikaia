@@ -84,7 +84,12 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
     // direct style. No `async` on the signature, no `await` at the call. In the
     // Lite profile the event loop picks up another connection while this one
     // waits - which is the entire point of the benchmark.
-    let mut rows = all.fetch(db)?
+    //
+    // And nothing marks the failure either. `fetch` can fail, this function is
+    // `throws`, and that is the whole propagation (ADR-023 D8). A sigil here
+    // would mark one of three invisible things - a pause, a failure, a cleanup
+    // at the closing brace - and imply the other two were absent.
+    let mut rows = all.fetch(db)
 
     // The benchmark requires one extra row added in memory, not in the query.
     rows.push(Fortune(id: 0, message: "Additional fortune added at request time."))
@@ -101,7 +106,7 @@ fn main() throws {
     // event loop, so `Shared` costs a non-atomic refcount; the same source
     // compiled with --profile=advanced gets the atomic one, and nothing above
     // this line changes (Part II, 12.2).
-    let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")?
+    let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")
 
     // A handler sees the request as its first implicit argument, under the
     // rule the language already has for lambdas
