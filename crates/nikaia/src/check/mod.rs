@@ -27,7 +27,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
+use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::contracts::{ty::Ty, FnContract, Ledger};
 use crate::parser::Parsed;
 
@@ -133,8 +133,74 @@ impl<'a> Checker<'a> {
                         self.function(&method.node, Some(&target));
                     }
                 }
+                // A test and a bench are code, and nothing about them is
+                // exempt from the language's rules (Part III, 14.1 and 13.4).
+                // Nothing produces these yet - the items are in the AST and the
+                // grammar has no rule for either - so this is what stops their
+                // bodies from arriving unchecked on the day it does.
+                Item::Test { body, .. } | Item::Bench { body, .. } => {
+                    let outer = self.expected.take();
+                    self.scope.push(Vec::new());
+                    self.block(body);
+                    self.scope.pop();
+                    self.expected = outer;
+                }
+                Item::Grammar(grammar) => self.grammar(grammar),
                 _ => {}
             }
+        }
+    }
+
+    /// A grammar's action blocks are Nikaia, and they build the rule's value.
+    ///
+    /// What a pattern binds has no type here - that is the parser backend's,
+    /// and Stage 0 does not read it - so every binding is `?`. What is written
+    /// down is the rule's **return type**, and an action that builds something
+    /// else is the mistake worth catching: a rule is where a struct literal is
+    /// most often typed out in full.
+    fn grammar(&mut self, grammar: &ast::GrammarDef) {
+        for rule in &grammar.rules {
+            let expected = rule.ret_type.as_ref().map(|t| Ty::from_ast(self.parsed, t));
+            for alt in &rule.alts {
+                let Some(action) = &alt.action else { continue };
+                let mut frame = Vec::new();
+                self.bindings_of(&alt.pattern.node, &mut frame);
+                let outer = std::mem::replace(&mut self.expected, expected.clone());
+                self.scope.push(frame);
+                let tail_span = action.stmts.last().map(|s| s.span.clone());
+                let tail = self.block(action);
+                self.scope.pop();
+                if let (Some(expected), Some(span)) = (&expected, tail_span) {
+                    self.expect(&tail, expected, span, "returns", |found, want| {
+                        format!("this action builds `{found}`, and its rule declares `{want}`")
+                    });
+                }
+                self.expected = outer;
+            }
+        }
+    }
+
+    /// Every `name:pattern` in a pattern, all of them `?`.
+    fn bindings_of(&self, pattern: &ast::Pattern, out: &mut Vec<(String, Ty)>) {
+        match pattern {
+            ast::Pattern::Bind { name, pat } => {
+                out.push((self.parsed.text(*name).to_string(), Ty::Unknown));
+                self.bindings_of(&pat.node, out);
+            }
+            ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
+                for part in parts {
+                    self.bindings_of(&part.node, out);
+                }
+            }
+            ast::Pattern::Ref { args, .. } => {
+                for arg in args {
+                    self.bindings_of(&arg.node, out);
+                }
+            }
+            ast::Pattern::Repeat { pat, .. } | ast::Pattern::Group(pat) => {
+                self.bindings_of(&pat.node, out)
+            }
+            ast::Pattern::Literal(_) | ast::Pattern::Cut | ast::Pattern::Fold(_) => {}
         }
     }
 
@@ -254,10 +320,11 @@ impl<'a> Checker<'a> {
                 iter,
                 body,
             } => {
-                self.expr(iter, span);
+                let over = self.expr(iter, span);
+                let element = element_of(&over, bindings.len());
                 let frame = bindings
                     .iter()
-                    .map(|b| (self.parsed.text(*b).to_string(), Ty::Unknown))
+                    .map(|b| (self.parsed.text(*b).to_string(), element.clone()))
                     .collect();
                 self.scope.push(frame);
                 self.block(body);
@@ -373,7 +440,7 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 };
                 let key = format!("{name}::{}", self.parsed.text(*method));
-                let Some(contract) = self.own.functions.get(&key) else {
+                let Some((key, contract)) = self.method(&key) else {
                     return Ty::Unknown;
                 };
                 self.arguments(&key, contract, &found, span)
@@ -713,6 +780,22 @@ impl<'a> Checker<'a> {
         self.library.lookup(name)
     }
 
+    /// A method on a type, by the name `Type::method` the ledger records it
+    /// under. A library writes the module in front of it (`fs::Mapped::deref`)
+    /// and the receiver's type does not carry one, so the suffix is what
+    /// matches - name-for-name resolution, as everywhere else.
+    fn method(&self, key: &str) -> Option<(String, &'a FnContract)> {
+        if let Some(contract) = self.own.functions.get(key) {
+            return Some((key.to_string(), contract));
+        }
+        let suffix = format!("::{key}");
+        self.library
+            .functions
+            .iter()
+            .find(|(name, _)| *name == key || name.ends_with(&suffix))
+            .map(|(name, contract)| (name.clone(), contract))
+    }
+
     /// The fields of a type, when something knows them.
     fn fields_of(&self, name: &str) -> Option<Vec<(String, Ty)>> {
         if let Some(fields) = self.structs.get(name) {
@@ -748,6 +831,24 @@ impl<'a> Checker<'a> {
                 .map(|b| (self.parsed.text(*b).to_string(), Ty::Unknown))
                 .collect(),
         }
+    }
+}
+
+/// What one turn of a `for` binds, when the collection's element type is
+/// written down.
+///
+/// Only a list with one element type and one binding: `for (k, v) in map`
+/// takes apart a pair whose shape Stage 0 has no signature for, and a view of
+/// a collection yields views whose spelling the language below chooses.
+fn element_of(over: &Ty, bindings: usize) -> Ty {
+    match over {
+        Ty::Named { name, args, view } if bindings == 1 && !view && args.len() == 1 => {
+            match name.as_str() {
+                "Vec" | "List" => args[0].clone(),
+                _ => Ty::Unknown,
+            }
+        }
+        _ => Ty::Unknown,
     }
 }
 

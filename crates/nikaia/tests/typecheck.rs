@@ -209,6 +209,43 @@ fn a_condition_that_is_not_a_bool_is_reported() {
     assert_eq!(message, "this is `&str`, and a condition is a `bool`");
 }
 
+/// A grammar's action builds the rule's value, so it answers to the rule's
+/// declared type - and a struct literal in one is checked like any other.
+#[test]
+fn a_grammar_action_is_checked_against_its_rule() {
+    let (code, message) = one("struct Reading { name: &str, temp: i32 }\n\
+         grammar Measurements {\n\
+         \x20   rule LINE -> Reading = name:until(\";\") \";\" temp:digit\n\
+         \x20       -> { Reading { nmae: name, temp: temp } }\n\
+         }");
+    assert_eq!(code, "NK1107");
+    assert_eq!(message, "`Reading` has no field `nmae`");
+}
+
+/// …and an action that builds something else entirely.
+#[test]
+fn a_grammar_action_of_the_wrong_type_is_reported() {
+    let (code, message) = one("grammar Measurements {\n\
+         \x20   rule COUNT -> i32 = s:until(\";\") -> { \"one\" }\n\
+         }");
+    assert_eq!(code, "NK1104");
+    assert_eq!(
+        message,
+        "this action builds `&str`, and its rule declares `i32`"
+    );
+}
+
+/// A `for` over a list whose element type is written down binds that type.
+#[test]
+fn a_loop_binds_the_element_type_of_a_list() {
+    let (code, message) = one("struct Row { id: i32 }\n\
+         fn count(rows: Vec[Row]) {\n\
+         \x20   for row in rows { let n: i32 = row.idd }\n\
+         }");
+    assert_eq!(code, "NK1107");
+    assert_eq!(message, "`Row` has no field `idd`");
+}
+
 // --- what it deliberately does not catch -------------------------------------
 
 /// A method on a receiver `std` does not write down is not an error.
@@ -255,6 +292,19 @@ fn a_generic_parameter_is_not_a_type() {
 #[test]
 fn a_field_of_an_unknown_type_says_nothing() {
     assert!(findings("fn label(r: &Row) -> &str { return r.nmae }").is_empty());
+}
+
+/// `for (k, v) in map` takes apart a pair whose shape Stage 0 has no signature
+/// for, so it binds nothing rather than guessing.
+#[test]
+fn a_loop_over_pairs_binds_nothing() {
+    assert!(findings(
+        "struct Row { id: i32 }\n\
+         fn count(rows: Vec[Row]) {\n\
+         \x20   for (a, b) in rows { let n: i32 = a.idd }\n\
+         }"
+    )
+    .is_empty());
 }
 
 /// Both directions of the rule at once: an unknown on either side fits.
