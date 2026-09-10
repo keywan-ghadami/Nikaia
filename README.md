@@ -301,10 +301,12 @@ fn main() {
 ```
 
 Bigger, more revealing programs live in [`examples/`](examples/): the One Billion Row
-Challenge, a four-function calculator, a web access log summarised, an INI file with comments,
-and the TechEmpower `fortunes` benchmark. **The first four compile, run, and are checked by
-`cargo test` under both profiles**, with their output required to be identical; `fortunes` is
-still written at specification level. They are there because writing a real program against a spec is the
+Challenge, a four-function calculator, a web access log summarised, an INI file with comments, a
+JSON document, two Computer Language Benchmarks Game programs, an HTML table that cannot be
+made to leak markup, a stock list rendered to a page **on disk**, a pipe tallied in constant
+memory, and the TechEmpower `fortunes` benchmark. **Ten of the eleven compile, run, and are
+checked by `cargo test` under both profiles**, with their output — and, where one is written, the file they produce — required to
+be identical; `fortunes` is still written at specification level. They are there because writing a real program against a spec is the
 cheapest way to find out what the spec forgot, and
 [`examples/README.md`](examples/README.md) lists exactly which gaps each one exposed and
 which are still open. `tests/samples/` holds the smaller programs the bootstrap compiler can
@@ -326,10 +328,11 @@ compiler. Concretely:
   `rustc` to produce a binary. It handles functions and methods, `impl`, `struct` and `use`,
   control flow, `throws`/`catch`/`??`, string interpolation — and the whole `grammar` construct,
   `@frame` and `dsl … from …` included. **`examples/1brc.nika` compiles, runs and is a test.**
-  A type checker is what it does not have.
-* ❌ **Not yet** — a type checker, the runtime binding to `tokio`, the LSP, self-hosting. The
-  standard library exists in the narrow sense the examples need, and one of its files is
-  already written in Nikaia.
+  Since [ADR-024](docs/specification/adr/adr-024.md) it also **checks types** — everything the
+  ledger writes down, and nothing it does not.
+* ❌ **Not yet** — the runtime binding to `tokio`, the LSP, self-hosting. The standard library
+  exists in the narrow sense the examples need, and one of its files is already written in
+  Nikaia.
 
 Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 
@@ -357,7 +360,10 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
   - [x] `fs::map`'s UTF-8 check divided across the cores rather than skipped
     ([ADR-016](docs/specification/adr/adr-016.md)): 3.9× on the check, and what is left to gain
     by removing it altogether is 10 ms of a 140 ms program.
-  - [ ] A type checker: everything Stage 0 cannot infer, the example has to say (ADR-013 D7).
+  - [x] A type checker ([ADR-024](docs/specification/adr/adr-024.md)): arity, arguments, `let`,
+    `return`, assignment, struct fields and conditions, answered from the ledger — with `?`
+    meaning *no claim*, so it never rejects a program that is correct, and it catches more as
+    more of `std` is written down.
 - [ ] **Runtime integration:** binding `tokio` (current-thread & thread-pool).
 - [ ] **Interop:** `extern "C"` in the compiler (Chapter 15 specifies it) and Python bindings —
       so a Nikaia core can be dropped into an existing stack as a hot loop, without anyone

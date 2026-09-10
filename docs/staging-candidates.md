@@ -2,11 +2,11 @@
 
 **Date:** September 10, 2026
 **Status:** findings, not decisions
-**Related:** [ADR-022](specification/adr/adr-022.md) §3 (the two tiers),
+**Related:** [ADR-026](specification/adr/adr-026.md) §3 (the two tiers),
 [ADR-010](specification/adr/adr-010.md) (the shipped precedent),
 [upstream findings](upstream/winnow-grammar-findings.md)
 
-ADR-022 §3 says Tier 1 — compiler-side staging — waits on nothing and is where the interesting
+ADR-026 §3 says Tier 1 — compiler-side staging — waits on nothing and is where the interesting
 applications live. This file is the survey that follows from it: where the opportunities actually
 are in today's code, which ones are already closed, and what it costs to check one. Recorded here so
 it is not re-discovered, in the manner of `docs/upstream/winnow-grammar-findings.md`.
@@ -19,7 +19,7 @@ Nothing here is implemented.
 
 Written first, because each of these looks like one.
 
-**Perfect hashing for a route table** — *as a first change*. ADR-022 §3 names it, and it has no
+**Perfect hashing for a route table** — *as a first change*. ADR-026 §3 names it, and it has no
 target today: there is no HTTP server. `crates/nikaia-std/src/` holds `cli`, `fs`, `hash`, `html`, `io`, `list`, `text` and
 nothing else; `route` appears only in `examples/fortunes.nika` and `examples/README.md`, at
 specification level. ADR-018 marked this "a decision and not a delivery". Building it means building
@@ -75,7 +75,7 @@ a git dependency on its *commit*, so editing a vendored checkout has no effect (
 `docs/upstream/winnow-grammar-findings.md`); testing needs a `[patch]` or a path override. The repo
 already has the channel for handing such a finding over — that file exists for exactly this.
 
-Before attempting it, read [ADR-022](specification/adr/adr-022.md) §3.1: it pre-registers the two ways
+Before attempting it, read [ADR-026](specification/adr/adr-026.md) §3.1: it pre-registers the two ways
 this claim goes wrong ("table-free is not automatically faster"; "no branch mispredictions is
 backwards for the state machine itself") and states the defensible version — *the win is where the
 analysis removes states*.

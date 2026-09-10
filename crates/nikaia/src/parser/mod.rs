@@ -911,7 +911,16 @@ grammar! {
         // parentheses, so the plain method rule would stop before the `fn:` and
         // leave it stranded.
         rule postfix_tail -> Postfix =
-            "." name:NAME lambda:trailing_lambda -> {
+            // `.route("/x") fn { … }`: arguments *and* a trailing lambda. It
+            // has to be tried before the plain call, or the call matches and
+            // the lambda is left over - which is the parse error this form did
+            // not have a grammar for until ADR-022.
+            "." name:NAME args:call_arg_list lambda:trailing_lambda -> {
+                let mut args = args;
+                args.push(lambda);
+                Postfix::Method(name, args)
+            }
+          | "." name:NAME lambda:trailing_lambda -> {
                 Postfix::Method(name, vec![lambda])
             }
           | "." name:NAME args:call_arg_list? -> {
@@ -934,17 +943,21 @@ grammar! {
         // and which of them the body actually uses is settled when it is
         // emitted rather than guessed here.
         rule trailing_lambda -> Expr =
-            "fn" ":" body:expr -> {
+            "fn" body:block -> {
+                Expr::Closure { params: Vec::new(), implicit: true, body }
+            }
+            // ADR-022: `fn: expr` was removed, and a form that was in the
+            // specification deserves a sentence rather than a parse error at
+            // the colon. `fail` beats the alternatives at this position, so
+            // this is what a reader gets.
+          | "fn" ":" fail("the `fn: …` form was removed (ADR-022): write `fn { … }`. \
+                           Its body ran to the end of the expression, so a `.method()` \
+                           after it landed *inside* the lambda - silently") -> {
                 Expr::Closure {
                     params: Vec::new(),
                     implicit: true,
-                    body: Block {
-                        stmts: vec![Spanned::new(Stmt::Expr(body), 0..0)],
-                    },
+                    body: Block { stmts: Vec::new() },
                 }
-            }
-          | "fn" body:block -> {
-                Expr::Closure { params: Vec::new(), implicit: true, body }
             }
 
         rule call_arg_list -> Vec<Expr> =

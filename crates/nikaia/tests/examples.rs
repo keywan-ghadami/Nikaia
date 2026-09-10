@@ -39,12 +39,36 @@ struct Example {
     stdin: Option<&'static str>,
     args: &'static [&'static str],
     /// Compared after trimming, so a trailing newline is not a test.
+    ///
+    /// It may not name a path: the two profiles run in scratch directories of
+    /// their own, so an example that echoed one would print something
+    /// different under each and `the_profiles_agree_on_every_example` would be
+    /// right to say so.
     expected: &'static str,
+    /// A file the example is expected to **write**. `{output}` in `args`
+    /// stands for its path, and what it holds afterwards is compared here.
+    ///
+    /// Standard output is not the only thing a program produces, and an
+    /// example whose result is a file would otherwise be checked by the one
+    /// line it prints about it.
+    wrote: Option<Output>,
 }
 
 struct Input {
     name: &'static str,
     contents: &'static str,
+}
+
+struct Output {
+    name: &'static str,
+    contents: &'static str,
+}
+
+/// What running an example produced.
+struct Run {
+    printed: String,
+    /// The contents of the file it was expected to write.
+    wrote: Option<String>,
 }
 
 /// The examples that run. An entry here is a promise that `cargo test` keeps.
@@ -55,6 +79,7 @@ const RUNNABLE: &[Example] = &[
         stdin: None,
         args: &["2 + 3 * (10 - 4) / 2"],
         expected: "2 + 3 * (10 - 4) / 2 = 11",
+        wrote: None,
     },
     Example {
         file: "access-log.nika",
@@ -81,6 +106,7 @@ const RUNNABLE: &[Example] = &[
 /api/order 1 512
 /missing 1 0
 /style.css 1 1024",
+        wrote: None,
     },
     Example {
         file: "config.nika",
@@ -110,6 +136,7 @@ timeout = 30s
 [limits]
   max_body = 1048576
   timeout = 30s",
+        wrote: None,
     },
     Example {
         file: "json.nika",
@@ -134,6 +161,7 @@ timeout = 30s
   \"empty\": {}
 }
 longest string: 3 characters",
+        wrote: None,
     },
     Example {
         file: "n-body.nika",
@@ -147,6 +175,7 @@ longest string: 3 characters",
         expected: "\
 -0.169075164
 -0.169087605",
+        wrote: None,
     },
     Example {
         file: "k-nucleotide.nika",
@@ -197,6 +226,7 @@ CG 1.117
 0\tGGTATT
 0\tGGTATTTTAATT
 0\tGGTATTTTAATTTATAGT",
+        wrote: None,
     },
     Example {
         file: "escaping.nika",
@@ -216,6 +246,70 @@ CG 1.117
 <tr class=\"odd\"><td>O&#39;Hara</td><td>&lt;/td&gt; is not a tag here</td></tr>
         </table>
 <tr class=\"odd\"><td>Ada</td><td><em>Ada</em></td></tr>",
+        wrote: None,
+    },
+    Example {
+        file: "tally.nika",
+        input: None,
+        // A pipe, and the point of the example: the program never holds more
+        // than one line, however long the stream is (ADR-025 D4).
+        stdin: Some(
+            "one\n\
+             \n\
+             the longest line in this stream\n\
+             \n\
+             three\n",
+        ),
+        args: &[],
+        expected: "\
+5 lines, 2 blank
+longest: 31 characters
+the longest line in this stream",
+        wrote: None,
+    },
+    Example {
+        file: "report.nika",
+        input: Some(Input {
+            name: "stock.csv",
+            // Item names as people type them, which is where an escaping bug
+            // comes from: an ampersand, a quote, an angle bracket, and one
+            // that reads like a closing tag.
+            contents: "\
+tools;Bolts & Nuts;12
+paper;<plain> A4;40
+tools;3\" Clamp;5
+paper;Card </td>;7
+",
+        }),
+        stdin: None,
+        args: &["{input}", "{output}"],
+        // Path-free on purpose: what a run says on standard output has to be
+        // the same under both profiles, and the two run in scratch
+        // directories of their own. The page is the deliverable and is
+        // checked as one, below.
+        expected: "4 items, 64 in total",
+        wrote: Some(Output {
+            name: "report.html",
+            // Sorted by count, descending. Every one of the four characters
+            // that changes what HTML means arrived from the *input file* and
+            // is gone from the page: `&`, `<`, `>` and `"`. That is
+            // ADR-017 D1 with something real to escape.
+            contents: "\
+<html>
+        <head><title>Stock</title></head>
+        <body>
+        <h1>Stock</h1>
+        <table>
+        <tr><th>Category</th><th>Item</th><th>Count</th></tr>
+        <tr><td>paper</td><td>&lt;plain&gt; A4</td><td>40</td></tr>\
+<tr><td>tools</td><td>Bolts &amp; Nuts</td><td>12</td></tr>\
+<tr><td>paper</td><td>Card &lt;/td&gt;</td><td>7</td></tr>\
+<tr><td>tools</td><td>3&quot; Clamp</td><td>5</td></tr>
+        </table>
+        <p>64 in total</p>
+        </body>
+        </html>",
+        }),
     },
 ];
 
@@ -231,15 +325,39 @@ const COVERED_ELSEWHERE: &[&str] = &["1brc.nika"];
 fn every_runnable_example_prints_what_it_promises() {
     for example in RUNNABLE {
         for profile in [Profile::Lite, Profile::Advanced] {
-            let printed = build_and_run(example, profile);
+            let run = build_and_run(example, profile);
             assert_eq!(
-                printed.trim(),
+                run.printed.trim(),
                 example.expected,
                 "{} under {profile:?}",
                 example.file
             );
         }
     }
+}
+
+/// An example whose result is a **file** is checked by the file.
+///
+/// `report.nika` prints one line about a page it wrote; checking that line
+/// would check almost nothing. This reads the page back.
+#[test]
+fn every_example_that_writes_a_file_writes_the_right_one() {
+    let mut checked = 0;
+    for example in RUNNABLE.iter().filter(|e| e.wrote.is_some()) {
+        let wrote = example.wrote.as_ref().expect("filtered above");
+        for profile in [Profile::Lite, Profile::Advanced] {
+            let run = build_and_run(example, profile);
+            assert_eq!(
+                run.wrote.as_deref().map(str::trim),
+                Some(wrote.contents),
+                "{} wrote a different {} under {profile:?}",
+                example.file,
+                wrote.name
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked > 0, "no example writes a file any more");
 }
 
 /// The two profiles are one language, not two dialects: same source, same
@@ -250,7 +368,16 @@ fn the_profiles_agree_on_every_example() {
     for example in RUNNABLE {
         let lite = build_and_run(example, Profile::Lite);
         let advanced = build_and_run(example, Profile::Advanced);
-        assert_eq!(lite, advanced, "{} differs between profiles", example.file);
+        assert_eq!(
+            lite.printed, advanced.printed,
+            "{} prints differently between profiles",
+            example.file
+        );
+        assert_eq!(
+            lite.wrote, advanced.wrote,
+            "{} writes a different file between profiles",
+            example.file
+        );
     }
 }
 
@@ -431,8 +558,8 @@ fn build(file: &str, profile: Profile) -> (PathBuf, PathBuf) {
     (dir, binary)
 }
 
-/// Lower, compile, run, and hand back what it printed.
-fn build_and_run(example: &Example, profile: Profile) -> String {
+/// Lower, compile, run, and hand back what it produced.
+fn build_and_run(example: &Example, profile: Profile) -> Run {
     let (dir, binary) = build(example.file, profile);
 
     let input_path = example.input.as_ref().map(|input| {
@@ -440,11 +567,12 @@ fn build_and_run(example: &Example, profile: Profile) -> String {
         std::fs::write(&path, input.contents).expect("write the example's input");
         path
     });
+    let output_path = example.wrote.as_ref().map(|wrote| dir.join(wrote.name));
 
     let args: Vec<String> = example
         .args
         .iter()
-        .map(|arg| substitute(arg, input_path.as_deref()))
+        .map(|arg| substitute(arg, input_path.as_deref(), output_path.as_deref()))
         .collect();
 
     let mut command = Command::new(&binary);
@@ -479,20 +607,32 @@ fn build_and_run(example: &Example, profile: Profile) -> String {
     );
 
     let printed = String::from_utf8_lossy(&run.stdout).into_owned();
+    let wrote = output_path.as_ref().map(|path| {
+        std::fs::read_to_string(path).unwrap_or_else(|e| {
+            panic!(
+                "{} said it wrote {}, and it is not there: {e}",
+                example.file,
+                path.display()
+            )
+        })
+    });
+
     let _ = std::fs::remove_dir_all(&dir);
-    printed
+    Run { printed, wrote }
 }
 
-/// `{input}` stands for the path the example's input was written to.
-fn substitute(arg: &str, input: Option<&Path>) -> String {
-    match input {
-        Some(path) => arg.replace("{input}", &path.display().to_string()),
-        None => {
-            assert!(
-                !arg.contains("{input}"),
-                "an argument names {{input}} but the example declares none"
-            );
-            arg.to_string()
+/// `{input}` stands for the path the example's input was written to, and
+/// `{output}` for the path it is expected to write.
+fn substitute(arg: &str, input: Option<&Path>, output: Option<&Path>) -> String {
+    let mut arg = arg.to_string();
+    for (name, path) in [("{input}", input), ("{output}", output)] {
+        match path {
+            Some(path) => arg = arg.replace(name, &path.display().to_string()),
+            None => assert!(
+                !arg.contains(name),
+                "an argument names {name} but the example declares none"
+            ),
         }
     }
+    arg
 }

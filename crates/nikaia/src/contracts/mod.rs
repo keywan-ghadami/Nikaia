@@ -18,8 +18,9 @@
 
 pub mod sync;
 pub mod trust;
+pub mod ty;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{anyhow, Result};
 
@@ -97,6 +98,17 @@ pub struct FnContract {
     /// `None` is not "trusted" - it is "this is not a source", which is what
     /// almost every function is.
     pub provenance: Option<Provenance>,
+    /// The signature, as the source writes it: `(path: &str) -> String`.
+    ///
+    /// One key rather than two, because that is how a person reads a function
+    /// and because the parameters and the result are one fact. A `self`
+    /// receiver is in it where there is one, so a method's arguments are the
+    /// parameters after the first.
+    ///
+    /// This is what makes a *type* checker possible across a boundary it cannot
+    /// see the body of - which ADR-020 predicted would be an extension of this
+    /// file rather than a new one.
+    pub signature: Option<Signature>,
     /// The parameters the result may point into, in declaration order.
     ///
     /// Empty when the result holds no view. Stage 0 has one input lifetime, so
@@ -106,12 +118,97 @@ pub struct FnContract {
     pub borrows: Vec<String>,
 }
 
+/// A function's parameters and result.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Signature {
+    /// Name and type, in order. A `self` receiver is the first of them where
+    /// there is one, named `self`.
+    pub params: Vec<(String, ty::Ty)>,
+    /// What it hands back. `None` where it hands back nothing.
+    pub result: Option<ty::Ty>,
+}
+
+impl Signature {
+    /// The arguments a *call* passes, which is the parameters after a receiver.
+    pub fn arguments(&self) -> &[(String, ty::Ty)] {
+        match self.params.first() {
+            Some((name, _)) if name == "self" => &self.params[1..],
+            _ => &self.params,
+        }
+    }
+
+    /// What a call to it hands back.
+    ///
+    /// A function with no `->` hands back nothing, and nothing is a type: the
+    /// empty tuple, which is what makes `let n: i32 = print(x)` a mistake the
+    /// checker can see rather than one only `rustc` finds.
+    pub fn result_or_unit(&self) -> ty::Ty {
+        self.result.clone().unwrap_or(ty::Ty::Tuple(Vec::new()))
+    }
+
+    pub fn text(&self) -> String {
+        let params: Vec<String> = self
+            .params
+            .iter()
+            .map(|(name, ty)| {
+                if name == "self" {
+                    ty.text()
+                } else {
+                    format!("{name}: {}", ty.text())
+                }
+            })
+            .collect();
+        match &self.result {
+            Some(result) => format!("({}) -> {}", params.join(", "), result.text()),
+            None => format!("({})", params.join(", ")),
+        }
+    }
+
+    /// Read one back from the text above.
+    pub fn parse(text: &str) -> Result<Signature> {
+        let text = text.trim();
+        let close = text
+            .rfind(')')
+            .ok_or_else(|| anyhow!("a signature is `(…) -> T`, found `{text}`"))?;
+        let inside = text
+            .strip_prefix('(')
+            .map(|t| &t[..close - 1])
+            .ok_or_else(|| anyhow!("a signature starts with `(`, found `{text}`"))?;
+
+        let params = ty::split_args(inside)
+            .iter()
+            .map(|part| match part.split_once(':') {
+                Some((name, ty)) => (name.trim().to_string(), ty::Ty::parse(ty)),
+                // A bare type is the receiver, which is what `&mut self` is.
+                None => ("self".to_string(), ty::Ty::parse(part)),
+            })
+            .collect();
+
+        let result = text[close + 1..]
+            .trim()
+            .strip_prefix("->")
+            .map(ty::Ty::parse);
+
+        Ok(Signature { params, result })
+    }
+}
+
 /// What a caller needs to know about one type.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TypeContract {
     pub public: bool,
     /// ADR-008 D6: `@borrowed` was asserted in the source.
     pub borrowed: bool,
+    /// Every field, with its type - what a checker needs to say that `r.nmae`
+    /// is not a field of `Row`.
+    pub fields: Vec<(String, ty::Ty)>,
+    /// Iterating a value of this type can **fail** (ADR-025 D6).
+    ///
+    /// A `for` over one is a place the enclosing function can fail from, and
+    /// the compiler makes that function declare `throws` (D1). It is recorded
+    /// here rather than inferred because the types that have it are `std`'s and
+    /// their bodies are Rust - which is the whole reason this file exists.
+    pub iterates_fallibly: bool,
     /// The fields that hold a view, directly or through another type that
     /// does. A struct with none of these is free of the input; one with any is
     /// tied to it for as long as it lives (Part II, 10.6).
@@ -148,33 +245,62 @@ impl Ledger {
         for item in &parsed.program.items {
             match &item.node {
                 Item::Fn { .. } => {
-                    let (name, contract) = ledger.function(parsed, &item.node, None);
+                    let (name, contract) =
+                        ledger.function(parsed, &item.node, None, &BTreeSet::new());
                     ledger.functions.insert(name, contract);
                 }
                 Item::Impl { target, methods } => {
+                    // `impl Stack[T]` puts `T` in scope for every method in it,
+                    // so it is a name that stands for a type there too.
+                    let outer: BTreeSet<String> = target
+                        .generics
+                        .iter()
+                        .filter(|g| g.generics.is_empty() && !g.is_tuple)
+                        .map(|g| parsed.text(g.name).to_string())
+                        .collect();
                     let target = parsed.text(target.name).to_string();
                     for method in methods {
-                        let (name, contract) = ledger.function(parsed, &method.node, Some(&target));
+                        let (name, contract) =
+                            ledger.function(parsed, &method.node, Some(&target), &outer);
                         ledger.functions.insert(name, contract);
                     }
                 }
                 Item::Struct {
                     name,
+                    generics,
                     fields,
                     is_public,
                     is_borrowed,
                     ..
                 } => {
+                    let parameters: BTreeSet<String> = generics
+                        .iter()
+                        .map(|g| parsed.text(g.name).to_string())
+                        .collect();
                     let tethered = fields
                         .iter()
                         .filter(|f| holds_view(&f.ty) || names_borrowing(&f.ty, &borrowing))
                         .map(|f| parsed.text(f.name).to_string())
+                        .collect();
+                    let field_types = fields
+                        .iter()
+                        .map(|f| {
+                            (
+                                parsed.text(f.name).to_string(),
+                                ty::Ty::from_ast(parsed, &f.ty).erase(&parameters),
+                            )
+                        })
                         .collect();
                     ledger.types.insert(
                         parsed.text(*name).to_string(),
                         TypeContract {
                             public: *is_public,
                             borrowed: *is_borrowed,
+                            fields: field_types,
+                            // Nothing a `.nika` file declares iterates at all
+                            // yet, let alone fallibly: the types that do are
+                            // `std`'s, and `std` writes them down (ADR-025 D6).
+                            iterates_fallibly: false,
                             tethered,
                         },
                     );
@@ -187,9 +313,16 @@ impl Ledger {
     }
 
     /// One function's entry, named as a caller would reach it.
-    fn function(&self, parsed: &Parsed, item: &Item, target: Option<&str>) -> (String, FnContract) {
+    fn function(
+        &self,
+        parsed: &Parsed,
+        item: &Item,
+        target: Option<&str>,
+        outer: &BTreeSet<String>,
+    ) -> (String, FnContract) {
         let Item::Fn {
             name,
+            generics,
             args,
             ret_type,
             is_sync,
@@ -200,6 +333,12 @@ impl Ledger {
         else {
             unreachable!("only a function is passed here");
         };
+
+        // A generic parameter is a name that stands for a type rather than
+        // being one. The ledger records `?` for it, because `?` is what a
+        // caller actually knows.
+        let mut parameters = outer.clone();
+        parameters.extend(generics.iter().map(|g| parsed.text(g.name).to_string()));
 
         // The anonymous constructor of Kap 4.2 is `Type::new` to a caller,
         // because that is what the lowering names it.
@@ -222,12 +361,35 @@ impl Ledger {
             Vec::new()
         };
 
+        // A method's receiver is a parameter named `self`, so a caller reads
+        // the arguments off the same list either way.
+        let mut params: Vec<(String, ty::Ty)> = Vec::new();
+        if let Item::Fn {
+            receiver: Some(receiver),
+            ..
+        } = item
+        {
+            params.push(("self".to_string(), receiver_type(parsed, receiver, target)));
+        }
+        params.extend(args.iter().map(|a| {
+            (
+                parsed.text(a.name).to_string(),
+                ty::Ty::from_ast(parsed, &a.ty).erase(&parameters),
+            )
+        }));
+
         (
             key,
             FnContract {
                 public: *is_public,
                 sync: *is_sync,
                 throws: *throws,
+                signature: Some(Signature {
+                    params,
+                    result: ret_type
+                        .as_ref()
+                        .map(|t| ty::Ty::from_ast(parsed, t).erase(&parameters)),
+                }),
                 borrows,
                 // A source is where bytes enter the program from outside, and
                 // nothing a `.nika` file can write is one: `fs` and `io` are
@@ -294,6 +456,9 @@ impl Ledger {
             if let Some(provenance) = contract.provenance {
                 out.push_str(&format!("provenance = \"{}\"\n", provenance.as_str()));
             }
+            if let Some(signature) = &contract.signature {
+                out.push_str(&format!("signature = \"{}\"\n", signature.text()));
+            }
         }
 
         for (name, contract) in &self.types {
@@ -303,6 +468,20 @@ impl Ledger {
             }
             if contract.borrowed {
                 out.push_str("borrowed = true\n");
+            }
+            if !contract.fields.is_empty() {
+                out.push_str(&format!(
+                    "fields = [{}]\n",
+                    contract
+                        .fields
+                        .iter()
+                        .map(|(name, ty)| format!("\"{name}: {}\"", ty.text()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if contract.iterates_fallibly {
+                out.push_str("iterates = \"throws\"\n");
             }
             if !contract.tethered.is_empty() {
                 out.push_str(&format!(
@@ -375,6 +554,9 @@ impl Ledger {
                         "provenance" => {
                             entry.provenance = Some(provenance_of(&unquote(value, at())?, at())?)
                         }
+                        "signature" => {
+                            entry.signature = Some(Signature::parse(&unquote(value, at())?)?)
+                        }
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
                     }
                 }
@@ -384,6 +566,28 @@ impl Ledger {
                         "pub" => entry.public = value == "true",
                         "borrowed" => entry.borrowed = value == "true",
                         "tethered" => entry.tethered = string_list(value, at())?,
+                        "iterates" => {
+                            let value = unquote(value, at())?;
+                            if value != "throws" {
+                                return Err(anyhow!(
+                                    "line {}: `iterates` is `throws` and nothing else, \
+                                     not `{value}` - a step that cannot fail says nothing",
+                                    at()
+                                ));
+                            }
+                            entry.iterates_fallibly = true;
+                        }
+                        "fields" => {
+                            entry.fields = string_list(value, at())?
+                                .iter()
+                                .map(|field| match field.split_once(':') {
+                                    Some((name, ty)) => {
+                                        (name.trim().to_string(), ty::Ty::parse(ty))
+                                    }
+                                    None => (field.trim().to_string(), ty::Ty::Unknown),
+                                })
+                                .collect()
+                        }
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a type", at())),
                     }
                 }
@@ -391,6 +595,18 @@ impl Ledger {
         }
 
         Ok(ledger)
+    }
+}
+
+/// The receiver's type, as a caller sees it: the type the `impl` is for, with
+/// the `&` the receiver was written with.
+fn receiver_type(parsed: &Parsed, receiver: &crate::ast::Receiver, target: Option<&str>) -> ty::Ty {
+    let _ = parsed;
+    let name = target.unwrap_or("Self");
+    if receiver.is_ref {
+        ty::Ty::view(name)
+    } else {
+        ty::Ty::named(name)
     }
 }
 

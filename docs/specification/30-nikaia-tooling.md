@@ -145,8 +145,12 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O |
 | `throws` | fn | Kap 7.1: it may fail |
 | `returns` | fn | what the result may point into — `borrows(a \| b)` |
+| `signature` | fn | its parameters and its result, as the source writes them: `"(path: &str) -> String"`. A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one |
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
+| `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
+
+`signature` and `fields` are what make a *type* checker possible across a boundary whose bodies are not visible — the `NK1xxx` diagnostics above are all answered from them ([ADR-024](adr/adr-024.md)). They are also where the ledger's `?` earns its keep: it is **the absence of a claim**, and a checker reports a mismatch only where both sides are written down, so a contract that says less makes the compiler quieter and never wronger.
 
 Only what is *true* is written: a `sync = false` on every entry would treble the file and say nothing, and a diff should show a promise being made or withdrawn. **An absent `sync` therefore means not `sync`** — while an absent *entry* means nothing is known and a caller may not assume. That distinction is what makes the file worth shipping rather than deriving.
 
@@ -428,15 +432,31 @@ pub fn lines() -> Lines throws             // one line at a time
 pub fn bytes() -> ByteStream throws        // chunks as they arrive
 ```
 
+**A step of `lines` can fail, and the failure leaves the function** ([ADR-025](adr/adr-025.md) D1). A pipe is where this is unavoidable: its bytes do not exist until they are read, so the failure cannot be moved to the call the way `fs::map` moves it. Nothing marks the loop, for the reason nothing marks a failing call ([ADR-023](adr/adr-023.md) D8) — and the compiler is what makes the enclosing function declare `throws`:
+
+```nika
+fn tally() -> i64 throws {          // NK2701 without the `throws`
+    let mut n = 0
+    for line in io::lines() { n += 1 }
+    return n
+}
+```
+
+What must **not** happen is what a scanner that reports its error afterwards does: a failed read that is indistinguishable from the end of the input, so a truncated stream becomes a shorter one and the tally is quietly wrong. Part I 6.4 refuses that at the *closing* brace of a block; this is the same refusal at the top of a loop.
+
+`read_to_string`, `read` and `lines` are implemented. `bytes` is not, and needs nothing new — the rule above already covers it.
+
 It is `std::fs`'s shape minus what a stream cannot keep, and the same "looks blocking, is not"
 applies: no `async` on the signature, no `await` at the call. Under Lite the event loop runs
 another task while the pipe is empty; under Advanced the read may resume on a different thread.
 What *is* visible is the rule that matters — **a `sync` function cannot call it** (Part II, 12.1),
 which is what keeps a `par_iter` body from waiting on a pipe.
 
-`lines()` yields **owned** text where `fs::lines` yields views: a file's line can be a view
-because the file is still there to point at, and a stream's bytes are gone once consumed. Keeping
-them would be `read_to_string` with extra steps.
+`lines()` yields **owned** text, where a file's lines are views into the mapping they came from
+(`fs::map(path)` and `.lines()`, above): a file is still there to point at, and a stream's bytes
+are gone once consumed. Keeping them would be `read_to_string` with extra steps. It is also what
+makes the stream expressible at all — an iterator may hand out views into a buffer it does not
+own, and never into one it does ([ADR-025](adr/adr-025.md)).
 
 There is one standard input, so these are functions rather than a handle — a handle that can be
 held invites two tasks to hold it, and two readers of one pipe get interleaved halves of lines.
@@ -479,9 +499,9 @@ use std::http
 fn main() {
     // Starts a server on Port 8080.
     // The code looks the same, but the runtime behavior adapts to the profile.
-    // Note: We use the Trailing Lambda syntax (fn: ...) for the handler.
+    // The handler is a trailing lambda, outside the parentheses.
     http::Server::new()
-        .route("/") fn: "Hello World"
+        .route("/") fn { "Hello World" }
         .listen(":8080")
 }
 ```
@@ -491,8 +511,8 @@ about its arguments is the one Part I 5.3 already gives: it takes as many implic
 its body reaches for. The first — and only — one is the request.
 
 ```nika
-.route("/")         fn: "Hello World"                      // mentions none, takes none
-.route("/hello")    fn: "Hello, {a.query("name") ?? "world"}"
+.route("/")         fn { "Hello World" }                    // mentions none, takes none
+.route("/hello")    fn { "Hello, {a.query("name") ?? "world"}" }
 .route("/fortunes") fn(request) { render(request) }         // or name it
 ```
 
@@ -560,8 +580,9 @@ whitespace inside the body is kept exactly.
 What may go in a hole is decided by the **type**, through the `Render` trait: a `Raw` renders
 itself, text renders escaped, and a type with no impl cannot be placed in a template at all. The
 compiler emits the same call for every hole and has no way to emit a different one — choosing is
-what the type does, which is why this needs no type checker in the compiler and gets one from the
-language below.
+what the type does. So this rule holds without the Nikaia compiler having to know what a hole's
+value is: it is enforced by the language below, on every hole, including the ones the checker of
+[ADR-024](adr/adr-024.md) records as `?`.
 
 **Control flow is written as an element**, because the file is markup and an editor that
 highlights it keeps working — a second syntax in a file that already has one is a second thing to
@@ -593,18 +614,30 @@ pub fn read_to_string(path: Path) -> String throws            // whole file, UTF
 pub fn write(path: Path, data: &[u8]; append: bool = false, create: bool = true) throws
 ```
 
+**What Stage 0 has of this today.** `read`, `read_to_string`, `write` and `map`. `write` takes the
+path and the data and nothing else: the `;` config section above does not parse yet
+(`examples/README.md`, G18), so `append` and `create` have no spelling at a call and are not in
+`std` rather than being there under an invented one. `lines`, `bytes`, `open`/`File`, and the
+directory functions are not here either — `lines` and `bytes` for a reason of their own, below.
+
 `read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 
-**Streaming**
+**Reading a large file: `map`, and the grammar**
 
-Reading a large file whole is a mistake the API should not encourage, so streaming is a first-class form rather than an afterthought:
+There is no `fs::lines` and no `fs::bytes`. Earlier drafts of this chapter specified both, and [ADR-025](adr/adr-025.md) D3 removed them rather than deferring them. The reasons are worth stating where a reader will look for the functions:
+
+* **The specified shape cannot exist.** `lines(path)` was to open the file *and* yield tethered `&str` — so the returned value would own the buffer and hand out views into itself. That is the one thing an iterator may not do, and it is why the language below allocates a string per line when it offers the same function.
+* **The shape that works is two calls, and it is the model.** `fs::map(path)` owns the pages; `.lines()` borrows views of them. One value owns a buffer, another borrows from it, and Part I 6.6 and [ADR-008](adr/adr-008.md) rest on keeping those apart.
+* **The properties `lines` was for are properties of the mapping**: tethered `&str`, no allocation per line, constant memory. They come from `map`, not from the sequence.
 
 ```nika
-pub fn lines(path: Path) -> Lines throws        // yields tethered &str, one per line
-pub fn bytes(path: Path) -> ByteStream throws   // yields chunks as they arrive
+let data = fs::map(&path)
+for line in data.lines() { … }
 ```
 
-Both are **immediate contexts** (Part I, 5.4) when iterated, so the loop body borrows rather than moves. Neither holds the whole file in memory.
+And for a file that is a **record per line**, the language already has something better than a sequence of lines — the grammar protocol, where `@frame(boundary: "\n")` says exactly that and drives itself over the pages, in parallel where the profile allows (Part II, 10.7). `examples/1brc.nika`, `examples/access-log.nika` and `examples/config.nika` are all that shape; none of them iterates lines.
+
+The WASM question these functions were the answer to comes back with the target: `map` is a compile error there, and what `std::fs` offers instead on `wasm32-*` will be decided with it.
 
 **Handles**
 
@@ -659,7 +692,7 @@ Both profiles have the same `std::fs` surface; only the target changes it.
 | API | Native (any profile) | `wasm32-*` (any profile) |
 | :--- | :--- | :--- |
 | `read`, `read_to_string`, `write` | yes | yes — backed by OPFS |
-| `lines`, `bytes`, `open` | yes | yes — backed by OPFS |
+| `open` | yes | yes — backed by OPFS |
 | `map` | yes | **compile error** — the platform has no memory mapping |
 | `metadata`, `read_dir`, `create_dir`, `remove`, `rename`, `copy` | yes | yes — OPFS, within the origin's sandbox |
 
@@ -809,14 +842,37 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 
 | Range | Domain | Examples defined so far |
 | :--- | :--- | :--- |
-| `NK1xxx` | Syntax & types | — |
+| `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. All eight are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` in Advanced (Part II, 12.7). |
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Borrow contracts | `NK2401` a contract change broke a caller, narrated from the ledger diff (13.5). |
 | `NK25xx` | Profile portability | Reserved: Advanced `Send`-rules reported under Lite as a portability lint, so Lite libraries stay Advanced-compatible. |
+| `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 | `NK26xx` | Resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). |
 
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
+
+### C.4. What a Type Error Looks Like
+
+Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a literal in a `String` field:
+
+```text
+error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1
+  --> app.nika:11:5
+  11 |     let text = io::read_to_string("input.txt")?
+           ^
+     = `io::read_to_string() -> String`
+     help: call it as `io::read_to_string()`
+error[NK1106]: `Reading.name` is `String`, and this is `&str`
+  --> app.nika:12:5
+  12 |     let r = Reading { name: "Hamburg", temp: 12 }
+           ^
+     help: write `.to_string()` to make a `String` of it
+```
+
+Three things about that shape are deliberate. **The note is the contract**, quoted from the ledger — the compiler shows the caller what the callee promised, because that is the fact the caller was working from. **The caret is on the statement**, not the expression: expression-level spans are open work, and both this checker and `NK2202` report at statement granularity until they exist ([ADR-024](adr/adr-024.md) D7). And **the help is paste-ready**, as C.2 requires: `.to_string()` for text, `as i64` between numbers, and the field you probably meant when a name is close to one that exists.
+
+A message appears only where **both** sides are written down. Where a type is not known — a method on a receiver `std` has no signature for, what a `?` unwraps — the compiler says nothing, which is not the same as approving. That is the property that lets the checker be run on every build: it never rejects a program that is correct.
 
 

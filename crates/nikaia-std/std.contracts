@@ -19,6 +19,13 @@
 # An absent `sync` means *not* sync - which is the promise this file exists to
 # make. An absent *entry* means nothing is known, and a caller may not assume.
 #
+# **A parameter whose Rust type is a bound rather than a type is recorded `?`.**
+# `fs::write(path: impl AsRef<Path>, data: impl AsRef<[u8]>)` accepts a `String`
+# and a `&str` and a buffer, so writing `&str` here would make the type checker
+# reject `fs::write(path, text)` for a `String` - a correct program, refused.
+# `?` is the absence of a claim (ADR-024 D1) and it is the true one: the arity
+# is still checked, and the type is not claimed because there is no one type.
+#
 # `provenance` marks a **source**: a function whose result is bytes that entered
 # the program from outside, and who chose them (ADR-010 D2). Its absence is not
 # "trusted" - it is "this is not a source", which is what almost every function
@@ -34,45 +41,77 @@ inference = "stage0-signatures"
 [fn."cli::args"]
 pub = true
 provenance = "trusted"
+signature = "() -> ?"
 
 [fn."fs::map"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "(path: ?) -> Mapped"
 
 [fn."fs::Mapped::deref"]
 pub = true
 sync = true
 returns = "borrows(self)"
+signature = "(&Mapped) -> &str"
+
+[fn."fs::read"]
+pub = true
+throws = true
+provenance = "trusted"
+signature = "(path: ?) -> Vec[u8]"
 
 [fn."fs::read_to_string"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "(path: ?) -> String"
+
+[fn."fs::write"]
+pub = true
+throws = true
+signature = "(path: ?, data: ?)"
 
 [fn."html::escape"]
 pub = true
 sync = true
 returns = "borrows(text)"
+signature = "(text: &str) -> ?"
 
 [fn."io::read"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "() -> Vec[u8]"
+
+[fn."io::lines"]
+pub = true
+provenance = "trusted"
+signature = "() -> Lines"
 
 [fn."io::read_to_string"]
 pub = true
 throws = true
 provenance = "trusted"
+signature = "() -> String"
 
 [fn."list::ListExt::map"]
 pub = true
+signature = "(?, f: ?) -> ?"
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
 [fn."text::digit_value"]
 pub = true
 sync = true
+signature = "(c: char) -> i32"
 
 [type."fs::Mapped"]
 pub = true
+
+# A step of this one can **fail**, and that is a fact a caller cannot get from
+# anywhere else: a `for` over it is a place the enclosing function can fail
+# from, and the compiler makes that function say `throws` (ADR-025 D1, `NK2701`).
+[type."io::Lines"]
+pub = true
+iterates = "throws"

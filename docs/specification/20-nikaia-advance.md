@@ -74,12 +74,13 @@ pub macro Describe(def: StructDef) -> AstExpr {
     
     // Logic: Create a print statement for every field in the struct.
     // .map() iterates over the fields and creates a list of code blocks.
-    // Syntax: Trailing Lambda with 'fn:' shorthand. No parentheses.
-    let print_statements = def.fields.map fn: quote {
+    // Syntax: a trailing lambda, outside the parentheses - and where there are
+    // no other arguments, the parentheses go with them.
+    let print_statements = def.fields.map fn { quote {
         // 'quote' creates a piece of code. 
         // We inject 'a.name' and 'self.a.name' into this code.
         println("Value of " + a.name + " is: " + self.a.name)
-    }
+    } }
 
     let name = def.name
 
@@ -180,7 +181,7 @@ Library authors accept those parameters with the **typed spread**:
 ```nika
 impl SqlParser {
     // Subject: self (the parsed statement) ; Config: the DSL's parameters
-    pub fn execute(self; ...args: Self::dsl) -> Result[Row] {
+    pub fn execute(self; ...args: Self::dsl) -> List[Row] throws {
         return self.conn.query(self.sql, args.values())
     }
 }
@@ -322,7 +323,7 @@ fn main() {
 
     // 'spawn' is a @detached context.
     // 'img_path' is implicitly moved into the task.
-    let handle = spawn fn: process_image(img_path)
+    let handle = spawn fn { process_image(img_path) }
 
     // Compiler Error: img_path is gone.
     // println("Processing: " + img_path) 
@@ -356,8 +357,8 @@ fn calculate_physics(obj: Object) sync {
 
 // Usage in Parallel Iterator
 // par_iter requires a 'sync' closure because it runs purely on CPU cores.
-// Trailing lambda syntax: 'fn:' is outside parentheses.
-particles.par_iter().for_each fn: calculate_physics(a)
+// A trailing lambda goes outside the parentheses.
+particles.par_iter().for_each fn { calculate_physics(a) }
 ```
 
 ### 12.2. The Dual Nature of `Locked[T]`
@@ -384,24 +385,24 @@ A `sync` lambda (see 12.1) can never perform I/O and can never pause. Therefore,
 let counter: Shared[Locked[i32]] = ...
 
 // OK: pure computation
-counter.access fn: a += 1
+counter.access fn { a += 1 }
 
 // Compiler Error: I/O inside a lock
-// counter.access fn: fs::write("log", "{a}")
+// counter.access fn { fs::write("log", "{a}") }
 ```
 
 ```text
 error[NK2201]: cannot wait for I/O while holding locked data
   --> main.nika:7
    |
- 7 | counter.access fn: fs::write("log", "{a}")
+ 7 | counter.access fn { fs::write("log", "{a}") }
    |                    ^^^^^^^^^^^^^^^^^^^^^^ this writes to a file,
    |                                            which makes the program pause
    |
   note: while you hold locked data, every other task that needs it must wait.
         Pausing here could freeze them for a long time (or forever).
   help: copy the value out first, then do the I/O without holding the lock:
-        let snapshot = counter.access fn: a
+        let snapshot = counter.access fn { a }
         fs::write("log", "{snapshot}")
 ```
 
@@ -422,7 +423,11 @@ let account_a: Shared[Locked[Account]] = ...
 let account_b: Shared[Locked[Account]] = ...
 
 // ERROR: Manual Nesting is forbidden to prevent Deadlocks.
-// account_a.access fn: ...
+// Taking one lock inside another is what creates the inconsistent order
+// this section is about — a single `access` (12.2) is of course fine.
+// account_a.access fn(from) {
+//     account_b.access fn(to) { to.balance += 100 }
+// }
 
 // Atomic Locking (Deadlock Proof)
 // The runtime sorts A and B internally and locks them safely.
@@ -474,10 +479,11 @@ let pixels = [/* 1 million pixels */]
 
 // The compiler splits the array into chunks and distributes them
 // across all cores. The closure must be 'sync'.
-// Correct Syntax: Methods chained with trailing lambdas (no parens around fn:).
+// Methods chained with trailing lambdas. A block ends at its `}`, so the chain
+// continues after it and means what it reads as (ADR-022).
 let bright_pixels = pixels.par_iter()
-    .map fn: a.brightness * 1.5
-    .filter fn: a > 0.5
+    .map fn { a.brightness * 1.5 }
+    .filter fn { a > 0.5 }
     .collect()
 ```
 
@@ -493,8 +499,8 @@ let data = [1, 2, 3]
 // 'task::scope' waits for all inner tasks before it returns.
 task::scope fn(s) {
     // Note: s.spawn is tied to the scope, unlike global spawn.
-    s.spawn fn: println("Reading: {data}") // Safe Borrow
-    s.spawn fn: println("Reading: {data}") // Safe Borrow
+    s.spawn fn { println("Reading: {data}") } // Safe Borrow
+    s.spawn fn { println("Reading: {data}") } // Safe Borrow
 }
 // 'data' is still valid here
 ```
@@ -510,7 +516,7 @@ If a task needs to do I/O in Advanced, it does not belong in a scope — it is a
 error[NK2102]: tasks inside `task::scope` must be `sync` in the Advanced profile
   --> worker.nika:12
    |
-12 |     s.spawn fn: fetch_url(url)
+12 |     s.spawn fn { fetch_url(url) }
    |                 ^^^^^^^^^^^^^^ `fetch_url` performs network I/O
    |
   note: a scope promises to wait for its tasks. On multiple CPU cores this
@@ -521,7 +527,7 @@ error[NK2102]: tasks inside `task::scope` must be `sync` in the Advanced profile
            mark the function `sync` (and do the I/O before the scope)
         2. run it as a background task instead — it will take ownership
            of its variables (clone what you still need):
-           let handle = spawn fn: fetch_url(url.clone())
+           let handle = spawn fn { fetch_url(url.clone()) }
            let result = handle.await
 ```
 

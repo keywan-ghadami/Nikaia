@@ -81,18 +81,22 @@ Nikaia provides basic types to represent simple values.
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
 
 ```nika
-let strictly_string: String = "Hello"
+let strictly_string: String = "Hello".to_string()
 // strictly_string = null // Error!
 
-let maybe_string: String? = null // Valid
-maybe_string = "World"           // Valid
+let mut maybe_string: &str? = null // Valid
+maybe_string = "World"             // Valid (`mut`, as in 2.1)
 ```
+
+A literal is a **view** of text the program was compiled with, not a `String` — see 6.6, where
+an allocation happens only where you wrote that you wanted one, and [ADR-024](adr/adr-024.md) D5.
+`.to_string()` is how you say you want one.
 
 ### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
 
 ```nika
-let name = "Nikaia"  // Compiler knows this is a String
+let name = "Nikaia"  // Compiler knows this is a &str - a view of static text
 let count = 42       // Compiler knows this is an i32
 ```
 
@@ -173,6 +177,34 @@ expression — it may be given a name, passed, or indexed with — and it binds
 **looser than every operator in it**, so `0..n - 1` is a range ending at
 `n - 1` rather than a range with something subtracted from it. That is the
 reading a loop head wants and the only one that is ever useful.
+
+**A loop can fail.** Some things a `for` walks are read *as it goes* — standard
+input's lines are the one `std` has today. Getting the next one is real work,
+and real work can fail. When it does, the loop stops and **the failure leaves
+the function**, exactly as a failing call would (Chapter 7), and the compiler
+makes you declare it:
+
+```nika
+fn tally() -> i64 throws {           // without `throws`: error[NK2701]
+    let mut n = 0
+    for line in io::lines() { n += 1 }
+    return n
+}
+```
+
+Nothing marks the loop, for the reason nothing marks a call that can fail
+([ADR-023](adr/adr-023.md) D8) — and this is the same rule 6.4 already applies
+to the *end* of a block, where a resource's cleanup can fail and the function
+that owns it has to say so. One rule, two places the language calls something
+you did not write ([ADR-025](adr/adr-025.md) D1).
+
+What this rule exists to prevent is the alternative: a failed read that looks
+like the end of the input, so a truncated stream becomes a shorter one and the
+count is quietly wrong. 6.4 calls that "a decades-old bug class in other
+languages", and it is the same bug at the other end of the block.
+
+Most loops cannot fail. A range, a list, a map: nothing is read, so nothing
+about them changes.
 
 ### 3.4. Pattern Matching (`match`)
 The `match` expression compares a value against a series of patterns. It is similar to a "switch" statement in other languages but ensures that every possible case is handled.
@@ -332,13 +364,13 @@ Nikaia includes built-in types for storing groups of data.
     let numbers = [1, 2, 3, 4]
     ```
     A list keeps the order it was given, and that order can be changed:
-    `xs.sort()` puts the elements in their natural order, `xs.sort_by_key fn: …`
+    `xs.sort()` puts the elements in their natural order, `xs.sort_by_key fn { … }`
     in the order of whatever the closure returns. **Both are stable** — elements
     the key does not separate keep the order they had — which is what makes two
     passes say a compound order without a comparator:
     ```nika
     names.sort()                                  // by name
-    names.sort_by_key fn: -report[a].hits         // then by hits, descending
+    names.sort_by_key fn { -report[a].hits }         // then by hits, descending
     ```
     That matters because of the line below: a map has no order to borrow, so a
     program that prints one says which.
@@ -405,10 +437,10 @@ Arguments *after* the semicolon are options, flags, or modifiers.
 fn request(url: String; timeout: i32 = 30, method: String = "GET") { ... }
 
 // Valid Calls
-request("[https://api.com](https://api.com)"; timeout: 60)
+request("https://api.com"; timeout: 60)
 
 // Invalid Calls (Compiler Errors)
-// request("[https://api.com](https://api.com)", 60)         // Error: Positional arg in named zone
+// request("https://api.com", 60)         // Error: Positional arg in named zone
 ```
 
 **Optional Parentheses**
@@ -420,23 +452,20 @@ fn init {
 }
 ```
 
-### 5.2. Expression Lambdas (The `fn:` Shorthand)
-For concise, single-line logic, use the `fn:` syntax.
-* **Implicit Arguments:** `a`, `b`, `c` are automatically available.
-* **Implicit Return:** The result of the expression is returned.
+### 5.2. There Is One Lambda Form
+Earlier drafts had a second one, `fn: expression`, for single-line logic. It is **removed**
+([ADR-022](adr/adr-022.md)), and 5.3 is the whole of what a lambda looks like.
 
-**Trailing Syntax**
-If a `fn:` expression is the last argument, parentheses can be omitted.
+It was four characters shorter than the block and cost three things. It did not grow: a body that
+gained a second line had to change *form* rather than gain a line, which the flagship example had
+already had to do. It was a second way to write the same thing, so every reader had to know when
+to use which. And its body ran to the end of the expression, so a `.method()` chained after it
+landed **inside** the lambda — silently, with no error and a different program.
 
-```nika
-// Cleanest Syntax: No parentheses required
-let ids = users.map fn: a.id
+Writing it today is an error that says so, because the form was in this specification and someone
+will have it in their fingers.
 
-// With other arguments
-let sum = numbers.reduce(0) fn: a + b
-```
-
-### 5.3. Block Lambdas (`fn { ... }`)
+### 5.3. Lambdas (`fn { ... }`)
 When logic requires multiple steps, use a Block Lambda. You can choose between implicit arguments (for speed) or explicit arguments (for clarity).
 
 **Option A: Implicit Arguments (The Default)**
@@ -462,6 +491,23 @@ Use this when you need specific names (e.g., nested closures) or types.
 * **Syntax:** `fn(name) { ... }`
 * **Note:** This disables the implicit `a` and `b`.
 
+**Trailing Syntax**
+A lambda that is the last argument may go *outside* the parentheses, and where there are no other
+arguments the parentheses go away with it:
+
+```nika
+let ids = users.map fn { a.id }
+let sum = numbers.reduce(0) fn { a + b }
+```
+
+A block ends at its `}`, so a chain continues after it and means what it reads as:
+
+```nika
+Server::new()
+    .route("/x") fn { handler(db) }
+    .listen(":8080")
+```
+
 ```nika
 // Explicit naming for better readability
 users.map fn(user) {
@@ -485,34 +531,34 @@ let names = ["Alice", "Bob"]
 
 // 'map' is @immediate. It executes completely within this stack frame.
 // 'prefix' is implicitly borrowed.
-let formatted = names.map fn: prefix + a 
+let formatted = names.map fn { prefix + a } 
 
 // 'prefix' is still valid here because it was only borrowed.
 println(prefix)
 ```
 
-#### B. Detached Context (@detached)
-​If a function stores the callback, executes it later, or sends it to another thread/task, it is a Detached Context.
-​Behavior: Implicit Move (Ownership Transfer).
-​Examples: spawn, defer, set_timeout, channel.on_receive.
+#### B. Detached Context (`@detached`)
+If a function stores the callback, executes it later, or sends it to another thread/task, it is a **Detached Context**.
+* **Behavior:** Implicit Move (Ownership Transfer).
+* **Examples:** `spawn`, `defer`, `set_timeout`, `channel.on_receive`.
 
-````nika
+```nika
 let prefix = "Log: "
 
 // 'spawn' is @detached. The lambda might outlive the current function.
 // 'prefix' is implicitly moved into the background task to ensure safety.
-spawn fn: println(prefix + "System started")
+spawn fn { println(prefix + "System started") }
 
 // Compiler Error: 'prefix' has been moved!
-// println(prefix) 
-````
+// println(prefix)
+```
 
 #### C. Constraint Propagation (The Viral Rule)
 
-​The distinction between immediate and detached is part of the function's type signature.
-​By default, function parameters accepting lambdas fn() are Immediate.
-​To accept a lambda that will be stored or spawned, you must explicitly mark the parameter as @detached.
-​Safety Rule: You cannot pass an immediate lambda to a detached parameter.
+The distinction between immediate and detached is part of the function's type signature.
+* By default, function parameters accepting lambdas `fn()` are Immediate.
+* To accept a lambda that will be stored or spawned, you must explicitly mark the parameter as `@detached`.
+* **Safety Rule:** You cannot pass an immediate lambda to a detached parameter.
 
 ```nika
 // Custom function wrapper for spawning
@@ -544,7 +590,7 @@ To modify data inside a `Locked` container, you must use the `.access()` method.
 let data: Shared[Locked[i32]] = ...
 
 // Uses short syntax where 'a' is the locked value
-data.access fn: a += 1
+data.access fn { a += 1 }
 ```
 
 ### 6.4. Resource Cleanup (RAII)
@@ -731,7 +777,7 @@ error[NK2301]: cannot change `users` while looping over it
   note: removing items mid-loop would invalidate the loop's position
         (this is a crash or silent bug in most languages)
   help: use the built-in method that does this safely:
-        users.retain fn: !a.is_duplicate()
+        users.retain fn { !a.is_duplicate() }
 ```
 
 For every known pattern of this kind, the standard library provides a safe, named method (`retain`, `drain`, `entry`, `swap(i, j)`, …) and the error message points directly at it.
@@ -810,10 +856,11 @@ Even in **Nikaia Lite** (Single-Threaded), you can perform multiple tasks concur
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
 
 ### 8.2. Spawning Tasks
-To run a new independent task, use `spawn`. It takes an **Explicit Block Lambda** containing the code to run.
+To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the
+one lambda form (5.3), whose body is a block whether it holds one line or several.
 
 ```nika
-spawn fn: println("I am running in the background!")
+spawn fn { println("I am running in the background!") }
 ```
 
 ### 8.3. Data Ownership in Tasks (Implicit Move)
@@ -823,7 +870,7 @@ A background task may keep running after the function that started it has alread
 let message = "Hello"
 
 // 'message' is implicitly moved into the task (spawn is @detached)
-spawn fn: println(message)
+spawn fn { println(message) }
 
 // Compiler Error: 'message' now belongs to the task.
 // println(message)
@@ -833,7 +880,7 @@ If you still need the value afterwards, clone it first:
 
 ```nika
 let message = "Hello"
-spawn fn: println(message.clone())
+spawn fn { println(message.clone()) }
 println(message)   // OK: the task owns a copy
 ```
 
@@ -843,7 +890,7 @@ The compiler error for this situation explains exactly that:
 error[NK2101]: this background task takes ownership of `message`
   --> main.nika:3
    |
- 3 | spawn fn: println(message)
+ 3 | spawn fn { println(message) }
    |                   ^^^^^^^ moved into the task here
  4 | println(message)
    | --------------- but `message` is used again afterwards
@@ -851,7 +898,7 @@ error[NK2101]: this background task takes ownership of `message`
   note: a task started with `spawn` may outlive this function,
         so it cannot merely borrow your variables — it takes them with it
   help: keep using `message` here by giving the task its own copy:
-        spawn fn: println(message.clone())
+        spawn fn { println(message.clone()) }
 ```
 
 ### 8.4. The Runtime Sidecar Model

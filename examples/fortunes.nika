@@ -15,8 +15,8 @@
 //
 // NOTE: this does not compile yet - see examples/README.md. [G7], the template
 // and its escaping, is done: `render` below lowers and runs. What is left is
-// [G6], the request the handler cannot see, and `fn:` in a method chain
-// (ADR-013 D5) - both of them in `main`.
+// [G6] alone, the request the handler cannot see - the chain in `main` reads
+// as it should since ADR-022 removed the `fn:` form that could not be chained.
 
 use std::http
 use std::db::postgres
@@ -48,7 +48,7 @@ pub struct Fortune {
 // the grammar cannot escape for - inside `<script>`, in a URL - is a compile
 // error naming the position rather than a promise that quietly does not hold.
 // The `render` function below lowers and runs today; what this file still
-// waits on is [G6] and the `fn:` chaining of ADR-013 D5, both in `main`.
+// waits on is [G6] alone.
 fn render(rows: List[Fortune]) -> String {
     return dsl html {
         <!DOCTYPE html>
@@ -84,14 +84,19 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
     // direct style. No `async` on the signature, no `await` at the call. In the
     // Lite profile the event loop picks up another connection while this one
     // waits - which is the entire point of the benchmark.
-    let mut rows = all.fetch(db)?
+    //
+    // And nothing marks the failure either. `fetch` can fail, this function is
+    // `throws`, and that is the whole propagation (ADR-023 D8). A sigil here
+    // would mark one of three invisible things - a pause, a failure, a cleanup
+    // at the closing brace - and imply the other two were absent.
+    let mut rows = all.fetch(db)
 
     // The benchmark requires one extra row added in memory, not in the query.
-    rows.push(Fortune(id: 0, message: "Additional fortune added at request time."))
+    rows.push(Fortune(id: 0, message: "Additional fortune added at request time.".to_string()))
 
     // `sort_by` is @immediate (Part I, 5.4), so the comparison borrows `rows`
     // rather than moving it - no clone needed.
-    rows.sort_by fn: a.message.cmp(b.message)
+    rows.sort_by fn { a.message.cmp(b.message) }
 
     return render(rows)
 }
@@ -101,7 +106,7 @@ fn main() throws {
     // event loop, so `Shared` costs a non-atomic refcount; the same source
     // compiled with --profile=advanced gets the atomic one, and nothing above
     // this line changes (Part II, 12.2).
-    let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")?
+    let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")
 
     // A handler sees the request as its first implicit argument, under the
     // rule the language already has for lambdas
@@ -111,6 +116,6 @@ fn main() throws {
     // TechEmpower tests need a query parameter or a status code. What is left
     // for [G6] is the runtime binding this cannot run without.
     http::Server::new()
-        .route("/fortunes") fn: fortunes(db)
+        .route("/fortunes") fn { fortunes(db) }
         .listen(":8080")
 }

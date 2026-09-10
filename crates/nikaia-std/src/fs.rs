@@ -88,6 +88,39 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> 
     std::fs::read_to_string(path)
 }
 
+/// A whole file, as bytes.
+///
+/// Part III 17.1. The half of `read_to_string` that does not check: an input
+/// that is not text is not a failure here, because nothing downstream is going
+/// to cut a `&str` out of it. Reach for this where the bytes are the point -
+/// an image, a checksum, a format with a length prefix.
+pub fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
+    std::fs::read(path)
+}
+
+/// A whole file, written.
+///
+/// Part III 17.1. The file is created if it is not there and **truncated if it
+/// is**, which is what `write` means everywhere and is why the specification
+/// gives it `create: bool = true` as the default rather than as a decision at
+/// the call.
+///
+/// The two options that specification also names (`append`, and `create: false`)
+/// are not here. Stage 0 has no named arguments — Part I 5.1's `;` config
+/// section does not parse yet — so shipping them would mean inventing a
+/// spelling in the meantime, and a spelling invented for one function is a
+/// spelling to keep or to break later. `examples/README.md` records it as a gap
+/// rather than as an absence nobody wrote down.
+///
+/// Takes anything that is bytes, so a Nikaia program hands it a `String`, a
+/// `&str` or a buffer without saying which it meant.
+///
+/// It is not `sync` (Part II, 12.1) and it is not a source (ADR-010 D2): it
+/// does I/O, and the bytes travel out of the program rather than in.
+pub fn write(path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), std::io::Error> {
+    std::fs::write(path, data)
+}
+
 /// Below this, the pool costs more than the check does.
 const CHUNKED_ABOVE: usize = 1 << 20;
 
@@ -144,6 +177,49 @@ fn char_boundaries(bytes: &[u8], n: usize) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::{validate, CHUNKED_ABOVE};
+
+    /// A written file reads back byte for byte, and a second write replaces
+    /// what the first one left rather than adding to it.
+    #[test]
+    fn a_file_is_written_whole_and_replaced_whole() {
+        let path = std::env::temp_dir().join(format!("nikaia-write-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        super::write(&path, "Hamburg;12.0\n").expect("write");
+        assert_eq!(
+            super::read_to_string(&path).expect("read back"),
+            "Hamburg;12.0\n"
+        );
+
+        super::write(&path, "Bremen;9.5\n").expect("write again");
+        assert_eq!(
+            super::read_to_string(&path).expect("read back"),
+            "Bremen;9.5\n",
+            "a second write truncates rather than appends"
+        );
+
+        // Bytes are bytes: what `read` hands back is what `write` was given,
+        // with no check in between - which is the difference from
+        // `read_to_string` and the reason both exist.
+        super::write(&path, [0xFFu8, 0x00, 0xFE]).expect("write bytes");
+        assert_eq!(super::read(&path).expect("read bytes"), [0xFF, 0x00, 0xFE]);
+        assert!(
+            super::read_to_string(&path).is_err(),
+            "the same bytes are not text, and the text half says so"
+        );
+
+        std::fs::remove_file(&path).expect("clean up");
+    }
+
+    /// Failing to write is an ordinary failure, not a panic: a path whose
+    /// parent is not there is the commonest one there is.
+    #[test]
+    fn writing_where_nothing_can_be_written_fails() {
+        let path = std::env::temp_dir()
+            .join("nikaia-no-such-directory")
+            .join("report.html");
+        assert!(super::write(&path, "x").is_err());
+    }
 
     /// What `validate` has to agree with, on every input.
     fn serial(bytes: &[u8]) -> Result<(), usize> {

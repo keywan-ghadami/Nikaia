@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Eight of the nine programs here compile, run, and are checked by `cargo test`. The ninth is
+Ten of the eleven programs here compile, run, and are checked by `cargo test`. The eleventh is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -14,9 +14,11 @@ needs is listed under *Gaps* below.
 | [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
 | [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
 | [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
+| [`report.nika`](report.nika) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `crates/nikaia/tests/examples.rs` |
+| [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the eight is compiled and run **under both profiles**, and their output must be
+Each of the ten is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -41,6 +43,20 @@ They are deliberately different shapes.
   escapes every hole, the type `html::Raw` is the only way to say a value is already markup, and
   a hole in a position escaping cannot make safe is a compile error naming the position. It is
   the smallest program that shows all three.
+* **`report.nika`** is the one whose result is a **file**. Every other example here ends at
+  `println`, and a program that cannot produce a file is not a tool: this one reads a stock
+  list, orders it, renders a page with the `html` template and writes it with `fs::write`
+  (Part III, 17.1). It is also `escaping.nika`'s claim tested against data that was not written
+  to make the point — the `&`, the `"` and the `<` come out of the *input file*, which is where
+  they come from in every program that has ever had an escaping bug. The test reads the page
+  back rather than the line the program printed, because the page is what it produced.
+* **`tally.nika`** is the one whose **memory does not grow with its input**. `k-nucleotide.nika`
+  also reads standard input and reads *all* of it, which is right for FASTA and wrong for a log
+  that never ends; this one holds one line at a time. It is also the smallest program that shows
+  the rule of [ADR-025](../docs/specification/adr/adr-025.md): each turn of `for line in
+  io::lines()` reads, a read can fail, nothing marks it, and the failure leaves the function —
+  which is why `throws` is on the signature and why the compiler puts it there
+  (`NK2701`).
 * **`k-nucleotide.nika`** is the one that reads **standard input**, and the difference a pipe
   makes is the point of it. `1brc.nika` maps its file and copies nothing at all; here there are
   no pages to point at, because the bytes do not exist until they are read — so the program owns
@@ -69,7 +85,10 @@ literals and constructors, lambdas, operators, `throws`/`catch`/`??`, string int
 since [ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules,
 patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
 Errors are reported on the `.nika` line that caused them
-([ADR-012](../docs/specification/adr/adr-012.md)). There is no type checker.
+([ADR-012](../docs/specification/adr/adr-012.md)), and since
+[ADR-024](../docs/specification/adr/adr-024.md) types are checked before any Rust is emitted -
+everything the ledger writes down, and nothing it does not. Every file here is part of that
+checker's guard: the build fails if any of them produces a finding.
 
 That is deliberate, and it is what these files are *for*. Writing a real program against the
 spec is the cheapest way to find out which parts of the spec are underspecified. The gaps each
@@ -159,6 +178,34 @@ CoreMark (embedded C microbenchmark).
 Writing the two programs surfaced spec questions that a real implementation must answer.
 
 ### Resolved
+
+**G17 — a stream of lines that can fail while it is being read.** *Decided and implemented*
+([ADR-025](../docs/specification/adr/adr-025.md)). Found by trying to build `fs::lines` and
+`io::lines`, and it turned out to be two problems rather than one.
+
+The **failure** half: `for line in io::lines()` performs a call per turn that nobody wrote and no
+signature declares, so there was nowhere for `throws` to attach — and pressing three answers (a
+line, the end, *I could not find out*) into an iterator's two makes a failed read look like the
+end of the stream. A truncated file becomes a shorter file, silently. Part I 6.4 already refuses
+exactly that at the *closing* brace of a block, where a resource's cleanup can fail, and calls it
+"a decades-old bug class in other languages". So the rule was already written and was never
+stated generally: **an implicit call that can fail fails the enclosing function, and the compiler
+makes you declare it.** Cleanup was its first case, iteration is its second, and `NK2701` is what
+the compiler says. Nothing marks the loop, because [ADR-023](../docs/specification/adr/adr-023.md)
+D8 leaves three of the language's four invisible control-flow events unmarked and marking the
+fourth would imply the other three were absent.
+
+The **ownership** half is why `fs::lines` is *gone* rather than waiting: `lines(path)` was to open
+the file and yield tethered `&str`, so the returned value would own the buffer and hand out views
+into itself — the one thing an iterator may not do, and the reason the language below allocates a
+string per line when it offers the same function. The shape that works is two calls,
+`fs::map(path)` + `.lines()`, and that separation *is* the model Part I 6.6 rests on. For a
+record-per-line file the language has something better than a sequence of lines anyway:
+`@frame(boundary: "\n")`, which is what `1brc.nika`, `access-log.nika` and `config.nika` all use.
+None of them iterates lines.
+
+`io::lines()` exists, because a pipe is genuinely different — its bytes do not exist until they
+are read, so the failure cannot be moved to the call — and `examples/tally.nika` is it running.
 
 **G1 — `std::fs` named no functions.** The module was described ("looks blocking, is async")
 but had no surface. Now specified in Part III, 17.1: whole-file (`read`, `read_to_string`,
@@ -266,7 +313,7 @@ over a list was specified. ADR-010 D6 is why it cannot be left to the map: an un
 seeded randomly, so its iteration order differs between runs. The answer is the explicit form,
 and now it is written down — Part I 4.5 specifies `sort()` and `sort_by_key`, and says both are
 **stable**, which is what lets two passes state a compound order without a comparator:
-`names.sort()` then `names.sort_by_key fn: -hits` is hits descending, ties by name.
+`names.sort()` then `names.sort_by_key fn { -hits }` is hits descending, ties by name.
 `access-log.nika` prints that way.
 
 **G10 — no tuple.** Found by `calc.nika`, which has to carry an operator alongside the operand
@@ -358,6 +405,14 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
 
+**G18 — a function cannot take named arguments with defaults.** Part I 5.1 specifies
+`fn request(url: String; timeout: i32 = 30, method: String = "GET")` — a subject, a `;`, and a
+config section whose parameters have names and defaults at the call. Nothing parses it. Found by
+`fs::write`, whose specification is
+`write(path: Path, data: &[u8]; append: bool = false, create: bool = true)`: the two options are
+not in `std` because there is no way to write a call that passes one, and inventing a spelling
+for one function is a spelling to keep or to break later.
+
 **G16 — a type could not be named by a path.** `Shared[postgres::Connection]` did not parse:
 a type was a name with optional arguments, and `postgres::Connection` is a name with a path in
 front of it. Found by `fortunes.nika` the moment its template stopped being the first thing that
@@ -375,7 +430,7 @@ meaning.
 ([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime
 binding. The request is the handler's **first implicit argument**, under the rule Part I 5.3
 already has: a lambda takes as many implicit arguments as its body reaches for, so
-`fn: "Hello World"` keeps working unchanged and `fn: a.query("name")` reads one. Nothing is added
+`fn { "Hello World" }` keeps working unchanged and `fn { a.query("name") }` reads one. Nothing is added
 to the language. A handler *returns* what answers the request — a `String` is 200 text/plain, an
 `html::Raw` is 200 text/html (ADR-017 D2 read from the other end: the type that says "this is
 markup" is the type that may be sent as markup), a `Response` is itself, and a `throws` that fails
@@ -397,13 +452,14 @@ holds only in some positions would have to be qualified everywhere.
 holes at compile time, every hole goes through `html::Render`, and a hole in a position escaping
 cannot make safe is refused with the position named. The type decides what a hole may hold —
 `Raw` renders itself, text renders escaped, a type with no impl cannot go in a template — which
-is ADR-017 D2 put where `rustc` can act on it, so the Nikaia compiler needs no type checker to
-enforce it. `examples/escaping.nika` is the whole of it in one page.
+is ADR-017 D2 put where `rustc` can act on it - the Nikaia compiler emits the same call for every
+hole and does not have to know which case it is. `examples/escaping.nika` is the whole of it in one page.
 
 **Control flow is there too**: `<for row in :rows> … </for>`, written as an *element* because
 the file is markup and an editor that highlights it keeps working, with `:rows` captured from the
 enclosing scope (ADR-007 D4). The position check runs through a loop's body, so nothing becomes
 safe by being repeated. `fortunes.nika`'s `render` lowers and runs today; what that file still
-waits on is **G6** and `fn:` in a method chain (ADR-013 D5), both of them in `main`.
+waits on is the `postgres` block and **G6**'s runtime binding — since
+[ADR-022](../docs/specification/adr/adr-022.md) removed the `fn:` form, the whole file parses.
 
 
