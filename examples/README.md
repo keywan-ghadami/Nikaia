@@ -179,6 +179,24 @@ Writing the two programs surfaced spec questions that a real implementation must
 
 ### Resolved
 
+**G18 — a function could not take named arguments with defaults.** *Implemented.* Part I 5.1
+specifies the *Subject ; Config* protocol — a `;` in a signature, positional data before it and
+named options after it — and nothing parsed it. Found by `fs::write`, whose specified surface is
+`write(path, data; append: bool = false, create: bool = true)`: the two options were missing from
+`std` because there was no way to write a call that passes one.
+
+Both sides parse now, and the lowering is the interesting part. The language below has neither
+named arguments nor defaults, so an option becomes an **ordinary parameter in declaration order**
+and a call fills in whatever it left out — which means the expansion needs the *callee's*
+declaration, not the call. That is what the ledger already records (Part III, 13.5), so
+`signature` gained the options with their defaults and `fs::write` is checked and expanded from
+the file `std` ships. Every configuration parameter has a default, because that is what makes it
+an option; a default is a literal, because deciding when an expression would be evaluated is worth
+doing when something needs it. `NK1109` is a call that names an option the callee does not have,
+with the one that was probably meant.
+
+`examples/tally.nika` uses both halves: it declares one option and passes one to `fs::write`.
+
 **G17 — a stream of lines that can fail while it is being read.** *Decided and implemented*
 ([ADR-025](../docs/specification/adr/adr-025.md)). Found by trying to build `fs::lines` and
 `io::lines`, and it turned out to be two problems rather than one.
@@ -404,14 +422,6 @@ next to it was handed the value it was meant to inspect and nothing compiled. Bo
 in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
-
-**G18 — a function cannot take named arguments with defaults.** Part I 5.1 specifies
-`fn request(url: String; timeout: i32 = 30, method: String = "GET")` — a subject, a `;`, and a
-config section whose parameters have names and defaults at the call. Nothing parses it. Found by
-`fs::write`, whose specification is
-`write(path: Path, data: &[u8]; append: bool = false, create: bool = true)`: the two options are
-not in `std` because there is no way to write a call that passes one, and inventing a spelling
-for one function is a spelling to keep or to break later.
 
 **G16 — a type could not be named by a path.** `Shared[postgres::Connection]` did not parse:
 a type was a name with optional arguments, and `postgres::Connection` is a name with a path in

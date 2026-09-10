@@ -14,7 +14,7 @@ Parse error:
 expected `)`; found unexpected token `b` at line 1, column 13
    1 | fn f(a: i32 b: i32) {
                    ^
-note: also possible here: `,`, `//`, `::`
+note: also possible here: `,`, `//`, `::`, `;`
 in fn_params
 in fn_item
 in item
@@ -227,7 +227,7 @@ Parse error:
 expected `)`; found unexpected token `{` at line 1, column 10
    1 | fn main( {
                 ^
-note: also possible here: `&`, `//`, `self`, identifier
+note: also possible here: `&`, `//`, `;`, `self`, identifier
 in fn_params
 in fn_item
 in item

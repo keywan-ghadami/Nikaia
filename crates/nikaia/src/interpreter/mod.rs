@@ -73,7 +73,7 @@ impl Interpreter {
 
     fn eval_expr(&self, expr: &Expr) {
         match expr {
-            Expr::Call { func, args } => {
+            Expr::Call { func, args, .. } => {
                 // Simplified function resolution
                 if let Expr::Variable(name) = &**func {
                     let name_str = self.text(name);

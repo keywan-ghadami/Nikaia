@@ -260,12 +260,17 @@ CG 1.117
              \n\
              three\n",
         ),
-        args: &[],
+        args: &["{output}"],
         expected: "\
 5 lines, 2 blank
 longest: 31 characters
 the longest line in this stream",
-        wrote: None,
+        // The run log it appends to, which is where Kap 5.1's `append: true`
+        // ends up: a tab, because the call names `separator` too.
+        wrote: Some(Output {
+            name: "tally.log",
+            contents: "5\t2",
+        }),
     },
     Example {
         file: "report.nika",
