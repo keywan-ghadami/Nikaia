@@ -87,8 +87,9 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
     //
     // And nothing marks the failure either. `fetch` can fail, this function is
     // `throws`, and that is the whole propagation (ADR-023 D8). A sigil here
-    // would mark one of three invisible things - a pause, a failure, a cleanup
-    // at the closing brace - and imply the other two were absent.
+    // would mark one of four invisible things - a pause, a failure, a cleanup
+    // at the closing brace, a loop step that fails (ADR-025 D2) - and imply the
+    // other three were absent.
     let mut rows = all.fetch(db)
 
     // The benchmark requires one extra row added in memory, not in the query.
