@@ -15,8 +15,8 @@
 //
 // NOTE: this does not compile yet - see examples/README.md. [G7], the template
 // and its escaping, is done: `render` below lowers and runs. What is left is
-// [G6], the request the handler cannot see, and `fn:` in a method chain
-// (ADR-013 D5) - both of them in `main`.
+// [G6] alone, the request the handler cannot see - the chain in `main` reads
+// as it should since ADR-022 removed the `fn:` form that could not be chained.
 
 use std::http
 use std::db::postgres
@@ -48,7 +48,7 @@ pub struct Fortune {
 // the grammar cannot escape for - inside `<script>`, in a URL - is a compile
 // error naming the position rather than a promise that quietly does not hold.
 // The `render` function below lowers and runs today; what this file still
-// waits on is [G6] and the `fn:` chaining of ADR-013 D5, both in `main`.
+// waits on is [G6] alone.
 fn render(rows: List[Fortune]) -> String {
     return dsl html {
         <!DOCTYPE html>
@@ -91,7 +91,7 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
 
     // `sort_by` is @immediate (Part I, 5.4), so the comparison borrows `rows`
     // rather than moving it - no clone needed.
-    rows.sort_by fn: a.message.cmp(b.message)
+    rows.sort_by fn { a.message.cmp(b.message) }
 
     return render(rows)
 }
@@ -111,6 +111,6 @@ fn main() throws {
     // TechEmpower tests need a query parameter or a status code. What is left
     // for [G6] is the runtime binding this cannot run without.
     http::Server::new()
-        .route("/fortunes") fn: fortunes(db)
+        .route("/fortunes") fn { fortunes(db) }
         .listen(":8080")
 }

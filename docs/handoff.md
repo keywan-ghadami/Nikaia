@@ -237,24 +237,19 @@ is left is 3 and 4, and neither is a performance question.
    `fortunes.nika` lowers and runs today**, and `examples/escaping.nika` is the
    whole contract in one page.
 
-   What that file still waits on, both in its `main`:
+   Since [ADR-022](specification/adr/adr-022.md) removed the `fn:` form, the
+   **whole file parses** — the chain in `main` was the last thing the syntax
+   was in the way of. What it waits on now is two runtime pieces and no
+   language question:
 
+   * **The `postgres` block**, a deferred-parameter DSL (ADR-007 D4): the
+     statement has to reach a driver intact, which is a different machinery
+     from the template that is built.
    * **G6, the runtime binding.** [ADR-018](specification/adr/adr-018.md)
      decided what a handler *is* — the request as its first implicit argument,
      and what each return type answers with — and nothing of it can be built
      before there is a server to bind to. That is the roadmap line after the
-     bootstrap compiler, not a language change.
-   * **`fn:` in a method chain** (ADR-013 D5), which is a *language* question
-     rather than missing work. `.route("/x") fn: fortunes(db)` followed by
-     `.listen(":8080")` is ambiguous as the grammar stands: `.listen` could
-     continue the chain or continue the lambda's body, and the body must be
-     allowed method calls (`rows.sort_by fn: a.message.cmp(b.message)` needs
-     them). The rule that makes both read correctly is that **a `fn:` body ends
-     at the end of the line**, and a body that needs more lines uses
-     `fn { … }` — but that makes the language newline-sensitive in one place,
-     which is a decision to take deliberately rather than to slip in while
-     fixing an example. Part III 17.1 shows the chained form, so the language
-     intends it.
+     bootstrap compiler.
 
 ### Closed since this file was written
 

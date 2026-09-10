@@ -332,13 +332,13 @@ Nikaia includes built-in types for storing groups of data.
     let numbers = [1, 2, 3, 4]
     ```
     A list keeps the order it was given, and that order can be changed:
-    `xs.sort()` puts the elements in their natural order, `xs.sort_by_key fn: …`
+    `xs.sort()` puts the elements in their natural order, `xs.sort_by_key fn { … }`
     in the order of whatever the closure returns. **Both are stable** — elements
     the key does not separate keep the order they had — which is what makes two
     passes say a compound order without a comparator:
     ```nika
     names.sort()                                  // by name
-    names.sort_by_key fn: -report[a].hits         // then by hits, descending
+    names.sort_by_key fn { -report[a].hits }         // then by hits, descending
     ```
     That matters because of the line below: a map has no order to borrow, so a
     program that prints one says which.
@@ -420,23 +420,20 @@ fn init {
 }
 ```
 
-### 5.2. Expression Lambdas (The `fn:` Shorthand)
-For concise, single-line logic, use the `fn:` syntax.
-* **Implicit Arguments:** `a`, `b`, `c` are automatically available.
-* **Implicit Return:** The result of the expression is returned.
+### 5.2. There Is One Lambda Form
+Earlier drafts had a second one, `fn: expression`, for single-line logic. It is **removed**
+([ADR-022](adr/adr-022.md)), and 5.3 is the whole of what a lambda looks like.
 
-**Trailing Syntax**
-If a `fn:` expression is the last argument, parentheses can be omitted.
+It was four characters shorter than the block and cost three things. It did not grow: a body that
+gained a second line had to change *form* rather than gain a line, which the flagship example had
+already had to do. It was a second way to write the same thing, so every reader had to know when
+to use which. And its body ran to the end of the expression, so a `.method()` chained after it
+landed **inside** the lambda — silently, with no error and a different program.
 
-```nika
-// Cleanest Syntax: No parentheses required
-let ids = users.map fn: a.id
+Writing it today is an error that says so, because the form was in this specification and someone
+will have it in their fingers.
 
-// With other arguments
-let sum = numbers.reduce(0) fn: a + b
-```
-
-### 5.3. Block Lambdas (`fn { ... }`)
+### 5.3. Lambdas (`fn { ... }`)
 When logic requires multiple steps, use a Block Lambda. You can choose between implicit arguments (for speed) or explicit arguments (for clarity).
 
 **Option A: Implicit Arguments (The Default)**
@@ -462,6 +459,23 @@ Use this when you need specific names (e.g., nested closures) or types.
 * **Syntax:** `fn(name) { ... }`
 * **Note:** This disables the implicit `a` and `b`.
 
+**Trailing Syntax**
+A lambda that is the last argument may go *outside* the parentheses, and where there are no other
+arguments the parentheses go away with it:
+
+```nika
+let ids = users.map fn { a.id }
+let sum = numbers.reduce(0) fn { a + b }
+```
+
+A block ends at its `}`, so a chain continues after it and means what it reads as:
+
+```nika
+Server::new()
+    .route("/x") fn { handler(db) }
+    .listen(":8080")
+```
+
 ```nika
 // Explicit naming for better readability
 users.map fn(user) {
@@ -485,7 +499,7 @@ let names = ["Alice", "Bob"]
 
 // 'map' is @immediate. It executes completely within this stack frame.
 // 'prefix' is implicitly borrowed.
-let formatted = names.map fn: prefix + a 
+let formatted = names.map fn { prefix + a } 
 
 // 'prefix' is still valid here because it was only borrowed.
 println(prefix)
@@ -501,7 +515,7 @@ let prefix = "Log: "
 
 // 'spawn' is @detached. The lambda might outlive the current function.
 // 'prefix' is implicitly moved into the background task to ensure safety.
-spawn fn: println(prefix + "System started")
+spawn fn { println(prefix + "System started") }
 
 // Compiler Error: 'prefix' has been moved!
 // println(prefix)
@@ -544,7 +558,7 @@ To modify data inside a `Locked` container, you must use the `.access()` method.
 let data: Shared[Locked[i32]] = ...
 
 // Uses short syntax where 'a' is the locked value
-data.access fn: a += 1
+data.access fn { a += 1 }
 ```
 
 ### 6.4. Resource Cleanup (RAII)
@@ -731,7 +745,7 @@ error[NK2301]: cannot change `users` while looping over it
   note: removing items mid-loop would invalidate the loop's position
         (this is a crash or silent bug in most languages)
   help: use the built-in method that does this safely:
-        users.retain fn: !a.is_duplicate()
+        users.retain fn { !a.is_duplicate() }
 ```
 
 For every known pattern of this kind, the standard library provides a safe, named method (`retain`, `drain`, `entry`, `swap(i, j)`, …) and the error message points directly at it.
@@ -811,11 +825,10 @@ In Nikaia, functions that perform Input/Output (I/O), like reading a file or dow
 
 ### 8.2. Spawning Tasks
 To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the
-`fn:` expression form (5.2) where one line says it, the `fn { … }` block form (5.3) where it
-takes several.
+one lambda form (5.3), whose body is a block whether it holds one line or several.
 
 ```nika
-spawn fn: println("I am running in the background!")
+spawn fn { println("I am running in the background!") }
 ```
 
 ### 8.3. Data Ownership in Tasks (Implicit Move)
@@ -825,7 +838,7 @@ A background task may keep running after the function that started it has alread
 let message = "Hello"
 
 // 'message' is implicitly moved into the task (spawn is @detached)
-spawn fn: println(message)
+spawn fn { println(message) }
 
 // Compiler Error: 'message' now belongs to the task.
 // println(message)
@@ -835,7 +848,7 @@ If you still need the value afterwards, clone it first:
 
 ```nika
 let message = "Hello"
-spawn fn: println(message.clone())
+spawn fn { println(message.clone()) }
 println(message)   // OK: the task owns a copy
 ```
 
@@ -845,7 +858,7 @@ The compiler error for this situation explains exactly that:
 error[NK2101]: this background task takes ownership of `message`
   --> main.nika:3
    |
- 3 | spawn fn: println(message)
+ 3 | spawn fn { println(message) }
    |                   ^^^^^^^ moved into the task here
  4 | println(message)
    | --------------- but `message` is used again afterwards
@@ -853,7 +866,7 @@ error[NK2101]: this background task takes ownership of `message`
   note: a task started with `spawn` may outlive this function,
         so it cannot merely borrow your variables — it takes them with it
   help: keep using `message` here by giving the task its own copy:
-        spawn fn: println(message.clone())
+        spawn fn { println(message.clone()) }
 ```
 
 ### 8.4. The Runtime Sidecar Model

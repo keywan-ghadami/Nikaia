@@ -479,9 +479,9 @@ use std::http
 fn main() {
     // Starts a server on Port 8080.
     // The code looks the same, but the runtime behavior adapts to the profile.
-    // Note: We use the Trailing Lambda syntax (fn: ...) for the handler.
+    // The handler is a trailing lambda, outside the parentheses.
     http::Server::new()
-        .route("/") fn: "Hello World"
+        .route("/") fn { "Hello World" }
         .listen(":8080")
 }
 ```
@@ -491,8 +491,8 @@ about its arguments is the one Part I 5.3 already gives: it takes as many implic
 its body reaches for. The first — and only — one is the request.
 
 ```nika
-.route("/")         fn: "Hello World"                      // mentions none, takes none
-.route("/hello")    fn: "Hello, {a.query("name") ?? "world"}"
+.route("/")         fn { "Hello World" }                    // mentions none, takes none
+.route("/hello")    fn { "Hello, {a.query("name") ?? "world"}" }
 .route("/fortunes") fn(request) { render(request) }         // or name it
 ```
 
