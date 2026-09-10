@@ -1,0 +1,868 @@
+// crates/nikaia/src/check/mod.rs
+//
+// The type checker.
+//
+// It answers one question per construct - "are these two types the same?" - and
+// it answers it only where both sides are written down. That is the whole
+// design, and `contracts::ty::Ty::Unknown` is what makes it honest: Stage 0 has
+// no signatures for the Rust half of `std`, and a checker that guessed at
+// `push_str`, `entry` or `chars` would report errors that are not there. So
+// every rule below has the same shape - infer both sides, and report only when
+// **both are known and they disagree**.
+//
+// What it therefore promises, exactly:
+//
+//   * it never rejects a program that is correct;
+//   * what it catches grows as the ledger grows, without this file changing.
+//
+// The second is the point of building it on the ledger (ADR-020) rather than
+// beside it. A program's own functions are checked because `Ledger::infer` read
+// their signatures out of the source; `std`'s are checked because
+// `std.contracts` writes them down; a package's will be because a package ships
+// its ledger (Part III, 13.5). One mechanism, three sources.
+//
+// Spans are the enclosing statement's, as they are for the `sync` check:
+// expression-level spans are open work in the parser, and a caret on the right
+// line is worth more than none at all.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::ast::{BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
+use crate::contracts::{ty::Ty, FnContract, Ledger};
+use crate::parser::Parsed;
+
+/// One thing the checker is sure about.
+#[derive(Debug, Clone)]
+pub struct Finding {
+    /// The statement it is in.
+    pub span: Span,
+    /// Its `NK1xxx` code, from the catalogue in Part III, C.3.
+    pub code: &'static str,
+    /// The headline, which says what is wrong and never how to think about it.
+    pub message: String,
+    /// Why the compiler believes it - the two types, and where each came from.
+    pub notes: Vec<String>,
+    /// One concrete way out. Part III C.2 requires it of every diagnostic.
+    pub help: Option<String>,
+}
+
+/// Every type mistake the ledgers are enough to see.
+pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
+    let mut checker = Checker {
+        parsed,
+        own,
+        library,
+        structs: BTreeMap::new(),
+        enums: BTreeMap::new(),
+        scope: Vec::new(),
+        expected: None,
+        findings: Vec::new(),
+    };
+    checker.collect_types();
+    checker.program();
+    checker.findings.sort_by_key(|f| f.span.start);
+    checker.findings
+}
+
+struct Checker<'a> {
+    parsed: &'a Parsed,
+    /// This unit's own contracts, inferred from the source being checked.
+    own: &'a Ledger,
+    /// `std`'s, as `std` ships them.
+    library: &'a Ledger,
+    /// Every struct declared here, with its fields. A type whose fields are
+    /// not known is simply absent, and an absent type is never an error.
+    structs: BTreeMap<String, Vec<(String, Ty)>>,
+    /// Every enum declared here, with its variant names.
+    enums: BTreeMap<String, BTreeSet<String>>,
+    /// Names in scope, innermost frame last.
+    scope: Vec<Vec<(String, Ty)>>,
+    /// What the function being walked declared it hands back.
+    expected: Option<Ty>,
+    findings: Vec<Finding>,
+}
+
+impl<'a> Checker<'a> {
+    // --- the shape of a program ---------------------------------------------
+
+    fn collect_types(&mut self) {
+        for item in &self.parsed.program.items {
+            match &item.node {
+                Item::Struct {
+                    name,
+                    generics,
+                    fields,
+                    ..
+                } => {
+                    let parameters: BTreeSet<String> = generics
+                        .iter()
+                        .map(|g| self.parsed.text(g.name).to_string())
+                        .collect();
+                    let fields = fields
+                        .iter()
+                        .map(|f| {
+                            (
+                                self.parsed.text(f.name).to_string(),
+                                Ty::from_ast(self.parsed, &f.ty).erase(&parameters),
+                            )
+                        })
+                        .collect();
+                    self.structs
+                        .insert(self.parsed.text(*name).to_string(), fields);
+                }
+                Item::Enum { name, variants, .. } => {
+                    let variants = variants
+                        .iter()
+                        .map(|v| self.parsed.text(v.name).to_string())
+                        .collect();
+                    self.enums
+                        .insert(self.parsed.text(*name).to_string(), variants);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn program(&mut self) {
+        for item in &self.parsed.program.items {
+            match &item.node {
+                Item::Fn { .. } => self.function(&item.node, None),
+                Item::Impl { target, methods } => {
+                    let target = self.parsed.text(target.name).to_string();
+                    for method in methods {
+                        self.function(&method.node, Some(&target));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn function(&mut self, item: &Item, target: Option<&str>) {
+        let Item::Fn {
+            generics,
+            receiver,
+            args,
+            ret_type,
+            body,
+            ..
+        } = item
+        else {
+            return;
+        };
+
+        let mut parameters: BTreeSet<String> = generics
+            .iter()
+            .map(|g| self.parsed.text(g.name).to_string())
+            .collect();
+        // `Self` stands for the type the `impl` is on, and nothing here
+        // resolves it - so it is a name that stands for a type, like `T`.
+        parameters.insert("Self".to_string());
+
+        let mut frame: Vec<(String, Ty)> = Vec::new();
+        if let Some(receiver) = receiver {
+            let ty = match target {
+                Some(target) if receiver.is_ref => Ty::view(target),
+                Some(target) => Ty::named(target),
+                None => Ty::Unknown,
+            };
+            frame.push(("self".to_string(), ty));
+        }
+        for arg in args {
+            frame.push((
+                self.parsed.text(arg.name).to_string(),
+                Ty::from_ast(self.parsed, &arg.ty).erase(&parameters),
+            ));
+        }
+
+        let expected = ret_type
+            .as_ref()
+            .map(|t| Ty::from_ast(self.parsed, t).erase(&parameters));
+        let outer = std::mem::replace(&mut self.expected, expected.clone());
+
+        self.scope.push(frame);
+        let tail_span = body.stmts.last().map(|s| s.span.clone());
+        let tail = self.block(body);
+        self.scope.pop();
+
+        // The last expression of a body is what the function hands back, so it
+        // answers to the declared type exactly as a `return` does.
+        if let (Some(expected), Some(span)) = (&expected, tail_span) {
+            self.expect(&tail, expected, span, "returns", |found, want| {
+                format!("this function hands back `{found}`, and it declares `{want}`")
+            });
+        }
+
+        self.expected = outer;
+    }
+
+    // --- statements ---------------------------------------------------------
+
+    /// Walk a block and hand back the type of its tail.
+    fn block(&mut self, block: &Block) -> Ty {
+        self.scope.push(Vec::new());
+        let mut tail = Ty::Tuple(Vec::new());
+        let last = block.stmts.len().saturating_sub(1);
+        for (at, stmt) in block.stmts.iter().enumerate() {
+            let ty = self.stmt(&stmt.node, &stmt.span);
+            if at == last {
+                tail = ty;
+            }
+        }
+        self.scope.pop();
+        tail
+    }
+
+    fn stmt(&mut self, stmt: &Stmt, span: &Span) -> Ty {
+        match stmt {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
+                let found = self.expr(value, span);
+                let bound = match ty {
+                    Some(ty) => {
+                        let want = Ty::from_ast(self.parsed, ty);
+                        self.expect(&found, &want, span.clone(), "let", |found, want| {
+                            format!("this is `{found}`, and the `let` says `{want}`")
+                        });
+                        want
+                    }
+                    None => found,
+                };
+                let name = self.parsed.text(*name).to_string();
+                self.bind(name, bound);
+                Ty::Tuple(Vec::new())
+            }
+
+            Stmt::Assign {
+                target, op, value, ..
+            } => {
+                let into = self.expr(target, span);
+                let found = self.expr(value, span);
+                // Only a plain assignment: `n += 1` is whatever the operator
+                // makes of the two, and Stage 0 does not model operators.
+                if op.is_none() {
+                    self.expect(&found, &into, span.clone(), "assign", |found, want| {
+                        format!("this is `{found}`, and what it is assigned to is `{want}`")
+                    });
+                }
+                Ty::Tuple(Vec::new())
+            }
+
+            Stmt::For {
+                bindings,
+                iter,
+                body,
+            } => {
+                self.expr(iter, span);
+                let frame = bindings
+                    .iter()
+                    .map(|b| (self.parsed.text(*b).to_string(), Ty::Unknown))
+                    .collect();
+                self.scope.push(frame);
+                self.block(body);
+                self.scope.pop();
+                Ty::Tuple(Vec::new())
+            }
+
+            Stmt::Return(value) => {
+                let found = match value {
+                    Some(value) => self.expr(value, span),
+                    None => Ty::Tuple(Vec::new()),
+                };
+                if let Some(expected) = self.expected.clone() {
+                    self.expect(&found, &expected, span.clone(), "returns", |found, want| {
+                        format!("this returns `{found}`, and the function declares `{want}`")
+                    });
+                }
+                Ty::Unknown
+            }
+
+            Stmt::Expr(expr) => self.expr(expr, span),
+        }
+    }
+
+    // --- expressions --------------------------------------------------------
+
+    fn expr(&mut self, expr: &Expr, span: &Span) -> Ty {
+        match expr {
+            // A bare number fits every numeric type, exactly as it does in the
+            // language below. Committing it to one here would make `add(3)`
+            // wrong wherever the parameter is not that one.
+            Expr::LitInt(_) | Expr::LitFloat(_) => Ty::Unknown,
+            // Part I 2.4 calls a string literal a `String`; Stage 0 emits a
+            // Rust string literal, which is a view of static text. The checker
+            // says what is emitted - see ADR-023.
+            Expr::LitStr(_) => Ty::view("str"),
+            Expr::LitChar(_) => Ty::named("char"),
+            Expr::LitBool(_) => Ty::named("bool"),
+
+            Expr::Variable(name) => {
+                let name = self.parsed.text(*name);
+                self.lookup(name).unwrap_or(Ty::Unknown)
+            }
+
+            Expr::Path(segments) => {
+                // `Op::Times` is a value of the enum that declares it. Anything
+                // else a path can name, this compiler does not resolve.
+                let names: Vec<&str> = segments.iter().map(|s| self.parsed.text(*s)).collect();
+                match names.as_slice() {
+                    [ty, variant] if self.is_variant(ty, variant) => Ty::named(*ty),
+                    _ => Ty::Unknown,
+                }
+            }
+
+            Expr::Block(block) => self.block(block),
+
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_ty = self.expr(cond, span);
+                self.expect_bool(&cond_ty, span, "an `if` decides on a `bool`");
+                let then = self.block(then_branch);
+                match else_branch {
+                    Some(otherwise) => {
+                        let other = self.block(otherwise);
+                        // Only when both arms agree is there something to say.
+                        if then == other {
+                            then
+                        } else {
+                            Ty::Unknown
+                        }
+                    }
+                    // An `if` with no `else` is a statement's worth of value.
+                    None => Ty::Unknown,
+                }
+            }
+
+            Expr::Match { value, arms } => {
+                self.expr(value, span);
+                let mut result: Option<Ty> = None;
+                let mut agree = true;
+                for arm in arms {
+                    let frame = self.pattern_bindings(&arm.pattern);
+                    self.scope.push(frame);
+                    let ty = self.expr(&arm.body, span);
+                    self.scope.pop();
+                    match &result {
+                        None => result = Some(ty),
+                        Some(seen) if *seen == ty => {}
+                        Some(_) => agree = false,
+                    }
+                }
+                // Every arm of a `match` is a value of the same type, but what
+                // that type is, is only known when every arm says the same.
+                match result {
+                    Some(ty) if agree => ty,
+                    _ => Ty::Unknown,
+                }
+            }
+
+            Expr::Call { func, args } => self.call(func, args, span),
+
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
+                let on = self.expr(receiver, span);
+                let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
+                let Ty::Named { name, .. } = &on else {
+                    return Ty::Unknown;
+                };
+                let key = format!("{name}::{}", self.parsed.text(*method));
+                let Some(contract) = self.own.functions.get(&key) else {
+                    return Ty::Unknown;
+                };
+                self.arguments(&key, contract, &found, span)
+            }
+
+            Expr::Field { base, name } => {
+                let on = self.expr(base, span);
+                let field = self.parsed.text(*name).to_string();
+                let Ty::Named { name: ty, .. } = &on else {
+                    return Ty::Unknown;
+                };
+                let Some(fields) = self.fields_of(ty) else {
+                    return Ty::Unknown;
+                };
+                match fields.iter().find(|(f, _)| *f == field) {
+                    Some((_, ty)) => ty.clone(),
+                    None => {
+                        let ty = ty.clone();
+                        self.no_such_field(&ty, &field, &fields, span);
+                        Ty::Unknown
+                    }
+                }
+            }
+
+            Expr::StructLit { name, fields } => {
+                let name = self.parsed.text(*name).to_string();
+                let declared = self.fields_of(&name);
+                for init in fields {
+                    let field = self.parsed.text(init.name).to_string();
+                    // `Reading { name, temp }` is shorthand for `name: name`.
+                    let found = match &init.value {
+                        Some(value) => self.expr(value, span),
+                        None => self.lookup(&field).unwrap_or(Ty::Unknown),
+                    };
+                    let Some(declared) = &declared else { continue };
+                    match declared.iter().find(|(f, _)| *f == field) {
+                        Some((_, want)) => {
+                            let want = want.clone();
+                            let owner = name.clone();
+                            self.expect(
+                                &found,
+                                &want,
+                                span.clone(),
+                                "field",
+                                move |found, want| {
+                                    format!("`{owner}.{field}` is `{want}`, and this is `{found}`")
+                                },
+                            );
+                        }
+                        None => self.no_such_field(&name, &field, declared, span),
+                    }
+                }
+                Ty::named(name)
+            }
+
+            Expr::Closure { params, body, .. } => {
+                let frame = params
+                    .iter()
+                    .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown))
+                    .collect();
+                self.scope.push(frame);
+                self.block(body);
+                self.scope.pop();
+                Ty::Unknown
+            }
+
+            Expr::Unary { op, expr } => {
+                let inner = self.expr(expr, span);
+                match op {
+                    UnaryOp::Neg => inner,
+                    UnaryOp::Not => Ty::named("bool"),
+                    UnaryOp::Ref => view_of(&inner),
+                }
+            }
+
+            Expr::Binary { op, lhs, rhs } => {
+                let left = self.expr(lhs, span);
+                let right = self.expr(rhs, span);
+                match op {
+                    BinaryOp::And | BinaryOp::Or => {
+                        self.expect_bool(&left, span, "`&&` and `||` join two `bool`s");
+                        self.expect_bool(&right, span, "`&&` and `||` join two `bool`s");
+                        Ty::named("bool")
+                    }
+                    BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge => Ty::named("bool"),
+                    // Arithmetic on two of the same thing is that thing. Which
+                    // one is known - if either is - is what the result is.
+                    _ => {
+                        if left.is_unknown() {
+                            right
+                        } else {
+                            left
+                        }
+                    }
+                }
+            }
+
+            Expr::Cast { expr, ty } => {
+                self.expr(expr, span);
+                Ty::from_ast(self.parsed, ty)
+            }
+
+            Expr::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| self.expr(p, span)).collect()),
+
+            // A `?` unwraps a failure, a `??` unwraps an absence, an index
+            // reaches into a container and a range is an iterator: four things
+            // Stage 0 has no signature for.
+            Expr::Try(inner) => {
+                self.expr(inner, span);
+                Ty::Unknown
+            }
+            Expr::Coalesce { value, fallback } => {
+                self.expr(value, span);
+                self.expr(fallback, span);
+                Ty::Unknown
+            }
+            Expr::Index { base, index } => {
+                self.expr(base, span);
+                self.expr(index, span);
+                Ty::Unknown
+            }
+            Expr::Range { start, end, .. } => {
+                self.expr(start, span);
+                self.expr(end, span);
+                Ty::Unknown
+            }
+
+            Expr::TryCatch { expr, handler } => {
+                self.expr(expr, span);
+                self.scope.push(vec![("error".to_string(), Ty::Unknown)]);
+                self.block(handler);
+                self.scope.pop();
+                Ty::Unknown
+            }
+
+            Expr::Spawn { body, .. } => {
+                self.expr(body, span);
+                Ty::Unknown
+            }
+
+            Expr::DslFrom { input, .. } => {
+                self.expr(input, span);
+                Ty::Unknown
+            }
+
+            // A template, a grammar, an `asm` block: what these produce is the
+            // business of the emitter that compiles them.
+            Expr::Dsl { .. } | Expr::Asm { .. } => Ty::Unknown,
+        }
+    }
+
+    /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`.
+    fn call(&mut self, func: &Expr, args: &[Expr], span: &Span) -> Ty {
+        let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
+
+        let name = match func {
+            Expr::Variable(name) => self.parsed.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| self.parsed.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            other => {
+                self.expr(other, span);
+                return Ty::Unknown;
+            }
+        };
+
+        // A tuple variant of an enum declared here - `Op::Plus(1)` - is a value
+        // of that enum, not a call to a function.
+        if let Some((ty, variant)) = name.split_once("::") {
+            if self.is_variant(ty, variant) {
+                return Ty::named(ty);
+            }
+        }
+
+        let Some((key, contract)) = self.resolve(&name) else {
+            return Ty::Unknown;
+        };
+        // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
+        // lowering names `Stats::new` - and which hands back the type it is on,
+        // whatever its declaration says about `Self`.
+        let constructed = key
+            .strip_suffix("::new")
+            .filter(|_| !name.ends_with("::new"))
+            .map(Ty::named);
+        let result = self.arguments(&key, contract, &found, span);
+        constructed.unwrap_or(result)
+    }
+
+    /// The count and the types of what a call passes, against what it takes.
+    fn arguments(&mut self, key: &str, contract: &FnContract, found: &[Ty], span: &Span) -> Ty {
+        // No signature is no claim. The hand-written half of `std.contracts`
+        // has some, and an entry that says nothing is checked against nothing.
+        let Some(signature) = contract.signature.clone() else {
+            return Ty::Unknown;
+        };
+        let wanted = signature.arguments();
+
+        if wanted.len() != found.len() {
+            self.findings.push(Finding {
+                span: span.clone(),
+                code: "NK1101",
+                message: format!(
+                    "`{key}` takes {}, and this call passes {}",
+                    plural(wanted.len(), "argument"),
+                    found.len()
+                ),
+                notes: vec![format!("`{key}{}`", signature.text())],
+                help: Some(match wanted.len() {
+                    0 => format!("call it as `{key}()`"),
+                    _ => format!(
+                        "it takes {}",
+                        wanted
+                            .iter()
+                            .map(|(n, t)| format!("`{n}: {}`", t.text()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                }),
+            });
+            return signature.result_or_unit();
+        }
+
+        for ((name, want), found) in wanted.iter().zip(found) {
+            if found.fits(want) {
+                continue;
+            }
+            self.findings.push(Finding {
+                span: span.clone(),
+                code: "NK1102",
+                message: format!(
+                    "`{key}` takes `{name}: {}`, and this call passes `{}`",
+                    want.text(),
+                    found.text()
+                ),
+                notes: vec![format!("`{key}{}`", signature.text())],
+                help: Some(convert(found, want)),
+            });
+        }
+
+        signature.result_or_unit()
+    }
+
+    // --- the one shape every check has --------------------------------------
+
+    /// Report only when both sides are known and they disagree.
+    fn expect(
+        &mut self,
+        found: &Ty,
+        want: &Ty,
+        span: Span,
+        what: &str,
+        message: impl FnOnce(&str, &str) -> String,
+    ) {
+        if found.fits(want) {
+            return;
+        }
+        let code = match what {
+            "let" => "NK1103",
+            "returns" => "NK1104",
+            "assign" => "NK1105",
+            "field" => "NK1106",
+            other => unreachable!("no code for `{other}`"),
+        };
+        self.findings.push(Finding {
+            span,
+            code,
+            message: message(&found.text(), &want.text()),
+            notes: Vec::new(),
+            help: Some(convert(found, want)),
+        });
+    }
+
+    fn expect_bool(&mut self, found: &Ty, span: &Span, why: &str) {
+        let bool_ty = Ty::named("bool");
+        if found.fits(&bool_ty) {
+            return;
+        }
+        self.findings.push(Finding {
+            span: span.clone(),
+            code: "NK1108",
+            message: format!("this is `{}`, and a condition is a `bool`", found.text()),
+            notes: vec![why.to_string()],
+            help: Some(
+                "compare it: `x != 0`, `text != \"\"`, `xs.len() > 0` (Part I, 3.2)".to_string(),
+            ),
+        });
+    }
+
+    fn no_such_field(&mut self, ty: &str, field: &str, declared: &[(String, Ty)], span: &Span) {
+        let names: Vec<&str> = declared.iter().map(|(f, _)| f.as_str()).collect();
+        let near = nearest(field, &names);
+        self.findings.push(Finding {
+            span: span.clone(),
+            code: "NK1107",
+            message: format!("`{ty}` has no field `{field}`"),
+            notes: vec![format!("`{ty}` has {}", list(&names))],
+            help: Some(match near {
+                Some(near) => format!("did you mean `{near}`?"),
+                None => format!("add `{field}` to `{ty}`, or use one of the fields it has"),
+            }),
+        });
+    }
+
+    // --- looking things up ---------------------------------------------------
+
+    fn bind(&mut self, name: String, ty: Ty) {
+        if let Some(frame) = self.scope.last_mut() {
+            frame.push((name, ty));
+        }
+    }
+
+    fn lookup(&self, name: &str) -> Option<Ty> {
+        self.scope
+            .iter()
+            .rev()
+            .find_map(|frame| frame.iter().rev().find(|(n, _)| n == name))
+            .map(|(_, ty)| ty.clone())
+    }
+
+    /// A function by the name a call wrote: this unit's, then a constructor,
+    /// then a library's - the same order the `sync` check resolves in.
+    fn resolve(&self, name: &str) -> Option<(String, &'a FnContract)> {
+        if let Some(contract) = self.own.functions.get(name) {
+            return Some((name.to_string(), contract));
+        }
+        let constructed = format!("{name}::new");
+        if let Some(contract) = self.own.functions.get(&constructed) {
+            return Some((constructed, contract));
+        }
+        self.library.lookup(name)
+    }
+
+    /// The fields of a type, when something knows them.
+    fn fields_of(&self, name: &str) -> Option<Vec<(String, Ty)>> {
+        if let Some(fields) = self.structs.get(name) {
+            return Some(fields.clone()).filter(|f: &Vec<_>| !f.is_empty());
+        }
+        let suffix = format!("::{name}");
+        self.library
+            .types
+            .iter()
+            .find(|(key, _)| *key == name || key.ends_with(&suffix))
+            .map(|(_, contract)| contract.fields.clone())
+            .filter(|f| !f.is_empty())
+    }
+
+    fn is_variant(&self, ty: &str, variant: &str) -> bool {
+        self.enums
+            .get(ty)
+            .is_some_and(|variants| variants.contains(variant))
+    }
+
+    /// The names a `match` arm brings into scope, all of them unknown: what a
+    /// variant carries is not in the ledger yet.
+    fn pattern_bindings(&self, pattern: &MatchPattern) -> Vec<(String, Ty)> {
+        match pattern {
+            MatchPattern::Wildcard | MatchPattern::Literal(_) => Vec::new(),
+            // A single segment binds; `Op::Times` names a variant.
+            MatchPattern::Path(segments) if segments.len() == 1 => {
+                vec![(self.parsed.text(segments[0]).to_string(), Ty::Unknown)]
+            }
+            MatchPattern::Path(_) => Vec::new(),
+            MatchPattern::Tuple { bindings, .. } | MatchPattern::Named { bindings, .. } => bindings
+                .iter()
+                .map(|b| (self.parsed.text(*b).to_string(), Ty::Unknown))
+                .collect(),
+        }
+    }
+}
+
+/// `&x`, as far as Stage 0 can say.
+///
+/// A view of a `String` is a `&str`, because that is what the language below
+/// does at a call and what a Nikaia programmer means by writing it. A view of
+/// anything with type arguments is not stated: `&Vec[T]` and `&[T]` are the
+/// same expression there, and picking one would report an error that is not
+/// there.
+fn view_of(inner: &Ty) -> Ty {
+    match inner {
+        Ty::Named { name, args, view } if args.is_empty() => {
+            if *view {
+                inner.clone()
+            } else if name == "String" {
+                Ty::view("str")
+            } else {
+                Ty::view(name.clone())
+            }
+        }
+        _ => Ty::Unknown,
+    }
+}
+
+/// Part III C.2: every diagnostic names a concrete way out.
+fn convert(found: &Ty, want: &Ty) -> String {
+    let (found, want) = (found.text(), want.text());
+    match (found.as_str(), want.as_str()) {
+        ("&str", "String") => "write `.to_string()` to make a `String` of it".to_string(),
+        ("String", "&str") => "write `&` to take a view of it".to_string(),
+        _ if is_number(&found) && is_number(&want) => {
+            format!("write `as {want}` - Nikaia converts where you say so, never quietly")
+        }
+        _ => format!("make it a `{want}`, or change what is declared to `{found}`"),
+    }
+}
+
+fn is_number(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+    )
+}
+
+/// The closest field name, when one is close enough to be worth suggesting.
+fn nearest<'n>(name: &str, among: &[&'n str]) -> Option<&'n str> {
+    among
+        .iter()
+        .map(|candidate| (distance(name, candidate), *candidate))
+        .filter(|(d, _)| *d * 3 <= name.len().max(1))
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, candidate)| candidate)
+}
+
+/// Edit distance counting a swapped pair as **one** edit.
+///
+/// Plain Levenshtein charges two for `nmae` against `name`, which puts the most
+/// common typo there is outside any threshold worth having. This is the
+/// optimal-string-alignment variant, which charges one.
+fn distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut best = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(d[i - 2][j - 2] + 1);
+            }
+            d[i][j] = best;
+        }
+    }
+
+    d[a.len()][b.len()]
+}
+
+fn plural(n: usize, what: &str) -> String {
+    if n == 1 {
+        format!("1 {what}")
+    } else {
+        format!("{n} {what}s")
+    }
+}
+
+fn list(names: &[&str]) -> String {
+    match names {
+        [] => "no fields".to_string(),
+        [one] => format!("`{one}`"),
+        [rest @ .., last] => format!(
+            "{} and `{last}`",
+            rest.iter()
+                .map(|n| format!("`{n}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}

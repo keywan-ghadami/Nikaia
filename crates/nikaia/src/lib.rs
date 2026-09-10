@@ -5,6 +5,7 @@
 // of this; nothing here depends on `rustc_private`.
 
 pub mod ast;
+pub mod check;
 pub mod contracts;
 pub mod diagnostics;
 pub mod emit;

@@ -205,6 +205,29 @@ pub fn render_sync_violation(
     out
 }
 
+/// One of the type checker's findings, on the `.nika` line it is about.
+///
+/// The same shape `NK2202` and every relayed `rustc` message use, because a
+/// rule the compiler checks itself should not look different from one it
+/// relays (ADR-012). Part III C.2 asks for a headline, the reason, and one
+/// concrete way out; a `Finding` carries all three and this writes them down.
+pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str) -> String {
+    let (line, column) = winnow_grammar::span::line_column(source, finding.span.start);
+
+    let mut out = String::new();
+    out.push_str(&format!("error[{}]: {}\n", finding.code, finding.message));
+    out.push_str(&format!("  --> {path}:{line}:{column}\n"));
+    out.push_str(&winnow_grammar::span::caret(source, finding.span.start, 1));
+    out.push('\n');
+    for note in &finding.notes {
+        out.push_str(&format!("     = {note}\n"));
+    }
+    if let Some(help) = &finding.help {
+        out.push_str(&format!("     help: {help}\n"));
+    }
+    out
+}
+
 /// Byte offset -> line and column, computed once per file.
 struct LineIndex {
     /// Byte offset of the start of each line.
