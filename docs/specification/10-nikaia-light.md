@@ -84,8 +84,8 @@ In Nikaia, types are **non-nullable** by default. A variable of type `String` mu
 let strictly_string: String = "Hello"
 // strictly_string = null // Error!
 
-let maybe_string: String? = null // Valid
-maybe_string = "World"           // Valid
+let mut maybe_string: String? = null // Valid
+maybe_string = "World"               // Valid (`mut`, as in 2.1)
 ```
 
 ### 2.4. Type Inference
@@ -405,10 +405,10 @@ Arguments *after* the semicolon are options, flags, or modifiers.
 fn request(url: String; timeout: i32 = 30, method: String = "GET") { ... }
 
 // Valid Calls
-request("[https://api.com](https://api.com)"; timeout: 60)
+request("https://api.com"; timeout: 60)
 
 // Invalid Calls (Compiler Errors)
-// request("[https://api.com](https://api.com)", 60)         // Error: Positional arg in named zone
+// request("https://api.com", 60)         // Error: Positional arg in named zone
 ```
 
 **Optional Parentheses**
@@ -491,12 +491,12 @@ let formatted = names.map fn: prefix + a
 println(prefix)
 ```
 
-#### B. Detached Context (@detached)
-​If a function stores the callback, executes it later, or sends it to another thread/task, it is a Detached Context.
-​Behavior: Implicit Move (Ownership Transfer).
-​Examples: spawn, defer, set_timeout, channel.on_receive.
+#### B. Detached Context (`@detached`)
+If a function stores the callback, executes it later, or sends it to another thread/task, it is a **Detached Context**.
+* **Behavior:** Implicit Move (Ownership Transfer).
+* **Examples:** `spawn`, `defer`, `set_timeout`, `channel.on_receive`.
 
-````nika
+```nika
 let prefix = "Log: "
 
 // 'spawn' is @detached. The lambda might outlive the current function.
@@ -504,15 +504,15 @@ let prefix = "Log: "
 spawn fn: println(prefix + "System started")
 
 // Compiler Error: 'prefix' has been moved!
-// println(prefix) 
-````
+// println(prefix)
+```
 
 #### C. Constraint Propagation (The Viral Rule)
 
-​The distinction between immediate and detached is part of the function's type signature.
-​By default, function parameters accepting lambdas fn() are Immediate.
-​To accept a lambda that will be stored or spawned, you must explicitly mark the parameter as @detached.
-​Safety Rule: You cannot pass an immediate lambda to a detached parameter.
+The distinction between immediate and detached is part of the function's type signature.
+* By default, function parameters accepting lambdas `fn()` are Immediate.
+* To accept a lambda that will be stored or spawned, you must explicitly mark the parameter as `@detached`.
+* **Safety Rule:** You cannot pass an immediate lambda to a detached parameter.
 
 ```nika
 // Custom function wrapper for spawning
@@ -810,7 +810,9 @@ Even in **Nikaia Lite** (Single-Threaded), you can perform multiple tasks concur
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
 
 ### 8.2. Spawning Tasks
-To run a new independent task, use `spawn`. It takes an **Explicit Block Lambda** containing the code to run.
+To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the
+`fn:` expression form (5.2) where one line says it, the `fn { … }` block form (5.3) where it
+takes several.
 
 ```nika
 spawn fn: println("I am running in the background!")

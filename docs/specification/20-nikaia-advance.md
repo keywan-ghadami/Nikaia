@@ -180,7 +180,7 @@ Library authors accept those parameters with the **typed spread**:
 ```nika
 impl SqlParser {
     // Subject: self (the parsed statement) ; Config: the DSL's parameters
-    pub fn execute(self; ...args: Self::dsl) -> Result[Row] {
+    pub fn execute(self; ...args: Self::dsl) -> List[Row] throws {
         return self.conn.query(self.sql, args.values())
     }
 }
@@ -422,7 +422,11 @@ let account_a: Shared[Locked[Account]] = ...
 let account_b: Shared[Locked[Account]] = ...
 
 // ERROR: Manual Nesting is forbidden to prevent Deadlocks.
-// account_a.access fn: ...
+// Taking one lock inside another is what creates the inconsistent order
+// this section is about — a single `access` (12.2) is of course fine.
+// account_a.access fn(from) {
+//     account_b.access fn(to) { to.balance += 100 }
+// }
 
 // Atomic Locking (Deadlock Proof)
 // The runtime sorts A and B internally and locks them safely.
