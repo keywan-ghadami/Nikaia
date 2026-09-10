@@ -24,6 +24,8 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
+
+pub mod template;
 use winnow_grammar::Symbol;
 
 use crate::ast::{
@@ -187,7 +189,30 @@ impl Out {
 }
 
 pub fn emit_program(parsed: &Parsed, profile: Profile) -> Result<Lowered> {
-    Emitter::new(parsed, profile).program()
+    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    emit_program_with_trust(parsed, profile, trust.provenance)
+}
+
+/// The same, with the provenance already decided.
+///
+/// The CLI analyses once and prints the answer under `--trust`; this is what it
+/// hands back in so the emitted code and the explanation cannot disagree.
+pub fn emit_program_with_trust(
+    parsed: &Parsed,
+    profile: Profile,
+    provenance: crate::contracts::Provenance,
+) -> Result<Lowered> {
+    Emitter::new(parsed, profile, provenance).program()
+}
+
+/// `std`'s shipped contracts, parsed once.
+///
+/// A malformed ledger is a bug in this repository rather than in a user's
+/// program, and the tests read the same file - so failing to parse it here
+/// means treating the input as untrusted, which is the safe direction
+/// (ADR-010 D1) and never a silent upgrade.
+fn std_ledger() -> crate::contracts::Ledger {
+    crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default()
 }
 
 struct Emitter<'p> {
@@ -209,6 +234,9 @@ struct Emitter<'p> {
     by_name: HashMap<Symbol, Option<Method>>,
     /// Whether the program imports anything from `std`.
     uses_std: bool,
+    /// ADR-010: nobody outside the program chose the bytes its maps are keyed
+    /// by, so a map may have the fast hash.
+    trusted_input: bool,
 }
 
 /// What an `impl` says about a method. Enough to adapt a `&mut self` method to
@@ -250,7 +278,7 @@ enum Propagate {
 }
 
 impl<'p> Emitter<'p> {
-    fn new(parsed: &'p Parsed, profile: Profile) -> Self {
+    fn new(parsed: &'p Parsed, profile: Profile, provenance: crate::contracts::Provenance) -> Self {
         let mut grammars = HashMap::new();
         let mut structs = HashSet::new();
         let mut methods = HashMap::new();
@@ -313,6 +341,7 @@ impl<'p> Emitter<'p> {
             methods,
             by_name,
             uses_std,
+            trusted_input: provenance == crate::contracts::Provenance::Trusted,
         }
     }
 
@@ -915,6 +944,141 @@ impl<'p> Emitter<'p> {
 
     // --- Types ---
 
+    /// `dsl html { … } eod`, compiled here (ADR-017).
+    ///
+    /// `html` is the only target the bootstrap compiler knows. A `dsl sql { … }`
+    /// is a *deferred-parameter* DSL (ADR-007 D4) that has to reach a driver
+    /// with the statement intact, and saying so is better than lowering it to
+    /// something that reads like a template and is not one.
+    fn template(
+        &self,
+        out: &mut Out,
+        target: Symbol,
+        context: Option<&Symbol>,
+        content: &str,
+        depth: usize,
+        flow: Flow,
+    ) -> Result<()> {
+        let name = self.text(target);
+        if name != "html" {
+            return Err(anyhow!(
+                "`dsl {name} {{ … }}` is not lowered yet: the bootstrap compiler \
+                 compiles the `html` template (ADR-017) and nothing else. A DSL \
+                 whose block is a statement for a driver - `sql`, `postgres` - \
+                 needs the deferred-parameter binding of ADR-007 D4."
+            ));
+        }
+        if let Some(context) = context {
+            return Err(anyhow!(
+                "`dsl html` takes no context, and `{}` was given one",
+                self.text(*context)
+            ));
+        }
+
+        // The framing whitespace is not markup: the newline after `{` and the
+        // indentation before `} eod` are there because the template is written
+        // in a file, and a block form that kept them would make every value it
+        // produces carry the indentation of the function it was written in.
+        // Whitespace *inside* the body is kept exactly.
+        let segments = template::split(content.trim())?;
+
+        // ADR-017 D3. Every hole that escaping cannot make safe, at once: a
+        // template with three of them should say so three times rather than
+        // once per build.
+        let illegal = template::illegal(&segments);
+        if !illegal.is_empty() {
+            let mut message = String::from("the template has holes escaping cannot make safe\n");
+            for (expr, at) in &illegal {
+                message.push_str(&format!("  {}\n", template::illegal_message(expr, *at)));
+            }
+            return Err(anyhow!(message));
+        }
+
+        let pad = "    ".repeat(depth + 1);
+        let close = "    ".repeat(depth);
+        out.push(&format!("{{\n{pad}let mut __html = String::new();\n"));
+        self.template_segments(out, &segments, depth + 1, flow)?;
+        out.push(&format!("{pad}__html\n{close}}}"));
+        Ok(())
+    }
+
+    /// The pieces of a template, appended to `__html` in order.
+    fn template_segments(
+        &self,
+        out: &mut Out,
+        segments: &[template::Segment],
+        depth: usize,
+        flow: Flow,
+    ) -> Result<()> {
+        let pad = "    ".repeat(depth);
+
+        for segment in segments {
+            match segment {
+                template::Segment::Text(text) => {
+                    out.push(&format!("{pad}__html.push_str({});\n", rust_string(text)));
+                }
+                template::Segment::Hole { expr, .. } => {
+                    // Parsed as Nikaia and emitted as Nikaia: a hole holds an
+                    // expression of this language, not a foreign one.
+                    let parsed = parse_expression(&self.parsed.interner, expr)
+                        .map_err(|e| anyhow!("in the template hole `{{{expr}}}`: {e}"))?;
+                    out.push(&format!(
+                        "{pad}__html.push_str(&::nikaia_std::html::Render::render(&"
+                    ));
+                    self.expr(out, &parsed, depth, flow)?;
+                    out.push("));\n");
+                }
+                // The loop of the language below, over the captured collection:
+                // it borrows rather than copies, exactly as it would in the
+                // function around the template.
+                template::Segment::For {
+                    binding,
+                    collection,
+                    body,
+                } => {
+                    out.push(&format!("{pad}for {binding} in &{collection} {{\n"));
+                    self.template_segments(out, body, depth + 1, flow)?;
+                    out.push(&format!("{pad}}}\n"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A path, with the map it names chosen the same way its type is.
+    ///
+    /// `HashMap::new` has no counterpart on a map with a hasher of its own -
+    /// `new` exists only for the default one - so the trusted map is built with
+    /// `default`, which is what every `HashMap<_, _, S>` is built with.
+    fn path(&self, segments: &[&str]) -> String {
+        if let [container, "new"] = segments {
+            let chosen = self.map_name(container);
+            if chosen != *container {
+                return format!("{chosen}::default");
+            }
+        }
+        segments
+            .iter()
+            .map(|s| self.map_name(s))
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
+    /// `HashMap` under the name the provenance of this program's input picked
+    /// (ADR-010 D5).
+    ///
+    /// Trusted keys get a fast, fixed-seed hash; untrusted keys keep the keyed,
+    /// randomly seeded one `std` gives every map by default. Nothing else about
+    /// the map changes - same table, same API, same full-content equality - so
+    /// this is a name and not a translation.
+    fn map_name<'n>(&self, name: &'n str) -> &'n str {
+        match (name, self.trusted_input) {
+            ("HashMap", true) => "TrustedMap",
+            ("HashSet", true) => "TrustedSet",
+            _ => name,
+        }
+    }
+
     fn ty(&self, ty: &Type, lifetimes: Lifetimes) -> String {
         let mut out = String::new();
 
@@ -929,7 +1093,7 @@ impl<'p> Emitter<'p> {
         if ty.is_view {
             out.push_str(lifetimes.reference);
         }
-        out.push_str(self.text(ty.name));
+        out.push_str(self.map_name(self.text(ty.name)));
 
         let mut params: Vec<String> = ty.generics.iter().map(|g| self.ty(g, lifetimes)).collect();
         // A struct that holds a view carries the input lifetime with it.
@@ -1154,13 +1318,19 @@ impl<'p> Emitter<'p> {
             }
             Expr::LitBool(b) => out.push(&b.to_string()),
             Expr::Variable(name) => out.push(self.text(*name)),
-            Expr::Path(segments) => out.push(
-                &segments
-                    .iter()
-                    .map(|s| self.text(*s))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-            ),
+            // ADR-017: the template is compiled where it is written. What comes
+            // out is the string building a hand-written renderer would do, with
+            // `html::Render` at every hole - which is what makes the escaping a
+            // property of the template rather than of whoever filled it in.
+            Expr::Dsl {
+                target,
+                content,
+                context,
+            } => self.template(out, *target, context.as_ref(), content, depth, flow)?,
+            Expr::Path(segments) => {
+                let path: Vec<&str> = segments.iter().map(|s| self.text(*s)).collect();
+                out.push(&self.path(&path));
+            }
             Expr::Block(block) => self.block(out, block, depth, flow, true)?,
             Expr::If {
                 cond,
@@ -1730,6 +1900,28 @@ pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
     borrowing.contains(&ty.name) || ty.generics.iter().any(|g| names_borrowing(g, borrowing))
 }
 
+/// A Rust string literal for text the template wrote itself.
+///
+/// The text is markup by definition - the template author typed it - so nothing
+/// is escaped here; what is quoted is what Rust needs quoted to read the same
+/// bytes back.
+fn rust_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Walk every expression in a block, including the ones inside statements.
 fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
     for stmt in &block.stmts {
@@ -1855,11 +2047,29 @@ fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
             }
             '{' => {
                 let mut hole = String::new();
-                let mut spec = None;
+                let mut spec: Option<String> = None;
                 let mut depth = 1;
                 let mut nesting = 0;
 
-                for c in chars.by_ref() {
+                while let Some(c) = chars.next() {
+                    // A hole is Nikaia source that was written *inside* a string
+                    // literal, so the escaping it carries is that literal's. The
+                    // two characters the enclosing string had to escape are the
+                    // two undone here - without this, `"{f(\"a\")}"` hands the
+                    // parser `f(\"a\")`, which is not an expression.
+                    if c == '\\' {
+                        match chars.peek() {
+                            Some('"') | Some('\\') => {
+                                let c = chars.next().expect("peeked");
+                                match &mut spec {
+                                    Some(spec) => spec.push(c),
+                                    None => hole.push(c),
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     match c {
                         '{' => depth += 1,
                         '}' => {

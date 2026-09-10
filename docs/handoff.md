@@ -213,22 +213,48 @@ is left is 3 and 4, and neither is a performance question.
    program wants thousands of distinct keys and not before. Upstream
    winnow-grammar#13 records the numbers where the method is documented.
 
-3. **Input provenance (ADR-010) is specified and not implemented**, and Stage 0
-   cannot implement it — choosing a map's hasher needs dataflow the emitter must
-   not invent (ADR-011 D2). Costs 22 % of the flagship's instructions.
-   ADR-011 §4 has the measurement and why no `.nika` file gains an annotation.
-   This is the first thing that wants a type checker (ADR-013 D7).
-4. **What `fortunes.nika` waits on, now that it is decided.** G6 and G7 are no
-   longer open questions: [ADR-018](specification/adr/adr-018.md) says the
-   request is the handler's first *implicit* argument and what a handler's
-   return type answers with, and [ADR-017](specification/adr/adr-017.md) says a
-   template escapes every hole unconditionally, that `html::Raw` is the only way
-   to say "already markup", and that a hole in a position the grammar cannot
-   escape *for* is a compile error. `std::html::escape` is implemented and
-   tested. What is left is **implementation, in this order**: the `html` grammar
-   itself with the per-hole position check (G7), and the runtime binding a
-   server cannot exist without (G6) — which is the roadmap line after the
-   bootstrap compiler, not a language change.
+3. **Input provenance (ADR-010) — closed, and it was the biggest one.** A map
+   keyed by the input now gets the hash the provenance of that input picks:
+   `std`'s ledger says which of its calls are sources and who chose their bytes
+   (ADR-020), and `contracts::trust` joins them over the program. Callgrind on
+   200 000 rows, the same tree built twice with byte-identical output: **120.0 M
+   instructions hardened against 89.1 M chosen — 26 %.** `nikaia --trust` prints
+   the choice and what decided it.
+
+   What the analysis is, so a later one is not mistaken for it: **one buffer**,
+   because ADR-008 gives a compilation unit one input lifetime. The join over a
+   program's sources is not a coarsening of a per-buffer analysis — it is the
+   per-buffer analysis, for the one buffer this representation can express.
+   `std` has no untrusted source yet; `http`, `net` and `db` arrive with the
+   modules that have them, and the lattice is tested against a ledger that has
+   one so the join is checked rather than assumed on that day.
+
+4. **What `fortunes.nika` waits on — G7 is built, two things are left.**
+   [ADR-017](specification/adr/adr-017.md) is implemented: `dsl html { … } eod`
+   is compiled where it is written, every hole goes through `html::Render`, a
+   hole in a position escaping cannot make safe is refused with the position
+   named, and `<for row in :rows>` repeats a body. **The `render` function in
+   `fortunes.nika` lowers and runs today**, and `examples/escaping.nika` is the
+   whole contract in one page.
+
+   What that file still waits on, both in its `main`:
+
+   * **G6, the runtime binding.** [ADR-018](specification/adr/adr-018.md)
+     decided what a handler *is* — the request as its first implicit argument,
+     and what each return type answers with — and nothing of it can be built
+     before there is a server to bind to. That is the roadmap line after the
+     bootstrap compiler, not a language change.
+   * **`fn:` in a method chain** (ADR-013 D5), which is a *language* question
+     rather than missing work. `.route("/x") fn: fortunes(db)` followed by
+     `.listen(":8080")` is ambiguous as the grammar stands: `.listen` could
+     continue the chain or continue the lambda's body, and the body must be
+     allowed method calls (`rows.sort_by fn: a.message.cmp(b.message)` needs
+     them). The rule that makes both read correctly is that **a `fn:` body ends
+     at the end of the line**, and a body that needs more lines uses
+     `fn { … }` — but that makes the language newline-sensitive in one place,
+     which is a decision to take deliberately rather than to slip in while
+     fixing an example. Part III 17.1 shows the chained form, so the language
+     intends it.
 
 ### Closed since this file was written
 

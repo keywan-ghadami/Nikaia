@@ -540,6 +540,45 @@ present. It does **not** make text safe inside `<script>`, inside CSS, in an unq
 in a URL: those need different escaping, which is why a hole in one of those positions is a
 compile error naming the position rather than a call to this function.
 
+**The template, and where it is compiled.** `dsl html { … } eod` is compiled *where it is
+written*: the body is known when the program is compiled, so it is split into literal markup and
+holes there, and what comes out is the string building a hand-written renderer would do. That is
+what makes the escaping a compile-time property rather than a call somebody has to remember.
+
+```nika
+fn row(name: &str, shade: &str) -> String {
+    return dsl html {
+        <tr class="{shade}"><td>{name}</td></tr>
+    } eod
+}
+```
+
+`{{` is a literal brace, the same rule an interpolated string follows. The framing whitespace —
+the newline after `{` and the indentation before `} eod` — is not markup and is removed;
+whitespace inside the body is kept exactly.
+
+What may go in a hole is decided by the **type**, through the `Render` trait: a `Raw` renders
+itself, text renders escaped, and a type with no impl cannot be placed in a template at all. The
+compiler emits the same call for every hole and has no way to emit a different one — choosing is
+what the type does, which is why this needs no type checker in the compiler and gets one from the
+language below.
+
+**Control flow is written as an element**, because the file is markup and an editor that
+highlights it keeps working — a second syntax in a file that already has one is a second thing to
+know:
+
+```nika
+<table>
+<for row in :rows><tr><td>{row.id}</td><td>{row.message}</td></tr></for>
+</table>
+```
+
+`:rows` carries the colon because it is **captured from the enclosing scope** (ADR-007 D4): that
+is where the template's names end and the program's begin. The loop becomes the loop of the
+language below, over the captured collection, so it borrows rather than copies exactly as it
+would in the function around the template. The position check runs through a loop's body — a hole
+in a `<script>` does not become safe by being repeated.
+
 **`std::fs` (Compiler Magic)**
 File system access is designed to look **blocking** (synchronous) for ease of use. However, the compiler automatically transforms these calls into **non-blocking** state machines backed by the runtime's reactor. You never block the thread, but you never have to write "callback hell".
 
@@ -649,7 +688,17 @@ let data = fs::map(path; trusted: false)
 
 The reverse (`trusted: true`) exists for the case where you know the peer. Both are recorded in `nikaia.contracts`, so "every place this program declared something safe" is one list in one file, and it shows up in review when it changes. A grammar for a wire format can also pin the floor for everyone who uses it — `@untrusted grammar HttpHeaders` — so no application can lower it by accident (Part II, 10.7 and [ADR-010](adr/adr-010.md)).
 
-`nikaia explain --trust` prints where every buffer came from and which hasher each map got. And because untrusted maps are seeded randomly, **iteration order is not stable between runs** — when order matters, ask for it explicitly rather than relying on what a map happens to do today.
+`nikaia --trust` prints where the program's bytes came from, which source said so, and which hasher its maps got:
+
+```text
+$ nikaia --input 1brc.nika --backend rust --trust
+input provenance: trusted
+    cli::args is trusted
+    fs::map is trusted
+hash for a map keyed by the input: fast, fixed seed - no adversary chooses these keys
+```
+
+What the bootstrap compiler's analysis is, exactly, so that a later one is not mistaken for it: **one buffer**, because ADR-008 gives a compilation unit one input lifetime — so the join over the sources a program calls *is* the per-buffer answer, for the one buffer this representation can express. The build cache needs no separate key field for it: provenance is a function of the source and of what `std`'s ledger says about the sources that source calls, and the compiler's fingerprint already hashes that ledger (13.6). And because untrusted maps are seeded randomly, **iteration order is not stable between runs** — when order matters, ask for it explicitly rather than relying on what a map happens to do today.
 
 **Other Key Modules:**
 * **`std::json`**: High-performance serialization using compile-time code generation (zero-allocation parsing where possible).

@@ -198,6 +198,25 @@ CG 1.117
 0\tGGTATTTTAATT
 0\tGGTATTTTAATTTATAGT",
     },
+    Example {
+        file: "escaping.nika",
+        input: None,
+        stdin: None,
+        args: &[],
+        // Every character that changes what HTML means is gone from the three
+        // rows that hold text: `<` and `&` in a name, the quotes around a note,
+        // an apostrophe, and a `</td>` that is not a tag here. The fourth is
+        // the one the program built as markup and said so with a type - it
+        // keeps its `<em>`, and the name inside it is escaped once, by the call
+        // that made the promise.
+        expected: "\
+<table>
+        <tr class=\"odd\"><td>Ada</td><td>fine</td></tr>\
+<tr class=\"even\"><td>a&lt;b &amp; c</td><td>&quot;quoted&quot;</td></tr>\
+<tr class=\"odd\"><td>O&#39;Hara</td><td>&lt;/td&gt; is not a tag here</td></tr>
+        </table>
+<tr class=\"odd\"><td>Ada</td><td><em>Ada</em></td></tr>",
+    },
 ];
 
 /// Written at specification level: they say what the language is meant to look

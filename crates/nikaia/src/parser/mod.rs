@@ -393,7 +393,7 @@ grammar! {
         // recorded and the emitter decides what it becomes.
         rule type_ref -> Type # "type" =
             view:amp?
-            name:NAME
+            name:type_name
             generics:generic_type_args?
             -> {
                 Type {
@@ -419,6 +419,27 @@ grammar! {
         // USING [ ] SYNTAX directly for testing
         rule generic_type_args -> Vec<Type> =
             [ args:type_refs? ] -> { args.unwrap_or_default() }
+
+        // A type may be named by a path: `postgres::Connection`, `html::Raw`.
+        //
+        // The whole path is interned as one name, because that is what the name
+        // *is* to a compiler that lowers name for name (ADR-011 D2) - nothing
+        // here resolves a module, and a path can therefore never collide with a
+        // struct this file declares, which is correct.
+        rule type_name -> Symbol =
+            head:NAME tail:path_segment* -> {
+                if tail.is_empty() {
+                    head
+                } else {
+                    let mut path = String::new();
+                    path.push_str(_state.interner.resolve(head));
+                    for segment in tail {
+                        path.push_str("::");
+                        path.push_str(_state.interner.resolve(segment));
+                    }
+                    _state.intern(&path)
+                }
+            }
 
         rule type_refs -> Vec<Type> =
             head:type_ref tail:type_ref_tail* -> {
@@ -943,6 +964,7 @@ grammar! {
         // PEG keeps the first alternative that matches.
         rule primary_expr -> Expr =
             sp:spawn_expr -> { sp }
+          | d:dsl_block_expr -> { d }
           | d:dsl_from_expr -> { d }
           | i:if_expr -> { i }
           | m:match_expr -> { m }
@@ -1072,8 +1094,17 @@ grammar! {
             }
 
         // Part II, 10.2/10.5: `dsl Json from input` - a named grammar run over
-        // a value. The other `dsl` form takes a foreign-syntax block and is not
-        // parsed here.
+        // Part II, 10.5: a DSL block ends with `} eod`, and the end cannot be
+        // found by counting braces - the body is foreign syntax where a `}` may
+        // be a string character or absent entirely. So the body is what lies
+        // before the marker, taken verbatim; what it *means* is the target
+        // grammar's business and is decided when it is lowered.
+        rule dsl_block_expr -> Expr =
+            "dsl" name:NAME "{" body:until("} eod") "} eod" -> {
+                Expr::Dsl { target: name, context: None, content: body.to_string() }
+            }
+
+        // a value. The other `dsl` form takes a foreign-syntax block.
         rule dsl_from_expr -> Expr =
             // The binding is `source`, not `input`: the generated parser's own
             // closure takes a parameter called `input`, and a binding of that

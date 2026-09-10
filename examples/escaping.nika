@@ -1,0 +1,85 @@
+// examples/escaping.nika
+//
+// An HTML page built from a template, with the escaping the template promises
+// rather than the caller remembers.
+//
+// Run:
+//
+//     nikaia --input examples/escaping.nika --backend rust
+//     ./escaping
+//
+// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
+// itself rather than a copy of it.
+//
+// Why it is here beside the others. It is the smallest program that shows what
+// [ADR-017](../docs/specification/adr/adr-017.md) decided, and the decision is
+// worth seeing rather than reading:
+//
+//   * **Every hole is escaped, every time.** There is no flag at a hole and no
+//     way to ask for the other behaviour. The comment below is a comment, not a
+//     safety measure - nothing in this file could turn escaping off.
+//   * **The one way to say "this is already markup" is a type.** `html::Raw` is
+//     what the last row uses, and `Raw::new` is the one line to grep for. A
+//     flag at the hole would be a property of the call site, and the same value
+//     reaches many call sites; a type travels with the value.
+//   * **A hole is only legal where escaping is enough.** Move one of these into
+//     a `<script>` body, a `href="…"` or an unquoted attribute and the compiler
+//     names the position and refuses. That is what lets the first point be
+//     unconditional: a promise that held only in some positions would have to
+//     be qualified everywhere.
+
+use std::html
+
+@borrowed
+pub struct Row {
+    name: &str,
+    note: &str,
+    shade: &str,
+}
+
+// The whole table, in one template. `<for row in :rows>` is written as an
+// *element* because this file is markup and an editor that highlights it keeps
+// working; `:rows` carries the colon because it is captured from the enclosing
+// scope (ADR-007 D4) - that is where the template's names end and the program's
+// begin.
+//
+// The two holes in the cells are in text nodes and the one in the class is in a
+// *quoted* attribute, which is the other position escaping is enough for. The
+// check runs through the loop's body, so nothing becomes safe by being
+// repeated.
+//
+// `{{` is a literal brace, the same rule an interpolated string follows - a
+// template shares the syntax rather than inventing a second one.
+fn table(rows: Vec[Row]) -> String {
+    return dsl html {
+        <table>
+        <for r in :rows><tr class="{r.shade}"><td>{r.name}</td><td>{r.note}</td></tr></for>
+        </table>
+    } eod
+}
+
+// A row whose second cell is *markup* the program built itself. `Raw` is the
+// promise, and `escaped` is how text becomes markup safely - so what is emitted
+// here is escaped exactly once, by the call that says so.
+fn emphasised(name: &str) -> String {
+    // Text becomes markup by being escaped, and the type records that it was.
+    // `Raw::new` is the promise; `html::escape` is what makes it true here.
+    let mut built = String::new()
+    built.push_str("<em>")
+    built.push_str(&html::escape(name))
+    built.push_str("</em>")
+    let markup = html::Raw::new(built)
+    return dsl html {
+        <tr class="odd"><td>{name}</td><td>{markup}</td></tr>
+    } eod
+}
+
+fn main() {
+    let mut rows = Vec::new()
+    rows.push(Row { name: "Ada", note: "fine", shade: "odd" })
+    rows.push(Row { name: "a<b & c", note: "\"quoted\"", shade: "even" })
+    rows.push(Row { name: "O'Hara", note: "</td> is not a tag here", shade: "odd" })
+
+    println("{table(rows)}")
+    println("{emphasised(\"Ada\")}")
+}

@@ -166,25 +166,29 @@ fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Optio
         return (!contract.sync).then_some((constructed, false));
     }
 
-    // Then the library, by the name the caller wrote and by the name the
-    // prelude makes available unqualified. Matching on the last segment is
-    // name-for-name resolution (ADR-011 D2) rather than import tracking, and it
-    // is what a compiler without a module graph can honestly do.
-    if let Some(contract) = library.functions.get(&name) {
-        return (!contract.sync).then_some((name, true));
-    }
-    if !name.contains("::") {
-        let suffix = format!("::{name}");
-        if let Some((key, contract)) = library
-            .functions
-            .iter()
-            .find(|(key, _)| key.ends_with(&suffix))
-        {
-            return (!contract.sync).then_some((key.clone(), true));
-        }
+    // Then the library, by the name the caller wrote or the one the prelude
+    // makes available unqualified.
+    if let Some((key, contract)) = library.lookup(&name) {
+        return (!contract.sync).then_some((key, true));
     }
 
     None
+}
+
+/// Every call by name in a block and the blocks inside it.
+///
+/// Shared with the trust analysis, which asks a different question of the same
+/// walk: `sync` asks what a call promises, provenance asks where its result
+/// came from.
+pub(super) fn walk_calls(parsed: &Parsed, block: &Block, f: &mut impl FnMut(&str)) {
+    for stmt in &block.stmts {
+        visit_stmt(&stmt.node, &mut |expr| {
+            if let Some(name) = super::trust::call_name(parsed, expr) {
+                f(&name);
+            }
+        });
+        visit_stmt_blocks(&stmt.node, &mut |inner| walk_calls(parsed, inner, f));
+    }
 }
 
 /// Every expression a statement holds, without descending into nested blocks -

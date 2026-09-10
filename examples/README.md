@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Seven of the eight programs here compile, run, and are checked by `cargo test`. The eighth is
+Eight of the nine programs here compile, run, and are checked by `cargo test`. The ninth is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -13,9 +13,10 @@ needs is listed under *Gaps* below.
 | [`json.nika`](json.nika) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `crates/nikaia/tests/examples.rs` |
 | [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
 | [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
+| [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the seven is compiled and run **under both profiles**, and their output must be
+Each of the eight is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -36,6 +37,10 @@ They are deliberately different shapes.
   the one that defines its own `WS` so that `#` comments are legal everywhere a blank is
   without another rule mentioning them. It is also the counterpart to 1BRC's fold: `setting*`
   collects, which is right for a configuration file and wrong at a billion rows.
+* **`escaping.nika`** is the one about a *contract* rather than a shape: the `html` template
+  escapes every hole, the type `html::Raw` is the only way to say a value is already markup, and
+  a hole in a position escaping cannot make safe is a compile error naming the position. It is
+  the smallest program that shows all three.
 * **`k-nucleotide.nika`** is the one that reads **standard input**, and the difference a pipe
   makes is the point of it. `1brc.nika` maps its file and copies nothing at all; here there are
   no pages to point at, because the bytes do not exist until they are read — so the program owns
@@ -353,6 +358,19 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
 
+**G16 — a type could not be named by a path.** `Shared[postgres::Connection]` did not parse:
+a type was a name with optional arguments, and `postgres::Connection` is a name with a path in
+front of it. Found by `fortunes.nika` the moment its template stopped being the first thing that
+failed. The whole path is interned as one name, because that is what the name *is* to a compiler
+that lowers name for name (ADR-011 D2) — nothing here resolves a module, and a path can therefore
+never collide with a struct the file declares, which is correct.
+
+**A hole in an interpolated string could not hold a string literal.** `"{f(\"a\")}"` handed the
+parser `f(\"a\")`, which is not an expression. A hole is Nikaia source that was written *inside*
+a string literal, so the escaping it carries is that literal's: the two characters the enclosing
+string had to escape are undone before the hole is parsed, and every other escape keeps its
+meaning.
+
 **G6 — the HTTP handler cannot see the request.** *Decided*
 ([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime
 binding. The request is the handler's **first implicit argument**, under the rule Part I 5.3
@@ -365,8 +383,8 @@ is 500 with a **generic** body and the error in the log, because an error messag
 the operator. The request's strings are views into the connection buffer (ADR-008), so a parameter
 used inside the request's scope costs nothing and one kept past it has to be owned.
 
-**G7 — HTML escaping belongs in the template grammar's contract.** *Decided*
-([ADR-017](../docs/specification/adr/adr-017.md)), *not yet enforced*. Every hole is escaped,
+**G7 — HTML escaping belongs in the template grammar's contract.** *Decided and now
+**enforced*** ([ADR-017](../docs/specification/adr/adr-017.md)). Every hole is escaped,
 unconditionally — no flag at the hole, and no exemption for "trusted" data, because provenance is
 evidence about where bytes came from and one wrong `trusted: true` upstream becomes an XSS hole
 downstream (ADR-010 D8). The one way to say "this is already markup" is the type `html::Raw`,
@@ -375,8 +393,17 @@ is one line to grep for. And a hole is only legal in a position the grammar can 
 hole inside `<script>` or in a URL is a compile error naming the position, because a promise that
 holds only in some positions would have to be qualified everywhere.
 
-`std::html::escape` exists and is tested (`crates/nikaia-std/src/html.rs`) — it returns its input
-unallocated when nothing needs escaping, so the contract costs a scan rather than a copy. What is
-left is the `html` grammar and the per-hole position check.
+`dsl html { … } eod` is compiled where it is written: the body is split into literal markup and
+holes at compile time, every hole goes through `html::Render`, and a hole in a position escaping
+cannot make safe is refused with the position named. The type decides what a hole may hold —
+`Raw` renders itself, text renders escaped, a type with no impl cannot go in a template — which
+is ADR-017 D2 put where `rustc` can act on it, so the Nikaia compiler needs no type checker to
+enforce it. `examples/escaping.nika` is the whole of it in one page.
+
+**Control flow is there too**: `<for row in :rows> … </for>`, written as an *element* because
+the file is markup and an editor that highlights it keeps working, with `:rows` captured from the
+enclosing scope (ADR-007 D4). The position check runs through a loop's body, so nothing becomes
+safe by being repeated. `fortunes.nika`'s `render` lowers and runs today; what that file still
+waits on is **G6** and `fn:` in a method chain (ADR-013 D5), both of them in `main`.
 
 

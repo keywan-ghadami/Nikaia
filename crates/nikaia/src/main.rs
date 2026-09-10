@@ -15,7 +15,7 @@ use clap::Parser;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use nikaia::contracts::{sync, Ledger, STD};
+use nikaia::contracts::{self, sync, Ledger, STD};
 use nikaia::emit::{self, Profile};
 use nikaia::{diagnostics, interpreter, parser};
 
@@ -70,6 +70,14 @@ pub struct Cli {
     /// what the cache holds.
     #[arg(long)]
     pub no_cache: bool,
+
+    /// Print where this program's bytes came from and which hash its maps got
+    /// (ADR-010 D7).
+    ///
+    /// The choice is visible, never a mystery: this names every source the
+    /// program reads and what each one contributed.
+    #[arg(long)]
+    pub trust: bool,
 }
 
 /// Part II 12.1, checked: a `sync` function may only call `sync` functions.
@@ -214,6 +222,21 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     let layout = Layout::resolve(&args.input);
     let unit = layout.unit_name(&args.input);
     let choices = Choices::new(&args.profile, "rust");
+
+    // `--trust` is an explanation, so it is answered here rather than in the
+    // miss branch below: a build that reuses a cached lowering still answers
+    // the question, and the answer cannot differ from the one that lowering was
+    // built with. Provenance is a function of the source and of what `std`'s
+    // ledger says about the sources it calls, and both are already in the key -
+    // the compiler's fingerprint covers `std.contracts` by name (`build.rs`).
+    if args.trust {
+        let parsed = parser::parse_to_ast(source)?;
+        let library = Ledger::parse(STD).context("std's shipped ledger")?;
+        print!(
+            "{}",
+            contracts::trust::render(&contracts::trust::analyse(&parsed, &library))
+        );
+    }
 
     // A cache that cannot be opened is a slower build, never a failed one
     // (D12). Once the cache is the default, a read-only checkout or a full
