@@ -178,6 +178,34 @@ expression — it may be given a name, passed, or indexed with — and it binds
 `n - 1` rather than a range with something subtracted from it. That is the
 reading a loop head wants and the only one that is ever useful.
 
+**A loop can fail.** Some things a `for` walks are read *as it goes* — standard
+input's lines are the one `std` has today. Getting the next one is real work,
+and real work can fail. When it does, the loop stops and **the failure leaves
+the function**, exactly as a failing call would (Chapter 7), and the compiler
+makes you declare it:
+
+```nika
+fn tally() -> i64 throws {           // without `throws`: error[NK2701]
+    let mut n = 0
+    for line in io::lines() { n += 1 }
+    return n
+}
+```
+
+Nothing marks the loop, for the reason nothing marks a call that can fail
+([ADR-023](adr/adr-023.md) D8) — and this is the same rule 6.4 already applies
+to the *end* of a block, where a resource's cleanup can fail and the function
+that owns it has to say so. One rule, two places the language calls something
+you did not write ([ADR-025](adr/adr-025.md) D1).
+
+What this rule exists to prevent is the alternative: a failed read that looks
+like the end of the input, so a truncated stream becomes a shorter one and the
+count is quietly wrong. 6.4 calls that "a decades-old bug class in other
+languages", and it is the same bug at the other end of the block.
+
+Most loops cannot fail. A range, a list, a map: nothing is read, so nothing
+about them changes.
+
 ### 3.4. Pattern Matching (`match`)
 The `match` expression compares a value against a series of patterns. It is similar to a "switch" statement in other languages but ensures that every possible case is handled.
 

@@ -20,7 +20,7 @@ fn findings(source: &str) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
-    check::check(&parsed, &own, &library)
+    check::check(&parsed, &own, &library).findings
 }
 
 /// The one finding a source is written to produce, with its code.
@@ -64,7 +64,7 @@ fn no_program_in_the_repository_has_a_type_error() {
                 .unwrap_or_else(|e| panic!("{} does not parse: {e}", path.display()));
             let own = Ledger::infer(&parsed);
             let name = path.display().to_string();
-            for finding in check::check(&parsed, &own, &library) {
+            for finding in check::check(&parsed, &own, &library).findings {
                 reported.push_str(&nikaia::diagnostics::render_finding(
                     &finding, &name, &source,
                 ));
@@ -244,6 +244,83 @@ fn a_loop_binds_the_element_type_of_a_list() {
          }");
     assert_eq!(code, "NK1107");
     assert_eq!(message, "`Row` has no field `idd`");
+}
+
+// --- a loop whose step can fail (ADR-025) ------------------------------------
+
+/// `NK2701`: a turn of the loop reads, a read can fail, and the function does
+/// not say so.
+///
+/// The rule is Part I 6.4's, stated generally: an implicit call that can fail
+/// fails the enclosing function, and the compiler makes you declare it.
+#[test]
+fn a_loop_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
+    let (code, message) = one("fn count() -> i64 {\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in io::lines() { n += 1 }\n\
+         \x20   return n\n\
+         }");
+    assert_eq!(code, "NK2701");
+    assert_eq!(
+        message,
+        "this function can fail because a turn of this loop can fail"
+    );
+}
+
+/// …and nothing at all once it does.
+#[test]
+fn a_loop_that_can_fail_is_fine_where_the_failure_may_leave() {
+    assert!(findings(
+        "fn count() -> i64 throws {\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in io::lines() { n += 1 }\n\
+         \x20   return n\n\
+         }"
+    )
+    .is_empty());
+}
+
+/// The stream may be named first, and it is the same loop.
+///
+/// ADR-025 D7: this is why the emitter asks the type checker rather than
+/// matching on the name `io::lines` - the name is not there to match.
+#[test]
+fn naming_the_stream_first_does_not_hide_it() {
+    let (code, _) = one("fn count() -> i64 {\n\
+         \x20   let stream = io::lines()\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in stream { n += 1 }\n\
+         \x20   return n\n\
+         }");
+    assert_eq!(code, "NK2701");
+}
+
+/// A stream of pairs does not exist in `std`, and unwrapping a failure while
+/// also taking a pair apart is a shape to design rather than to guess at.
+#[test]
+fn a_fallible_loop_binds_one_name() {
+    let (code, message) = one("fn count() throws {\n\
+         \x20   for (a, b) in io::lines() { }\n\
+         }");
+    assert_eq!(code, "NK2701");
+    assert_eq!(
+        message,
+        "a `for` over `Lines` binds one name, and this binds 2"
+    );
+}
+
+/// An ordinary loop is not touched by any of this.
+#[test]
+fn a_loop_over_something_that_cannot_fail_says_nothing() {
+    assert!(findings(
+        "fn count(xs: Vec[i32]) -> i64 {\n\
+         \x20   let mut n = 0\n\
+         \x20   for x in xs { n += 1 }\n\
+         \x20   for i in 0..10 { n += 1 }\n\
+         \x20   return n\n\
+         }"
+    )
+    .is_empty());
 }
 
 // --- what it deliberately does not catch -------------------------------------

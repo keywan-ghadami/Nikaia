@@ -46,8 +46,25 @@ pub struct Finding {
     pub help: Option<String>,
 }
 
-/// Every type mistake the ledgers are enough to see.
-pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
+/// What one pass of the checker learned.
+#[derive(Debug, Clone, Default)]
+pub struct Checked {
+    /// Every mistake it is sure about.
+    pub findings: Vec<Finding>,
+    /// The `for` statements whose **step can fail** (ADR-025 D1), by the byte
+    /// the statement starts at.
+    ///
+    /// The emitter reads this. It is here rather than in the emitter because
+    /// answering it means inferring the type of the iterator expression, which
+    /// is what this module does - and because `let stream = io::lines()`
+    /// followed by `for line in stream` has to be the same as the one-line
+    /// form, which matching on a name would not give (ADR-025 D7).
+    pub fallible_loops: BTreeSet<usize>,
+}
+
+/// Every type mistake the ledgers are enough to see, and every loop that can
+/// fail.
+pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
     let mut checker = Checker {
         parsed,
         own,
@@ -56,12 +73,25 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
         enums: BTreeMap::new(),
         scope: Vec::new(),
         expected: None,
-        findings: Vec::new(),
+        throwing: false,
+        checked: Checked::default(),
     };
     checker.collect_types();
     checker.program();
-    checker.findings.sort_by_key(|f| f.span.start);
-    checker.findings
+    checker.checked.findings.sort_by_key(|f| f.span.start);
+    checker.checked
+}
+
+/// The loops whose step can fail, for a caller that wants only those.
+///
+/// The emitter's entry point: it builds the ledgers a program is compiled
+/// against and asks this, rather than carrying the checker's findings around.
+pub fn fallible_loops(parsed: &Parsed) -> BTreeSet<usize> {
+    let own = Ledger::infer(parsed);
+    let Ok(library) = Ledger::parse(crate::contracts::STD) else {
+        return BTreeSet::new();
+    };
+    check(parsed, &own, &library).fallible_loops
 }
 
 struct Checker<'a> {
@@ -79,7 +109,10 @@ struct Checker<'a> {
     scope: Vec<Vec<(String, Ty)>>,
     /// What the function being walked declared it hands back.
     expected: Option<Ty>,
-    findings: Vec<Finding>,
+    /// Whether it declared `throws` - which is what says a failure may leave
+    /// it, whether the failing call was written or implicit (ADR-025 D1).
+    throwing: bool,
+    checked: Checked,
 }
 
 impl<'a> Checker<'a> {
@@ -211,6 +244,7 @@ impl<'a> Checker<'a> {
             args,
             ret_type,
             body,
+            throws,
             ..
         } = item
         else {
@@ -245,6 +279,7 @@ impl<'a> Checker<'a> {
             .as_ref()
             .map(|t| Ty::from_ast(self.parsed, t).erase(&parameters));
         let outer = std::mem::replace(&mut self.expected, expected.clone());
+        let outer_throwing = std::mem::replace(&mut self.throwing, *throws);
 
         self.scope.push(frame);
         let tail_span = body.stmts.last().map(|s| s.span.clone());
@@ -260,6 +295,7 @@ impl<'a> Checker<'a> {
         }
 
         self.expected = outer;
+        self.throwing = outer_throwing;
     }
 
     // --- statements ---------------------------------------------------------
@@ -321,6 +357,7 @@ impl<'a> Checker<'a> {
                 body,
             } => {
                 let over = self.expr(iter, span);
+                self.fallible_step(&over, bindings.len(), span);
                 let element = element_of(&over, bindings.len());
                 let frame = bindings
                     .iter()
@@ -661,7 +698,7 @@ impl<'a> Checker<'a> {
         let wanted = signature.arguments();
 
         if wanted.len() != found.len() {
-            self.findings.push(Finding {
+            self.checked.findings.push(Finding {
                 span: span.clone(),
                 code: "NK1101",
                 message: format!(
@@ -689,7 +726,7 @@ impl<'a> Checker<'a> {
             if found.fits(want) {
                 continue;
             }
-            self.findings.push(Finding {
+            self.checked.findings.push(Finding {
                 span: span.clone(),
                 code: "NK1102",
                 message: format!(
@@ -726,7 +763,7 @@ impl<'a> Checker<'a> {
             "field" => "NK1106",
             other => unreachable!("no code for `{other}`"),
         };
-        self.findings.push(Finding {
+        self.checked.findings.push(Finding {
             span,
             code,
             message: message(&found.text(), &want.text()),
@@ -740,7 +777,7 @@ impl<'a> Checker<'a> {
         if found.fits(&bool_ty) {
             return;
         }
-        self.findings.push(Finding {
+        self.checked.findings.push(Finding {
             span: span.clone(),
             code: "NK1108",
             message: format!("this is `{}`, and a condition is a `bool`", found.text()),
@@ -751,10 +788,54 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// A loop over something whose step can fail (ADR-025 D1).
+    ///
+    /// Two things follow, and they are the two halves of the decision: the
+    /// enclosing function must declare `throws`, and the emitter has to make
+    /// the step propagate. This records the second and reports the first.
+    fn fallible_step(&mut self, over: &Ty, bindings: usize, span: &Span) {
+        let Ty::Named { name, .. } = over else {
+            return;
+        };
+        if !self.iterates_fallibly(name) {
+            return;
+        }
+
+        // A stream of pairs does not exist in `std`, and taking one apart while
+        // also unwrapping a failure is a shape to design rather than to guess
+        // at (ADR-025 §7).
+        if bindings != 1 {
+            self.checked.findings.push(Finding {
+                span: span.clone(),
+                code: "NK2701",
+                message: format!("a `for` over `{name}` binds one name, and this binds {bindings}"),
+                notes: vec![format!("each turn of `{name}` can fail, and the failure is what the one binding unwraps")],
+                help: Some("bind one name and take the pair apart inside the loop".to_string()),
+            });
+            return;
+        }
+
+        self.checked.fallible_loops.insert(span.start);
+
+        if self.throwing {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            span: span.clone(),
+            code: "NK2701",
+            message: "this function can fail because a turn of this loop can fail".to_string(),
+            notes: vec![format!(
+                "`{name}` reads as it goes, and a read can fail - so the failure leaves this \
+                 function, exactly as a failing call would"
+            )],
+            help: Some("declare the error: add `throws` to this function".to_string()),
+        });
+    }
+
     fn no_such_field(&mut self, ty: &str, field: &str, declared: &[(String, Ty)], span: &Span) {
         let names: Vec<&str> = declared.iter().map(|(f, _)| f.as_str()).collect();
         let near = nearest(field, &names);
-        self.findings.push(Finding {
+        self.checked.findings.push(Finding {
             span: span.clone(),
             code: "NK1107",
             message: format!("`{ty}` has no field `{field}`"),
@@ -823,6 +904,18 @@ impl<'a> Checker<'a> {
             .find(|(key, _)| *key == name || key.ends_with(&suffix))
             .map(|(_, contract)| contract.fields.clone())
             .filter(|f| !f.is_empty())
+    }
+
+    /// Whether a step of this type can fail, as a ledger records it
+    /// (ADR-025 D6). Matched by suffix, because a library writes the module in
+    /// front of a type's name and a value's type does not carry one.
+    fn iterates_fallibly(&self, name: &str) -> bool {
+        let suffix = format!("::{name}");
+        [self.own, self.library].iter().any(|ledger| {
+            ledger.types.iter().any(|(key, contract)| {
+                (key == name || key.ends_with(&suffix)) && contract.iterates_fallibly
+            })
+        })
     }
 
     fn is_variant(&self, ty: &str, variant: &str) -> bool {

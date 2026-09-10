@@ -225,6 +225,9 @@ struct Emitter<'p> {
     /// Declared struct names: `Stats(x)` is a call to a constructor, and only
     /// the declarations say which names are types.
     structs: HashSet<Symbol>,
+    /// The `for` statements whose step can fail, by the byte they start at
+    /// (ADR-025 D1).
+    fallible_loops: std::collections::BTreeSet<usize>,
     /// What the program's `impl` blocks declare, which is what makes the fold
     /// adapter of D2 a lookup rather than a guess.
     methods: HashMap<(Symbol, Symbol), Method>,
@@ -342,6 +345,12 @@ impl<'p> Emitter<'p> {
             by_name,
             uses_std,
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
+            // ADR-025 D7: the type checker knows which `for` iterates something
+            // whose step can fail, because it infers the iterator's type and
+            // reads the ledger. Matching on the name `io::lines` here would
+            // have caught the one-line form and quietly missed
+            // `let s = io::lines()` followed by `for line in s`.
+            fallible_loops: crate::check::fallible_loops(parsed),
         }
     }
 
@@ -639,7 +648,7 @@ impl<'p> Emitter<'p> {
                 if is_tail {
                     out.push("Ok(");
                 }
-                self.stmt(out, &stmt.node, depth + 1, is_tail, flow)?;
+                self.stmt(out, &stmt.node, &stmt.span, depth + 1, is_tail, flow)?;
                 if is_tail {
                     out.push(")");
                 }
@@ -855,7 +864,7 @@ impl<'p> Emitter<'p> {
                         let accumulator = self.text(*accumulator);
                         out.push(&format!("|mut {accumulator}, {}| {{ ", self.text(*item)));
                         for stmt in &body.stmts {
-                            self.stmt(out, &stmt.node, 0, false, Flow::PLAIN)?;
+                            self.stmt(out, &stmt.node, &stmt.span, 0, false, Flow::PLAIN)?;
                             out.push(" ");
                         }
                         out.push(&format!("{accumulator} }}"));
@@ -1150,19 +1159,47 @@ impl<'p> Emitter<'p> {
         flow: Flow,
         tail: bool,
     ) -> Result<()> {
+        self.block_opening_with(out, block, depth, flow, tail, None)
+    }
+
+    /// The same, with one line written before the statements.
+    ///
+    /// One caller: a `for` whose step can fail opens its body by unwrapping the
+    /// step (ADR-025 D7). It is a parameter rather than a wrapping block
+    /// because an extra brace level in the emitted Rust is a level the source
+    /// map has to explain and the reader has to skip.
+    fn block_opening_with(
+        &self,
+        out: &mut Out,
+        block: &Block,
+        depth: usize,
+        flow: Flow,
+        tail: bool,
+        opening: Option<&str>,
+    ) -> Result<()> {
         if block.stmts.is_empty() {
-            out.push("{ }");
-            return Ok(());
+            match opening {
+                Some(line) => {
+                    out.push(&format!("{{ {line} }}"));
+                    return Ok(());
+                }
+                None => {
+                    out.push("{ }");
+                    return Ok(());
+                }
+            }
         }
 
         // A one-statement block stays on its line. Most action blocks are one
         // expression, and a grammar reads better when its actions do not push
         // the pattern three lines apart. Whether it fits is decided by
         // rendering it, not by guessing from the shape.
-        if block.stmts.len() == 1 {
+        if block.stmts.len() == 1 && opening.is_none() {
             let only = block.stmts.first().expect("one statement");
             let rendered = Out::scratch(|scratch| {
-                scratch.from(&only.span, |s| self.stmt(s, &only.node, depth, tail, flow))
+                scratch.from(&only.span, |s| {
+                    self.stmt(s, &only.node, &only.span, depth, tail, flow)
+                })
             })?;
             if !rendered.buf.contains('\n') {
                 out.push("{ ");
@@ -1176,11 +1213,23 @@ impl<'p> Emitter<'p> {
         let inner_pad = "    ".repeat(depth + 1);
 
         out.push("{\n");
+        if let Some(line) = opening {
+            out.push(&inner_pad);
+            out.push(line);
+            out.push("\n");
+        }
         let last = block.stmts.len() - 1;
         for (i, stmt) in block.stmts.iter().enumerate() {
             out.push(&inner_pad);
             out.from(&stmt.span, |out| {
-                self.stmt(out, &stmt.node, depth + 1, tail && i == last, flow)
+                self.stmt(
+                    out,
+                    &stmt.node,
+                    &stmt.span,
+                    depth + 1,
+                    tail && i == last,
+                    flow,
+                )
             })?;
             out.push("\n");
         }
@@ -1196,6 +1245,7 @@ impl<'p> Emitter<'p> {
         &self,
         out: &mut Out,
         stmt: &Stmt,
+        span: &Span,
         depth: usize,
         is_tail: bool,
         flow: Flow,
@@ -1242,7 +1292,18 @@ impl<'p> Emitter<'p> {
                 }
                 self.expr(out, iter, depth, flow)?;
                 out.push(" ");
-                self.block(out, body, depth, flow, false)?;
+
+                // ADR-025 D1: a step that can fail fails the enclosing
+                // function, exactly as a written call would. This is that,
+                // and it is the line a Rust programmer writes by hand. The
+                // compiler has already refused the program if the function
+                // does not declare `throws` (`NK2701`), so the `?` always has
+                // somewhere to go.
+                let unwrap = self
+                    .fallible_loops
+                    .contains(&span.start)
+                    .then(|| format!("let {names} = {names}?;"));
+                self.block_opening_with(out, body, depth, flow, false, unwrap.as_deref())?;
             }
             // A `return` that is the last statement is the block's value, and
             // is written as one: `fn f() -> T { return x }` is `{ x }`. In a

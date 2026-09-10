@@ -1,0 +1,66 @@
+// examples/tally.nika
+//
+// A line-oriented filter over **standard input, in constant memory**.
+//
+// Input:  any text on a pipe, however long
+// Output: how many lines, how many of them are blank, and the longest one's
+//         length - and the longest line itself, which is the only thing the
+//         program keeps
+//
+// Run:
+//
+//     nikaia --input examples/tally.nika --backend rust
+//     cat something.txt | ./tally
+//
+// `crates/nikaia/tests/examples.rs` compiles and runs this file.
+//
+// Why it is here beside the others. `k-nucleotide.nika` also reads standard
+// input, and it reads **all** of it: `io::read_to_string` hands back a buffer
+// the size of the input, and everything after that points into it. That is
+// right for FASTA, where the analysis needs the whole sequence. It is wrong for
+// a log that never ends. This is the other half - and it is the first program
+// here whose memory does not grow with its input.
+//
+// One thing about it is invisible and is the point (ADR-025).
+//
+//     for line in io::lines() { … }
+//
+// Each turn of that loop **reads**, and a read can fail. Nothing marks it, for
+// the same reason nothing marks a call that can fail (ADR-023 D8): three of the
+// language's four invisible control-flow events were already unmarked, and
+// marking the fourth would imply the other three were absent. What happens
+// instead is what happens everywhere else - the failure leaves the function,
+// and the compiler is the reason `throws` is on the signature. Take it off and
+// the program does not compile:
+//
+//     error[NK2701]: this function can fail because a turn of this loop can fail
+//       help: declare the error: add `throws` to this function
+//
+// The one thing that must **not** happen is the one every language with a
+// scanner has shipped: a failed read that looks like the end of the input, so a
+// truncated stream becomes a shorter stream and the tally is quietly wrong.
+
+use std::io
+
+fn main() throws {
+    let mut lines = 0
+    let mut blank = 0
+    let mut longest = String::new()
+
+    // Constant memory: one line is alive at a time, and the only thing that
+    // outlives a turn is the longest line seen so far - which the program
+    // takes ownership of, because everything else is gone by the next read.
+    for line in io::lines() {
+        lines += 1
+        if line.len() == 0 {
+            blank += 1
+        }
+        if line.len() > longest.len() {
+            longest = line
+        }
+    }
+
+    println("{lines} lines, {blank} blank")
+    println("longest: {longest.len()} characters")
+    println("{longest}")
+}

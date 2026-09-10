@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Nine of the ten programs here compile, run, and are checked by `cargo test`. The tenth is
+Ten of the eleven programs here compile, run, and are checked by `cargo test`. The eleventh is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -15,9 +15,10 @@ needs is listed under *Gaps* below.
 | [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
 | [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
 | [`report.nika`](report.nika) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `crates/nikaia/tests/examples.rs` |
+| [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the nine is compiled and run **under both profiles**, and their output must be
+Each of the ten is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -49,6 +50,13 @@ They are deliberately different shapes.
   to make the point — the `&`, the `"` and the `<` come out of the *input file*, which is where
   they come from in every program that has ever had an escaping bug. The test reads the page
   back rather than the line the program printed, because the page is what it produced.
+* **`tally.nika`** is the one whose **memory does not grow with its input**. `k-nucleotide.nika`
+  also reads standard input and reads *all* of it, which is right for FASTA and wrong for a log
+  that never ends; this one holds one line at a time. It is also the smallest program that shows
+  the rule of [ADR-025](../docs/specification/adr/adr-025.md): each turn of `for line in
+  io::lines()` reads, a read can fail, nothing marks it, and the failure leaves the function —
+  which is why `throws` is on the signature and why the compiler puts it there
+  (`NK2701`).
 * **`k-nucleotide.nika`** is the one that reads **standard input**, and the difference a pipe
   makes is the point of it. `1brc.nika` maps its file and copies nothing at all; here there are
   no pages to point at, because the bytes do not exist until they are read — so the program owns
@@ -170,6 +178,34 @@ CoreMark (embedded C microbenchmark).
 Writing the two programs surfaced spec questions that a real implementation must answer.
 
 ### Resolved
+
+**G17 — a stream of lines that can fail while it is being read.** *Decided and implemented*
+([ADR-025](../docs/specification/adr/adr-025.md)). Found by trying to build `fs::lines` and
+`io::lines`, and it turned out to be two problems rather than one.
+
+The **failure** half: `for line in io::lines()` performs a call per turn that nobody wrote and no
+signature declares, so there was nowhere for `throws` to attach — and pressing three answers (a
+line, the end, *I could not find out*) into an iterator's two makes a failed read look like the
+end of the stream. A truncated file becomes a shorter file, silently. Part I 6.4 already refuses
+exactly that at the *closing* brace of a block, where a resource's cleanup can fail, and calls it
+"a decades-old bug class in other languages". So the rule was already written and was never
+stated generally: **an implicit call that can fail fails the enclosing function, and the compiler
+makes you declare it.** Cleanup was its first case, iteration is its second, and `NK2701` is what
+the compiler says. Nothing marks the loop, because [ADR-023](../docs/specification/adr/adr-023.md)
+D8 leaves three of the language's four invisible control-flow events unmarked and marking the
+fourth would imply the other three were absent.
+
+The **ownership** half is why `fs::lines` is *gone* rather than waiting: `lines(path)` was to open
+the file and yield tethered `&str`, so the returned value would own the buffer and hand out views
+into itself — the one thing an iterator may not do, and the reason the language below allocates a
+string per line when it offers the same function. The shape that works is two calls,
+`fs::map(path)` + `.lines()`, and that separation *is* the model Part I 6.6 rests on. For a
+record-per-line file the language has something better than a sequence of lines anyway:
+`@frame(boundary: "\n")`, which is what `1brc.nika`, `access-log.nika` and `config.nika` all use.
+None of them iterates lines.
+
+`io::lines()` exists, because a pipe is genuinely different — its bytes do not exist until they
+are read, so the failure cannot be moved to the call — and `examples/tally.nika` is it running.
 
 **G1 — `std::fs` named no functions.** The module was described ("looks blocking, is async")
 but had no surface. Now specified in Part III, 17.1: whole-file (`read`, `read_to_string`,
@@ -368,25 +404,6 @@ next to it was handed the value it was meant to inspect and nothing compiled. Bo
 in `crates/nikaia/tests/grammar_lowering.rs`.
 
 ### Open
-
-**G17 — a stream of lines that can fail while it is being read.** Found by trying to build
-`fs::lines` and `io::lines`, which Part III 17.1 specifies and neither of which is here. The
-surface says `pub fn lines(path: Path) -> Lines throws`, as if the failure happened when the
-stream was opened; it does not. A read fails *mid-iteration*, and Nikaia has no form that says
-so. Three ways out, and each costs something that has to be decided rather than picked:
-
-* **yield the text and treat a read error as the end** — a truncated file becomes a shorter
-  file, silently, which is the worst outcome an aggregation can have;
-* **yield something that may be a failure**, and every loop over a stream unwraps — which is
-  the shape the language spent Chapter 7 avoiding;
-* **hand the loop body to the stream** (`fs::lines(path) fn { … }`), so the failure is the
-  call's and `throws` covers it as it covers everything else — a different shape from `for`,
-  and one more thing to know.
-
-What is *not* blocked by this: the semantics Part III 17.1 promises `fs::lines` — tethered
-`&str`, no allocation per line, constant memory — are what `fs::map(path)` and `.lines()` already
-give, and `1brc.nika` is built on them. So the gap is the failure model of a stream, not the
-streaming.
 
 **G18 — a function cannot take named arguments with defaults.** Part I 5.1 specifies
 `fn request(url: String; timeout: i32 = 30, method: String = "GET")` — a subject, a `;`, and a

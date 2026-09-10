@@ -84,6 +84,11 @@ throws = true
 provenance = "trusted"
 signature = "() -> Vec[u8]"
 
+[fn."io::lines"]
+pub = true
+provenance = "trusted"
+signature = "() -> Lines"
+
 [fn."io::read_to_string"]
 pub = true
 throws = true
@@ -103,3 +108,10 @@ signature = "(c: char) -> i32"
 
 [type."fs::Mapped"]
 pub = true
+
+# A step of this one can **fail**, and that is a fact a caller cannot get from
+# anywhere else: a `for` over it is a place the enclosing function can fail
+# from, and the compiler makes that function say `throws` (ADR-025 D1, `NK2701`).
+[type."io::Lines"]
+pub = true
+iterates = "throws"

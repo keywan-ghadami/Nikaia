@@ -249,6 +249,25 @@ CG 1.117
         wrote: None,
     },
     Example {
+        file: "tally.nika",
+        input: None,
+        // A pipe, and the point of the example: the program never holds more
+        // than one line, however long the stream is (ADR-025 D4).
+        stdin: Some(
+            "one\n\
+             \n\
+             the longest line in this stream\n\
+             \n\
+             three\n",
+        ),
+        args: &[],
+        expected: "\
+5 lines, 2 blank
+longest: 31 characters
+the longest line in this stream",
+        wrote: None,
+    },
+    Example {
         file: "report.nika",
         input: Some(Input {
             name: "stock.csv",

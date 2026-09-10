@@ -211,3 +211,48 @@ fn the_expression_lambda_says_it_was_removed() {
     assert!(message.contains("`fn { … }`"), "{message}");
     assert!(message.contains("inside* the lambda"), "{message}");
 }
+
+/// ADR-025 D1: a loop whose step can fail propagates the failure, and this is
+/// the line that does it.
+///
+/// One line inside the loop, and it is the one a Rust programmer writes by
+/// hand - which is what keeps the lowering readable and the rule honest: the
+/// failure leaves the function the moment it happens, rather than being asked
+/// about afterwards.
+#[test]
+fn a_loop_whose_step_can_fail_unwraps_the_step() {
+    let rust = emit(
+        "fn count() -> i64 throws {\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in io::lines() { n += 1 }\n\
+         \x20   return n\n\
+         }",
+    );
+    assert!(
+        rust.contains("for line in io::lines() {\n        let line = line?;"),
+        "the step is not unwrapped:\n{rust}"
+    );
+
+    // …and naming the stream first is the same loop (D7).
+    let rust = emit(
+        "fn count() -> i64 throws {\n\
+         \x20   let stream = io::lines()\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in stream { n += 1 }\n\
+         \x20   return n\n\
+         }",
+    );
+    assert!(
+        rust.contains("let line = line?;"),
+        "naming the stream first hid it:\n{rust}"
+    );
+}
+
+/// An ordinary loop keeps the shape it always had. The rule above must not
+/// leak into every `for` in the language.
+#[test]
+fn an_ordinary_loop_is_not_touched() {
+    let rust = emit("fn main() { for i in 0..5 { } }");
+    assert!(rust.contains("for i in 0..5"), "{rust}");
+    assert!(!rust.contains("?;"), "{rust}");
+}

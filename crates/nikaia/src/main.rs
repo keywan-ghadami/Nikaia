@@ -94,7 +94,7 @@ fn check(parsed: &parser::Parsed, path: &Path, source: &str) -> Result<()> {
     let own = Ledger::infer(parsed);
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
 
-    let findings = check::check(parsed, &own, &library);
+    let findings = check::check(parsed, &own, &library).findings;
     let violations = sync::check(parsed, &own, &library);
     if findings.is_empty() && violations.is_empty() {
         return Ok(());
@@ -112,11 +112,22 @@ fn check(parsed: &parser::Parsed, path: &Path, source: &str) -> Result<()> {
     }
 
     let mut refused = Vec::new();
-    if !findings.is_empty() {
+    // The `NK1xxx` family is types; anything else the checker reports is a rule
+    // of its own and should not be summarised as one. Today that is `NK2701`,
+    // a loop whose step can fail in a function that does not say so.
+    let (types, rules): (Vec<_>, Vec<_>) = findings.iter().partition(|f| f.code.starts_with("NK1"));
+    if !types.is_empty() {
         refused.push(format!(
             "{} type error{}",
-            findings.len(),
-            if findings.len() == 1 { "" } else { "s" }
+            types.len(),
+            if types.len() == 1 { "" } else { "s" }
+        ));
+    }
+    if !rules.is_empty() {
+        refused.push(format!(
+            "{} loop{} that can fail without saying so",
+            rules.len(),
+            if rules.len() == 1 { "" } else { "s" }
         ));
     }
     if !violations.is_empty() {
