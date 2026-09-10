@@ -69,7 +69,10 @@ literals and constructors, lambdas, operators, `throws`/`catch`/`??`, string int
 since [ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules,
 patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
 Errors are reported on the `.nika` line that caused them
-([ADR-012](../docs/specification/adr/adr-012.md)). There is no type checker.
+([ADR-012](../docs/specification/adr/adr-012.md)), and since
+[ADR-023](../docs/specification/adr/adr-023.md) types are checked before any Rust is emitted -
+everything the ledger writes down, and nothing it does not. Every file here is part of that
+checker's guard: the build fails if any of them produces a finding.
 
 That is deliberate, and it is what these files are *for*. Writing a real program against the
 spec is the cheapest way to find out which parts of the spec are underspecified. The gaps each
@@ -397,8 +400,8 @@ holds only in some positions would have to be qualified everywhere.
 holes at compile time, every hole goes through `html::Render`, and a hole in a position escaping
 cannot make safe is refused with the position named. The type decides what a hole may hold —
 `Raw` renders itself, text renders escaped, a type with no impl cannot go in a template — which
-is ADR-017 D2 put where `rustc` can act on it, so the Nikaia compiler needs no type checker to
-enforce it. `examples/escaping.nika` is the whole of it in one page.
+is ADR-017 D2 put where `rustc` can act on it - the Nikaia compiler emits the same call for every
+hole and does not have to know which case it is. `examples/escaping.nika` is the whole of it in one page.
 
 **Control flow is there too**: `<for row in :rows> … </for>`, written as an *element* because
 the file is markup and an editor that highlights it keeps working, with `:rows` captured from the

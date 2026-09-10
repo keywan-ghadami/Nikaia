@@ -265,6 +265,16 @@ is left is 3 and 4, and neither is a performance question.
   for what is left *here*.
 * Tuples (G10), ordered output over a map (G5), and a rejected parse saying
   where it failed (G11).
+* **The type checker** — [ADR-023](specification/adr/adr-023.md). Eight `NK1xxx`
+  codes, answered from the ledger, before a line of Rust is emitted. The design
+  is one value: `?`, the absence of a claim. An error is reported only where
+  **both** sides are written down and disagree, so it never rejects a program
+  that is correct — which is the only way to build one on a `std` that is half
+  Rust. Its first find was real: `fortunes.nika` put a `&str` literal in a
+  `String` field, which no `rustc` had ever seen because that file does not run
+  yet. What it does not catch — a method on an unwritten receiver, an element
+  type, what a `?` unwraps — becomes checkable when a signature is written,
+  without the checker changing.
 
 ### Do not re-propose these — they were measured and lost
 

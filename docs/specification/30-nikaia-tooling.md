@@ -145,8 +145,12 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O |
 | `throws` | fn | Kap 7.1: it may fail |
 | `returns` | fn | what the result may point into — `borrows(a \| b)` |
+| `signature` | fn | its parameters and its result, as the source writes them: `"(path: &str) -> String"`. A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one |
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
+| `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
+
+`signature` and `fields` are what make a *type* checker possible across a boundary whose bodies are not visible — the `NK1xxx` diagnostics above are all answered from them ([ADR-023](adr/adr-023.md)). They are also where the ledger's `?` earns its keep: it is **the absence of a claim**, and a checker reports a mismatch only where both sides are written down, so a contract that says less makes the compiler quieter and never wronger.
 
 Only what is *true* is written: a `sync = false` on every entry would treble the file and say nothing, and a diff should show a promise being made or withdrawn. **An absent `sync` therefore means not `sync`** — while an absent *entry* means nothing is known and a caller may not assume. That distinction is what makes the file worth shipping rather than deriving.
 
@@ -560,8 +564,9 @@ whitespace inside the body is kept exactly.
 What may go in a hole is decided by the **type**, through the `Render` trait: a `Raw` renders
 itself, text renders escaped, and a type with no impl cannot be placed in a template at all. The
 compiler emits the same call for every hole and has no way to emit a different one — choosing is
-what the type does, which is why this needs no type checker in the compiler and gets one from the
-language below.
+what the type does. So this rule holds without the Nikaia compiler having to know what a hole's
+value is: it is enforced by the language below, on every hole, including the ones the checker of
+[ADR-023](adr/adr-023.md) records as `?`.
 
 **Control flow is written as an element**, because the file is markup and an editor that
 highlights it keeps working — a second syntax in a file that already has one is a second thing to
@@ -809,7 +814,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 
 | Range | Domain | Examples defined so far |
 | :--- | :--- | :--- |
-| `NK1xxx` | Syntax & types | — |
+| `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. All eight are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-023](adr/adr-023.md)). |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` in Advanced (Part II, 12.7). |
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |

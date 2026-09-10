@@ -81,18 +81,22 @@ Nikaia provides basic types to represent simple values.
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
 
 ```nika
-let strictly_string: String = "Hello"
+let strictly_string: String = "Hello".to_string()
 // strictly_string = null // Error!
 
-let mut maybe_string: String? = null // Valid
-maybe_string = "World"               // Valid (`mut`, as in 2.1)
+let mut maybe_string: &str? = null // Valid
+maybe_string = "World"             // Valid (`mut`, as in 2.1)
 ```
+
+A literal is a **view** of text the program was compiled with, not a `String` — see 6.6, where
+an allocation happens only where you wrote that you wanted one, and [ADR-023](adr/adr-023.md) D5.
+`.to_string()` is how you say you want one.
 
 ### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
 
 ```nika
-let name = "Nikaia"  // Compiler knows this is a String
+let name = "Nikaia"  // Compiler knows this is a &str - a view of static text
 let count = 42       // Compiler knows this is an i32
 ```
 
