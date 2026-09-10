@@ -1,7 +1,7 @@
 # Tier-1 Staging: Candidates, Non-Candidates, and How to Measure One
 
 **Date:** September 10, 2026
-**Status:** findings; §3 is measured and built, §2 is open
+**Status:** §2 and §3 are measured and built; §2's original answer was wrong and says so
 **Related:** [ADR-026](specification/adr/adr-026.md) §3 (the two tiers),
 [ADR-010](specification/adr/adr-010.md) (the shipped precedent),
 [upstream findings](upstream/winnow-grammar-findings.md)
@@ -45,7 +45,57 @@ two. There is no headroom here.
 
 ---
 
-## 2. The real opportunity, and why it is not a one-file change
+## 2. Where the time actually went — **profiled, and it was not §2's answer**
+
+> **Read this before §2.1.** The section below was written from a reading of the code, and
+> profiling the compiler said something else. It is kept because its analysis of the alternation
+> machinery is correct as far as it goes; what it got wrong is how much that machinery costs.
+
+`nikaia --backend rust` on 2000 small functions (300 KB), release, callgrind:
+
+| | Ir | share |
+| :--- | ---: | ---: |
+| `parse_WS_inner` | 333.3 M | **32.5 %** |
+| the class scan inside it (`rt::expected(rt::class(…))`) | 246.7 M | **24.1 %** |
+| the 16-way `primary_expr` alternation | 18.3 M | 1.8 % |
+| the 6-way `postfix_tail` alternation | 9.8 M | 1.0 % |
+
+**Whitespace was 56 % of the parse; the literal dispatch this file called "the actual prize" was
+under 3 %.** The class scan was reached 4.77 million times for a 300 KB input — sixteen times per
+byte.
+
+The alternation *was* the problem, and not through the compares it makes. A syntactic rule skips
+whitespace where it starts, and that skip was emitted **inside each alternative**, so a sixteen-way
+rule ran sixteen skips at one position to consume one blank and threw away all but the winner.
+Hoisting it out — for every multi-alternative rule, the way a labelled rule already did for an
+unrelated reason — is **−19.8 % of the whole compiler run**
+([winnow-grammar#14](https://github.com/keywan-ghadami/winnow-grammar/pull/14)):
+
+| | before | after | Δ |
+| :--- | ---: | ---: | ---: |
+| instructions | 1,025,494,823 | 822,239,436 | **−19.8 %** |
+| branches | 129,633,498 | 104,035,212 | **−19.8 %** |
+| mispredicts | 2,771,029 | 2,513,896 | **−9.5 %** |
+| D1 misses | 1,144,537 | 1,149,150 | +0.4 % |
+| LL misses | 351,771 | 352,265 | +0.1 % |
+
+Nikaia's 26-row error corpus is byte-identical after it, which is the check that matters: the
+corpus exists to catch a message that moved.
+
+**Two things measured beside it lost**, and are in the dependency's `TODO.md` §6 so they are not
+re-proposed. Guarding `rt::expected` on `E::RECORDING` — skipping, on the pass that discards
+messages, work only a message needs — costs **+1.4 %**. And respelling Nikaia's `WS` as
+`multispace0 (COMMENT multispace0)*` trades **+0.7 % instructions for −7.7 % mispredicts**, which
+the arithmetic favours by about 2.6× and which was refused anyway: it changes what a parse error
+says, and an uncertain performance trade bought with a certain regression in messages is not a
+trade.
+
+**What this cost to find: one profile, before writing any code.** That is the cheapest step in
+§7's list and it was not on it.
+
+---
+
+## 2.1 The opportunity this file was written about, and why it is not a one-file change
 
 **A rule with N literal alternatives becomes N sequential prefix compares.** Nikaia's emitter has the
 whole literal set at compile time and hands it on unchanged: `Pattern::Literal`
@@ -255,9 +305,16 @@ An order that reflects cost rather than appeal:
 2. ~~`html::escape` inside `std`~~ — **done** (§3.2), and it is still true that this is a `std`
    optimisation and does **not** demonstrate the Tier-1 thesis. It demonstrated something else worth
    more at this stage: that the intuition in this file was wrong twice, in opposite directions.
-3. First-byte or prefix dispatch for literal alternations — the actual prize, in the dependency,
-   needing a `[patch]` to test and ADR-026 §3.1's caveats to survive. **Now the one that is left**,
-   and the harness above is what it should be measured with.
+3. ~~First-byte or prefix dispatch for literal alternations~~ — **not the prize** (§2). Profiling
+   put it under 3 % of the parse, against 56 % for the whitespace the alternation was re-skipping.
+   The whitespace hoist that came out of that profile is **−19.8 %**, and it is merged. What is
+   left of the original item is a ≤3 % ceiling in a dependency, which is not where the next
+   measurement should go.
+
+**And the step that was missing from this list entirely: profile first.** Every entry above was
+derived from reading code. The one measurement taken before writing any — a callgrind profile of
+the compiler on a large input — overturned the ranking outright and was cheaper than any item on
+it.
 
 And the thing worth saying plainly: **Tier 1 does not need Tier 2, and the applications people cite
 as the reason for Tier 2 are all in this list.**
