@@ -109,7 +109,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` bounds how much of the **user's** code runs at once — and the compiler's own threads are not the user's | Accepted | `0` and the target table; above `0` is §4 |
+| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` bounds how much of the **user's** code runs at once — and the compiler's own threads are not the user's | Accepted | D1–D3; §4 is what is not decided |
 
 ## What supersedes what
 

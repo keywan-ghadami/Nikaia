@@ -356,7 +356,10 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         let parsed = parser::parse_to_ast(source)?;
         let library = Ledger::parse(STD).context("std's shipped ledger")?;
         let own = Ledger::infer(&parsed);
-        print!("{}", contracts::order::report(&parsed, &own, &library));
+        print!(
+            "{}",
+            contracts::order::report(&parsed, &own, &library, build.user_parallelism)
+        );
     }
 
     if args.trust {

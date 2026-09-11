@@ -1733,12 +1733,14 @@ impl<'p> Emitter<'p> {
             earlier,
             &self.own_contracts,
             &self.library,
+            self.build.user_parallelism,
         );
         let later = crate::contracts::order::operation(
             self.parsed,
             later,
             &self.own_contracts,
             &self.library,
+            self.build.user_parallelism,
         );
         match (earlier, later) {
             (Some(earlier), Some(later)) => crate::contracts::order::may_overlap(&earlier, &later),
