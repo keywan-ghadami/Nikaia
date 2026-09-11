@@ -7,18 +7,16 @@ one it displaces.
 
 ## What goes where
 
-Three kinds of writing, and mixing them is what makes a specification
-unreadable:
-
 | | holds | does not hold |
 | :--- | :--- | :--- |
-| [`../10`, `../20`, `../30`](..) — the **specification** | what the language *is*: the rule, the syntax, the guarantee | why that rule won, what the alternatives were, what anything cost |
+| the [specification](..) | what the language *is*: the rule, the syntax, the guarantee | why that rule won, what the alternatives were, what anything cost |
 | **an ADR** (here) | one decision, the reasoning that settled it, and the evidence it rests on | the story of the session that produced it |
-| [`../../`](../..) — the **notes** (`handoff.md`, `staging-candidates.md`, `error-corpus.md`, `technical_notes.md`) and `CHANGELOG.md` | what was tried, what was measured, how, on which machine, what went wrong on the way | anything normative — nothing may depend on these to know what a program means |
+| the [notes](../..) and `CHANGELOG.md` | what was tried and measured, how, and what went wrong on the way | anything normative |
 
-So a measurement belongs in an ADR as *the number that decided it*, with the
-method in the notes. A spec section states the rule and links the ADR; a reader
-who only wants to write Nikaia never has to open one.
+A measurement belongs in an ADR as *the number that decided it*, with the method
+in the notes. A spec section states the rule and links here; a reader who only
+wants to write Nikaia never has to open one. The full rule is
+[`docs/README.md`](../../README.md).
 
 ## The index
 
