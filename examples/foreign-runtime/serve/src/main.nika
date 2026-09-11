@@ -1,0 +1,14 @@
+// ADR-038 D7, question 1: a Nikaia program that starts a Rust HTTP server and
+// serves one request, and question 2's *legal* half - a value that may cross
+// any thread crossing into one the foreign runtime owns.
+//
+// Both lines are ordinary calls. Nothing in this file says that `hyper_shim`
+// starts three threads and an event loop, and nothing in the language lets it
+// say so.
+fn main() {
+    let served = hyper_shim::serve_once(18080)
+    println(f"served: {served}")
+
+    let crossed = hyper_shim::across_a_thread("a String is Send".to_string())
+    println(f"crossed: {crossed}")
+}
