@@ -972,6 +972,44 @@ Even in **Nikaia Lite** (Single-Threaded), you can perform multiple tasks concur
 ### 8.1. Async by Default
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
 
+Within one task the order is exactly the order you wrote: `let a = fs::read("x")` pauses, and the line after it does not run until `a` is there. What runs meanwhile is some *other* task — a pause point never forks one. Tasks exist only where you put them (`spawn`, `par_iter`, `task::scope`), and `.await` on a handle is where two of them meet again. Nikaia did not remove the marker for waiting; it kept it exactly where something branches, and left it off where nothing does.
+
+### 8.1.1. Order Is Kept Where It Can Be Seen
+
+> **Note:** this section describes a decision ([ADR-033](adr/adr-033.md)), not current behaviour. Nothing of it is implemented. It is written down here because it changes what a program *means*, and a decision of that kind belongs in the specification before it belongs in the compiler.
+
+Two lines that never meet have no reason to wait for one another:
+
+```nika
+let a = fs::read("x")       // 40 ms
+let b = fs::read("y")       // 40 ms
+return a.len() + b.len()    // 40 ms, not 80
+```
+
+Every operation is known by **what it touches** — not merely "it does I/O", but *which file, which socket, which lock*. From that comes one rule:
+
+> **Two operations whose touch sets are disjoint have no order between them. Everything else keeps the order it was written in.**
+
+You write nothing for this. The default is the fast path, and the cases below are what keep it from being a surprise:
+
+* **The obvious stays obvious.** `println("a")` then `println("b")` prints `a` before `b` — both touch standard output, so they are ordered. Not a special case; the rule already says it.
+* **What is not known is ordered.** An operation whose touches the compiler cannot determine counts as touching everything, and stays exactly where you put it. A program built against libraries that say nothing behaves precisely as it does today, and gets faster only as contracts get written.
+* **Nothing is run on speculation.** `if x { lies(a) } else { lies(b) }` starts one of them. Overlapping only ever applies to work that was certainly going to happen.
+* **Errors keep their order.** If two overlapped operations both fail, the failure you see is the one written first — never the one that lost a race.
+
+**When you need an order the compiler cannot see** — two calls to different addresses of the same service, say — say so:
+
+```nika
+seq {
+    benachrichtige(kunde)
+    protokolliere(vorgang)
+}
+```
+
+That is the trade the rule is built on: the common path is the fast and safe one and costs nothing to write, and the exception costs a line and is visible where it matters.
+
+The whole thing can be turned off for a project with `ordering = "strict"` in `nikaia.toml` (Part III, 13.3), which restores the written order everywhere.
+
 ### 8.2. Spawning Tasks
 To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the
 one lambda form (5.3), whose body is a block whether it holds one line or several.

@@ -28,6 +28,15 @@ We have successfully implemented a "Vertical Slice" of the compiler that can com
 
 ## Remaining Work to Finalize Nikaia
 
+### Phase 0: The Execution Model (ADR-033, decided and unbuilt)
+
+*   [ ] **Order is kept where it can be seen** ([ADR-033](specification/adr/adr-033.md), Part I 8.1.1): every operation is known by **what it touches**, and two operations touching disjoint resources have no order between them. Decided, **provisional and unmeasured**, switchable off with `ordering = "strict"`.
+    *   *Why it is here and not in Phase 4*: it changes what a program **means**, not how fast it runs. Everything below is built on an execution model, so this is the one decision that is cheaper to make before the parts than after them.
+    *   *Why it is safe to adopt incrementally*: an unknown touch set means "touches everything", so a program built against libraries that describe nothing behaves exactly as it does today. Programs get faster as `std.contracts` grows - the same shape as ADR-028 and ADR-031, where writing a contract down is what let a caller earn `sync`.
+    *   *The first increment, to argue about before any code*: two unconditional `fs::read` calls with disjoint literal paths, lowered to a concurrent join. It needs `touches` for two `std` functions, a dependency check between two statements, and one emitter change. If that cannot be made to work cleanly, the rest does not deserve attempting.
+    *   *Open*: the whole of it. No `touches` column, no `ordering` key, no `seq`, no dependency graph in the emitter - and `task::scope`/`select`, which the runtime side builds on, are unimplemented too.
+    *   *The debt*: measure how much unconditional, independent I/O real programs actually contain, once there is an application big enough to carry the measurement. If the answer is "almost none", the decision was wrong and `strict` becomes the default.
+
 ### Phase 1: Language Completeness (Frontend)
 
 To make Nikaia usable for real-world programming, we need to expand the frontend capabilities.

@@ -53,6 +53,15 @@ default-profile = "advanced"
 # cancelling a cleanup always terminates (the fallback cannot pause).
 cleanup-deadline = "30s"
 
+# How strictly the written order of two operations is taken (ADR-033, Part I 8.1.1).
+#   "effects" (default) - two operations that touch disjoint resources may
+#       overlap; everything else keeps the order it was written in.
+#   "strict"            - the written order, always. The analysis is not applied.
+# Not an aid to be removed later: it is the escape for a project that does not
+# want this, and the way to rule the analysis out when chasing a bug in the field.
+# **Not implemented** - the key is specified, nothing reads it yet.
+ordering = "effects"
+
 [dependencies]
 http-server = "1.2"
 # Import native Rust Crates
@@ -149,6 +158,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
 | `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
+| `touches` | fn | which resources it reaches and whether it reads or writes them — `["file(path) write", "stdout write"]` ([ADR-033](adr/adr-033.md)). **Absent means it touches everything**, so a function nobody has described orders against everything and stays where it was written. *Specified, not implemented.* |
 
 `signature` and `fields` are what make a *type* checker possible across a boundary whose bodies are not visible — the `NK1xxx` diagnostics above are all answered from them ([ADR-024](adr/adr-024.md)). They are also where the ledger's `?` earns its keep: it is **the absence of a claim**, and a checker reports a mismatch only where both sides are written down, so a contract that says less makes the compiler quieter and never wronger.
 
