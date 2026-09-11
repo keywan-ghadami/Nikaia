@@ -46,21 +46,22 @@ pub enum Target {
     Wasm32Unknown,
 }
 
-/// How much of the **user's** code may run at once (ADR-037 D2).
+/// Whether the **user's** code may run concurrently at all (ADR-037 D2).
 ///
-/// `None` is `user_parallelism = 0`: nothing the user wrote ever runs
-/// concurrently. It does not bind the compiler - `fs::map` may still validate
-/// its text on four cores here, because that is not code the user wrote and it
-/// changes nothing the program prints (ADR-016 D3).
+/// A yes-or-no question, deliberately: *how many* threads or cores serve that
+/// answer is the runtime's business, and a number in the language would be a
+/// promise the language cannot keep on a machine it has not seen.
+///
+/// It does not bind the compiler - `fs::map` may still validate its text on
+/// four cores at `No`, because that is not code the user wrote and it changes
+/// nothing the program prints (ADR-016 D3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UserParallelism {
-    /// `0` - the default.
+    /// `no` - the default. Nothing the user wrote ever runs concurrently.
     #[default]
-    None,
-    /// `n` - at most this many pieces of user code at once.
-    Bounded(u16),
-    /// `auto` - as many as the machine has.
-    Auto,
+    No,
+    /// `yes` - it may, and the runtime decides how widely.
+    Yes,
 }
 
 /// How strictly the written order of two statements is taken (ADR-033, D8).
@@ -109,7 +110,7 @@ impl Build {
     /// The default machine, with parallelism asked for.
     pub fn parallel() -> Build {
         Build {
-            user_parallelism: UserParallelism::Auto,
+            user_parallelism: UserParallelism::Yes,
             ..Build::default()
         }
     }
@@ -164,21 +165,23 @@ impl Target {
 impl UserParallelism {
     pub fn parse(value: &str) -> Result<UserParallelism> {
         match value {
-            "0" => Ok(UserParallelism::None),
-            "auto" => Ok(UserParallelism::Auto),
-            other => match other.parse::<u16>() {
-                Ok(0) => Ok(UserParallelism::None),
-                Ok(n) => Ok(UserParallelism::Bounded(n)),
-                Err(_) => Err(anyhow!(
-                    "unknown user-parallelism `{other}` (expected 0, a number, or auto)"
-                )),
-            },
+            "no" => Ok(UserParallelism::No),
+            "yes" => Ok(UserParallelism::Yes),
+            // A number is the plausible mistake, and it has a reason rather
+            // than a typo behind it. Say which.
+            other if other.parse::<u32>().is_ok() => Err(anyhow!(
+                "`user-parallelism` is yes or no, not a count: how many threads \
+                 serve a `yes` is the runtime's to decide, not the program's"
+            )),
+            other => Err(anyhow!(
+                "unknown user-parallelism `{other}` (expected yes or no)"
+            )),
         }
     }
 
     /// Whether any code the user wrote may run concurrently.
     pub fn is_concurrent(self) -> bool {
-        !matches!(self, UserParallelism::None)
+        matches!(self, UserParallelism::Yes)
     }
 
     /// How the generated driver is asked to cut the input.
@@ -191,8 +194,8 @@ impl UserParallelism {
             return "Parallelism::Off";
         }
         match self {
-            UserParallelism::None => "Parallelism::Off",
-            UserParallelism::Bounded(_) | UserParallelism::Auto => "Parallelism::Auto",
+            UserParallelism::No => "Parallelism::Off",
+            UserParallelism::Yes => "Parallelism::Auto",
         }
     }
 }

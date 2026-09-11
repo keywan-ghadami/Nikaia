@@ -30,19 +30,21 @@ traps.
 
 The default is `x86_64-linux`.
 
-#### `user_parallelism` — how much of *your* code runs at once
-* `0` (the default) — nothing you wrote ever runs concurrently. A web service
-  that wants one event loop is built this way, and **data races are impossible**:
-  two pieces of your code are never in flight together, so there is nothing to
-  collide.
-* `n` — at most *n* pieces of your code at once.
-* `auto` — as many as the machine has. This is what an image filter or a
-  scientific calculation wants, and the compiler enforces the rules that keep
-  shared data intact.
+#### `user_parallelism` — may *your* code run concurrently at all?
+* `no` (the default) — nothing you wrote ever runs concurrently. A web service
+  that wants one event loop is built this way, and **data races are
+  impossible**: two pieces of your code are never in flight together, so there
+  is nothing to collide.
+* `yes` — it may. This is what an image filter or a scientific calculation
+  wants, and the compiler enforces the rules that keep shared data intact.
+
+It is a permission and not a count. *How many* threads or cores serve a `yes`
+belongs to the machine and the moment, so the runtime decides it; a number here
+would be a promise the language cannot keep on hardware it has not seen.
 
 **The word *your* is the whole of it.** This bounds your program, not the
 compiler. Reading a file may still validate its text on four cores at
-`user_parallelism = 0`, and the runtime may still hand a blocking call to a
+`user_parallelism = no`, and the runtime may still hand a blocking call to a
 helper thread — neither runs code you wrote, and neither changes a single byte
 of what your program prints. The rule is:
 
@@ -579,7 +581,7 @@ users.map fn(user) {
 }
 ```
 ### 5.4. Contextual Capture (The Lifecycle Rule)
-Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at every `user_parallelism`.
+Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at either `user_parallelism`.
 
 #### A. Immediate Context (`@immediate`)
 If a function guarantees that the callback will be executed and finished before the function itself returns, it is an **Immediate Context**.
@@ -641,7 +643,7 @@ When a variable goes out of **Scope** (usually at the end of the block `{}` wher
 ### 6.2. Unified Types
 To make coding easier, Nikaia provides smart types that handle memory logic for you.
 
-You write `Shared[T]` yourself — it is not inferred, because sharing changes *when* a value is cleaned up (6.4), and that is something your program can observe. What the compiler decides is the machinery underneath: at `user_parallelism = 0` a plain reference count, above it an atomic one ([ADR-037](adr/adr-037.md) D3).
+You write `Shared[T]` yourself — it is not inferred, because sharing changes *when* a value is cleaned up (6.4), and that is something your program can observe. What the compiler decides is the machinery underneath: at `user_parallelism = no` a plain reference count, above it an atomic one ([ADR-037](adr/adr-037.md) D3).
 
 * **`Shared[T]`**: Allows data to be owned by multiple parts of the program. The memory is only cleaned up when the *last* owner is finished.
 * **`Locked[T]`**: Allows data inside a `Shared` container to be modified (mutated). It acts as a gatekeeper to ensure safety.
@@ -1021,7 +1023,7 @@ The rules, told straight:
 
 ## Chapter 8: Concurrency (Doing things at the same time)
 
-Even at `user_parallelism = 0`, you can perform multiple tasks concurrently, such as waiting for a download while responding to user input. This is done using **Asynchronous Programming**.
+Even at `user_parallelism = no`, you can perform multiple tasks concurrently, such as waiting for a download while responding to user input. This is done using **Asynchronous Programming**.
 
 ### 8.1. Async by Default
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
@@ -1132,7 +1134,7 @@ error[NK2101]: this background task takes ownership of `message`
 ```
 
 ### 8.4. The Runtime Sidecar Model
-While `user_parallelism = 0` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.
+While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.
 
 * **Separation of Concerns:** User code runs exclusively on the main thread (Event Loop). Heavy operations (like SQLite queries) are offloaded to a managed Runtime Sidecar (a background thread on Native, or a Web Worker on WASM).
 * **Safety Guarantee:** Data exchange occurs via strict message passing (ownership transfer). Since user code never accesses the Sidecar memory directly, **Race Conditions** remain impossible.

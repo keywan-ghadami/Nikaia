@@ -120,7 +120,7 @@ It is the best fit because it stresses exactly the three things 0.0.7 asserts:
 * **Zero-copy / tethered slices** (Part II, 10.6) — station names must point into the input
   buffer; allocating a billion strings loses by an order of magnitude.
 * **`par_iter` and the `sync` rule** (12.1, 12.6) — the aggregation is pure computation, so
-  `user_parallelism = auto` can use every core, and the compiler can prove no task pauses.
+  `user_parallelism = yes` can use every core, and the compiler can prove no task pauses.
 
 If Nikaia is slow here, the grammar protocol's performance argument is wrong. That makes it a
 useful benchmark rather than a demo. See `1brc.nika`.
@@ -142,7 +142,7 @@ so results are directly comparable against Rust, C and Go.
 Small, self-contained, no external services. `n-body` is the usual first one because it is
 ~100 lines and purely numeric.
 
-### 3. TechEmpower Web Framework Benchmarks — **what `user_parallelism = 0` is actually for**
+### 3. TechEmpower Web Framework Benchmarks — **what `user_parallelism = no` is actually for**
 
 `plaintext`, `json`, `db`, `queries`, `fortunes`, `updates`, `cached-queries`.
 

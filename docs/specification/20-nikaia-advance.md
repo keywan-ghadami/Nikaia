@@ -287,18 +287,18 @@ let totals = dsl Measurements from data
 
 **Why you have to ask for it.** The compiler will not turn a `fold` into a `par_fold` on its own, even when it looks associative. Adding `f64` is not associative, so the number of cores would quietly change the answer. Writing `par_fold` is you saying that a different chunk count is the same result to you — for an aggregation over integers, as above, it is.
 
-At `user_parallelism = 0`, `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
+At `user_parallelism = no`, `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
 
 **What you get for free.** Because the grammar states the format, the generated parser is allowed to exploit it: scanning for a separator or a frame boundary works a machine word at a time rather than byte by byte, on every target and with no `unsafe` in sight — and a terminator with up to three alternatives, like `until(";" | frame_end)`, is still one scan. See [ADR-009](adr/adr-009.md).
 
 ## Chapter 11: Running Your Code at Once
 
-Raising `user_parallelism` above `0` (1.2) turns the same source into a program that uses more than one core. Nothing in the source changes.
+Setting `user_parallelism` to `yes` (1.2) turns the same source into a program that uses more than one core. Nothing in the source changes.
 
 ### 11.1. Implicit Async & The Scheduler
 The syntax is identical either way. You do **not** use `async` keywords on function definitions.
-* **At `0`:** functions yield on I/O events, cooperatively, on one thread.
-* **Above `0`:** the runtime uses a **Work-Stealing Scheduler** and distributes tasks across the cores it is allowed.
+* **At `no`:** functions yield on I/O events, cooperatively, on one thread.
+* **At `yes`:** the runtime uses a **Work-Stealing Scheduler** and distributes tasks across the cores it is allowed.
 
 The code remains "Direct Style". You write code as if it were synchronous, and the compiler handles the suspension points.
 
@@ -311,7 +311,7 @@ The `spawn` function is defined with the `@detached` attribute. This triggers **
 * **Copying:** If you need to keep data in the parent thread, you must explicitly call `.clone()` before spawning.
 
 #### Return Values & Handles
-`spawn` always returns a `TaskHandle`. Above `0` it represents a running thread; at `0` a scheduled event. Calling `.await` or `.join()` on it works identically either way.
+`spawn` always returns a `TaskHandle`. At `yes` it represents a running thread; at `no` a scheduled event. Calling `.await` or `.join()` on it works identically either way.
 
 ```nika
 fn process_image(path: String) -> Image { ... }
@@ -326,7 +326,7 @@ fn main() {
     // Compiler Error: img_path is gone.
     // println("Processing: " + img_path) 
 
-    // Uniform API: the same at every `user_parallelism`
+    // Uniform API: the same at either `user_parallelism`
     let result = handle.await catch { return }
 }
 ```
@@ -335,7 +335,7 @@ fn main() {
 
 ## Chapter 12: Thread Safety and Synchronization
 
-Because code above `user_parallelism = 0` runs on several physical CPU cores at once, strict safety rules apply to prevent data corruption.
+Because code at `user_parallelism = yes` runs on several physical CPU cores at once, strict safety rules apply to prevent data corruption.
 
 ### 12.1. The `sync` Keyword (CPU Constraints)
 Since everything in Nikaia is "Async by Default" (interruptible), we need a way to define code that **must not be interrupted** or moved between threads mid-execution.
@@ -417,12 +417,12 @@ assertion, checked as far as the compiler can see, and yours where it cannot.
 ### 12.2. The Dual Nature of `Locked[T]`
 To share mutable data, you use the `Locked[T]` type. Its implementation follows `user_parallelism`, providing "Zero Cost Abstraction" relative to the requirements.
 
-**At `user_parallelism = 0`:**
+**At `user_parallelism = no`:**
 * **Implementation:** Similar to a `RefCell` with a reentrancy check.
 * **Cost:** Extremely cheap (integer increment).
 * **Purpose:** It protects against **Logical Deadlocks** (e.g., Task A locks data, waits for network, Task B tries to lock same data -> Panic!). It does not use OS primitives.
 
-**Above `user_parallelism = 0`:**
+**At `user_parallelism = yes`:**
 * **Implementation:** A real OS-level **Mutex** (Mutual Exclusion).
 * **Cost:** Higher (Atomic operations).
 * **Purpose:** It protects against **Memory Corruption**. It ensures that two physical threads cannot write to the memory address at the same time.
@@ -560,8 +560,8 @@ task::scope fn(s) {
 
 **One rule differs with `user_parallelism`.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
 
-* **At `0`:** everything runs on one thread, and the runtime owns every task. When a scope ends (even when it is torn down early by an error), the runtime collects its tasks *before* your function's variables disappear. **Scoped tasks may do anything, including I/O.**
-* **Above `0`:** tasks run on other CPU cores *in parallel*. A task that is mid-computation on another core cannot be stopped at an arbitrary moment — so the scope can only keep its promise for tasks that finish on their own, deterministically. Therefore: **above `0`, scoped tasks must be `sync`** (pure computation — no I/O, no pausing; the same rule as `par_iter`, 12.6). This is the natural fit anyway: scoped parallelism exists exactly for "split this computation across all cores".
+* **At `no`:** everything runs on one thread, and the runtime owns every task. When a scope ends (even when it is torn down early by an error), the runtime collects its tasks *before* your function's variables disappear. **Scoped tasks may do anything, including I/O.**
+* **At `yes`:** tasks run on other CPU cores *in parallel*. A task that is mid-computation on another core cannot be stopped at an arbitrary moment — so the scope can only keep its promise for tasks that finish on their own, deterministically. Therefore: **above `0`, scoped tasks must be `sync`** (pure computation — no I/O, no pausing; the same rule as `par_iter`, 12.6). This is the natural fit anyway: scoped parallelism exists exactly for "split this computation across all cores".
 
 If a task needs to do I/O there, it does not belong in a scope — it is a background task. Use a normal `spawn` (the task takes ownership, Chapter 8.3) and collect the result through its handle. The compiler explains this when you hit the rule:
 
@@ -584,7 +584,7 @@ error[NK2102]: tasks inside `task::scope` must be `sync` where they run in paral
            let result = handle.await
 ```
 
-> **Design Note (Soundness):** Borrowing across *parallel, pausable* tasks is a known unsoundness trap — a cancelled scope cannot instantly stop a task mid-execution on another core, yet the borrowed variables are about to disappear. General-purpose async runtimes cannot offer a safe async scope for exactly this reason. Nikaia avoids the trap structurally: at `0` the single-threaded runtime owns all task state and tears scopes down synchronously (which additionally requires that task futures are exclusively runtime-owned and that the language exposes no way to leak a live scope — both are language-level guarantees); above `0` the `sync` restriction makes waiting deterministic. See [ADR-005](adr/adr-005.md), D5.
+> **Design Note (Soundness):** Borrowing across *parallel, pausable* tasks is a known unsoundness trap — a cancelled scope cannot instantly stop a task mid-execution on another core, yet the borrowed variables are about to disappear. General-purpose async runtimes cannot offer a safe async scope for exactly this reason. Nikaia avoids the trap structurally: at `no` the single-threaded runtime owns all task state and tears scopes down synchronously (which additionally requires that task futures are exclusively runtime-owned and that the language exposes no way to leak a live scope — both are language-level guarantees); above `0` the `sync` restriction makes waiting deterministic. See [ADR-005](adr/adr-005.md), D5.
 
 ### 12.8. Supervision Trees
 In complex systems, threads might crash (panic). A **Supervisor** monitors tasks. If a child task crashes, the supervisor can decide to:

@@ -109,7 +109,7 @@ a struct, a task borrowing from its parent) get real language constructs instead
 → [ADR-005](docs/specification/adr/adr-005.md), [ADR-008](docs/specification/adr/adr-008.md)
 
 **3. One source, every runtime.**
-You write `Shared[T]`. At `user_parallelism = 0` it compiles to `Rc` and a single-threaded
+You write `Shared[T]`. At `user_parallelism = no` it compiles to `Rc` and a single-threaded
 event loop; above it, to `Arc` and a work-stealing thread pool. The same holds for `spawn`.
 Your source file does not encode the deployment decision, so changing it is a line in
 `nikaia.toml`, not a refactor.
@@ -256,11 +256,14 @@ in your `nikaia.toml` decide how it is built — never what it means.
 what a panic does: an orderly unwind where the machine unwinds, a trap where it traps.
 
 ### `user_parallelism` — how much of *your* code runs at once
-* **`0`** (default) — single-threaded event loop. **Data races are impossible**: two pieces of
+* **`no`** (default) — single-threaded event loop. **Data races are impossible**: two pieces of
   your code are never in flight together. Microservices, web servers, CLI tools, edge workers —
   where you would reach for Node.js or Go.
-* **`auto`** — multi-threaded work-stealing runtime, every core busy, thread safety proven by
+* **`yes`** — multi-threaded work-stealing runtime, every core busy, thread safety proven by
   the borrow checker. HPC, game engines, heavy backends — where you would reach for Rust or C++.
+
+It is a permission, not a count: *how many* threads serve a `yes` is the runtime's to decide,
+because the right answer belongs to the machine and not to the source file.
 
 **The word *your* is load-bearing.** It bounds your program, not the compiler: reading a file
 may still validate its text on four cores at `0`, because that is not code you wrote and it

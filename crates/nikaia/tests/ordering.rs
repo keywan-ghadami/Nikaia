@@ -271,7 +271,7 @@ fn the_corpus_lowers_under_both_orderings() {
 /// parallelism asked for, so a refusal is about the *pair* rather than about
 /// `user_parallelism = 0` refusing every handler (ADR-037 D2).
 fn report(source: &str) -> String {
-    report_at(source, nikaia::emit::UserParallelism::Auto)
+    report_at(source, nikaia::emit::UserParallelism::Yes)
 }
 
 fn report_at(source: &str, user_parallelism: nikaia::emit::UserParallelism) -> String {
@@ -386,7 +386,7 @@ fn a_handler_is_user_code_and_does_not_overlap_at_zero() {
 /// vaguer reason (ADR-033 D9).
 #[test]
 fn the_refusal_at_zero_names_the_handler() {
-    let report = report_at(TWO_READS, nikaia::emit::UserParallelism::None);
+    let report = report_at(TWO_READS, nikaia::emit::UserParallelism::No);
     assert!(
         report.contains("code you wrote") && report.contains("user_parallelism"),
         "{report}"

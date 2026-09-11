@@ -45,14 +45,14 @@ authors = ["dev@nikaia.org"]
 # and what `std` can offer.
 target = "x86_64-linux"
 
-# How much of *your* code may run at once (ADR-037 D2).
-#   0      (default) - nothing you wrote ever runs concurrently
-#   <n>              - at most n pieces of your code at once
-#   "auto"           - as many as the machine has
+# May *your* code run concurrently at all (ADR-037 D2)? A permission, not a
+# count - how many threads serve a "yes" is the runtime's to decide.
+#   "no"  (default) - nothing you wrote ever runs concurrently
+#   "yes"           - it may
 # This bounds your program, not the compiler: reading a file may still
-# validate its text on several cores at 0, because that is not your code
+# validate its text on several cores at "no", because that is not your code
 # and changes nothing your program prints.
-user-parallelism = 0
+user-parallelism = "no"
 
 # How long the runtime waits at program end for pending resource cleanups
 # (flushes, rollbacks, connection shutdowns — see Part I, 6.4 and ADR-006).
@@ -370,7 +370,7 @@ fn process() {
 ```
 
 ### 15.3. WebAssembly (WASM) Synergy
-A single-threaded build possesses a natural affinity for WebAssembly. Since WASM (in its basic form) shares a linear memory model and runs in single-threaded host environments, `user_parallelism = 0` is the perfect match.
+A single-threaded build possesses a natural affinity for WebAssembly. Since WASM (in its basic form) shares a linear memory model and runs in single-threaded host environments, `user_parallelism = no` is the perfect match.
 
 **Zero Overhead**
 Compiling with `nikaia build --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
@@ -541,8 +541,8 @@ progress line rewritten in place — where a newline after every fragment would 
 
 **`std::http`**
 A production-ready HTTP/1.1 and HTTP/2 server and client.
-* **At `user_parallelism = 0`:** Runs on a single-threaded Event Loop.
-* **Above `0`:** Runs on a multi-threaded Work-Stealing Executor.
+* **At `user_parallelism = no`:** Runs on a single-threaded Event Loop.
+* **At `yes`:** Runs on a multi-threaded Work-Stealing Executor.
 
 ```nika
 use std::http
@@ -745,7 +745,7 @@ Every setting has the same `std::fs` surface; only the target changes it.
 | `map` | yes | **compile error** — the platform has no memory mapping |
 | `metadata`, `read_dir`, `create_dir`, `remove`, `rename`, `copy` | yes | yes — OPFS, within the origin's sandbox |
 
-This is the difference between `fs::map` and `std::thread` (17.2). `std::thread` is barred by **`user_parallelism = 0`**: it is share-nothing by design, so manual threading is a compile error even on a native target that has threads. `fs::map` is barred by the **target**: nothing about a single-threaded runtime prevents mapping a file.
+This is the difference between `fs::map` and `std::thread` (17.2). `std::thread` is barred by **`user_parallelism = no`**: it is share-nothing by design, so manual threading is a compile error even on a native target that has threads. `fs::map` is barred by the **target**: nothing about a single-threaded runtime prevents mapping a file.
 
 **`std::collections` — and where your keys came from**
 
@@ -792,9 +792,9 @@ Some modules are only available, or behave restrictively, depending on the machi
 
 * **`std::process`**: Spawning child processes.
 * **`std::thread` / `spawn`**:
-    * **Above `user_parallelism = 0`:** Supports full concurrency. The primary mechanism is `spawn`.
+    * **At `user_parallelism = yes`:** Supports full concurrency. The primary mechanism is `spawn`.
         * **Strict Implicit Move:** To ensure thread safety without complex lifetime tracking, Nikaia enforces **Implicit Move Semantics** for all tasks spawned this way. Ownership of variables used inside the `spawn` block is automatically transferred to the new thread.
-    * **At `0`, and on `wasm32-*`:** Direct usage of `std::thread` is a **compile-time error**. A share-nothing architecture is what makes `user_parallelism = 0` mean something, and what keeps a program compatible with WASM hosts.
+    * **At `0`, and on `wasm32-*`:** Direct usage of `std::thread` is a **compile-time error**. A share-nothing architecture is what makes `user_parallelism = no` mean something, and what keeps a program compatible with WASM hosts.
 
 **`std::db` (Universal SQL)**
 Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.
@@ -896,7 +896,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Contract changes | `NK2401` a borrow contract change broke a caller, narrated from the ledger diff (13.5). Reserved: a `catch` that no longer covers every error that can reach it, narrated from the same diff — it needs the ledger to record the *set* rather than a boolean ([ADR-023](adr/adr-023.md) D1), which needs error types the compiler can lower. |
-| `NK25xx` | Portability | Reserved: the `Send` rules that parallel code needs, reported at `user_parallelism = 0` as a lint, so a library built there stays usable above it. |
+| `NK25xx` | Portability | Reserved: the `Send` rules that parallel code needs, reported at `user_parallelism = no` as a lint, so a library built there stays usable at `yes`. |
 | `NK26xx` | Resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). |
 | `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 

@@ -231,7 +231,7 @@ fn user_parallelism_chooses_the_parallelism_and_nothing_else() {
 fn a_target_without_threads_pins_the_driver_sequential() {
     let asked_for_parallel = Build {
         target: nikaia::emit::Target::Wasm32Unknown,
-        user_parallelism: nikaia::emit::UserParallelism::Auto,
+        user_parallelism: nikaia::emit::UserParallelism::Yes,
     };
     let emitted = emit(WITH_DSL, asked_for_parallel);
 

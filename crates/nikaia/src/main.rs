@@ -38,13 +38,14 @@ pub struct Cli {
     #[arg(long, default_value = "x86_64-linux")]
     pub target: String,
 
-    /// How much of *your* code may run at once (ADR-037 D2): `0`, a number,
-    /// or `auto`.
+    /// Whether *your* code may run concurrently at all (ADR-037 D2): `yes`
+    /// or `no`.
     ///
-    /// It bounds the program, not the compiler: `fs::map` may still validate
-    /// its text on several cores at `0`, because that is not code you wrote
-    /// and it changes nothing the program prints.
-    #[arg(long, default_value = "0")]
+    /// Not a count - how many threads serve a `yes` is the runtime's to
+    /// decide. And it bounds the program, not the compiler: `fs::map` may
+    /// still validate its text on several cores at `no`, because that is not
+    /// code you wrote and it changes nothing the program prints.
+    #[arg(long, default_value = "no")]
     pub user_parallelism: String,
 
     /// Where the `rust` backend writes. Defaults to `<input>.rs`.

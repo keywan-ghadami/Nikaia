@@ -103,7 +103,7 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
 }
 
 fn main() throws {
-    // One connection per worker. At `user_parallelism = 0` this is a single-threaded
+    // One connection per worker. At `user_parallelism = no` this is a single-threaded
     // event loop, so `Shared` costs a non-atomic refcount; the same source
     // compiled with --user-parallelism=auto gets the atomic one, and nothing above
     // this line changes (Part II, 12.2).
