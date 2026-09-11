@@ -224,6 +224,21 @@ pub enum Expr {
     // Kap 3.1: Blöcke sind Expressions
     Block(Block),
 
+    /// Part I 8.1.1: `seq { … }` - the statements inside keep the order they
+    /// were written in, whatever their touch sets say
+    /// ([ADR-033](../../../docs/specification/adr/adr-033.md) D7).
+    ///
+    /// **A variant and not a flag on [`Block`]**, for the reason
+    /// [`Expr::LitInterpolated`] gives about itself: a flag is something an
+    /// analysis can walk past, and the one thing this construct exists to do is
+    /// stop a reordering. A variant makes every `match` on an expression say
+    /// what it does with it, and the compiler names the places that forgot.
+    ///
+    /// *The keyword is provisional* - ADR-033 D7 says so in as many words. It
+    /// has to read as "in this order, whatever you think", and `seq` is a
+    /// placeholder for a word that is still the owner's to pick.
+    Seq(Block),
+
     // Kap 3.2: if cond { ... } else { ... }
     If {
         cond: Box<Expr>,

@@ -1,6 +1,6 @@
 //! Order is kept where it can be seen (ADR-033, Part I 8.1.1).
 //!
-//! Two adjacent statements whose calls reach different files are lowered to run
+//! A run of statements whose calls reach different resources is lowered to run
 //! at the same time. Everything here is either that working, or one of the
 //! reasons it must not - and the second list is the longer one on purpose,
 //! because the decision is only safe if every "no" is reliable.
@@ -11,6 +11,14 @@
 //! falling out on the shape alone, which measured the analysis and not the
 //! corpus - so each widening below has a test for the operation it now sees and
 //! a test for the refusal it must still make.
+//!
+//! Three of §6's "not built" list are here too. A **group** of three or more
+//! mutually disjoint statements, where the safety argument is that disjointness
+//! is not transitive and every pair has to be asked about rather than every
+//! adjacent one. **`seq`**, the block that states an order the compiler cannot
+//! see (D7) - and the keyword is provisional, as D7 says itself. And a
+//! **vocabulary** past `file` and `stdout`, whose own fail-closed question is
+//! what the compiler does with a resource named in a word it does not know.
 //!
 //! The lowering is not taken on trust: the emitted Rust is compiled and run,
 //! and the program prints what the sequential one would have printed.
@@ -294,6 +302,464 @@ fn a_value_that_is_not_a_bare_call_is_weighed() {
     assert!(why.contains("both reach file `zwei.txt`"), "{why}");
 }
 
+// --- more than two at a time (ADR-033 §6) ------------------------------------
+
+/// Three reads of three files are one group, not a pair and a leftover.
+///
+/// The pair lowering left the third read waiting for two that had nothing to do
+/// with it - one thread wake-up more than the work needs, which at ~46 µs each
+/// (§8.4) is the whole of what the overlap has to spend.
+const THREE_READS: &str = "use std::fs\n\
+     fn main() throws {\n\
+         let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+         let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+         let c = fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
+         println(f\"{a.len()} {b.len()} {c.len()}\")\n\
+     }";
+
+#[test]
+fn three_statements_overlap_as_one_group() {
+    let rust = lowered(THREE_READS, Ordering::Effects);
+    // One group and not a pair with a statement after it: three closures, and
+    // the pattern that collects them is nested exactly as the calls are.
+    assert_eq!(rust.matches("task::both").count(), 2, "{rust}");
+    assert!(rust.contains("let (a, (b, c)) = task::both("), "{rust}");
+    // … and nothing is left behind: no third `let a =`-shaped read outside it.
+    assert_eq!(rust.matches("fs::read_to_string").count(), 3, "{rust}");
+}
+
+/// … and the emitted Rust compiles and prints what the sequential one printed.
+#[test]
+fn the_overlapped_group_compiles_and_runs() {
+    let dir = common::scratch_dir("ordering-group");
+    let source = dir.join("three_reads.rs");
+    std::fs::write(&source, lowered(THREE_READS, Ordering::Effects)).expect("write the Rust");
+    std::fs::write(dir.join("eins.txt"), "hallo").expect("write eins");
+    std::fs::write(dir.join("zwei.txt"), "welt!!").expect("write zwei");
+    std::fs::write(dir.join("drei.txt"), "abc").expect("write drei");
+
+    let binary = dir.join("three_reads");
+    let built = common::compile(&source, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "the grouped lowering does not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "5 6 3");
+}
+
+/// A group is every pair, not every **adjacent** pair - and this is the one
+/// place where the difference is a soundness hole rather than a missed chance.
+///
+/// `read eins / read zwei / write eins`: both adjacent pairs meet on nothing,
+/// and the run does not. In a group all three run at once, so a chain of
+/// adjacent answers would have overlapped a read of `eins.txt` with the write
+/// of it and the program would print either the old contents or the new,
+/// depending on a race. The group is therefore the first two, and the write
+/// stands where it was written.
+#[test]
+fn a_group_is_checked_pairwise_and_not_by_its_neighbours() {
+    const READ_READ_WRITE: &str = "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+             fs::write(\"eins.txt\", \"x\") catch { }\n\
+             println(f\"{a.len()} {b.len()}\")\n\
+         }";
+
+    let rust = lowered(READ_READ_WRITE, Ordering::Effects);
+    assert_eq!(rust.matches("task::both").count(), 1, "{rust}");
+    assert!(rust.contains("let (a, b) = task::both("), "{rust}");
+    // The write is not in the group, so it is a statement of its own after it.
+    let group_ends = rust.find(");").expect("the group closes");
+    let write_at = rust.find("fs::write").expect("the write is emitted");
+    assert!(write_at > group_ends, "{rust}");
+}
+
+/// A group takes what binds and what does not, and the pattern says which.
+///
+/// A bare expression statement binds nothing (§8.3's first item), so its place
+/// in the pattern is `_`. Three of them and there would be no pattern at all.
+#[test]
+fn a_group_may_mix_bindings_with_statements() {
+    let rust = lowered(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+             fs::write(\"zwei.txt\", \"x\") catch { }\n\
+             let c = fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
+             println(f\"{a.len()} {c.len()}\")\n\
+         }",
+        Ordering::Effects,
+    );
+    assert!(rust.contains("let (a, (_, c)) = task::both("), "{rust}");
+}
+
+/// A group of four, mixed, compiled and run.
+///
+/// The nesting is where a lowering like this breaks: a `_` two levels into a
+/// pattern, four closures, and a tuple shape that has to match the calls
+/// exactly. Reading the emitted Rust is not evidence that Rust will take it.
+#[test]
+fn a_group_of_four_compiles_and_runs() {
+    const FOUR: &str = "use std::fs\n\
+         fn main() throws {\n\
+             fs::write(\"eins.txt\", \"a\") catch { }\n\
+             let b = fs::read_to_string(\"zwei.txt\") catch { \"leer\".to_string() }\n\
+             fs::write(\"drei.txt\", \"ccc\") catch { }\n\
+             let d = fs::read_to_string(\"vier.txt\") catch { \"leer\".to_string() }\n\
+             println(f\"{b} {d}\")\n\
+         }";
+
+    let rust = lowered(FOUR, Ordering::Effects);
+    assert_eq!(rust.matches("task::both").count(), 3, "{rust}");
+    assert!(
+        rust.contains("let (_, (b, (_, d))) = task::both("),
+        "{rust}"
+    );
+
+    let dir = common::scratch_dir("ordering-group-four");
+    let source = dir.join("four.rs");
+    std::fs::write(&source, &rust).expect("write the Rust");
+    std::fs::write(dir.join("zwei.txt"), "zwei").expect("write zwei");
+    std::fs::write(dir.join("vier.txt"), "vier").expect("write vier");
+
+    let binary = dir.join("four");
+    let built = common::compile(&source, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "the grouped lowering does not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "zwei vier");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("eins.txt")).expect("eins.txt"),
+        "a"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("drei.txt")).expect("drei.txt"),
+        "ccc"
+    );
+}
+
+/// A group stops before the statement that is the block's value.
+///
+/// Kap 3.1: a block's last statement is what it hands back, and a group hands
+/// back a tuple. Three accountable operations where the third is the value are
+/// a group of two, not a group of three that changes what the function means.
+#[test]
+fn a_group_stops_before_the_value_of_a_function() {
+    let source = "use std::fs\n\
+         fn drei() -> String throws {\n\
+             fs::write(\"eins.txt\", \"1\") catch { }\n\
+             fs::write(\"zwei.txt\", \"2\") catch { }\n\
+             fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
+         }";
+    let rust = lowered(source, Ordering::Effects);
+    assert_eq!(rust.matches("task::both").count(), 1, "{rust}");
+    // The read is the value, so it is emitted on its own and without a `;`.
+    let group_ends = rust.find(");").expect("the group closes");
+    assert!(
+        rust.find("fs::read_to_string")
+            .expect("the read is emitted")
+            > group_ends,
+        "{rust}"
+    );
+}
+
+/// `--ordering strict` still turns the whole thing off, groups included.
+#[test]
+fn strict_ordering_leaves_a_group_alone() {
+    let strict = lowered(THREE_READS, Ordering::Strict);
+    assert!(!strict.contains("task::both"), "{strict}");
+    for name in ["let a = match", "let b = match", "let c = match"] {
+        assert!(strict.contains(name), "{strict}");
+    }
+}
+
+// --- `seq`: an order the compiler cannot see (ADR-033 D7) --------------------
+//
+// The keyword is **provisional**, and D7 says so itself: it has to read as "in
+// this order, whatever you think", and `seq` is a placeholder for a word chosen
+// later. What is decided is the construct and its meaning, which is what these
+// pin.
+
+/// Two writes to different files overlap - unless they are inside a `seq`.
+///
+/// Both halves are the test. Without the block they are a pair, so the `seq`
+/// case cannot pass because the analysis failed to see the statements at all.
+#[test]
+fn seq_keeps_the_order_its_statements_were_written_in() {
+    const TWO_WRITES_IN_SEQ: &str = "use std::fs\n\
+         fn main() throws {\n\
+             seq {\n\
+                 fs::write(\"eins.txt\", \"a\") catch { }\n\
+                 fs::write(\"zwei.txt\", \"b\") catch { }\n\
+             }\n\
+             println(\"fertig\")\n\
+         }";
+
+    assert!(
+        !overlaps(TWO_WRITES_IN_SEQ),
+        "{}",
+        lowered(TWO_WRITES_IN_SEQ, Ordering::Effects)
+    );
+    assert!(overlaps(
+        "use std::fs\n\
+         fn main() throws {\n\
+             fs::write(\"eins.txt\", \"a\") catch { }\n\
+             fs::write(\"zwei.txt\", \"b\") catch { }\n\
+             println(\"fertig\")\n\
+         }"
+    ));
+}
+
+/// … and it reaches inward: a block written inside a `seq` is written inside it.
+///
+/// The rule is about a *sequence*, and a nested block is a sequence in the same
+/// one. A `seq` that stopped at the first brace would be an escape that leaks.
+#[test]
+fn seq_reaches_into_the_blocks_inside_it() {
+    assert!(!overlaps(
+        "use std::fs\n\
+         fn main() throws {\n\
+             seq {\n\
+                 println(\"erst\")\n\
+                 {\n\
+                     fs::write(\"eins.txt\", \"a\") catch { }\n\
+                     fs::write(\"zwei.txt\", \"b\") catch { }\n\
+                 }\n\
+             }\n\
+         }"
+    ));
+}
+
+/// A `seq` block does not overlap with the statement beside it either.
+///
+/// D7 decides the order **inside** the block and says nothing about the block
+/// itself, so the block keeps its place - the fail-closed answer, and the only
+/// one the record decides. A reader who wrote `seq` said the compiler cannot
+/// see what the order is for; moving the block would be answering the question
+/// they just said could not be answered.
+#[test]
+fn a_seq_block_keeps_its_own_place() {
+    let why = report(
+        "use std::fs\n\
+         fn main() throws {\n\
+             seq {\n\
+                 fs::write(\"eins.txt\", \"a\") catch { }\n\
+             }\n\
+             fs::write(\"zwei.txt\", \"b\") catch { }\n\
+             println(\"fertig\")\n\
+         }",
+    );
+    let about_the_block = why
+        .lines()
+        .find(|line| line.contains("`seq` block"))
+        .unwrap_or_else(|| panic!("the report says nothing about the block: {why}"));
+    assert!(about_the_block.contains("in order"), "{why}");
+}
+
+/// … and the program inside a `seq` compiles and prints what it says.
+///
+/// `seq` asks for *less* than the compiler would otherwise do, so the risk is
+/// not a race but a lowering that emits a block Rust will not take.
+#[test]
+fn the_sequential_block_compiles_and_runs() {
+    const SEQ_PROGRAM: &str = "use std::fs\n\
+         fn main() throws {\n\
+             seq {\n\
+                 fs::write(\"eins.txt\", \"abc\") catch { }\n\
+                 fs::write(\"zwei.txt\", \"defg\") catch { }\n\
+             }\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+             println(f\"{a.len()} {b.len()}\")\n\
+         }";
+
+    let dir = common::scratch_dir("ordering-seq");
+    let source = dir.join("seq.rs");
+    std::fs::write(&source, lowered(SEQ_PROGRAM, Ordering::Effects)).expect("write the Rust");
+
+    let binary = dir.join("seq");
+    let built = common::compile(&source, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "the `seq` lowering does not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "3 4");
+}
+
+/// `seq` is a keyword in expression position, so it may be a value too.
+///
+/// Blocks are expressions (Kap 3.1) and this is a block; refusing it in a
+/// `let` would be a second rule about where a block may stand.
+#[test]
+fn seq_is_an_expression_like_any_other_block() {
+    let rust = lowered(
+        "fn main() {\n\
+             let n = seq { 1 }\n\
+             println(f\"{n}\")\n\
+         }",
+        Ordering::Effects,
+    );
+    assert!(rust.contains("let n ="), "{rust}");
+}
+
+// --- the vocabulary (ADR-033 D2) ---------------------------------------------
+
+/// The arguments the program was started with are a resource like any other.
+///
+/// `cli::args` was the most-refused callee in `examples/` - ten adjacent pairs
+/// named it - and it was refused because nobody had written down what it
+/// reaches. Two reads of it meet on nothing, and a read of it meets nothing a
+/// `println` writes either.
+#[test]
+fn the_programs_arguments_are_a_resource() {
+    assert!(overlaps(
+        "use std::cli\n\
+         fn main() {\n\
+             let a = cli::args()\n\
+             let b = cli::args()\n\
+             println(f\"{a.len()} {b.len()}\")\n\
+         }"
+    ));
+
+    // … and `args` is a kind of its own, so reading it does not meet what
+    // `println` writes.
+    let why = report(
+        "use std::cli\n\
+         fn main() {\n\
+             let a = cli::args()\n\
+             println(\"x\")\n\
+             println(f\"{a.len()}\")\n\
+         }",
+    );
+    assert!(why.contains("together"), "{why}");
+}
+
+/// The two console handles keep their order, because `2>&1` makes them one.
+///
+/// What widening the groups turned up, and it is the same shape as the `catch`
+/// handler whose effects nobody counted (§8.3): an effect that *was* in the
+/// touch set, against a resource whose identity nobody had checked. `stdout`
+/// and `stderr` are two handles and one destination as soon as anybody
+/// redirects one onto the other, so three console writes would have been a
+/// group of three whose output interleaves differently on every run.
+#[test]
+fn the_two_console_handles_keep_their_order() {
+    assert!(!overlaps(
+        "fn main() {\n\
+             println(\"out\")\n\
+             eprintln(\"err\")\n\
+             println(\"out2\")\n\
+         }"
+    ));
+
+    // … and the refusal is about the resource rather than about ignorance:
+    // both are described, and what they meet on is what is printed.
+    let why = report(
+        "fn main() {\n\
+             println(\"out\")\n\
+             eprintln(\"err\")\n\
+             println(\"out2\")\n\
+         }",
+    );
+    assert!(
+        why.contains("may be the same destination") && why.contains("stderr"),
+        "{why}"
+    );
+    // … and the way out is named, because a refusal a reader can act on is
+    // worth several they cannot (D9).
+    assert!(why.contains("`seq`"), "{why}");
+}
+
+/// A resource named in a word this compiler does not know reaches everything.
+///
+/// The fail-open shape this closes is the worst one an analysis like this can
+/// have. Two touches of *different* kinds never conflict, so a kind nobody
+/// knows is disjoint from every kind there is - which would make a typo in a
+/// hand-maintained ledger *buy* an overlap. D4's polarity says what to do
+/// instead, and it is the same answer it gives everywhere else.
+#[test]
+fn a_resource_this_compiler_cannot_name_reaches_everything() {
+    const LEDGER: &str = "version = 2\n\
+         toolchain = \"nikaia 0.1.0\"\n\
+         inference = \"stage0-signatures\"\n\
+         \n\
+         [fn.\"net::post\"]\n\
+         pub = true\n\
+         sync = true\n\
+         touches = [\"endpoint(url) write\"]\n\
+         signature = \"(url: ?) -> ?\"\n";
+
+    let library = nikaia::contracts::Ledger::parse(LEDGER).expect("the ledger parses");
+    let source = "fn main() {\n\
+             net::post(\"https://eins\")\n\
+             net::post(\"https://zwei\")\n\
+             println(\"x\")\n\
+         }";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let why = nikaia::contracts::order::report(&parsed, &own, &library);
+
+    assert!(why.contains("does not know about"), "{why}");
+    assert!(why.contains("endpoint"), "{why}");
+    assert!(!why.contains("together"), "{why}");
+}
+
+/// `std`'s hand-maintained ledger names only resources this compiler knows.
+///
+/// The check the `kind_is_known` rule cannot make on its own: an unknown kind
+/// costs a program its overlap silently and correctly, which means a typo in
+/// `std.contracts` would be a pessimisation nobody notices. The file is
+/// reviewed like code (ADR-020 D5), and this is the part of that review a
+/// reviewer cannot do by eye.
+#[test]
+fn the_std_ledger_names_only_known_resources() {
+    let library = nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger");
+    for (name, contract) in &library.functions {
+        for touch in &contract.touches {
+            assert!(
+                touch.kind_is_known(),
+                "`{name}` reaches `{}`, which is not in the vocabulary",
+                touch.kind
+            );
+        }
+    }
+}
+
 // --- and every reason two statements must keep their order --------------------
 
 /// A data dependency: the second uses what the first bound.
@@ -341,9 +807,9 @@ fn a_file_that_cannot_be_named_keeps_the_order() {
 
 /// A function nobody described touches everything.
 ///
-/// `println` has no `touches` in `std.contracts`, so it orders against
-/// everything - which is also what makes two `println`s keep their order, the
-/// case any model like this has to get right without a special rule for it.
+/// `etwas_unbekanntes` has no entry in any ledger, so it orders against
+/// everything (D4) - and the refusal is about a contract somebody could write
+/// rather than about this compiler's own limits.
 #[test]
 fn a_function_with_no_contract_keeps_the_order() {
     assert!(!overlaps(
@@ -426,8 +892,9 @@ fn a_non_literal_argument_keeps_the_order() {
 /// ADR-033 D6 asks for the obvious without an exception for it, and this is
 /// where a wider analysis could have lost it: a bare `println(x)` is now a
 /// shape the analysis reads, so the answer has to come from somewhere. It comes
-/// from D4 - nothing in `std.contracts` says what `println` reaches, so it
-/// reaches everything and orders against everything, `stdout` included.
+/// from the place D6 says it should - `println` is entered as reaching `stdout`
+/// and writing it, so two of them meet, and there is no special case for
+/// printing anywhere in this compiler.
 #[test]
 fn two_printlns_keep_their_order() {
     assert!(!overlaps(

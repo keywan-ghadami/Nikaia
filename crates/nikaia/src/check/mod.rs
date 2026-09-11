@@ -552,7 +552,10 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Block(block) => self.block(block),
+            // A `seq` block is a block for every purpose but one: what it says
+            // is about the *order* its statements run in (ADR-033 D7), not
+            // about what any of them mean or what it hands back.
+            Expr::Block(block) | Expr::Seq(block) => self.block(block),
 
             Expr::If {
                 cond,

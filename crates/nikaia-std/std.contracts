@@ -47,6 +47,28 @@
 # program wrong rather than merely slow. Only the entries below say it; every
 # other function in this file keeps the order it was written in.
 #
+# The resources it may name are a **closed list** - `file(path)`, `stdin`,
+# `stdout`, `stderr`, `args` - kept in `contracts::touch`. It is closed because
+# two touches of different kinds never conflict, so a kind the compiler did not
+# know would be disjoint from every kind there is: a typo here would buy an
+# overlap rather than fail to buy one. A word from outside the list is answered
+# the way ADR-033 D4 answers everything it cannot read - the function reaches
+# everything and keeps its place - and the list grows when a function needs it
+# (ADR-028 D5), never before.
+#
+# **`touches = []` is a claim about resources and not about memory.** A function
+# that changes something it was handed - `Vec::push`, `String::push_str`,
+# `HashMap::entry` - reaches no *resource*, and writing `touches = []` on it
+# would still be true in ADR-033 D2's terms and wrong to write: the ordering
+# analysis finds a data dependency by comparing what a statement binds against
+# what the next one mentions, and `xs.push(a)` twice binds nothing and mentions
+# `xs` in both. Memory is the borrow checker's question (ADR-033 D3) and this
+# analysis does not have its answer, so the functions that change what they are
+# given say nothing here and keep their order. The same goes for a function
+# that runs a lambda - `Vec::sort_by_key`, `Entry::and_modify` - where a
+# `touches = []` would be a claim about somebody else's code, exactly as
+# `sync = "from(f)"` records for pausing (ADR-027 §7).
+#
 # `provenance` marks a **source**: a function whose result is bytes that entered
 # the program from outside, and who chose them (ADR-010 D2). Its absence is not
 # "trusted" - it is "this is not a source", which is what almost every function
@@ -59,8 +81,14 @@ inference = "stage0-signatures+sync-bodies+throws-bodies"
 
 # --- Written by hand: the modules that are still Rust ------------------------
 
+# The arguments the program was started with. Read-only and read by anyone:
+# two `cli::args()` calls hand back the same vector, so they meet on nothing
+# and neither has to wait for the other. It is the most-refused callee in
+# `examples/` - ten adjacent pairs named it - and it was refused for no better
+# reason than that nobody had written this line.
 [fn."cli::args"]
 pub = true
+touches = ["args read"]
 provenance = "trusted"
 signature = "() -> ?"
 
@@ -124,6 +152,7 @@ signature = "(text: ?)"
 [fn."html::escape"]
 pub = true
 sync = true
+touches = []
 returns = "borrows(text)"
 signature = "(text: &str) -> ?"
 
@@ -245,6 +274,15 @@ pub = true
 sync = "from(f)"
 signature = "(Entry[$V], f: fn()) -> &$V"
 
+# `String::new()` reaches nothing and hands back an empty one. Four adjacent
+# pairs in `examples/` named it as the callee nobody had described, which is
+# what asked for the entry.
+[fn."String::new"]
+pub = true
+sync = true
+touches = []
+signature = "() -> String"
+
 [fn."String::chars"]
 pub = true
 sync = true
@@ -274,6 +312,7 @@ signature = "(&Vec[?]) -> usize"
 [fn."Vec::new"]
 pub = true
 sync = true
+touches = []
 signature = "() -> Vec[?]"
 
 [fn."Vec::push"]

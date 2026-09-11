@@ -465,16 +465,23 @@ fn a_loop_over_something_that_cannot_fail_says_nothing() {
 
 // --- what it deliberately does not catch -------------------------------------
 
-/// A method on a receiver `std` does not write down is not an error.
+/// A method `std` does not write down is not an error.
 ///
-/// This is `Unknown` doing its job: `push_str`, `entry` and `chars` are Rust's,
-/// and a checker that had an opinion about them would be guessing.
+/// This is `Unknown` doing its job: `insert_str` is Rust's and no ledger names
+/// it, and a checker that had an opinion about it would be guessing.
+///
+/// `push_str` used to stand here and no longer can, because the ledger now says
+/// what `String::new()` hands back (ADR-033 needed its touch set, and a
+/// signature came with it) - so the receiver has a type, the entry for
+/// `String::push_str` resolves, and three arguments to a method that takes one
+/// is caught. That is the ledger growing and the checker getting sharper
+/// together, which is what ADR-028 predicted it would look like.
 #[test]
-fn a_method_on_an_unknown_receiver_says_nothing() {
+fn a_method_nobody_wrote_down_says_nothing() {
     assert!(findings(
         "fn main() {\n\
          \x20   let mut out = String::new()\n\
-         \x20   out.push_str(\"a\", \"b\", \"c\")\n\
+         \x20   out.insert_str(0, \"a\", \"b\")\n\
          }"
     )
     .is_empty());

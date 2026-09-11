@@ -596,13 +596,35 @@ struct Flow<'a> {
     /// the part of that key this compiler has; the ordinal within the function
     /// waits on the mark table.
     origin: &'a str,
+    /// Part I 8.1.1: the statements here are inside a `seq` block, so they keep
+    /// the order they were written in whatever their touch sets say
+    /// (ADR-033 D7).
+    ///
+    /// It rides on `Flow` because that is what "what surrounds the statements
+    /// being emitted" means, and because it has to reach *inward*: a block, an
+    /// `if` or a loop written inside a `seq` is written inside it, and nothing
+    /// there may be reordered either. A function body starts a `Flow` of its
+    /// own, which is the one boundary it does not cross - a function called
+    /// from inside a `seq` was not written inside it, and its own order is its
+    /// own business.
+    sequential: bool,
 }
 
 impl Flow<'_> {
     const PLAIN: Flow<'static> = Flow {
         throws: false,
         origin: "",
+        sequential: false,
     };
+
+    /// The same surroundings, with reordering switched off for what is inside a
+    /// `seq` block (ADR-033 D7).
+    fn in_seq(self) -> Self {
+        Flow {
+            sequential: true,
+            ..self
+        }
+    }
 }
 
 /// Whether a `dsl … from …` hands its failure to the enclosing function or to
@@ -1109,7 +1131,11 @@ impl<'p> Emitter<'p> {
         returns_value: bool,
         origin: &str,
     ) -> Result<()> {
-        let flow = Flow { throws, origin };
+        let flow = Flow {
+            throws,
+            origin,
+            sequential: false,
+        };
 
         if !throws {
             return self.block(out, body, depth, flow, returns_value);
@@ -1122,13 +1148,14 @@ impl<'p> Emitter<'p> {
         let last = body.stmts.len().saturating_sub(1);
         let mut i = 0;
         while i < body.stmts.len() {
-            // The same pairing as in `block_opening_with`, through the same
+            // The same grouping as in `block_opening_with`, through the same
             // helper. A `throws` body has a loop of its own because its last
             // statement may need wrapping in `Ok(…)`, and two loops that decide
             // this separately would drift.
             let tail_at = if returns_value { Some(last) } else { None };
-            if self.overlap_at(out, &body.stmts, i, tail_at, depth + 1, flow)? {
-                i += 2;
+            let taken = self.overlap_at(out, &body.stmts, i, tail_at, depth + 1, flow)?;
+            if taken > 0 {
+                i += taken;
                 continue;
             }
 
@@ -1779,16 +1806,15 @@ impl<'p> Emitter<'p> {
         let last = block.stmts.len() - 1;
         let mut i = 0;
         while i < block.stmts.len() {
-            // ADR-033: two statements that meet on nothing need not wait for one
-            // another. Only a *pair* today, and only where neither is the tail -
-            // a block's last statement is its value (Kap 3.1) and lowering it
-            // through a join would change what the block hands back.
-            // Neither may be the tail: a block's last statement is its value
-            // (Kap 3.1), and lowering it through a join would change what the
-            // block hands back.
+            // ADR-033: statements that meet on nothing need not wait for one
+            // another - a run of any length, and not only a pair. None of them
+            // may be the tail: a block's last statement is its value (Kap 3.1),
+            // and lowering it through a join would change what the block hands
+            // back.
             let tail_at = if tail { Some(last) } else { None };
-            if self.overlap_at(out, &block.stmts, i, tail_at, depth + 1, flow)? {
-                i += 2;
+            let taken = self.overlap_at(out, &block.stmts, i, tail_at, depth + 1, flow)?;
+            if taken > 0 {
+                i += taken;
                 continue;
             }
 
@@ -1812,18 +1838,33 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
-    /// Write `stmts[i]` and `stmts[i + 1]` as one overlapped pair, where they may
-    /// be one (ADR-033).
+    /// Write the run of statements starting at `stmts[i]` as one overlapped
+    /// **group**, where two or more of them may be one (ADR-033 §6).
     ///
-    /// `Ok(false)` means nothing was written and the caller should emit
-    /// `stmts[i]` the ordinary way. The two statement loops in this file - a
-    /// block's and a `throws` body's - both go through here, because a rule
-    /// about what may be reordered that two places decide separately is a rule
-    /// that will eventually be two rules.
+    /// Returns how many statements were written, and `0` where nothing was and
+    /// the caller should emit `stmts[i]` the ordinary way. The two statement
+    /// loops in this file - a block's and a `throws` body's - both go through
+    /// here, because a rule about what may be reordered that two places decide
+    /// separately is a rule that will eventually be two rules.
+    ///
+    /// **Why a group and not a chain of pairs.** Pairing adjacent statements
+    /// left three independent operations running as two-then-one, which is one
+    /// thread wake-up more than the work needs. Taking them as a group is not,
+    /// however, a matter of pairing repeatedly: disjointness is not transitive,
+    /// so `contracts::order::group_of` asks about *every* pair in the run and
+    /// not only the adjacent ones. That is the whole of the safety argument,
+    /// and it lives there rather than here.
     ///
     /// `tail_at` is the index of the statement that is the block's **value**,
-    /// where there is one. Neither half of a pair may be it: a block's last
-    /// statement is what it hands back (Kap 3.1), and a join hands back a tuple.
+    /// where there is one. No member of a group may be it: a block's last
+    /// statement is what it hands back (Kap 3.1), and a group hands back a
+    /// tuple.
+    ///
+    /// A `seq` block answers `0` for every run inside it, which is the whole of
+    /// what `seq` does (D7). It is checked here rather than in
+    /// `contracts::order` for the reason §8.2b gives about the build switches:
+    /// whether two operations *may* overlap is a question about the program,
+    /// and `contracts::order` answers only that one.
     fn overlap_at(
         &self,
         out: &mut Out,
@@ -1832,128 +1873,173 @@ impl<'p> Emitter<'p> {
         tail_at: Option<usize>,
         depth: usize,
         flow: Flow<'_>,
-    ) -> Result<bool> {
+    ) -> Result<usize> {
         if !self.build.overlaps_user_code()
             || self.ordering != Ordering::Effects
+            || flow.sequential
             || i + 1 >= stmts.len()
         {
-            return Ok(false);
+            return Ok(0);
         }
-        if tail_at.is_some_and(|tail| tail == i || tail == i + 1) {
-            return Ok(false);
+        // The run stops before the block's value, and a value at `i` itself
+        // ends it before it starts.
+        let end = match tail_at {
+            Some(tail) if tail <= i => return Ok(0),
+            Some(tail) => tail,
+            None => stmts.len(),
+        };
+
+        // The statements from `i` that this compiler can account for at all.
+        // The first one it cannot ends the run: a statement whose effects are
+        // unknown orders against everything (D4), so nothing past it can join
+        // this group either.
+        let mut run = Vec::new();
+        for stmt in &stmts[i..end] {
+            match crate::contracts::order::operation(
+                self.parsed,
+                &stmt.node,
+                &self.own_contracts,
+                &self.library,
+            ) {
+                Some(operation) => run.push(operation),
+                None => break,
+            }
         }
-        let (earlier, later) = (&stmts[i], &stmts[i + 1]);
-        if !self.may_overlap(&earlier.node, &later.node) {
-            return Ok(false);
+        let taken = crate::contracts::order::group_of(&run);
+        if taken == 0 {
+            return Ok(0);
         }
 
         out.push(&"    ".repeat(depth));
-        self.overlapped(out, earlier, later, depth, flow)?;
+        self.overlapped(out, &stmts[i..i + taken], depth, flow)?;
         out.push("\n");
-        Ok(true)
+        Ok(taken)
     }
 
-    /// Whether two adjacent statements may run at the same time (ADR-033).
-    ///
-    /// Both have to be operations this compiler can account for *completely* -
-    /// `contracts::order::operation` says `None` for everything else - and their
-    /// touch sets have to meet on nothing either of them writes. A `None` on
-    /// either side is an admission of ignorance and keeps the order, which is
-    /// the same answer a real dependency gets and deliberately so (D4).
-    fn may_overlap(&self, earlier: &Stmt, later: &Stmt) -> bool {
-        let earlier = crate::contracts::order::operation(
-            self.parsed,
-            earlier,
-            &self.own_contracts,
-            &self.library,
-        );
-        let later = crate::contracts::order::operation(
-            self.parsed,
-            later,
-            &self.own_contracts,
-            &self.library,
-        );
-        match (earlier, later) {
-            (Some(earlier), Some(later)) => crate::contracts::order::may_overlap(&earlier, &later),
-            _ => false,
-        }
-    }
-
-    /// Two statements, lowered to run at the same time and be collected
+    /// A group of statements, lowered to run at the same time and be collected
     /// together.
     ///
     /// ```text
-    /// let (a, b) = task::both(
+    /// let (a, (b, c)) = task::both(
     ///     || … ,
-    ///     || … ,
+    ///     || task::both(
+    ///         || … ,
+    ///         || … ,
+    ///     ),
     /// );
     /// ```
     ///
-    /// Either of them may be a **bare expression statement** rather than a
-    /// `let` (ADR-033 §8.3's first item): `fs::write("a.txt", "1")` binds
-    /// nothing, so its half of the pattern is `_` - and where neither binds,
-    /// there is no pattern at all and the call stands as a statement.
+    /// Any of them may be a **bare expression statement** rather than a `let`
+    /// (ADR-033 §8.3's first item): `fs::write("a.txt", "1")` binds nothing, so
+    /// its place in the pattern is `_` - and where none of them binds, there is
+    /// no pattern at all and the call stands as a statement.
     ///
     /// Threads and not a runtime: `std`'s I/O is blocking Rust (`std::fs::read`
     /// behind `fs::read`), so overlapping it means threads. *Which* threads is
-    /// `nikaia_std::task` deciding and not this function - it runs the pair on
+    /// `nikaia_std::task` deciding and not this function - it runs the group on
     /// the pool the program already has, so a handler that overlaps under load
     /// asks for a bounded number of threads (ADR-033 §8.4). Naming one `std`
-    /// function also keeps this lowering one line long instead of a scope, two
-    /// spawns and two joins spelled into every program that uses it.
+    /// function also keeps this lowering short instead of a scope, n spawns and
+    /// n joins spelled into every program that uses it - and it is why a group
+    /// of three needed nothing new in `std`: `task::both` nests, so the vehicle
+    /// is unchanged and changing it is still a `std` change.
     ///
-    /// A panic inside either reaches the caller, so a program that would have
-    /// panicked still panics with its own message and its own payload. Turning
-    /// somebody's panic into `called Result::unwrap on an Err` would be this
-    /// lowering putting its own words in the program's mouth.
+    /// **The nesting leans right, and D6 is the reason.** `rayon::join`
+    /// propagates the *first* closure's panic when both panic, so a run nested
+    /// `(s0, (s1, (s2, s3)))` surfaces `s0`'s panic over everything after it
+    /// and `s1`'s over what follows that - which is the written program order,
+    /// by construction rather than by luck. Errors need no such argument: an
+    /// operation this analysis accounts for either cannot fail or catches its
+    /// failure into a value, or `Accounted::UncaughtFailure` refused it.
+    ///
+    /// A panic inside any of them reaches the caller, so a program that would
+    /// have panicked still panics with its own message and its own payload.
+    /// Turning somebody's panic into `called Result::unwrap on an Err` would be
+    /// this lowering putting its own words in the program's mouth.
     fn overlapped(
         &self,
         out: &mut Out,
-        earlier: &Spanned<Stmt>,
-        later: &Spanned<Stmt>,
+        group: &[Spanned<Stmt>],
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (first_bind, first_value) = self.overlapped_half(&earlier.node);
-        let (second_bind, second_value) = self.overlapped_half(&later.node);
-
         let pad = "    ".repeat(depth);
-        let inner = "    ".repeat(depth + 1);
-
-        out.push(&format!(
-            "// ADR-033: these two meet on nothing, so neither waits for the other.\n{pad}"
-        ));
-        // A pair where nothing is bound is a statement and not a binding: `let
+        let why = if group.len() == 2 {
+            "these two meet on nothing, so neither waits for the other".to_string()
+        } else {
+            format!(
+                "these {} meet on nothing, so none of them waits for another",
+                count_word(group.len())
+            )
+        };
+        out.push(&format!("// ADR-033: {why}.\n{pad}"));
+        // A group where nothing is bound is a statement and not a binding: `let
         // (_, _) = …` would be a pattern that says nothing, and the emitted
         // Rust is read by people.
-        let pattern = match (&first_bind, &second_bind) {
-            (None, None) => String::new(),
-            (first, second) => format!(
-                "let ({}, {}) = ",
-                first.as_deref().unwrap_or("_"),
-                second.as_deref().unwrap_or("_"),
-            ),
-        };
-        // `task::both` and not `std::thread::scope` inline: the vehicle is
-        // `std`'s decision, not a shape baked into every generated program.
-        // It runs on the pool the program already has, so a handler that
-        // overlaps two reads under a thousand concurrent requests asks for a
-        // bounded number of threads rather than two thousand (ADR-033 §8.4).
-        out.push(&format!("{pattern}task::both(\n{inner}|| "));
-
-        out.from(&earlier.span, |out| {
-            self.expr(out, first_value, depth + 1, flow)
-        })?;
-        out.push(&format!(",\n{inner}|| "));
-
-        out.from(&later.span, |out| {
-            self.expr(out, second_value, depth + 1, flow)
-        })?;
-        out.push(&format!(",\n{pad});"));
+        if let Some(pattern) = self.overlapped_pattern(group) {
+            out.push(&format!("let {pattern} = "));
+        }
+        self.both_of(out, group, depth, flow)?;
+        out.push(";");
         Ok(())
     }
 
-    /// One half of an overlapped pair: what it binds, and what it evaluates.
+    /// What a group binds, as one pattern shaped like the calls that fill it.
+    ///
+    /// `None` where nothing in the group binds anything.
+    fn overlapped_pattern(&self, group: &[Spanned<Stmt>]) -> Option<String> {
+        let binds: Vec<Option<String>> = group
+            .iter()
+            .map(|stmt| self.overlapped_half(&stmt.node).0)
+            .collect();
+        if binds.iter().all(Option::is_none) {
+            return None;
+        }
+        let mut pattern = binds.last()?.clone().unwrap_or_else(|| "_".to_string());
+        for bind in binds.iter().rev().skip(1) {
+            pattern = format!("({}, {pattern})", bind.as_deref().unwrap_or("_"));
+        }
+        Some(pattern)
+    }
+
+    /// `task::both(|| …, || …)` over a group of two or more, nested to the
+    /// right.
+    ///
+    /// `task::both` and not `std::thread::scope` inline: the vehicle is `std`'s
+    /// decision, not a shape baked into every generated program. It runs on the
+    /// pool the program already has, so a handler that overlaps two reads under
+    /// a thousand concurrent requests asks for a bounded number of threads
+    /// rather than two thousand (ADR-033 §8.4).
+    fn both_of(
+        &self,
+        out: &mut Out,
+        group: &[Spanned<Stmt>],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let pad = "    ".repeat(depth);
+        let inner = "    ".repeat(depth + 1);
+        let (first, rest) = group
+            .split_first()
+            .expect("`group_of` never answers fewer than two");
+
+        out.push(&format!("task::both(\n{inner}|| "));
+        let (_, value) = self.overlapped_half(&first.node);
+        out.from(&first.span, |out| self.expr(out, value, depth + 1, flow))?;
+        out.push(&format!(",\n{inner}|| "));
+
+        match rest {
+            [last] => {
+                let (_, value) = self.overlapped_half(&last.node);
+                out.from(&last.span, |out| self.expr(out, value, depth + 1, flow))?;
+            }
+            _ => self.both_of(out, rest, depth + 1, flow)?,
+        }
+        out.push(&format!(",\n{pad})"));
+        Ok(())
+    }
+
+    /// One member of an overlapped group: what it binds, and what it evaluates.
     ///
     /// `contracts::order` accounts for a `let` and for a bare expression
     /// statement, and those are the only two shapes that reach here.
@@ -1973,7 +2059,7 @@ impl<'p> Emitter<'p> {
                 value,
             ),
             Stmt::Expr(value) => (None, value),
-            _ => unreachable!("`may_overlap` accepts only a `let` or an expression statement"),
+            _ => unreachable!("`group_of` accepts only a `let` or an expression statement"),
         }
     }
 
@@ -2101,7 +2187,7 @@ impl<'p> Emitter<'p> {
                 self.expr(out, expr, depth, flow)?;
                 // `if x { … };` is legal and noisy; a block-shaped statement
                 // ends where its brace does.
-                let block_shaped = matches!(expr, Expr::If { .. } | Expr::Block(_));
+                let block_shaped = matches!(expr, Expr::If { .. } | Expr::Block(_) | Expr::Seq(_));
                 if !is_tail && !block_shaped {
                     out.push(";");
                 }
@@ -2141,6 +2227,12 @@ impl<'p> Emitter<'p> {
                 out.push(&self.path(&path));
             }
             Expr::Block(block) => self.block(out, block, depth, flow, true)?,
+            // Part I 8.1.1: a plain Rust block, and the whole of what `seq`
+            // does is in the `Flow` (ADR-033 D7). There is nothing to emit for
+            // it because it asks for *less*: the order it states is the order
+            // the statements are already written in, and what it withdraws is
+            // this compiler's permission to change that.
+            Expr::Seq(block) => self.block(out, block, depth, flow.in_seq(), true)?,
             Expr::If {
                 cond,
                 then_branch,
@@ -2563,6 +2655,7 @@ impl<'p> Emitter<'p> {
                 | Expr::If { .. }
                 | Expr::Match { .. }
                 | Expr::Block(_)
+                | Expr::Seq(_)
                 | Expr::Closure { .. }
                 | Expr::TryCatch { .. }
                 | Expr::Dsl { .. }
@@ -2891,10 +2984,25 @@ fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
     }
 }
 
+/// How many, in words, for the one sentence the emitted Rust says about itself.
+///
+/// The generated file is read by people (ADR-011 D2), and "these 3 statements"
+/// in a comment that otherwise reads as prose is a seam. Past the words a
+/// person counts without thinking, the numeral is the clearer answer.
+fn count_word(n: usize) -> String {
+    match n {
+        3 => "three".to_string(),
+        4 => "four".to_string(),
+        5 => "five".to_string(),
+        6 => "six".to_string(),
+        other => format!("{other} statements"),
+    }
+}
+
 fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match expr {
-        Expr::Block(block) => visit_block(block, f),
+        Expr::Block(block) | Expr::Seq(block) => visit_block(block, f),
         Expr::If {
             cond,
             then_branch,

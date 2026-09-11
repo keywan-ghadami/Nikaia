@@ -379,7 +379,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_expr(func, f);
             args.iter().for_each(|a| visit_expr(a, f));
         }
-        Expr::Block(block) => visit_block(block, f),
+        Expr::Block(block) | Expr::Seq(block) => visit_block(block, f),
         Expr::If {
             cond,
             then_branch,

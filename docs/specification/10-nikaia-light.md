@@ -1034,12 +1034,16 @@ Within one task the order is exactly the order you wrote: `let a = fs::read("x")
 
 > **Status.** This section is specified ahead of the compiler, because it changes what a program
 > *means* and a decision of that kind belongs here before it belongs in the implementation
-> ([ADR-033](adr/adr-033.md), still marked provisional). Built today: two adjacent statements whose
-> calls reach different resources do overlap — a `let` or a bare expression statement, and a value
-> built out of literals and calls rather than being one call — `--overlaps` explains every pair,
-> the `ordering` key is read from `nikaia.toml`, and `--ordering strict` restores the written order
-> everywhere. Not built: `seq { … }`; more than two statements at a time; a **method call**, whose
-> contract depends on the type of its receiver; and an argument that is not a literal.
+> ([ADR-033](adr/adr-033.md), still marked provisional). Built today: a **run of adjacent
+> statements of any length** whose calls reach different resources overlaps — a `let` or a bare
+> expression statement, and a value built out of literals and calls rather than being one call;
+> `seq { … }`; the resources a file, standard output, standard error and the program's arguments;
+> `--overlaps` explains every pair; the `ordering` key is read from `nikaia.toml`, and
+> `--ordering strict` restores the written order everywhere. Not built: a **method call**, whose
+> contract depends on the type of its receiver; an argument that is not a literal; a `let` with a
+> written type; a call with options; standard input, a socket and a lock as resources — nothing
+> asks for one yet, so all three of them count as touching everything; and nothing infers what a
+> function of your own touches, so every one of those counts as touching everything too.
 
 Two lines that never meet have no reason to wait for one another:
 
@@ -1055,8 +1059,9 @@ Every operation is known by **what it touches** — not merely "it does I/O", bu
 
 You write nothing for this. The default is the fast path, and the cases below are what keep it from being a surprise:
 
-* **The obvious stays obvious.** `println("a")` then `println("b")` prints `a` before `b` — both touch standard output, so they are ordered. Not a special case; the rule already says it.
-* **What is not known is ordered.** An operation whose touches the compiler cannot determine counts as touching everything, and stays exactly where you put it. A program built against libraries that say nothing behaves precisely as it does today, and gets faster only as contracts get written.
+* **The obvious stays obvious.** `println("a")` then `println("b")` prints `a` before `b` — both touch standard output, so they are ordered. Not a special case; the rule already says it. A `println` and an `eprintln` are ordered too: two handles, and one destination as soon as anybody runs the program with `2>&1`, so the compiler does not treat them as separate things.
+* **It is a run, not a pair.** Three lines that all meet on nothing run as one group, not as two and then one. Every one of them has to meet *every* other on nothing, and not merely the line next to it — `read("a")`, `read("b")`, `write("a")` is a group of the first two, because the third meets the first.
+* **What is not known is ordered.** An operation whose touches the compiler cannot determine counts as touching everything, and stays exactly where you put it. A program built against libraries that say nothing behaves precisely as it does today, and gets faster only as contracts get written. A resource named in a word this compiler does not know — a library built for a newer toolchain — reads the same way: the operation touches everything, and nothing is assumed.
 * **Nothing is run on speculation.** `if x { lies(a) } else { lies(b) }` starts one of them. Overlapping only ever applies to work that was certainly going to happen.
 * **Errors keep their order.** If two overlapped operations both fail, the failure you see is the one written first — never the one that lost a race.
 
@@ -1068,6 +1073,12 @@ seq {
     protokolliere(vorgang)
 }
 ```
+
+Inside the block the statements run in the order you wrote them, whatever their touch sets say, and that holds for anything written inside it — a nested block, an `if`, a loop. The block itself keeps its own place as well: you have just said the compiler cannot see what the order is for, so it does not move the block either. It changes nothing else: a `seq` block is a block, so it is an expression and has a value like any other (3.1).
+
+> **The keyword is provisional.** It has to read as *"in this order, whatever you think"*, and `seq`
+> is a placeholder for a word chosen later ([ADR-033](adr/adr-033.md) D7). The construct and its
+> meaning are decided; the spelling is not, and a program written today may have to be renamed.
 
 That is the trade the rule is built on: the common path is the fast and safe one and costs nothing to write, and the exception costs a line and is visible where it matters.
 

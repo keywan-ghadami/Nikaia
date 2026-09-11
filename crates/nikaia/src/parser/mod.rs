@@ -1117,6 +1117,12 @@ grammar! {
           | d:dsl_from_expr -> { d }
           | i:if_expr -> { i }
           | m:match_expr -> { m }
+          // Before `struct_lit` and `path_expr`, and both orders matter: a PEG
+          // keeps the first alternative that matches, so `seq { … }` would
+          // otherwise be read as a struct literal called `seq` - its statements
+          // taken for shorthand fields - or as a variable followed by a block
+          // of its own, which is the trap the `while` rule records.
+          | s:seq_expr -> { s }
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
@@ -1346,6 +1352,18 @@ grammar! {
         // Blocks are expressions (Part I, 3.1).
         rule block_expr -> Expr =
             b:block -> { Expr::Block(b) }
+
+        // Part I 8.1.1: `seq { … }` states an order the compiler cannot see
+        // (ADR-033 D7). The statements inside keep the order they were written
+        // in, whatever their touch sets say - which is why it is a block and
+        // not an attribute on a statement: what it constrains is a *sequence*.
+        //
+        // The keyword is provisional (D7). It has to read as "in this order,
+        // whatever you think", and `seq` is a placeholder for a word chosen
+        // later; changing it is this rule, the AST variant's doc, and the two
+        // spec sections that name it.
+        rule seq_expr -> Expr =
+            "seq" b:block -> { Expr::Seq(b) }
 
         rule struct_lit -> Expr =
             name:NAME "{" fields:field_inits "}" -> {
