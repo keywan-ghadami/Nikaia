@@ -29,7 +29,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [001](adr-001.md) | One exact nightly pinned per release; the parser is generated from a grammar over bytes, not over Rust tokens | Accepted (§4 superseded by [003](adr-003.md)) | yes |
-| [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro | Accepted (§4 superseded by [003](adr-003.md)) | no |
+| [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro | Accepted (§4 superseded by [003](adr-003.md)) | D1 for a Rust dependency; not a Nikaia one, not D2 |
 | [003](adr-003.md) | Hub-and-spoke: a frontend targets **Bridge-IR** and never `rustc_ast`; CLI, cache and Cargo wrapping are generic | Accepted | yes |
 | [004](adr-004.md) | One lowering builds `rustc_ast`; readable Rust is a *print* of it, never a second code generator | Accepted | yes, except the in-memory exit |
 | [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what | Accepted | key, store |

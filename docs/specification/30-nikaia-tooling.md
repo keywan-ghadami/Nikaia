@@ -31,6 +31,12 @@ When you create a new project (`nikaia new my_project`), the following structure
 * `nikaia bench`: Runs performance benchmarks.
 * `nikaia fmt`: Automatically formats your code.
 
+**Status:** `build` and `run` are built, over `nikaia.toml` translated to a
+`Cargo.toml` ([ADR-002](adr/adr-002.md) D1 §5). `test`, `bench` and `fmt` are
+not. A single file outside a project is compiled with `nikaia --input
+<file>.nika`, which is not one of these commands and stays available on its own
+account ([ADR-021](adr/adr-021.md) D11).
+
 ### 13.3. Manifest Configuration (`nikaia.toml`)
 The manifest defines project metadata and the two build switches of Part I 1.2.
 
@@ -78,13 +84,19 @@ cleanup-deadline = "30s"
 ordering = "effects"
 
 [dependencies]
+# A Nikaia package. How one is resolved is not decided: no record names a
+# registry, a name space or a distribution format, so the compiler refuses this
+# with that reason rather than guessing (ADR-002 D1 §5).
 http-server = "1.2"
-# Import native Rust Crates
+# Import native Rust Crates. This reaches Cargo with only `type` removed, and
+# Cargo resolves, fetches and links it as it would for any Rust project.
 regex = { type = "rust", version = "1.5" }
 
 # Code generation, per target. These are choices about output size and speed,
 # and they change nothing a program means - which is why they are tables under
-# `[build]` rather than switches in it.
+# `[build]` rather than switches in it. The table of the machine a build chose
+# becomes the generated `Cargo.toml`'s profile (ADR-002 D1); the panic strategy
+# is *not* here, because it follows from `target` rather than being a choice.
 [build.wasm32-unknown]
 opt-level = "z"     # Optimize for binary size
 

@@ -13,3 +13,4 @@ pub mod interpreter;
 pub mod manifest;
 pub mod modules;
 pub mod parser;
+pub mod project;
