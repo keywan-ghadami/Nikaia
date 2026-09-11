@@ -25,9 +25,10 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use bridge_orchestrator::cache::{Artifacts, Cache, Choices, Layout};
+use bridge_orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
 use bridge_orchestrator::project::{
-    record_extra_dependencies, write_if_changed, Cargo, CargoProject, Invocation, Package, Profile,
+    record_extra_dependencies, resolved_versions, write_if_changed, Cargo, CargoProject,
+    Invocation, Package, Profile,
 };
 
 use crate::contracts::{sync, Ledger, STD};
@@ -631,7 +632,68 @@ impl Project {
             env,
         };
 
-        cargo.run(subcommand, &[], program_args)
+        let code = cargo.run(subcommand, &[], program_args)?;
+
+        // Cargo has resolved by now, and only now: the versions do not exist
+        // before it ran. A build that failed resolved nothing worth recording.
+        if code == 0 {
+            if let Err(error) = self.record_resolved_dependencies(no_cache) {
+                // D12: the record costs the *next* reader some information. It
+                // never costs this build, which has already succeeded.
+                eprintln!(
+                    "warning: the resolved dependency versions could not be recorded \
+                     in nikaia.lock: {error:#}"
+                );
+            }
+        }
+        Ok(code)
+    }
+
+    /// Copy the versions Cargo chose into `nikaia.lock` (ADR-021 D2).
+    ///
+    /// The toolchain does not resolve versions and must not (ADR-002 D1), so
+    /// this reads Cargo's `Cargo.lock` for the generated package rather than
+    /// computing anything - D4's distinction exactly: `nikaia.toml` declares
+    /// `regex = { type = "rust", version = "1.5" }`, and this records the
+    /// `1.13.1` that turned into.
+    ///
+    /// Two conditions, and neither is tidiness. **`--no-cache` writes nothing**,
+    /// because `nikaia.lock` is the cache's own record and a run told not to
+    /// keep one must not leave a file behind. **A lockfile that is not there is
+    /// not created**, because a file holding resolved versions and no unit
+    /// hashes would answer D2's question with half an answer while looking like
+    /// a whole one.
+    ///
+    /// Nothing is written when the versions are unchanged, which is the common
+    /// case: a committed file must not turn up as modified after a build that
+    /// changed nothing about it.
+    fn record_resolved_dependencies(&self, no_cache: bool) -> Result<()> {
+        if no_cache {
+            return Ok(());
+        }
+        // The same walk the cache and `Project::open` use, so the three can
+        // never disagree about where the record lives.
+        let lock_path = Layout::resolve(&self.root.join("nikaia.toml")).lock;
+        if !lock_path.is_file() {
+            return Ok(());
+        }
+
+        let name = self
+            .manifest
+            .package_name()
+            .ok_or_else(|| anyhow!("the project has no `[package] name`"))?;
+        let resolved = resolved_versions(&self.build_dir().join("Cargo.lock"), name)?;
+
+        let mut lock = Lockfile::load(
+            &lock_path,
+            env!("NIKAIA_RUSTC_VERSION"),
+            env!("NIKAIA_COMPILER"),
+        )?;
+        if lock.dependencies == resolved {
+            return Ok(());
+        }
+        lock.dependencies = resolved;
+        lock.save(&lock_path)
     }
 }
 

@@ -32,7 +32,7 @@ and a decision is not an implementation.
 | [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro | Accepted (§4 superseded by [003](adr-003.md)) | D1 for a Rust dependency; not a Nikaia one, not D2 |
 | [003](adr-003.md) | Hub-and-spoke: a frontend targets **Bridge-IR** and never `rustc_ast`; CLI, cache and Cargo wrapping are generic | Accepted | yes |
 | [004](adr-004.md) | One lowering builds `rustc_ast`; readable Rust is a *print* of it, never a second code generator | Accepted | D1, D2; D3's in-memory exit measured at 0.64 % and not built |
-| [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what | Accepted | key, store |
+| [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what | Accepted | key, store, lockfile - D2's resolved versions included (§5); not `--locked` for the lock |
 
 ### Ownership, borrowing, cleanup
 

@@ -29,6 +29,18 @@ use rustc_data_structures::thin_vec::ThinVec;
 use rustc_span::symbol::{Ident, Symbol};
 use rustc_span::DUMMY_SP;
 
+/// The Rust edition this executor lowers *for*, stated once.
+///
+/// It is read twice - by the interner, which decides which words are keywords
+/// and therefore which identifiers `pprust` prints as `r#…`, and by `rustc`,
+/// which decides what the printed text means. Two statements of one fact is how
+/// they came apart: the interner said 2021 and the `rustc` invocation said
+/// nothing, so the printed crate was compiled at 2015 while the emitter
+/// (`crates/nikaia/src/emit/mod.rs`) and every test of the `rust` backend
+/// (`crates/nikaia/tests/common/mod.rs`) wrote and compiled 2021. `Display`
+/// renders it as the word `--edition` takes, so the two cannot drift again.
+const EDITION: rustc_span::edition::Edition = rustc_span::edition::Edition::Edition2021;
+
 /// Bridge-IR to a binary (ADR-004 D1 and D2): build the `rustc_ast::Crate`,
 /// print it, hand the text to `rustc`.
 ///
@@ -42,15 +54,10 @@ use rustc_span::DUMMY_SP;
 /// function - a caller that is already inside a session (an ADR-004 D3 driver
 /// would be) must not be punished for calling it.
 ///
-/// The edition decides which words the interner reserves as keywords, and so
-/// which identifiers `pprust` prints as `r#…`. 2021 is the edition the rest of
-/// this toolchain writes Rust for; note that the `rustc` invocation below
-/// passes no `--edition` and therefore compiles at 2015, which nothing in
-/// Bridge-IR can currently tell apart. Recorded in
-/// `docs/subprocess-cost.md` rather than changed here, because changing it
-/// changes what is compiled.
+/// The [`EDITION`] the session is created with is the one `rustc` is told
+/// below, and the two are the same constant on purpose.
 pub fn execute(bridge_module: &BridgeModule, output_path: &str) -> Result<()> {
-    rustc_span::create_session_if_not_set_then(rustc_span::edition::Edition::Edition2021, |_| {
+    rustc_span::create_session_if_not_set_then(EDITION, |_| {
         execute_in_session(bridge_module, output_path)
     })
 }
@@ -70,8 +77,12 @@ fn execute_in_session(bridge_module: &BridgeModule, output_path: &str) -> Result
 
     println!("Generated Rust source at: {}", temp_file_path);
 
+    // `--edition` and not a default: without it `rustc` compiles at 2015, and
+    // the crate above was interned and printed for 2021.
     let status = Command::new("rustc")
         .arg(&temp_file_path)
+        .arg("--edition")
+        .arg(EDITION.to_string())
         .arg("-o")
         .arg(output_path)
         .status()?;

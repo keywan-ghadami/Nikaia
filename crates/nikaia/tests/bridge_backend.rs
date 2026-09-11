@@ -71,6 +71,80 @@ fn the_bridge_backend_compiles_and_runs_hello_world() {
     );
 }
 
+/// The printed crate is compiled at the edition it was printed for.
+///
+/// `execute` passed no `--edition`, so `rustc` compiled at **2015** while the
+/// crate had been interned and printed for 2021 - and 2021 is what the emitter
+/// writes (`crates/nikaia/src/emit/mod.rs`) and what every test of the `rust`
+/// backend compiles (`crates/nikaia/tests/common/mod.rs` passes
+/// `--edition 2021`). A mismatch rather than a choice, found while measuring
+/// ADR-004 D3 (`docs/subprocess-cost.md` §5) and closed here.
+///
+/// What this asserts is the two halves of that claim at once. The program the
+/// bridge carries still runs and still prints what it printed: the change moved
+/// nothing observable, which is what made it safe to make. And the *reason* it
+/// moved nothing is that nothing Bridge-IR can express tells 2015 and 2021
+/// apart - so the same printed text is compiled at both editions and the two
+/// binaries are compared. The day that assertion fails is the day the bridge
+/// grew something edition-sensitive, and the edition stops being a formality;
+/// failing here is the notice.
+#[test]
+fn the_printed_crate_is_compiled_at_the_edition_it_was_printed_for() {
+    let dir = scratch("bridge-edition");
+    let source = repo_root().join("tests/samples/hello_world.nika");
+
+    let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["--input", source.to_str().expect("utf-8 path")])
+        .args(["--backend", "bridge"])
+        .current_dir(&dir)
+        .output()
+        .expect("the nikaia binary runs");
+    assert!(
+        run.status.success(),
+        "`--backend bridge` failed\nstderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let printed = dir.join("hello_world.rs");
+    let out = Command::new(dir.join("hello_world"))
+        .output()
+        .expect("the compiled binary runs");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "Hallo Welt, Nikaia!",
+        "the program the bridge carries still prints what it printed"
+    );
+
+    // The same text, compiled twice by the pinned `rustc`, once at each
+    // edition. Both must build and both must print the same thing.
+    let mut binaries = Vec::new();
+    for edition in ["2015", "2021"] {
+        let binary = dir.join(format!("hello_world-{edition}"));
+        let built = Command::new(env!("NIKAIA_RUSTC"))
+            .args(["--edition", edition])
+            .arg(&printed)
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .expect("run rustc");
+        assert!(
+            built.status.success(),
+            "the printed crate does not compile at edition {edition}:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&binary).output().expect("the binary runs");
+        binaries.push(String::from_utf8_lossy(&ran.stdout).trim().to_string());
+    }
+
+    assert_eq!(
+        binaries[0], binaries[1],
+        "the bridge's output is edition-sensitive now, so `--edition` in \
+         `rustc-executor` is no longer a formality - check what changed before \
+         relaxing this"
+    );
+    assert_eq!(binaries[1], "Hallo Welt, Nikaia!");
+}
+
 /// The narrow waist refuses rather than guesses (ADR-003 D3).
 ///
 /// `println(name)` is a macro call whose argument is a variable, and
