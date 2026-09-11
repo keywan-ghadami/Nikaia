@@ -105,7 +105,7 @@ impl Interpreter {
                     self.eval_expr(body);
                 }
             }
-            Expr::LitStr(_) => {
+            Expr::LitStr(_) | Expr::LitInterpolated(_) => {
                 // Literals evaluate to themselves.
             }
             Expr::Block(b) => self.eval_block(b),
@@ -121,7 +121,7 @@ impl Interpreter {
 
     fn builtin_println(&self, args: &[Expr]) {
         for arg in args {
-            if let Expr::LitStr(s) = arg {
+            if let Expr::LitStr(s) | Expr::LitInterpolated(s) = arg {
                 println!("{}", s);
             } else {
                 println!("<expression>");
@@ -131,7 +131,7 @@ impl Interpreter {
 
     fn builtin_log(&self, args: &[Expr]) {
         for arg in args {
-            if let Expr::LitStr(s) = arg {
+            if let Expr::LitStr(s) | Expr::LitInterpolated(s) = arg {
                 println!("[LOG] {}", s);
             }
         }

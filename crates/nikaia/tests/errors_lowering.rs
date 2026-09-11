@@ -133,7 +133,7 @@ fn an_error_is_declared_raised_caught_and_printed() {
         impl Error for ConfigError {
             fn message(&self) -> String {
                 match self {
-                    ConfigError::NotFound(p) => { return "no config at {p}" }
+                    ConfigError::NotFound(p) => { return f"no config at {p}" }
                 }
             }
         }
@@ -144,10 +144,10 @@ fn an_error_is_declared_raised_caught_and_printed() {
 
         fn main() {
             let text = load("app.conf".to_string()) catch {
-                println("{error}")
+                println(f"{error}")
                 return
             }
-            println("{text}")
+            println(f"{text}")
         }
     "#;
     let rust = emit(source);

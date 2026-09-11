@@ -80,7 +80,7 @@ fn a_unicode_escape_is_not_a_hole() {
 /// … and a hole beside one is still a hole.
 #[test]
 fn an_escape_does_not_swallow_the_interpolation_after_it() {
-    let emitted = emit(r#"fn main() { let x = 1 println("\u{0041}{x}\n") }"#);
+    let emitted = emit(r#"fn main() { let x = 1 println(f"\u{0041}{x}\n") }"#);
     assert!(
         emitted.contains(r#"println!("\u{0041}{}\n", x)"#),
         "{emitted}"
@@ -105,12 +105,85 @@ fn print_is_a_macro_like_println() {
 /// not say so.
 #[test]
 fn a_hole_may_hold_a_string_literal() {
-    let emitted = emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println("{f(\"a\")}") }"#);
+    let emitted = emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println(f"{f(\"a\")}") }"#);
     assert!(emitted.contains(r#"f("a")"#), "{emitted}");
 
     // A backslash the inner text wants keeps its meaning: only the two
     // characters the enclosing literal had to escape are undone.
     let escaped =
-        emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println("{f(\"a\\nb\")}") }"#);
+        emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println(f"{f(\"a\\nb\")}") }"#);
     assert!(escaped.contains(r#"f("a\nb")"#), "{escaped}");
+}
+
+/// **A brace is a brace** (ADR-035 D1).
+///
+/// The case this was written for is `examples/json.nika`, where a program
+/// whose job is to print `{` had to write `print("{{}}")` - and every string
+/// in every program paid for a feature one string in four uses.
+#[test]
+fn a_plain_string_is_text_and_a_brace_is_part_of_it() {
+    let emitted = emit(r#"fn main() { let x = "{ \"a\": 1 }" }"#);
+    assert!(emitted.contains(r#"let x = "{ \"a\": 1 }";"#), "{emitted}");
+}
+
+/// …and Rust's macro must not read that brace as a hole of its own.
+///
+/// The one place the two languages disagree about a string literal: `print` is
+/// a macro below, so a plain string's braces are doubled on the way down. That
+/// is a transcription detail and not a rule anybody writes.
+#[test]
+fn a_plain_string_printed_keeps_its_braces() {
+    let emitted = emit(r#"fn main() { print("{}") }"#);
+    assert!(emitted.contains(r#"print!("{{}}")"#), "{emitted}");
+}
+
+/// An escape is copied whole, `\u{…}` included - doubling the braces inside one
+/// would hand `println!` a `\u` with nothing after it.
+#[test]
+fn an_escape_is_not_a_brace_to_double() {
+    let emitted = emit(r#"fn main() { println("\u{0041}") }"#);
+    assert!(emitted.contains(r#"println!("\u{0041}")"#), "{emitted}");
+}
+
+/// `f"…"` is what says there is code in here (ADR-035 D1).
+#[test]
+fn an_f_string_interpolates_and_a_plain_one_does_not() {
+    let woven = emit(r#"fn main() { let n = 1 let s = f"n is {n}" }"#);
+    assert!(woven.contains(r#"format!("n is {}", n)"#), "{woven}");
+
+    let plain = emit(r#"fn main() { let n = 1 let s = "n is {n}" }"#);
+    assert!(plain.contains(r#"let s = "n is {n}";"#), "{plain}");
+}
+
+/// **The type comes from the syntax, not from the text** (ADR-035 D3).
+///
+/// Before the `f`, adding a brace to a string changed its type: `"a"` was a
+/// view of static text and `"a {b}"` a `String`, and which one you had written
+/// depended on whether the *content* happened to hold a hole. Now the first
+/// character says it, so an `f"…"` with nothing in it is still a `String`.
+#[test]
+fn an_f_string_is_a_string_even_with_no_hole_in_it() {
+    let emitted = emit(r#"fn main() { let s = f"no holes here" }"#);
+    assert!(
+        emitted.contains(r#""no holes here".to_string()"#),
+        "{emitted}"
+    );
+}
+
+/// The `f` and the quote are **one token**, so whitespace cannot change what a
+/// program means: `f "x"` is the variable `f` beside a string, and it is not
+/// an interpolation that lost its nerve.
+#[test]
+fn a_space_after_the_f_is_not_an_interpolation() {
+    let parsed = parse_to_ast(r#"fn main() { let f = 1 let s = "{f}" }"#).expect("parses");
+    let Item::Fn { body, .. } = &parsed.program.items[1 - 1].node else {
+        panic!("expected a function");
+    };
+    let Stmt::Let { value, .. } = &body.stmts[1].node else {
+        panic!("expected a `let`");
+    };
+    assert!(
+        matches!(value, Expr::LitStr(_)),
+        "a plain string became an interpolation: {value:?}"
+    );
 }

@@ -39,5 +39,5 @@ fn main() {
     }
 
     let markup = table(rows)
-    println("{markup.len()}")
+    println(f"{markup.len()}")
 }

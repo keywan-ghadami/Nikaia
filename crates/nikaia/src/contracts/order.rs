@@ -188,6 +188,9 @@ pub fn may_overlap(earlier: &Operation, later: &Operation) -> bool {
 }
 
 /// Whether an argument is a literal - something with no name in it at all.
+///
+/// `LitInterpolated` is deliberately **not** one: `f"{path}.log"` has a name in
+/// it, and a name is the thing this asks about.
 fn is_literal(expr: &Expr) -> bool {
     matches!(
         expr,
@@ -237,6 +240,8 @@ fn literal_text(parsed: &Parsed, expr: &Expr) -> Option<String> {
     let _ = parsed;
     match expr {
         Expr::LitStr(text) => Some(text.clone()),
+        // An `f"…"` is not a constant: what it says depends on what its holes
+        // hold, and this wants the text of a file name written down.
         _ => None,
     }
 }

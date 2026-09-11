@@ -223,9 +223,9 @@ fn main() {
     let mut system = solar_system()
     system.offset_momentum()
 
-    println("{system.energy():.9}")
+    println(f"{system.energy():.9}")
     for _step in 0..n {
         system.advance(0.01)
     }
-    println("{system.energy():.9}")
+    println(f"{system.energy():.9}")
 }

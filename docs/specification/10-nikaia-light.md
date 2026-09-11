@@ -100,22 +100,45 @@ let name = "Nikaia"  // Compiler knows this is a &str - a view of static text
 let count = 42       // Compiler knows this is an i32
 ```
 
-### 2.5. String Interpolation
-A string may contain **holes**: `{` and `}` around an expression, whose value is written where
-the hole is.
+### 2.5. Strings, Plain and Interpolated
+There are two string literals, and the difference is one character at the front.
 
 ```nika
 let name = "Nikaia"
-println("hello, {name} - {name.len()} characters")
+
+println(f"hello, {name} - {name.len()} characters")   // f"…" - the braces are code
+println("hello, {name}")                              // "…"  - the braces are braces
 ```
 
-A hole holds an expression, not just a name: a field, a call, an index. What follows a `:` inside
-one says *how* to write the value rather than which value — the first colon that is not inside a
-call or an index separates the two, so `Point(x: 1)` in a hole keeps its own.
+**`"…"` is text.** A `{` is a brace and nothing else, so a program that writes JSON, CSS or a
+regular expression says what it means:
 
-Two braces stand for one: `{{` is a literal `{` and `}}` a literal `}`. An escape is not a hole —
-the `{` in `"\u{0041}"` belongs to the escape — and a `}` on its own is an error rather than a
-guess.
+```nika
+print("{}")               // prints {}
+print("\\d{3}")            // a regular expression, written as one
+print("{ margin: 0 }")    // a rule, not a hole
+```
+
+**`f"…"` has code in it.** Between `{` and `}` stands an expression — not just a name, but a
+field, a call, an index. What follows a `:` inside one says *how* to write the value rather than
+which value: the first colon that is not inside a call or an index separates the two, so
+`Point(x: 1)` in a hole keeps its own.
+
+Inside an `f"…"`, two braces stand for one: `{{` is a literal `{` and `}}` a literal `}`. An
+escape is not a hole — the `{` in `"\u{0041}"` belongs to the escape — and a `}` on its own is an
+error rather than a guess. **A plain string needs none of that**: it has no holes to be told
+apart from, so `"{"` is a brace and `"{{"` is two.
+
+The `f` and the quote are **one token**. `f"x"` interpolates; `f "x"` is a variable named `f`
+beside a string, and whitespace never decides what a program means.
+
+The type follows the syntax rather than the contents. `"…"` is a view of static text and `f"…"`
+builds a `String`, whether or not anyone put a hole in it — so adding a brace to a piece of text
+cannot quietly change its type.
+
+**A template's holes need no `f`.** `dsl html { <p>{name}</p> } eod` (Part II) is already marked
+as a place where code appears, and the mark belongs on the construct rather than on every brace
+inside it. That is the same rule read twice: a literal that holds code says so.
 
 ---
 
@@ -157,7 +180,7 @@ Repeats code as long as a condition is true.
 ```nika
 let mut count = 0
 while count < 5 {
-    println("Count is {count}")
+    println(f"Count is {count}")
     count += 1
 }
 ```
@@ -168,7 +191,7 @@ Iterates over a sequence (like a range of numbers or a list).
 ```nika
 // Iterates from 0 to 4 (5 is excluded)
 for i in 0..5 {
-    println("Index: {i}")
+    println(f"Index: {i}")
 }
 ```
 
@@ -334,7 +357,7 @@ Nikaia does not use **Classes** (a concept from Object-Oriented Programming). In
 // Defining behavior for the User struct
 impl User {
     fn login(&self) {
-        println("{self.username} logged in.")
+        println(f"{self.username} logged in.")
     }
 }
 ```
@@ -703,7 +726,7 @@ Two things are guaranteed to *just work*:
     fn report(config: &Config) {
         let name = &config.name       // borrow
         let data = fs::read("log")    // the function pauses here (I/O)...
-        println("{name}: {data}")     // ...and the borrow is still valid.
+        println(f"{name}: {data}")     // ...and the borrow is still valid.
     }
     ```
 
@@ -876,7 +899,7 @@ end may **pause and fail** (6.4), a call may **fail** (here), and a loop's step 
 
 ```nika
 let config = load() catch {
-    eprintln("{error}")
+    eprintln(f"{error}")
     return                                // leaves the function
 }
 
@@ -895,7 +918,7 @@ let config = load() catch {
     match error {
         ConfigError::NotFound(p) => Config::default()
         ConfigError::BadSyntax { line, .. } => {
-            eprintln("config broken at line {line}")
+            eprintln(f"config broken at line {line}")
             return
         }
         _ => throw error
@@ -916,8 +939,8 @@ was unwinding is attached to the original as a *secondary* error rather than rep
 **Printing it: short is the default.**
 
 ```nika
-eprintln("{error}")         // the message, and the mark if the application shows one
-eprintln("{error:full}")    // plus the chain and the stack trace
+eprintln(f"{error}")         // the message, and the mark if the application shows one
+eprintln(f"{error:full}")    // plus the chain and the stack trace
 ```
 
 `{error}` **never** prints the stack trace. An error message is written for the operator, not for
@@ -1078,7 +1101,7 @@ program's entry:
 use utils
 
 fn main() {
-    println("{utils::double(21)}")
+    println(f"{utils::double(21)}")
 }
 ```
 

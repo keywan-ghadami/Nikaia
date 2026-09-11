@@ -95,21 +95,21 @@ fn main() throws {
     // the text has to outlive nothing here. `fs::map` is the other half of the
     // same module and what 1BRC needs (Part III, 17.1).
     let text = fs::read_to_string(&path) catch {
-        eprintln("cannot read {path}: {error}")
+        eprintln(f"cannot read {path}: {error}")
         return
     }
 
     let sections = dsl Config from text catch {
-        eprintln("{path}: {error}")
+        eprintln(f"{path}: {error}")
         return
     }
 
-    println("{sections.len()} sections")
+    println(f"{sections.len()} sections")
 
     for section in sections {
-        println("[{section.name}]")
+        println(f"[{section.name}]")
         for setting in section.settings {
-            println("  {setting.key} = {setting.value}")
+            println(f"  {setting.key} = {setting.value}")
         }
     }
 }

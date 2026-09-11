@@ -1084,6 +1084,9 @@ grammar! {
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
+          // Before `path_expr`: a PEG keeps the first alternative that matches,
+          // and `f"…"` starts with what `NAME` reads as the variable `f`.
+          | s:f_str_lit -> { s }
           | p:path_expr -> { p }
           | s:str_lit -> { s }
           | c:char_lit -> { c }
@@ -1181,6 +1184,8 @@ grammar! {
         rule head_primary -> Expr =
             c:ctor_lit -> { c }
           | b:bool_lit -> { b }
+          // Before `path_expr`, for the reason `primary_expr` gives.
+          | s:f_str_lit -> { s }
           | p:path_expr -> { p }
           | s:str_lit -> { s }
           | c:char_lit -> { c }
@@ -1350,8 +1355,28 @@ grammar! {
             "true" -> { Expr::LitBool(true) }
           | "false" -> { Expr::LitBool(false) }
 
+        // Kap 2.5. `f` before the quote is what makes a string *code* - without
+        // it the braces are braces (ADR-035). UPPERCASE, so the `f` and the
+        // quote are one token: `f "x"` with a space is the variable `f`
+        // followed by a string, and reading it as an interpolation would make
+        // whitespace change what a program means.
+        rule FSTRING -> String =
+            "f\"" parts:STR_CHAR* "\"" -> { parts.concat() }
+
         rule str_lit -> Expr =
             s:STRING -> { Expr::LitStr(s) }
+
+        // Its own rule rather than an alternative inside `str_lit`, and the
+        // reason is the error message: a rule whose body is one sequence
+        // reports what it can start with, so `"` stays in the "also possible
+        // here" list and `f` joins it. Folded into `str_lit` both disappear,
+        // which Part III C.2 would not forgive.
+        //
+        // **Not reachable from `literal_expr` or `pattern_lit`**, and
+        // deliberately: a Kap 5.1 default and a `match` pattern are constants,
+        // and `f"…"` is a call to `format!`. The grammar is where that is said.
+        rule f_str_lit -> Expr =
+            s:FSTRING -> { Expr::LitInterpolated(s) }
 
         // Kap 2.2. Lexical, and the body is kept as written - a `'\n'` is two
         // characters here and one in the value, and the language below reads
@@ -1445,6 +1470,11 @@ fn lower_expr(parsed: &Parsed, expr: &ast::Expr) -> Result<BridgeExpr> {
     match expr {
         ast::Expr::LitInt(i) => Ok(BridgeExpr::Literal(BridgeLiteral::Int(*i))),
         ast::Expr::LitStr(s) => Ok(BridgeExpr::Literal(BridgeLiteral::String(s.clone()))),
+        // The bridge carries literals, and an `f"…"` is a `format!` - a call,
+        // whose holes are expressions this lowering has no place to put.
+        ast::Expr::LitInterpolated(_) => Err(anyhow::anyhow!(
+            "an `f\"…\"` cannot be lowered to the bridge: it is built at run time"
+        )),
         ast::Expr::Variable(id) => Ok(BridgeExpr::Variable(parsed.text(*id).to_string())),
         ast::Expr::Call { func, args, .. } => {
             let mut bridge_args = Vec::new();

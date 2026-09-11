@@ -16,5 +16,5 @@ fn main() {
     while seen < 3 {
         for k in 0..2 { seen += 1 }
     }
-    println("{countdown(5)} {seen}")
+    println(f"{countdown(5)} {seen}")
 }

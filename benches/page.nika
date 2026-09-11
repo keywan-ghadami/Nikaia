@@ -49,5 +49,5 @@ fn main() {
         let markup = page("A page with <angles> & an ampersand", "Some body text.")
         total += markup.len()
     }
-    println("{total}")
+    println(f"{total}")
 }

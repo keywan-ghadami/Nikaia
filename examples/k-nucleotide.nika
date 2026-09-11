@@ -137,7 +137,7 @@ fn report_frequencies(seq: &str, k: usize) {
 
     for row in rows {
         let percent = (row.1 as f64) * 100.0 / (total as f64)
-        println("{row.0} {percent:.3}")
+        println(f"{row.0} {percent:.3}")
     }
     println("")
 }
@@ -149,7 +149,7 @@ fn report_fragment(seq: &str, fragment: &str) {
     // A trailing lambda goes outside the parentheses and is the last
     // argument; a lambda in any other position is written out.
     let n = counts.get(fragment).map_or(0, fn(t) { t.n })
-    println("{n}\t{fragment}")
+    println(f"{n}\t{fragment}")
 }
 
 // ---------------------------------------------------------------------------
@@ -160,12 +160,12 @@ fn main() throws {
     // The whole of standard input, owned. There is no `map` for a pipe and no
     // `await` on the read: ADR-019 D1 and D2, in one line.
     let text = io::read_to_string() catch {
-        eprintln("cannot read standard input: {error}")
+        eprintln(f"cannot read standard input: {error}")
         return
     }
 
     let sections = dsl Fasta from text catch {
-        eprintln("standard input is not FASTA: {error}")
+        eprintln(f"standard input is not FASTA: {error}")
         return
     }
 
@@ -184,7 +184,7 @@ fn main() throws {
     }
 
     if seq.len() == 0 {
-        eprintln("no section whose header starts with {wanted}")
+        eprintln(f"no section whose header starts with {wanted}")
         return
     }
 

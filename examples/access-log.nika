@@ -143,7 +143,7 @@ fn main() throws {
     let path = cli::args().nth(1) ?? "access.log"
 
     let data = fs::map(&path) catch {
-        eprintln("cannot open {path}: {error}")
+        eprintln(f"cannot open {path}: {error}")
         return
     }
 
@@ -151,11 +151,11 @@ fn main() throws {
     // reports the offset it failed at in the *file*, not in whichever piece a
     // core happened to be holding (ADR-009 D3).
     let report = dsl Log from data catch {
-        eprintln("{path}: {error}")
+        eprintln(f"{path}: {error}")
         return
     }
 
-    println("{report.requests} requests, {report.failures} failed")
+    println(f"{report.requests} requests, {report.failures} failed")
 
     // A map has no order to borrow - ADR-010 seeds an untrusted one randomly,
     // so its iteration order differs between runs - and a report has to say
@@ -180,8 +180,8 @@ fn main() throws {
     rows.sort_by_key fn { -a.1 }
 
     let body = rows
-        .map fn { "{a.0} {a.1} {a.2}" }
+        .map fn { f"{a.0} {a.1} {a.2}" }
         .join("\n")
 
-    println("{body}")
+    println(f"{body}")
 }

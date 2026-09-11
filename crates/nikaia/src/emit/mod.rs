@@ -1220,14 +1220,8 @@ impl<'p> Emitter<'p> {
             // keeps its text and the holes are parsed when it is emitted. A
             // lambda whose whole body is `"{a.0} {a.1}"` would otherwise be
             // generated with no parameters at all.
-            if let Expr::LitStr(literal) = expr {
-                if let Ok((_, holes)) = interpolation(literal) {
-                    for hole in holes {
-                        if let Ok(inner) = parse_expression(&self.parsed.interner, &hole) {
-                            visit_expr(&inner, &mut mark);
-                        }
-                    }
-                }
+            for hole in literal_expressions(self.parsed, expr) {
+                visit_expr(&hole, &mut mark);
             }
         });
 
@@ -1832,7 +1826,7 @@ impl<'p> Emitter<'p> {
         match expr {
             Expr::LitInt(v) => out.push(&v.to_string()),
             Expr::LitFloat(v) => out.push(v),
-            Expr::LitStr(_) => self.string(out, expr, depth, flow)?,
+            Expr::LitStr(_) | Expr::LitInterpolated(_) => self.string(out, expr, depth, flow)?,
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
             Expr::Range {
                 start,
@@ -2046,10 +2040,18 @@ impl<'p> Emitter<'p> {
             // piece by piece - a pretty-printer, a progress line - cannot be
             // written with the newline attached.
             if matches!(text, "println" | "eprintln" | "print" | "eprint") {
-                if let [Expr::LitStr(literal)] = args {
+                if let [Expr::LitInterpolated(literal)] = args {
                     out.push(&format!("{text}!("));
                     self.format_string(out, literal, depth, flow)?;
                     out.push(")");
+                    return Ok(());
+                }
+                // A plain string is text, and Rust's macro would read a brace
+                // in it as a hole of its own - so the braces are escaped on the
+                // way down rather than the argument being passed separately
+                // (ADR-035 D2). `print("{")` prints a brace.
+                if let [Expr::LitStr(literal)] = args {
+                    out.push(&format!("{text}!(\"{}\")", rust_format_escape(literal)));
                     return Ok(());
                 }
                 out.push(&format!("{text}!(\"{{}}\", "));
@@ -2119,21 +2121,33 @@ impl<'p> Emitter<'p> {
         (!config.is_empty()).then_some(config.as_slice())
     }
 
-    /// A string literal, which is a format string when it has holes in it.
+    /// A string literal. Which of the two it is decides what comes out, and
+    /// that is read off the syntax rather than the text (ADR-035 D3).
     fn string(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow) -> Result<()> {
-        let Expr::LitStr(literal) = expr else {
-            return Err(anyhow!("not a string literal"));
-        };
-
-        if interpolation(literal)?.1.is_empty() {
-            out.push(&format!("\"{literal}\""));
-            return Ok(());
+        match expr {
+            // Inert text, transcribed. A brace is a brace, so nothing has to be
+            // escaped on the way into a Rust string literal - only a *format*
+            // string treats one specially, and this is not one.
+            Expr::LitStr(literal) => {
+                out.push(&format!("\"{literal}\""));
+                Ok(())
+            }
+            // `f"…"` is a `String` whether or not anyone put a hole in it,
+            // because the checker says it is and the two have to agree. With no
+            // hole there is nothing to format, and `format!("x")` is a
+            // roundabout way of writing what `.to_string()` says plainly.
+            Expr::LitInterpolated(literal) => {
+                if interpolation(literal)?.1.is_empty() {
+                    out.push(&format!("\"{literal}\".to_string()"));
+                    return Ok(());
+                }
+                out.push("format!(");
+                self.format_string(out, literal, depth, flow)?;
+                out.push(")");
+                Ok(())
+            }
+            _ => Err(anyhow!("not a string literal")),
         }
-
-        out.push("format!(");
-        self.format_string(out, literal, depth, flow)?;
-        out.push(")");
-        Ok(())
     }
 
     /// The literal as a Rust format string, with its holes as arguments.
@@ -2617,7 +2631,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
 /// its own words, at the place it happens; an analysis has nothing to add.
 pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
     match expr {
-        Expr::LitStr(literal) => match interpolation(literal) {
+        Expr::LitInterpolated(literal) => match interpolation(literal) {
             Ok((_, holes)) => holes
                 .iter()
                 .filter_map(|hole| parse_expression(&parsed.interner, hole).ok())
@@ -2657,6 +2671,42 @@ fn template_holes(segments: &[template::Segment]) -> Vec<String> {
         }
     }
     holes
+}
+
+/// A plain string on its way into a Rust *format* string.
+///
+/// Nikaia's plain string is inert - `print("{")` prints a brace (ADR-035 D1) -
+/// and Rust's `println!` would read that brace as a hole of its own. Doubling
+/// is what says "this one is text" to the macro, and it is the only place the
+/// two languages disagree about a string literal.
+/// An escape is copied whole, `\u{0041}` included: Rust's lexer turns that into
+/// a character before the macro ever sees a brace, so doubling the braces
+/// inside one would hand `println!` a `\u` with nothing after it. The same rule
+/// `interpolation` follows, for the same reason.
+fn rust_format_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push('\\');
+                let Some(escape) = chars.next() else { break };
+                out.push(escape);
+                if escape == 'u' && chars.peek() == Some(&'{') {
+                    for c in chars.by_ref() {
+                        out.push(c);
+                        if c == '}' {
+                            break;
+                        }
+                    }
+                }
+            }
+            '{' => out.push_str("{{"),
+            '}' => out.push_str("}}"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {

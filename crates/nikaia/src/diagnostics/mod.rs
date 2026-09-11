@@ -214,8 +214,12 @@ pub fn render_sync_violation(
 pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str) -> String {
     let (line, column) = winnow_grammar::span::line_column(source, finding.span.start);
 
+    let level = match finding.severity {
+        crate::check::Severity::Error => "error",
+        crate::check::Severity::Warning => "warning",
+    };
     let mut out = String::new();
-    out.push_str(&format!("error[{}]: {}\n", finding.code, finding.message));
+    out.push_str(&format!("{level}[{}]: {}\n", finding.code, finding.message));
     out.push_str(&format!("  --> {path}:{line}:{column}\n"));
     out.push_str(&winnow_grammar::span::caret(source, finding.span.start, 1));
     out.push('\n');

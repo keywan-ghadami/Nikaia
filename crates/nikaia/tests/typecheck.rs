@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use nikaia::check::{self, Finding};
+use nikaia::check::{self, Finding, Severity};
 use nikaia::contracts::{Ledger, STD};
 use nikaia::parser::parse_to_ast;
 
@@ -337,9 +337,9 @@ fn an_option_of_a_library_function_is_checked_from_its_ledger() {
 /// follows the lowering rather than the syntax.
 #[test]
 fn an_interpolated_string_is_a_string_and_a_plain_one_is_a_view() {
-    assert!(findings("fn label(n: i32) -> String { return \"{n} rows\" }").is_empty());
+    assert!(findings("fn label(n: i32) -> String { return f\"{n} rows\" }").is_empty());
 
-    let (code, message) = one("fn label(n: i32) -> &str { return \"{n} rows\" }");
+    let (code, message) = one("fn label(n: i32) -> &str { return f\"{n} rows\" }");
     assert_eq!(code, "NK1104");
     assert_eq!(
         message,
@@ -359,7 +359,7 @@ fn a_hole_in_a_string_is_checked_like_anything_else() {
     let outside = one("fn add(a: i32, b: i32) -> i32 { return a + b }\n\
          fn main() { let n = add(1) }");
     let inside = one("fn add(a: i32, b: i32) -> i32 { return a + b }\n\
-         fn main() { println(\"{add(1)}\") }");
+         fn main() { println(f\"{add(1)}\") }");
     assert_eq!(
         inside, outside,
         "a hole is checked differently from a statement"
@@ -383,7 +383,7 @@ fn a_hole_in_a_template_is_checked_too() {
 /// the place it happens. The checker says nothing rather than guessing.
 #[test]
 fn a_hole_that_does_not_parse_is_not_the_checkers_business() {
-    assert!(findings("fn main() { println(\"{let}\") }").is_empty());
+    assert!(findings("fn main() { println(f\"{let}\") }").is_empty());
 }
 
 // --- a loop whose step can fail (ADR-025) ------------------------------------
@@ -551,4 +551,65 @@ fn a_value_from_an_unwritten_signature_fits_anywhere() {
          fn main() { takes(cli::args().nth(1)) }"
     )
     .is_empty());
+}
+
+// --- the migration warning (ADR-035 D5) --------------------------------------
+
+/// A string written before the `f` existed looks exactly like one that meant
+/// its braces, so the change of meaning cannot be silent - Part III C.1 calls a
+/// silent one a bug in this compiler.
+#[test]
+fn a_string_that_used_to_interpolate_is_warned_about() {
+    let found = findings("fn main() { let name = \"welt\" println(\"hallo {name}\") }");
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1111");
+    assert_eq!(found[0].severity, Severity::Warning);
+    // Paste-ready, as Part III C.2 requires of every diagnostic.
+    assert_eq!(
+        found[0].help.as_deref(),
+        Some("write `f\"hallo {name}\"` if the value was meant to appear (Part I, 2.5)")
+    );
+}
+
+/// **And it never fires on a program that is right.** This is the whole reason
+/// it is a warning and not an error: a stylesheet, a regular expression and a
+/// JSON document all hold braces, and `margin` is nobody's variable.
+#[test]
+fn braces_that_name_nothing_are_just_braces() {
+    assert!(findings("fn main() { println(\"{ margin: 0 }\") }").is_empty());
+    assert!(findings("fn main() { println(\"\\\\d{3}\") }").is_empty());
+    assert!(findings("fn main() { println(\"{}\") }").is_empty());
+    assert!(findings("fn main() { println(\"\\u{0041}\") }").is_empty());
+}
+
+/// The other half of the change of meaning: `"{{}}"` printed `{}` and now
+/// prints itself.
+#[test]
+fn a_doubled_brace_in_a_plain_string_is_warned_about_too() {
+    let found = findings("fn main() { print(\"{{}}\") }");
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1111");
+    assert_eq!(found[0].severity, Severity::Warning);
+    assert!(
+        found[0].help.as_deref().unwrap().contains("write `\"{}\"`"),
+        "{:?}",
+        found[0].help
+    );
+}
+
+/// An `f"…"` is held to nothing by this - it says what it is.
+#[test]
+fn an_f_string_is_never_warned_about() {
+    assert!(findings("fn main() { let n = 1 println(f\"{n}\") }").is_empty());
+    assert!(findings("fn main() { let n = 1 println(f\"{{{n}}}\") }").is_empty());
+}
+
+/// **The type comes from the syntax** (ADR-035 D3), so a `&str` return that
+/// hands back an `f"…"` is the mistake it was before - and a plain string with
+/// a brace in it is a `&str` rather than becoming a `String` by accident.
+#[test]
+fn the_type_of_a_literal_is_read_off_its_first_character() {
+    let (code, _) = one("fn label(n: i32) -> &str { return f\"{n} rows\" }");
+    assert_eq!(code, "NK1104");
+    assert!(findings("fn label() -> &str { return \"{ a brace }\" }").is_empty());
 }
