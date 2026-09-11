@@ -9,21 +9,21 @@
 //!     > crates/nikaia/tests/fixtures/measurements_expected.rs
 //! ```
 
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let path = args
         .next()
-        .ok_or_else(|| anyhow::anyhow!("usage: dump <file.nika> [lite|advanced]"))?;
-    let profile = match args.next() {
-        Some(name) => Profile::parse(&name)?,
-        None => Profile::default(),
-    };
+        .ok_or_else(|| anyhow::anyhow!("usage: dump <file.nika> [target] [user-parallelism]"))?;
+    let build = Build::parse(
+        &args.next().unwrap_or_else(|| "x86_64-linux".to_string()),
+        &args.next().unwrap_or_else(|| "0".to_string()),
+    )?;
 
     let source = std::fs::read_to_string(&path)?;
     let parsed = parse_to_ast(&source)?;
-    print!("{}", emit_program(&parsed, profile)?.rust);
+    print!("{}", emit_program(&parsed, build)?.rust);
     Ok(())
 }

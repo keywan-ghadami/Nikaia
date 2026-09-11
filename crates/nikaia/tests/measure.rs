@@ -26,7 +26,7 @@ mod common;
 use std::path::PathBuf;
 use std::process::Command;
 
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -45,7 +45,7 @@ fn lower(file: &str) -> String {
     let source =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let parsed = parse_to_ast(&source).unwrap_or_else(|e| panic!("{file} does not parse:\n{e}"));
-    emit_program(&parsed, Profile::Advanced)
+    emit_program(&parsed, Build::default())
         .unwrap_or_else(|e| panic!("{file} does not lower:\n{e}"))
         .rust
 }
@@ -204,7 +204,7 @@ fn strip_capacity(rust: &str) -> String {
 ///
 /// `benches/template.nika` is the right workload for it: two holes per row,
 /// one that needs escaping and one that does not, so both paths through
-/// `html::escape` are on the profile.
+/// `html::escape` are on the build.
 #[test]
 #[ignore = "shells out to valgrind; run with --ignored"]
 fn what_escaping_costs() {

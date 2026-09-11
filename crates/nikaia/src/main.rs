@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use nikaia::contracts::{self, sync, Ledger, STD};
-use nikaia::emit::{self, Ordering, Profile};
+use nikaia::emit::{self, Build, Ordering};
 use nikaia::{check, diagnostics, interpreter, modules, parser};
 
 #[derive(Parser, Debug)]
@@ -32,13 +32,21 @@ pub struct Cli {
     #[arg(long, default_value = "bridge")]
     pub backend: String,
 
-    /// Which runtime the program is compiled for (Part I/II).
+    /// The machine to build for (ADR-037 D1): `x86_64-linux` or
+    /// `wasm32-unknown`. It decides what `std` can offer and what a panic
+    /// does, and nothing about what a program means.
+    #[arg(long, default_value = "x86_64-linux")]
+    pub target: String,
+
+    /// Whether *your* code may run concurrently at all (ADR-037 D2): `yes`
+    /// or `no`.
     ///
-    /// Not a dialect: the same source compiles under both. It decides how the
-    /// generated parser is driven - under Lite a `par_fold` runs as a
-    /// sequential fold, which is ADR-009's degradation and nothing more.
-    #[arg(long, default_value = "advanced")]
-    pub profile: String,
+    /// Not a count - how many threads serve a `yes` is the runtime's to
+    /// decide. And it bounds the program, not the compiler: `fs::map` may
+    /// still validate its text on several cores at `no`, because that is not
+    /// code you wrote and it changes nothing the program prints.
+    #[arg(long, default_value = "no")]
+    pub user_parallelism: String,
 
     /// Where the `rust` backend writes. Defaults to `<input>.rs`.
     #[arg(short, long)]
@@ -272,12 +280,12 @@ impl LanguageFrontend for NikaiaFrontend {
 fn explain(args: &Cli, source: &str) -> Result<()> {
     use std::io::Read;
 
-    let profile = Profile::parse(&args.profile)?;
+    let build = Build::parse(&args.target, &args.user_parallelism)?;
     // The same ordering the build used, or the map would point into a file this
     // run did not emit.
     let ordering = Ordering::parse(&args.ordering)?;
     let parsed = parser::parse_to_ast(source)?;
-    let lowered = emit::emit_program_ordered(&parsed, profile, ordering)?;
+    let lowered = emit::emit_program_ordered(&parsed, build, ordering)?;
 
     let mut rustc_json = String::new();
     std::io::stdin().read_to_string(&mut rustc_json)?;
@@ -319,7 +327,7 @@ const RUST: &str = "rust";
 const CONTRACTS: &str = "contracts";
 
 fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
-    let profile = Profile::parse(&args.profile)?;
+    let build = Build::parse(&args.target, &args.user_parallelism)?;
     let ordering = Ordering::parse(&args.ordering)?;
     let output_path = args
         .output
@@ -333,7 +341,11 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     // first failure direction, a key that moves with the checkout.
     let layout = Layout::resolve(&args.input);
     let unit = layout.unit_name(&args.input);
-    let choices = Choices::with_ordering(&args.profile, "rust", &args.ordering);
+    let choices = Choices::with_ordering(
+        format!("{}/{}", args.target, args.user_parallelism),
+        "rust",
+        &args.ordering,
+    );
 
     // `--trust` is an explanation, so it is answered here rather than in the
     // miss branch below: a build that reuses a cached lowering still answers
@@ -347,10 +359,12 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         // question about the build, and two settings answer it no on their
         // own - so say which, rather than letting the report read as a
         // promise the emitter is not keeping.
-        if !profile.user_parallelism() {
+        if !build.overlaps_user_code() {
             println!(
-                "note: `--profile {}` runs user code on one thread, so nothing below overlaps in this build.",
-                args.profile
+                "note: `--user-parallelism {}` on `--target {}` runs user code on one thread, \
+                 so nothing below overlaps in this build.",
+                args.user_parallelism,
+                build.target.triple()
             );
         } else if args.ordering != "effects" {
             println!(
@@ -437,7 +451,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
                 )?;
             }
 
-            let lowered = program.emit_ordered(profile, ordering)?;
+            let lowered = program.emit_ordered(build, ordering)?;
             let ledger = program.contracts.render();
 
             if let Some(cache) = &mut cache {
@@ -473,10 +487,10 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     contracts(&ledger_path, &ledger, args.locked)?;
 
     println!(
-        "Lowered {} to {} (profile: {}{})",
+        "Lowered {} to {} (target: {}{})",
         args.input.display(),
         output_path.display(),
-        args.profile,
+        args.target,
         if reused { ", lowering from cache" } else { "" }
     );
 
@@ -485,6 +499,19 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
 
 pub fn main() -> Result<()> {
     let args = Cli::parse();
+
+    // Both switches are validated before anything is read, so a mistyped one
+    // fails on its own account rather than after a compile. A target the
+    // toolchain cannot build for is refused here too: emitting code for a
+    // different machine than the one named would be worse than any name this
+    // switch replaced (ADR-037 D1).
+    let build = Build::parse(&args.target, &args.user_parallelism)?;
+    if let Some(missing) = build.target.unbuildable() {
+        anyhow::bail!(
+            "cannot build for `{}` yet: {missing}",
+            build.target.triple()
+        );
+    }
 
     let source = std::fs::read_to_string(&args.input)?;
 

@@ -129,7 +129,7 @@ fn main() throws {
     }
 
     // Path-free, and not because a tool should be quiet about where it wrote:
-    // the two profiles are compiled and run separately by
+    // the two settings are compiled and run separately by
     // `crates/nikaia/tests/examples.rs`, in scratch directories of their own,
     // and what a program prints has to be the same under both. The page is the
     // deliverable, and the test reads it back.

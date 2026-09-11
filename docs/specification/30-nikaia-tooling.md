@@ -18,7 +18,7 @@ When you create a new project (`nikaia new my_project`), the following structure
     * **Source Hashing:** The SHA256 of each `.nika` source that took part, so an unchanged module skips parsing and expansion entirely.
     * **Resolved Versions:** The exact dependency versions, the toolchain version actually used, and the **Nikaia compiler's own version** - a changed emitter produces different output from identical input, so leaving it out makes the cache serve stale artifacts (ADR-021 D3).
     * **Declaration vs. record:** `nikaia.toml` states what the project *requires*; `nikaia.lock` records what was *resolved and used* - the same relationship `Cargo.toml` has with `Cargo.lock`.
-    * **Not in the lockfile:** build-time choices (profile, opt-level, backend). They are hashed into the cache key but never written, or every profile switch would rewrite a committed file for no reason (ADR-021 D5).
+    * **Not in the lockfile:** build-time choices (both switches, opt-level, backend). They are hashed into the cache key but never written, or every change of switch would rewrite a committed file for no reason (ADR-021 D5).
     * **Instant Builds:** On subsequent builds, if the hashes on disk haven't changed, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/` (git-ignored; the lockfile holds inputs, the store holds outputs). Keys are per translation unit, so one changed asset invalidates that unit, not the project (ADR-021 D6).
 * `nikaia.contracts`: The **Borrow Contract Ledger** (generated, commit it like the lockfile). Records the borrow contracts the compiler inferred for your functions and the tether relationships of your structs. It is both an incremental-build cache and the basis for the compiler's "what changed and what broke" error messages. Details in Chapter 13.5.
 * `src/`: The folder containing your source code.
@@ -32,7 +32,7 @@ When you create a new project (`nikaia new my_project`), the following structure
 * `nikaia fmt`: Automatically formats your code.
 
 ### 13.3. Manifest Configuration (`nikaia.toml`)
-The manifest allows defining project metadata and configuring Build Profiles (Lite vs. Advanced).
+The manifest defines project metadata and the two build switches of Part I 1.2.
 
 ```toml
 [package]
@@ -40,9 +40,19 @@ name = "hyper-core"
 version = "0.1.0"
 authors = ["dev@nikaia.org"]
 
-# Defines the default compilation mode
-# Options: "lite" (I/O optimized) or "advanced" (CPU optimized)
-default-profile = "advanced"
+# Which machine to build for (ADR-037 D1). `wasm32-unknown` has no threads
+# and traps rather than unwinding, which is what decides the panic strategy
+# and what `std` can offer.
+target = "x86_64-linux"
+
+# May *your* code run concurrently at all (ADR-037 D2)? A permission, not a
+# count - how many threads serve a "yes" is the runtime's to decide.
+#   "no"  (default) - nothing you wrote ever runs concurrently
+#   "yes"           - it may
+# This bounds your program, not the compiler: reading a file may still
+# validate its text on several cores at "no", because that is not your code
+# and changes nothing your program prints.
+user-parallelism = "no"
 
 # How long the runtime waits at program end for pending resource cleanups
 # (flushes, rollbacks, connection shutdowns — see Part I, 6.4 and ADR-006).
@@ -67,11 +77,12 @@ http-server = "1.2"
 # Import native Rust Crates
 regex = { type = "rust", version = "1.5" }
 
-[profiles.lite]
+# Code generation, per target. These are choices about output size and speed,
+# and they change nothing a program means.
+[build.wasm32-unknown]
 opt-level = "z"     # Optimize for binary size
-panic = "abort"     # Disable stack unwinding for smaller footprint
 
-[profiles.advanced]
+[build.x86_64-linux]
 opt-level = 3       # Maximize throughput
 lto = true          # Link Time Optimization
 ```
@@ -203,7 +214,7 @@ One consequence is worth stating for a library author: **writing a signature dow
 
 **Determinism guarantee.** The ledger is a **pure function of (source tree, toolchain)**: the same sources and the same pinned toolchain produce a byte-identical `nikaia.contracts` on every machine, every run, with any thread count. This is a hard guarantee (see [ADR-005](adr/adr-005.md), D8, including the implementation ban list and the CI tests that enforce it); a violation is treated as a compiler bug. Two consequences worth knowing:
 
-* There is exactly **one** ledger per project — it is valid for both the Lite and the Advanced profile. Borrow contracts and tether relationships are profile-independent by design; profile-dependent checks (such as thread-safety rules) are performed by the compiler directly and are never recorded in the ledger.
+* There is exactly **one** ledger per project — it is valid at every setting of either switch. Borrow contracts and tether relationships are switch-independent by design; switch-dependent checks (such as thread-safety rules) are performed by the compiler directly and are never recorded in the ledger.
 * Ledger stability is **not** promised across toolchain *upgrades* — a newer compiler may infer better contracts. The toolchain hash plus the explicit "caused by the toolchain update" narration make such diffs self-explaining instead of alarming.
 
 **Verification mode (`--locked`).** `nikaia build --locked` (and CI setups) verify instead of update: the compiler regenerates the contracts in memory and compares them byte-for-byte against the committed `nikaia.contracts`. Any difference fails the build with the narrated contract diff (see `NK2401` above). Because of the determinism guarantee, this check is exact and needs no tolerance or semantic comparison — the recommended CI line is simply building with `--locked`, which is equivalent to `git diff --exit-code nikaia.contracts` after a regular build.
@@ -341,7 +352,7 @@ Nikaia treats Rust Crates differently than C libraries. Because Rust has a stron
 Nikaia can detect thread safety in Rust code. The compiler reads the metadata of the Rust Crate.
 
 * If a Rust type implements the `Send` trait (safe to move between threads), Nikaia allows using it in `spawn` tasks.
-* If a Rust type is `!Send` (e.g., `Rc<T>`), and you try to use it in **Nikaia Advanced** (Multi-Threaded), the Nikaia compiler produces an error:
+* If a Rust type is `!Send` (e.g., `Rc<T>`), and you try to use it where your code runs in parallel, the Nikaia compiler produces an error:
     > "Error: Cannot move Rust type 'Rc<i32>' to another thread. It is not Thread-Safe."
 
 ```nika
@@ -359,16 +370,16 @@ fn process() {
 ```
 
 ### 15.3. WebAssembly (WASM) Synergy
-The **Lite Profile** possesses a natural affinity for WebAssembly. Since WASM (in its basic form) shares a linear memory model and runs in single-threaded host environments, the Lite Profile is the perfect match.
+A single-threaded build possesses a natural affinity for WebAssembly. Since WASM (in its basic form) shares a linear memory model and runs in single-threaded host environments, `user_parallelism = no` is the perfect match.
 
 **Zero Overhead**
-Compiling with `nikaia build --profile=lite --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
+Compiling with `nikaia build --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
 
 **JavaScript Interoperability (`dsl js`)**
 Instead of trying to map the entire DOM to Nikaia structs, Nikaia embeds raw JavaScript using the `dsl` keyword (Part II, 10.5).
 
 ```nika
-// main.nika (Lite Profile)
+// main.nika
 fn main() {
     let message = "Hello from Nikaia!"
 
@@ -396,15 +407,14 @@ of which validates its own operands.
 
 ### 16.1. Why not a core construct
 
-Earlier drafts (up to 0.0.5) specified an `unsafe asm` block with register constraints
-(`in(reg)`, `out(reg)`, `clobber("cc")`) built into the language. That construct assumed the
-target has registers.
+A built-in `asm` block with register constraints — `in(reg)`, `out(reg)`, `clobber("cc")` —
+would assume every target has registers. Nikaia targets **WebAssembly**
+(Chapter 15), and WASM is a *stack machine*: there is nothing for `in(reg)` to mean. A core
+construct that cannot be given meaning on a first-class target is a defect in the core, not in
+the target.
 
-Nikaia's Lite profile targets **WebAssembly** (Chapter 15), and WASM is a *stack machine*:
-there are no registers to constrain, and no meaning to give `in(reg)`. A core construct that
-cannot be given meaning on a first-class target is a defect in the core, not in the target.
-Moving instructions into DSLs lets each backend define exactly the operand model its hardware
-has. See [ADR-007](adr/adr-007.md), D6.
+As a DSL instead, each backend defines exactly the operand model its hardware has, and the
+grammar that validates it ([ADR-007](adr/adr-007.md), D6).
 
 ### 16.2. Usage
 
@@ -454,10 +464,10 @@ declares a different vocabulary — `dsl wasm` has locals and a value stack, not
 
 ## Chapter 17: The Standard Library ("Batteries Included")
 
-Unlike languages that prefer a minimal core, Nikaia pursues immediate productivity. The standard library consists of universal modules (same API everywhere) and profile-specific capabilities.
+Unlike languages that prefer a minimal core, Nikaia pursues immediate productivity. The standard library consists of universal modules (same API everywhere) and target-specific capabilities.
 
 ### 17.1. Universal Modules
-These modules rely on Unified Types and function identically in both Lite and Advanced profiles, though their internal implementation differs significantly to match the runtime model.
+These modules rely on Unified Types and function identically at every setting, though their internal implementation differs significantly to match the runtime model.
 
 **`std::io` — standard input**
 
@@ -488,8 +498,8 @@ What must **not** happen is what a scanner that reports its error afterwards doe
 `read_to_string`, `read` and `lines` are implemented. `bytes` is not, and needs nothing new — the rule above already covers it.
 
 It is `std::fs`'s shape minus what a stream cannot keep, and the same "looks blocking, is not"
-applies: no `async` on the signature, no `await` at the call. Under Lite the event loop runs
-another task while the pipe is empty; under Advanced the read may resume on a different thread.
+applies: no `async` on the signature, no `await` at the call. On a single-threaded runtime the event loop runs
+another task while the pipe is empty; with threads the read may resume on a different one.
 What *is* visible is the rule that matters — **a `sync` function cannot call it** (Part II, 12.1),
 which is what keeps a `par_iter` body from waiting on a pipe.
 
@@ -531,15 +541,15 @@ progress line rewritten in place — where a newline after every fragment would 
 
 **`std::http`**
 A production-ready HTTP/1.1 and HTTP/2 server and client.
-* **Lite Profile:** Runs on a single-threaded Event Loop.
-* **Advanced Profile:** Runs on a multi-threaded Work-Stealing Executor.
+* **At `user_parallelism = no`:** Runs on a single-threaded Event Loop.
+* **At `yes`:** Runs on a multi-threaded Work-Stealing Executor.
 
 ```nika
 use std::http
 
 fn main() {
     // Starts a server on Port 8080.
-    // The code looks the same, but the runtime behavior adapts to the profile.
+    // The code looks the same, but the runtime behavior follows `user_parallelism`.
     // The handler is a trailing lambda, outside the parentheses.
     http::Server::new()
         .route("/") fn { "Hello World" }
@@ -577,7 +587,7 @@ one kept past it has to be owned (Part I, 6.6). `query` and `header` return the 
 Part I 3.5 rather than an empty string, and `method()` returns an enum rather than a string.
 
 A handler does I/O, so it is not `sync`; it carries no `async` marker and no `await`, and the
-profile chooses the executor and nothing else.
+switch chooses the executor and nothing else.
 
 **`std::html`**
 
@@ -663,7 +673,7 @@ not here yet; `lines` and `bytes` are gone for a reason of their own, below.
 
 **Reading a large file: `map`, and the grammar**
 
-There is no `fs::lines` and no `fs::bytes`. Earlier drafts of this chapter specified both, and [ADR-025](adr/adr-025.md) D3 removed them rather than deferring them. The reasons are worth stating where a reader will look for the functions:
+There is no `fs::lines` and no `fs::bytes`, and there will not be. The reasons are stated here because this is where a reader looks for them ([ADR-025](adr/adr-025.md) D3):
 
 * **The specified shape cannot exist.** `lines(path)` was to open the file *and* yield tethered `&str` — so the returned value would own the buffer and hand out views into itself. That is the one thing an iterator may not do, and it is why the language below allocates a string per line when it offers the same function.
 * **The shape that works is two calls, and it is the model.** `fs::map(path)` owns the pages; `.lines()` borrows views of them. One value owns a buffer, another borrows from it, and Part I 6.6 and [ADR-008](adr/adr-008.md) rest on keeping those apart.
@@ -674,7 +684,7 @@ let data = fs::map(&path)
 for line in data.lines() { … }
 ```
 
-And for a file that is a **record per line**, the language already has something better than a sequence of lines — the grammar protocol, where `@frame(boundary: "\n")` says exactly that and drives itself over the pages, in parallel where the profile allows (Part II, 10.7). `examples/1brc.nika`, `examples/access-log.nika` and `examples/config.nika` are all that shape; none of them iterates lines.
+And for a file that is a **record per line**, the language already has something better than a sequence of lines — the grammar protocol, where `@frame(boundary: "\n")` says exactly that and drives itself over the pages, in parallel where `user_parallelism` allows (Part II, 10.7). `examples/1brc.nika`, `examples/access-log.nika` and `examples/config.nika` are all that shape; none of them iterates lines.
 
 The WASM question these functions were the answer to comes back with the target: `map` is a compile error there, and what `std::fs` offers instead on `wasm32-*` will be decided with it.
 
@@ -708,7 +718,7 @@ pub fn map(path: Path) -> Mapped throws          // read-only memory map
 
 **Retention.** A slice that escapes the mapping's scope tethers to it, and a tether keeps the *whole* map alive — one twelve-byte station name can pin thirteen gigabytes. The compiler warns where a small extract outlives a large buffer and suggests `.to_owned()`; the mapping is released once the last tether is gone, which may be later than the end of the block that created it ([ADR-008](adr/adr-008.md), D8). Slices that never leave that scope cost nothing and hold nothing. At process exit a read-only mapping with nothing observable attached to it is simply left to the operating system rather than unmapped page by page ([ADR-009](adr/adr-009.md), D7) — at thirteen gigabytes that teardown is measurable, and skipping it changes nothing a program can see.
 
-**Availability is a property of the target, not of the profile.** Memory mapping is an operating-system service, and whether it exists has nothing to do with whether the runtime is single-threaded. `fs::map` is therefore available under **both** profiles on any target whose platform provides it — a Lite-profile program compiled for Linux, macOS or Windows maps files exactly like an Advanced one. What rules it out is a target without the service: on `wasm32-*` there is no memory mapping to call, so `fs::map` is a **compile-time error** there.
+**Availability is a property of the target, and of nothing else.** Memory mapping is an operating-system service, and whether it exists has nothing to do with whether the runtime is single-threaded. `fs::map` is therefore available at **every** setting on any target whose platform provides it — a single-threaded program compiled for Linux, macOS or Windows maps files exactly like a parallel one. What rules it out is a target without the service: on `wasm32-*` there is no memory mapping to call, so `fs::map` is a **compile-time error** there.
 
 The error is deliberate rather than a silent fallback to `read`: degrading a memory map into a full read turns a constant-memory program into one that allocates its entire input, which is a failure the program would only discover in production. Code that must build for every target, WASM included, uses `lines` or `bytes` — constant-memory everywhere.
 
@@ -726,16 +736,16 @@ pub fn copy(from: Path, to: Path) -> u64 throws
 
 **Availability by target**
 
-Both profiles have the same `std::fs` surface; only the target changes it.
+Every setting has the same `std::fs` surface; only the target changes it.
 
-| API | Native (any profile) | `wasm32-*` (any profile) |
+| API | Native | `wasm32-*` |
 | :--- | :--- | :--- |
 | `read`, `read_to_string`, `write` | yes | yes — backed by OPFS |
 | `open` | yes | yes — backed by OPFS |
 | `map` | yes | **compile error** — the platform has no memory mapping |
 | `metadata`, `read_dir`, `create_dir`, `remove`, `rename`, `copy` | yes | yes — OPFS, within the origin's sandbox |
 
-This is the difference between `fs::map` and `std::thread` (17.2). `std::thread` is barred by the **profile**: Lite is share-nothing by design, so manual threading is a compile error even on a native target that has threads. `fs::map` is barred by the **target**: nothing about a single-threaded runtime prevents mapping a file.
+This is the difference between `fs::map` and `std::thread` (17.2). `std::thread` is barred by **`user_parallelism = no`**: it is share-nothing by design, so manual threading is a compile error even on a native target that has threads. `fs::map` is barred by the **target**: nothing about a single-threaded runtime prevents mapping a file.
 
 **`std::collections` — and where your keys came from**
 
@@ -777,19 +787,19 @@ What the bootstrap compiler's analysis is, exactly, so that a later one is not m
 * **`std::cli`**: Parsers for command-line arguments, environment variables, and ANSI terminal colors.
 * **`std::net`**: Low-level TCP/UDP sockets for building custom protocols.
 
-### 17.2. Profile-Specific Availability
-Some modules are only available or behave restrictively depending on the compilation target.
+### 17.2. Availability by Target and by `user_parallelism`
+Some modules are only available, or behave restrictively, depending on the machine and on how much of your code may run at once.
 
 * **`std::process`**: Spawning child processes.
 * **`std::thread` / `spawn`**:
-    * **Advanced:** Supports full concurrency. The primary mechanism is `spawn`.
+    * **At `user_parallelism = yes`:** Supports full concurrency. The primary mechanism is `spawn`.
         * **Strict Implicit Move:** To ensure thread safety without complex lifetime tracking, Nikaia enforces **Implicit Move Semantics** for all tasks spawned this way. Ownership of variables used inside the `spawn` block is automatically transferred to the new thread.
-    * **Lite / WASM:** Direct usage of `std::thread` results in a **compile-time error**. The Lite profile enforces a "Share-Nothing" architecture where manual threading is prohibited to ensure compatibility with WASM hosts.
+    * **At `user_parallelism = no`, and on `wasm32-*` whatever it says:** Direct usage of `std::thread` is a **compile-time error**. A share-nothing architecture is what makes `user_parallelism = no` mean something, and what keeps a program compatible with WASM hosts.
 
 **`std::db` (Universal SQL)**
 Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.
 
-* **Zero-Blocking Guarantee:** Database operations are implicitly asynchronous. They never block the Event Loop (Lite) or the Compute Scheduler (Advanced).
+* **Zero-Blocking Guarantee:** Database operations are implicitly asynchronous. They never block the Event Loop, nor the Compute Scheduler where there is one.
 * **Architecture Adapter:** The implementation switches automatically based on the compilation target:
     * **Native Targets:** Utilizes a dedicated, hidden I/O thread (powered by `tokio-rusqlite`) to offload blocking filesystem operations.
     * **WASM Targets:** Automatically spawns a **Web Worker** and utilizes the **OPFS** (Origin Private File System). This enables native-grade, persistent SQL performance in the browser without freezing the UI thread.
@@ -821,14 +831,18 @@ Errors arising from external circumstances (File not found, Network timeout).
 * **Handling:** Enforced by the compiler via `catch{}` blocks or propagation.
 
 ### A.2. Unrecoverable Errors (`panic`)
-Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). The behavior differs drastically based on the profile:
+Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). What a panic does depends on **both** switches, and on different grounds:
 
-| Profile | Panic Behavior | Consequence |
+| `user_parallelism` | Panic Behavior | Consequence |
 | :--- | :--- | :--- |
-| **Lite** | **Abort** | The entire process terminates immediately. In WebAssembly, this triggers a "Trap". There is no stack unwinding, resulting in minimal binary size. |
-| **Advanced** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
+| **`no`** | **Abort** | The process terminates immediately. There is no second piece of your code in flight to isolate the failure from, so unwinding would buy nothing and is not done — which also leaves a smaller binary. |
+| **`yes`** | **Task Poisoning** | Only the affected task is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked "poisoned" so no other thread reads state a half-finished task left behind. |
 
-On **every** panic path — including Lite's abort and the WASM trap — the application's **Panic Hook** runs first (Part I, 7.2): one global, `sync` handler receiving message, location, and stack trace, intended for crash dumps and reports. This rides on the backend's panic machinery, which invokes the hook before aborting even under `panic = abort`. See [ADR-006](adr/adr-006.md), D6.
+The `target` decides this independently where the machine leaves no choice: on
+`wasm32-unknown` a panic is a **trap** and the module is done, whatever
+`user_parallelism` says, because the host offers nothing to unwind to.
+
+On **every** panic path — including the abort and the WASM trap — the application's **Panic Hook** runs first (Part I, 7.2): one global, `sync` handler receiving message, location, and stack trace, intended for crash dumps and reports. This rides on the backend's panic machinery, which invokes the hook before aborting even under `panic = abort`. See [ADR-006](adr/adr-006.md), D6.
 
 # Appendix B: Compiler Internals & Annotations
 
@@ -856,13 +870,13 @@ pub fn spawn(task: @detached fn() -> T) -> TaskHandle[T]
 
 // std::task
 // Scope is immediate because it waits for completion
-// Advanced profile: the scope's child tasks must be 'sync' (see Part II, 12.7)
+// Where they run in parallel, a scope's child tasks must be 'sync' (see Part II, 12.7)
 pub fn scope(f: fn(Scope))
 ```
 
 # Appendix C: The Diagnostics Contract
 
-Nikaia compiles through the Rust toolchain (ADR-001/002), but the Rust compiler's error messages — lifetimes, borrow traits, generated code — are exactly the vocabulary Nikaia promises its users they never need. This appendix makes diagnostic quality a **testable requirement**, not an aspiration. Full rationale: [ADR-005](adr/adr-005.md), D7.
+Nikaia compiles through the Rust toolchain ([ADR-003](adr/adr-003.md)), but the Rust compiler's error messages — lifetimes, borrow traits, generated code — are exactly the vocabulary Nikaia promises its users they never need. This appendix makes diagnostic quality a **testable requirement**, not an aspiration. Full rationale: [ADR-005](adr/adr-005.md), D7.
 
 ### C.1. The Iron Rule
 
@@ -882,11 +896,11 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | Range | Domain | Examples defined so far |
 | :--- | :--- | :--- |
 | `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. `NK1109` a call names an option the callee does not have (Part I, 5.1). `NK1110` a call reaches an item another file keeps private (Part I, 9.2). All ten are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). `NK1111` (**warning, and temporary**) a plain string holds what looks like a hole, or a doubled brace that used to be an escape - the one-release migration to `f"…"` ([ADR-035](adr/adr-035.md) D5), and the only thing this checker warns about rather than refusing. |
-| `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` in Advanced (Part II, 12.7). |
+| `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` where they run in parallel (Part II, 12.7). |
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Contract changes | `NK2401` a borrow contract change broke a caller, narrated from the ledger diff (13.5). Reserved: a `catch` that no longer covers every error that can reach it, narrated from the same diff — it needs the ledger to record the *set* rather than a boolean ([ADR-023](adr/adr-023.md) D1), which needs error types the compiler can lower. |
-| `NK25xx` | Profile portability | Reserved: Advanced `Send`-rules reported under Lite as a portability lint, so Lite libraries stay Advanced-compatible. |
+| `NK25xx` | Portability | Reserved: the `Send` rules that parallel code needs, reported at `user_parallelism = no` as a lint, so a library built there stays usable at `yes`. |
 | `NK26xx` | Resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). |
 | `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 

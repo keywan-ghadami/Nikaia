@@ -9,7 +9,7 @@
 //   * `grammar Name { rule ... }`  ->  `grammar! { grammar Name { ... } }`
 //   * `@frame(boundary: "\n")`     ->  `#[frame(boundary = "\n")]`
 //   * `dsl Name from input`        ->  the generated `par_fold` driver, with
-//                                      the `Parallelism` the profile asks for
+//                                      the `Parallelism` the build asks for
 //
 // What it is *not* is a type checker. The lowering is syntactic: every action
 // block, every `init`/`step`/`merge` and every function body is emitted as
@@ -34,16 +34,34 @@ use crate::ast::{
 };
 use crate::parser::{parse_expression, Parsed};
 
-/// Part I/II: the runtime a program is compiled for.
+/// The machine a program is built for (ADR-037 D1).
 ///
-/// It is not a dialect - the same source compiles under both. ADR-009: under
-/// Lite a `par_fold` runs as a sequential fold, which is the driver's
-/// `Parallelism::Off` and nothing else.
+/// It decides what `std` can offer and what a panic does. It decides nothing
+/// about what a program means: the same source compiles for every target and
+/// prints the same bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Profile {
-    Lite,
+pub enum Target {
     #[default]
-    Advanced,
+    X86_64Linux,
+    Wasm32Unknown,
+}
+
+/// Whether the **user's** code may run concurrently at all (ADR-037 D2).
+///
+/// A yes-or-no question, deliberately: *how many* threads or cores serve that
+/// answer is the runtime's business, and a number in the language would be a
+/// promise the language cannot keep on a machine it has not seen.
+///
+/// It does not bind the compiler - `fs::map` may still validate its text on
+/// four cores at `No`, because that is not code the user wrote and it changes
+/// nothing the program prints (ADR-016 D3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UserParallelism {
+    /// `no` - the default. Nothing the user wrote ever runs concurrently.
+    #[default]
+    No,
+    /// `yes` - it may, and the runtime decides how widely.
+    Yes,
 }
 
 /// How strictly the written order of two statements is taken (ADR-033, D8).
@@ -71,53 +89,143 @@ impl Ordering {
     }
 }
 
-impl Profile {
-    pub fn parse(name: &str) -> Result<Profile> {
-        match name {
-            "lite" => Ok(Profile::Lite),
-            "advanced" => Ok(Profile::Advanced),
-            other => Err(anyhow!(
-                "unknown profile `{other}` (expected lite or advanced)"
-            )),
+/// The two build switches together (ADR-037).
+///
+/// One value rather than two parameters: a third switch is then a field, not a
+/// change at every call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Build {
+    pub target: Target,
+    pub user_parallelism: UserParallelism,
+}
+
+impl Build {
+    pub fn parse(target: &str, user_parallelism: &str) -> Result<Build> {
+        Ok(Build {
+            target: Target::parse(target)?,
+            user_parallelism: UserParallelism::parse(user_parallelism)?,
+        })
+    }
+
+    /// The default machine, with parallelism asked for.
+    pub fn parallel() -> Build {
+        Build {
+            user_parallelism: UserParallelism::Yes,
+            ..Build::default()
         }
     }
 
     /// How the generated driver is asked to cut the input.
     fn parallelism(self) -> &'static str {
-        match self {
-            Profile::Lite => "Parallelism::Off",
-            Profile::Advanced => "Parallelism::Auto",
+        self.user_parallelism.parallelism(self.target)
+    }
+
+    /// Whether a vehicle exists here for running two pieces of **user** code
+    /// at the same time (ADR-033 §8.2).
+    ///
+    /// Not "does the process have more than one thread". It has a second one
+    /// at `user_parallelism = no` too, and always did: Part I 8.4's Runtime
+    /// Sidecar offloads blocking I/O to a background thread on native (a Web
+    /// Worker on WASM) so the event loop never stalls, and it stays safe
+    /// precisely because *user code never runs there* - the exchange is
+    /// ownership-transferring message passing, so there is nothing to race
+    /// over. What `no` forbids is the other thing: that anything **you** wrote
+    /// is in flight twice at once (Part I 1.2).
+    ///
+    /// `task::both(|| …, || …)` puts two user closures on two threads, so it
+    /// is out at `no` whatever the analysis says - ADR-033 decides whether two
+    /// operations *may* overlap, and this decides whether there is anything to
+    /// overlap them with. A target without threads answers no for the second
+    /// reason: `rayon::join` does not link on `wasm32-unknown` (Part III 15.3).
+    ///
+    /// This is **not** a statement that ADR-033 means nothing at `no`. Two
+    /// reads in flight at once with their results collected on the main thread
+    /// in written order is concurrency without parallelism, which is what an
+    /// event loop and a sidecar are *for* - and it would carry none of the
+    /// per-pair thread wake-up ADR-033 §8.4 measured. That vehicle is not
+    /// built (no event loop, no sidecar, no async lowering), so `effects`
+    /// degrades to `strict` here the way `par_fold` degrades to `fold`
+    /// (ADR-009) - for now, and for a narrower reason than "no threads".
+    pub fn overlaps_user_code(self) -> bool {
+        self.user_parallelism.is_concurrent() && self.target.has_threads()
+    }
+}
+
+impl Target {
+    pub fn parse(name: &str) -> Result<Target> {
+        match name {
+            "x86_64-linux" => Ok(Target::X86_64Linux),
+            "wasm32-unknown" => Ok(Target::Wasm32Unknown),
+            other => Err(anyhow!(
+                "unknown target `{other}` (expected x86_64-linux or wasm32-unknown)"
+            )),
         }
     }
 
-    /// Whether two pieces of **user** code may run at the same time.
-    ///
-    /// Not "does the process have more than one thread": Lite has a second one
-    /// and always did. Part I 8.4's Runtime Sidecar offloads blocking I/O to a
-    /// background thread on native (a Web Worker on WASM) so the event loop
-    /// never stalls, and it stays safe because *user code never runs there* -
-    /// the exchange is message passing, so there is nothing to race over. What
-    /// Lite forbids is the other thing: *"a strict single-threaded model for
-    /// user logic"*.
-    ///
-    /// `task::both(|| …, || …)` puts user closures on two threads, so it is
-    /// forbidden under Lite whatever the analysis says - ADR-033 decides
-    /// whether two operations *may* overlap, and this decides whether a
-    /// vehicle exists to overlap them with. `rayon::join` is also not a
-    /// vehicle on `wasm32-unknown`, where it does not link (Part III 19.4).
-    ///
-    /// This is **not** a statement that ADR-033 is meaningless under Lite. Two
-    /// reads in flight at once with their results collected on the main thread
-    /// is concurrency without parallelism, which is precisely what an event
-    /// loop and a sidecar are for - and it would carry none of the per-pair
-    /// thread wake-up §8.4 measured. Lite's own vehicle for that is not built
-    /// (no event loop, no sidecar, no async lowering), so `effects` degrades
-    /// to `strict` here the way `par_fold` degrades to `fold` (ADR-009) -
-    /// for now, and for a narrower reason than "Lite has no threads".
-    pub fn user_parallelism(self) -> bool {
+    /// The triple handed to the backend.
+    pub fn triple(self) -> &'static str {
         match self {
-            Profile::Lite => false,
-            Profile::Advanced => true,
+            Target::X86_64Linux => "x86_64-unknown-linux-gnu",
+            Target::Wasm32Unknown => "wasm32-unknown-unknown",
+        }
+    }
+
+    /// Whether this machine has threads at all. A target without them bounds
+    /// `user_parallelism` to `0` however it is set.
+    pub fn has_threads(self) -> bool {
+        matches!(self, Target::X86_64Linux)
+    }
+
+    /// What a target still needs before a program can be built for it.
+    ///
+    /// `Some(reason)` is a refusal that names the gap, never code emitted for
+    /// a different machine (ADR-037 D1).
+    pub fn unbuildable(self) -> Option<&'static str> {
+        match self {
+            Target::Wasm32Unknown => Some(
+                "`std` reaches for a memory mapping and a thread pool, and neither \
+                 exists on wasm32-unknown-unknown; what `std::fs` offers there is \
+                 undecided",
+            ),
+            Target::X86_64Linux => None,
+        }
+    }
+}
+
+impl UserParallelism {
+    pub fn parse(value: &str) -> Result<UserParallelism> {
+        match value {
+            "no" => Ok(UserParallelism::No),
+            "yes" => Ok(UserParallelism::Yes),
+            // A number is the plausible mistake, and it has a reason rather
+            // than a typo behind it. Say which.
+            other if other.parse::<u32>().is_ok() => Err(anyhow!(
+                "`user-parallelism` is yes or no, not a count: how many threads \
+                 serve a `yes` is the runtime's to decide, not the program's"
+            )),
+            other => Err(anyhow!(
+                "unknown user-parallelism `{other}` (expected yes or no)"
+            )),
+        }
+    }
+
+    /// Whether any code the user wrote may run concurrently.
+    pub fn is_concurrent(self) -> bool {
+        matches!(self, UserParallelism::Yes)
+    }
+
+    /// How the generated driver is asked to cut the input.
+    ///
+    /// A target without threads pins this to `Off` whatever was asked for: the
+    /// switch bounds what may run at once, it cannot conjure a thread the
+    /// machine does not have.
+    fn parallelism(self, target: Target) -> &'static str {
+        if !target.has_threads() {
+            return "Parallelism::Off";
+        }
+        match self {
+            UserParallelism::No => "Parallelism::Off",
+            UserParallelism::Yes => "Parallelism::Auto",
         }
     }
 }
@@ -276,18 +384,14 @@ impl Out {
     }
 }
 
-pub fn emit_program(parsed: &Parsed, profile: Profile) -> Result<Lowered> {
-    emit_program_ordered(parsed, profile, Ordering::default())
+pub fn emit_program(parsed: &Parsed, build: Build) -> Result<Lowered> {
+    emit_program_ordered(parsed, build, Ordering::default())
 }
 
 /// The same, saying how strictly the written order is to be taken (ADR-033).
-pub fn emit_program_ordered(
-    parsed: &Parsed,
-    profile: Profile,
-    ordering: Ordering,
-) -> Result<Lowered> {
+pub fn emit_program_ordered(parsed: &Parsed, build: Build, ordering: Ordering) -> Result<Lowered> {
     let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
-    Emitter::new(parsed, profile, trust.provenance, ordering).program()
+    Emitter::new(parsed, build, trust.provenance, ordering).program()
 }
 
 /// The same, with the provenance already decided.
@@ -296,10 +400,10 @@ pub fn emit_program_ordered(
 /// hands back in so the emitted code and the explanation cannot disagree.
 pub fn emit_program_with_trust(
     parsed: &Parsed,
-    profile: Profile,
+    build: Build,
     provenance: crate::contracts::Provenance,
 ) -> Result<Lowered> {
-    Emitter::new(parsed, profile, provenance, Ordering::default()).program()
+    Emitter::new(parsed, build, provenance, Ordering::default()).program()
 }
 
 /// A module's items, with no preamble and no `mod` around them.
@@ -313,11 +417,11 @@ pub fn emit_program_with_trust(
 /// declaration, and the declaration is in another file.
 pub fn emit_module_body(
     parsed: &Parsed,
-    profile: Profile,
+    build: Build,
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
 ) -> Result<Lowered> {
-    emit_module_body_ordered(Ordering::default(), parsed, profile, provenance, contracts)
+    emit_module_body_ordered(Ordering::default(), parsed, build, provenance, contracts)
 }
 
 /// The same, saying how strictly the written order is taken (ADR-033).
@@ -328,11 +432,11 @@ pub fn emit_module_body(
 pub fn emit_module_body_ordered(
     ordering: Ordering,
     parsed: &Parsed,
-    profile: Profile,
+    build: Build,
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
 ) -> Result<Lowered> {
-    Emitter::with_contracts(parsed, profile, provenance, contracts.clone(), ordering).items_only()
+    Emitter::with_contracts(parsed, build, provenance, contracts.clone(), ordering).items_only()
 }
 
 /// What a program's preamble has to say, over all of its files.
@@ -350,10 +454,10 @@ pub struct Needs {
 }
 
 impl Needs {
-    pub fn of(parsed: &Parsed, profile: Profile) -> Needs {
+    pub fn of(parsed: &Parsed, build: Build) -> Needs {
         let emitter = Emitter::new(
             parsed,
-            profile,
+            build,
             crate::contracts::Provenance::Trusted,
             Ordering::default(),
         );
@@ -420,7 +524,7 @@ fn std_ledger() -> crate::contracts::Ledger {
 
 struct Emitter<'p> {
     parsed: &'p Parsed,
-    profile: Profile,
+    build: Build,
     /// Structs that hold a view into the input, and so need the input lifetime
     /// wherever they are named.
     borrowing: HashSet<Symbol>,
@@ -503,19 +607,19 @@ enum Propagate {
 impl<'p> Emitter<'p> {
     fn new(
         parsed: &'p Parsed,
-        profile: Profile,
+        build: Build,
         provenance: crate::contracts::Provenance,
         ordering: Ordering,
     ) -> Self {
         let own = crate::contracts::Ledger::infer(parsed);
-        Self::with_contracts(parsed, profile, provenance, own, ordering)
+        Self::with_contracts(parsed, build, provenance, own, ordering)
     }
 
     /// The same, against contracts that already exist - a program's rather than
     /// a file's.
     fn with_contracts(
         parsed: &'p Parsed,
-        profile: Profile,
+        build: Build,
         provenance: crate::contracts::Provenance,
         own_contracts: crate::contracts::Ledger,
         ordering: Ordering,
@@ -578,7 +682,7 @@ impl<'p> Emitter<'p> {
 
         Self {
             parsed,
-            profile,
+            build,
             borrowing: borrowing_structs(parsed),
             grammars,
             structs,
@@ -1632,7 +1736,7 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<bool> {
-        if !self.profile.user_parallelism()
+        if !self.build.overlaps_user_code()
             || self.ordering != Ordering::Effects
             || i + 1 >= stmts.len()
         {
@@ -2354,7 +2458,7 @@ impl<'p> Emitter<'p> {
     /// grammar. Everything the parallel form needs is already in the grammar
     /// (ADR-009): the frame says where the input may be cut, the `par_fold`
     /// says how the pieces combine. What is left is choosing the executor, and
-    /// that is the profile's decision, not the program's.
+    /// that is the build's decision, not the program's.
     fn dsl_from(
         &self,
         out: &mut Out,
@@ -2398,7 +2502,7 @@ impl<'p> Emitter<'p> {
                  &ParseContext::<()>::default(), {})\n\
                  {pad}    .map_err(|error| error.render(_source))\n\
                  {close}}}{question}",
-                self.profile.parallelism()
+                self.build.parallelism()
             ));
             return Ok(());
         }

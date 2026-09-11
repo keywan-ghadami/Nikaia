@@ -3,7 +3,7 @@ use nikaia::parser::parse_to_ast;
 
 #[test]
 fn test_advanced_hello_world_compilation() {
-    // Advanced Hello World with Async Spawn
+    // Hello World with an async spawn
     let source_code = r#"
         fn main() {
             println("Hello Nikaia");

@@ -5,24 +5,17 @@
 //! have to: where it was raised, what joined it on the way, and — only where a
 //! program asked for it — a stack trace.
 //!
-//! **Why the trace is not simply always there.** Measured, under callgrind, on
-//! 20 000 errors raised eight frames deep:
+//! **Why the trace is not simply always there.** Capturing one costs about
+//! 28 300 instructions per error - roughly sixteen times what the rest of the
+//! program does - for a value almost nothing reads. So it is off unless
+//! `NIKAIA_TRACE` asks for it. The measurement behind that number, and the
+//! reasoning that made it the deciding one, are ADR-023 §3.2.
 //!
-//! | | instructions | per error |
-//! | :--- | ---: | ---: |
-//! | no trace | 37.5 M | — |
-//! | `Backtrace::capture()` | 604.2 M | **+28 300** |
-//! | the same, `RUST_BACKTRACE=0` | 38.5 M | +51 |
-//!
-//! Sixteen times the whole program, for a value almost nothing reads. And the
-//! trap the numbers found: `Backtrace::capture()` captures when the variable is
-//! **unset** — only `RUST_BACKTRACE=0` turns it off — so the naive version of
-//! this costs that by default, on every program, forever.
-//!
-//! Instruction count is the right quantity here and the cache numbers say why:
-//! the D1 miss rate is 0.2 % without the trace and 0.0 % with it, so nothing
-//! about memory behaviour changed and the work is the whole story. A change
-//! that moved the miss rate would have needed a different measurement.
+//! **`NIKAIA_TRACE` is the only switch.** `Backtrace::capture()` consults
+//! `RUST_BACKTRACE`/`RUST_LIB_BACKTRACE` and is `Disabled` unless one of them
+//! is set, so a program told to trace would silently not have traced. This
+//! module uses `force_capture` behind its own flag: one variable decides, and
+//! it is the one the message names.
 
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::error::Error;
@@ -111,7 +104,9 @@ where
     Box::new(Raised {
         inner: Box::new(error),
         origin,
-        trace: tracing().then(Backtrace::capture),
+        // `force_capture`, not `capture`: `capture` additionally requires
+        // `RUST_BACKTRACE`, so `NIKAIA_TRACE=1` alone would capture nothing.
+        trace: tracing().then(Backtrace::force_capture),
     })
 }
 

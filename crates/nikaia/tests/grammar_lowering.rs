@@ -9,16 +9,16 @@
 //! Each generated file goes in a module of its own, because each is a whole
 //! compilation unit and brings its own imports.
 
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 const FIXTURE: &str = include_str!("fixtures/measurements.nika");
 const EXPECTED: &str = include_str!("fixtures/measurements_expected.rs");
 const DIGITS: &str = include_str!("fixtures/digits.nika");
 
-fn emit(source: &str, profile: Profile) -> String {
+fn emit(source: &str, build: Build) -> String {
     let parsed = parse_to_ast(source).expect("the fixture parses");
-    emit_program(&parsed, profile)
+    emit_program(&parsed, build)
         .expect("the fixture lowers")
         .rust
 }
@@ -106,7 +106,7 @@ mod digits {
 #[test]
 fn the_emitted_rust_is_the_file_this_test_compiles() {
     assert_eq!(
-        emit(FIXTURE, Profile::Advanced),
+        emit(FIXTURE, Build::default()),
         EXPECTED,
         "the emitter and fixtures/measurements_expected.rs have drifted apart; \
          regenerate it with `cargo run -p nikaia --example dump -- \
@@ -116,7 +116,7 @@ fn the_emitted_rust_is_the_file_this_test_compiles() {
 
 #[test]
 fn a_frame_becomes_the_backend_attribute() {
-    let emitted = emit(FIXTURE, Profile::Advanced);
+    let emitted = emit(FIXTURE, Build::default());
     // ADR-009 D1: keyed, and the boundary keeps its escape - the backend is
     // handed the same "\n" the source wrote.
     assert!(
@@ -127,7 +127,7 @@ fn a_frame_becomes_the_backend_attribute() {
 
 #[test]
 fn a_view_takes_the_input_lifetime_and_the_struct_with_it() {
-    let emitted = emit(FIXTURE, Profile::Advanced);
+    let emitted = emit(FIXTURE, Build::default());
     // ADR-008: `&str` is a view marker. The lifetime is the emitter's, never
     // the source's - and a struct that holds one is tied to the input too.
     assert!(emitted.contains("rule NAME -> &'a str ="), "{emitted}");
@@ -147,7 +147,7 @@ fn a_view_takes_the_input_lifetime_and_the_struct_with_it() {
 
 #[test]
 fn a_bare_par_fold_gets_the_binding_its_rule_needs() {
-    let emitted = emit(FIXTURE, Profile::Advanced);
+    let emitted = emit(FIXTURE, Build::default());
     // A `par_fold` is the whole body of its rule (ADR-009 D2), so there is
     // nothing for an action to add - and the emitter supplies the one the
     // backend wants rather than making the user write it.
@@ -172,7 +172,7 @@ fn arithmetic() {
     let mixed = a + b < c && d
 }
 "#;
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
 
     assert!(emitted.contains("let flat = a * 10 + b;"), "{emitted}");
     assert!(emitted.contains("let grouped = (a + b) * c;"), "{emitted}");
@@ -197,31 +197,46 @@ fn summarize() {
 "#;
 
 #[test]
-fn the_profile_chooses_the_parallelism_and_nothing_else() {
-    // ADR-009: parallelism is not a dialect. The same source compiles under
-    // both profiles; under Lite the driver is told not to cut, which is what
-    // "degrades to a sequential fold" means in code.
-    let advanced = emit(WITH_DSL, Profile::Advanced);
-    let lite = emit(WITH_DSL, Profile::Lite);
+fn user_parallelism_chooses_the_parallelism_and_nothing_else() {
+    // ADR-009 D2 and ADR-037 D2: parallelism is not a dialect. The same source
+    // compiles at either setting; at `0` the driver is told not to cut, which
+    // is what "degrades to a sequential fold" means in code.
+    let parallel = emit(WITH_DSL, Build::parallel());
+    let sequential = emit(WITH_DSL, Build::default());
 
     assert!(
-        advanced.contains(
+        parallel.contains(
             "Measurements::parse_file_pieces(_source, &ParseContext::<()>::default(), Parallelism::Auto)"
         ),
-        "{advanced}"
+        "{parallel}"
     );
     assert!(
-        lite.contains(
+        sequential.contains(
             "Measurements::parse_file_pieces(_source, &ParseContext::<()>::default(), Parallelism::Off)"
         ),
-        "{lite}"
+        "{sequential}"
     );
 
     // Only the executor differs.
     assert_eq!(
-        advanced.replace("Parallelism::Auto", "Parallelism::Off"),
-        lite
+        parallel.replace("Parallelism::Auto", "Parallelism::Off"),
+        sequential
     );
+}
+
+/// ADR-037 D2: a target without threads pins the driver to `Off` however
+/// `user_parallelism` was set - a switch bounds what may run at once, it
+/// cannot conjure a thread the machine does not have.
+#[test]
+fn a_target_without_threads_pins_the_driver_sequential() {
+    let asked_for_parallel = Build {
+        target: nikaia::emit::Target::Wasm32Unknown,
+        user_parallelism: nikaia::emit::UserParallelism::Yes,
+    };
+    let emitted = emit(WITH_DSL, asked_for_parallel);
+
+    assert!(emitted.contains("Parallelism::Off"), "{emitted}");
+    assert!(!emitted.contains("Parallelism::Auto"), "{emitted}");
 }
 
 #[test]
@@ -229,7 +244,7 @@ fn a_sequential_entry_rule_gets_no_piece_driver() {
     // Without a `par_fold` there is nothing to cut and nothing to merge, so the
     // lowering drives the rule's own parser over the whole input (ADR-011 D4).
     let source = format!("{DIGITS}\n\nfn read() {{\n    let p = dsl Digits from data\n}}\n");
-    let emitted = emit(&source, Profile::Advanced);
+    let emitted = emit(&source, Build::default());
 
     assert!(!emitted.contains("_pieces("), "{emitted}");
     assert!(
@@ -262,7 +277,7 @@ fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
         "{DIGITS}\n\nfn read() throws {{\n    \
          let p = dsl Digits from data catch {{\n        return\n    }}\n}}\n"
     );
-    let emitted = emit(&source, Profile::Advanced);
+    let emitted = emit(&source, Build::default());
 
     assert!(
         emitted.contains("Ok(value) => value"),
@@ -280,7 +295,7 @@ fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
 /// expected and never *where* (ADR-009 D3, `docs/error-corpus.md`).
 #[test]
 fn a_rejected_parse_is_rendered_against_the_input_it_parsed() {
-    let emitted = emit(WITH_DSL, Profile::Advanced);
+    let emitted = emit(WITH_DSL, Build::default());
     assert!(
         emitted.contains(".map_err(|error| error.render(_source))"),
         "{emitted}"
@@ -300,7 +315,7 @@ fn a_rule_label_is_lowered_where_the_backend_expects_it() {
         "      | \"(\" e:atom \")\" -> { e }\n",
         "}\n"
     );
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(
         emitted.contains("rule atom -> i32 # \"expression\" ="),
         "{emitted}"
@@ -311,7 +326,7 @@ fn a_rule_label_is_lowered_where_the_backend_expects_it() {
 #[test]
 fn a_rule_without_a_label_gains_nothing() {
     let source = "grammar G {\n    rule atom -> i32 = n:digit1 -> { 1 }\n}\n";
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(emitted.contains("rule atom -> i32 ="), "{emitted}");
     assert!(!emitted.contains('#'), "{emitted}");
 }
@@ -329,7 +344,7 @@ fn a_tuple_is_a_type_a_value_and_a_field_access() {
         "    return (p.0, p.1)\n",
         "}\n"
     );
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(emitted.contains("fn pair() -> (i64, i64)"), "{emitted}");
     assert!(emitted.contains("let p = (1, 2);"), "{emitted}");
     // A trailing `return` is the block's value, so it comes out unwrapped.
@@ -347,7 +362,7 @@ fn a_tuple_of_views_ties_its_struct_to_the_input() {
         "    both: (&str, i64),\n",
         "}\n"
     );
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(
         emitted.contains("pub struct Pair<'a>") && emitted.contains("(&'a str, i64)"),
         "{emitted}"
@@ -359,7 +374,7 @@ fn a_tuple_of_views_ties_its_struct_to_the_input() {
 #[test]
 fn parentheses_without_a_comma_are_still_grouping() {
     let source = "fn f() -> i64 {\n    return (1 + 2) * 3\n}\n";
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(emitted.contains("(1 + 2) * 3"), "{emitted}");
     assert!(!emitted.contains("((1 + 2))"), "{emitted}");
 }
@@ -372,7 +387,7 @@ fn parentheses_without_a_comma_are_still_grouping() {
 fn an_implicit_lambda_sees_the_names_in_a_string_hole() {
     let source =
         "fn f(xs: List) -> String {\n    return xs.map fn { f\"{a.0}={a.1}\" }.join(\",\")\n}\n";
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(emitted.contains("map(|a|"), "{emitted}");
     assert!(!emitted.contains("map(||"), "{emitted}");
 }
@@ -387,7 +402,7 @@ fn an_enum_lowers_its_three_variant_shapes() {
         "    Move { x: i32, y: i32 },\n",
         "}\n"
     );
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(emitted.contains("pub enum Message {"), "{emitted}");
     assert!(emitted.contains("    Quit,"), "{emitted}");
     assert!(emitted.contains("    Write(String),"), "{emitted}");
@@ -402,7 +417,7 @@ fn an_enum_lowers_its_three_variant_shapes() {
 #[test]
 fn an_enum_that_carries_a_view_takes_the_input_lifetime() {
     let source = "enum Token {\n    End,\n    Word(&str),\n}\n";
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(emitted.contains("enum Token<'a>"), "{emitted}");
     assert!(emitted.contains("Word(&'a str)"), "{emitted}");
 }
@@ -423,7 +438,7 @@ fn a_match_lowers_every_pattern_shape() {
         "    }\n",
         "}\n"
     );
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     for arm in [
         "Message::Quit => 0,",
         "Message::Write(text) => 1,",
@@ -441,7 +456,7 @@ fn a_match_lowers_every_pattern_shape() {
 #[test]
 fn a_match_value_is_not_read_as_a_struct_literal() {
     let source = "fn f(v: i32) -> i32 {\n    return match v {\n        _ => 1,\n    }\n}\n";
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
     assert!(emitted.contains("match v {"), "{emitted}");
 }
 
@@ -536,7 +551,7 @@ fn the_grammar_half_of_the_1brc_example_lowers() {
     // ADR-011 §3: the file as a whole does not compile yet - its `impl` blocks,
     // `throws`/`catch` and string interpolation are not lowered. Its grammar
     // does, and that is the half this work was about.
-    let emitted = emit(&one_brc_grammar_half(), Profile::Advanced);
+    let emitted = emit(&one_brc_grammar_half(), Build::default());
 
     assert!(
         emitted.contains(r#"#[frame(boundary = "\n")]"#),
@@ -571,7 +586,7 @@ grammar Ids {
     pub rule entry -> i32 = n:N -> { n }
 }
 "#;
-    let emitted = emit(source, Profile::Advanced);
+    let emitted = emit(source, Build::default());
 
     assert!(emitted.contains("n:dec<i32>(digit{1,2})"), "{emitted}");
     // A built-in without type arguments keeps its call exactly as written.

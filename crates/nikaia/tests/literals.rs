@@ -6,12 +6,12 @@
 //! without a newline attached to every piece.
 
 use nikaia::ast::{Expr, Item, MatchPattern, Stmt};
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 fn emit(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit_program(&parsed, Profile::Advanced)
+    emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
 }

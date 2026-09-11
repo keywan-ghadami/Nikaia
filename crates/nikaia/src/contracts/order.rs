@@ -130,12 +130,17 @@ fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Ac
     // performed. That case was not in D5 when it was written; it is the first
     // thing building this found, and it is recorded in ADR-034.
     let value = match value {
-        Expr::TryCatch { expr, handler } if !diverts(&handler.stmts) => &**expr,
-        Expr::TryCatch { .. } => return Accounted::DivertingHandler,
+        // A handler that can `return` makes the *next* statement conditional
+        // on this one having succeeded, and ADR-033 D5 forbids starting a
+        // conditional operation early.
+        Expr::TryCatch { .. } if matches!(value, Expr::TryCatch { handler, .. } if diverts(&handler.stmts)) => {
+            return Accounted::DivertingHandler
+        }
+        Expr::TryCatch { expr, .. } => &**expr,
         other => other,
     };
 
-    let Expr::Call { func, args, config } = value else {
+    let Expr::Call { args, config, .. } = value else {
         return Accounted::NotAPlainCall;
     };
     // Kap 5.1's options are values like any other and would have to be walked
@@ -144,14 +149,8 @@ fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Ac
         return Accounted::NotAPlainCall;
     }
 
-    let callee = match &**func {
-        Expr::Variable(name) => parsed.text(*name).to_string(),
-        Expr::Path(segments) => segments
-            .iter()
-            .map(|s| parsed.text(*s))
-            .collect::<Vec<_>>()
-            .join("::"),
-        _ => return Accounted::NotAPlainCall,
+    let Some(callee) = callee_of(parsed, value) else {
+        return Accounted::NotAPlainCall;
     };
 
     // The contract has to be found *and* has to describe its effects. An entry
@@ -317,6 +316,26 @@ pub fn may_overlap(earlier: &Operation, later: &Operation) -> bool {
 ///
 /// `LitInterpolated` is deliberately **not** one: `f"{path}.log"` has a name in
 /// it, and a name is the thing this asks about.
+/// The ledger key of the call an expression performs, where it performs one.
+///
+/// One place, so a refusal names the same call the happy path would have.
+fn callee_of(parsed: &Parsed, expr: &Expr) -> Option<String> {
+    let Expr::Call { func, .. } = expr else {
+        return None;
+    };
+    match &**func {
+        Expr::Variable(name) => Some(parsed.text(*name).to_string()),
+        Expr::Path(segments) => Some(
+            segments
+                .iter()
+                .map(|s| parsed.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+        ),
+        _ => None,
+    }
+}
+
 fn is_literal(expr: &Expr) -> bool {
     matches!(
         expr,

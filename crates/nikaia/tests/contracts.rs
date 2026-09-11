@@ -778,18 +778,18 @@ fn a_source_is_found_inside_a_nested_block() {
 /// (`crates/nikaia/build.rs`).
 #[test]
 fn the_provenance_chooses_the_map() {
-    use nikaia::emit::{emit_program_with_trust, Profile};
+    use nikaia::emit::{emit_program_with_trust, Build};
 
     let source = "fn main() { let m: HashMap[&str, i64] = HashMap::new() }";
     let parsed = parse_to_ast(source).expect("parses");
 
-    let trusted = emit_program_with_trust(&parsed, Profile::Advanced, Provenance::Trusted)
+    let trusted = emit_program_with_trust(&parsed, Build::default(), Provenance::Trusted)
         .expect("lowers")
         .rust;
     assert!(trusted.contains("TrustedMap<&str, i64>"), "{trusted}");
     assert!(trusted.contains("TrustedMap::default()"), "{trusted}");
 
-    let untrusted = emit_program_with_trust(&parsed, Profile::Advanced, Provenance::Untrusted)
+    let untrusted = emit_program_with_trust(&parsed, Build::default(), Provenance::Untrusted)
         .expect("lowers")
         .rust;
     assert!(untrusted.contains("HashMap<&str, i64>"), "{untrusted}");

@@ -16,7 +16,7 @@ Not over anyone. What the sentence denies is something else: that good and fast 
 and that being decent to the person writing the code has to be paid for at runtime. Here it is
 the other way round. Because the language never makes you write `Arc`, lifetimes or lock orders,
 those decisions belong to the compiler — and only because they belong to it can it choose `Rc`
-under Lite and `Arc` under Advanced, order the locks, and infer borrow contracts across a whole
+where nothing of yours runs at once and `Arc` where it does, order the locks, and infer borrow contracts across a whole
 program. A stricter language would have to take your word for it. Good is not the price of fast
 here; it is the reason for it.
 
@@ -44,11 +44,11 @@ Nikaia is the technical council. It ends the split with a **Unified Core Archite
 ## 3. The Agora and the Swarm
 Nikaia needs two images, and only one of them is a place.
 
-1.  **The Marketplace (Agora) — Nikaia Lite:**
+1.  **The Marketplace (Agora) — nothing of yours running at once:**
     One square, in constant movement. Trade, exchange, flow. Nobody stands still waiting for
     anybody else: everything is "non-blocking".
     *Optimised for:* I/O density, web services, rapid prototyping.
-2.  **The Swarm — Nikaia Advanced:**
+2.  **The Swarm — every core busy:**
     Not a place, and not a fortress. Ask what concurrency actually looks like and the answer is
     a swarm: no centre, no commander, no walls to defend. Every worker takes what is in front of
     it, and when it runs out it takes work from a neighbour. The order comes from the rules

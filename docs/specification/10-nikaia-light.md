@@ -1,5 +1,5 @@
 # Nikaia Language Specification
-**Part I: The Language Core & Nikaia Lite**
+**Part I: The Language Core**
 **Version:** 0.0.7 (Draft)
 **Date:** September 5, 2026
 
@@ -16,20 +16,43 @@ In many languages, developers must choose between:
 
 Nikaia aims to combine the readability of a scripting language with the performance and safety of a systems language. The developer writes simple code that focuses on the logic (the "Happy Path"). The **Compiler** (the program that translates your code into machine-readable instructions) automatically handles the complex technical details in the background.
 
-### 1.2. One Language, Two Profiles
-Nikaia uses a unique concept called **"Unified Core Architecture."** The same code can be compiled in two different ways, depending on what the software needs to do. These modes are called **Profiles**.
+### 1.2. One Language, Two Switches
+There is one Nikaia. The same source compiles for every machine and at every
+setting, and prints the same bytes. What you choose when you build is **how**,
+never **what**, and there are exactly two things to choose.
 
-#### A. Nikaia Lite (The Default)
-* **Purpose:** Building network services (like web servers) or programs that move files and data.
-* **Behavior:** It uses a **Single-Threaded** architecture. This means the program performs tasks one after another extremely quickly, without the complexity of managing multiple parallel processes manually.
-* **Safety:** Because it runs on a single thread, **Race Conditions** (errors where two processes try to modify the same data at the same time) are impossible by design.
+#### `target` — which machine
+A 64-core server has threads and unwinds a stack when something goes wrong;
+WebAssembly has neither. So the machine decides what the standard library can
+offer — whether a file can be memory-mapped at all — and what happens on a
+`panic`: an orderly unwind where the machine unwinds, an immediate trap where it
+traps.
 
-#### B. Nikaia Advanced (formerly "Standard")
-* **Purpose:** Heavy computations (like image processing, scientific calculations, or game engines).
-* **Behavior:** It uses a **Multi-Threaded** architecture. The program splits tasks across all available processor cores to run them simultaneously.
-* **Safety:** The compiler enforces strict mathematical rules to ensure data is not corrupted when accessed by multiple threads.
+The default is `x86_64-linux`.
 
-*Note: This document (Part I) focuses on the core language features available in **Nikaia Lite**.*
+#### `user_parallelism` — may *your* code run concurrently at all?
+* `no` (the default) — nothing you wrote ever runs concurrently. A web service
+  that wants one event loop is built this way, and **data races are
+  impossible**: two pieces of your code are never in flight together, so there
+  is nothing to collide.
+* `yes` — it may. This is what an image filter or a scientific calculation
+  wants, and the compiler enforces the rules that keep shared data intact.
+
+It is a permission and not a count. *How many* threads or cores serve a `yes`
+belongs to the machine and the moment, so the runtime decides it; a number here
+would be a promise the language cannot keep on hardware it has not seen.
+
+**The word *your* is the whole of it.** This bounds your program, not the
+compiler. Reading a file may still validate its text on four cores at
+`user_parallelism = no`, and the runtime may still hand a blocking call to a
+helper thread — neither runs code you wrote, and neither changes a single byte
+of what your program prints. The rule is:
+
+> The compiler may use as many threads as the machine has, for as long as no
+> code **you** wrote runs concurrently.
+
+Both switches live in `nikaia.toml`, and `--target` and `--user-parallelism`
+override them for a single build ([ADR-037](adr/adr-037.md)).
 
 ---
 
@@ -495,17 +518,15 @@ fn init {
 ```
 
 ### 5.2. There Is One Lambda Form
-Earlier drafts had a second one, `fn: expression`, for single-line logic. It is **removed**
-([ADR-022](adr/adr-022.md)), and 5.3 is the whole of what a lambda looks like.
+A lambda is written `fn { … }`, and 5.3 is the whole of it. There is no second, shorter form for
+single-line bodies.
 
-It was four characters shorter than the block and cost three things. It did not grow: a body that
-gained a second line had to change *form* rather than gain a line, which the flagship example had
-already had to do. It was a second way to write the same thing, so every reader had to know when
-to use which. And its body ran to the end of the expression, so a `.method()` chained after it
-landed **inside** the lambda — silently, with no error and a different program.
-
-Writing it today is an error that says so, because the form was in this specification and someone
-will have it in their fingers.
+The short form `fn: expression` is **not** part of the language. It saved four characters and its
+body ran to the end of the expression, so a `.method()` chained after it landed *inside* the
+lambda — silently, and a different program. Writing it is a compile error that names the block
+form, rather than a parse failure, because the form appeared in earlier versions of this
+specification and readers will have it in their fingers. Full reasoning:
+[ADR-022](adr/adr-022.md).
 
 ### 5.3. Lambdas (`fn { ... }`)
 When logic requires multiple steps, use a Block Lambda. You can choose between implicit arguments (for speed) or explicit arguments (for clarity).
@@ -560,7 +581,7 @@ users.map fn(user) {
 }
 ```
 ### 5.4. Contextual Capture (The Lifecycle Rule)
-Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is consistent across both Lite (Event Loop) and Advanced (Multi-Threaded) profiles.
+Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at either `user_parallelism`.
 
 #### A. Immediate Context (`@immediate`)
 If a function guarantees that the callback will be executed and finished before the function itself returns, it is an **Immediate Context**.
@@ -620,7 +641,9 @@ Memory management is usually either manual (hard) or automatic via Garbage Colle
 When a variable goes out of **Scope** (usually at the end of the block `{}` where it was created), Nikaia automatically cleans up the memory. You do not need to free memory manually.
 
 ### 6.2. Unified Types
-To make coding easier, Nikaia provides smart types that handle memory logic for you, adapting to whether you are in Lite or Advanced mode.
+To make coding easier, Nikaia provides smart types that handle memory logic for you.
+
+You write `Shared[T]` yourself — it is not inferred, because sharing changes *when* a value is cleaned up (6.4), and that is something your program can observe. What the compiler decides is the machinery underneath: at `user_parallelism = no` a plain reference count, above it an atomic one ([ADR-037](adr/adr-037.md) D3).
 
 * **`Shared[T]`**: Allows data to be owned by multiple parts of the program. The memory is only cleaned up when the *last* owner is finished.
 * **`Locked[T]`**: Allows data inside a `Shared` container to be modified (mutated). It acts as a gatekeeper to ensure safety.
@@ -701,7 +724,7 @@ Two refinements:
 
 **One restriction, told straight:** a `sync` function can never pause — so a resource with a pausable `cleanup` must not go out of scope inside one. The compiler catches this (`NK2602`) and names the ways out: return the resource to your caller, close it before the `sync` part, or use a non-buffering variant.
 
-**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and in the **Lite profile, a panic aborts the process immediately, so no destructors run at all** (Part III, Appendix A). What *does* still run on every panic is the **Panic Hook** (7.2) — your registered last-moment handler for dumps and crash reports. Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
+**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and **on a target that traps rather than unwinds, a panic ends the process immediately, so no destructors run at all** (Part III, Appendix A). What *does* still run on every panic is the **Panic Hook** (7.2) — your registered last-moment handler for dumps and crash reports. Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
 
 > **Design Note: Why no `defer`?**
 > Unlike languages like Go or Zig, Nikaia does not need a `defer` keyword.
@@ -937,12 +960,12 @@ beneath it where another error joined on the way — a cleanup that failed while
 unwinding is attached to the original as a *secondary* error rather than replacing it (6.4). The
 site costs nothing at run time: the compiler knew it and wrote it into the binary as text.
 
-**A stack trace is not among them, and that is measured rather than assumed.** Capturing one costs
-about **28 300 instructions per error** — sixteen times the whole of a program that raises twenty
-thousand of them ([ADR-036](adr/adr-036.md)). Errors here are the *expected* kind, so that is a bill
-a program pays per rejected line, for a value almost nothing reads. `NIKAIA_TRACE=1` asks for one;
-without it there is none, and the long form **says so** rather than leaving you to wonder whether
-one was lost.
+**A stack trace is not among them.** Errors here are the *expected* kind — a missing file, a line
+that does not parse — and capturing a trace for each one costs far more than raising it, so a
+program would pay that per rejected line for a value almost nothing reads. `NIKAIA_TRACE=1` asks
+for one; without it there is none, and the long form **says so** rather than leaving you to wonder
+whether one was lost. What that costs, and why the cost decided it, is
+[ADR-036](adr/adr-036.md).
 
 **Printing it: short is the default.**
 
@@ -969,10 +992,10 @@ stream ([ADR-025](adr/adr-025.md), `NK2701`). In both the enclosing function gai
 the compiler says which resource or which loop it was.
 
 ### 7.2. Unrecoverable Errors (`panic`)
-These are logical bugs, like trying to access the 10th item in a list of 5 items. Nikaia stops the execution to prevent incorrect behavior. In **Nikaia Lite**, this aborts the process safely.
+These are logical bugs, like trying to access the 10th item in a list of 5 items. Nikaia stops the execution to prevent incorrect behavior. Where the machine cannot unwind, this ends the process safely.
 
 **The Panic Hook (`std::panic::on_panic`)**
-"Abort" does not mean *no* code runs anymore — it means no normal cleanup runs. Before the process dies (Lite) or the crashed task is isolated (Advanced), Nikaia calls one last, registered function: the **Panic Hook**. This is the place for a crash dump, a crash report, or flushing a diagnostics log — so a crash in production never has to be a mystery.
+"Abort" does not mean *no* code runs anymore — it means no normal cleanup runs. Before the process dies, or the crashed task is isolated where the program survives, Nikaia calls one last, registered function: the **Panic Hook**. This is the place for a crash dump, a crash report, or flushing a diagnostics log — so a crash in production never has to be a mystery.
 
 ```nika
 use std::panic
@@ -992,15 +1015,15 @@ fn main() {
 
 The rules, told straight:
 * **Global, application-only.** Exactly one hook per program, set by the application — a library calling `on_panic` is a compile error (`NK2604`). A crash-reporting library instead exports a function that your hook calls.
-* **It runs on every panic, in both profiles** — in Lite right before the abort (before the trap on WASM), in Advanced before the task is poisoned. Supervisors (Part II, 12.8) receive their crash information from the same `info`.
-* **Blocking is allowed here — briefly.** In Lite the process is ending anyway. In Advanced the program keeps running, so keep the hook short and hand heavy reporting to something you started earlier.
+* **It runs on every panic, on every target** — right before the trap where the machine traps, before the task is poisoned where it unwinds. Supervisors (Part II, 12.8) receive their crash information from the same `info`.
+* **Blocking is allowed here — briefly.** Where the process is ending anyway it costs nothing. Where the program keeps running, keep the hook short and hand heavy reporting to something you started earlier.
 * **Diagnosis, not cleanup.** Do not try to flush buffered files or finish transactions from the hook — those objects may be broken in exactly the way that caused the panic. That is why panics skip destructors, and the hook does not reopen that door. If the hook itself panics, the process aborts immediately.
 
 ---
 
 ## Chapter 8: Concurrency (Doing things at the same time)
 
-Even in **Nikaia Lite** (Single-Threaded), you can perform multiple tasks concurrently, such as waiting for a download while responding to user input. This is done using **Asynchronous Programming**.
+Even at `user_parallelism = no`, you can perform multiple tasks concurrently, such as waiting for a download while responding to user input. This is done using **Asynchronous Programming**.
 
 ### 8.1. Async by Default
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
@@ -1009,7 +1032,12 @@ Within one task the order is exactly the order you wrote: `let a = fs::read("x")
 
 ### 8.1.1. Order Is Kept Where It Can Be Seen
 
-> **Note:** this section describes a decision ([ADR-033](adr/adr-033.md)), not current behaviour. Nothing of it is implemented. It is written down here because it changes what a program *means*, and a decision of that kind belongs in the specification before it belongs in the compiler.
+> **Status.** This section is specified ahead of the compiler, because it changes what a program
+> *means* and a decision of that kind belongs here before it belongs in the implementation
+> ([ADR-033](adr/adr-033.md), still marked provisional). Built today: two adjacent statements whose
+> calls reach different resources do overlap, `--overlaps` explains every pair, and
+> `--ordering strict` restores the written order everywhere. Not built: `seq { … }`, the
+> `ordering` key in `nikaia.toml`, and overlapping anything wider than a `let` of a single call.
 
 Two lines that never meet have no reason to wait for one another:
 
@@ -1106,7 +1134,7 @@ error[NK2101]: this background task takes ownership of `message`
 ```
 
 ### 8.4. The Runtime Sidecar Model
-While Nikaia Lite enforces a strict single-threaded model for user logic ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.
+While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.
 
 * **Separation of Concerns:** User code runs exclusively on the main thread (Event Loop). Heavy operations (like SQLite queries) are offloaded to a managed Runtime Sidecar (a background thread on Native, or a Web Worker on WASM).
 * **Safety Guarantee:** Data exchange occurs via strict message passing (ownership transfer). Since user code never accesses the Sidecar memory directly, **Race Conditions** remain impossible.

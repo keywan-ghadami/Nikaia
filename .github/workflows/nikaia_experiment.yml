@@ -38,6 +38,12 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      # A decision is only citable if its number is stable, so a dangling
+      # `ADR-023 D7` is as much a defect as a dangling link. 700+ citations
+      # live in the compiler's own comments and tests.
+      - name: Check ADR citations resolve
+        run: python3 scripts/check-adr-refs.py
+
       - name: Build
         run: cargo build --workspace --release
 

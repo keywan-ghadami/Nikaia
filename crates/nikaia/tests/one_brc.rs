@@ -12,7 +12,7 @@ mod common;
 use std::path::PathBuf;
 use std::process::Command;
 
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -26,7 +26,7 @@ fn the_1brc_example_compiles_and_prints_what_the_benchmark_asks_for() {
 
     // 1. Lower it.
     let parsed = parse_to_ast(&source).expect("the example parses");
-    let lowered = emit_program(&parsed, Profile::Advanced).expect("the example lowers");
+    let lowered = emit_program(&parsed, Build::default()).expect("the example lowers");
 
     let dir = common::scratch_dir("1brc");
     let rust = dir.join("brc.rs");

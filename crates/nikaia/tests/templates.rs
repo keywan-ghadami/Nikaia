@@ -5,12 +5,12 @@
 //! type, and a hole only where escaping is enough.
 
 use nikaia::emit::template::{self, Position, Segment};
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 fn emit(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit_program(&parsed, Profile::Advanced)
+    emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
 }
@@ -19,7 +19,7 @@ fn refuse(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     format!(
         "{:#}",
-        emit_program(&parsed, Profile::Advanced).expect_err("the template is refused")
+        emit_program(&parsed, Build::default()).expect_err("the template is refused")
     )
 }
 

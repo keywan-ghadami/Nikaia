@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         let source = std::fs::read_to_string(&path)?;
         let parsed = nikaia::parser::parse_to_ast(&source)
             .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
-        let lowered = nikaia::emit::emit_program(&parsed, nikaia::emit::Profile::Advanced)
+        let lowered = nikaia::emit::emit_program(&parsed, nikaia::emit::Build::default())
             .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
 
         let name = path

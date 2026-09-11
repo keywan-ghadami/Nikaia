@@ -12,12 +12,16 @@ mod common;
 
 use std::path::PathBuf;
 
-use nikaia::emit::{self, Ordering, Profile};
+use nikaia::emit::{self, Build, Ordering};
 use nikaia::parser::parse_to_ast;
 
+/// Overlapping is only reachable with parallelism asked for: at
+/// `user_parallelism = no` nothing the user wrote may run concurrently, and
+/// the two closures `task::both` takes are code the user wrote (ADR-037 D2).
+/// So these tests are about `yes`, and the one below checks the `no` side.
 fn lowered(source: &str, ordering: Ordering) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit::emit_program_ordered(&parsed, Profile::Advanced, ordering)
+    emit::emit_program_ordered(&parsed, Build::parallel(), ordering)
         .expect("the source lowers")
         .rust
 }
@@ -44,34 +48,34 @@ fn two_reads_of_different_files_overlap() {
     );
 }
 
-/// The Lite profile has no threads, so it does not get the overlap either.
+/// At `user_parallelism = no` there is nothing to overlap with.
 ///
-/// Part I 11.6 calls Lite *"a strict single-threaded model for user logic"*,
-/// and Part III 19.4 promises a `wasm32-unknown` build with no OS-level
-/// mutexes or atomics - a target where `std::thread::scope` does not even
-/// link. `--ordering effects` is a question about the program; whether a
-/// thread exists to answer it with is a question about the build, and Lite
-/// answers that one no. So this degrades exactly as `par_fold` degrades to a
-/// sequential `fold` under Lite (ADR-009), rather than quietly contradicting
-/// the profile in the same file that emits `Parallelism::Off`.
+/// Part I 1.2 promises that nothing **you** wrote ever runs concurrently at
+/// `no`, and Part III 15.3 promises a `wasm32-unknown` build with no OS-level
+/// mutexes or atomics - a target where `rayon::join` does not even link.
+/// `--ordering effects` is a question about the program; whether a vehicle
+/// exists to answer it with is a question about the build, and `no` answers
+/// that one no. So this degrades exactly as `par_fold` degrades to a
+/// sequential `fold` (ADR-009), rather than quietly contradicting the switch
+/// in the same file that emits `Parallelism::Off`.
 #[test]
-fn the_lite_profile_never_spawns_a_thread() {
+fn no_user_parallelism_never_spawns_a_thread() {
     let parsed = parse_to_ast(TWO_READS).expect("the source parses");
-    let lite = emit::emit_program_ordered(&parsed, Profile::Lite, Ordering::Effects)
+    let sequential = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Effects)
         .expect("the source lowers")
         .rust;
     assert!(
-        !lite.contains("task::both"),
-        "Lite overlapped under `--ordering effects`:\n{lite}"
+        !sequential.contains("task::both"),
+        "`user_parallelism = no` overlapped under `--ordering effects`:\n{sequential}"
     );
 
     // …and it is the sequential program, not merely a different one.
-    let strict = emit::emit_program_ordered(&parsed, Profile::Lite, Ordering::Strict)
+    let strict = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Strict)
         .expect("the source lowers")
         .rust;
-    assert_eq!(lite, strict, "Lite's two orderings differ");
+    assert_eq!(sequential, strict, "the two orderings differ at `no`");
 
-    // The guard has to be the profile and not the analysis: Advanced still
+    // The guard has to be the switch and not the analysis: `yes` still
     // overlaps the same program, or this test would pass for the wrong reason.
     assert!(overlaps(TWO_READS));
 }
@@ -263,8 +267,8 @@ fn the_corpus_lowers_under_both_orderings() {
             let Ok(parsed) = parse_to_ast(&source) else {
                 continue;
             };
-            let one = emit::emit_program_ordered(&parsed, Profile::Advanced, Ordering::Effects);
-            let other = emit::emit_program_ordered(&parsed, Profile::Advanced, Ordering::Strict);
+            let one = emit::emit_program_ordered(&parsed, Build::parallel(), Ordering::Effects);
+            let other = emit::emit_program_ordered(&parsed, Build::parallel(), Ordering::Strict);
             match (one, other) {
                 (Ok(one), Ok(other)) => {
                     seen += 1;
@@ -295,6 +299,10 @@ fn the_corpus_lowers_under_both_orderings() {
 
 // --- why a pair did not overlap (ADR-033 D9) ---------------------------------
 
+/// The report answers "may these two overlap", which is a question about the
+/// program alone - whether a vehicle then exists to overlap them with is a
+/// question about the build, and the CLI says so separately (ADR-033 §8.2b).
+/// So no build setting reaches this.
 fn report(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     let library = nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger");

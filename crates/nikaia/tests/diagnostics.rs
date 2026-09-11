@@ -9,7 +9,7 @@
 mod common;
 
 use nikaia::diagnostics::{self, Diagnostic};
-use nikaia::emit::{emit_program, Lowered, Profile};
+use nikaia::emit::{emit_program, Build, Lowered};
 use nikaia::parser::parse_to_ast;
 
 const BROKEN: &str = include_str!("fixtures/broken_frame.nika");
@@ -19,7 +19,7 @@ const GOOD: &str = include_str!("fixtures/digits.nika");
 
 fn lower(source: &str) -> Lowered {
     let parsed = parse_to_ast(source).expect("the fixture parses");
-    emit_program(&parsed, Profile::Advanced).expect("the fixture lowers")
+    emit_program(&parsed, Build::default()).expect("the fixture lowers")
 }
 
 /// Compile emitted Rust and return rustc's JSON diagnostics.
