@@ -34,12 +34,18 @@ When you create a new project (`nikaia new my_project`), the following structure
 ### 13.3. Manifest Configuration (`nikaia.toml`)
 The manifest defines project metadata and the two build switches of Part I 1.2.
 
+They live in `[build]`, and a flag overrides any of them for a single build —
+which is what a benchmark and a bug hunt need, while the committed value is the
+one a reviewer sees (ADR-037 D5). A key `[build]` does not know is a typo and
+fails the build rather than being ignored.
+
 ```toml
 [package]
 name = "hyper-core"
 version = "0.1.0"
 authors = ["dev@nikaia.org"]
 
+[build]
 # Which machine to build for (ADR-037 D1). `wasm32-unknown` has no threads
 # and traps rather than unwinding, which is what decides the panic strategy
 # and what `std` can offer.
@@ -69,7 +75,6 @@ cleanup-deadline = "30s"
 #   "strict"            - the written order, always. The analysis is not applied.
 # Not an aid to be removed later: it is the escape for a project that does not
 # want this, and the way to rule the analysis out when chasing a bug in the field.
-# **Not implemented** - the key is specified, nothing reads it yet.
 ordering = "effects"
 
 [dependencies]
@@ -78,7 +83,8 @@ http-server = "1.2"
 regex = { type = "rust", version = "1.5" }
 
 # Code generation, per target. These are choices about output size and speed,
-# and they change nothing a program means.
+# and they change nothing a program means - which is why they are tables under
+# `[build]` rather than switches in it.
 [build.wasm32-unknown]
 opt-level = "z"     # Optimize for binary size
 

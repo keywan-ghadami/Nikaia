@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Built (0.0.9 - ADR-037 D5 and ADR-033 D8: the switches live in the manifest)
+
+- **`nikaia.toml` carries the build switches, and a flag overrides them for one build.** `[build] target`, `[build] user-parallelism` and `[build] ordering` were specified and unread - the choice lived only on the command line, which makes a project's setting something every invocation has to remember. They are properties of a project, and a committed value is one a reviewer sees. `--target`, `--user-parallelism` and `--ordering` override for a single build, which is what a benchmark and a bug hunt need.
+- **A key `[build]` does not know fails the build and names itself.** The manifest spells it `user-parallelism` and the flag `--user-parallelism`, so an underscore is the mistake a person actually makes - and a silently ignored key leaves the build at a default its author believed they had changed. `cleanup-deadline` is accepted without being honoured, because a manifest that follows the specification must not be refused by a compiler that has not caught up with it. `[build.x86_64-linux]` and `[build.wasm32-unknown]` are codegen tables rather than switches and are skipped, not rejected.
+- **A value the switch cannot use is refused by the switch.** `user-parallelism = 4` in the manifest gets the same answer as `--user-parallelism 4` on the CLI - *how many* threads serve a `yes` is the runtime's to decide - rather than a type error about TOML that explains nothing.
+- **The switches are resolved once per run**, before anything is read, and threaded from there. Three places used to re-derive them from the arguments; two settings resolved in two places are two settings waiting to disagree, and one of them decides the cache key.
+- **Part III 13.3's example manifest was not valid for its own purpose.** The switches sat between `[package]` and `[dependencies]`, which by TOML's rules makes them package metadata. They are under `[build]` now, where `[build.<target>]` already lived.
+
 ### Measured (0.0.9 - ADR-033 §8: what the overlap actually bought)
 
 - **Nothing in this repository overlaps, and the reason is the analysis, not the code.** `--overlaps` weighs **127 adjacent statement pairs across `examples/` and refuses all 127**; the emitted Rust is byte-identical under `--ordering effects` and `--ordering strict` for all ten files the bootstrap compiler can lower, and not one `std::thread::scope` is produced. But **101 of the 127 fall out before any `touches` set is consulted**, on "one of them is not a `let` of a single call" - the analysis only looks at a shape almost nothing is written in. 12 are ADR-034's conditional handler. Only 14 are the ledger's fail-closed polarity doing its job. A zero produced that way measures the analysis, not the corpus.

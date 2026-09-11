@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use nikaia::contracts::{self, sync, Ledger, STD};
 use nikaia::emit::{self, Build, Ordering};
+use nikaia::manifest::Manifest;
 use nikaia::{check, diagnostics, interpreter, modules, parser};
 
 #[derive(Parser, Debug)]
@@ -35,8 +36,11 @@ pub struct Cli {
     /// The machine to build for (ADR-037 D1): `x86_64-linux` or
     /// `wasm32-unknown`. It decides what `std` can offer and what a panic
     /// does, and nothing about what a program means.
-    #[arg(long, default_value = "x86_64-linux")]
-    pub target: String,
+    ///
+    /// Overrides `nikaia.toml`'s `[build] target` for this one build; the
+    /// default is `x86_64-linux` where neither says (D5).
+    #[arg(long)]
+    pub target: Option<String>,
 
     /// Whether *your* code may run concurrently at all (ADR-037 D2): `yes`
     /// or `no`.
@@ -45,8 +49,11 @@ pub struct Cli {
     /// decide. And it bounds the program, not the compiler: `fs::map` may
     /// still validate its text on several cores at `no`, because that is not
     /// code you wrote and it changes nothing the program prints.
-    #[arg(long, default_value = "no")]
-    pub user_parallelism: String,
+    ///
+    /// Overrides `nikaia.toml`'s `[build] user-parallelism`; the default is
+    /// `no` where neither says (D5).
+    #[arg(long)]
+    pub user_parallelism: Option<String>,
 
     /// Where the `rust` backend writes. Defaults to `<input>.rs`.
     #[arg(short, long)]
@@ -73,10 +80,12 @@ pub struct Cli {
     ///
     /// `effects` (the default) lets two operations that touch disjoint
     /// resources overlap; `strict` keeps the written order everywhere and does
-    /// not apply the analysis. The manifest key of Part III 13.3 is specified
-    /// and unimplemented, so this is where the choice lives today.
-    #[arg(long, default_value = "effects")]
-    pub ordering: String,
+    /// not apply the analysis.
+    ///
+    /// Overrides `nikaia.toml`'s `[build] ordering` (D8); the default is
+    /// `effects` where neither says.
+    #[arg(long)]
+    pub ordering: Option<String>,
 
     /// Lower from scratch, ignoring the build cache (ADR-021).
     ///
@@ -272,20 +281,58 @@ impl LanguageFrontend for NikaiaFrontend {
     }
 }
 
+/// The build switches, resolved: flag over manifest over built-in default.
+///
+/// One value threaded through rather than three fields re-read at each use.
+/// Every setting is kept both as the word that named it and as the parsed
+/// thing, because the cache key and the diagnostics want the word (ADR-021 D5
+/// hashes what was asked for) and the emitter wants the value.
+#[derive(Debug, Clone)]
+pub struct Settings {
+    pub build: Build,
+    pub ordering: Ordering,
+    pub target: String,
+    pub user_parallelism: String,
+    pub ordering_word: String,
+}
+
+impl Settings {
+    /// Resolve every switch before anything is read, so a mistyped one fails
+    /// on its own account rather than after a compile (ADR-037 D1).
+    fn resolve(args: &Cli) -> Result<Settings> {
+        let manifest = Manifest::find(&args.input)?;
+        let target = manifest
+            .setting("target", args.target.as_deref(), "x86_64-linux")
+            .to_string();
+        let user_parallelism = manifest
+            .setting("user-parallelism", args.user_parallelism.as_deref(), "no")
+            .to_string();
+        let ordering_word = manifest
+            .setting("ordering", args.ordering.as_deref(), "effects")
+            .to_string();
+
+        Ok(Settings {
+            build: Build::parse(&target, &user_parallelism)?,
+            ordering: Ordering::parse(&ordering_word)?,
+            target,
+            user_parallelism,
+            ordering_word,
+        })
+    }
+}
+
 /// `rustc --error-format=json … | nikaia --input x.nika --explain`
 ///
 /// Every message rustc reports about the emitted file is placed back in the
 /// `.nika` it came from. The text is left alone: because the lowering is name
 /// for name (ADR-011 D2), only the position was ever wrong.
-fn explain(args: &Cli, source: &str) -> Result<()> {
+fn explain(args: &Cli, settings: &Settings, source: &str) -> Result<()> {
     use std::io::Read;
 
-    let build = Build::parse(&args.target, &args.user_parallelism)?;
-    // The same ordering the build used, or the map would point into a file this
-    // run did not emit.
-    let ordering = Ordering::parse(&args.ordering)?;
+    // The same switches the build used, or the map would point into a file this
+    // run did not emit - which is why they are resolved once and passed in.
     let parsed = parser::parse_to_ast(source)?;
-    let lowered = emit::emit_program_ordered(&parsed, build, ordering)?;
+    let lowered = emit::emit_program_ordered(&parsed, settings.build, settings.ordering)?;
 
     let mut rustc_json = String::new();
     std::io::stdin().read_to_string(&mut rustc_json)?;
@@ -326,9 +373,8 @@ fn explain(args: &Cli, source: &str) -> Result<()> {
 const RUST: &str = "rust";
 const CONTRACTS: &str = "contracts";
 
-fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
-    let build = Build::parse(&args.target, &args.user_parallelism)?;
-    let ordering = Ordering::parse(&args.ordering)?;
+fn lower_to_rust(args: &Cli, settings: &Settings, source: &str) -> Result<()> {
+    let (build, ordering) = (settings.build, settings.ordering);
     let output_path = args
         .output
         .clone()
@@ -342,9 +388,9 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     let layout = Layout::resolve(&args.input);
     let unit = layout.unit_name(&args.input);
     let choices = Choices::with_ordering(
-        format!("{}/{}", args.target, args.user_parallelism),
+        format!("{}/{}", settings.target, settings.user_parallelism),
         "rust",
-        &args.ordering,
+        &settings.ordering_word,
     );
 
     // `--trust` is an explanation, so it is answered here rather than in the
@@ -363,13 +409,13 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
             println!(
                 "note: `--user-parallelism {}` on `--target {}` runs user code on one thread, \
                  so nothing below overlaps in this build.",
-                args.user_parallelism,
+                settings.user_parallelism,
                 build.target.triple()
             );
-        } else if args.ordering != "effects" {
+        } else if settings.ordering != Ordering::Effects {
             println!(
-                "note: `--ordering {}` keeps the written order, so nothing below overlaps in this build.",
-                args.ordering
+                "note: `ordering = {}` keeps the written order, so nothing below overlaps in this build.",
+                settings.ordering_word
             );
         }
         let parsed = parser::parse_to_ast(source)?;
@@ -490,7 +536,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         "Lowered {} to {} (target: {}{})",
         args.input.display(),
         output_path.display(),
-        args.target,
+        settings.target,
         if reused { ", lowering from cache" } else { "" }
     );
 
@@ -500,12 +546,13 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
 pub fn main() -> Result<()> {
     let args = Cli::parse();
 
-    // Both switches are validated before anything is read, so a mistyped one
-    // fails on its own account rather than after a compile. A target the
-    // toolchain cannot build for is refused here too: emitting code for a
-    // different machine than the one named would be worse than any name this
-    // switch replaced (ADR-037 D1).
-    let build = Build::parse(&args.target, &args.user_parallelism)?;
+    // Resolved before anything is read, so a mistyped switch - in the manifest
+    // or on the command line - fails on its own account rather than after a
+    // compile. A target the toolchain cannot build for is refused here too:
+    // emitting code for a different machine than the one named would be worse
+    // than any name this switch replaced (ADR-037 D1).
+    let settings = Settings::resolve(&args)?;
+    let build = settings.build;
     if let Some(missing) = build.target.unbuildable() {
         anyhow::bail!(
             "cannot build for `{}` yet: {missing}",
@@ -516,7 +563,7 @@ pub fn main() -> Result<()> {
     let source = std::fs::read_to_string(&args.input)?;
 
     if args.explain {
-        return explain(&args, &source);
+        return explain(&args, &settings, &source);
     }
 
     match args.backend.as_str() {
@@ -527,7 +574,7 @@ pub fn main() -> Result<()> {
             interpreter.run(&parsed);
             Ok(())
         }
-        "rust" => lower_to_rust(&args, &source),
+        "rust" => lower_to_rust(&args, &settings, &source),
         "bridge" => {
             // For compilation backends we use the orchestrator flow (or similar)
             let bridge_module = NikaiaFrontend.parse(&source)?;

@@ -102,14 +102,14 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [026](adr-026.md) | Compile-time I/O — what a build may read, and what may run while it reads | **Open** | no |
-| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | first increment on `task::both`, `--overlaps` |
+| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | first increment on `task::both`, `--overlaps`, D8's manifest key |
 | [034](adr-034.md) | A handler that can `return` makes the next statement conditional, so it may not be started early | Accepted | yes |
 
 ### Build switches
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` bounds how much of the **user's** code runs at once — and the compiler's own threads are not the user's | Accepted | D1–D3; §4 is what is not decided |
+| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` says whether the **user's** code may run concurrently — and the compiler's own threads are not the user's | Accepted | D1–D5; `wasm32-unknown` is refused rather than mis-emitted |
 
 ## What supersedes what
 

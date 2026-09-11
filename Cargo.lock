@@ -381,6 +381,7 @@ dependencies = [
  "rustc-executor",
  "serde_json",
  "sha2",
+ "toml",
  "winnow 0.7.15",
  "winnow-grammar",
 ]
