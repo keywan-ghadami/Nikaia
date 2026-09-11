@@ -28,10 +28,10 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [001](adr-001.md) | The driver approach: one nightly `rustc` pinned per release, `winnow-grammar` as the parser backend, lowering and span mapping inside the driver | Partly superseded by [003](adr-003.md) — see [supersession](#what-supersedes-what) | toolchain pinning, parser backend |
-| [002](adr-002.md) | A five-phase toolchain wrapping Cargo, with `nikaia.lock` as a deterministic cache key | Partly superseded by [003](adr-003.md) | no |
-| [003](adr-003.md) | Hub-and-spoke: the language frontend is decoupled from `rustc` by the **Bridge-IR** protocol and a generic orchestrator | Accepted | yes |
-| [004](adr-004.md) | One backend, two exits: `Bridge-IR` lowers to `rustc_ast`, and the Rust source stays inspectable for debugging | Accepted | yes (transpile path) |
+| [001](adr-001.md) | One exact nightly pinned per release; the parser is generated from a grammar over bytes, not over Rust tokens | Accepted (§4 superseded by [003](adr-003.md)) | yes |
+| [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro | Accepted (§4 superseded by [003](adr-003.md)) | no |
+| [003](adr-003.md) | Hub-and-spoke: a frontend targets **Bridge-IR** and never `rustc_ast`; CLI, cache and Cargo wrapping are generic | Accepted | yes |
+| [004](adr-004.md) | One lowering builds `rustc_ast`; readable Rust is a *print* of it, never a second code generator | Accepted | yes, except the in-memory exit |
 | [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what | Accepted | key, store |
 
 ### Ownership, borrowing, cleanup
@@ -117,15 +117,15 @@ replaced is the *coupling*: the frontend no longer links `rustc_driver` and
 touch, and what later ADRs still cite, is everything in 001 and 002 that was
 never about that coupling:
 
-* ADR-001 §1.3, one exact nightly pinned per release — the premise
+* ADR-001 D1, one exact nightly pinned per release — the premise
   [005](adr-005.md) §1 Group B.2 rests on when it enables `-Zpolonius=next`, and
   the rule `rust-toolchain.toml` and [021](adr-021.md) implement.
-* ADR-001 §2.3, why the parser backend is `winnow-grammar` and not
+* ADR-001 D2, why the parser backend is `winnow-grammar` and not
   `syn-grammar` — cited by [007](adr-007.md).
-* ADR-001 §4.2, Stage 0 is a transpiler — cited by [011](adr-011.md),
+* ADR-001 D4, Stage 0 is a transpiler — cited by [011](adr-011.md),
   [012](adr-012.md), [014](adr-014.md).
-* ADR-002 §1, Phase 0 — `nikaia.lock` as a deterministic cache key, the starting
-  point [021](adr-021.md) works out.
+* ADR-002 D3 — a deterministic key over what a build read, the starting point
+  [021](adr-021.md) works out.
 
 Each of those sections is marked in place with what still stands.
 
@@ -134,7 +134,7 @@ header:
 
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
-| [002](adr-002.md) §1, Phase 4 | [021](adr-021.md) D9 | Cranelift for "sub-second iterations" — never measured; measured, it buys 25 s against 26 s |
+| [002](adr-002.md) D3 | [021](adr-021.md) D9 | Cranelift for "sub-second iterations" — never measured; measured, it buys 25 s against 26 s |
 | [013](adr-013.md) D5 | [022](adr-022.md) | `fn:` recorded as a chaining limitation; removed as a second way to say one thing |
 | [014](adr-014.md) D3 | [015](adr-015.md) | the measurement, once the backend's eager diagnostics were found to dominate it |
 | [023](adr-023.md) D7 | [036](adr-036.md) | `{error:full}` as a format spec; `f"{error.full()}"` needs no new syntax |
