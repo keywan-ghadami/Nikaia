@@ -105,6 +105,12 @@ and a decision is not an implementation.
 | [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | two increments on `task::both` — a `let` or a bare expression statement, values of literals and calls — plus `--overlaps` and D8's manifest key; not a method call, not a non-literal argument |
 | [034](adr-034.md) | A handler that can `return` makes the next statement conditional, so it may not be started early | Accepted | yes |
 
+### The runtime
+
+| ADR | Decides | Status | Built |
+| :--- | :--- | :--- | :--- |
+| [038](adr-038.md) | The runtime and the HTTP server are ours: `rustls` bound, `io_uring` for files, readiness for sockets, and a Rust crate may bring its own runtime under two rules | Accepted | no |
+
 ### Build switches
 
 | ADR | Decides | Status | Built |

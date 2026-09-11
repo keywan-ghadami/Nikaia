@@ -559,6 +559,10 @@ progress line rewritten in place — where a newline after every fragment would 
 
 **`std::http`**
 A production-ready HTTP/1.1 and HTTP/2 server and client.
+
+> **Status:** not built. The server is Nikaia's own rather than a binding to a
+> finished one, and HTTP/1.1 comes first ([ADR-038](adr/adr-038.md) D1, D6).
+> HTTP/2 is named here because it is intended, not because it exists.
 * **At `user_parallelism = no`:** Runs on a single-threaded Event Loop.
 * **At `yes`:** Runs on a multi-threaded Work-Stealing Executor.
 
