@@ -234,7 +234,7 @@ A workload lives in `benches/` rather than `examples/` on purpose: an example is
 reads to learn the language, and these are programs a compiler is weighed with.
 
 **A harness was never the prerequisite,** because the project's own headline result was measured
-without one. ADR-011 §193-206 records ADR-010's hasher under callgrind on 200 000 rows, the same tree
+without one. ADR-011 §4 records ADR-010's hasher under callgrind on 200 000 rows, the same tree
 built twice with byte-identical output: **120.0 M → 89.1 M instructions**, 600 → 446 per row.
 `valgrind` is installed. The reusable plumbing for build-and-run is
 `crates/nikaia/tests/common/mod.rs:23-129` (`rustc()`, `deps_dir()`, `externs()`, `scratch_dir()`,
