@@ -494,13 +494,20 @@ impl<'a> Checker<'a> {
             // the emitted Rust, it is a `format!`, and a `format!` is a
             // `String`. Two spellings in Nikaia, two types below, and the
             // checker follows the lowering rather than the syntax.
-            Expr::LitStr(text) => match crate::emit::interpolation(text) {
-                Ok((_, holes)) if !holes.is_empty() => Ty::named("String"),
-                Ok(_) => Ty::view("str"),
-                // A literal the emitter will refuse. It reports that in its own
-                // words; this one says nothing rather than guessing.
-                Err(_) => Ty::Unknown,
-            },
+            Expr::LitStr(text) => {
+                // **A hole is checked like anything else.** It is Nikaia source
+                // written inside a literal, and until this walk existed it was
+                // source no analysis could see - the same mistake was caught
+                // outside a hole and silently passed inside one.
+                self.holes(expr, span);
+                match crate::emit::interpolation(text) {
+                    Ok((_, holes)) if !holes.is_empty() => Ty::named("String"),
+                    Ok(_) => Ty::view("str"),
+                    // A literal the emitter will refuse. It reports that in its
+                    // own words; this one says nothing rather than guessing.
+                    Err(_) => Ty::Unknown,
+                }
+            }
             Expr::LitChar(_) => Ty::named("char"),
             Expr::LitBool(_) => Ty::named("bool"),
 
@@ -806,9 +813,27 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
 
-            // A template, a grammar, an `asm` block: what these produce is the
-            // business of the emitter that compiles them.
-            Expr::Dsl { .. } | Expr::Asm { .. } => Ty::Unknown,
+            // A template's holes are Nikaia too (ADR-017), and what the
+            // template *produces* is still the emitter's business.
+            Expr::Dsl { .. } => {
+                self.holes(expr, span);
+                Ty::Unknown
+            }
+
+            // A grammar and an `asm` block: what these produce is the business
+            // of the emitter that compiles them.
+            Expr::Asm { .. } => Ty::Unknown,
+        }
+    }
+
+    /// Every expression a literal hides, walked where it stands.
+    ///
+    /// The result is discarded: what a hole evaluates to is the emitter's
+    /// business - `Render` decides for a template and `Display` for a string -
+    /// and what the checker is here for is everything *inside* it.
+    fn holes(&mut self, literal: &Expr, span: &Span) {
+        for hole in crate::emit::literal_expressions(self.parsed, literal) {
+            self.expr(&hole, span);
         }
     }
 

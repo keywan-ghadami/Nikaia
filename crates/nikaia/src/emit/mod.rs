@@ -2363,6 +2363,67 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
 /// `"{a}={s.mean()}"` becomes `("{}={}", ["a", "s.mean()"])`. Braces are
 /// doubled to be literal, as in every format string; the holes themselves are
 /// Nikaia expressions and are parsed as such by the caller.
+/// Every expression a literal holds - the holes of an interpolated string, and
+/// the holes of a template.
+///
+/// **The emitter is not the only thing that needs these.** A hole is Nikaia
+/// source, and until this existed it was source no analysis could see: the
+/// splitting happened here, on the way out, so the type checker, the `sync`
+/// check and the provenance analysis all walked past a `LitStr` as if it were
+/// a string.
+///
+/// That was not only a missed diagnostic. `sync` is *inferred* from what a body
+/// calls (ADR-027), so a function whose only pausing call sat inside a hole was
+/// recorded `sync = "inferred"` - a claim, in a file a library ships, that it
+/// cannot pause. ADR-027 D2 and ADR-010 D1 both say the same thing about that
+/// direction: an analysis that fails open is a vulnerability generator.
+///
+/// A hole that does not parse yields nothing here. The emitter reports it, in
+/// its own words, at the place it happens; an analysis has nothing to add.
+pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
+    match expr {
+        Expr::LitStr(literal) => match interpolation(literal) {
+            Ok((_, holes)) => holes
+                .iter()
+                .filter_map(|hole| parse_expression(&parsed.interner, hole).ok())
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+        // A template's holes are Nikaia too (ADR-017), and reach the emitter by
+        // the same route: text, split on the way out.
+        Expr::Dsl { content, .. } => match template::split(content.trim()) {
+            Ok(segments) => template_holes(&segments)
+                .iter()
+                .filter_map(|hole| parse_expression(&parsed.interner, hole).ok())
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Every hole in a template, including the ones inside a `<for>` body - a hole
+/// does not become invisible by being repeated, any more than it becomes safe
+/// by it (ADR-017 D3).
+fn template_holes(segments: &[template::Segment]) -> Vec<String> {
+    let mut holes = Vec::new();
+    for segment in segments {
+        match segment {
+            template::Segment::Text(_) => {}
+            template::Segment::Hole { expr, .. } => holes.push(expr.clone()),
+            template::Segment::For {
+                collection, body, ..
+            } => {
+                // The collection is captured from the enclosing scope with `:`
+                // (ADR-007 D4), and it is a name this program wrote.
+                holes.push(collection.clone());
+                holes.extend(template_holes(body));
+            }
+        }
+    }
+    holes
+}
+
 pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
     let mut format = String::new();
     let mut holes = Vec::new();

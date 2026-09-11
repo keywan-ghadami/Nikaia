@@ -261,6 +261,7 @@ fn collect_reach(
 ) {
     for stmt in &block.stmts {
         visit_stmt(
+            parsed,
             &stmt.node,
             &mut |expr| match reached(parsed, expr, own, library) {
                 Some(Reached::Own(name)) => {
@@ -326,7 +327,7 @@ fn walk_block(
 ) {
     for stmt in &block.stmts {
         let span = stmt.span.clone();
-        visit_stmt(&stmt.node, &mut |expr| {
+        visit_stmt(parsed, &stmt.node, &mut |expr| {
             if let Some((callee, from_library)) = called(parsed, expr, own, library) {
                 found.push(Violation {
                     span: span.clone(),
@@ -460,7 +461,7 @@ fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Optio
 /// came from.
 pub(super) fn walk_calls(parsed: &Parsed, block: &Block, f: &mut impl FnMut(&str)) {
     for stmt in &block.stmts {
-        visit_stmt(&stmt.node, &mut |expr| {
+        visit_stmt(parsed, &stmt.node, &mut |expr| {
             if let Some(name) = super::trust::call_name(parsed, expr) {
                 f(&name);
             }
@@ -471,18 +472,18 @@ pub(super) fn walk_calls(parsed: &Parsed, block: &Block, f: &mut impl FnMut(&str
 
 /// Every expression a statement holds, without descending into nested blocks -
 /// those are walked separately so that each keeps its own statement's span.
-fn visit_stmt(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
+fn visit_stmt(parsed: &Parsed, stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
     match stmt {
-        Stmt::Let { value, .. } => visit_expr(value, f),
+        Stmt::Let { value, .. } => visit_expr(parsed, value, f),
         Stmt::Assign { target, value, .. } => {
-            visit_expr(target, f);
-            visit_expr(value, f);
+            visit_expr(parsed, target, f);
+            visit_expr(parsed, value, f);
         }
-        Stmt::For { iter, .. } => visit_expr(iter, f),
-        Stmt::While { cond, .. } => visit_expr(cond, f),
-        Stmt::Return(Some(value)) => visit_expr(value, f),
+        Stmt::For { iter, .. } => visit_expr(parsed, iter, f),
+        Stmt::While { cond, .. } => visit_expr(parsed, cond, f),
+        Stmt::Return(Some(value)) => visit_expr(parsed, value, f),
         Stmt::Return(None) => {}
-        Stmt::Expr(expr) => visit_expr(expr, f),
+        Stmt::Expr(expr) => visit_expr(parsed, expr, f),
     }
 }
 
@@ -541,43 +542,56 @@ fn visit_expr_blocks(expr: &Expr, f: &mut impl FnMut(&Block)) {
 }
 
 /// Every expression inside one, excluding the bodies of nested blocks.
-fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
+fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
+
+    // **A hole is a call like any other.** Its expression is parsed out of the
+    // literal on the way to the emitter, so until this walk existed a call
+    // inside `"{io::read_to_string()}"` was invisible here - and `sync` is
+    // *inferred* from what a body calls (ADR-027), so the function came out of
+    // the ledger claiming it cannot pause. ADR-027 D2 and ADR-010 D1 name that
+    // direction the dangerous one.
+    for hole in crate::emit::literal_expressions(parsed, expr) {
+        visit_expr(parsed, &hole, f);
+    }
+
     match expr {
         Expr::Call { func, args, .. } => {
-            visit_expr(func, f);
-            args.iter().for_each(|a| visit_expr(a, f));
+            visit_expr(parsed, func, f);
+            args.iter().for_each(|a| visit_expr(parsed, a, f));
         }
         Expr::MethodCall { receiver, args, .. } => {
-            visit_expr(receiver, f);
-            args.iter().for_each(|a| visit_expr(a, f));
+            visit_expr(parsed, receiver, f);
+            args.iter().for_each(|a| visit_expr(parsed, a, f));
         }
         Expr::Binary { lhs, rhs, .. } => {
-            visit_expr(lhs, f);
-            visit_expr(rhs, f);
+            visit_expr(parsed, lhs, f);
+            visit_expr(parsed, rhs, f);
         }
-        Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Cast { expr, .. } => visit_expr(expr, f),
-        Expr::Field { base, .. } => visit_expr(base, f),
+        Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Cast { expr, .. } => {
+            visit_expr(parsed, expr, f)
+        }
+        Expr::Field { base, .. } => visit_expr(parsed, base, f),
         Expr::Index { base, index } => {
-            visit_expr(base, f);
-            visit_expr(index, f);
+            visit_expr(parsed, base, f);
+            visit_expr(parsed, index, f);
         }
         Expr::Range { start, end, .. } => {
-            visit_expr(start, f);
-            visit_expr(end, f);
+            visit_expr(parsed, start, f);
+            visit_expr(parsed, end, f);
         }
-        Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
+        Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(parsed, p, f)),
         Expr::Coalesce { value, fallback } => {
-            visit_expr(value, f);
-            visit_expr(fallback, f);
+            visit_expr(parsed, value, f);
+            visit_expr(parsed, fallback, f);
         }
-        Expr::TryCatch { expr, .. } => visit_expr(expr, f),
-        Expr::If { cond, .. } => visit_expr(cond, f),
-        Expr::Match { value, .. } => visit_expr(value, f),
+        Expr::TryCatch { expr, .. } => visit_expr(parsed, expr, f),
+        Expr::If { cond, .. } => visit_expr(parsed, cond, f),
+        Expr::Match { value, .. } => visit_expr(parsed, value, f),
         Expr::StructLit { fields, .. } => fields
             .iter()
             .filter_map(|field| field.value.as_ref())
-            .for_each(|value| visit_expr(value, f)),
+            .for_each(|value| visit_expr(parsed, value, f)),
         _ => {}
     }
 }

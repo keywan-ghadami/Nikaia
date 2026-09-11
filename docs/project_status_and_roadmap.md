@@ -48,6 +48,13 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Privacy*: `pub` becomes `pub`, so Part I 9.2 is enforced by the language below; `NK1110` says it in Nikaia's words first. Two bugs one file could not show are fixed with it - the emitter made every struct field public, and `pub` on a field did not parse.
     *   *Open*: nested module paths (refused with a sentence rather than guessed at), a grammar across a module boundary, and per-module incremental compilation - ADR-021 D6's unit is now the program (ADR-030 §7).
 
+*   [x] **A hole is code, and every analysis sees it** ([ADR-032](specification/adr/adr-032.md)): the expression inside `"{…}"` and inside a `dsl html` template is walked by the type checker and by the `sync` analysis, like the same expression written on a line of its own.
+    *   *The bug*: a hole is parsed in the **emitter**, so "parsed" and "analysed" had come apart for one construct - `let n = add(1)` was `NK1101` and `println("{add(1)}")` was silence, and ADR-017's templates inherited the same blindness two ADRs later.
+    *   *Why it was more than a missed diagnostic*: `sync` is inferred from what a body calls, so `pub fn greet() -> String { return "hello {io::read_to_string()}" }` was recorded `sync = "inferred"` - a false claim in a shipped ledger, in the direction ADR-027 D2 and ADR-010 D1 both call a vulnerability generator.
+    *   *The shape of the fix*: **one** function, `emit::literal_expressions`, answers "what code is inside this expression?" and every analysis calls it. Re-parsing at each call site is how the blindness happened the first time.
+    *   *Measured*: 230 tests pass with **no ledger drift** - nothing in the corpus was depending on it, so the gap closes without moving any recorded claim.
+    *   *Open*: holes still are not in the AST. Parsing them there is the honest fix and touches `Expr::LitStr`, the emitter's measured string fast paths, the golden fixtures and the error corpus - deferrable without any of ADR-032's decisions changing meaning.
+
 ### Phase 2: Compiler Robustness (Middle-end)
 
 *   [ ] **Error Reporting**: Replace generic `anyhow` errors with specific, span-aware error messages using `miette` or `codespan`.
