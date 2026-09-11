@@ -109,8 +109,27 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
 #[derive(Debug, Clone)]
 pub enum Postfix {
     Field(Symbol),
-    Method(Symbol, Vec<ast::Expr>),
+    Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Index(Box<ast::Expr>),
+}
+
+/// A declaration's parameters, with the config zone split into its two shapes.
+pub fn params_of(
+    receiver: Option<ast::Receiver>,
+    args: Vec<ast::FnArg>,
+    zone: Option<ast::ConfigZone>,
+) -> ast::FnParams {
+    let (config, spread) = match zone {
+        Some(ast::ConfigZone::Options(options)) => (options, None),
+        Some(ast::ConfigZone::Spread(name)) => (Vec::new(), Some(name)),
+        None => (Vec::new(), None),
+    };
+    ast::FnParams {
+        receiver,
+        args,
+        config,
+        spread,
+    }
 }
 
 /// Left-associative: `a - b - c` is `(a - b) - c`.
@@ -129,10 +148,11 @@ pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
             base: Box::new(recv),
             name,
         },
-        Postfix::Method(method, args) => ast::Expr::MethodCall {
+        Postfix::Method(method, args, config) => ast::Expr::MethodCall {
             receiver: Box::new(recv),
             method,
             args,
+            config,
         },
         Postfix::Index(index) => ast::Expr::Index {
             base: Box::new(recv),
@@ -254,6 +274,7 @@ grammar! {
                     receiver: params.receiver,
                     args: params.args,
                     config: params.config,
+                    spread: params.spread,
                     ret_type: ret,
                     body,
                     is_sync: sync_before.is_some() || sync_after.is_some(),
@@ -272,25 +293,36 @@ grammar! {
 
         rule fn_params_body -> FnParams =
             r:receiver args:fn_arg_def_tail* config:config_zone? -> {
-                FnParams { receiver: Some(r), args, config: config.unwrap_or_default() }
+                params_of(Some(r), args, config)
             }
           | head:fn_arg_def tail:fn_arg_def_tail* config:config_zone? -> {
                 let mut args = vec![head];
                 args.extend(tail);
-                FnParams { receiver: None, args, config: config.unwrap_or_default() }
+                params_of(None, args, config)
             }
           | config:config_zone -> {
-                FnParams { receiver: None, args: Vec::new(), config }
+                params_of(None, Vec::new(), Some(config))
             }
 
         // Kap 5.1: everything after the `;` is an option. Named at the call,
         // never positional - which is what the separator buys, and why it is a
         // separator rather than a convention about where the flags go.
-        rule config_zone -> Vec<ConfigParam> =
-            ";" head:config_param tail:config_param_tail* -> {
+        //
+        // ADR-007 D5 puts one more thing there: `...args: Self::dsl`, the typed
+        // spread a DSL driver accepts deferred parameters with. It is tried
+        // first because `...` cannot begin an option's name, so a `;` followed
+        // by one is unambiguous.
+        rule config_zone -> ConfigZone =
+            ";" "..." name:NAME ":" "Self::dsl" -> { ConfigZone::Spread(name) }
+          | ";" "..." name:NAME ":" fail(
+                "a typed spread is written `...name: Self::dsl` (ADR-007 D5): \
+                 `Self::dsl` is the parameter type the DSL string generates, and \
+                 it is the only type this parameter can have."
+            ) -> { ConfigZone::Spread(name) }
+          | ";" head:config_param tail:config_param_tail* -> {
                 let mut params = vec![head];
                 params.extend(tail);
-                params
+                ConfigZone::Options(params)
             }
 
         rule config_param_tail -> ConfigParam = "," p:config_param -> { p }
@@ -1000,16 +1032,20 @@ grammar! {
             // the lambda is left over - which is the parse error this form did
             // not have a grammar for until ADR-022.
             "." name:NAME args:call_arg_list lambda:trailing_lambda -> {
-                let mut args = args.0;
-                args.push(lambda);
-                Postfix::Method(name, args)
+                let (mut positional, config) = args;
+                positional.push(lambda);
+                Postfix::Method(name, positional, config)
             }
           | "." name:NAME lambda:trailing_lambda -> {
-                Postfix::Method(name, vec![lambda])
+                Postfix::Method(name, vec![lambda], Vec::new())
             }
           | "." name:NAME args:call_arg_list? -> {
                 match args {
-                    Some((args, _config)) => Postfix::Method(name, args),
+                    // Kap 5.1's `;` reaches a method call too, and what stands
+                    // after it is kept: ADR-007 D5's deferred parameters arrive
+                    // exactly here, and dropping them was why a `dsl` statement
+                    // could not be given any.
+                    Some((args, config)) => Postfix::Method(name, args, config),
                     None => Postfix::Field(name),
                 }
             }

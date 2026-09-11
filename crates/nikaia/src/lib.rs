@@ -8,6 +8,7 @@ pub mod ast;
 pub mod check;
 pub mod contracts;
 pub mod diagnostics;
+pub mod dsl;
 pub mod emit;
 pub mod interpreter;
 pub mod manifest;

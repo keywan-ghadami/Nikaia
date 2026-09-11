@@ -153,13 +153,16 @@ fn an_unclosed_hole_is_refused() {
     assert!(message.contains("unclosed"), "{message}");
 }
 
-/// Only `html` is compiled here. A `dsl sql { … }` needs the
-/// deferred-parameter binding of ADR-007 D4, and saying so is better than
-/// lowering it to something that reads like a template and is not one.
+/// Only `html` is compiled as a template here, and a foreign statement with no
+/// hole at all is refused: its holes are what ADR-007 D5 gives a meaning to,
+/// and a body without them belongs to a grammar this compiler does not have.
+/// Saying so is better than lowering it to something that reads like a template
+/// and is not one.
 #[test]
 fn another_dsl_target_says_what_it_needs() {
     let message = refuse("fn q() -> String { return dsl sql { SELECT 1 } eod }");
-    assert!(message.contains("deferred-parameter"), "{message}");
+    assert!(message.contains("has no hole"), "{message}");
+    assert!(message.contains("deferred-parameter DSL"), "{message}");
 }
 
 // --- Control flow in the markup ---------------------------------------------

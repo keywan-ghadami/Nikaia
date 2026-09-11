@@ -415,10 +415,15 @@ fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
             receiver,
             args,
             method,
+            config,
         } => {
             names_in(parsed, receiver, out);
             out.insert(parsed.text(*method).to_string());
             args.iter().for_each(|a| names_in(parsed, a, out));
+            // What stands after a method call's `;` reads names like anything
+            // else - a DSL's deferred parameters arrive there (ADR-007 D5),
+            // and a name read inside one is read.
+            config.iter().for_each(|c| names_in(parsed, &c.value, out));
         }
         Expr::Field { base, .. } => names_in(parsed, base, out),
         Expr::Binary { lhs, rhs, .. } => {
