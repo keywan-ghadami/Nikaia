@@ -52,11 +52,15 @@ def citations():
             text = open(f, encoding="utf-8", errors="ignore").read()
         except OSError:
             continue
-        for m in re.finditer(
-            r"ADR[- ]?(\d{3})((?:[^A-Za-z0-9]{0,4}(?:D\d+|§[\d.]+))+)", text
+        # Two spellings reach the same place: a bare `ADR-023 D7`, and the
+        # markdown form `[ADR-023](adr-023.md) D7` that every ADR header uses.
+        for pattern in (
+            r"ADR[- ]?(\d{3})((?:[^A-Za-z0-9]{0,4}(?:D\d+|§[\d.]+))+)",
+            r"\]\(adr-(\d{3})\.md\)((?:[^A-Za-z0-9]{0,4}(?:D\d+|§[\d.]+))+)",
         ):
-            for label in re.findall(r"D\d+|§[\d.]+", m.group(2)):
-                seen.append((m.group(1), label, f))
+            for m in re.finditer(pattern, text):
+                for label in re.findall(r"D\d+|§[\d.]+", m.group(2)):
+                    seen.append((m.group(1), label, f))
     return seen
 
 
