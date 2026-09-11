@@ -43,9 +43,10 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Open*: traits, generics on impls, and operators as methods.
 *   [ ] **Generics**: Fully support generic type parameters (`<T>`) across functions and structs.
     *   *Status*: Parser has basic support (using `[...]`), but lowering and bridge need full integration.
-*   [ ] **Modules & Imports**: Implement `use` and multi-file compilation support.
-    *   *Parser*: `use` keyword.
-    *   *Orchestrator*: Handle file resolution and dependency graph.
+*   [x] **Modules & Imports** ([ADR-030](specification/adr/adr-030.md)): `use utils` brings in `utils.nika` beside the entry, every module becomes a `mod` at the crate root, and `stock::total(…)` lowers to itself - so ADR-011 D2 is untouched, because nothing resolved it.
+    *   *The argument*: multi-file compilation is **name resolution**, and the ledger has been the place for that since ADR-020 - `std.contracts` has had module-qualified keys from the day it existed. A program's own ledger takes the same shape, so the type checker, the `sync` check, provenance, Kap 5.1's options and ADR-025's loops work across files without changing.
+    *   *Privacy*: `pub` becomes `pub`, so Part I 9.2 is enforced by the language below; `NK1110` says it in Nikaia's words first. Two bugs one file could not show are fixed with it - the emitter made every struct field public, and `pub` on a field did not parse.
+    *   *Open*: nested module paths (refused with a sentence rather than guessed at), a grammar across a module boundary, and per-module incremental compilation - ADR-021 D6's unit is now the program (ADR-030 §7).
 
 ### Phase 2: Compiler Robustness (Middle-end)
 

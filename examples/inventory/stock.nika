@@ -1,0 +1,53 @@
+// examples/inventory/stock.nika
+//
+// The parse: a grammar, the record it yields, and nothing about reports or
+// pages. A module is a file (Part I, 9.1), and this one is the file about
+// *reading* a stock list.
+
+grammar Stock {
+
+    rule FIELD -> &str = s:until(";" | frame_end) -> { s }
+
+    rule COUNT -> i64 = n:dec[i64](digit+) -> { n }
+
+    @frame(boundary: "\n")
+    rule ENTRY -> Entry =
+        category:FIELD ";" => item:FIELD ";" count:COUNT frame_end
+        -> { Entry { category, item, count } }
+
+    pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }
+}
+
+// `pub`, because `main.nika` builds a page out of these. The fields are public
+// for the same reason: a template reads them.
+@borrowed
+pub struct Entry {
+    pub category: &str,
+    pub item: &str,
+    pub count: i64,
+}
+
+// The parse itself, behind a function - which is what a module boundary makes
+// you do and is the better shape anyway.
+//
+// A **grammar is not visible across modules** (ADR-030 §7): `dsl Stock from …`
+// in another file finds no `Stock`, because the emitter reads grammars out of
+// the file it is emitting. That is a limit of this compiler and not of the
+// language, and it points the right way here: the file about reading a stock
+// list is where reading a stock list belongs.
+pub fn read(data: &str) -> Vec[Entry] throws {
+    return dsl Stock from data
+}
+
+// Private to this file: `main.nika` never needs it, and Part I 9.3's point is
+// that privacy is what forces an interface rather than a pile of exposed parts.
+fn weight(entry: &Entry) -> i64 {
+    return entry.count
+}
+
+// The total, in one place. `pub` because the page prints it.
+pub fn total(entries: &Vec[Entry]) -> i64 {
+    let mut sum = 0
+    for e in entries { sum += weight(e) }
+    return sum
+}

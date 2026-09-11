@@ -1,6 +1,6 @@
 # Nikaia Examples
 
-Ten of the eleven programs here compile, run, and are checked by `cargo test`. The eleventh is
+Eleven of the twelve programs here compile, run, and are checked by `cargo test`. The twelfth is
 written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
 needs is listed under *Gaps* below.
 
@@ -16,9 +16,10 @@ needs is listed under *Gaps* below.
 | [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
 | [`report.nika`](report.nika) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `crates/nikaia/tests/examples.rs` |
 | [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
+| [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the ten is compiled and run **under both profiles**, and their output must be
+Each of the eleven is compiled and run **under both profiles**, and their output must be
 identical — that is the claim the profiles rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
@@ -43,6 +44,7 @@ They are deliberately different shapes.
   escapes every hole, the type `html::Raw` is the only way to say a value is already markup, and
   a hole in a position escaping cannot make safe is a compile error naming the position. It is
   the smallest program that shows all three.
+* **`inventory/`** is the one made of **more than one file** ([ADR-030](../docs/specification/adr/adr-030.md)) - the same program `report.nika` is, split into the parse, the page and the program that joins them. Both are here on purpose: what a module boundary buys and what it costs, on something small enough to hold in the head. What it buys is that `stock.nika` keeps `weight` to itself and that neither file has to be read to use the other; what it costs is visible too, because a grammar is not visible across a boundary and `stock.nika` had to wrap its own in a `pub fn read`.
 * **`report.nika`** is the one whose result is a **file**. Every other example here ends at
   `println`, and a program that cannot produce a file is not a tool: this one reads a stock
   list, orders it, renders a page with the `html` template and writes it with `fs::write`

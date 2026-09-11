@@ -428,6 +428,9 @@ pub struct ConfigParam {
 pub struct FieldDef {
     pub name: Ident,
     pub ty: Type,
+    /// Kap 9.2: a field is visible outside the file that declares its struct
+    /// only where it says `pub`.
+    pub is_public: bool,
 }
 
 // Part III, Kap 16.1: $dst = out(reg) result

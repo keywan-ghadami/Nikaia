@@ -20,8 +20,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nikaia::emit::{emit_program, Profile};
-use nikaia::parser::parse_to_ast;
+use nikaia::emit::Profile;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -270,6 +269,42 @@ the longest line in this stream",
         wrote: Some(Output {
             name: "tally.log",
             contents: "5\t2",
+        }),
+    },
+    Example {
+        // The same program as `report.nika`, in three files (Part I, 9.1).
+        // Having both is the point: what a module boundary buys and what it
+        // costs, on a program small enough to hold in the head.
+        file: "inventory/main.nika",
+        input: Some(Input {
+            name: "stock.csv",
+            contents: "\
+tools;Bolts & Nuts;12
+paper;<plain> A4;40
+tools;3\" Clamp;5
+paper;Card </td>;7
+",
+        }),
+        stdin: None,
+        args: &["{input}", "{output}"],
+        expected: "4 items, 64 in total",
+        wrote: Some(Output {
+            name: "report.html",
+            contents: "\
+<html>
+        <head><title>Stock</title></head>
+        <body>
+        <h1>Stock</h1>
+        <table>
+        <tr><th>Category</th><th>Item</th><th>Count</th></tr>
+        <tr><td>paper</td><td>&lt;plain&gt; A4</td><td>40</td></tr>\
+<tr><td>tools</td><td>Bolts &amp; Nuts</td><td>12</td></tr>\
+<tr><td>paper</td><td>Card &lt;/td&gt;</td><td>7</td></tr>\
+<tr><td>tools</td><td>3&quot; Clamp</td><td>5</td></tr>
+        </table>
+        <p>64 in total</p>
+        </body>
+        </html>",
         }),
     },
     Example {
@@ -532,12 +567,14 @@ fn a_missing_operand_is_reported_as_an_expression() {
 /// Lower and compile. The example is the real file: it cannot drift.
 fn build(file: &str, profile: Profile) -> (PathBuf, PathBuf) {
     let source_path = repo_root().join("examples").join(file);
-    let source = std::fs::read_to_string(&source_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", source_path.display()));
 
-    let parsed = parse_to_ast(&source).unwrap_or_else(|e| panic!("{file} does not parse:\n{e}"));
-    let lowered =
-        emit_program(&parsed, profile).unwrap_or_else(|e| panic!("{file} does not lower:\n{e}"));
+    // Part I 9.1: an example may be more than one file. `Program::read` on a
+    // file that imports nothing is that file, so this is one path for both.
+    let program = nikaia::modules::Program::read(&source_path)
+        .unwrap_or_else(|e| panic!("{file} does not read:\n{e:#}"));
+    let lowered = program
+        .emit(profile)
+        .unwrap_or_else(|e| panic!("{file} does not lower:\n{e:#}"));
 
     let dir = common::scratch_dir(&format!("example-{}", file.replace('.', "-")));
     let rust = dir.join("example.rs");
