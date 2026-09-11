@@ -1,0 +1,68 @@
+// examples/inventory/main.nika
+//
+// The same program `examples/report.nika` is, in **three files** - and the
+// first thing in this repository that is more than one (Part I, 9.1).
+//
+// Input:  `category;item;count` per line
+// Output: an HTML page written to the path given as the second argument
+//
+// Run:
+//
+//     nikaia --input examples/inventory/main.nika --backend rust
+//     ./main stock.csv report.html
+//
+// `crates/nikaia/tests/examples.rs` compiles and runs it, and checks the page.
+//
+// Why it is here beside `report.nika` rather than instead of it. `report.nika`
+// is the same program in one file, and having both is the point: a reader can
+// see what a module boundary buys and what it costs, on a program small enough
+// to hold in the head. What it buys here is that `stock.nika` can keep
+// `weight` to itself, and that neither file has to be read to use the other.
+//
+// Three things about the multi-file build are worth knowing, and all three are
+// the same answer - **it is name resolution, and Nikaia already had one place
+// for that** (ADR-030).
+//
+//   * `stock::total(…)` is written the way it is *because* that is what it
+//     lowers to. Every module becomes a `mod` at the crate root, so the
+//     lowering stays name for name (ADR-011 D2) and nothing resolves anything.
+//   * **One ledger for the project** (Part III, 13.5), keys qualified the way a
+//     caller writes them - `stock::total`, `page::render` - which is the shape
+//     `std.contracts` has had since ADR-020. So the type checker, the `sync`
+//     check and the provenance analysis work across files without learning a
+//     new trick.
+//   * **`pub` is the whole of privacy.** `stock::weight` is not public, and
+//     reaching it from here is `NK1110` before `rustc` is asked.
+
+use stock
+use page
+use std::fs
+use std::cli
+
+fn main() throws {
+    let path = cli::args().nth(1) ?? "stock.csv"
+    let out = cli::args().nth(2) ?? "report.html"
+
+    let data = fs::map(&path) catch {
+        eprintln("cannot open {path}: {error}")
+        return
+    }
+
+    let mut entries = stock::read(&data) catch {
+        eprintln("{path}: {error}")
+        return
+    }
+
+    entries.sort_by_key fn { -a.count }
+
+    let total = stock::total(&entries)
+    let count = entries.len()
+    let markup = page::render(entries, total)
+
+    fs::write(&out, &markup) catch {
+        eprintln("cannot write {out}: {error}")
+        return
+    }
+
+    println("{count} items, {total} in total")
+}

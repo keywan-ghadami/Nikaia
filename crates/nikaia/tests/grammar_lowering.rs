@@ -136,7 +136,13 @@ fn a_view_takes_the_input_lifetime_and_the_struct_with_it() {
         "{emitted}"
     );
     assert!(emitted.contains("pub struct Reading<'a> {"), "{emitted}");
-    assert!(emitted.contains("pub name: &'a str,"), "{emitted}");
+    // The struct is `pub` and its fields are not, because the source says so:
+    // Part I 9.2 makes them two questions, and 9.3's point is that a public
+    // type keeping its parts to itself is the ordinary case. The emitter used
+    // to write `pub` on every field regardless, which nothing could tell apart
+    // until a program had more than one file.
+    assert!(emitted.contains("    name: &'a str,"), "{emitted}");
+    assert!(!emitted.contains("pub name: &'a str,"), "{emitted}");
 }
 
 #[test]

@@ -93,7 +93,27 @@ pub struct Checked {
 
 /// Every type mistake the ledgers are enough to see, and every loop that can
 /// fail.
+///
+/// For one file. A program of several (Part I, 9.1) uses [`check_program`],
+/// which additionally knows which names are *modules* - and therefore which
+/// qualified calls cross a file boundary.
 pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
+    check_program(parsed, own, library, &BTreeSet::new())
+}
+
+/// The same, for one file of a program made of several.
+///
+/// `modules` is what the program is made of, and it is the whole difference: a
+/// qualified call is either into another **module**, where Part I 9.2 says
+/// `pub` decides, or into a **type** (`Stats::new`), where it does not. Without
+/// the set there is no telling those apart, and a private constructor called in
+/// its own file would be reported as a privacy violation.
+pub fn check_program(
+    parsed: &Parsed,
+    own: &Ledger,
+    library: &Ledger,
+    modules: &BTreeSet<String>,
+) -> Checked {
     let mut checker = Checker {
         parsed,
         own,
@@ -104,6 +124,7 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
         expected: None,
         throwing: false,
         current: None,
+        modules: modules.clone(),
         checked: Checked::default(),
     };
     checker.collect_types();
@@ -117,11 +138,16 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
 /// The emitter's entry point: it builds the ledgers a program is compiled
 /// against and asks this, rather than carrying the checker's findings around.
 pub fn fallible_loops(parsed: &Parsed) -> BTreeSet<usize> {
-    let own = Ledger::infer(parsed);
+    fallible_loops_against(parsed, &Ledger::infer(parsed))
+}
+
+/// The same, against contracts the caller already has - which for a program of
+/// several files is the **program's** ledger and not this file's (Part I, 9.1).
+pub fn fallible_loops_against(parsed: &Parsed, own: &Ledger) -> BTreeSet<usize> {
     let Ok(library) = Ledger::parse(crate::contracts::STD) else {
         return BTreeSet::new();
     };
-    check(parsed, &own, &library).fallible_loops
+    check(parsed, own, &library).fallible_loops
 }
 
 struct Checker<'a> {
@@ -148,6 +174,9 @@ struct Checker<'a> {
     /// belongs to no function a caller can name, and whose method calls
     /// therefore have nowhere to be recorded.
     current: Option<String>,
+    /// The modules this program is made of (Part I, 9.1). Empty for a single
+    /// file, where no call crosses a file boundary.
+    modules: BTreeSet<String>,
     checked: Checked,
 }
 
@@ -801,6 +830,7 @@ impl<'a> Checker<'a> {
         let Some((key, contract)) = self.resolve(&name) else {
             return Ty::Unknown;
         };
+        self.reachable(&name, contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
         // whatever its declaration says about `Self`.
@@ -979,6 +1009,34 @@ impl<'a> Checker<'a> {
                  function, exactly as a failing call would"
             )],
             help: Some("declare the error: add `throws` to this function".to_string()),
+        });
+    }
+
+    /// Part I 9.2: an item is private to its file unless it says `pub`.
+    ///
+    /// The language below enforces this too - `pub` becomes `pub` and a `mod`
+    /// keeps what it was not given - but a reader should not meet the rule as a
+    /// `rustc` message about a file they did not write, which is what
+    /// Part III C.1 calls a bug in this compiler.
+    ///
+    /// Only a call written `module::item` can be from another file: a call
+    /// inside `utils.nika` writes `secret()`, unqualified. So this needs no
+    /// notion of "which file am I in" - the spelling says it.
+    fn reachable(&mut self, name: &str, contract: &FnContract, span: &Span) {
+        let Some((module, item)) = name.split_once("::") else {
+            return;
+        };
+        if !self.modules.contains(module) || contract.public {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            span: span.clone(),
+            code: "NK1110",
+            message: format!("`{item}` is private to `{module}.nika`"),
+            notes: vec!["an item is private to the file that declares it unless it says `pub` (Part I, 9.2)".to_string()],
+            help: Some(format!(
+                "write `pub fn {item}` in `{module}.nika`, or reach it through something that is public"
+            )),
         });
     }
 

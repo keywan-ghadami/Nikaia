@@ -1,0 +1,25 @@
+// examples/inventory/page.nika
+//
+// The rendering, and nothing about parsing. It reaches into `stock` for the
+// type it renders - which is the whole of what a module boundary is: one file
+// names another's public items and sees none of its private ones.
+
+use stock
+use std::html
+
+// The title is a Kap 5.1 option: after the `;`, named at the call, defaulted.
+pub fn render(entries: Vec[stock::Entry], total: i64; title: &str = "Stock") -> String {
+    return dsl html {
+        <html>
+        <head><title>{title}</title></head>
+        <body>
+        <h1>{title}</h1>
+        <table>
+        <tr><th>Category</th><th>Item</th><th>Count</th></tr>
+        <for e in :entries><tr><td>{e.category}</td><td>{e.item}</td><td>{e.count}</td></tr></for>
+        </table>
+        <p>{total} in total</p>
+        </body>
+        </html>
+    } eod
+}

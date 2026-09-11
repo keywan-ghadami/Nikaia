@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use nikaia::contracts::{self, sync, Ledger, STD};
 use nikaia::emit::{self, Profile};
-use nikaia::{check, diagnostics, interpreter, parser};
+use nikaia::{check, diagnostics, interpreter, modules, parser};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -90,12 +90,17 @@ pub struct Cli {
 ///
 /// Types are reported before suspension because a call that passes the wrong
 /// thing is usually why the rest of the file reads strangely.
-fn check(parsed: &parser::Parsed, path: &Path, source: &str) -> Result<()> {
-    let own = Ledger::infer(parsed);
+fn check(
+    parsed: &parser::Parsed,
+    own: &Ledger,
+    modules: &std::collections::BTreeSet<String>,
+    path: &Path,
+    source: &str,
+) -> Result<()> {
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
 
-    let findings = check::check(parsed, &own, &library).findings;
-    let violations = sync::check(parsed, &own, &library);
+    let findings = check::check_program(parsed, own, &library, modules).findings;
+    let violations = sync::check(parsed, own, &library);
     if findings.is_empty() && violations.is_empty() {
         return Ok(());
     }
@@ -328,11 +333,26 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         }
     };
 
+    // Part I 9.1: every file is a module, so a build is however many files the
+    // entry reaches - and the cache cannot be asked about a program until the
+    // program is known. Finding that out means parsing, so **ADR-021 D13's
+    // "on a hit nothing is parsed" becomes "nothing is parsed twice"**: the
+    // parse is what tells the compiler which files took part, and Part III 13.1
+    // already keys the build on each of them. What a hit still saves is the
+    // lowering, the checks and the inference, which is the larger part - and
+    // the parse itself became 20 % cheaper with the whitespace hoist.
+    //
+    // A single file is unchanged in every respect that matters: `sources()`
+    // is one string, so the key is byte-identical to the one this wrote before
+    // modules existed.
+    let program = modules::Program::read(&args.input)?;
+    let key_source = program.sources().join("\n// --- unit ---\n");
+
     // An entry that predates an artifact this build needs is a miss, not a
     // gap: adding an output stays a safe change.
     let cached = cache
         .as_ref()
-        .and_then(|cache| cache.lookup(&unit, source, &choices, &layout.root))
+        .and_then(|cache| cache.lookup(&unit, &key_source, &choices, &layout.root))
         .filter(|artifacts| artifacts.has_all(&[RUST, CONTRACTS]));
     let reused = cached.is_some();
 
@@ -342,10 +362,22 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
             artifacts.get(CONTRACTS).expect("checked above").to_string(),
         ),
         None => {
-            let parsed = parser::parse_to_ast(source)?;
-            check(&parsed, &args.input, source)?;
-            let lowered = emit::emit_program(&parsed, profile)?;
-            let ledger = Ledger::infer(&parsed).render();
+            // Every unit is checked against the *program's* contracts, not its
+            // own: `utils::double` is a name `main.nika` may write, and the
+            // type checker resolves it in the one place any name is resolved.
+            let modules = program.module_names();
+            for unit in &program.units {
+                check(
+                    &unit.parsed,
+                    &program.contracts,
+                    &modules,
+                    &unit.path,
+                    &unit.source,
+                )?;
+            }
+
+            let lowered = program.emit(profile)?;
+            let ledger = program.contracts.render();
 
             if let Some(cache) = &mut cache {
                 // Nothing reports assets yet: compile-time I/O
@@ -356,7 +388,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
                     .with(RUST, &lowered.rust)
                     .with(CONTRACTS, &ledger);
                 let stored = cache
-                    .record(&unit, source, BTreeMap::new(), &choices, &artifacts)
+                    .record(&unit, &key_source, BTreeMap::new(), &choices, &artifacts)
                     .and_then(|()| cache.save());
                 if let Err(error) = stored {
                     // The outputs are in hand; only the next build is slower.

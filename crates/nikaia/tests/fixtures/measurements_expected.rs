@@ -34,7 +34,7 @@ grammar! {
 // value of this type escapes its buffer is not implemented yet.
 #[derive(Debug, Clone)]
 pub struct Reading<'a> {
-    pub name: &'a str,
-    pub temp: i32,
+    name: &'a str,
+    temp: i32,
 }
 
