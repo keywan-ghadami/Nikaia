@@ -6,6 +6,7 @@ members = [
     "crates/rustc-executor",
     "crates/nikaia",
     "crates/nikaia-std",
+    "benches/overlap",
 ]
 
 [workspace.dependencies]

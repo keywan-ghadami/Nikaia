@@ -24,7 +24,6 @@
 use std::collections::BTreeSet;
 
 use crate::ast::{Expr, Item, Stmt};
-use crate::emit::UserParallelism;
 use crate::parser::Parsed;
 
 use super::touch::Reached;
@@ -58,9 +57,8 @@ pub fn operation(
     stmt: &Stmt,
     own: &Ledger,
     library: &Ledger,
-    user_parallelism: UserParallelism,
 ) -> Option<Operation> {
-    match accounted(parsed, stmt, own, library, user_parallelism) {
+    match accounted(parsed, stmt, own, library) {
         Accounted::Operation(operation) => Some(operation),
         _ => None,
     }
@@ -84,11 +82,6 @@ pub enum Accounted {
     /// An argument that is not a literal, which the first increment will not
     /// send to another thread.
     NonLiteralArgument(String),
-    /// Its `catch` handler is code the user wrote, and overlapping would run
-    /// it on another thread. Refused while `user_parallelism = 0`, which is
-    /// the promise that nothing the user wrote runs concurrently
-    /// (ADR-037 D2).
-    UserCodeInHandler(String),
 }
 
 impl Accounted {
@@ -109,24 +102,11 @@ impl Accounted {
             Accounted::NonLiteralArgument(name) => {
                 format!("`{name}` is given an argument that is not a literal")
             }
-            Accounted::UserCodeInHandler(name) => {
-                format!(
-                    "`{name}`'s `catch` handler is code you wrote, and overlapping would run \
-                     it on another thread - raise `user_parallelism` above 0 if that is what \
-                     you want"
-                )
-            }
         }
     }
 }
 
-fn accounted(
-    parsed: &Parsed,
-    stmt: &Stmt,
-    own: &Ledger,
-    library: &Ledger,
-    user_parallelism: UserParallelism,
-) -> Accounted {
+fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Accounted {
     let Stmt::Let {
         name, value, ty, ..
     } = stmt
@@ -155,18 +135,6 @@ fn accounted(
         // conditional operation early.
         Expr::TryCatch { .. } if matches!(value, Expr::TryCatch { handler, .. } if diverts(&handler.stmts)) => {
             return Accounted::DivertingHandler
-        }
-        // And a handler that cannot divert is still **code the user wrote**.
-        // Overlapping puts the whole expression - handler included - inside a
-        // spawned closure, so at `user_parallelism = 0` this pair stays in
-        // order: the switch promises that nothing the user wrote runs
-        // concurrently, and a handler is not an exception to it (ADR-037 D2).
-        Expr::TryCatch { expr, handler }
-            if !user_parallelism.is_concurrent() && !handler.stmts.is_empty() =>
-        {
-            return Accounted::UserCodeInHandler(
-                callee_of(parsed, expr).unwrap_or_else(|| "this call".to_string()),
-            )
         }
         Expr::TryCatch { expr, .. } => &**expr,
         other => other,
@@ -481,39 +449,18 @@ fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
 /// language without an `allow_parallel` owes its user. Nothing prints it on its
 /// own: it is asked for (`--overlaps`), because a compiler that volunteered a
 /// paragraph per pair would be noise in exactly the programs that are fine.
-pub fn report(
-    parsed: &Parsed,
-    own: &Ledger,
-    library: &Ledger,
-    user_parallelism: UserParallelism,
-) -> String {
+pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger) -> String {
     let mut out = String::new();
 
     for item in &parsed.program.items {
         match &item.node {
-            Item::Fn { .. } => function_report(
-                parsed,
-                &item.node,
-                None,
-                own,
-                library,
-                user_parallelism,
-                &mut out,
-            ),
+            Item::Fn { .. } => function_report(parsed, &item.node, None, own, library, &mut out),
             Item::Impl {
                 target, methods, ..
             } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
-                    function_report(
-                        parsed,
-                        &method.node,
-                        Some(&target),
-                        own,
-                        library,
-                        user_parallelism,
-                        &mut out,
-                    );
+                    function_report(parsed, &method.node, Some(&target), own, library, &mut out);
                 }
             }
             _ => {}
@@ -532,7 +479,6 @@ fn function_report(
     target: Option<&str>,
     own: &Ledger,
     library: &Ledger,
-    user_parallelism: UserParallelism,
     out: &mut String,
 ) {
     let Item::Fn { name, body, .. } = item else {
@@ -549,8 +495,8 @@ fn function_report(
 
     let mut lines = Vec::new();
     for pair in body.stmts.windows(2) {
-        let earlier = accounted(parsed, &pair[0].node, own, library, user_parallelism);
-        let later = accounted(parsed, &pair[1].node, own, library, user_parallelism);
+        let earlier = accounted(parsed, &pair[0].node, own, library);
+        let later = accounted(parsed, &pair[1].node, own, library);
 
         let (mark, what, why) = match (&earlier, &later) {
             (Accounted::Operation(earlier), Accounted::Operation(later)) => {
@@ -572,8 +518,7 @@ fn function_report(
                 refused @ (Accounted::NotAPlainCall
                 | Accounted::DivertingHandler
                 | Accounted::NoTouches(_)
-                | Accounted::NonLiteralArgument(_)
-                | Accounted::UserCodeInHandler(_)),
+                | Accounted::NonLiteralArgument(_)),
                 other,
             )
             | (other @ Accounted::Operation(_), refused) => {

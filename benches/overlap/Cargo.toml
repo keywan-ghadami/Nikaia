@@ -1,0 +1,11 @@
+[package]
+name = "overlap-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The pool a generated program already links, because `nikaia_std::task::both`
+# is what the emitter names. Timing anything else would time a program this
+# compiler does not produce.
+rayon = "1.10"

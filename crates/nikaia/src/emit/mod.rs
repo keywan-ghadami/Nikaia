@@ -119,6 +119,36 @@ impl Build {
     fn parallelism(self) -> &'static str {
         self.user_parallelism.parallelism(self.target)
     }
+
+    /// Whether a vehicle exists here for running two pieces of **user** code
+    /// at the same time (ADR-033 §8.2).
+    ///
+    /// Not "does the process have more than one thread". It has a second one
+    /// at `user_parallelism = no` too, and always did: Part I 8.4's Runtime
+    /// Sidecar offloads blocking I/O to a background thread on native (a Web
+    /// Worker on WASM) so the event loop never stalls, and it stays safe
+    /// precisely because *user code never runs there* - the exchange is
+    /// ownership-transferring message passing, so there is nothing to race
+    /// over. What `no` forbids is the other thing: that anything **you** wrote
+    /// is in flight twice at once (Part I 1.2).
+    ///
+    /// `task::both(|| …, || …)` puts two user closures on two threads, so it
+    /// is out at `no` whatever the analysis says - ADR-033 decides whether two
+    /// operations *may* overlap, and this decides whether there is anything to
+    /// overlap them with. A target without threads answers no for the second
+    /// reason: `rayon::join` does not link on `wasm32-unknown` (Part III 15.3).
+    ///
+    /// This is **not** a statement that ADR-033 means nothing at `no`. Two
+    /// reads in flight at once with their results collected on the main thread
+    /// in written order is concurrency without parallelism, which is what an
+    /// event loop and a sidecar are *for* - and it would carry none of the
+    /// per-pair thread wake-up ADR-033 §8.4 measured. That vehicle is not
+    /// built (no event loop, no sidecar, no async lowering), so `effects`
+    /// degrades to `strict` here the way `par_fold` degrades to `fold`
+    /// (ADR-009) - for now, and for a narrower reason than "no threads".
+    pub fn overlaps_user_code(self) -> bool {
+        self.user_parallelism.is_concurrent() && self.target.has_threads()
+    }
 }
 
 impl Target {
@@ -1706,7 +1736,10 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<bool> {
-        if self.ordering != Ordering::Effects || i + 1 >= stmts.len() {
+        if !self.build.overlaps_user_code()
+            || self.ordering != Ordering::Effects
+            || i + 1 >= stmts.len()
+        {
             return Ok(false);
         }
         if tail_at.is_some_and(|tail| tail == i || tail == i + 1) {
@@ -1736,14 +1769,12 @@ impl<'p> Emitter<'p> {
             earlier,
             &self.own_contracts,
             &self.library,
-            self.build.user_parallelism,
         );
         let later = crate::contracts::order::operation(
             self.parsed,
             later,
             &self.own_contracts,
             &self.library,
-            self.build.user_parallelism,
         );
         match (earlier, later) {
             (Some(earlier), Some(later)) => crate::contracts::order::may_overlap(&earlier, &later),
@@ -1754,21 +1785,24 @@ impl<'p> Emitter<'p> {
     /// Two `let`s, lowered to run at the same time and be collected together.
     ///
     /// ```text
-    /// let (a, b) = std::thread::scope(|scope| {
-    ///     let first  = scope.spawn(|| … );
-    ///     let second = scope.spawn(|| … );
-    ///     (first.join()…, second.join()…)
-    /// });
+    /// let (a, b) = task::both(
+    ///     || … ,
+    ///     || … ,
+    /// );
     /// ```
     ///
-    /// `std::thread::scope` and nothing else: `std`'s I/O is blocking Rust
-    /// (`std::fs::read` behind `fs::read`), so overlapping it means threads, and
-    /// a scoped one is the join that needs no runtime and no dependency.
+    /// Threads and not a runtime: `std`'s I/O is blocking Rust (`std::fs::read`
+    /// behind `fs::read`), so overlapping it means threads. *Which* threads is
+    /// `nikaia_std::task` deciding and not this function - it runs the pair on
+    /// the pool the program already has, so a handler that overlaps under load
+    /// asks for a bounded number of threads (ADR-033 §8.4). Naming one `std`
+    /// function also keeps this lowering one line long instead of a scope, two
+    /// spawns and two joins spelled into every program that uses it.
     ///
-    /// A panic inside either is **resumed** rather than unwrapped, so a program
-    /// that would have panicked still panics with its own message and its own
-    /// payload. Turning somebody's panic into `called Result::unwrap on an Err`
-    /// would be this lowering putting its own words in the program's mouth.
+    /// A panic inside either reaches the caller, so a program that would have
+    /// panicked still panics with its own message and its own payload. Turning
+    /// somebody's panic into `called Result::unwrap on an Err` would be this
+    /// lowering putting its own words in the program's mouth.
     fn overlapped(
         &self,
         out: &mut Out,
@@ -1804,29 +1838,26 @@ impl<'p> Emitter<'p> {
         out.push(&format!(
             "// ADR-033: these two meet on nothing, so neither waits for the other.\n{pad}"
         ));
+        // `task::both` and not `std::thread::scope` inline: the vehicle is
+        // `std`'s decision, not a shape baked into every generated program.
+        // It runs on the pool the program already has, so a handler that
+        // overlaps two reads under a thousand concurrent requests asks for a
+        // bounded number of threads rather than two thousand (ADR-033 §8.4).
         out.push(&format!(
-            "let ({}, {}) = std::thread::scope(|scope| {{\n{inner}",
+            "let ({}, {}) = task::both(\n{inner}|| ",
             bind(first_mut, *first_name),
             bind(second_mut, *second_name),
         ));
 
-        out.push("let first = scope.spawn(|| ");
         out.from(&earlier.span, |out| {
             self.expr(out, first_value, depth + 1, flow)
         })?;
-        out.push(&format!(");\n{inner}"));
+        out.push(&format!(",\n{inner}|| "));
 
-        out.push("let second = scope.spawn(|| ");
         out.from(&later.span, |out| {
             self.expr(out, second_value, depth + 1, flow)
         })?;
-        out.push(&format!(");\n{inner}"));
-
-        out.push("(first.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)),\n");
-        out.push(&format!(
-            "{inner} second.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))\n{pad}"
-        ));
-        out.push("});");
+        out.push(&format!(",\n{pad});"));
         Ok(())
     }
 

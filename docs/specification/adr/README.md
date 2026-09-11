@@ -102,7 +102,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [026](adr-026.md) | Compile-time I/O — what a build may read, and what may run while it reads | **Open** | no |
-| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | first increment, `--overlaps` |
+| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | first increment on `task::both`, `--overlaps` |
 | [034](adr-034.md) | A handler that can `return` makes the next statement conditional, so it may not be started early | Accepted | yes |
 
 ### Build switches

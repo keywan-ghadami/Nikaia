@@ -16,9 +16,9 @@ use nikaia::emit::{self, Build, Ordering};
 use nikaia::parser::parse_to_ast;
 
 /// Overlapping is only reachable with parallelism asked for: at
-/// `user_parallelism = 0` nothing the user wrote may run concurrently, and a
-/// `catch` handler is code the user wrote (ADR-037 D2). So these tests are
-/// about `auto`, and the one below checks the `0` side.
+/// `user_parallelism = no` nothing the user wrote may run concurrently, and
+/// the two closures `task::both` takes are code the user wrote (ADR-037 D2).
+/// So these tests are about `yes`, and the one below checks the `no` side.
 fn lowered(source: &str, ordering: Ordering) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit::emit_program_ordered(&parsed, Build::parallel(), ordering)
@@ -28,7 +28,7 @@ fn lowered(source: &str, ordering: Ordering) -> String {
 
 /// Whether the emitted Rust runs the two calls together.
 fn overlaps(source: &str) -> bool {
-    lowered(source, Ordering::Effects).contains("std::thread::scope")
+    lowered(source, Ordering::Effects).contains("task::both")
 }
 
 const TWO_READS: &str = "use std::fs\n\
@@ -46,6 +46,38 @@ fn two_reads_of_different_files_overlap() {
         "{}",
         lowered(TWO_READS, Ordering::Effects)
     );
+}
+
+/// At `user_parallelism = no` there is nothing to overlap with.
+///
+/// Part I 1.2 promises that nothing **you** wrote ever runs concurrently at
+/// `no`, and Part III 15.3 promises a `wasm32-unknown` build with no OS-level
+/// mutexes or atomics - a target where `rayon::join` does not even link.
+/// `--ordering effects` is a question about the program; whether a vehicle
+/// exists to answer it with is a question about the build, and `no` answers
+/// that one no. So this degrades exactly as `par_fold` degrades to a
+/// sequential `fold` (ADR-009), rather than quietly contradicting the switch
+/// in the same file that emits `Parallelism::Off`.
+#[test]
+fn no_user_parallelism_never_spawns_a_thread() {
+    let parsed = parse_to_ast(TWO_READS).expect("the source parses");
+    let sequential = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Effects)
+        .expect("the source lowers")
+        .rust;
+    assert!(
+        !sequential.contains("task::both"),
+        "`user_parallelism = no` overlapped under `--ordering effects`:\n{sequential}"
+    );
+
+    // …and it is the sequential program, not merely a different one.
+    let strict = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Strict)
+        .expect("the source lowers")
+        .rust;
+    assert_eq!(sequential, strict, "the two orderings differ at `no`");
+
+    // The guard has to be the switch and not the analysis: `yes` still
+    // overlaps the same program, or this test would pass for the wrong reason.
+    assert!(overlaps(TWO_READS));
 }
 
 /// … and the emitted Rust compiles and prints what the sequential one would.
@@ -267,18 +299,15 @@ fn the_corpus_lowers_under_both_orderings() {
 
 // --- why a pair did not overlap (ADR-033 D9) ---------------------------------
 
-/// The report at the setting the overlapping analysis is interesting at: with
-/// parallelism asked for, so a refusal is about the *pair* rather than about
-/// `user_parallelism = 0` refusing every handler (ADR-037 D2).
+/// The report answers "may these two overlap", which is a question about the
+/// program alone - whether a vehicle then exists to overlap them with is a
+/// question about the build, and the CLI says so separately (ADR-033 §8.2b).
+/// So no build setting reaches this.
 fn report(source: &str) -> String {
-    report_at(source, nikaia::emit::UserParallelism::Yes)
-}
-
-fn report_at(source: &str, user_parallelism: nikaia::emit::UserParallelism) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     let library = nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger");
     let own = nikaia::contracts::Ledger::infer(&parsed);
-    nikaia::contracts::order::report(&parsed, &own, &library, user_parallelism)
+    nikaia::contracts::order::report(&parsed, &own, &library)
 }
 
 /// The refusal that the language decided **not** to give a keyword names its
@@ -359,36 +388,4 @@ fn the_recommended_rewrite_overlaps() {
              println(\"{a.len()} {b.len()}\")\n\
          }"
     ));
-}
-
-/// ADR-037 D2: at `user_parallelism = 0` the promise is that nothing the user
-/// wrote runs concurrently. Overlapping puts the whole statement - `catch`
-/// handler included - inside a spawned closure, so a handler is not an
-/// exception to it. The pair that overlaps under `auto` stays in order here.
-#[test]
-fn a_handler_is_user_code_and_does_not_overlap_at_zero() {
-    let parsed = parse_to_ast(TWO_READS).expect("the source parses");
-    let sequential = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Effects)
-        .expect("the source lowers")
-        .rust;
-
-    assert!(
-        !sequential.contains("std::thread::scope"),
-        "a `catch` handler must not be sent to another thread at 0:\n{sequential}"
-    );
-    assert!(
-        overlaps(TWO_READS),
-        "and the same pair must still overlap where parallelism was asked for"
-    );
-}
-
-/// And the refusal says which one it is, rather than falling through to a
-/// vaguer reason (ADR-033 D9).
-#[test]
-fn the_refusal_at_zero_names_the_handler() {
-    let report = report_at(TWO_READS, nikaia::emit::UserParallelism::No);
-    assert!(
-        report.contains("code you wrote") && report.contains("user_parallelism"),
-        "{report}"
-    );
 }
