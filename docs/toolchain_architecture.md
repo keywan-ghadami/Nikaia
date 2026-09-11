@@ -49,7 +49,7 @@ graph TD
     *   Accepts a `BridgeModule`.
     *   **Transpilation**: Converts the Bridge IR into valid, compilable Rust source code (`.rs`).
     *   **Compilation**: Invokes the system `rustc` command to compile the generated source into a binary.
-    *   *Note*: In the future, this might link directly against `rustc_driver` for deeper integration, but currently operates via source generation for stability.
+    *   *Note*: [ADR-004](specification/adr/adr-004.md) D3 keeps open the option of driving `rustc_interface::run_compiler` on the same AST instead. It is measured and not worth taking: the subprocess plus the round trip through text is 0.64 % of compiling the largest program the corpus lowers, and one Nikaia program is one Rust crate however many files it has, so the share falls as a project grows. See [`subprocess-cost.md`](subprocess-cost.md).
 
 ### 4. The Manager: `crates/bridge-orchestrator`
 *   **Role**: The build system coordinator.

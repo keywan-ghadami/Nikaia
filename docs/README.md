@@ -52,6 +52,9 @@ is normative and nothing may depend on it to know what a program means.
   compile-time staging would pay, and what it costs to check one.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and
   what the compiler says about each, before and after.
+* [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
+  process costs, against the codegen it wraps, and why ADR-004 D3's in-memory
+  exit is not worth building yet.
 * [`technical_notes.md`](technical_notes.md) — `rustc_private` internals as
   found on the pinned nightly.
 * [`toolchain_architecture.md`](toolchain_architecture.md) — how the crates in

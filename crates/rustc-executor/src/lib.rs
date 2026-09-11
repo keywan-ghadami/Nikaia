@@ -29,7 +29,33 @@ use rustc_data_structures::thin_vec::ThinVec;
 use rustc_span::symbol::{Ident, Symbol};
 use rustc_span::DUMMY_SP;
 
+/// Bridge-IR to a binary (ADR-004 D1 and D2): build the `rustc_ast::Crate`,
+/// print it, hand the text to `rustc`.
+///
+/// The wrapper is not ceremony. `Ident::from_str` and `Symbol::intern` read
+/// the interner out of `rustc_span`'s `SESSION_GLOBALS`, which is a
+/// `scoped-tls` key: with no session installed the *first* symbol the lowering
+/// interns panics inside `scoped-tls` rather than returning an error, which is
+/// what `--backend bridge` did on every input for as long as it existed.
+/// `create_session_if_not_set_then` rather than `create_session_globals_then`
+/// because the latter asserts nothing is installed, and this is a library
+/// function - a caller that is already inside a session (an ADR-004 D3 driver
+/// would be) must not be punished for calling it.
+///
+/// The edition decides which words the interner reserves as keywords, and so
+/// which identifiers `pprust` prints as `r#…`. 2021 is the edition the rest of
+/// this toolchain writes Rust for; note that the `rustc` invocation below
+/// passes no `--edition` and therefore compiles at 2015, which nothing in
+/// Bridge-IR can currently tell apart. Recorded in
+/// `docs/subprocess-cost.md` rather than changed here, because changing it
+/// changes what is compiled.
 pub fn execute(bridge_module: &BridgeModule, output_path: &str) -> Result<()> {
+    rustc_span::create_session_if_not_set_then(rustc_span::edition::Edition::Edition2021, |_| {
+        execute_in_session(bridge_module, output_path)
+    })
+}
+
+fn execute_in_session(bridge_module: &BridgeModule, output_path: &str) -> Result<()> {
     let krate = lower_module(bridge_module)?;
 
     let mut rust_code = String::new();
