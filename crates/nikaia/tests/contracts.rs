@@ -58,9 +58,9 @@ fn what_cannot_be_resolved_is_not_inferred_sync() {
     let l = ledger(
         "use std::io\n\
          fn pure(a: i32) -> i32 { return a + 1 }\n\
-         fn reads() -> String throws { return io::read_to_string()? }\n\
+         fn reads() -> String throws { return io::read_to_string() }\n\
          fn calls_pure(a: i32) -> i32 { return pure(a) }\n\
-         fn calls_reader() -> String throws { return reads()? }",
+         fn calls_reader() -> String throws { return reads() }",
     );
 
     assert_eq!(l.functions["pure"].sync, Sync::Inferred);
@@ -143,7 +143,7 @@ fn from_does_not_let_io_into_a_sync_function() {
 fn a_while_body_is_walked_like_any_other() {
     let l = ledger(
         "use std::io\n\
-         fn reads() -> i64 throws { let mut n = 0 while n < 3 { let t = io::read_to_string()? n += 1 } return n }\n\
+         fn reads() -> i64 throws { let mut n = 0 while n < 3 { let t = io::read_to_string() n += 1 } return n }\n\
          fn counts(n: i64) -> i64 { let mut i = 0 while i < n { i += 1 } return i }",
     );
 
@@ -240,7 +240,7 @@ fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
     let source = "use std::io\n\
                   fn pure(a: i32) -> i32 { return a + 1 }\n\
                   fn counted(s: String) -> usize { return s.len() }\n\
-                  fn reads() -> String throws { return io::read_to_string()? }\n\
+                  fn reads() -> String throws { return io::read_to_string() }\n\
                   pub struct S { n: i64 }\n\
                   impl S {\n\
                       pub fn(n: i64) -> S { return S(n: n) }\n\
@@ -315,8 +315,8 @@ fn mutual_recursion_between_pure_functions_stays_sync() {
 fn mutual_recursion_that_reaches_io_is_not_sync() {
     let l = ledger(
         "use std::io\n\
-         fn ping(n: i32) -> i32 throws { if n == 0 { return io::read_to_string()?.len() } return pong(n - 1)? }\n\
-         fn pong(n: i32) -> i32 throws { return ping(n - 1)? }",
+         fn ping(n: i32) -> i32 throws { if n == 0 { return io::read_to_string().len() } return pong(n - 1) }\n\
+         fn pong(n: i32) -> i32 throws { return ping(n - 1) }",
     );
 
     assert_eq!(l.functions["ping"].sync, Sync::No);
@@ -572,7 +572,7 @@ fn a_constructor_makes_the_same_promise_or_does_not() {
     let pausing = "use std::io\n\
                    pub struct S { n: i64 }\n\
                    impl S {\n\
-                       pub fn(n: i64) -> S throws { let t = io::read_to_string()? return S(n: n) }\n\
+                       pub fn(n: i64) -> S throws { let t = io::read_to_string() return S(n: n) }\n\
                        fn use_it(&self) sync { let x = S(1) }\n\
                    }";
     let found = violations(pausing);
@@ -622,7 +622,7 @@ fn provenance(source: &str) -> trust::Trust {
 fn a_program_that_reads_a_file_is_trusted() {
     let t = provenance(
         "use std::fs\n\
-         fn main() throws { let data = fs::map(\"x\")? }",
+         fn main() throws { let data = fs::map(\"x\") }",
     );
     assert_eq!(t.provenance, Provenance::Trusted);
     assert_eq!(t.reasons.len(), 1);
@@ -664,7 +664,7 @@ fn one_untrusted_source_decides() {
 
     let parsed = parse_to_ast(
         "use std::fs\n\
-         fn main() throws { let a = fs::map(\"x\")? let b = http::body() }",
+         fn main() throws { let a = fs::map(\"x\") let b = http::body() }",
     )
     .expect("parses");
 

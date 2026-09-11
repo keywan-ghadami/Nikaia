@@ -196,7 +196,9 @@ impl<'a> Checker<'a> {
         for item in &self.parsed.program.items {
             match &item.node {
                 Item::Fn { .. } => self.function(&item.node, None),
-                Item::Impl { target, methods } => {
+                Item::Impl {
+                    target, methods, ..
+                } => {
                     let target = self.parsed.text(target.name).to_string();
                     for method in methods {
                         self.function(&method.node, Some(&target));
@@ -699,6 +701,13 @@ impl<'a> Checker<'a> {
             // reaches into a container and a range is an iterator: four things
             // Stage 0 has no signature for.
             Expr::Try(inner) => {
+                self.expr(inner, span);
+                Ty::Unknown
+            }
+            // Kap 7.1: `throw` leaves the function, so it has no value of its
+            // own - the same shape a `return` has. What it throws is walked,
+            // because a mistyped constructor inside it is still a mistake.
+            Expr::Throw(inner) => {
                 self.expr(inner, span);
                 Ty::Unknown
             }

@@ -423,7 +423,9 @@ impl Ledger {
                         ledger.function(parsed, &item.node, None, &BTreeSet::new());
                     ledger.functions.insert(name, contract);
                 }
-                Item::Impl { target, methods } => {
+                Item::Impl {
+                    target, methods, ..
+                } => {
                     // `impl Stack[T]` puts `T` in scope for every method in it,
                     // so it is a name that stands for a type there too.
                     let outer: BTreeSet<String> = target

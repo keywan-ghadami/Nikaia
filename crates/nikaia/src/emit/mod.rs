@@ -302,6 +302,7 @@ impl<'p> Emitter<'p> {
                 }
                 Item::Import { .. } => uses_std = true,
                 Item::Impl {
+                    trait_name: _,
                     target,
                     methods: body,
                 } => {
@@ -503,7 +504,11 @@ impl<'p> Emitter<'p> {
                 Ok(())
             }
             Item::Fn { .. } => self.function(out, item, 0, Lifetimes::ELIDED),
-            Item::Impl { target, methods } => {
+            Item::Impl {
+                trait_name,
+                target,
+                methods,
+            } => {
                 // A type that holds a view carries the input lifetime, and the
                 // impl has to declare the lifetime its methods are written with.
                 let borrows = self.borrowing.contains(&target.name);
@@ -517,11 +522,24 @@ impl<'p> Emitter<'p> {
                 } else {
                     Lifetimes::ELIDED
                 };
+                let target_name = self.text(target.name).to_string();
 
-                out.push(&format!(
-                    "impl{params} {}{params} {{\n",
-                    self.text(target.name)
-                ));
+                // Kap 7.1: `Error` is the one trait the compiler reads rather
+                // than relays. An error travels in the failure channel, which
+                // the language below spells `Box<dyn std::error::Error>`, and a
+                // type gets in there by being `Display` plus `Error` - neither
+                // of which the `.nika` source mentions, because neither is a
+                // decision the author makes. `message` is what they wrote.
+                let is_error_impl = trait_name.is_some_and(|t| self.text(t) == "Error");
+                if is_error_impl {
+                    return self.error_impl(out, &target_name, &params, methods, lifetimes);
+                }
+
+                let head = match trait_name {
+                    Some(t) => format!("impl{params} {} for {target_name}{params}", self.text(*t)),
+                    None => format!("impl{params} {target_name}{params}"),
+                };
+                out.push(&format!("{head} {{\n"));
                 for method in methods {
                     out.from(&method.span, |out| {
                         out.push("    ");
@@ -550,6 +568,47 @@ impl<'p> Emitter<'p> {
     /// A function or a method. Kap 4.2: a `pub fn` with no name is the
     /// anonymous constructor, called as `Type(…)`; Rust has no such thing, so
     /// it is emitted as `new` and the call sites follow.
+    /// Kap 7.1: `impl Error for T` becomes the three impls the failure channel
+    /// needs, from the one method the source wrote.
+    ///
+    /// The author writes `message`. Rust wants `Display` for the text, and
+    /// `std::error::Error` for the value to be accepted as an error at all;
+    /// `Box<dyn Error>` then takes it. None of that is a decision - it is the
+    /// same transcription ADR-011 D2 asks of every other lowering - so the
+    /// `.nika` file says the part that is one and the emitter supplies the rest.
+    ///
+    /// `Debug` comes along because `std::error::Error` requires it, and a
+    /// derived one is what a user would have written.
+    fn error_impl(
+        &self,
+        out: &mut Out,
+        target: &str,
+        params: &str,
+        methods: &[Spanned<Item>],
+        lifetimes: Lifetimes,
+    ) -> Result<()> {
+        out.push(&format!("impl{params} {target}{params} {{\n"));
+        for method in methods {
+            out.from(&method.span, |out| {
+                out.push("    ");
+                self.function(out, &method.node, 1, lifetimes)
+            })?;
+        }
+        out.push("}\n");
+
+        out.push(&format!(
+            "impl{params} std::fmt::Display for {target}{params} {{\n\
+             \x20   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n\
+             \x20       f.write_str(&self.message())\n\
+             \x20   }}\n\
+             }}\n"
+        ));
+        out.push(&format!(
+            "impl{params} std::error::Error for {target}{params} {{}}\n"
+        ));
+        Ok(())
+    }
+
     fn function(
         &self,
         out: &mut Out,
@@ -1576,6 +1635,15 @@ impl<'p> Emitter<'p> {
                 self.postfix_base(out, inner, depth, flow)?;
                 out.push("?");
             }
+            // Kap 7.1: `throw e` leaves the function with `e` in the failure
+            // channel. `Box::new` is what puts it there, and it is the emitter's
+            // to write rather than the author's - ADR-023 D2 gives the language
+            // one way to raise an error, not one way plus a conversion.
+            Expr::Throw(inner) => {
+                out.push("return Err(Box::new(");
+                self.expr(out, inner, depth, flow)?;
+                out.push("))");
+            }
             Expr::Spawn { .. } => {
                 // Part II, 11.2. The runtime binding is the next roadmap line.
                 return Err(anyhow!(
@@ -2138,7 +2206,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_expr(lhs, f);
             visit_expr(rhs, f);
         }
-        Expr::Try(inner) => visit_expr(inner, f),
+        Expr::Try(inner) | Expr::Throw(inner) => visit_expr(inner, f),
         Expr::Index { base, index } => {
             visit_expr(base, f);
             visit_expr(index, f);

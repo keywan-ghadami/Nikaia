@@ -93,14 +93,14 @@ fn a_call_with_too_few_arguments_is_reported() {
 /// ledger worth shipping (Part III, 13.5).
 #[test]
 fn a_call_into_std_is_checked_against_the_shipped_ledger() {
-    let (code, message) = one("fn main() throws { let text = io::read_to_string(\"x\")? }");
+    let (code, message) = one("fn main() throws { let text = io::read_to_string(\"x\") }");
     assert_eq!(code, "NK1101");
     assert_eq!(
         message,
         "`io::read_to_string` takes 0 arguments, and this call passes 1"
     );
     assert_eq!(
-        findings("fn main() throws { let text = io::read_to_string(\"x\")? }")[0]
+        findings("fn main() throws { let text = io::read_to_string(\"x\") }")[0]
             .help
             .as_deref(),
         Some("call it as `io::read_to_string()`")

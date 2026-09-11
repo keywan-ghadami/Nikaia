@@ -84,7 +84,14 @@ pub enum Item {
     },
 
     // Kap 4.2: impl User { ... }
+    //
+    // Kap 4.7 and 7.1: `impl Summarize for User` names a trait, and `trait` is
+    // `None` for the inherent form. `Error` is the one the compiler reads
+    // rather than relays - a type that implements it is a type that may be
+    // thrown ([ADR-023](../../../docs/specification/adr/adr-023.md) D3).
     Impl {
+        /// The trait being implemented, or `None` for an inherent `impl`.
+        trait_name: Option<Ident>,
         target: Type,
         methods: Vec<Spanned<Item>>, // Enthält Item::Fn
     },
@@ -284,6 +291,12 @@ pub enum Expr {
 
     // Kap 7.1: expr?
     Try(Box<Expr>),
+
+    /// Kap 7.1: `throw ConfigError::NotFound(path)` - raise an error. The value
+    /// must implement `Error`; there is no other way to originate one, which is
+    /// why [ADR-023](../../../docs/specification/adr/adr-023.md) D2 calls it
+    /// load-bearing rather than convenient.
+    Throw(Box<Expr>),
 
     // Kap 2.2: 10.0
     LitFloat(String),

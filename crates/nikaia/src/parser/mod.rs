@@ -111,7 +111,6 @@ pub enum Postfix {
     Field(Symbol),
     Method(Symbol, Vec<ast::Expr>),
     Index(Box<ast::Expr>),
-    Try,
 }
 
 /// Left-associative: `a - b - c` is `(a - b) - c`.
@@ -139,7 +138,6 @@ pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
             base: Box::new(recv),
             index,
         },
-        Postfix::Try => ast::Expr::Try(Box::new(recv)),
     })
 }
 
@@ -209,18 +207,34 @@ grammar! {
           | i:fn_item -> { Spanned::new(i, _span) }
 
         // Kap 4.2: behaviour lives in an `impl`, never in the struct.
+        // Kap 4.2 and 4.7: `impl User` gives a type behaviour of its own,
+        // `impl Summarize for User` gives it a trait's. The trait name comes
+        // first and the `for` is what tells the two apart, so the grammar reads
+        // a name and only then finds out which form it was in.
         rule impl_item -> Item =
-            "impl" target:type_ref
+            "impl" first:type_ref rest:impl_for_target?
             "{" methods:impl_method* "}"
-            -> { Item::Impl { target, methods } }
+            -> {
+                let (trait_name, target) = match rest {
+                    Some(t) => (Some(first.name), t),
+                    None => (None, first),
+                };
+                Item::Impl { trait_name, target, methods }
+            }
+
+        rule impl_for_target -> Type = "for" t:type_ref -> { t }
 
         rule impl_method -> Spanned<Item> @= f:fn_item -> { Spanned::new(f, _span) }
 
         rule kw_sync -> () = "sync" -> { () }
         rule kw_pub -> () = "pub" -> { () }
 
-        // `sync` and `throws` are accepted on either side of the return type:
-        // Part II writes `fn add(…) sync`, Part I `fn f(…) -> String throws`.
+        // `sync` and `throws` are accepted on either side of the return type,
+        // and both sides are used: Part II writes `fn add(…) sync`, Part III
+        // `pub fn read(path: Path) -> Bytes throws`, and Part I 7.1
+        // `fn fetch_config() throws -> String`. The comment used to claim this
+        // while the rule gave `throws` only the trailing slot, so the form the
+        // error-handling chapter uses did not parse.
         rule fn_item -> Item =
             vis:kw_pub?
             "fn"
@@ -228,9 +242,10 @@ grammar! {
             generics:generic_list?
             params:fn_params
             sync_before:kw_sync?
+            throws_before:kw_throws?
             ret:return_type_arrow?
             sync_after:kw_sync?
-            throws:kw_throws?
+            throws_after:kw_throws?
             body:block
             -> {
                 Item::Fn {
@@ -243,7 +258,7 @@ grammar! {
                     body,
                     is_sync: sync_before.is_some() || sync_after.is_some(),
                     is_public: vis.is_some(),
-                    throws: throws.is_some(),
+                    throws: throws_before.is_some() || throws_after.is_some(),
                 }
             }
 
@@ -734,6 +749,7 @@ grammar! {
         rule stmt -> Spanned<Stmt> # "statement" @=
             l:let_stmt -> { Spanned::new(l, _span) }
           | r:return_stmt -> { Spanned::new(r, _span) }
+          | t:throw_stmt -> { Spanned::new(t, _span) }
           | w:while_stmt -> { Spanned::new(w, _span) }
           | f:for_stmt -> { Spanned::new(f, _span) }
           | a:assign_stmt -> { Spanned::new(a, _span) }
@@ -742,6 +758,14 @@ grammar! {
         rule return_stmt -> Stmt =
             "return" value:expr? ";"? -> {
                 Stmt::Return(value)
+            }
+
+        // Kap 7.1: `throw` is the only way an error originates. Without it a
+        // program could propagate what `std` produced and never produce one of
+        // its own (ADR-023 D2).
+        rule throw_stmt -> Stmt =
+            "throw" value:expr ";"? -> {
+                Stmt::Expr(Expr::Throw(Box::new(value)))
             }
 
         rule kw_mut -> () = "mut" -> { () }
@@ -993,8 +1017,7 @@ grammar! {
           // `t.0` - a tuple's parts are numbered, and the number is a field
           // name like any other, so nothing downstream has to know.
           | "." index:digits -> { Postfix::Field(_state.intern(&index)) }
-          // greedy `?` would take it apart into two error propagations.
-          | "?" not("?") -> { Postfix::Try }
+
 
         // `fn: expr` and `fn { … }` - the arguments are implicit (`a`, `b`),
         // and which of them the body actually uses is settled when it is

@@ -64,7 +64,9 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Violation> 
     for item in &parsed.program.items {
         match &item.node {
             Item::Fn { .. } => walk_fn(parsed, &item.node, None, own, library, &mut found),
-            Item::Impl { target, methods } => {
+            Item::Impl {
+                target, methods, ..
+            } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
                     walk_fn(
@@ -132,7 +134,9 @@ pub fn infer(
                     graph.insert(name, reach);
                 }
             }
-            Item::Impl { target, methods } => {
+            Item::Impl {
+                target, methods, ..
+            } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
                     if let Some((name, reach)) = reach_of(
