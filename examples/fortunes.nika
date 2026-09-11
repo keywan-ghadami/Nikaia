@@ -11,7 +11,7 @@
 // using *both* binding modes from ADR-007 D4 - deferred parameters for SQL,
 // immediate capture for the template.
 //
-// Build:  nikaia build --profile=lite --release
+// Build:  nikaia build --user-parallelism=0 --release
 //
 // NOTE: this does not compile yet - see examples/README.md. [G7], the template
 // and its escaping, is done: `render` below lowers and runs. What is left is
@@ -82,7 +82,7 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
 
     // Implicit async (Part II, 11.1): this is a network round-trip, written in
     // direct style. No `async` on the signature, no `await` at the call. In the
-    // Lite profile the event loop picks up another connection while this one
+    // At 0 the event loop picks up another connection while this one
     // waits - which is the entire point of the benchmark.
     //
     // And nothing marks the failure either. `fetch` can fail, this function is
@@ -103,9 +103,9 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
 }
 
 fn main() throws {
-    // One connection per worker. In the Lite profile this is a single-threaded
+    // One connection per worker. At `user_parallelism = 0` this is a single-threaded
     // event loop, so `Shared` costs a non-atomic refcount; the same source
-    // compiled with --profile=advanced gets the atomic one, and nothing above
+    // compiled with --user-parallelism=auto gets the atomic one, and nothing above
     // this line changes (Part II, 12.2).
     let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")
 

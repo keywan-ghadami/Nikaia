@@ -3,13 +3,13 @@
 //! A generated program links `nikaia_std`, `winnow_grammar` and `winnow`, and
 //! all three are in cargo's deps directory - along with other copies of them:
 //! the build-dependency graph builds the parser backend a second time under a
-//! different profile, and an earlier build may have left a stale hash behind.
+//! different Cargo profile, and an earlier build may have left a stale hash behind.
 //! Two copies of `winnow` in one program is a type error at every `Stream`
 //! bound, so guessing by modification time is not good enough.
 //!
 //! The copies that belong together are named in the crate metadata: an rlib
 //! lists its dependencies as `name-hash`, and the hash is the one in the
-//! file name. So one anchor - the newest `nikaia_std`, of which a profile has
+//! file name. So one anchor - the newest `nikaia_std`, of which a build has
 //! exactly one - and the rest is read, not guessed.
 
 #![allow(dead_code)]

@@ -4,7 +4,7 @@
 //! records. What it cannot check from there is the thing the ADR is actually
 //! worried about: that the artifacts the cache hands back are the ones the
 //! emitter would have produced. That needs a real `.nika` file whose lowering
-//! *differs* between the profiles, or the check passes without checking
+//! *differs* between the builds, or the check passes without checking
 //! anything - which is the failure mode D5 names by its own test,
 //! `the_profiles_agree_on_every_example`.
 
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use bridge_orchestrator::cache::{Artifacts, Cache, Choices};
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -29,9 +29,9 @@ fn rust(emitted: &str) -> Artifacts {
 }
 
 /// Lowers `source` the way the `rust` backend does.
-fn lower(source: &str, profile: Profile) -> String {
+fn lower(source: &str, build: Build) -> String {
     let parsed = parse_to_ast(source).expect("parse");
-    emit_program(&parsed, profile).expect("emit").rust
+    emit_program(&parsed, build).expect("emit").rust
 }
 
 fn cache_in(dir: &std::path::Path) -> Cache {
@@ -44,16 +44,16 @@ fn cache_in(dir: &std::path::Path) -> Cache {
     .expect("open cache")
 }
 
-/// An example that lowers differently under Lite and Advanced, so that a cache
+/// An example that lowers differently at either `user_parallelism`, so that a cache
 /// which confused the two would be caught. `1brc.nika` is the one the
 /// specification leans on for exactly this difference (ADR-009's `par_fold`).
-fn a_profile_sensitive_example() -> String {
+fn a_switch_sensitive_example() -> String {
     let path = repo_root().join("examples/1brc.nika");
     let source = std::fs::read_to_string(&path).expect("1brc.nika is readable");
     assert_ne!(
-        lower(&source, Profile::Lite),
-        lower(&source, Profile::Advanced),
-        "this test is only meaningful while {} lowers differently per profile; \
+        lower(&source, Build::default()),
+        lower(&source, Build::parallel()),
+        "this test is only meaningful while {} lowers differently per build; \
          if that changed, pick another example rather than deleting the check",
         path.display()
     );
@@ -63,9 +63,9 @@ fn a_profile_sensitive_example() -> String {
 #[test]
 fn an_unchanged_unit_comes_back_from_the_cache_unchanged() {
     let dir = common::scratch_dir("cache-roundtrip");
-    let source = a_profile_sensitive_example();
-    let choices = Choices::new("advanced", "rust");
-    let expected = lower(&source, Profile::Advanced);
+    let source = a_switch_sensitive_example();
+    let choices = Choices::new("x86_64-linux/auto", "rust");
+    let expected = lower(&source, Build::default());
 
     let mut cache = cache_in(&dir);
     assert!(
@@ -95,17 +95,17 @@ fn an_unchanged_unit_comes_back_from_the_cache_unchanged() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// ADR-021 D5. The profile is in the key, so each profile gets its own entry
+/// ADR-021 D5. The build is in the key, so each build gets its own entry
 /// and neither is ever served the other's.
 #[test]
-fn the_two_profiles_never_serve_each_others_artifacts() {
-    let dir = common::scratch_dir("cache-profiles");
-    let source = a_profile_sensitive_example();
+fn two_settings_never_serve_each_others_artifacts() {
+    let dir = common::scratch_dir("cache-builds");
+    let source = a_switch_sensitive_example();
 
-    let lite = Choices::new("lite", "rust");
-    let advanced = Choices::new("advanced", "rust");
-    let lowered_lite = lower(&source, Profile::Lite);
-    let lowered_advanced = lower(&source, Profile::Advanced);
+    let sequential = Choices::new("x86_64-linux/0", "rust");
+    let parallel = Choices::new("x86_64-linux/auto", "rust");
+    let lowered_sequential = lower(&source, Build::default());
+    let lowered_parallel = lower(&source, Build::parallel());
 
     let mut cache = cache_in(&dir);
     cache
@@ -113,37 +113,37 @@ fn the_two_profiles_never_serve_each_others_artifacts() {
             "1brc.nika",
             &source,
             BTreeMap::new(),
-            &lite,
-            &rust(&lowered_lite),
+            &sequential,
+            &rust(&lowered_sequential),
         )
-        .expect("record lite");
+        .expect("record sequential");
     cache
         .record(
             "1brc.nika",
             &source,
             BTreeMap::new(),
-            &advanced,
-            &rust(&lowered_advanced),
+            &parallel,
+            &rust(&lowered_parallel),
         )
-        .expect("record advanced");
+        .expect("record parallel");
 
-    // Same unit, same source, two profiles - and each has to come back as
+    // Same unit, same source, two builds - and each has to come back as
     // itself. Recording the second must not have displaced the first.
     assert_eq!(
         cache
-            .lookup("1brc.nika", &source, &lite, &dir)
+            .lookup("1brc.nika", &source, &sequential, &dir)
             .as_ref()
             .and_then(|artifacts| artifacts.get("rust")),
-        Some(lowered_lite.as_str()),
-        "lite is served lite"
+        Some(lowered_sequential.as_str()),
+        "the sequential build is served its own artifact"
     );
     assert_eq!(
         cache
-            .lookup("1brc.nika", &source, &advanced, &dir)
+            .lookup("1brc.nika", &source, &parallel, &dir)
             .as_ref()
             .and_then(|artifacts| artifacts.get("rust")),
-        Some(lowered_advanced.as_str()),
-        "advanced is served advanced"
+        Some(lowered_parallel.as_str()),
+        "the parallel build is served its own artifact"
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -154,8 +154,8 @@ fn the_two_profiles_never_serve_each_others_artifacts() {
 #[test]
 fn an_edited_source_misses() {
     let dir = common::scratch_dir("cache-edit");
-    let source = a_profile_sensitive_example();
-    let choices = Choices::new("advanced", "rust");
+    let source = a_switch_sensitive_example();
+    let choices = Choices::new("x86_64-linux/auto", "rust");
 
     let mut cache = cache_in(&dir);
     cache
@@ -164,7 +164,7 @@ fn an_edited_source_misses() {
             &source,
             BTreeMap::new(),
             &choices,
-            &rust(&lower(&source, Profile::Advanced)),
+            &rust(&lower(&source, Build::default())),
         )
         .expect("record");
 
@@ -178,12 +178,12 @@ fn an_edited_source_misses() {
 }
 
 /// The lockfile is the committed record (D2), and the build-time choices are
-/// deliberately not in it (D5) - otherwise switching profile would rewrite a
+/// deliberately not in it (D5) - otherwise switching build would rewrite a
 /// tracked file for a diff that means nothing.
 #[test]
 fn the_lockfile_survives_a_round_trip_and_holds_no_choices() {
     let dir = common::scratch_dir("cache-lockfile");
-    let source = a_profile_sensitive_example();
+    let source = a_switch_sensitive_example();
 
     let mut cache = cache_in(&dir);
     cache
@@ -191,8 +191,8 @@ fn the_lockfile_survives_a_round_trip_and_holds_no_choices() {
             "1brc.nika",
             &source,
             BTreeMap::new(),
-            &Choices::new("lite", "rust"),
-            &rust(&lower(&source, Profile::Lite)),
+            &Choices::new("x86_64-linux/0", "rust"),
+            &rust(&lower(&source, Build::default())),
         )
         .expect("record");
     cache.save().expect("save");
@@ -200,8 +200,8 @@ fn the_lockfile_survives_a_round_trip_and_holds_no_choices() {
     let text = std::fs::read_to_string(dir.join("nikaia.lock")).expect("lockfile written");
     assert!(text.contains("1brc.nika"), "the unit is recorded:\n{text}");
     assert!(
-        !text.contains("lite"),
-        "the profile is a choice and must not be recorded:\n{text}"
+        !text.contains("user_parallelism"),
+        "the build is a choice and must not be recorded:\n{text}"
     );
 
     // Reopening sees the same units, so a second invocation can look up what

@@ -23,9 +23,9 @@
 //     is where that shows - the fragments counted below are views into the
 //     sequence, thousands of them, and none of them is a string.
 //   * **Looks blocking, is not.** There is no `async` on `main` and no `await`
-//     on the read. Under Lite the event loop runs another task while the pipe
-//     is empty; under Advanced the read may resume on a different thread. The
-//     source says neither, and the two profiles must print the same thing -
+//     on the read. On one thread the event loop runs another task while the pipe
+//     is empty; with threads the read may resume on a different onead. The
+//     source says neither, and both settings must print the same thing -
 //     which the test checks.
 //   * **A grammar for a format that is nearly not one.** FASTA is a header line
 //     beginning with `>` and the lines under it. That is small enough that the

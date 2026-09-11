@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nikaia::contracts::Ledger;
-use nikaia::emit::Profile;
+use nikaia::emit::Build;
 use nikaia::modules::Program;
 
 /// Write a set of files into a scratch directory and hand back the entry.
@@ -28,9 +28,9 @@ fn project(name: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf) {
 }
 
 /// Lower, compile and run - the only proof that the modules really resolved.
-fn run(entry: &Path, profile: Profile) -> String {
+fn run(entry: &Path, build: Build) -> String {
     let program = Program::read(entry).expect("the program reads");
-    let lowered = program.emit(profile).expect("the program lowers");
+    let lowered = program.emit(build).expect("the program lowers");
 
     let dir = entry.parent().expect("a directory");
     let rust = dir.join("program.rs");
@@ -94,8 +94,8 @@ fn a_program_of_two_files_compiles_and_runs() {
         ],
     );
 
-    for profile in [Profile::Lite, Profile::Advanced] {
-        assert_eq!(run(&entry, profile).trim(), "42 42", "under {profile:?}");
+    for build in [Build::default(), Build::default()] {
+        assert_eq!(run(&entry, build).trim(), "42 42", "under {build:?}");
     }
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -166,7 +166,7 @@ fn a_private_item_cannot_be_reached_from_another_file() {
     );
 
     let program = Program::read(&entry).expect("the program reads");
-    let lowered = program.emit(Profile::Advanced).expect("it lowers");
+    let lowered = program.emit(Build::default()).expect("it lowers");
     assert!(
         lowered.rust.contains("fn secret()") && !lowered.rust.contains("pub fn secret()"),
         "a private function was emitted public:\n{}",
@@ -264,7 +264,7 @@ fn two_modules_may_import_each_other() {
         ],
     );
 
-    assert_eq!(run(&entry, Profile::Advanced).trim(), "2");
+    assert_eq!(run(&entry, Build::default()).trim(), "2");
     let _ = std::fs::remove_dir_all(dir);
 }
 

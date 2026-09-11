@@ -10,10 +10,10 @@ never be able to quietly change the language.
 **What the language is.** Normative. If the compiler disagrees with it, one of
 the two is a bug and the disagreement gets recorded.
 
-* [Part I — Nikaia Lite](specification/10-nikaia-light.md): the language a
-  person learns first.
-* [Part II — Nikaia Advanced](specification/20-nikaia-advance.md): concurrency,
-  parallelism, the grammar protocol.
+* [Part I — The Language Core](specification/10-nikaia-light.md): the language
+  a person learns first.
+* [Part II — Concurrency and Metaprogramming](specification/20-nikaia-advance.md):
+  concurrency, parallelism, the grammar protocol.
 * [Part III — Tooling](specification/30-nikaia-tooling.md): the CLI, the
   ledger, `std`, the diagnostics contract.
 

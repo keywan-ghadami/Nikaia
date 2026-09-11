@@ -10,7 +10,7 @@
 // grammar protocol claims (scannerless parsing, zero-copy slices, `sync`
 // parallelism). If it is slow, the argument in ADR-007 is wrong.
 //
-// Build:  nikaia build --profile=advanced --release
+// Build:  nikaia build --user-parallelism=auto --release
 // Run:    ./1brc measurements.txt
 //
 // This runs:
@@ -21,7 +21,7 @@
 // prints, on this file rather than a copy of it.
 //
 // It does what it says: `fs::map` maps the file (ADR-014 D2), and under the
-// Advanced profile the pieces are parsed on every core (D3) - 8 million lines
+// `--user-parallelism=auto` the pieces are parsed on every core (D3) - 8 million lines
 // on 4 cores took 0.14 s against 0.52 s sequentially, with identical output.
 // Sequentially it is 659 instructions per row, against 840 for the same
 // aggregation written naively in Rust and 688 for it hand-tuned (ADR-015 D3).
@@ -119,7 +119,7 @@ grammar Measurements {
     // on its own, because a merge over floats is not associative and the core
     // count would silently change the answer. This one is associative: the
     // aggregation runs entirely in i64 tenths and only becomes f64 at print
-    // time. Under --profile=lite the same grammar runs as a sequential fold.
+    // time. Under --user-parallelism=0 the same grammar runs as a sequential fold.
     pub rule file -> Summary =
         par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) },
                  Summary::merge)
@@ -220,12 +220,12 @@ fn main() throws {
     // practical - the pages *are* the buffer, so nothing is copied and every
     // station name below points straight into the mapped file.
     //
-    // `fs::map` needs a target with memory mapping, not a particular profile:
-    // this would map the file just the same under `--profile=lite` on Linux.
+    // `fs::map` needs a target with memory mapping, not a particular setting:
+    // this would map the file just the same under `--user-parallelism=0` on Linux.
     // Only a `wasm32-*` target rules it out, where `fs::lines` is the
-    // constant-memory alternative. The Advanced profile is chosen here so the
-    // grammar's `par_fold` uses every core, not for the mapping - and under
-    // Lite the same program still runs, on one core.
+    // constant-memory alternative. Parallelism is asked for here so the
+    // grammar's `par_fold` uses every core, not for the mapping - and at
+    // `user_parallelism = 0` the same program still runs, on one core.
     let data = fs::map(&path) catch {
         eprintln(f"cannot open {path}: {error}")
         return

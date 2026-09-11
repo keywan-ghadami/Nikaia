@@ -9,7 +9,7 @@
 mod common;
 
 use nikaia::contracts::Ledger;
-use nikaia::emit::{emit_program, Profile};
+use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
 /// The ledger this source produces, rendered the way it is committed.
@@ -19,7 +19,7 @@ fn ledger_for(source: &str) -> String {
 
 fn emit(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit_program(&parsed, Profile::Advanced)
+    emit_program(&parsed, Build::default())
         .expect("the source lowers")
         .rust
 }

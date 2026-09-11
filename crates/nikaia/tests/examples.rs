@@ -7,10 +7,11 @@
 //! with the `rustc` that built this test, run the binary, compare what it
 //! printed.
 //!
-//! Under **both profiles**, and the outputs must be equal. That is the claim
-//! the profiles rest on (Part I): the same source compiles under Lite and
-//! Advanced and means the same thing, only the runtime underneath differs. A
-//! test that only ran one of them would leave the interesting half unchecked.
+//! At **both settings of `user_parallelism`**, and the outputs must be equal.
+//! That is the claim the switches rest on (Part I 1.2): the same source
+//! compiles either way and means the same thing, only the runtime underneath
+//! differs. A test that ran one setting would leave the interesting half
+//! unchecked.
 //!
 //! `1brc.nika` has a test of its own (`one_brc.rs`), because it checks more
 //! than its output. The last test here makes sure no example escapes both.
@@ -20,7 +21,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nikaia::emit::Profile;
+use nikaia::emit::Build;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -39,7 +40,7 @@ struct Example {
     args: &'static [&'static str],
     /// Compared after trimming, so a trailing newline is not a test.
     ///
-    /// It may not name a path: the two profiles run in scratch directories of
+    /// It may not name a path: the two builds run in scratch directories of
     /// their own, so an example that echoed one would print something
     /// different under each and `the_profiles_agree_on_every_example` would be
     /// right to say so.
@@ -95,7 +96,7 @@ const RUNNABLE: &[Example] = &[
         stdin: None,
         args: &["{input}"],
         // Sorted by path; /index.html was hit twice, and the 404 is the one
-        // failure. The counts are what makes the merge visible: under Advanced
+        // failure. The counts are what makes the merge visible: with parallelism
         // the five lines are parsed by several accumulators and added up.
         // By hits, descending; ties keep the name order the first sort put
         // them in - which is the compound order two stable sorts state.
@@ -324,7 +325,7 @@ paper;Card </td>;7
         stdin: None,
         args: &["{input}", "{output}"],
         // Path-free on purpose: what a run says on standard output has to be
-        // the same under both profiles, and the two run in scratch
+        // the same under both builds, and the two run in scratch
         // directories of their own. The page is the deliverable and is
         // checked as one, below.
         expected: "4 items, 64 in total",
@@ -364,12 +365,12 @@ const COVERED_ELSEWHERE: &[&str] = &["1brc.nika"];
 #[test]
 fn every_runnable_example_prints_what_it_promises() {
     for example in RUNNABLE {
-        for profile in [Profile::Lite, Profile::Advanced] {
-            let run = build_and_run(example, profile);
+        for how in [Build::default(), Build::parallel()] {
+            let run = build_and_run(example, how);
             assert_eq!(
                 run.printed.trim(),
                 example.expected,
-                "{} under {profile:?}",
+                "{} under {how:?}",
                 example.file
             );
         }
@@ -385,12 +386,12 @@ fn every_example_that_writes_a_file_writes_the_right_one() {
     let mut checked = 0;
     for example in RUNNABLE.iter().filter(|e| e.wrote.is_some()) {
         let wrote = example.wrote.as_ref().expect("filtered above");
-        for profile in [Profile::Lite, Profile::Advanced] {
-            let run = build_and_run(example, profile);
+        for how in [Build::default(), Build::parallel()] {
+            let run = build_and_run(example, how);
             assert_eq!(
                 run.wrote.as_deref().map(str::trim),
                 Some(wrote.contents),
-                "{} wrote a different {} under {profile:?}",
+                "{} wrote a different {} under {how:?}",
                 example.file,
                 wrote.name
             );
@@ -400,22 +401,22 @@ fn every_example_that_writes_a_file_writes_the_right_one() {
     assert!(checked > 0, "no example writes a file any more");
 }
 
-/// The two profiles are one language, not two dialects: same source, same
+/// The two builds are one language, not two dialects: same source, same
 /// output. Checked separately from the value above so a failure says which of
 /// the two claims broke.
 #[test]
-fn the_profiles_agree_on_every_example() {
+fn the_switches_agree_on_every_example() {
     for example in RUNNABLE {
-        let lite = build_and_run(example, Profile::Lite);
-        let advanced = build_and_run(example, Profile::Advanced);
+        let sequential = build_and_run(example, Build::default());
+        let parallel = build_and_run(example, Build::parallel());
         assert_eq!(
-            lite.printed, advanced.printed,
-            "{} prints differently between profiles",
+            sequential.printed, parallel.printed,
+            "{} prints differently between builds",
             example.file
         );
         assert_eq!(
-            lite.wrote, advanced.wrote,
-            "{} writes a different file between profiles",
+            sequential.wrote, parallel.wrote,
+            "{} writes a different file between builds",
             example.file
         );
     }
@@ -473,7 +474,7 @@ fn the_lists_name_files_that_exist() {
 /// the claim its comment makes.
 #[test]
 fn a_malformed_line_is_reported_and_no_summary_is_printed() {
-    let (dir, binary) = build("access-log.nika", Profile::Advanced);
+    let (dir, binary) = build("access-log.nika", Build::default());
 
     // The status is two digits where the format fixes three.
     let log = dir.join("broken.log");
@@ -537,7 +538,7 @@ fn a_malformed_line_is_reported_and_no_summary_is_printed() {
 /// message, and this is the only place all four are exercised together.
 #[test]
 fn a_missing_operand_is_reported_as_an_expression() {
-    let (dir, binary) = build("calc.nika", Profile::Advanced);
+    let (dir, binary) = build("calc.nika", Build::default());
 
     let run = Command::new(&binary)
         .arg("2 +")
@@ -565,7 +566,7 @@ fn a_missing_operand_is_reported_as_an_expression() {
 }
 
 /// Lower and compile. The example is the real file: it cannot drift.
-fn build(file: &str, profile: Profile) -> (PathBuf, PathBuf) {
+fn build(file: &str, how: Build) -> (PathBuf, PathBuf) {
     let source_path = repo_root().join("examples").join(file);
 
     // Part I 9.1: an example may be more than one file. `Program::read` on a
@@ -573,7 +574,7 @@ fn build(file: &str, profile: Profile) -> (PathBuf, PathBuf) {
     let program = nikaia::modules::Program::read(&source_path)
         .unwrap_or_else(|e| panic!("{file} does not read:\n{e:#}"));
     let lowered = program
-        .emit(profile)
+        .emit(how)
         .unwrap_or_else(|e| panic!("{file} does not lower:\n{e:#}"));
 
     let dir = common::scratch_dir(&format!("example-{}", file.replace('.', "-")));
@@ -592,7 +593,7 @@ fn build(file: &str, profile: Profile) -> (PathBuf, PathBuf) {
     );
     assert!(
         compiled.status.success(),
-        "{file} did not compile under {profile:?}:\n{}\n--- emitted ---\n{}",
+        "{file} did not compile under {how:?}:\n{}\n--- emitted ---\n{}",
         String::from_utf8_lossy(&compiled.stderr),
         lowered.rust
     );
@@ -601,8 +602,8 @@ fn build(file: &str, profile: Profile) -> (PathBuf, PathBuf) {
 }
 
 /// Lower, compile, run, and hand back what it produced.
-fn build_and_run(example: &Example, profile: Profile) -> Run {
-    let (dir, binary) = build(example.file, profile);
+fn build_and_run(example: &Example, how: Build) -> Run {
+    let (dir, binary) = build(example.file, how);
 
     let input_path = example.input.as_ref().map(|input| {
         let path = dir.join(input.name);
@@ -643,7 +644,7 @@ fn build_and_run(example: &Example, profile: Profile) -> Run {
     };
     assert!(
         run.status.success(),
-        "{} failed under {profile:?}: {}",
+        "{} failed under {how:?}: {}",
         example.file,
         String::from_utf8_lossy(&run.stderr)
     );

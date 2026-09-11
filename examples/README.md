@@ -19,8 +19,8 @@ needs is listed under *Gaps* below.
 | [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 
-Each of the eleven is compiled and run **under both profiles**, and their output must be
-identical — that is the claim the profiles rest on, and a test is where it belongs rather than
+Each of the eleven is compiled and run **at both settings**, and their output must be
+identical — that is the claim the switches rest on, and a test is where it belongs rather than
 in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
 an example cannot drift from what is checked.
 
@@ -85,7 +85,7 @@ What the bootstrap compiler handles: functions and methods, `impl` blocks, `stru
 items, `let`, assignment, `for`, `if`, `return`, calls, field access, indexing, casts, struct
 literals and constructors, lambdas, operators, `throws`/`catch`/`??`, string interpolation — and,
 since [ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules,
-patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver the profile asks for.
+patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver `user_parallelism` asks for.
 Errors are reported on the `.nika` line that caused them
 ([ADR-012](../docs/specification/adr/adr-012.md)), and since
 [ADR-024](../docs/specification/adr/adr-024.md) types are checked before any Rust is emitted -
@@ -120,7 +120,7 @@ It is the best fit because it stresses exactly the three things 0.0.7 asserts:
 * **Zero-copy / tethered slices** (Part II, 10.6) — station names must point into the input
   buffer; allocating a billion strings loses by an order of magnitude.
 * **`par_iter` and the `sync` rule** (12.1, 12.6) — the aggregation is pure computation, so
-  the Advanced profile can use every core, and the compiler can prove no task pauses.
+  `user_parallelism = auto` can use every core, and the compiler can prove no task pauses.
 
 If Nikaia is slow here, the grammar protocol's performance argument is wrong. That makes it a
 useful benchmark rather than a demo. See `1brc.nika`.
@@ -132,7 +132,7 @@ so results are directly comparable against Rust, C and Go.
 
 | Program | What it exercises in Nikaia |
 | :--- | :--- |
-| `n-body`, `spectral-norm`, `mandelbrot` | `sync` functions, `par_iter`, Advanced profile |
+| `n-body`, `spectral-norm`, `mandelbrot` | `sync` functions, `par_iter`, parallelism |
 | `binary-trees` | allocation and deterministic teardown (`Drop` / `Cleanup`, ADR-006) |
 | `fannkuch-redux` | scoped tasks (12.7) |
 | `reverse-complement`, `k-nucleotide` | **stdin/stdout IO** plus hashing |
@@ -142,12 +142,12 @@ so results are directly comparable against Rust, C and Go.
 Small, self-contained, no external services. `n-body` is the usual first one because it is
 ~100 lines and purely numeric.
 
-### 3. TechEmpower Web Framework Benchmarks — **the Lite profile's actual thesis**
+### 3. TechEmpower Web Framework Benchmarks — **what `user_parallelism = 0` is actually for**
 
 `plaintext`, `json`, `db`, `queries`, `fortunes`, `updates`, `cached-queries`.
 
 This is the benchmark that matches Nikaia's pitch: implicit async, IO density, share-nothing,
-WASM-compatible Lite profile. `fortunes` in particular exercises the 0.0.7 DSL protocol
+WASM-compatible single-threaded build. `fortunes` in particular exercises the 0.0.7 DSL protocol
 end-to-end — a SQL DSL with deferred parameters *and* an HTML template DSL with capture holes,
 in one request handler. See `fortunes.nika`.
 
@@ -244,9 +244,9 @@ are read, so the failure cannot be moved to the call — and `examples/tally.nik
 but had no surface. Now specified in Part III, 17.1: whole-file (`read`, `read_to_string`,
 `write`), streaming (`lines`, `bytes`), handles (`open` → `File`, which implements `Cleanup`
 so a failed flush surfaces as an error instead of being swallowed), memory mapping (`map`,
-a **compile error under Lite** because WASM has no mmap and degrading it to a full read would
+a **compile error on `wasm32`** because WASM has no mmap and degrading it to a full read would
 turn a constant-memory program into one that allocates its whole input), metadata and
-directory calls, and a per-profile availability table.
+directory calls, and an availability table.
 
 **G2 — a grammar rule that folds instead of collecting.** An earlier draft of
 this note claimed a gap around "applying a grammar per line". That was wrong,
@@ -272,7 +272,7 @@ billion.
 
 Writing the example did more than expose the gap — it showed the existing rule was stated over
 the wrong event. "Stored in a struct ⇒ tethered" (Part I 6.6, as of 0.0.7) puts a shared handle
-on `Reading`, which this program builds a billion times; under the Advanced profile that is a
+on `Reading`, which this program builds a billion times; with parallelism that is a
 billion atomic increment/decrement pairs on one refcount word shared by every worker. Nothing
 in the program actually escapes, so the right answer costs nothing at all.
 
@@ -305,21 +305,21 @@ rejections included. All of it is in `winnow-grammar` `main` (`#[frame(boundary 
 `frame_end`, `par_fold`, `unchecked` for the formats a byte-string boundary cannot cut — its
 ADR 16 names them), with `frames_<RULE>`, `merge_<RULE>` and the driver
 `parse_<RULE>_pieces(input, ctx, Parallelism)` generated; Nikaia chooses the `Parallelism` from
-the profile and the executor. The blind split, the
+the switch and the executor. The blind split, the
 seam repair, the per-core accumulators and the reduce are then generated; `1brc.nika`'s `main`
 is down to `let totals = dsl Measurements from data`.
 
 The same ADR settles what the compiler may then do with the format the grammar states:
 word-at-a-time scanning as a specified complexity rather than a hoped-for optimization
-(portable SWAR baseline, SIMD only as a target-gated layer, so Lite and `wasm32` keep the same
+(portable SWAR baseline, SIMD only as a target-gated layer, so a single-threaded build and `wasm32` keep the same
 story), hashing a view from its first bytes while equality stays full-content, and skipping the
 unmap of a large read-only mapping at process exit. Parallelism stays opt-in: a plain `fold` is
 never parallelised behind your back, because a merge over floats would make the answer depend on
 the core count.
 
-**G8 — the default hasher.** Raised by ADR-009, which framed it as a profile question and was
-wrong to. The profile answers "which runtime", never "who supplied these bytes": a single-threaded
-Lite server hashing attacker-supplied header names is exactly as vulnerable as an Advanced one,
+**G8 — the default hasher.** Raised by ADR-009, which framed it as a question about the build mode and was
+wrong to. A switch answers "which runtime", never "who supplied these bytes": a single-threaded
+single-threaded server hashing attacker-supplied header names is exactly as vulnerable as a parallel one,
 and a compute job over operator-chosen data has no adversary in either.
 
 [ADR-010](../docs/specification/adr/adr-010.md) decides it on the axis that matters, **provenance**,
@@ -329,7 +329,7 @@ trusted), the state travels the edges ADR-008 already tracks and lands in the sa
 conservatively, and fails safe at `dyn`/FFI barriers. The user overrides it at the source
 (`fs::map(path; trusted: false)`) and a DSL for a wire format can pin an `@untrusted` floor its
 callers cannot lower. Only then does the compiler pick an implementation: keyed hash with a random
-seed for untrusted keys, fast hash for trusted ones — the profile enters as *how*, never as
+seed for untrusted keys, fast hash for trusted ones — the switch enters as *how*, never as
 *whether*. 1BRC keeps the fast path without a word about hashing; `fortunes` gets hardened without
 anyone remembering to ask.
 

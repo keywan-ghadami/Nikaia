@@ -12,12 +12,12 @@ mod common;
 
 use std::path::PathBuf;
 
-use nikaia::emit::{self, Ordering, Profile};
+use nikaia::emit::{self, Build, Ordering};
 use nikaia::parser::parse_to_ast;
 
 fn lowered(source: &str, ordering: Ordering) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    emit::emit_program_ordered(&parsed, Profile::Advanced, ordering)
+    emit::emit_program_ordered(&parsed, Build::default(), ordering)
         .expect("the source lowers")
         .rust
 }
@@ -231,8 +231,8 @@ fn the_corpus_lowers_under_both_orderings() {
             let Ok(parsed) = parse_to_ast(&source) else {
                 continue;
             };
-            let one = emit::emit_program_ordered(&parsed, Profile::Advanced, Ordering::Effects);
-            let other = emit::emit_program_ordered(&parsed, Profile::Advanced, Ordering::Strict);
+            let one = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Effects);
+            let other = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Strict);
             match (one, other) {
                 (Ok(one), Ok(other)) => {
                     seen += 1;

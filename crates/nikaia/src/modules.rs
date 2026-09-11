@@ -199,21 +199,21 @@ impl Program {
     /// `pub` becomes `pub`, so Part I 9.2's privacy is enforced by the language
     /// below rather than re-implemented here - the same move ADR-017 D2 made
     /// with `html::Render`.
-    pub fn emit(&self, profile: crate::emit::Profile) -> Result<crate::emit::Lowered> {
-        self.emit_ordered(profile, crate::emit::Ordering::default())
+    pub fn emit(&self, build: crate::emit::Build) -> Result<crate::emit::Lowered> {
+        self.emit_ordered(build, crate::emit::Ordering::default())
     }
 
     /// The same, saying how strictly the written order is taken (ADR-033).
     pub fn emit_ordered(
         &self,
-        profile: crate::emit::Profile,
+        build: crate::emit::Build,
         ordering: crate::emit::Ordering,
     ) -> Result<crate::emit::Lowered> {
         use crate::emit::{Lowered, Needs, SourceMap};
 
         let trust = crate::contracts::trust::analyse(&self.units[0].parsed, &std_ledger());
         let needs = self.units.iter().fold(Needs::default(), |acc, u| {
-            acc.join(Needs::of(&u.parsed, profile))
+            acc.join(Needs::of(&u.parsed, build))
         });
 
         let mut rust = String::new();
@@ -230,7 +230,7 @@ impl Program {
             let body = crate::emit::emit_module_body_ordered(
                 ordering,
                 &unit.parsed,
-                profile,
+                build,
                 trust.provenance,
                 &self.contracts,
             )?;
@@ -252,7 +252,7 @@ impl Program {
         let entry = crate::emit::emit_module_body_ordered(
             ordering,
             &self.units[0].parsed,
-            profile,
+            build,
             trust.provenance,
             &self.contracts,
         )?;

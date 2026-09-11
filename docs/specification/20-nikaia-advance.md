@@ -287,18 +287,18 @@ let totals = dsl Measurements from data
 
 **Why you have to ask for it.** The compiler will not turn a `fold` into a `par_fold` on its own, even when it looks associative. Adding `f64` is not associative, so the number of cores would quietly change the answer. Writing `par_fold` is you saying that a different chunk count is the same result to you — for an aggregation over integers, as above, it is.
 
-Under the **Lite** profile `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
+At `user_parallelism = 0`, `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
 
 **What you get for free.** Because the grammar states the format, the generated parser is allowed to exploit it: scanning for a separator or a frame boundary works a machine word at a time rather than byte by byte, on every target and with no `unsafe` in sight — and a terminator with up to three alternatives, like `until(";" | frame_end)`, is still one scan. See [ADR-009](adr/adr-009.md).
 
-## Chapter 11: Nikaia Advanced Profile (The Compute Engine)
+## Chapter 11: Running Your Code at Once
 
-While **Nikaia Lite** is designed for I/O density, **Nikaia Advanced** (`--profile=advanced`) is designed for **Parallel CPU Throughput**.
+Raising `user_parallelism` above `0` (1.2) turns the same source into a program that uses more than one core. Nothing in the source changes.
 
 ### 11.1. Implicit Async & The Scheduler
-In both profiles, the syntax looks identical. You do **not** use `async` keywords on function definitions.
-* **Lite:** Functions yield on I/O events (Cooperative).
-* **Advanced:** The runtime uses a **Work-Stealing Scheduler**. It automatically distributes tasks across all CPU cores.
+The syntax is identical either way. You do **not** use `async` keywords on function definitions.
+* **At `0`:** functions yield on I/O events, cooperatively, on one thread.
+* **Above `0`:** the runtime uses a **Work-Stealing Scheduler** and distributes tasks across the cores it is allowed.
 
 The code remains "Direct Style". You write code as if it were synchronous, and the compiler handles the suspension points.
 
@@ -307,14 +307,11 @@ Since code is implicitly async, "calling a function" usually means "running it n
 
 #### The @detached Contract
 The `spawn` function is defined with the `@detached` attribute. This triggers **Implicit Move Semantics**.
-* **Why?** This guarantees thread safety (Advanced) and prevents logic races or "Use-After-Free" (Lite). The parent scope cannot access the captured data while the detached task owns it.
+* **Why?** This guarantees thread safety where code runs in parallel, and prevents logic races or "Use-After-Free" where it does not. The parent scope cannot access the captured data while the detached task owns it.
 * **Copying:** If you need to keep data in the parent thread, you must explicitly call `.clone()` before spawning.
 
 #### Return Values & Handles
-Regardless of the profile, `spawn` returns a `TaskHandle`.
-* In **Advanced**: It represents a running thread (or green thread).
-* In **Lite**: It represents a scheduled event/promise.
-Calling `.await` or `.join()` on this handle works identically in both profiles.
+`spawn` always returns a `TaskHandle`. Above `0` it represents a running thread; at `0` a scheduled event. Calling `.await` or `.join()` on it works identically either way.
 
 ```nika
 fn process_image(path: String) -> Image { ... }
@@ -329,7 +326,7 @@ fn main() {
     // Compiler Error: img_path is gone.
     // println("Processing: " + img_path) 
 
-    // Uniform API: Works in Lite and Advanced
+    // Uniform API: the same at every `user_parallelism`
     let result = handle.await catch { return }
 }
 ```
@@ -338,7 +335,7 @@ fn main() {
 
 ## Chapter 12: Thread Safety and Synchronization
 
-Because the Advanced Profile runs code on multiple physical CPU cores simultaneously, strict safety rules apply to prevent data corruption.
+Because code above `user_parallelism = 0` runs on several physical CPU cores at once, strict safety rules apply to prevent data corruption.
 
 ### 12.1. The `sync` Keyword (CPU Constraints)
 Since everything in Nikaia is "Async by Default" (interruptible), we need a way to define code that **must not be interrupted** or moved between threads mid-execution.
@@ -378,7 +375,7 @@ fn total(p: &Player) -> i32 sync {
 
 This matters more than it looks. Every construct in this chapter that makes
 concurrency safe does it by demanding a `sync` lambda — `access`, `access_all`,
-`par_iter`, a scope's tasks under Advanced, the panic hook. If `sync` were
+`par_iter`, a scope's parallel tasks, the panic hook. If `sync` were
 something you had to *enter*, the set of things those lambdas could call would
 be "whatever somebody remembered to annotate", and the safe path would be the
 narrow one. It is the other way round: the safe path is open by default, and it
@@ -418,22 +415,22 @@ somebody's lock. Writing `sync` yourself is how you overrule that — an
 assertion, checked as far as the compiler can see, and yours where it cannot.
 
 ### 12.2. The Dual Nature of `Locked[T]`
-To share mutable data, you use the `Locked[T]` type. Its implementation changes entirely based on the profile, providing "Zero Cost Abstraction" relative to the requirements.
+To share mutable data, you use the `Locked[T]` type. Its implementation follows `user_parallelism`, providing "Zero Cost Abstraction" relative to the requirements.
 
-**In Nikaia Lite:**
+**At `user_parallelism = 0`:**
 * **Implementation:** Similar to a `RefCell` with a reentrancy check.
 * **Cost:** Extremely cheap (integer increment).
 * **Purpose:** It protects against **Logical Deadlocks** (e.g., Task A locks data, waits for network, Task B tries to lock same data -> Panic!). It does not use OS primitives.
 
-**In Nikaia Advanced:**
+**Above `user_parallelism = 0`:**
 * **Implementation:** A real OS-level **Mutex** (Mutual Exclusion).
 * **Cost:** Higher (Atomic operations).
 * **Purpose:** It protects against **Memory Corruption**. It ensures that two physical threads cannot write to the memory address at the same time.
 
 **The `sync` Rule (No Pausing While Holding a Lock)**
-Holding a lock while the program pauses is dangerous in *both* profiles: in Advanced it can block a whole CPU core; in Lite it can freeze other tasks that need the same data. Nikaia rules this out **at compile time**, using a keyword the language already has:
+Holding a lock while the program pauses is dangerous *either way*: with threads it can block a whole CPU core; without them it can freeze other tasks that need the same data. Nikaia rules this out **at compile time**, using a keyword the language already has:
 
-> **`access` and `access_all` require a `sync` lambda — in both profiles.**
+> **`access` and `access_all` require a `sync` lambda — at every setting.**
 
 A `sync` lambda (see 12.1) can never perform I/O and can never pause. Therefore, while you hold locked data, the program provably runs straight through: lock, compute, unlock. There is nothing to remember — if you try to do I/O inside `access`, the compiler stops you with a plain explanation:
 
@@ -462,7 +459,7 @@ error[NK2201]: cannot wait for I/O while holding locked data
         fs::write("log", "{snapshot}")
 ```
 
-This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. The runtime checks described above (reentrancy check in Lite, poisoning in Advanced) remain as a safety net for the remaining edge cases — e.g. accidentally re-entering the *same* lock through a chain of `sync` calls — but well-formed code never triggers them.
+This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. The runtime checks described above (a reentrancy check on one thread, poisoning on several) remain as a safety net for the remaining edge cases — e.g. accidentally re-entering the *same* lock through a chain of `sync` calls — but well-formed code never triggers them.
 
 ### 12.3. Deadlock Prevention: Atomic Composition
 The classic cause of deadlocks is inconsistent locking order (Thread 1 locks A then B; Thread 2 locks B then A).
@@ -561,15 +558,15 @@ task::scope fn(s) {
 // 'data' is still valid here
 ```
 
-**One rule differs between the profiles.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
+**One rule differs with `user_parallelism`.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
 
-* **Lite Profile:** everything runs on one thread, and the runtime owns every task. When a scope ends (even when it is torn down early by an error), the runtime collects its tasks *before* your function's variables disappear. **Scoped tasks may do anything, including I/O.**
-* **Advanced Profile:** tasks run on other CPU cores *in parallel*. A task that is mid-computation on another core cannot be stopped at an arbitrary moment — so the scope can only keep its promise for tasks that finish on their own, deterministically. Therefore: **in Advanced, scoped tasks must be `sync`** (pure computation — no I/O, no pausing; the same rule as `par_iter`, 12.6). This is the natural fit anyway: scoped parallelism exists exactly for "split this computation across all cores".
+* **At `0`:** everything runs on one thread, and the runtime owns every task. When a scope ends (even when it is torn down early by an error), the runtime collects its tasks *before* your function's variables disappear. **Scoped tasks may do anything, including I/O.**
+* **Above `0`:** tasks run on other CPU cores *in parallel*. A task that is mid-computation on another core cannot be stopped at an arbitrary moment — so the scope can only keep its promise for tasks that finish on their own, deterministically. Therefore: **above `0`, scoped tasks must be `sync`** (pure computation — no I/O, no pausing; the same rule as `par_iter`, 12.6). This is the natural fit anyway: scoped parallelism exists exactly for "split this computation across all cores".
 
-If a task needs to do I/O in Advanced, it does not belong in a scope — it is a background task. Use a normal `spawn` (the task takes ownership, Chapter 8.3) and collect the result through its handle. The compiler explains this when you hit the rule:
+If a task needs to do I/O there, it does not belong in a scope — it is a background task. Use a normal `spawn` (the task takes ownership, Chapter 8.3) and collect the result through its handle. The compiler explains this when you hit the rule:
 
 ```text
-error[NK2102]: tasks inside `task::scope` must be `sync` in the Advanced profile
+error[NK2102]: tasks inside `task::scope` must be `sync` where they run in parallel
   --> worker.nika:12
    |
 12 |     s.spawn fn { fetch_url(url) }
@@ -587,7 +584,7 @@ error[NK2102]: tasks inside `task::scope` must be `sync` in the Advanced profile
            let result = handle.await
 ```
 
-> **Design Note (Soundness):** Borrowing across *parallel, pausable* tasks is a known unsoundness trap — a cancelled scope cannot instantly stop a task mid-execution on another core, yet the borrowed variables are about to disappear. General-purpose async runtimes cannot offer a safe async scope for exactly this reason. Nikaia avoids the trap structurally: in Lite the single-threaded runtime owns all task state and tears scopes down synchronously (which additionally requires that task futures are exclusively runtime-owned and that the language exposes no way to leak a live scope — both are language-level guarantees); in Advanced the `sync` restriction makes waiting deterministic. See [ADR-005](adr/adr-005.md), D5.
+> **Design Note (Soundness):** Borrowing across *parallel, pausable* tasks is a known unsoundness trap — a cancelled scope cannot instantly stop a task mid-execution on another core, yet the borrowed variables are about to disappear. General-purpose async runtimes cannot offer a safe async scope for exactly this reason. Nikaia avoids the trap structurally: at `0` the single-threaded runtime owns all task state and tears scopes down synchronously (which additionally requires that task futures are exclusively runtime-owned and that the language exposes no way to leak a live scope — both are language-level guarantees); above `0` the `sync` restriction makes waiting deterministic. See [ADR-005](adr/adr-005.md), D5.
 
 ### 12.8. Supervision Trees
 In complex systems, threads might crash (panic). A **Supervisor** monitors tasks. If a child task crashes, the supervisor can decide to:

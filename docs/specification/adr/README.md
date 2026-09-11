@@ -105,6 +105,12 @@ and a decision is not an implementation.
 | [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | first increment, `--overlaps` |
 | [034](adr-034.md) | A handler that can `return` makes the next statement conditional, so it may not be started early | Accepted | yes |
 
+### Build switches
+
+| ADR | Decides | Status | Built |
+| :--- | :--- | :--- | :--- |
+| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` bounds how much of the **user's** code runs at once — and the compiler's own threads are not the user's | Accepted | `0` and the target table; above `0` is §4 |
+
 ## What supersedes what
 
 Every supersession in this directory is **partial** — a later record displaces

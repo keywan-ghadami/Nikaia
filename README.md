@@ -9,7 +9,7 @@
     <a href="#-a-language-for-the-age-of-generated-code">AI-generated code</a> •
     <a href="#-what-its-good-at--and-what-it-isnt">Good for</a> •
     <a href="#-how-it-compares">Comparison</a> •
-    <a href="#-two-profiles-one-language">Profiles</a> •
+    <a href="#-two-switches-one-language">Switches</a> •
     <a href="#-code-example">Example</a> •
     <a href="#-where-the-project-actually-stands">Status</a> •
     <a href="docs/specification">Specification</a> •
@@ -80,7 +80,7 @@ where the human beats the machine. It says the thing this project refuses to acc
 and fast are opposites, and that being decent to the person writing the code has to be paid for
 at runtime. Here it is the other way round. Because the language never makes you write `Arc`,
 or a lifetime, or a lock order, those decisions belong to the compiler — and only because they
-belong to it can it pick `Rc` under Lite and `Arc` under Advanced, order the locks, and infer
+belong to it can it pick `Rc` where nothing of yours runs at once and `Arc` where it does, order the locks, and infer
 borrow contracts across a whole program. A stricter language would have to take your word for
 it instead. Good is not the price of fast here; it is the reason for it.
 
@@ -92,7 +92,7 @@ ended in consensus rather than in one side defeating the other. The rest of the 
 
 ## 💎 What Nikaia does differently
 
-Two profiles are the *packaging*. These are the actual claims — each one is specified, and
+The two switches are the *packaging*. These are the actual claims — each one is specified, and
 each one links to the decision record that argues it:
 
 **1. Functions have no colour.**
@@ -108,11 +108,11 @@ auditable ledger; the cases that are genuinely inexpressible in safe Rust (a sli
 a struct, a task borrowing from its parent) get real language constructs instead of a lecture.
 → [ADR-005](docs/specification/adr/adr-005.md), [ADR-008](docs/specification/adr/adr-008.md)
 
-**3. One source, two runtimes.**
-You write `Shared[T]`. Under the **Lite** profile it compiles to `Rc` and a single-threaded
-event loop; under **Advanced** it becomes `Arc` and a work-stealing thread pool. The same
-holds for `spawn`. Your source file does not encode the deployment decision, so changing it
-is a build flag, not a refactor.
+**3. One source, every runtime.**
+You write `Shared[T]`. At `user_parallelism = 0` it compiles to `Rc` and a single-threaded
+event loop; above it, to `Arc` and a work-stealing thread pool. The same holds for `spawn`.
+Your source file does not encode the deployment decision, so changing it is a line in
+`nikaia.toml`, not a refactor.
 
 **4. Deadlocks removed by construction.**
 Multiple resources are requested together — `access_all(a, b)` — and the runtime always takes
@@ -130,7 +130,7 @@ trusting your word for it. This is why parsing benchmarks are a first-class targ
 → [ADR-007](docs/specification/adr/adr-007.md), [ADR-009](docs/specification/adr/adr-009.md)
 
 **6. The compiler tracks where your data came from.**
-Trust is a property of the *source*, not of the profile: bytes off a socket are untrusted,
+Trust is a property of the *source*, not of how you build: bytes off a socket are untrusted,
 your own config file is not, and that provenance travels with the value. The compiler then
 picks a DoS-resistant hasher exactly where it matters and a fast one everywhere else,
 instead of making every program pay for the worst case — or, worse, making you remember.
@@ -173,12 +173,12 @@ that question:
   and weak on the memory model. A hallucinated lock order or a shared mutable capture is not a
   compile error in Go or C++; it is a bug that appears in production, under load, once. In
   Nikaia a deadlock between `access_all` callers is unconstructible, a lock cannot be held
-  across a suspension point, and data races are rejected at compile time under *both* profiles.
+  across a suspension point, and data races are rejected at compile time however much runs at once.
   The compiler is a merciless reviewer for exactly the class of defect human review is worst at.
 * **Fewer decisions to get wrong.** `Rc` or `Arc`? The sync or the async variant of this API? Is
   this future `Send`? Each is a coin flip a generator can lose, and losing it surfaces as an
   error three modules away, in code the author has never read. In Nikaia these decisions are not
-  in the source at all — the profile settles them at build time.
+  in the source at all — the two switches settle them at build time.
 
 This is also the honest answer to a new language's chicken-and-egg problem. Nobody has to learn
 Nikaia to get something out of it: hand a model the specification and your requirements, and let
@@ -235,37 +235,42 @@ plus `examples/` is the bundle.
 | Async in the type system | colours functions | invisible (goroutines) | colours functions | **invisible** |
 | Memory management | GC | GC | ownership, manual annotations | **ownership, inferred** |
 | Pause times | GC pauses | GC pauses | none | **none** |
-| Thread-safe vs single-thread types | n/a | n/a | you choose `Rc`/`Arc` | **one type, profile decides** |
+| Thread-safe vs single-thread types | n/a | n/a | you choose `Rc`/`Arc` | **one type, `user_parallelism` decides** |
 | Data-race protection | none / GIL | detector at runtime | compile time | **compile time** |
 | Deadlock protection | none | none | none | **`access_all` ordering** |
 | Embedded DSLs | strings / metaprogramming | none | proc macros over Rust tokens | **first-class scannerless grammars** |
-| Single-core / multi-core target | one runtime | one runtime | you build it | **build-time profile** |
+| Single-core / multi-core | one runtime | one runtime | you build it | **one switch** |
 | Maturity | ✅ production | ✅ production | ✅ production | ⚠️ **specification** |
 
 The last row is the honest one, and it is the only one where Nikaia loses on purpose.
 
 ---
 
-## 🎛 Two profiles, one language
+## 🎛 Two switches, one language
 
-Nikaia adapts to your problem, not the other way around. The profile is a line in your
-`nikaia.toml`, not a rewrite:
+Nikaia adapts to your problem, not the other way around. There is one language, and two lines
+in your `nikaia.toml` decide how it is built — never what it means.
 
-### 🟢 Nikaia Lite (The I/O Engine)
-* **Alternative to:** Node.js, Go, WASM runtimes.
-* **Architecture:** single-threaded event loop.
-* **Benefit:** race conditions impossible by design, maximum I/O density, minimal footprint.
-* **Use case:** microservices, web servers, CLI tools, edge workers.
+### `target` — which machine
+`x86_64-linux` by default, or `wasm32-unknown`. The machine decides what `std` can offer and
+what a panic does: an orderly unwind where the machine unwinds, a trap where it traps.
 
-### 🔵 Nikaia Advanced (The Compute Engine)
-* **Alternative to:** Rust, C++.
-* **Architecture:** multi-threaded work-stealing runtime.
-* **Benefit:** every core busy, thread safety proven by the borrow checker.
-* **Use case:** HPC, game engines, heavy backend systems.
+### `user_parallelism` — how much of *your* code runs at once
+* **`0`** (default) — single-threaded event loop. **Data races are impossible**: two pieces of
+  your code are never in flight together. Microservices, web servers, CLI tools, edge workers —
+  where you would reach for Node.js or Go.
+* **`auto`** — multi-threaded work-stealing runtime, every core busy, thread safety proven by
+  the borrow checker. HPC, game engines, heavy backends — where you would reach for Rust or C++.
 
-Because the profile difference lives in the compiler and not in your source, a library written
-under Lite is checked against Advanced's rules too — you cannot accidentally ship something
+**The word *your* is load-bearing.** It bounds your program, not the compiler: reading a file
+may still validate its text on four cores at `0`, because that is not code you wrote and it
+changes nothing your program prints.
+
+Because the difference lives in the compiler rather than in your source, a library built at `0`
+is checked against the rules parallel code needs too — you cannot accidentally ship something
 that only works single-threaded.
+
+→ [ADR-037](docs/specification/adr/adr-037.md)
 
 ---
 
@@ -289,8 +294,8 @@ fn main() {
     println("Starting Nikaia Server on :8080")
 
     // `spawn` behaves polymorphically:
-    // - Lite: Green Thread on Main Loop
-    // - Advanced: Task on Thread Pool
+    // - at user_parallelism = 0: green thread on the main loop
+    // - above 0:                 task on the thread pool
     // Syntax: Uses 'fn' block for lambdas (no '||')
     spawn fn {
         http::Server::new()
@@ -307,7 +312,7 @@ Challenge, a four-function calculator, a web access log summarised, an INI file 
 JSON document, two Computer Language Benchmarks Game programs, an HTML table that cannot be
 made to leak markup, a stock list rendered to a page **on disk**, a pipe tallied in constant
 memory, and the TechEmpower `fortunes` benchmark. **Ten of the eleven compile, run, and are
-checked by `cargo test` under both profiles**, with their output — and, where one is written, the file they produce — required to
+checked by `cargo test` at either setting**, with their output — and, where one is written, the file they produce — required to
 be identical; `fortunes` is still written at specification level. They are there because writing a real program against a spec is the
 cheapest way to find out what the spec forgot, and
 [`examples/README.md`](examples/README.md) lists exactly which gaps each one exposed and
@@ -321,7 +326,7 @@ already parse.
 Nikaia is an experiment conducted in the open, and the specification is far ahead of the
 compiler. Concretely:
 
-* ✅ **Specification 0.0.7** — syntax, profiles, unified types, borrow model, cleanup
+* ✅ **Specification 0.0.7** — syntax, build switches, unified types, borrow model, cleanup
   semantics, grammar protocol. Thirty-six [ADRs](docs/specification/adr/README.md) record
   *why*, including the ones that reverse an earlier decision.
 * 🚧 **0.0.8 (unreleased)** — tethered slices in user structs, parallel parsing, input
@@ -340,13 +345,13 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 
 ### Roadmap to 0.1.0
 
-- [x] **Spec 0.0.5:** syntax, profiles, unified types.
+- [x] **Spec 0.0.5:** syntax, build switches, unified types.
 - [x] **Spec 0.0.6:** borrow model without lifetime annotations; cleanup under implicit async.
 - [x] **Spec 0.0.7:** scannerless grammar protocol, DSLs as expressions, hardware instructions as libraries.
 - [x] **Manifesto:** the soul and philosophy of the project.
 - [ ] **Bootstrap compiler:** the transpiler in Rust (Stage 0).
   - [x] The grammar protocol: `grammar` onto `grammar!`, `@frame` onto `#[frame]`, and
-    `dsl … from …` onto the parallel piece driver, with the profile choosing the parallelism
+    `dsl … from …` onto the parallel piece driver, with `user_parallelism` choosing the parallelism
     ([ADR-011](docs/specification/adr/adr-011.md)).
   - [x] Diagnostics on the `.nika` line that caused them, for every error class at once
     ([ADR-012](docs/specification/adr/adr-012.md)).
@@ -444,7 +449,7 @@ walls and a little more by the freedom to build. ❤️
 ## ⚖️ Intellectual property & governance
 
 Nikaia introduces the **Unified Core Architecture**, a novel approach to compile-time
-orchestration, deterministic concurrency (`access_all`), and profile-based runtime
+orchestration, deterministic concurrency (`access_all`), and switch-based runtime
 transformation.
 
 **For corporate entities & implementers:**
