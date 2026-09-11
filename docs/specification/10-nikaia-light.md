@@ -1035,9 +1035,11 @@ Within one task the order is exactly the order you wrote: `let a = fs::read("x")
 > **Status.** This section is specified ahead of the compiler, because it changes what a program
 > *means* and a decision of that kind belongs here before it belongs in the implementation
 > ([ADR-033](adr/adr-033.md), still marked provisional). Built today: two adjacent statements whose
-> calls reach different resources do overlap, `--overlaps` explains every pair, and
-> `--ordering strict` restores the written order everywhere. Not built: `seq { … }`, the
-> `ordering` key in `nikaia.toml`, and overlapping anything wider than a `let` of a single call.
+> calls reach different resources do overlap — a `let` or a bare expression statement, and a value
+> built out of literals and calls rather than being one call — `--overlaps` explains every pair,
+> the `ordering` key is read from `nikaia.toml`, and `--ordering strict` restores the written order
+> everywhere. Not built: `seq { … }`; more than two statements at a time; a **method call**, whose
+> contract depends on the type of its receiver; and an argument that is not a literal.
 
 Two lines that never meet have no reason to wait for one another:
 

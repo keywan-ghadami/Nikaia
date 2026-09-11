@@ -1782,7 +1782,8 @@ impl<'p> Emitter<'p> {
         }
     }
 
-    /// Two `let`s, lowered to run at the same time and be collected together.
+    /// Two statements, lowered to run at the same time and be collected
+    /// together.
     ///
     /// ```text
     /// let (a, b) = task::both(
@@ -1790,6 +1791,11 @@ impl<'p> Emitter<'p> {
     ///     || … ,
     /// );
     /// ```
+    ///
+    /// Either of them may be a **bare expression statement** rather than a
+    /// `let` (ADR-033 §8.3's first item): `fs::write("a.txt", "1")` binds
+    /// nothing, so its half of the pattern is `_` - and where neither binds,
+    /// there is no pattern at all and the call stands as a statement.
     ///
     /// Threads and not a runtime: `std`'s I/O is blocking Rust (`std::fs::read`
     /// behind `fs::read`), so overlapping it means threads. *Which* threads is
@@ -1811,43 +1817,32 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (
-            Stmt::Let {
-                name: first_name,
-                mutable: first_mut,
-                value: first_value,
-                ..
-            },
-            Stmt::Let {
-                name: second_name,
-                mutable: second_mut,
-                value: second_value,
-                ..
-            },
-        ) = (&earlier.node, &later.node)
-        else {
-            unreachable!("`may_overlap` accepts only two `let`s");
-        };
+        let (first_bind, first_value) = self.overlapped_half(&earlier.node);
+        let (second_bind, second_value) = self.overlapped_half(&later.node);
 
         let pad = "    ".repeat(depth);
         let inner = "    ".repeat(depth + 1);
-        let bind = |mutable: &bool, name: Symbol| {
-            format!("{}{}", if *mutable { "mut " } else { "" }, self.text(name))
-        };
 
         out.push(&format!(
             "// ADR-033: these two meet on nothing, so neither waits for the other.\n{pad}"
         ));
+        // A pair where nothing is bound is a statement and not a binding: `let
+        // (_, _) = …` would be a pattern that says nothing, and the emitted
+        // Rust is read by people.
+        let pattern = match (&first_bind, &second_bind) {
+            (None, None) => String::new(),
+            (first, second) => format!(
+                "let ({}, {}) = ",
+                first.as_deref().unwrap_or("_"),
+                second.as_deref().unwrap_or("_"),
+            ),
+        };
         // `task::both` and not `std::thread::scope` inline: the vehicle is
         // `std`'s decision, not a shape baked into every generated program.
         // It runs on the pool the program already has, so a handler that
         // overlaps two reads under a thousand concurrent requests asks for a
         // bounded number of threads rather than two thousand (ADR-033 §8.4).
-        out.push(&format!(
-            "let ({}, {}) = task::both(\n{inner}|| ",
-            bind(first_mut, *first_name),
-            bind(second_mut, *second_name),
-        ));
+        out.push(&format!("{pattern}task::both(\n{inner}|| "));
 
         out.from(&earlier.span, |out| {
             self.expr(out, first_value, depth + 1, flow)
@@ -1859,6 +1854,30 @@ impl<'p> Emitter<'p> {
         })?;
         out.push(&format!(",\n{pad});"));
         Ok(())
+    }
+
+    /// One half of an overlapped pair: what it binds, and what it evaluates.
+    ///
+    /// `contracts::order` accounts for a `let` and for a bare expression
+    /// statement, and those are the only two shapes that reach here.
+    fn overlapped_half<'s>(&self, stmt: &'s Stmt) -> (Option<String>, &'s Expr) {
+        match stmt {
+            Stmt::Let {
+                name,
+                mutable,
+                value,
+                ..
+            } => (
+                Some(format!(
+                    "{}{}",
+                    if *mutable { "mut " } else { "" },
+                    self.text(*name)
+                )),
+                value,
+            ),
+            Stmt::Expr(value) => (None, value),
+            _ => unreachable!("`may_overlap` accepts only a `let` or an expression statement"),
+        }
     }
 
     /// `is_tail` marks the last statement of a block: Nikaia's blocks are
