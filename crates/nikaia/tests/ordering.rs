@@ -24,7 +24,7 @@ fn lowered(source: &str, ordering: Ordering) -> String {
 
 /// Whether the emitted Rust runs the two calls together.
 fn overlaps(source: &str) -> bool {
-    lowered(source, Ordering::Effects).contains("std::thread::scope")
+    lowered(source, Ordering::Effects).contains("task::both")
 }
 
 const TWO_READS: &str = "use std::fs\n\
@@ -61,8 +61,8 @@ fn the_lite_profile_never_spawns_a_thread() {
         .expect("the source lowers")
         .rust;
     assert!(
-        !lite.contains("thread::scope"),
-        "Lite spawned a thread under `--ordering effects`:\n{lite}"
+        !lite.contains("task::both"),
+        "Lite overlapped under `--ordering effects`:\n{lite}"
     );
 
     // …and it is the sequential program, not merely a different one.

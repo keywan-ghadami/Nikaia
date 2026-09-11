@@ -1664,21 +1664,24 @@ impl<'p> Emitter<'p> {
     /// Two `let`s, lowered to run at the same time and be collected together.
     ///
     /// ```text
-    /// let (a, b) = std::thread::scope(|scope| {
-    ///     let first  = scope.spawn(|| … );
-    ///     let second = scope.spawn(|| … );
-    ///     (first.join()…, second.join()…)
-    /// });
+    /// let (a, b) = task::both(
+    ///     || … ,
+    ///     || … ,
+    /// );
     /// ```
     ///
-    /// `std::thread::scope` and nothing else: `std`'s I/O is blocking Rust
-    /// (`std::fs::read` behind `fs::read`), so overlapping it means threads, and
-    /// a scoped one is the join that needs no runtime and no dependency.
+    /// Threads and not a runtime: `std`'s I/O is blocking Rust (`std::fs::read`
+    /// behind `fs::read`), so overlapping it means threads. *Which* threads is
+    /// `nikaia_std::task` deciding and not this function - it runs the pair on
+    /// the pool the program already has, so a handler that overlaps under load
+    /// asks for a bounded number of threads (ADR-033 §8.4). Naming one `std`
+    /// function also keeps this lowering one line long instead of a scope, two
+    /// spawns and two joins spelled into every program that uses it.
     ///
-    /// A panic inside either is **resumed** rather than unwrapped, so a program
-    /// that would have panicked still panics with its own message and its own
-    /// payload. Turning somebody's panic into `called Result::unwrap on an Err`
-    /// would be this lowering putting its own words in the program's mouth.
+    /// A panic inside either reaches the caller, so a program that would have
+    /// panicked still panics with its own message and its own payload. Turning
+    /// somebody's panic into `called Result::unwrap on an Err` would be this
+    /// lowering putting its own words in the program's mouth.
     fn overlapped(
         &self,
         out: &mut Out,
@@ -1714,29 +1717,26 @@ impl<'p> Emitter<'p> {
         out.push(&format!(
             "// ADR-033: these two meet on nothing, so neither waits for the other.\n{pad}"
         ));
+        // `task::both` and not `std::thread::scope` inline: the vehicle is
+        // `std`'s decision, not a shape baked into every generated program.
+        // It runs on the pool the program already has, so a handler that
+        // overlaps two reads under a thousand concurrent requests asks for a
+        // bounded number of threads rather than two thousand (ADR-033 §8.4).
         out.push(&format!(
-            "let ({}, {}) = std::thread::scope(|scope| {{\n{inner}",
+            "let ({}, {}) = task::both(\n{inner}|| ",
             bind(first_mut, *first_name),
             bind(second_mut, *second_name),
         ));
 
-        out.push("let first = scope.spawn(|| ");
         out.from(&earlier.span, |out| {
             self.expr(out, first_value, depth + 1, flow)
         })?;
-        out.push(&format!(");\n{inner}"));
+        out.push(&format!(",\n{inner}|| "));
 
-        out.push("let second = scope.spawn(|| ");
         out.from(&later.span, |out| {
             self.expr(out, second_value, depth + 1, flow)
         })?;
-        out.push(&format!(");\n{inner}"));
-
-        out.push("(first.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)),\n");
-        out.push(&format!(
-            "{inner} second.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))\n{pad}"
-        ));
-        out.push("});");
+        out.push(&format!(",\n{pad});"));
         Ok(())
     }
 
