@@ -808,34 +808,132 @@ For every known pattern of this kind, the standard library provides a safe, name
 Failures are a part of software. Nikaia distinguishes between two types of errors.
 
 ### 7.1. Recoverable Errors (`throws`)
-These are expected problems, like "File not found" or "Network disconnected". Functions that can fail must declare the possible error types in their signature using `throws`.
 
-**Multiple Errors**
-A function can define multiple types of errors it might produce.
+These are expected problems: a file is missing, a connection drops, an input does not fit the
+format. A function that can fail says so with `throws`.
 
 ```nika
-// This function might throw an IoError OR a NetworkError
-fn fetch_config() throws IoError, NetworkError -> String {
-    let file = fs::read("config.txt") // might throw IoError
-    return net::send(file)            // might throw NetworkError
+fn fetch_config() throws -> String {
+    let file = fs::read("config.txt")   // can fail
+    return net::send(file)              // can fail too
 }
 ```
 
-**Automatic Debug Information**
-When an error occurs, it "bubbles up" to the caller automatically. Nikaia automatically attaches rich debugging information to this error, including:
-* The filename and line number where the error happened.
-* The full **Stack Trace** (the history of function calls).
-This happens invisibly, so you don't need to manually add context to every error.
+**`throws` names no types.** What a function can fail *with* follows from its body, so the compiler
+infers it whole-program and writes it to `nikaia.contracts` (Part III, 13.5). Writing it into the
+signature would mean maintaining derived truth by hand — the same reason a borrow relationship is
+not written in the source ([ADR-005](adr/adr-005.md) D3, [ADR-023](adr/adr-023.md) D1).
 
-**Handling Errors (`catch`)**
-To handle an error, use the `catch` keyword. Inside the catch block, the error is available for inspection.
+**An error type is an `enum`.**
 
 ```nika
-let content = fetch_config() catch {
-    println("Failed to fetch")
-    return // Stop execution
+enum ConfigError {
+    NotFound(Path),
+    Unreadable(Path),
+    BadSyntax { line: i64, expected: &str },
+}
+
+impl Error for ConfigError {
+    fn message(&self) -> String {
+        match self {
+            ConfigError::NotFound(p)   => "no config at {p}"
+            ConfigError::Unreadable(p) => "cannot read {p}"
+            ConfigError::BadSyntax { line, expected } => "line {line}: expected {expected}"
+        }
+    }
 }
 ```
+
+An error **carries what belongs to it** — "not found" without the path is a message that costs a
+question before it helps. An `enum` is what the language already has for one of a fixed set of
+things (4.4), and a `match` over one is checked for completeness. No marker on the type is needed:
+what is thrown must implement `Error`, and the `impl` line is where that is said.
+
+**Raising: `throw`.**
+
+```nika
+if !fs::exists(path) {
+    throw ConfigError::NotFound(path)
+}
+```
+
+**Propagation happens on its own, and nothing marks it.** A call that can fail, inside a function
+that declares `throws` — that is all of it. No operator, no sigil:
+
+```nika
+fn load() throws -> Config {
+    let text = fetch_config()   // if it fails, `load` fails
+    return parse(text)
+}
+```
+
+That is deliberate, and it is the same decision as in three other places. Four things can leave the
+control flow of a Nikaia program without the line showing it: a call may **pause** (8.1), a block's
+end may **pause and fail** (6.4), a call may **fail** (here), and a loop's step may fail
+([ADR-025](adr/adr-025.md)). Marking one of them would claim the other three were absent.
+
+**Handling: `catch`.** The block supplies the replacement value — or it leaves the function.
+
+```nika
+let config = load() catch {
+    eprintln("{error}")
+    return                                // leaves the function
+}
+
+let port = read_port() catch { 8080 }     // replacement value
+```
+
+Inside the block the error is called **`error`**. To pass it on rather than handle it, throw it:
+`throw error`.
+
+**Telling failures apart.** `error` is the sum of the errors that can arrive at this point — the
+compiler knows them because it inferred them. Match with the patterns of 3.4, where a path with
+`::` names a variant:
+
+```nika
+let config = load() catch {
+    match error {
+        ConfigError::NotFound(p) => Config::default()
+        ConfigError::BadSyntax { line, .. } => {
+            eprintln("config broken at line {line}")
+            return
+        }
+        _ => throw error
+    }
+}
+```
+
+Two sets, and they are not the same one. The **variants of an error type** are closed, a `match`
+over them is exhaustive, and adding one is a breaking change — correctly. The **set of error types**
+arriving at a `catch` is open, and it grows when a callee gains a failure. Where that changes a
+`catch`, the compiler narrates the chain: what changed, which contract moved, which caller broke
+(`NK2401`).
+
+**What an error brings without anyone attaching it.** The place it was raised, the stack trace, and
+the chain beneath it where another error joined on the way — a cleanup that failed while the stack
+was unwinding is attached to the original as a *secondary* error rather than replacing it (6.4).
+
+**Printing it: short is the default.**
+
+```nika
+eprintln("{error}")         // the message, and the mark if the application shows one
+eprintln("{error:full}")    // plus the chain and the stack trace
+```
+
+`{error}` **never** prints the stack trace. An error message is written for the operator, not for
+the visitor of a web page — which is why a failed HTTP handler answers with a generic 500 and logs
+the rest ([ADR-018](adr/adr-018.md)). The form you type without thinking is the one you may show a
+stranger.
+
+So that a generic answer stays findable anyway, every error knows the **site that raised it** and
+has a short form of it a person can read out. A screenshot carrying `(NK-2C7)` leads through
+`nikaia explain NK-2C7` to the line that threw it — with no log file, and also when your working
+tree is two features further along ([ADR-023](adr/adr-023.md) D6).
+
+**Failure nobody writes down.** Two places perform a call you did not type, and both can fail: the
+end of a block, where a resource is cleaned up (6.4, `NK2601`), and a loop's step over a fallible
+stream ([ADR-025](adr/adr-025.md), `NK2701`). In both the enclosing function gains a `throws`, and
+the compiler says which resource or which loop it was.
 
 ### 7.2. Unrecoverable Errors (`panic`)
 These are logical bugs, like trying to access the 10th item in a list of 5 items. Nikaia stops the execution to prevent incorrect behavior. In **Nikaia Lite**, this aborts the process safely.
