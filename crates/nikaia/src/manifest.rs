@@ -10,20 +10,49 @@
 //! `emit::Ordering` own that, and get handed a string either way. This module
 //! only answers "which string", and does it once per run so that two places
 //! cannot resolve the same setting differently.
+//!
+//! It also reads the rest of the manifest, for
+//! [ADR-002](../../../docs/specification/adr/adr-002.md) D1's translation into
+//! a `Cargo.toml`: `[package]`, `[dependencies]` and the per-target codegen
+//! tables `[build.<target>]`. One reader, because a manifest read twice is a
+//! manifest that can be understood two ways.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 
-/// Where a `nikaia.toml` was found, and what its `[build]` table said.
+/// Where a `nikaia.toml` was found, and what it said.
 ///
 /// Absent outside a project, which is not an error: a single `.nika` file
 /// compiles with the built-in defaults and the flags, and littering a manifest
 /// into someone's directory to make that work would be the wrong trade.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Manifest {
     build: BTreeMap<String, String>,
+    package: BTreeMap<String, toml::Value>,
+    dependencies: BTreeMap<String, Dependency>,
+    /// `[build.<target>]` - `opt-level` and `lto`, per machine (Part III 13.3).
+    codegen: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    /// The directory the manifest was found in, and therefore the project root.
+    /// `None` when there was no manifest at all.
+    root: Option<PathBuf>,
+}
+
+/// One entry of `[dependencies]`, and which of the two shapes Part III 13.3
+/// shows it is.
+///
+/// The distinction is the whole of the translation: a native Rust crate is
+/// passed to Cargo exactly as written (ADR-002 D1), and a Nikaia package is
+/// something nothing has decided yet.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Dependency {
+    /// `regex = { type = "rust", version = "1.5" }` - the value with `type`
+    /// removed, which is what Cargo is handed.
+    Rust(toml::Value),
+    /// `http-server = "1.2"`. Carried rather than resolved: see
+    /// [`Manifest::dependencies`].
+    Nikaia(toml::Value),
 }
 
 /// The keys `[build]` may carry. A key outside this set is a typo until proven
@@ -36,47 +65,62 @@ pub struct Manifest {
 /// that has not caught up with it yet.
 const KNOWN: &[&str] = &["target", "user-parallelism", "ordering", "cleanup-deadline"];
 
+/// What a `[build.<target>]` table may carry (Part III 13.3). Same rule as
+/// `[build]`: a key nothing reads is a typo, and a silently ignored `opt_level`
+/// leaves a build at a setting its author believed they had changed.
+const KNOWN_CODEGEN: &[&str] = &["opt-level", "lto"];
+
+/// The machines `[build.<target>]` may name (ADR-037 D1). A table for a target
+/// that does not exist is codegen nothing will ever apply.
+const TARGETS: &[&str] = &["x86_64-linux", "wasm32-unknown"];
+
 impl Manifest {
     /// Read the manifest governing `input`, if there is one.
     ///
-    /// The search is the one the build cache already does - the nearest
-    /// `nikaia.toml` at or above the input's directory - so a file cannot be
-    /// cached as part of one project and compiled with another's switches.
+    /// The search is the one the build cache already does - `Layout::resolve`
+    /// walks to the nearest `nikaia.toml` at or above the input's directory -
+    /// so a file cannot be cached as part of one project and compiled with
+    /// another's switches. One root-finder, deliberately.
     pub fn find(input: &Path) -> Result<Manifest> {
-        let start = input
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let start = start.canonicalize().unwrap_or(start);
-
-        for dir in start.ancestors() {
-            let path = dir.join("nikaia.toml");
-            if path.is_file() {
-                let text = std::fs::read_to_string(&path)
-                    .with_context(|| format!("reading {}", path.display()))?;
-                return Manifest::parse(&text)
-                    .with_context(|| format!("in {}", path.display()))
-                    .map_err(|e| anyhow!("{e:#}"));
-            }
+        let layout = bridge_orchestrator::cache::Layout::resolve(input);
+        if !layout.in_project {
+            return Ok(Manifest::default());
         }
-        Ok(Manifest::default())
+        Manifest::read(&layout.root.join("nikaia.toml"))
     }
 
-    /// The `[build]` table, as strings.
-    ///
-    /// Sub-tables are skipped rather than rejected: `[build.x86_64-linux]`
-    /// carries per-target codegen choices (Part III 13.3) that are not
-    /// switches and are nothing to do with this.
+    /// Read a manifest at a known path. The project build already knows where
+    /// the root is, and searching again from there could only find a different
+    /// answer.
+    pub fn read(path: &Path) -> Result<Manifest> {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let mut manifest = Manifest::parse(&text)
+            .with_context(|| format!("in {}", path.display()))
+            .map_err(|e| anyhow!("{e:#}"))?;
+        manifest.root = path.parent().map(Path::to_path_buf);
+        Ok(manifest)
+    }
+
+    /// `[package]`, `[dependencies]`, `[build]` and the `[build.<target>]`
+    /// codegen tables.
     pub fn parse(text: &str) -> Result<Manifest> {
         let document: toml::Value = toml::from_str(text).context("this is not valid TOML")?;
+
+        let mut manifest = Manifest {
+            package: table_of(&document, "package"),
+            dependencies: dependencies(&document)?,
+            ..Manifest::default()
+        };
+
         let Some(table) = document.get("build").and_then(toml::Value::as_table) else {
-            return Ok(Manifest::default());
+            return Ok(manifest);
         };
 
         let mut build = BTreeMap::new();
         for (key, value) in table {
-            if value.is_table() {
+            if let Some(sub) = value.as_table() {
+                manifest.codegen.insert(key.clone(), codegen(key, sub)?);
                 continue;
             }
             if !KNOWN.contains(&key.as_str()) {
@@ -96,7 +140,38 @@ impl Manifest {
             };
             build.insert(key.clone(), word);
         }
-        Ok(Manifest { build })
+        manifest.build = build;
+        Ok(manifest)
+    }
+
+    /// The project root - the directory the manifest sits in.
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    /// `[package] name`, which becomes the Cargo package and the binary's name.
+    pub fn package_name(&self) -> Option<&str> {
+        self.package.get("name").and_then(toml::Value::as_str)
+    }
+
+    /// `[package] version`. Cargo requires one, so a project that does not say
+    /// gets `0.0.0` - a version nobody typed, rather than a guess at one they
+    /// meant.
+    pub fn package_version(&self) -> &str {
+        self.package
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("0.0.0")
+    }
+
+    /// Everything `[dependencies]` declared, in the order Cargo will see it.
+    pub fn dependencies(&self) -> &BTreeMap<String, Dependency> {
+        &self.dependencies
+    }
+
+    /// The codegen table for one machine, empty where the manifest is silent.
+    pub fn codegen_for(&self, target: &str) -> BTreeMap<String, toml::Value> {
+        self.codegen.get(target).cloned().unwrap_or_default()
     }
 
     /// The effective value: the flag if one was given, else the manifest, else
@@ -110,6 +185,74 @@ impl Manifest {
         flag.or_else(|| self.build.get(key).map(String::as_str))
             .unwrap_or(default)
     }
+}
+
+/// A top-level table of the manifest, as a map. Absent is empty, because a
+/// manifest without `[package]` is a manifest that only set switches.
+fn table_of(document: &toml::Value, name: &str) -> BTreeMap<String, toml::Value> {
+    document
+        .get(name)
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default()
+}
+
+/// `[build.<target>]`, checked.
+fn codegen(target: &str, table: &toml::Table) -> Result<BTreeMap<String, toml::Value>> {
+    if !TARGETS.contains(&target) {
+        return Err(anyhow!(
+            "`[build.{target}]` names no machine (expected one of: {})",
+            TARGETS.join(", ")
+        ));
+    }
+    let mut out = BTreeMap::new();
+    for (key, value) in table {
+        if !KNOWN_CODEGEN.contains(&key.as_str()) {
+            return Err(anyhow!(
+                "unknown key `{key}` in `[build.{target}]` (expected one of: {})",
+                KNOWN_CODEGEN.join(", ")
+            ));
+        }
+        out.insert(key.clone(), value.clone());
+    }
+    Ok(out)
+}
+
+/// `[dependencies]`, split into the two shapes 13.3 shows.
+///
+/// `type = "rust"` is the marker, and it is removed on the way through: it is
+/// Nikaia's word about which ecosystem the name belongs to, and Cargo would
+/// reject it as an unknown key.
+fn dependencies(document: &toml::Value) -> Result<BTreeMap<String, Dependency>> {
+    let mut out = BTreeMap::new();
+    for (name, value) in table_of(document, "dependencies") {
+        let kind = value.get("type").and_then(toml::Value::as_str);
+        match kind {
+            Some("rust") => {
+                let mut table = value
+                    .as_table()
+                    .cloned()
+                    .expect("a value with a `type` key is a table");
+                table.remove("type");
+                out.insert(name, Dependency::Rust(toml::Value::Table(table)));
+            }
+            Some(other) => {
+                return Err(anyhow!(
+                    "dependency `{name}` has `type = \"{other}\"`, which names no ecosystem \
+                     (the only one spelled out is `rust`, for a crate from crates.io)"
+                ));
+            }
+            None => {
+                out.insert(name, Dependency::Nikaia(value));
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -138,11 +281,12 @@ mod tests {
     #[test]
     fn a_manifest_without_a_build_table_decides_nothing() {
         let manifest = Manifest::parse("[package]\nname = \"x\"\n").expect("parses");
-        assert_eq!(manifest, Manifest::default());
         assert_eq!(
             manifest.setting("target", None, "x86_64-linux"),
             "x86_64-linux"
         );
+        assert_eq!(manifest.setting("ordering", None, "effects"), "effects");
+        assert_eq!(manifest.package_name(), Some("x"));
     }
 
     /// The mistake this exists for: the switch is spelled with a hyphen in the
@@ -157,7 +301,8 @@ mod tests {
         assert!(text.contains("user-parallelism"), "{text}");
     }
 
-    /// `[build.x86_64-linux]` is codegen, not a switch. It has to survive.
+    /// `[build.x86_64-linux]` is codegen, not a switch. It has to survive, and
+    /// since ADR-002 D1 it has to arrive somewhere: it becomes a Cargo profile.
     #[test]
     fn a_per_target_table_is_not_a_switch() {
         let manifest = Manifest::parse(
@@ -165,6 +310,71 @@ mod tests {
         )
         .expect("parses");
         assert_eq!(manifest.setting("ordering", None, "effects"), "strict");
+
+        let codegen = manifest.codegen_for("x86_64-linux");
+        assert_eq!(codegen["opt-level"].as_integer(), Some(3));
+        assert_eq!(codegen["lto"].as_bool(), Some(true));
+        assert!(
+            manifest.codegen_for("wasm32-unknown").is_empty(),
+            "a machine the manifest says nothing about carries no codegen"
+        );
+    }
+
+    /// The same rule `[build]` has, for the same reason: a key nothing reads
+    /// leaves a build at a setting its author believed they had changed.
+    #[test]
+    fn an_unknown_codegen_key_is_named_rather_than_ignored() {
+        let error = Manifest::parse("[build.x86_64-linux]\nopt_level = 3\n")
+            .expect_err("an unknown key is refused");
+        let text = format!("{error:#}");
+        assert!(text.contains("opt_level"), "{text}");
+        assert!(text.contains("opt-level"), "{text}");
+    }
+
+    /// `[build.x86_65-linux]` is a typo, and the codegen in it would apply to
+    /// nothing at all.
+    #[test]
+    fn a_per_target_table_for_no_machine_is_refused() {
+        let error = Manifest::parse("[build.x86_65-linux]\nopt-level = 3\n")
+            .expect_err("an unknown machine is refused");
+        assert!(format!("{error:#}").contains("x86_64-linux"), "{error:#}");
+    }
+
+    /// Part III 13.3's two shapes. `type = "rust"` says crates.io, and the
+    /// marker is Nikaia's - Cargo would refuse it as an unknown key, so it does
+    /// not travel (ADR-002 D1).
+    #[test]
+    fn a_rust_dependency_passes_through_without_its_marker() {
+        let manifest = Manifest::parse(
+            "[dependencies]\nhttp-server = \"1.2\"\nregex = { type = \"rust\", version = \"1.5\" }\n",
+        )
+        .expect("parses");
+
+        match &manifest.dependencies()["regex"] {
+            Dependency::Rust(value) => {
+                assert_eq!(
+                    value.get("version").and_then(toml::Value::as_str),
+                    Some("1.5")
+                );
+                assert!(
+                    value.get("type").is_none(),
+                    "the marker does not reach Cargo"
+                );
+            }
+            other => panic!("regex is a Rust crate, not {other:?}"),
+        }
+        assert!(matches!(
+            manifest.dependencies()["http-server"],
+            Dependency::Nikaia(_)
+        ));
+    }
+
+    /// A `type` nothing implements is refused rather than guessed at.
+    #[test]
+    fn a_dependency_naming_no_ecosystem_is_refused() {
+        let error = Manifest::parse("[dependencies]\nx = { type = \"c\", version = \"1\" }\n")
+            .expect_err("an unknown ecosystem is refused");
+        assert!(format!("{error:#}").contains("rust"), "{error:#}");
     }
 
     /// Specified, decided, and not yet read. Refusing it would make the

@@ -9,22 +9,28 @@ extern crate rustc_driver;
 
 use anyhow::{bail, Context, Result};
 use bridge_ir::BridgeModule;
-use bridge_orchestrator::cache::{Artifacts, Cache, Choices, Layout};
 use bridge_orchestrator::LanguageFrontend;
-use clap::Parser;
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
-use nikaia::contracts::{self, sync, Ledger, STD};
-use nikaia::emit::{self, Build, Ordering};
+use nikaia::contracts::{self, Ledger, STD};
+use nikaia::emit;
 use nikaia::manifest::Manifest;
-use nikaia::{check, diagnostics, interpreter, modules, parser};
+use nikaia::project::{self, Project, Settings};
+use nikaia::{diagnostics, interpreter, parser};
 
+/// The Nikaia compiler: `nikaia build` for a project, `--input` for one file.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
+    /// A project command (ADR-002 D1). Without one, `--input` compiles a single
+    /// file - the shape the compiler had before there were projects, and the
+    /// one every `.nika` file outside a project still uses.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     #[arg(short, long)]
-    pub input: PathBuf,
+    pub input: Option<PathBuf>,
 
     /// `interpreter`, `rust` or `bridge`.
     ///
@@ -39,7 +45,7 @@ pub struct Cli {
     ///
     /// Overrides `nikaia.toml`'s `[build] target` for this one build; the
     /// default is `x86_64-linux` where neither says (D5).
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub target: Option<String>,
 
     /// Whether *your* code may run concurrently at all (ADR-037 D2): `yes`
@@ -52,7 +58,7 @@ pub struct Cli {
     ///
     /// Overrides `nikaia.toml`'s `[build] user-parallelism`; the default is
     /// `no` where neither says (D5).
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub user_parallelism: Option<String>,
 
     /// Where the `rust` backend writes. Defaults to `<input>.rs`.
@@ -73,7 +79,7 @@ pub struct Cli {
     /// The ledger is a pure function of source and toolchain, so this compares
     /// bytes: any difference fails the build and prints what changed. The
     /// recommended CI line, and the reason the file is committed.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub locked: bool,
 
     /// How strictly the written order of two statements is taken (ADR-033).
@@ -84,7 +90,7 @@ pub struct Cli {
     ///
     /// Overrides `nikaia.toml`'s `[build] ordering` (D8); the default is
     /// `effects` where neither says.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub ordering: Option<String>,
 
     /// Lower from scratch, ignoring the build cache (ADR-021).
@@ -94,7 +100,7 @@ pub struct Cli {
     /// is not that. This flag exists for the times that matters less than
     /// seeing the emitter run - debugging it, or comparing its output against
     /// what the cache holds.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub no_cache: bool,
 
     /// Print which adjacent statements run together and why the rest do not
@@ -116,161 +122,29 @@ pub struct Cli {
     pub trust: bool,
 }
 
-/// Everything the compiler decides for itself, before it emits a line of Rust.
-///
-/// Two rules today, and one mechanism under both: the ledger (ADR-020) is what
-/// makes either possible across the `std` boundary. A call to
-/// `io::read_to_string` is a `sync` violation only if something says that
-/// function can pause, and it takes the wrong number of arguments only if
-/// something says how many it takes - `std.contracts` is where both are said.
-///
-/// Types are reported before suspension because a call that passes the wrong
-/// thing is usually why the rest of the file reads strangely.
-fn check(
-    parsed: &parser::Parsed,
-    own: &Ledger,
-    modules: &std::collections::BTreeSet<String>,
-    path: &Path,
-    source: &str,
-) -> Result<()> {
-    let library = Ledger::parse(STD).context("std's shipped ledger")?;
-
-    let all = check::check_program(parsed, own, &library, modules).findings;
-    let violations = sync::check(parsed, own, &library);
-    if all.is_empty() && violations.is_empty() {
-        return Ok(());
-    }
-
-    // A warning is printed and does not stop anything. There is one, and it is
-    // a migration (ADR-035 D5): a string written before `f"…"` existed looks
-    // exactly like one that meant its braces, and neither refusing it nor
-    // saying nothing would be right.
-    let path = path.display().to_string();
-    for finding in &all {
-        eprint!("{}", diagnostics::render_finding(finding, &path, source));
-    }
-    let findings: Vec<&check::Finding> = all
-        .iter()
-        .filter(|f| f.severity == check::Severity::Error)
-        .collect();
-    if findings.is_empty() && violations.is_empty() {
-        return Ok(());
-    }
-    for violation in &violations {
-        eprint!(
-            "{}",
-            diagnostics::render_sync_violation(violation, &path, source)
-        );
-    }
-
-    let mut refused = Vec::new();
-    // The `NK1xxx` family is types; anything else the checker reports is a rule
-    // of its own and should not be summarised as one. Today that is `NK2701`,
-    // a loop whose step can fail in a function that does not say so.
-    let (types, rules): (Vec<&check::Finding>, Vec<&check::Finding>) = findings
-        .iter()
-        .copied()
-        .partition(|f| f.code.starts_with("NK1"));
-
-    if !types.is_empty() {
-        refused.push(format!(
-            "{} type error{}",
-            types.len(),
-            if types.len() == 1 { "" } else { "s" }
-        ));
-    }
-    if !rules.is_empty() {
-        refused.push(format!(
-            "{} loop{} that can fail without saying so",
-            rules.len(),
-            if rules.len() == 1 { "" } else { "s" }
-        ));
-    }
-    if !violations.is_empty() {
-        refused.push(format!(
-            "{} call{} a `sync` function may not make",
-            violations.len(),
-            if violations.len() == 1 { "" } else { "s" }
-        ));
-    }
-    anyhow::bail!("{}", refused.join(", "))
-}
-
-/// Write the ledger, or - under `--locked` - check that it did not need
-/// writing.
-///
-/// The determinism guarantee (13.5) is what lets this compare bytes rather than
-/// meanings: the same sources and the same compiler produce the same file, so a
-/// difference is a change in a contract and never in the formatting.
-fn contracts(path: &std::path::Path, ledger: &str, locked: bool) -> Result<()> {
-    if !locked {
-        std::fs::write(path, ledger)?;
-        return Ok(());
-    }
-
-    let committed = std::fs::read_to_string(path).with_context(|| {
-        format!(
-            "--locked, but {} is not there; run without --locked to write it",
-            path.display()
-        )
-    })?;
-
-    if committed != *ledger {
-        anyhow::bail!(
-            "--locked: the contracts changed and {} does not say so.\n\
-             What the build inferred and the ledger does not have:\n{}\n\
-             Run without --locked to record it, and read the diff.",
-            path.display(),
-            changed_lines(ledger, &committed).join("\n")
-        );
-    }
-
-    Ok(())
-}
-
-/// The lines the build produced that the committed ledger does not have, each
-/// under the entry it belongs to.
-///
-/// Naming the entry is the whole point. A contract line is short and repeats -
-/// `sync = true` says nothing on its own, and since ADR-027 it is the commonest
-/// line in the file - so a bare list of them tells you that *something* changed
-/// and leaves you to find out what. 13.5 asks this diff to narrate a cause; it
-/// cannot do that without saying whose contract moved.
-fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut entry: Option<&str> = None;
-    let mut named: Option<&str> = None;
-
-    for line in ledger.lines() {
-        if line.starts_with('[') {
-            entry = Some(line);
-            named = None;
-        }
-        if line.is_empty() || line.starts_with('#') || committed.lines().any(|c| c == line) {
-            continue;
-        }
-        match entry.filter(|e| *e != line) {
-            // A line inside an entry, under the entry's name - printed once,
-            // however many of its lines changed.
-            Some(entry) => {
-                if named != Some(entry) {
-                    out.push(format!("  {entry}"));
-                    named = Some(entry);
-                }
-                out.push(format!("      {line}"));
-            }
-            // The line *is* the entry - a whole contract that is new - or it is
-            // a header line, which belongs to no entry. Either way it names
-            // itself, and an entry that has named itself must not be named
-            // again by the lines that follow it.
-            None => {
-                out.push(format!("  {line}"));
-                named = entry;
-            }
-        }
-    }
-
-    out
+/// The project commands of Part III 13.2.
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Compile the project in this directory (Part III 13.2).
+    ///
+    /// `nikaia.toml` is translated to a `Cargo.toml` and `cargo` builds it,
+    /// which is how a Nikaia project reaches crates.io without this toolchain
+    /// resolving a single version itself (ADR-002 D1).
+    Build {
+        /// The project directory. Defaults to the working directory, and the
+        /// search walks up from there to the nearest `nikaia.toml`.
+        #[arg(long)]
+        project: Option<PathBuf>,
+    },
+    /// Compile the project and run it.
+    ///
+    /// Everything after `--` is the program's own arguments.
+    Run {
+        #[arg(long)]
+        project: Option<PathBuf>,
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
 }
 
 struct NikaiaFrontend;
@@ -281,52 +155,12 @@ impl LanguageFrontend for NikaiaFrontend {
     }
 }
 
-/// The build switches, resolved: flag over manifest over built-in default.
-///
-/// One value threaded through rather than three fields re-read at each use.
-/// Every setting is kept both as the word that named it and as the parsed
-/// thing, because the cache key and the diagnostics want the word (ADR-021 D5
-/// hashes what was asked for) and the emitter wants the value.
-#[derive(Debug, Clone)]
-pub struct Settings {
-    pub build: Build,
-    pub ordering: Ordering,
-    pub target: String,
-    pub user_parallelism: String,
-    pub ordering_word: String,
-}
-
-impl Settings {
-    /// Resolve every switch before anything is read, so a mistyped one fails
-    /// on its own account rather than after a compile (ADR-037 D1).
-    fn resolve(args: &Cli) -> Result<Settings> {
-        let manifest = Manifest::find(&args.input)?;
-        let target = manifest
-            .setting("target", args.target.as_deref(), "x86_64-linux")
-            .to_string();
-        let user_parallelism = manifest
-            .setting("user-parallelism", args.user_parallelism.as_deref(), "no")
-            .to_string();
-        let ordering_word = manifest
-            .setting("ordering", args.ordering.as_deref(), "effects")
-            .to_string();
-
-        Ok(Settings {
-            build: Build::parse(&target, &user_parallelism)?,
-            ordering: Ordering::parse(&ordering_word)?,
-            target,
-            user_parallelism,
-            ordering_word,
-        })
-    }
-}
-
 /// `rustc --error-format=json … | nikaia --input x.nika --explain`
 ///
 /// Every message rustc reports about the emitted file is placed back in the
 /// `.nika` it came from. The text is left alone: because the lowering is name
 /// for name (ADR-011 D2), only the position was ever wrong.
-fn explain(args: &Cli, settings: &Settings, source: &str) -> Result<()> {
+fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &str) -> Result<()> {
     use std::io::Read;
 
     // The same switches the build used, or the map would point into a file this
@@ -340,8 +174,8 @@ fn explain(args: &Cli, settings: &Settings, source: &str) -> Result<()> {
     let generated = args
         .output
         .clone()
-        .unwrap_or_else(|| args.input.with_extension("rs"));
-    let path = args.input.display().to_string();
+        .unwrap_or_else(|| input.with_extension("rs"));
+    let path = input.display().to_string();
     let generated = generated.display().to_string();
 
     let diagnostics = diagnostics::translate(&rustc_json, &lowered.map, source);
@@ -360,59 +194,40 @@ fn explain(args: &Cli, settings: &Settings, source: &str) -> Result<()> {
     Ok(())
 }
 
-/// Stage 0: the transpiler. A `grammar` item reaches the parser backend only
-/// through here - the Bridge IR has no macro to carry it.
+/// The single-file `rust` backend: one `.nika` entry to one `.rs` file.
 ///
-/// The build cache (ADR-021) covers the whole of it: on a hit nothing is
-/// parsed, checked, lowered or inferred, because only a build that passed every
-/// check was recorded and the key holds everything those checks depend on
-/// (D13). What a hit does *not* skip is `--locked`: comparing the committed
-/// ledger against what this build determined is the user's check, not the
-/// compiler's, and skipping it would change what the flag means.
-/// The names `lower_to_rust` stores its outputs under.
-const RUST: &str = "rust";
-const CONTRACTS: &str = "contracts";
-
-fn lower_to_rust(args: &Cli, settings: &Settings, source: &str) -> Result<()> {
-    let (build, ordering) = (settings.build, settings.ordering);
+/// Unchanged by the project build, deliberately. A one-off transformation of a
+/// file that belongs to no project is a real thing to want (ADR-021 D11), and
+/// it is what every test that drives the emitter uses.
+fn lower_to_rust(
+    input: &std::path::Path,
+    args: &Cli,
+    settings: &Settings,
+    source: &str,
+) -> Result<()> {
     let output_path = args
         .output
         .clone()
-        .unwrap_or_else(|| args.input.with_extension("rs"));
+        .unwrap_or_else(|| input.with_extension("rs"));
 
-    // `Layout` decides where the lock and the store go, and guarantees that
-    // outside a `nikaia.toml` project nothing is written into the source tree
-    // - which is what makes caching-by-default something other than littering.
-    // It also names the unit relative to its root: an absolute path is D7's
-    // first failure direction, a key that moves with the checkout.
-    let layout = Layout::resolve(&args.input);
-    let unit = layout.unit_name(&args.input);
-    let choices = Choices::with_ordering(
-        format!("{}/{}", settings.target, settings.user_parallelism),
-        "rust",
-        &settings.ordering_word,
-    );
-
-    // `--trust` is an explanation, so it is answered here rather than in the
-    // miss branch below: a build that reuses a cached lowering still answers
-    // the question, and the answer cannot differ from the one that lowering was
-    // built with. Provenance is a function of the source and of what `std`'s
-    // ledger says about the sources it calls, and both are already in the key -
-    // the compiler's fingerprint covers `std.contracts` by name (`build.rs`).
+    // `--trust` and `--overlaps` are explanations, so they are answered before
+    // the cache is consulted: a build that reuses a cached lowering still
+    // answers the question, and the answer cannot differ from the one that
+    // lowering was built with.
     if args.overlaps {
         // The report answers "may these two overlap", which is a question
         // about the program. Whether anything then *does* overlap is a
         // question about the build, and two settings answer it no on their
         // own - so say which, rather than letting the report read as a
         // promise the emitter is not keeping.
-        if !build.overlaps_user_code() {
+        if !settings.build.overlaps_user_code() {
             println!(
                 "note: `--user-parallelism {}` on `--target {}` runs user code on one thread, \
                  so nothing below overlaps in this build.",
                 settings.user_parallelism,
-                build.target.triple()
+                settings.build.target.triple()
             );
-        } else if settings.ordering != Ordering::Effects {
+        } else if settings.ordering != emit::Ordering::Effects {
             println!(
                 "note: `ordering = {}` keeps the written order, so nothing below overlaps in this build.",
                 settings.ordering_word
@@ -433,137 +248,80 @@ fn lower_to_rust(args: &Cli, settings: &Settings, source: &str) -> Result<()> {
         );
     }
 
-    // A cache that cannot be opened is a slower build, never a failed one
-    // (D12). Once the cache is the default, a read-only checkout or a full
-    // disk must not turn a build that would have succeeded into one that does
-    // not.
-    let mut cache = if args.no_cache {
-        None
-    } else {
-        match Cache::open(
-            &layout.lock,
-            &layout.store,
-            env!("NIKAIA_RUSTC_VERSION"),
-            env!("NIKAIA_COMPILER"),
-        ) {
-            Ok(cache) => Some(cache),
-            Err(error) => {
-                eprintln!("warning: the build cache is unavailable: {error:#}");
-                None
-            }
-        }
-    };
-
-    // Part I 9.1: every file is a module, so a build is however many files the
-    // entry reaches - and the cache cannot be asked about a program until the
-    // program is known. Finding that out means parsing, so **ADR-021 D13's
-    // "on a hit nothing is parsed" becomes "nothing is parsed twice"**: the
-    // parse is what tells the compiler which files took part, and Part III 13.1
-    // already keys the build on each of them. What a hit still saves is the
-    // lowering, the checks and the inference, which is the larger part - and
-    // the parse itself became 20 % cheaper with the whitespace hoist.
-    //
-    // A single file is unchanged in every respect that matters: `sources()`
-    // is one string, so the key is byte-identical to the one this wrote before
-    // modules existed.
-    let program = modules::Program::read(&args.input)?;
-    let key_source = program.sources().join("\n// --- unit ---\n");
-
-    // An entry that predates an artifact this build needs is a miss, not a
-    // gap: adding an output stays a safe change.
-    let cached = cache
-        .as_ref()
-        .and_then(|cache| cache.lookup(&unit, &key_source, &choices, &layout.root))
-        .filter(|artifacts| artifacts.has_all(&[RUST, CONTRACTS]));
-    let reused = cached.is_some();
-
-    let (rust, ledger) = match &cached {
-        Some(artifacts) => (
-            artifacts.get(RUST).expect("checked above").to_string(),
-            artifacts.get(CONTRACTS).expect("checked above").to_string(),
-        ),
-        None => {
-            // Every unit is checked against the *program's* contracts, not its
-            // own: `utils::double` is a name `main.nika` may write, and the
-            // type checker resolves it in the one place any name is resolved.
-            let modules = program.module_names();
-            for unit in &program.units {
-                check(
-                    &unit.parsed,
-                    &program.contracts,
-                    &modules,
-                    &unit.path,
-                    &unit.source,
-                )?;
-            }
-
-            let lowered = program.emit_ordered(build, ordering)?;
-            let ledger = program.contracts.render();
-
-            if let Some(cache) = &mut cache {
-                // Nothing reports assets yet: compile-time I/O
-                // (`from "schema.sql"`) is specified and not implemented. The
-                // dimension travels through the key regardless, so switching it
-                // on later does not reshape the key.
-                let artifacts = Artifacts::new()
-                    .with(RUST, &lowered.rust)
-                    .with(CONTRACTS, &ledger);
-                let stored = cache
-                    .record(&unit, &key_source, BTreeMap::new(), &choices, &artifacts)
-                    .and_then(|()| cache.save());
-                if let Err(error) = stored {
-                    // The outputs are in hand; only the next build is slower.
-                    eprintln!("warning: the build cache could not be updated: {error:#}");
-                }
-            }
-            (lowered.rust, ledger)
-        }
-    };
-
-    std::fs::write(&output_path, &rust)?;
+    let lowered = project::lower(input, settings, args.no_cache)?;
+    std::fs::write(&output_path, &lowered.rust)?;
 
     // The ledger goes beside the output, because that is where a build puts
-    // what it produced. Part III 13.5 says the project root, which is what this
-    // is once the orchestrator compiles a project rather than a file.
+    // what it produced. Part III 13.5 says the project root, which is where
+    // `nikaia build` puts it.
     //
     // This runs on a hit too: `--locked` asks whether the *committed* file
     // still matches, and a cached build has as much to answer for there as a
     // fresh one.
     let ledger_path = output_path.with_file_name("nikaia.contracts");
-    contracts(&ledger_path, &ledger, args.locked)?;
+    project::write_ledger(&ledger_path, &lowered.ledger, args.locked)?;
 
     println!(
         "Lowered {} to {} (target: {}{})",
-        args.input.display(),
+        input.display(),
         output_path.display(),
         settings.target,
-        if reused { ", lowering from cache" } else { "" }
+        if lowered.reused {
+            ", lowering from cache"
+        } else {
+            ""
+        }
     );
 
     Ok(())
 }
 
-pub fn main() -> Result<()> {
-    let args = Cli::parse();
+/// `nikaia build` and `nikaia run` (Part III 13.2).
+fn project_command(args: &Cli, command: &Command) -> Result<i32> {
+    let (subcommand, directory, program_args) = match command {
+        Command::Build { project } => ("build", project.clone(), Vec::new()),
+        Command::Run { project, args } => ("run", project.clone(), args.clone()),
+    };
 
+    let start = match directory {
+        Some(directory) => directory,
+        None => std::env::current_dir().context("finding the working directory")?,
+    };
+
+    let project = Project::open(
+        &start,
+        args.target.as_deref(),
+        args.user_parallelism.as_deref(),
+        args.ordering.as_deref(),
+    )?;
+    project.drive(subcommand, &program_args, args.no_cache, args.locked)
+}
+
+/// The single-file path, unchanged: `nikaia --input x.nika --backend …`.
+fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
     // Resolved before anything is read, so a mistyped switch - in the manifest
     // or on the command line - fails on its own account rather than after a
     // compile. A target the toolchain cannot build for is refused here too:
     // emitting code for a different machine than the one named would be worse
     // than any name this switch replaced (ADR-037 D1).
-    let settings = Settings::resolve(&args)?;
-    let build = settings.build;
-    if let Some(missing) = build.target.unbuildable() {
-        anyhow::bail!(
+    let manifest = Manifest::find(input)?;
+    let settings = Settings::resolve(
+        &manifest,
+        args.target.as_deref(),
+        args.user_parallelism.as_deref(),
+        args.ordering.as_deref(),
+    )?;
+    if let Some(missing) = settings.build.target.unbuildable() {
+        bail!(
             "cannot build for `{}` yet: {missing}",
-            build.target.triple()
+            settings.build.target.triple()
         );
     }
 
-    let source = std::fs::read_to_string(&args.input)?;
+    let source = std::fs::read_to_string(input)?;
 
     if args.explain {
-        return explain(&args, &settings, &source);
+        return explain(input, args, &settings, &source);
     }
 
     match args.backend.as_str() {
@@ -574,16 +332,16 @@ pub fn main() -> Result<()> {
             interpreter.run(&parsed);
             Ok(())
         }
-        "rust" => lower_to_rust(&args, &settings, &source),
+        "rust" => lower_to_rust(input, args, &settings, &source),
         "bridge" => {
             // For compilation backends we use the orchestrator flow (or similar)
             let bridge_module = NikaiaFrontend.parse(&source)?;
 
             // Output name based on input
-            let file_stem = args.input.file_stem().unwrap().to_str().unwrap();
+            let file_stem = input.file_stem().unwrap().to_str().unwrap();
             let output_path = format!("./{}", file_stem);
 
-            println!("Compiling {} to {}...", args.input.display(), output_path);
+            println!("Compiling {} to {}...", input.display(), output_path);
 
             // Manually call the backend executor
             rustc_executor::execute(&bridge_module, &output_path)?;
@@ -603,72 +361,28 @@ pub fn main() -> Result<()> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::changed_lines;
-
-    /// `--locked` names the entry a changed line belongs to.
-    ///
-    /// A contract line is short and repeats; since ADR-027 `sync` is the
-    /// commonest line in the file. Reporting three bare `sync = true` lines
-    /// tells a reader that something moved and leaves them to find out what,
-    /// which is not the narrated diff 13.5 asks for.
-    #[test]
-    fn a_locked_diff_says_whose_contract_moved() {
-        let committed = "version = 1\n\n[fn.\"a\"]\nsync = true\n\n[fn.\"b\"]\n";
-        let built = "version = 1\n\n[fn.\"a\"]\nsync = true\n\n[fn.\"b\"]\nsync = \"inferred\"\n";
-
-        assert_eq!(
-            changed_lines(built, committed),
-            ["  [fn.\"b\"]", "      sync = \"inferred\""]
-        );
+pub fn main() -> Result<()> {
+    // Cargo owns the wrapper's argument list, so this cannot be a flag or a
+    // subcommand: the marker in the environment is the only channel available,
+    // and it is read before `clap` sees an argument list it would not
+    // recognise (ADR-002 D1).
+    if std::env::var_os(project::WRAPPER_MARKER).is_some() {
+        let code = project::wrapper_main()?;
+        std::process::exit(code);
     }
 
-    /// An entry is named once, however many of its lines changed.
-    #[test]
-    fn an_entry_is_named_once_for_all_of_its_changes() {
-        let committed = "version = 1\n\n[fn.\"a\"]\n";
-        let built = "version = 1\n\n[fn.\"a\"]\nsync = \"inferred\"\nthrows = true\n";
+    let args = Cli::parse();
 
-        assert_eq!(
-            changed_lines(built, committed),
-            [
-                "  [fn.\"a\"]",
-                "      sync = \"inferred\"",
-                "      throws = true"
-            ]
-        );
+    if let Some(command) = &args.command {
+        let code = project_command(&args, command)?;
+        std::process::exit(code);
     }
 
-    /// A wholly new entry names itself, and is not named twice.
-    ///
-    /// The entry line and the lines under it are both new here, so the naming
-    /// has to notice that the entry has already introduced itself.
-    #[test]
-    fn a_new_entry_names_itself_once() {
-        let committed = "version = 1\n";
-        let built = "version = 1\n\n[fn.\"z\"]\nsync = \"inferred\"\nthrows = true\n";
-
-        assert_eq!(
-            changed_lines(built, committed),
-            [
-                "  [fn.\"z\"]",
-                "      sync = \"inferred\"",
-                "      throws = true"
-            ]
+    let Some(input) = args.input.clone() else {
+        bail!(
+            "nothing to build: give `--input <file.nika>` for a single file, or \
+             `nikaia build` inside a project (Part III 13.2)"
         );
-    }
-
-    /// A header line belongs to no entry and is reported on its own - which is
-    /// what a toolchain upgrade changing the inference looks like.
-    #[test]
-    fn a_changed_header_is_reported_without_an_entry() {
-        let committed = "version = 1\ninference = \"stage0-signatures\"\n";
-        let built = "version = 1\ninference = \"stage0-signatures+sync-bodies\"\n";
-
-        assert_eq!(
-            changed_lines(built, committed),
-            ["  inference = \"stage0-signatures+sync-bodies\""]
-        );
-    }
+    };
+    single_file(&args, &input)
 }

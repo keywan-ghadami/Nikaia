@@ -1,11 +1,13 @@
 //! The build orchestrator.
 //!
 //! Its caching half is implemented in [`cache`] and specified by ADR-021. The
-//! other half - wrapping `cargo`, injecting `RUSTC_WORKSPACE_WRAPPER` and
-//! managing the build graph (ADR-003) - is not built yet; [`Orchestrator::run`]
-//! below is still the placeholder it always was.
+//! other half - translating a project manifest into a `Cargo.toml`, driving
+//! `cargo` over it and injecting `RUSTC_WORKSPACE_WRAPPER` (ADR-002 D1,
+//! ADR-003 D2) - is [`project`]. What is still a placeholder is
+//! [`Orchestrator::run`] below, the Bridge-IR path through `rustc-executor`.
 
 pub mod cache;
+pub mod project;
 
 use anyhow::{Context, Result};
 use bridge_ir::BridgeModule;
