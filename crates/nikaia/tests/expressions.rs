@@ -308,3 +308,47 @@ fn a_library_option_is_filled_in_from_the_shipped_ledger() {
         "{rust}"
     );
 }
+
+/// Kap 3.3: `while` is a loop, not an identifier.
+///
+/// It was neither in the parser nor in the AST, so `while n < 5 { … }` read as
+/// **three** statements - a variable called `while`, a comparison thrown away,
+/// and a bare block - and the compiler said nothing at all. What a reader got
+/// was `rustc` complaining about `while;` in a file they had not written, which
+/// Part III C.1 calls a bug in this compiler.
+#[test]
+fn a_while_is_one_statement_and_not_three() {
+    let parsed = parse_to_ast(
+        "fn main() {\n\
+         \x20   let mut n = 0\n\
+         \x20   while n < 5 { n += 1 }\n\
+         }",
+    )
+    .expect("parses");
+    let Item::Fn { body, .. } = &parsed.program.items[0].node else {
+        panic!("expected a function");
+    };
+    assert_eq!(
+        body.stmts.len(),
+        2,
+        "the `while` did not stay one statement: {:#?}",
+        body.stmts
+    );
+    let Stmt::While { body: inner, .. } = &body.stmts[1].node else {
+        panic!("expected a `while`, found {:#?}", body.stmts[1].node);
+    };
+    assert_eq!(inner.stmts.len(), 1, "the body is the block after it");
+}
+
+/// …and it lowers name for name, because the language below spells it the same
+/// way (ADR-011 D2).
+#[test]
+fn a_while_lowers_to_a_while() {
+    let rust = emit(
+        "fn main() {\n\
+         \x20   let mut n = 0\n\
+         \x20   while n < 5 { n += 1 }\n\
+         }",
+    );
+    assert!(rust.contains("while n < 5 { n += 1; }"), "{rust}");
+}

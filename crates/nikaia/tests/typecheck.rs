@@ -198,6 +198,27 @@ fn a_field_that_does_not_exist_in_a_literal_is_reported() {
     assert_eq!(message, "`Reading` has no field `nmae`");
 }
 
+/// A `while` decides on a `bool` too, and says which loop it is about.
+#[test]
+fn a_while_condition_that_is_not_a_bool_is_reported() {
+    let (code, message) = one("fn main() {\n\
+         \x20   let name = \"Hamburg\"\n\
+         \x20   while name { }\n\
+         }");
+    assert_eq!(code, "NK1108");
+    assert_eq!(message, "this is `&str`, and a condition is a `bool`");
+    assert_eq!(
+        findings(
+            "fn main() {\n\
+             \x20   let name = \"Hamburg\"\n\
+             \x20   while name { }\n\
+             }"
+        )[0]
+        .notes[0],
+        "a `while` repeats while a `bool` holds"
+    );
+}
+
 /// A condition that is not a `bool`.
 #[test]
 fn a_condition_that_is_not_a_bool_is_reported() {

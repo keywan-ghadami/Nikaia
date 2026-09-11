@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed (0.0.8 - `while` exists)
+
+- **`while` was in the specification and not in the compiler**, and it failed in the way that costs most: silently. Part I 3.3 documents it with a worked example; the parser had no rule for it, so `while n < 5 { n += 1 }` read as **three** statements - a variable called `while`, a comparison thrown away, and a bare block - and lowered "successfully" to `while; n < 5; { n += 1; }`. What a reader got was `rustc` complaining about a file nobody wrote, which Part III C.1 calls a bug in this compiler. It is one statement now, it lowers name for name (ADR-011 D2), and its condition is type-checked like an `if`'s (`NK1108`, with a note that says which loop it is about).
+- **The regression test is about the shape**, not the output: a `while` must be *one* statement and not three. That is the bug that was there, and a test that only checked the emitted Rust would not have caught it.
+- **Two rows of the error corpus changed**, and both are improvements: `while` now appears in the list of what may begin a statement, because it may.
+- **`loop` is not added.** It has been on the roadmap since that file was written and it is **not in the specification** - Part I 3.3 has `while` and `for` and nothing else. Whether the language wants an unconditional loop is a question to answer before implementing one, and the roadmap now says so rather than listing it as work.
+- **The roadmap's Phase 1 said things that stopped being true months ago**: that enum variants do not parse (they have since G12) and that `while` does not (it does now). Both boxes are checked, with what is actually still open under them - the Bridge path, which carries `let` and an expression statement and refuses every other kind.
+
 ### Decided and built (0.0.8 - ADR-028: the type checker already knew)
 
 - **The answer was one module away, being computed and thrown away.** [ADR-027](docs/specification/adr/adr-027.md) inferred `sync` from bodies and refused to vouch for a method call, because `stats.add(5)` names `add` and says nothing about what `stats` is. It recorded that as future work: "a method becomes resolvable the day its receiver has a signature written down". The type checker had been resolving method calls on every build the whole time - receiver type, ledger lookup, contract - and nobody was reading the result. [ADR-028](docs/specification/adr/adr-028.md) reads it.
