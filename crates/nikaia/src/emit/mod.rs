@@ -89,6 +89,23 @@ impl Profile {
             Profile::Advanced => "Parallelism::Auto",
         }
     }
+
+    /// Whether the emitter may spawn an OS thread at all.
+    ///
+    /// Lite is *"a strict single-threaded model for user logic"* (Part I,
+    /// 11.6), and Part III 19.4 promises a `--target=wasm32-unknown` build
+    /// that generates no OS-level mutexes or atomics - on that target
+    /// `std::thread::scope` does not link. So this is not a preference the
+    /// analysis may override: ADR-033 decides whether two operations *may*
+    /// overlap, and this decides whether there is anything to overlap them
+    /// with. Under Lite the answer is no, and `--ordering effects` degrades
+    /// to `strict` the same way `par_fold` degrades to `fold` (ADR-009).
+    pub fn threads(self) -> bool {
+        match self {
+            Profile::Lite => false,
+            Profile::Advanced => true,
+        }
+    }
 }
 
 /// The lifetime the parser backend gives its input. A Nikaia view (`&str`) is
@@ -1601,7 +1618,7 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<bool> {
-        if self.ordering != Ordering::Effects || i + 1 >= stmts.len() {
+        if !self.profile.threads() || self.ordering != Ordering::Effects || i + 1 >= stmts.len() {
             return Ok(false);
         }
         if tail_at.is_some_and(|tail| tail == i || tail == i + 1) {

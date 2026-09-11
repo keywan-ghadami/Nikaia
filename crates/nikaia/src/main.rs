@@ -342,6 +342,22 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     // ledger says about the sources it calls, and both are already in the key -
     // the compiler's fingerprint covers `std.contracts` by name (`build.rs`).
     if args.overlaps {
+        // The report answers "may these two overlap", which is a question
+        // about the program. Whether anything then *does* overlap is a
+        // question about the build, and two settings answer it no on their
+        // own - so say which, rather than letting the report read as a
+        // promise the emitter is not keeping.
+        if !profile.threads() {
+            println!(
+                "note: `--profile {}` has no threads, so nothing below overlaps in this build.",
+                args.profile
+            );
+        } else if args.ordering != "effects" {
+            println!(
+                "note: `--ordering {}` keeps the written order, so nothing below overlaps in this build.",
+                args.ordering
+            );
+        }
         let parsed = parser::parse_to_ast(source)?;
         let library = Ledger::parse(STD).context("std's shipped ledger")?;
         let own = Ledger::infer(&parsed);

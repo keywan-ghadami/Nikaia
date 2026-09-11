@@ -44,6 +44,38 @@ fn two_reads_of_different_files_overlap() {
     );
 }
 
+/// The Lite profile has no threads, so it does not get the overlap either.
+///
+/// Part I 11.6 calls Lite *"a strict single-threaded model for user logic"*,
+/// and Part III 19.4 promises a `wasm32-unknown` build with no OS-level
+/// mutexes or atomics - a target where `std::thread::scope` does not even
+/// link. `--ordering effects` is a question about the program; whether a
+/// thread exists to answer it with is a question about the build, and Lite
+/// answers that one no. So this degrades exactly as `par_fold` degrades to a
+/// sequential `fold` under Lite (ADR-009), rather than quietly contradicting
+/// the profile in the same file that emits `Parallelism::Off`.
+#[test]
+fn the_lite_profile_never_spawns_a_thread() {
+    let parsed = parse_to_ast(TWO_READS).expect("the source parses");
+    let lite = emit::emit_program_ordered(&parsed, Profile::Lite, Ordering::Effects)
+        .expect("the source lowers")
+        .rust;
+    assert!(
+        !lite.contains("thread::scope"),
+        "Lite spawned a thread under `--ordering effects`:\n{lite}"
+    );
+
+    // …and it is the sequential program, not merely a different one.
+    let strict = emit::emit_program_ordered(&parsed, Profile::Lite, Ordering::Strict)
+        .expect("the source lowers")
+        .rust;
+    assert_eq!(lite, strict, "Lite's two orderings differ");
+
+    // The guard has to be the profile and not the analysis: Advanced still
+    // overlaps the same program, or this test would pass for the wrong reason.
+    assert!(overlaps(TWO_READS));
+}
+
 /// … and the emitted Rust compiles and prints what the sequential one would.
 ///
 /// The half that cannot be checked by reading the output: a lowering that
