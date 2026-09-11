@@ -64,6 +64,18 @@ pub = true
 provenance = "trusted"
 signature = "() -> ?"
 
+[fn."eprint"]
+pub = true
+sync = true
+touches = ["stderr write"]
+signature = "(text: ?)"
+
+[fn."eprintln"]
+pub = true
+sync = true
+touches = ["stderr write"]
+signature = "(text: ?)"
+
 [fn."fs::map"]
 pub = true
 touches = ["file(path) read"]
@@ -96,6 +108,18 @@ pub = true
 touches = ["file(path) write"]
 throws = ["?"]
 signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
+
+[fn."print"]
+pub = true
+sync = true
+touches = ["stdout write"]
+signature = "(text: ?)"
+
+[fn."println"]
+pub = true
+sync = true
+touches = ["stdout write"]
+signature = "(text: ?)"
 
 [fn."html::escape"]
 pub = true
@@ -291,6 +315,7 @@ signature = "(&str, prefix: ?) -> bool"
 [fn."str::to_string"]
 pub = true
 sync = true
+touches = []
 signature = "(&str) -> String"
 
 [fn."str::trim"]

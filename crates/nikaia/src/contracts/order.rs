@@ -208,6 +208,16 @@ fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Ac
     // union.
     let mut walked = Walked::default();
     walk(parsed, value, &mut walked);
+    // **And the handler's own effects, not only the names it mentions.** The
+    // analysis looks *past* a `catch` at the call it guards, so without this a
+    // handler that writes a file the next statement reads would be invisible
+    // and the pair would overlap - the emitted program producing a different
+    // result from the sequential one. A handler is part of the statement, so
+    // what it reaches is part of what the statement touches; where that cannot
+    // be read, D4 says the statement touches everything and stays put.
+    if let Some(handler) = handler {
+        walk_block(parsed, handler, &mut walked);
+    }
     if walked.calls.is_empty() && !walked.performs {
         // Nothing here reaches the world at all. Not an admission of ignorance:
         // the statement genuinely is not an operation, and saying so keeps a
@@ -278,6 +288,28 @@ fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Ac
         named_by.push(key);
     }
 
+    // A method call is accounted for only where **every** entry of that name
+    // reaches nothing. One that may reach the world leaves this analysis unable
+    // to say which resource, and D4's answer to "which" being unanswerable is
+    // that it is all of them - so the statement stays where it was written.
+    for method in &walked.methods {
+        let candidates = {
+            let mine = own.candidates(method);
+            if mine.is_empty() {
+                library.candidates(method)
+            } else {
+                mine
+            }
+        };
+        if candidates.is_empty()
+            || candidates
+                .iter()
+                .any(|(_, contract)| !contract.touches_known || !contract.touches.is_empty())
+        {
+            return Accounted::NoTouches(method.clone());
+        }
+    }
+
     if let Some(refusal) = walked.refused {
         return refusal;
     }
@@ -314,6 +346,10 @@ struct Walked<'a> {
     /// this could not say what. Set wherever the walk stops descending, so that
     /// an unreadable operation is never mistaken for no operation.
     performs: bool,
+    /// Every method called, by name. Which ledger entry each *is* needs the
+    /// type checker (ADR-028); whether they all reach nothing does not, and
+    /// that weaker question is answered in [`accounted`].
+    methods: Vec<String>,
     /// Why it could not be taken apart, where it could not. The first reason
     /// only: a refusal is a refusal, and a list of them would be noise.
     refused: Option<Accounted>,
@@ -333,6 +369,23 @@ impl Walked<'_> {
     fn refuse(&mut self, why: Accounted) {
         self.performs = true;
         self.note(why);
+    }
+}
+
+/// The same, for the statements of a `catch` handler.
+///
+/// A handler is code that runs, so its calls belong in the statement's touch
+/// set. Only the two shapes whose value `walk` can take apart are read; every
+/// other statement in a handler stops the walk, which is what makes the
+/// handler's effects unknown rather than empty (D4).
+fn walk_block<'a>(parsed: &Parsed, block: &'a crate::ast::Block, out: &mut Walked<'a>) {
+    for stmt in &block.stmts {
+        match &stmt.node {
+            Stmt::Let { value, .. } | Stmt::Expr(value) => walk(parsed, value, out),
+            _ => out.refuse(Accounted::Opaque(
+                "a `catch` handler doing more than handing back a value",
+            )),
+        }
     }
 }
 
@@ -449,11 +502,23 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         Expr::LitInterpolated(_) => out.refuse(Accounted::Opaque(
             "text with code in it, whose holes this has not parsed",
         )),
-        // Answered by the type checker rather than here (ADR-028): which ledger
-        // entry `xs.len()` is depends on what `xs` is.
-        Expr::MethodCall { .. } => out.refuse(Accounted::Opaque(
-            "a method call, whose ledger entry needs the type checker",
-        )),
+        // *Which* ledger entry `xs.len()` is depends on what `xs` is, and that
+        // is the type checker's answer rather than this one's (ADR-028). The
+        // weaker question is answerable here: if every `::len` in the ledger
+        // reaches nothing, this reaches nothing whatever the receiver is. So
+        // the name is recorded and `accounted` decides; anything that may reach
+        // the world is refused there (D4).
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
+            walk(parsed, receiver, out);
+            for arg in args {
+                walk(parsed, arg, out);
+            }
+            out.methods.push(parsed.text(*method).to_string());
+        }
         // Everything with its own control flow: what runs inside it is decided
         // while it runs, and D5 allows only operations that certainly run.
         _ => out.refuse(Accounted::Opaque("something with its own control flow")),

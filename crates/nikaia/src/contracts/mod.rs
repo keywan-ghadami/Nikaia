@@ -703,6 +703,23 @@ impl Ledger {
             .map(|(key, contract)| (key.clone(), contract))
     }
 
+    /// Every entry a bare method name could resolve to.
+    ///
+    /// Which one `xs.len()` *is* depends on what `xs` is, and that is the type
+    /// checker's answer rather than this file's (ADR-028). But a question
+    /// weaker than "which entry" can be answered without it: if **every**
+    /// `::len` in the ledger reaches nothing, then `xs.len()` reaches nothing
+    /// whatever `xs` turns out to be. An over-approximation over the
+    /// candidates, which is the direction ADR-033 D4 requires.
+    pub fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)> {
+        let suffix = format!("::{method}");
+        self.functions
+            .iter()
+            .filter(|(key, _)| key.ends_with(&suffix))
+            .map(|(key, contract)| (key.as_str(), contract))
+            .collect()
+    }
+
     /// The file, as it is written out.
     ///
     /// Only what is *true* is recorded: a `sync = false` on every entry would

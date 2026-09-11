@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed (0.0.9 - ADR-033: a `catch` handler's effects were not counted)
+
+- **A handler that wrote a file the next statement read overlapped with it, and raced.** The analysis looked *past* a `catch` at the call it guards, so the handler's own effects never reached the statement's touch set - D1's guarantee broken by an effect nobody counted. A handler is code that runs, so what it reaches counts; where it cannot be read, D4 answers as it answers everywhere else.
+- **Closing it found the real gap, and it was in the ledger.** Refusing every handler whose effects cannot be read would have retired the increment, because `catch { "".to_string() }` is a method call and *which* ledger entry a method call is needs the type checker (ADR-028). A weaker question does not: **if every `::to_string` in the ledger reaches nothing, then `"".to_string()` reaches nothing whatever its receiver is.** An over-approximation over the candidates, in D4's direction, and it needs no type checker.
+- **`println` had no ledger entry at all.** ADR-033 D2's own table names it (`println(x) touches stdout write`) and D6 rests on it - two `println`s stay ordered *because* both touch `stdout`, not by a special case. Unentered, they were ordered by ignorance: the right answer for the wrong reason, and not the right answer any more as soon as something else is in the pair. `print`, `println`, `eprint`, `eprintln` and `str::to_string` are entered now.
+- Two regression tests, one per half: a handler that writes stdout next to a `println`, and a handler the walk cannot read.
+
 ### Built (0.0.9 - ADR-033 §8.3 item 1: the ordering analysis sees more than one shape)
 
 - **`--overlaps` weighed 127 pairs across `examples/` and refused all 127, and 101 of those refusals were the analysis's own narrowness** - "one of them is not a `let` of a single call", decided before any `touches` set was consulted. ADR-033 §8.3 says widening the shapes comes before any conclusion about whether `ordering = "effects"` earns being the default, because a zero produced that way measures the analysis and not the corpus. It is widened.

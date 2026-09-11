@@ -87,6 +87,56 @@ fn no_user_parallelism_never_spawns_a_thread() {
     assert!(overlaps(TWO_READS));
 }
 
+/// A `catch` handler's own effects are part of what the statement touches.
+///
+/// The analysis looks *past* a `catch` at the call it guards, so without this
+/// the handler below would be invisible: the pair would meet on nothing and
+/// overlap, and the overlapped program could print its two lines in either
+/// order. A handler is code that runs, so what it reaches counts (D2), and
+/// where it cannot be read D4 says the statement reaches everything.
+#[test]
+fn a_handlers_own_effects_are_part_of_the_statement() {
+    const HANDLER_WRITES_STDOUT: &str = "use std::fs\n\
+         fn main() {\n\
+         \x20   fs::write(\"a.txt\", \"x\") catch { println(\"failed\") }\n\
+         \x20   println(\"next\")\n\
+         }";
+
+    assert!(
+        !overlaps(HANDLER_WRITES_STDOUT),
+        "the handler writes stdout and so does the next statement:\n{}",
+        report(HANDLER_WRITES_STDOUT)
+    );
+    let report = report(HANDLER_WRITES_STDOUT);
+    assert!(
+        report.contains("stdout") && report.contains("println"),
+        "and the refusal must name what they meet on: {report}"
+    );
+}
+
+/// A handler this analysis cannot read makes the statement reach everything.
+///
+/// `catch { …; … }` is more than one statement, which the walk stops at. The
+/// answer then has to be the fail-closed one, or a handler could smuggle an
+/// effect past the touch set - which is exactly the hole this pair is here to
+/// keep shut (ADR-010 D1's polarity, applied to a third question).
+#[test]
+fn an_unreadable_handler_is_not_an_empty_one() {
+    const HANDLER_DOES_MORE: &str = "use std::fs\n\
+         fn main() throws {\n\
+         \x20   let a = fs::read_to_string(\"eins.txt\") catch { \
+         fs::write(\"zwei.txt\", \"x\") catch { }; \"\".to_string() }\n\
+         \x20   let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+         \x20   println(f\"{a.len()} {b.len()}\")\n\
+         }";
+
+    assert!(
+        !overlaps(HANDLER_DOES_MORE),
+        "the first handler writes the file the second statement reads:\n{}",
+        report(HANDLER_DOES_MORE)
+    );
+}
+
 /// … and the emitted Rust compiles and prints what the sequential one would.
 ///
 /// The half that cannot be checked by reading the output: a lowering that
