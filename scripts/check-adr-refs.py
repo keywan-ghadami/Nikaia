@@ -64,6 +64,27 @@ def citations():
     return seen
 
 
+# An ADR may point at a note ("the survey is over there"). It may not cite a
+# numbered section of one, because that is borrowing authority from a file
+# `docs/README.md` says holds nothing normative. The difference is the whole
+# line between "see the survey" and "per rule 6".
+NOTES = re.compile(
+    r"(?:docs/)?(?:\.\./\.\./)?"
+    r"(staging-candidates|handoff|error-corpus|technical_notes|"
+    r"toolchain_architecture|project_status_and_roadmap)\.md[^\n]{0,12}§[\d.]+"
+)
+
+
+def inversions():
+    """ADRs citing a section of a notes file as if it were a rule."""
+    found = []
+    for path in sorted(glob.glob(f"{ADR_DIR}/adr-*.md")):
+        for line_no, line in enumerate(open(path, encoding="utf-8"), 1):
+            if NOTES.search(line):
+                found.append((path, line_no, line.strip()[:90]))
+    return found
+
+
 def main():
     have = headings()
     bad = []
@@ -80,12 +101,23 @@ def main():
             if sec and sec not in secs:
                 bad.append((adr, label, where, "no such section"))
 
+    inverted = inversions()
+
     if bad:
         print(f"{len(bad)} dangling ADR citation(s):")
         for adr, label, where, why in sorted(set(bad)):
             print(f"  {where}: ADR-{adr} {label} — {why}")
+    if inverted:
+        print(f"{len(inverted)} ADR(s) citing a section of a notes file as authority:")
+        for path, line_no, text in inverted:
+            print(f"  {path}:{line_no}: {text}")
+        print("  A note holds nothing normative (docs/README.md). Link the file,")
+        print("  or make the argument in the ADR.")
+    if bad or inverted:
         return 1
+
     print(f"all ADR citations resolve ({len(citations())} checked)")
+    print("no ADR borrows authority from a note")
     return 0
 
 
