@@ -149,7 +149,7 @@ fn contrib_of(
 
 fn collect(parsed: &Parsed, block: &Block, own: &Ledger, library: &Ledger, into: &mut Contrib) {
     for stmt in &block.stmts {
-        visit_stmt(&stmt.node, &mut |expr| {
+        visit_stmt(parsed, &stmt.node, &mut |expr| {
             if let Expr::Throw(thrown) = expr {
                 match error_type(parsed, thrown) {
                     Some(name) => into.direct.insert(name),

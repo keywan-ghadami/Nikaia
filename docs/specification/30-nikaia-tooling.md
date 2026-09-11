@@ -904,4 +904,12 @@ Three things about that shape are deliberate. **The note is the contract**, quot
 
 A message appears only where **both** sides are written down. Where a type is not known — a method on a receiver `std` has no signature for, what a `?` unwraps — the compiler says nothing, which is not the same as approving. That is the property that lets the checker be run on every build: it never rejects a program that is correct.
 
+**A hole is code, and is checked like code.** The expression inside `"total is {stock::total(items)}"`
+— and inside a `dsl html` template's `{…}` — goes through the same path as a statement, so
+`NK1101` and the rest say the same thing about it that they would say about the same expression
+written on a line of its own ([ADR-032](adr/adr-032.md) D3). The `sync` analysis reads holes too,
+in both directions: a pausing call inside one costs an inferred `sync` and contradicts an asserted
+one. A hole whose text does not parse is reported by the emitter, which has the span, and the
+checker stays quiet about it rather than raising a second error for one mistake.
+
 

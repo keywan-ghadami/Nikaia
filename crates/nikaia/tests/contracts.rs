@@ -795,3 +795,45 @@ fn the_provenance_chooses_the_map() {
     assert!(untrusted.contains("HashMap<&str, i64>"), "{untrusted}");
     assert!(untrusted.contains("HashMap::new()"), "{untrusted}");
 }
+
+/// A call inside a hole is a call, and the **inference** has to see it.
+///
+/// This is the half of the blind spot that was more than a missed diagnostic.
+/// `sync` is inferred from what a body calls (ADR-027), the hole's expression
+/// was parsed on the way to the emitter, and so a function whose only pausing
+/// call sat inside `"{…}"` was recorded `sync = "inferred"` - a claim, in a
+/// file a library ships, that it cannot pause. ADR-027 D2 and ADR-010 D1 both
+/// name that direction the dangerous one: an analysis that fails open is a
+/// vulnerability generator.
+#[test]
+fn a_pausing_call_inside_a_hole_costs_the_sync_claim() {
+    let l = ledger(
+        "use std::io\n\
+         pub fn hidden() -> String { return \"hello {io::read_to_string()}\" }\n\
+         pub fn plain() -> String { let who = io::read_to_string() return \"hello {who}\" }\n\
+         pub fn pure() -> String { let n = 1 return \"hello {n}\" }",
+    );
+
+    assert!(
+        !l.functions["hidden"].sync.is_sync(),
+        "a call inside a hole was invisible to the inference"
+    );
+    // The same call written outside a hole, for comparison - the two spellings
+    // have to give the same answer, which is the whole point.
+    assert!(!l.functions["plain"].sync.is_sync());
+    // …and a hole with nothing in it that can pause still earns the claim, so
+    // this is not a blanket refusal of anything holding a `{`.
+    assert!(l.functions["pure"].sync.is_sync());
+}
+
+/// The **check** sees into a hole too, so an asserted `sync` is held to it.
+#[test]
+fn a_sync_function_may_not_pause_inside_a_hole_either() {
+    let found = violations(
+        "use std::io\n\
+         pub fn greet() -> String sync { return \"hello {io::read_to_string()}\" }",
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].caller, "greet");
+    assert_eq!(found[0].callee, "io::read_to_string");
+}

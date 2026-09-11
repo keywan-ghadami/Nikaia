@@ -347,6 +347,45 @@ fn an_interpolated_string_is_a_string_and_a_plain_one_is_a_view() {
     );
 }
 
+// --- what a literal hides ----------------------------------------------------
+
+/// A hole is Nikaia source, and it is checked like Nikaia source.
+///
+/// The same mistake was caught outside a hole and passed silently inside one,
+/// which is worth a test of its own: `println("{…}")` is the most-written
+/// syntax in the language, so the blind spot covered most of what people type.
+#[test]
+fn a_hole_in_a_string_is_checked_like_anything_else() {
+    let outside = one("fn add(a: i32, b: i32) -> i32 { return a + b }\n\
+         fn main() { let n = add(1) }");
+    let inside = one("fn add(a: i32, b: i32) -> i32 { return a + b }\n\
+         fn main() { println(\"{add(1)}\") }");
+    assert_eq!(
+        inside, outside,
+        "a hole is checked differently from a statement"
+    );
+    assert_eq!(inside.0, "NK1101");
+}
+
+/// …and a template's holes too (ADR-017), which reach the emitter the same way.
+#[test]
+fn a_hole_in_a_template_is_checked_too() {
+    let (code, _) = one("fn add(a: i32, b: i32) -> i32 { return a + b }\n\
+         fn page() -> String {\n\
+         \x20   return dsl html {\n\
+         \x20       <p>{add(1)}</p>\n\
+         \x20   } eod\n\
+         }");
+    assert_eq!(code, "NK1101");
+}
+
+/// A hole that does not parse is the emitter's to report, in its own words at
+/// the place it happens. The checker says nothing rather than guessing.
+#[test]
+fn a_hole_that_does_not_parse_is_not_the_checkers_business() {
+    assert!(findings("fn main() { println(\"{let}\") }").is_empty());
+}
+
 // --- a loop whose step can fail (ADR-025) ------------------------------------
 
 /// `NK2701`: a turn of the loop reads, a read can fail, and the function does
