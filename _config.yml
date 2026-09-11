@@ -1,0 +1,63 @@
+# GitHub Pages configuration.
+#
+# This file publishes the documentation that already exists in this repository.
+# It copies nothing and restates nothing: every page on the site is one of the
+# Markdown files below, rendered where it lies. The plugins that make that work
+# are enabled by GitHub Pages by default and need no Gemfile:
+#
+#   jekyll-readme-index          README.md becomes its directory's index page,
+#                                so `/` is this repository's README and
+#                                `/docs/specification/adr/` is the ADR index.
+#   jekyll-optional-front-matter every .md file renders as a page without
+#                                needing YAML front matter added to it.
+#   jekyll-relative-links        a link to `docs/specification/adr/adr-037.md`
+#                                keeps working on the site and on GitHub.
+#   jekyll-titles-from-headings  a page's title is its own first heading.
+
+title: Nikaia
+description: >-
+  Good wins. The Nikaia language specification, the decisions behind it,
+  and the notes they were argued from.
+
+# A project site, served under the repository name.
+url: https://keywan-ghadami.github.io
+baseurl: /Nikaia
+
+theme: jekyll-theme-primer
+
+plugins:
+  - jekyll-sitemap
+
+# What is not documentation. A user-supplied `exclude` replaces Jekyll's own
+# default list rather than adding to it, so the defaults are repeated here.
+exclude:
+  - .jekyll-cache/
+  - .sass-cache/
+  - gemfiles/
+  - Gemfile
+  - Gemfile.lock
+  - node_modules/
+  - vendor/
+  # the compiler, its tests, its benchmarks and its tooling
+  - crates/
+  - tests/
+  - benches/
+  - scripts/
+  - target/
+  - Cargo.toml
+  - Cargo.lock
+  - rust-toolchain.toml
+  - check_rustc.rs
+  - hello_world.rs
+  - hello_world
+  - .github/
+  # patches and findings handed to dependencies, not written for readers here
+  - docs/upstream/
+  # a scratch note recording a local rustup path
+  - findthesource.md
+
+# Publish the rendered page, not a second copy of the Markdown beside it.
+optional_front_matter:
+  remove_originals: true
+readme_index:
+  remove_originals: true

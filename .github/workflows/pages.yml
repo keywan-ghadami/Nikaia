@@ -1,0 +1,79 @@
+# Publishes the documentation in this repository as a GitHub Pages site.
+# The site is built by the same github-pages gem the legacy Pages builder used,
+# so `_config.yml` is the whole of the configuration and no Gemfile is needed.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one that is already running:
+# two pushes in a row must not deploy over each other.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Nikaia writes a literal brace as `{{`, so `{{` occurs in Part I, in
+      # Part III, in ADR-013, ADR-035, the roadmap notes and the changelog.
+      # Jekyll hands every Markdown file to Liquid first, which reads `{{` as
+      # the start of a template variable: unguarded, two of the three
+      # specification parts fail the build outright and the rest lose the text
+      # between one brace pair and the next, silently. Wrapping each file in
+      # `{% raw %}` tells Liquid to leave the file alone. The marker sits
+      # inside an HTML comment so it is invisible in the built page, and it is
+      # written only into this throwaway checkout on the runner — no file in
+      # the repository is changed, and no documentation is copied or restated.
+      # The marker goes *after* a file's opening heading, so that
+      # jekyll-titles-from-headings still finds that heading where it
+      # expects it — at the very start of the file.
+      - name: Fence literal braces off from Liquid
+        run: |
+          find . -name '*.md' -not -path './.git/*' -print0 |
+            while IFS= read -r -d '' f; do
+              awk '
+                NR == 1 && /^#/ { print; print "<!-- {% raw %} -->"; o = 1; next }
+                NR == 1         { print "<!-- {% raw %} -->"; print; o = 1; next }
+                                { print }
+                END             { if (o) { print ""; print "<!-- {% endraw %} -->" } }
+              ' "$f" >"$f.pages" && mv "$f.pages" "$f"
+            done
+
+      # `enablement: true` turns Pages on for the repository if it is off,
+      # so nobody has to click through Settings first.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
