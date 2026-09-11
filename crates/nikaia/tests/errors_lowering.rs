@@ -99,7 +99,7 @@ fn throw_leaves_the_function() {
         "#,
     );
     assert!(
-        rust.contains("return Err(Box::new(ConfigError::NotFound))"),
+        rust.contains(r#"return Err(nikaia_std::error::raise(ConfigError::NotFound, "load"))"#),
         "{rust}"
     );
 }
@@ -151,7 +151,10 @@ fn an_error_is_declared_raised_caught_and_printed() {
         }
     "#;
     let rust = emit(source);
-    assert!(rust.contains("return Err(Box::new("), "{rust}");
+    assert!(
+        rust.contains("return Err(nikaia_std::error::raise("),
+        "{rust}"
+    );
     assert!(
         rust.contains("impl std::error::Error for ConfigError"),
         "{rust}"
@@ -273,4 +276,102 @@ fn a_function_that_cannot_fail_has_no_entry() {
     let ledger = ledger_for(r#"fn pure(n: i64) -> i64 { return n }"#);
     // The header explains the key, so look for the key being *set*.
     assert!(!ledger.contains("throws = "), "{ledger}");
+}
+
+// --- the site, and the trace ------------------------------------------------
+
+/// ADR-023 D6: an error knows where it was raised, and the compiler wrote that
+/// down rather than the author. `raise` is what carries it.
+#[test]
+fn a_throw_carries_the_site_it_came_from() {
+    let rust = emit(
+        r#"
+        enum E { X }
+        fn load() throws -> i64 { throw E::X }
+        "#,
+    );
+    assert!(
+        rust.contains(r#"nikaia_std::error::raise(E::X, "load")"#),
+        "the raise site should be in the call:\n{rust}"
+    );
+}
+
+/// The whole of Kap 7.1's reporting rule, compiled and run: `{error}` is the
+/// message and nothing else, `error.full()` adds the site, and the trace is
+/// absent unless the program asked - with its absence stated rather than left
+/// to be guessed at.
+#[test]
+fn short_is_safe_and_full_is_asked_for() {
+    let source = r#"
+        enum ConfigError { NotFound(String) }
+
+        impl Error for ConfigError {
+            fn message(&self) -> String {
+                match self {
+                    ConfigError::NotFound(p) => { return f"no config at {p}" }
+                }
+            }
+        }
+
+        fn load(path: String) throws -> String {
+            throw ConfigError::NotFound(path)
+        }
+
+        fn main() {
+            let text = load("app.conf".to_string()) catch {
+                println(f"short: {error}")
+                println(f"full: {error.full()}")
+                return
+            }
+            println(text)
+        }
+    "#;
+    let rust = emit(source);
+    let dir = common::scratch_dir("trace");
+    let path = dir.join("prog.rs");
+    std::fs::write(&path, &rust).expect("write the emitted Rust");
+    let binary = dir.join("prog");
+    let compiled = common::compile(
+        &path,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .env_remove("NIKAIA_TRACE")
+        .output()
+        .expect("run the program");
+    let out = String::from_utf8_lossy(&run.stdout);
+
+    // The short form is the message the author wrote, and nothing else. It is
+    // what a generic 500 may carry (ADR-018).
+    assert!(
+        out.contains("short: no config at app.conf"),
+        "stdout was:\n{out}"
+    );
+    // The full form adds where it came from...
+    assert!(out.contains("raised at load"), "stdout was:\n{out}");
+    // ...and says a trace was not captured, rather than leaving a reader to
+    // wonder whether one was lost.
+    assert!(out.contains("NIKAIA_TRACE=1"), "stdout was:\n{out}");
+
+    // Asked for, there is one.
+    let traced = std::process::Command::new(&binary)
+        .env("NIKAIA_TRACE", "1")
+        .output()
+        .expect("run the program with tracing on");
+    let traced = String::from_utf8_lossy(&traced.stdout);
+    assert!(
+        !traced.contains("NIKAIA_TRACE=1"),
+        "with the switch on there should be a trace:\n{traced}"
+    );
 }

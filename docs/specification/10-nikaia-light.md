@@ -932,21 +932,31 @@ arriving at a `catch` is open, and it grows when a callee gains a failure. Where
 `catch`, the compiler narrates the chain: what changed, which contract moved, which caller broke
 (`NK2401`).
 
-**What an error brings without anyone attaching it.** The place it was raised, the stack trace, and
-the chain beneath it where another error joined on the way — a cleanup that failed while the stack
-was unwinding is attached to the original as a *secondary* error rather than replacing it (6.4).
+**What an error brings without anyone attaching it.** The **site** it was raised from, and the chain
+beneath it where another error joined on the way — a cleanup that failed while the stack was
+unwinding is attached to the original as a *secondary* error rather than replacing it (6.4). The
+site costs nothing at run time: the compiler knew it and wrote it into the binary as text.
+
+**A stack trace is not among them, and that is measured rather than assumed.** Capturing one costs
+about **28 300 instructions per error** — sixteen times the whole of a program that raises twenty
+thousand of them ([ADR-036](adr/adr-036.md)). Errors here are the *expected* kind, so that is a bill
+a program pays per rejected line, for a value almost nothing reads. `NIKAIA_TRACE=1` asks for one;
+without it there is none, and the long form **says so** rather than leaving you to wonder whether
+one was lost.
 
 **Printing it: short is the default.**
 
 ```nika
-eprintln(f"{error}")         // the message, and the mark if the application shows one
-eprintln(f"{error:full}")    // plus the chain and the stack trace
+eprintln(f"{error}")           // the message, and nothing else
+eprintln(f"{error.full()}")    // the site, the chain, and a trace if one was captured
 ```
 
-`{error}` **never** prints the stack trace. An error message is written for the operator, not for
-the visitor of a web page — which is why a failed HTTP handler answers with a generic 500 and logs
-the rest ([ADR-018](adr/adr-018.md)). The form you type without thinking is the one you may show a
-stranger.
+`{error}` is the message the author wrote. An error message is for the operator, not for the visitor
+of a web page — which is why a failed HTTP handler answers with a generic 500 and logs the rest
+([ADR-018](adr/adr-018.md)). The form you type without thinking is the one you may show a stranger.
+
+`full()` is an ordinary call, not a spelling the language had to invent: a hole holds an expression
+(2.5), and a method call is one.
 
 So that a generic answer stays findable anyway, every error knows the **site that raised it** and
 has a short form of it a person can read out. A screenshot carrying `(NK-2C7)` leads through

@@ -15,6 +15,7 @@
 //! include the result (ADR-014).
 
 pub mod cli;
+pub mod error;
 pub mod fs;
 pub mod hash;
 pub mod html;
@@ -33,6 +34,7 @@ pub mod text {
 /// What a `use std::…` in a Nikaia program brings into scope.
 pub mod prelude {
     pub use crate::cli;
+    pub use crate::error::Full;
     pub use crate::fs;
     pub use crate::hash::{TrustedMap, TrustedSet};
     pub use crate::html;

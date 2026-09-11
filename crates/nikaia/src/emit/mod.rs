@@ -313,6 +313,9 @@ pub struct Needs {
     pub grammar: bool,
     pub driver: bool,
     pub std: bool,
+    /// Kap 7.1: a function here declares `throws`, so the error surface is
+    /// reachable and `std`'s is what carries it.
+    pub fails: bool,
 }
 
 impl Needs {
@@ -331,6 +334,7 @@ impl Needs {
                 .any(|i| matches!(i.node, Item::Grammar(_))),
             driver: emitter.uses_driver(),
             std: emitter.uses_std,
+            fails: emitter.fails,
         }
     }
 
@@ -339,6 +343,7 @@ impl Needs {
             grammar: self.grammar || other.grammar,
             driver: self.driver || other.driver,
             std: self.std || other.std,
+            fails: self.fails || other.fails,
         }
     }
 
@@ -360,6 +365,13 @@ impl Needs {
             // reaches these names through a glob of its own, and a private
             // import is not re-exported into one.
             out.push_str("pub use nikaia_std::prelude::*;\n");
+        }
+        if self.fails {
+            // Kap 7.1: `error.full()` is a method on whatever a `catch` bound, so
+            // the trait has to be in scope even in a program that imports no `std`
+            // module of its own - `throw` needs `std` whether or not the source
+            // mentions it.
+            out.push_str("#[allow(unused_imports)]\npub use nikaia_std::error::Full;\n");
         }
         out
     }
@@ -403,6 +415,7 @@ struct Emitter<'p> {
     by_name: HashMap<Symbol, Option<Method>>,
     /// Whether the program imports anything from `std`.
     uses_std: bool,
+    fails: bool,
     /// ADR-010: nobody outside the program chose the bytes its maps are keyed
     /// by, so a map may have the fast hash.
     trusted_input: bool,
@@ -427,13 +440,23 @@ impl Method {
 
 /// What surrounds the statements being emitted.
 #[derive(Debug, Clone, Copy)]
-struct Flow {
+struct Flow<'a> {
     /// Kap 7.1: the enclosing function is `throws`, so a `return` carries `Ok`.
     throws: bool,
+    /// The function a `throw` inside this flow is raised from.
+    ///
+    /// ADR-023 D6 wants a raise site keyed by what the source says rather than
+    /// by where it sits, so that an edit above it does not move it. A name is
+    /// the part of that key this compiler has; the ordinal within the function
+    /// waits on the mark table.
+    origin: &'a str,
 }
 
-impl Flow {
-    const PLAIN: Flow = Flow { throws: false };
+impl Flow<'_> {
+    const PLAIN: Flow<'static> = Flow {
+        throws: false,
+        origin: "",
+    };
 }
 
 /// Whether a `dsl … from …` hands its failure to the enclosing function or to
@@ -471,6 +494,7 @@ impl<'p> Emitter<'p> {
         let mut methods = HashMap::new();
         let mut by_name: HashMap<Symbol, Option<Method>> = HashMap::new();
         let mut uses_std = false;
+        let mut fails = false;
 
         for item in &parsed.program.items {
             match &item.node {
@@ -481,6 +505,7 @@ impl<'p> Emitter<'p> {
                     structs.insert(*name);
                 }
                 Item::Import { .. } => uses_std = true,
+                Item::Fn { throws: true, .. } => fails = true,
                 Item::Impl {
                     trait_name: _,
                     target,
@@ -529,6 +554,7 @@ impl<'p> Emitter<'p> {
             methods,
             by_name,
             uses_std,
+            fails,
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             // ADR-025 D7: the type checker knows which `for` iterates something
             // whose step can fail, because it infers the iterator's type and
@@ -585,6 +611,13 @@ impl<'p> Emitter<'p> {
             // reaches these names through a glob of its own, and a private
             // import is not re-exported into one.
             out.push("pub use nikaia_std::prelude::*;\n");
+        }
+        if self.fails {
+            // Kap 7.1: `error.full()` is a method on whatever a `catch` bound, so
+            // the trait has to be in scope even in a program that imports no `std`
+            // module of its own - `throw` needs `std` whether or not the source
+            // mentions it.
+            out.push("#[allow(unused_imports)]\npub use nikaia_std::error::Full;\n");
         }
         out.push("\n");
 
@@ -883,7 +916,7 @@ impl<'p> Emitter<'p> {
         };
 
         out.push(&format!("{vis}fn {name}({}){ret} ", params.join(", ")));
-        self.function_body(out, body, depth, *throws, ret_type.is_some())?;
+        self.function_body(out, body, depth, *throws, ret_type.is_some(), &name)?;
         out.push("\n");
         Ok(())
     }
@@ -897,8 +930,9 @@ impl<'p> Emitter<'p> {
         depth: usize,
         throws: bool,
         returns_value: bool,
+        origin: &str,
     ) -> Result<()> {
-        let flow = Flow { throws };
+        let flow = Flow { throws, origin };
 
         if !throws {
             return self.block(out, body, depth, flow, returns_value);
@@ -1244,7 +1278,7 @@ impl<'p> Emitter<'p> {
         context: Option<&Symbol>,
         content: &str,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<()> {
         let name = self.text(target);
         if name != "html" {
@@ -1309,7 +1343,7 @@ impl<'p> Emitter<'p> {
         out: &mut Out,
         segments: &[template::Segment],
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<()> {
         let pad = "    ".repeat(depth);
 
@@ -1429,7 +1463,7 @@ impl<'p> Emitter<'p> {
         then_branch: &Block,
         else_branch: Option<&Block>,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
         tail: bool,
     ) -> Result<()> {
         out.push("if ");
@@ -1448,7 +1482,7 @@ impl<'p> Emitter<'p> {
         out: &mut Out,
         block: &Block,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
         tail: bool,
     ) -> Result<()> {
         self.block_opening_with(out, block, depth, flow, tail, None)
@@ -1465,7 +1499,7 @@ impl<'p> Emitter<'p> {
         out: &mut Out,
         block: &Block,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
         tail: bool,
         opening: Option<&str>,
     ) -> Result<()> {
@@ -1565,7 +1599,7 @@ impl<'p> Emitter<'p> {
         i: usize,
         tail_at: Option<usize>,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<bool> {
         if self.ordering != Ordering::Effects || i + 1 >= stmts.len() {
             return Ok(false);
@@ -1634,7 +1668,7 @@ impl<'p> Emitter<'p> {
         earlier: &Spanned<Stmt>,
         later: &Spanned<Stmt>,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<()> {
         let (
             Stmt::Let {
@@ -1699,7 +1733,7 @@ impl<'p> Emitter<'p> {
         span: &Span,
         depth: usize,
         is_tail: bool,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<()> {
         match stmt {
             Stmt::Let {
@@ -1822,7 +1856,7 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
-    fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow) -> Result<()> {
+    fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
             Expr::LitInt(v) => out.push(&v.to_string()),
             Expr::LitFloat(v) => out.push(v),
@@ -2000,10 +2034,15 @@ impl<'p> Emitter<'p> {
             // channel. `Box::new` is what puts it there, and it is the emitter's
             // to write rather than the author's - ADR-023 D2 gives the language
             // one way to raise an error, not one way plus a conversion.
+            // Kap 7.1: `throw e` leaves the function with `e` in the failure
+            // channel. `raise` is what puts it there, and it carries the site
+            // the compiler knew and the author did not have to write (D6). The
+            // trace it may attach is off unless the program asked - measured at
+            // 28 300 instructions an error, which is not a default.
             Expr::Throw(inner) => {
-                out.push("return Err(Box::new(");
+                out.push("return Err(nikaia_std::error::raise(");
                 self.expr(out, inner, depth, flow)?;
-                out.push("))");
+                out.push(&format!(", {:?}))", flow.origin));
             }
             Expr::Spawn { .. } => {
                 // Part II, 11.2. The runtime binding is the next roadmap line.
@@ -2029,7 +2068,7 @@ impl<'p> Emitter<'p> {
         args: &[Expr],
         config: &[crate::ast::ConfigArg],
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<()> {
         if let Expr::Variable(name) = func {
             let text = self.text(*name);
@@ -2123,7 +2162,7 @@ impl<'p> Emitter<'p> {
 
     /// A string literal. Which of the two it is decides what comes out, and
     /// that is read off the syntax rather than the text (ADR-035 D3).
-    fn string(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow) -> Result<()> {
+    fn string(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
             // Inert text, transcribed. A brace is a brace, so nothing has to be
             // escaped on the way into a Rust string literal - only a *format*
@@ -2151,7 +2190,13 @@ impl<'p> Emitter<'p> {
     }
 
     /// The literal as a Rust format string, with its holes as arguments.
-    fn format_string(&self, out: &mut Out, literal: &str, depth: usize, flow: Flow) -> Result<()> {
+    fn format_string(
+        &self,
+        out: &mut Out,
+        literal: &str,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
         let (format, holes) = interpolation(literal)?;
         out.push(&format!("\"{format}\""));
 
@@ -2172,7 +2217,7 @@ impl<'p> Emitter<'p> {
         out: &mut Out,
         pattern: &MatchPattern,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<()> {
         let path = |p: &[Symbol]| {
             p.iter()
@@ -2208,7 +2253,7 @@ impl<'p> Emitter<'p> {
     /// parentheses back: the parser drops them - a group is not a node, it is
     /// how the tree was written - and without them the emitted Rust means
     /// something else and often still compiles.
-    fn postfix_base(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow) -> Result<()> {
+    fn postfix_base(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         let parenthesise = matches!(
             expr,
             Expr::Binary { .. }
@@ -2243,7 +2288,7 @@ impl<'p> Emitter<'p> {
         expr: &Expr,
         needs: u8,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
     ) -> Result<()> {
         let parenthesise = match expr {
             Expr::Binary { op, .. } => precedence(*op) < needs,
@@ -2261,7 +2306,7 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
-    fn args(&self, out: &mut Out, args: &[Expr], depth: usize, flow: Flow) -> Result<()> {
+    fn args(&self, out: &mut Out, args: &[Expr], depth: usize, flow: Flow<'_>) -> Result<()> {
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 out.push(", ");
@@ -2282,7 +2327,7 @@ impl<'p> Emitter<'p> {
         grammar: Symbol,
         input: &Expr,
         depth: usize,
-        flow: Flow,
+        flow: Flow<'_>,
         propagate: Propagate,
     ) -> Result<()> {
         let question = match propagate {
