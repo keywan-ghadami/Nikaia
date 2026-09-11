@@ -9,7 +9,7 @@
 //! 28 300 instructions per error - roughly sixteen times what the rest of the
 //! program does - for a value almost nothing reads. So it is off unless
 //! `NIKAIA_TRACE` asks for it. The measurement behind that number, and the
-//! reasoning that made it the deciding one, are ADR-023 §4.2.
+//! reasoning that made it the deciding one, are ADR-023 §3.2.
 //!
 //! **`NIKAIA_TRACE` is the only switch.** `Backtrace::capture()` consults
 //! `RUST_BACKTRACE`/`RUST_LIB_BACKTRACE` and is `Disabled` unless one of them
