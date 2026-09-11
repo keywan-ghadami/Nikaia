@@ -24,7 +24,7 @@
 //!   changed source would not rebuild.
 
 use anyhow::{Context, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -329,6 +329,65 @@ impl Invocation {
     }
 }
 
+/// What Cargo *resolved*, read out of the `Cargo.lock` it wrote beside the
+/// generated manifest.
+///
+/// The toolchain does not resolve versions and must not start
+/// ([ADR-002](../../../docs/specification/adr/adr-002.md) D1) - but
+/// [ADR-021](../../../docs/specification/adr/adr-021.md) D2 asks the lockfile to
+/// record them, and until this existed they lived only in a generated file under
+/// `target/` that nobody commits. So this reads Cargo's answer rather than
+/// computing one: a measurement, in D4's sense, of what the declaration in
+/// `nikaia.toml` turned into.
+///
+/// **The whole graph, not the direct dependencies.** The question the record
+/// exists to answer is *does this build the same thing for you as for me*, and a
+/// transitive crate that resolved differently on the two machines is a different
+/// build. That is also why the root package is left out: the generated package is
+/// the project, not something it depends on.
+///
+/// **A list of versions per name, because one name can resolve twice.** Two
+/// majors of one crate in a graph is ordinary, and a map from name to a single
+/// version would silently drop one of them - a record that quietly stops being
+/// the whole answer, which is the failure D2 is about.
+///
+/// A `Cargo.lock` that is not there is not an error: a `cargo` subcommand that
+/// resolves nothing writes none, and there is then nothing to record.
+pub fn resolved_versions(
+    cargo_lock: &Path,
+    root_package: &str,
+) -> Result<BTreeMap<String, BTreeSet<String>>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let Ok(text) = std::fs::read_to_string(cargo_lock) else {
+        return Ok(out);
+    };
+    let document: toml::Value =
+        toml::from_str(&text).with_context(|| format!("parsing {}", cargo_lock.display()))?;
+
+    let packages = document
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or_default();
+
+    for package in packages {
+        let (Some(name), Some(version)) = (
+            package.get("name").and_then(toml::Value::as_str),
+            package.get("version").and_then(toml::Value::as_str),
+        ) else {
+            continue;
+        };
+        if name == root_package {
+            continue;
+        }
+        out.entry(name.to_string())
+            .or_default()
+            .insert(version.to_string());
+    }
+
+    Ok(out)
+}
+
 /// Adds `sources` to a `rustc` dependency file as prerequisites of everything
 /// it lists as a target.
 ///
@@ -526,5 +585,57 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ADR-021 D2's resolved versions, read from Cargo's own answer.
+    ///
+    /// Two properties that are easy to get wrong and invisible afterwards: the
+    /// root package is the project rather than a dependency of it, and **two
+    /// versions of one name are both kept**. A graph holding two majors of one
+    /// crate is ordinary, and a map from name to a single version would drop
+    /// one of them - a record that silently answers less than it claims to.
+    #[test]
+    fn what_cargo_resolved_is_read_whole() {
+        let dir = std::env::temp_dir().join(format!("nikaia-cargolock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let path = dir.join("Cargo.lock");
+        std::fs::write(
+            &path,
+            "version = 4\n\n\
+             [[package]]\nname = \"greeter\"\nversion = \"0.1.0\"\n\n\
+             [[package]]\nname = \"regex\"\nversion = \"1.13.1\"\n\
+             source = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n\
+             [[package]]\nname = \"windows-sys\"\nversion = \"0.52.0\"\n\n\
+             [[package]]\nname = \"windows-sys\"\nversion = \"0.48.0\"\n",
+        )
+        .expect("write");
+
+        let resolved = resolved_versions(&path, "greeter").expect("reads");
+        assert!(
+            !resolved.contains_key("greeter"),
+            "the root package is the project, not something it depends on: {resolved:?}"
+        );
+        assert_eq!(
+            resolved["regex"],
+            BTreeSet::from(["1.13.1".to_string()]),
+            "the version Cargo chose, not the constraint the author wrote"
+        );
+        assert_eq!(
+            resolved["windows-sys"],
+            BTreeSet::from(["0.48.0".to_string(), "0.52.0".to_string()]),
+            "one name can resolve twice, and both versions determine the build"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A `cargo` subcommand that resolved nothing wrote no lockfile, and there
+    /// is then nothing to record - not an error to fail a finished build with
+    /// (ADR-021 D12).
+    #[test]
+    fn a_missing_cargo_lock_records_nothing() {
+        let resolved =
+            resolved_versions(Path::new("/nonexistent/Cargo.lock"), "greeter").expect("no error");
+        assert!(resolved.is_empty());
     }
 }

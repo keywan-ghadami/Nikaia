@@ -229,6 +229,95 @@ fn a_crates_io_dependency_never_reaches_the_wrapper() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `nikaia.lock` records the versions Cargo resolved (ADR-021 D2), and the same
+/// project resolved twice is the same bytes.
+///
+/// D2 has asked for this since it was written and it was not there. Since
+/// ADR-002 D1 the versions exist - a project build generates a `Cargo.toml` and
+/// Cargo resolves a real `Cargo.lock` beside it - so the record was the only
+/// missing part, and without it the file whose job is to answer *does this build
+/// the same thing for you as for me?* answered only about the Nikaia half.
+///
+/// Three claims, and the middle one is the reason it is worth a test over a real
+/// dependency rather than a fixture:
+///
+/// 1. the **resolved** version is recorded, not the constraint the author wrote
+///    - a measurement, not a claim (D4);
+/// 2. the **whole graph**, including a crate nobody wrote down: `regex-syntax`
+///    is not in `nikaia.toml` and a transitive crate that resolved differently
+///    on two machines is a different build;
+/// 3. the file is **byte-identical** for two independent resolutions in two
+///    processes, with nothing absolute in it (ADR-005 D8). Two processes is the
+///    load-bearing half: a hash map's iteration order is randomised per
+///    process, so a same-process comparison would pass over exactly the slip
+///    that is easiest to make.
+///
+/// Needs the network the first time, like the wrapper-trace test above.
+#[test]
+fn the_lockfile_records_what_cargo_resolved_and_does_so_identically_twice() {
+    const MANIFEST: &str = "[package]\nname = \"locker\"\nversion = \"0.1.0\"\n\n\
+                            [dependencies]\nregex = { type = \"rust\", version = \"1.5\" }\n";
+
+    let mut locks = Vec::new();
+    let mut dirs = Vec::new();
+    for _ in 0..2 {
+        let dir = a_project("project-lockfile", MANIFEST, HELLO);
+        let built = nikaia(&["build"], &dir);
+        assert!(built.status.success(), "{}", said(&built));
+
+        let text = std::fs::read_to_string(dir.join("nikaia.lock"))
+            .expect("a project build writes nikaia.lock in the root");
+        locks.push(text);
+        dirs.push(dir);
+    }
+
+    let lock = &locks[0];
+    let parsed: toml::Value = toml::from_str(lock).expect("the lockfile is valid TOML");
+    let dependencies = parsed
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .unwrap_or_else(|| panic!("nikaia.lock records no resolved dependencies:\n{lock}"));
+
+    let regex = dependencies["regex"]
+        .as_array()
+        .expect("a list of versions, because one name can resolve twice");
+    let resolved = regex[0].as_str().expect("a version string");
+    assert_eq!(regex.len(), 1, "one `regex` in this graph: {regex:?}");
+    assert_ne!(
+        resolved, "1.5",
+        "`1.5` is what the manifest asked for; the lock records what that \
+         turned into (ADR-021 D4)"
+    );
+    assert_eq!(
+        resolved.split('.').count(),
+        3,
+        "an exact version, not a requirement: {resolved}"
+    );
+    assert!(
+        dependencies.contains_key("regex-syntax"),
+        "the whole resolved graph, not the two lines the author wrote - a \
+         transitive crate is as much a part of what was built:\n{lock}"
+    );
+
+    // D8: nothing absolute, and nothing that moves with the checkout.
+    for dir in &dirs {
+        assert!(
+            !lock.contains(&dir.display().to_string()),
+            "an absolute path reached the committed record:\n{lock}"
+        );
+    }
+
+    assert_eq!(
+        locks[0], locks[1],
+        "two independent resolutions of one project, in two processes, must be \
+         the same bytes (ADR-005 D8)"
+    );
+
+    for dir in dirs {
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
 /// The translation, without building anything: what `[dependencies]` and
 /// `[build.<target>]` become.
 #[test]

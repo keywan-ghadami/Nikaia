@@ -197,11 +197,18 @@ measured — there was nothing to measure.** Repaired by wrapping the body in
 `create_session_if_not_set_then`, five lines, and `crates/nikaia/tests/bridge_backend.rs` now
 asserts the whole path: `.nika` in, a binary out, and the binary prints what the program says.
 
-A smaller thing found on the way and deliberately not changed: `execute` invokes `rustc` with no
-`--edition`, so the printed crate compiles at **2015**, while every other path in the workspace
+A smaller thing found on the way, reported here and since changed: `execute` invoked `rustc` with
+no `--edition`, so the printed crate compiled at **2015**, while every other path in the workspace
 writes Rust for 2021 (`crates/nikaia/tests/common/mod.rs` passes `--edition 2021`). Nothing
-Bridge-IR can express tells the two apart today, and changing it changes what is compiled, so it
-is written down instead.
+Bridge-IR can express tells the two apart today, which is why this file recorded it rather than
+acting on it — a change to what is compiled wants its own commit and its own check. It has one now:
+the interner's edition and `rustc`'s are a single constant in `crates/rustc-executor/src/lib.rs`,
+and the change was verified inert rather than assumed inert. The printed crate and the compiled
+binary are byte-identical before and after
+(`sha256` `01455af3…` and `a474e629…` on `hello_world`), and
+`crates/nikaia/tests/bridge_backend.rs` now compiles the same printed text at 2015 and at 2021 and
+compares what the two binaries print — so the sentence "nothing Bridge-IR can express tells the two
+apart" is an assertion rather than a claim, and stops being true loudly.
 
 **The `rustc_ast::Crate` that D1 builds is print-only, so D3 does not cost nothing to keep open.**
 Every node it creates carries `NodeId::from_u32(0)` — which is `CRATE_NODE_ID` — and `DUMMY_SP`.
