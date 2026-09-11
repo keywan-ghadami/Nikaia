@@ -1,0 +1,33 @@
+// The third question of the ADR-038 D7 experiment, as a single file, so that
+// `nikaia --input examples/foreign-runtime/overlaps.nika --overlaps
+// --user-parallelism yes` answers it with no network and no Cargo.
+//
+// A foreign crate has no ledger entry, so `touches` is absent, so ADR-033 D4
+// makes it reach everything and order against everything. The first pair is the
+// control - two reads of two files, which do overlap - and every pair after it
+// has a foreign call in it.
+use std::fs
+
+fn control() throws {
+    let a = fs::read_to_string("eins.txt") catch { "".to_string() }
+    let b = fs::read_to_string("zwei.txt") catch { "".to_string() }
+    println(f"{a.len()} {b.len()}")
+}
+
+fn foreign_against_foreign() {
+    let first = hyper_shim::serve_once(18080)
+    let second = hyper_shim::serve_once(18081)
+    println(f"{first} {second}")
+}
+
+fn foreign_against_a_read() throws {
+    let served = hyper_shim::serve_once(18082)
+    let file = fs::read_to_string("eins.txt") catch { "".to_string() }
+    println(f"{served} {file.len()}")
+}
+
+fn a_read_against_foreign() throws {
+    let file = fs::read_to_string("zwei.txt") catch { "".to_string() }
+    let served = hyper_shim::serve_once(18083)
+    println(f"{file.len()} {served}")
+}

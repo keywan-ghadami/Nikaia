@@ -1,0 +1,19 @@
+[package]
+name = "hyper-shim"
+version = "0.1.0"
+edition = "2021"
+
+# `hyper` needs an executor, so `tokio` comes with it. That is the point of the
+# experiment (ADR-038 D7), not a violation of ADR-002 D1: D1 says the toolchain
+# does not adopt hyper as *Nikaia's* HTTP server, and D7 says a user's program
+# may depend on one.
+[dependencies]
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "time", "io-util"] }
+
+# Not a member of the Nikaia workspace it happens to sit inside. `cargo test
+# --workspace` must not build hyper, and the generated package Cargo is handed
+# declares `[workspace]` for the same reason.
+[workspace]

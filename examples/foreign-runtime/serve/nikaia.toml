@@ -1,0 +1,17 @@
+[package]
+name = "foreign-runtime-serve"
+version = "0.1.0"
+
+# The switch D7's first rule is about. `no` is the default and is written down
+# anyway, because it is the setting under which `Shared` would be an `Rc`
+# (ADR-037 D3) and the whole question is what that means next to a foreign
+# thread.
+[build]
+user-parallelism = "no"
+
+# `type = "rust"` is ADR-002 D1's passthrough: the value with `type` removed
+# reaches Cargo verbatim, so a path dependency works exactly as a version does.
+# The path is relative to the *generated* manifest, which a build writes to
+# `target/nikaia/build/`, hence four levels up.
+[dependencies]
+hyper-shim = { type = "rust", path = "../../../../shim" }

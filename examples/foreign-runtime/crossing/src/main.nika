@@ -1,0 +1,16 @@
+// ADR-038 D7, question 2, first rule: a value that may *not* cross a thread,
+// handed to a thread the foreign runtime owns.
+//
+// `local_handle` returns a value holding an `Rc` - which is what `Shared`
+// lowers to at `user_parallelism = no` (ADR-037 D3), and which `Shared` being
+// unbuilt is the reason this experiment has to borrow from the foreign crate
+// rather than write in Nikaia.
+//
+// **This program must not build.** It is kept because what it says when it
+// fails is the finding: who refuses it, in whose vocabulary, and pointing at
+// which file.
+fn main() {
+    let handle = hyper_shim::local_handle("not Send".to_string())
+    let crossed = hyper_shim::across_a_thread(handle)
+    println(f"crossed: {crossed}")
+}

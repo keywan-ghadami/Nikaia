@@ -1,0 +1,13 @@
+// ADR-038 D7, question 2, first rule - the other side of it.
+//
+// Identical to `../crossing` except for the name of the function called, which
+// is the same crossing through a foreign API whose author wrote
+// `unsafe impl Send` for a type that is not. **This one builds and runs**, and
+// increments an `Rc` refcount on a thread the foreign runtime owns.
+//
+// Nikaia contributes nothing to either outcome. That is the measurement.
+fn main() {
+    let handle = hyper_shim::local_handle("not Send".to_string())
+    let crossed = hyper_shim::across_a_thread_unchecked(handle)
+    println(f"crossed: {crossed}")
+}
