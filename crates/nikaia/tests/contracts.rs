@@ -133,6 +133,24 @@ fn from_does_not_let_io_into_a_sync_function() {
     assert_eq!(dirty[0].callee, "io::read");
 }
 
+/// A `while` body is part of the function around it.
+///
+/// Here because `while` arrived from another branch while this analysis was
+/// being built, and a statement the walk does not descend into is a silent
+/// hole: a loop body doing I/O would leave its function looking pure. Cheap to
+/// check, and the kind of thing a merge is exactly where it goes wrong.
+#[test]
+fn a_while_body_is_walked_like_any_other() {
+    let l = ledger(
+        "use std::io\n\
+         fn reads() -> i64 throws { let mut n = 0 while n < 3 { let t = io::read_to_string()? n += 1 } return n }\n\
+         fn counts(n: i64) -> i64 { let mut i = 0 while i < n { i += 1 } return i }",
+    );
+
+    assert_eq!(l.functions["reads"].sync, Sync::No);
+    assert_eq!(l.functions["counts"].sync, Sync::Inferred);
+}
+
 /// The crossover, in the smallest program that shows it.
 ///
 /// A helper nobody annotated uses an iterator method over a pure lambda, and a
