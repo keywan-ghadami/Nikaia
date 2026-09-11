@@ -192,6 +192,44 @@ impl SqlParser {
 
 `Self::dsl` is the constraint proving these named arguments belong to this grammar. The compiler monomorphizes `args` per DSL string and allocates it on the stack — no heap traffic per query.
 
+**What the call site is checked against.** The statement's parameters are read
+out of the body as written, so the two ways of getting a call wrong are both
+errors in the `.nika` file:
+
+```text
+error[NK1112]: `query` needs `:target_age`, and this call does not pass it
+  --> users.nika:17:5
+  17 |     let users = query.execute(; targt_age: min_age)
+           ^
+     = the statement's parameters are `:target_age`
+     help: pass it after the `;`: `target_age: …`
+error[NK1113]: `query` has no parameter `:targt_age`
+  --> users.nika:17:5
+  17 |     let users = query.execute(; targt_age: min_age)
+           ^
+     = the statement's parameters are `:target_age`
+     help: did you mean `target_age`?
+```
+
+A `:name` is a hole because the body wrote `:` and a name: a path (`a::b`) and a
+time (`12:30`) are not holes, and the same `:name` twice is one parameter. Which
+holes a body has is the **grammar's** answer, and until a grammar can give one
+the compiler reads them off the text - so a colon and a name inside the foreign
+language's own string literal (`SELECT ':id'`) counts as a hole. The cost is a
+call that has to pass a parameter which is not really one, and the message names
+it; nothing compiles to something other than what it says.
+
+> **Status.** The shadow type, the check above and `...args: Self::dsl` are
+> built ([ADR-007](adr/adr-007.md) D5). Two things in the code on this page are
+> not. **`args.values()`** needs the parameters to have a *type*, which is what
+> `meta::parameter(name, type)` declares — and no `grammar` can declare one yet,
+> so a driver receives the parameter struct and can pass it on but not read the
+> values out of it by anything but their names. And the target of a `dsl … { … }
+> eod` block is not resolved to a grammar at all: a body with `:name` holes
+> lowers whatever the target is called, its text reaching the driver with the
+> holes as written, and a body **without** holes is refused rather than given a
+> meaning this compiler would have to invent.
+
 ### 10.6. Advanced Parser Features
 Nikaia grammars are designed for high-performance tooling.
 

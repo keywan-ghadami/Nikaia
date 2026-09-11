@@ -46,7 +46,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [007](adr-007.md) | The scannerless grammar protocol and hybrid DSL binding; retires `unsafe asm` as a core construct | Accepted | D1–D4, D6, D8; D5 and D7 are not |
+| [007](adr-007.md) | The scannerless grammar protocol and hybrid DSL binding; retires `unsafe asm` as a core construct | Accepted | D1–D4, D6, D8; D5's shadow type, its call-site check (`NK1112`/`NK1113`) and `...args: Self::dsl`, not its driver's `args.values()`. D7 decides *not* to build auto-AST and regex terminals, so it has nothing to implement |
 | [009](adr-009.md) | Parallel parsing: frames, monoid folds, and where a format assumption is written down | Accepted | frames, `par_fold` |
 | [011](adr-011.md) | Stage 0 lowering — the grammar protocol onto the parser backend, name for name | Accepted | yes |
 | [016](adr-016.md) | The UTF-8 check is divided across frames, not skipped | Accepted | yes |

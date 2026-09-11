@@ -152,6 +152,10 @@ pub fn check_program(
     };
     checker.collect_types();
     checker.program();
+    // ADR-007 D5: the DSL parameters a call forgot, and the ones it invented.
+    // A separate walk because it answers a question about a *statement's
+    // holes* rather than about a type, and it needs no ledger to answer it.
+    checker.checked.findings.extend(crate::dsl::check(parsed));
     checker.checked.findings.sort_by_key(|f| f.span.start);
     checker.checked
 }
@@ -602,7 +606,15 @@ impl<'a> Checker<'a> {
                 receiver,
                 method,
                 args,
+                config,
             } => {
+                // ADR-007 D5: a DSL's deferred parameters stand here. They are
+                // expressions like any other, so they are walked - what checks
+                // that they are the *right* names is `dsl::check`, which knows
+                // which statement the receiver came from.
+                config.iter().for_each(|a| {
+                    self.expr(&a.value, span);
+                });
                 let on = self.expr(receiver, span);
                 let Ty::Named { name, .. } = &on else {
                     // The receiver's type is not known, so neither is what this

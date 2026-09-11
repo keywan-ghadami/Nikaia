@@ -58,6 +58,11 @@ pub enum Item {
         /// Kap 5.1: what stands after the `;` - options, named at the call and
         /// never positional. Empty for a function that has no `;`.
         config: Vec<ConfigParam>,
+        /// ADR-007 D5: `...args: Self::dsl` - the typed spread a driver accepts
+        /// a DSL's deferred parameters with. It stands where the options stand,
+        /// because a DSL parameter *is* configuration, and it is exclusive with
+        /// them: a function takes options or a spread, never both.
+        spread: Option<Ident>,
         ret_type: Option<Type>,
         body: Block,
         is_sync: bool,   // Kap 12.1: sync keyword
@@ -268,6 +273,10 @@ pub enum Expr {
         receiver: Box<Expr>,
         method: Ident,
         args: Vec<Expr>,
+        /// Kap 5.1 at a method call: what stands after the `;`. A DSL's
+        /// deferred parameters arrive here (ADR-007 D5), which is why a method
+        /// call carries them at all - before that they were parsed and dropped.
+        config: Vec<ConfigArg>,
     },
 
     // Feldzugriff: self.min
@@ -618,4 +627,21 @@ pub struct FnParams {
     pub receiver: Option<Receiver>,
     pub args: Vec<FnArg>,
     pub config: Vec<ConfigParam>,
+    /// ADR-007 D5: `...args: Self::dsl`, where a config zone holds one instead
+    /// of options.
+    pub spread: Option<Ident>,
+}
+
+/// What stands after the `;` in a declaration: options, or the typed spread of
+/// [ADR-007](../../../docs/specification/adr/adr-007.md) D5.
+///
+/// Exclusive on purpose. An option has a default and a DSL parameter does not -
+/// it is required, and what makes it configuration is that it is named rather
+/// than positional. A declaration that mixed them would have to say which rule
+/// applies to which name.
+#[derive(Debug, Clone)]
+pub enum ConfigZone {
+    Options(Vec<ConfigParam>),
+    /// The name the parameter struct arrives under.
+    Spread(Ident),
 }

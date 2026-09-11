@@ -554,6 +554,10 @@ struct Emitter<'p> {
     /// ADR-010: nobody outside the program chose the bytes its maps are keyed
     /// by, so a map may have the fast hash.
     trusted_input: bool,
+    /// ADR-007 D5: the functions that accept a DSL's deferred parameters, by
+    /// name. A `;` at a call means options everywhere else, and this is what
+    /// says which calls mean the other thing.
+    dsl_drivers: HashSet<String>,
 }
 
 /// What an `impl` says about a method. Enough to adapt a `&mut self` method to
@@ -572,6 +576,13 @@ impl Method {
         !self.returns_value && self.receiver.is_some_and(|r| r.is_ref && r.is_mut)
     }
 }
+
+/// How `Self::dsl` is spelled in the source, and what it becomes below.
+///
+/// ADR-007 D5 gives a driver one way to name the type a DSL string generates,
+/// and the emitted Rust needs a name for it that no program can collide with.
+const SELF_DSL: &str = "Self::dsl";
+const DSL_PARAMETER: &str = "NikaiaDsl";
 
 /// What surrounds the statements being emitted.
 #[derive(Debug, Clone, Copy)]
@@ -700,6 +711,7 @@ impl<'p> Emitter<'p> {
             own_contracts,
             library: std_ledger(),
             ordering,
+            dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
         }
     }
 
@@ -710,6 +722,7 @@ impl<'p> Emitter<'p> {
     /// A module's items and nothing else - no preamble, no `mod` header.
     fn items_only(&self) -> Result<Lowered> {
         let mut out = Out::default();
+        self.shadow_types(&mut out);
         for item in &self.parsed.program.items {
             out.from(&item.span, |out| self.item(out, &item.node))?;
             out.push("\n");
@@ -755,6 +768,8 @@ impl<'p> Emitter<'p> {
             out.push("#[allow(unused_imports)]\npub use nikaia_std::error::Full;\n");
         }
         out.push("\n");
+
+        self.shadow_types(&mut out);
 
         for item in &self.parsed.program.items {
             out.from(&item.span, |out| self.item(out, &item.node))?;
@@ -984,6 +999,7 @@ impl<'p> Emitter<'p> {
             receiver,
             args,
             config,
+            spread,
             ret_type,
             body,
             is_sync,
@@ -1028,11 +1044,33 @@ impl<'p> Emitter<'p> {
                 .map(|c| format!("{}: {}", self.text(c.name), self.ty(&c.ty, lifetimes))),
         );
 
+        // ADR-007 D5: `...args: Self::dsl` is the one parameter whose type the
+        // *call site* decides, because the DSL string it comes from decides it.
+        // A generic parameter is what that is in the language below, and Rust
+        // monomorphises it per DSL string exactly as D5 asks - so the driver is
+        // written once and pays no heap traffic per statement.
+        let dsl = spread.as_ref().map(|name| {
+            params.push(format!("{}: {DSL_PARAMETER}", self.text(*name)));
+            format!("<{DSL_PARAMETER}>")
+        });
+
         // Kap 7.1: `throws` becomes a `Result` in the emitted Rust, over
         // `Box<dyn Error>` because Nikaia's own error types are not lowered
         // yet - the `?` the DSL driver needs works against it, and every error
         // keeps its own type behind it.
         let returned = match ret_type {
+            // `Self::dsl` in the result position is the same type the spread
+            // parameter has: a driver that hands the bound parameters back
+            // names them the only way D5 gives it to name them.
+            Some(ty) if self.text(ty.name) == SELF_DSL => {
+                if dsl.is_none() {
+                    return Err(anyhow!(
+                        "`Self::dsl` names the parameters of a `...args: Self::dsl`, \
+                         and this function declares none"
+                    ));
+                }
+                DSL_PARAMETER.to_string()
+            }
             Some(ty) => self.ty(ty, lifetimes),
             None => "()".to_string(),
         };
@@ -1050,7 +1088,11 @@ impl<'p> Emitter<'p> {
             None => "new".to_string(),
         };
 
-        out.push(&format!("{vis}fn {name}({}){ret} ", params.join(", ")));
+        out.push(&format!(
+            "{vis}fn {name}{}({}){ret} ",
+            dsl.unwrap_or_default(),
+            params.join(", ")
+        ));
         self.function_body(out, body, depth, *throws, ret_type.is_some(), &name)?;
         out.push("\n");
         Ok(())
@@ -1400,12 +1442,46 @@ impl<'p> Emitter<'p> {
 
     // --- Types ---
 
-    /// `dsl html { … } eod`, compiled here (ADR-017).
+    /// The shadow type of every deferred-parameter DSL in this unit
+    /// (ADR-007 D5).
     ///
-    /// `html` is the only target the bootstrap compiler knows. A `dsl sql { … }`
-    /// is a *deferred-parameter* DSL (ADR-007 D4) that has to reach a driver
-    /// with the statement intact, and saying so is better than lowering it to
-    /// something that reads like a template and is not one.
+    /// One struct per parameter list, a field per `:name`, and **generic in
+    /// every field**: nothing in `… WHERE id = :id …` says what `:id` is, so
+    /// the type comes from the argument at the call site and is monomorphised
+    /// there. Inventing `i32` here is exactly the guess ADR-011 D2 forbids an
+    /// emitter to make.
+    ///
+    /// A plain struct, passed by value: D5 asks for the parameters on the
+    /// stack, and a struct of the caller's own values is what that is.
+    fn shadow_types(&self, out: &mut Out) {
+        for (name, parameters) in crate::dsl::shadow_types(self.parsed) {
+            let generics: Vec<String> = (0..parameters.len()).map(|i| format!("P{i}")).collect();
+            let fields: Vec<String> = parameters
+                .iter()
+                .zip(&generics)
+                .map(|(field, ty)| format!("    pub {field}: {ty},"))
+                .collect();
+            out.push(&format!(
+                "// ADR-007 D5: the parameters of a `dsl … {{ … }} eod` statement, \
+                 as a type.\n\
+                 #[derive(Debug, Clone, Copy, PartialEq)]\n\
+                 #[allow(non_camel_case_types, dead_code)]\n\
+                 pub struct {name}<{}> {{\n{}\n}}\n\n",
+                generics.join(", "),
+                fields.join("\n"),
+            ));
+        }
+    }
+
+    /// A `dsl … { … } eod` body: the `html` template compiled here (ADR-017),
+    /// or a statement whose holes the call site fills (ADR-007 D5).
+    ///
+    /// Which it is follows from the target and the holes, and not from anything
+    /// inferred about the body. `html` is the one grammar this compiler *is*,
+    /// so `:name` there is an immediate capture (ADR-007 D4); anywhere else a
+    /// `:name` is a deferred parameter and the body reaches its driver intact.
+    /// A body with neither is refused, because nothing here knows what it
+    /// means.
     fn template(
         &self,
         out: &mut Out,
@@ -1416,12 +1492,33 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
     ) -> Result<()> {
         let name = self.text(target);
+
+        // ADR-007 D5: a body with `:name` holes and a target this compiler is
+        // not itself the grammar for is a *statement*, and its value is its own
+        // text. Nothing is substituted into it: a deferred parameter is not
+        // string interpolation, so the value may not be spliced into the source
+        // and change what it means (Part III, 15.3). The holes stay as written
+        // and the driver binds them - which is also the only lowering that
+        // needs to know nothing about the foreign syntax (ADR-011 D2).
+        if crate::dsl::is_deferred(name, content) {
+            if let Some(context) = context {
+                return Err(anyhow!(
+                    "`dsl {name} {{ … }}` with deferred parameters takes no context, \
+                     and `{}` was given one",
+                    self.text(*context)
+                ));
+            }
+            out.push(&rust_string(content.trim()));
+            return Ok(());
+        }
+
         if name != "html" {
             return Err(anyhow!(
-                "`dsl {name} {{ … }}` is not lowered yet: the bootstrap compiler \
-                 compiles the `html` template (ADR-017) and nothing else. A DSL \
-                 whose block is a statement for a driver - `sql`, `postgres` - \
-                 needs the deferred-parameter binding of ADR-007 D4."
+                "`dsl {name} {{ … }}` has no hole, so nothing here says what it \
+                 means. A statement with `:name` holes is a deferred-parameter DSL \
+                 and lowers (ADR-007 D5); one without them is the target grammar's \
+                 to give a meaning, and `{name}` is not a grammar this compiler has \
+                 - the one it is itself the grammar for is `html` (ADR-017)."
             ));
         }
         if let Some(context) = context {
@@ -2062,6 +2159,7 @@ impl<'p> Emitter<'p> {
                 receiver,
                 method,
                 args,
+                config,
             } => {
                 self.postfix_base(out, receiver, depth, flow)?;
                 out.push(&format!(".{}", self.text(*method)));
@@ -2072,6 +2170,7 @@ impl<'p> Emitter<'p> {
                 }
                 out.push("(");
                 self.args(out, args, depth, flow)?;
+                self.dsl_parameters(out, self.text(*method), args.len(), config, depth, flow)?;
                 out.push(")");
             }
             Expr::Match { value, arms } => {
@@ -2268,6 +2367,10 @@ impl<'p> Emitter<'p> {
         out.push("(");
         self.args(out, args, depth, flow)?;
 
+        if let Expr::Variable(name) = func {
+            self.dsl_parameters(out, self.text(*name), args.len(), config, depth, flow)?;
+        }
+
         // Kap 5.1: the language below has no named arguments and no defaults,
         // so the options become positional here, in the order the *declaration*
         // gives - which is the only order there is, and the reason this needs
@@ -2286,6 +2389,46 @@ impl<'p> Emitter<'p> {
         }
 
         out.push(")");
+        Ok(())
+    }
+
+    /// ADR-007 D5: the shadow struct a call to a DSL driver builds.
+    ///
+    /// A `;` at a call site means options everywhere else, and the callee's
+    /// declaration is what tells the two apart: a driver said
+    /// `...args: Self::dsl`, so what stands after its `;` is a DSL's deferred
+    /// parameters and becomes one value rather than one argument each.
+    ///
+    /// A struct literal names its fields, so a call may write them in any
+    /// order - the body's order decides the type's fields and nothing else.
+    fn dsl_parameters(
+        &self,
+        out: &mut Out,
+        callee: &str,
+        args: usize,
+        config: &[crate::ast::ConfigArg],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        if config.is_empty() || !self.dsl_drivers.contains(callee) {
+            return Ok(());
+        }
+        let names: Vec<String> = config
+            .iter()
+            .map(|a| self.text(a.name).to_string())
+            .collect();
+        if args > 0 {
+            out.push(", ");
+        }
+        out.push(&format!("{} {{ ", crate::dsl::type_name(&names)));
+        for (i, argument) in config.iter().enumerate() {
+            if i > 0 {
+                out.push(", ");
+            }
+            out.push(&format!("{}: ", self.text(argument.name)));
+            self.expr(out, &argument.value, depth, flow)?;
+        }
+        out.push(" }");
         Ok(())
     }
 
@@ -2841,7 +2984,13 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
             Err(_) => Vec::new(),
         },
         // A template's holes are Nikaia too (ADR-017), and reach the emitter by
-        // the same route: text, split on the way out.
+        // the same route: text, split on the way out. A deferred-parameter
+        // statement has none: its braces are the foreign syntax's, and reading
+        // them as holes would be this compiler speaking for a grammar it does
+        // not have (ADR-007 D5).
+        Expr::Dsl {
+            target, content, ..
+        } if crate::dsl::is_deferred(parsed.text(*target), content) => Vec::new(),
         Expr::Dsl { content, .. } => match template::split(content.trim()) {
             Ok(segments) => template_holes(&segments)
                 .iter()

@@ -515,13 +515,20 @@ pub(super) fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
 fn visit_expr_blocks(expr: &Expr, f: &mut impl FnMut(&Block)) {
     match expr {
         Expr::Block(block) | Expr::Closure { body: block, .. } => f(block),
-        Expr::Call { func, args, .. } => {
+        Expr::Call { func, args, config } => {
             visit_expr_blocks(func, f);
             args.iter().for_each(|a| visit_expr_blocks(a, f));
+            config.iter().for_each(|c| visit_expr_blocks(&c.value, f));
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        Expr::MethodCall {
+            receiver,
+            args,
+            config,
+            ..
+        } => {
             visit_expr_blocks(receiver, f);
             args.iter().for_each(|a| visit_expr_blocks(a, f));
+            config.iter().for_each(|c| visit_expr_blocks(&c.value, f));
         }
         Expr::If {
             then_branch,
@@ -561,13 +568,25 @@ fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)) {
     }
 
     match expr {
-        Expr::Call { func, args, .. } => {
+        // What stands after a `;` is an expression too, and one that can
+        // pause. `sync` is *inferred* from what a body calls (ADR-027), so a
+        // call this walk does not reach is a function claiming it cannot pause
+        // - the fail-open direction ADR-027 D2 names as the dangerous one. A
+        // DSL's deferred parameters stand there (ADR-007 D5).
+        Expr::Call { func, args, config } => {
             visit_expr(parsed, func, f);
             args.iter().for_each(|a| visit_expr(parsed, a, f));
+            config.iter().for_each(|c| visit_expr(parsed, &c.value, f));
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        Expr::MethodCall {
+            receiver,
+            args,
+            config,
+            ..
+        } => {
             visit_expr(parsed, receiver, f);
             args.iter().for_each(|a| visit_expr(parsed, a, f));
+            config.iter().for_each(|c| visit_expr(parsed, &c.value, f));
         }
         Expr::Binary { lhs, rhs, .. } => {
             visit_expr(parsed, lhs, f);
