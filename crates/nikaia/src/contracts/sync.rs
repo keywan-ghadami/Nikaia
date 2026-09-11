@@ -352,7 +352,7 @@ fn walk_block(
 /// and that disagreement is the design. Having them disagree about what a call
 /// even resolves to would just be a bug waiting to happen.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Reached {
+pub(super) enum Reached {
     /// A function this unit declares, by the name the ledger records it under.
     Own(String),
     /// A function in a library, and what that library's ledger says about it.
@@ -379,7 +379,12 @@ enum Reached {
 ///
 /// `None` means the expression is not a call at all, which is the one case
 /// neither analysis has anything to say about.
-fn reached(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Option<Reached> {
+pub(super) fn reached(
+    parsed: &Parsed,
+    expr: &Expr,
+    own: &Ledger,
+    library: &Ledger,
+) -> Option<Reached> {
     let name = match expr {
         Expr::Call { func, .. } => match &**func {
             Expr::Variable(name) => parsed.text(*name).to_string(),
@@ -471,7 +476,7 @@ pub(super) fn walk_calls(parsed: &Parsed, block: &Block, f: &mut impl FnMut(&str
 
 /// Every expression a statement holds, without descending into nested blocks -
 /// those are walked separately so that each keeps its own statement's span.
-fn visit_stmt(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
+pub(super) fn visit_stmt(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
     match stmt {
         Stmt::Let { value, .. } => visit_expr(value, f),
         Stmt::Assign { target, value, .. } => {
@@ -486,7 +491,7 @@ fn visit_stmt(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
     }
 }
 
-fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
+pub(super) fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
     match stmt {
         Stmt::For { body, .. } | Stmt::While { body, .. } => f(body),
         Stmt::Let { value, .. } | Stmt::Expr(value) => visit_expr_blocks(value, f),
