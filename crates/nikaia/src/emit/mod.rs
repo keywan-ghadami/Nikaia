@@ -1306,6 +1306,15 @@ impl<'p> Emitter<'p> {
                 self.expr(out, value, depth, flow)?;
                 out.push(";");
             }
+            // Kap 3.3. Name for name (ADR-011 D2): the language below spells
+            // this the same way, so there is nothing to decide here.
+            Stmt::While { cond, body } => {
+                out.push("while ");
+                self.expr(out, cond, depth, flow)?;
+                out.push(" ");
+                self.block(out, body, depth, flow, false)?;
+            }
+
             Stmt::For {
                 bindings,
                 iter,
@@ -2072,6 +2081,10 @@ fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
             }
             Stmt::For { iter, body, .. } => {
                 visit_expr(iter, f);
+                visit_block(body, f);
+            }
+            Stmt::While { cond, body } => {
+                visit_expr(cond, f);
                 visit_block(body, f);
             }
             Stmt::Return(value) => {

@@ -734,6 +734,7 @@ grammar! {
         rule stmt -> Spanned<Stmt> # "statement" @=
             l:let_stmt -> { Spanned::new(l, _span) }
           | r:return_stmt -> { Spanned::new(r, _span) }
+          | w:while_stmt -> { Spanned::new(w, _span) }
           | f:for_stmt -> { Spanned::new(f, _span) }
           | a:assign_stmt -> { Spanned::new(a, _span) }
           | e:expr_stmt -> { Spanned::new(e, _span) }
@@ -768,6 +769,16 @@ grammar! {
         // Kap 3.3. The head is parsed with the brace-free expression grammar:
         // in `for d in whole { ... }` the brace opens the body, never a struct
         // literal - the same restriction Rust puts on this position.
+        // Kap 3.3. Before `expr_stmt` in `stmt`, or `while` would be read as an
+        // identifier and the condition as a statement of its own - which is
+        // exactly what happened before this rule existed: three statements, no
+        // error, and `rustc` complaining about a file nobody wrote.
+        rule while_stmt -> Stmt =
+            "while" cond:head_expr body:block ";"?
+            -> {
+                Stmt::While { cond, body }
+            }
+
         rule for_stmt -> Stmt =
             "for" bindings:for_bindings "in"
             iter:head_expr body:block ";"?

@@ -146,6 +146,17 @@ pub enum Stmt {
         body: Block,
     },
 
+    /// Kap 3.3: `while count < 5 { … }`.
+    ///
+    /// A statement rather than an expression, like `for` and unlike `if`: it
+    /// repeats until a condition stops holding, and what that is worth as a
+    /// value is nothing. Part I 3.3 writes both loops as statements and neither
+    /// as something a `let` takes.
+    While {
+        cond: Expr,
+        body: Block,
+    },
+
     // Kap 7.1: return, return value
     Return(Option<Expr>),
 

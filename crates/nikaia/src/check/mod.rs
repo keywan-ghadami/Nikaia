@@ -403,6 +403,15 @@ impl<'a> Checker<'a> {
                 Ty::Tuple(Vec::new())
             }
 
+            Stmt::While { cond, body } => {
+                let cond_ty = self.expr(cond, span);
+                self.expect_bool(&cond_ty, span, "a `while` repeats while a `bool` holds");
+                self.scope.push(Vec::new());
+                self.block(body);
+                self.scope.pop();
+                Ty::Tuple(Vec::new())
+            }
+
             Stmt::For {
                 bindings,
                 iter,

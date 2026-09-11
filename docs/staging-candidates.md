@@ -82,7 +82,7 @@ unrelated reason — is **−19.8 % of the whole compiler run**
 Nikaia's 26-row error corpus is byte-identical after it, which is the check that matters: the
 corpus exists to catch a message that moved.
 
-**Two things measured beside it lost**, and are in the dependency's `TODO.md` §6 so they are not
+**Two things measured beside it lost**, and are in the dependency's `TODO.md` §7 so they are not
 re-proposed. Guarding `rt::expected` on `E::RECORDING` — skipping, on the pass that discards
 messages, work only a message needs — costs **+1.4 %**. And respelling Nikaia's `WS` as
 `multispace0 (COMMENT multispace0)*` trades **+0.7 % instructions for −7.7 % mispredicts**, which

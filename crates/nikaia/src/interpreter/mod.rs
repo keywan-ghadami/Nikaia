@@ -68,6 +68,12 @@ impl Interpreter {
                 println!("[Nikaia Runtime] For loop (single pass)");
                 self.eval_block(body);
             }
+            Stmt::While { body, .. } => {
+                // The same, and for the same reason: nothing here evaluates a
+                // condition, so repeating the body would repeat it forever.
+                println!("[Nikaia Runtime] While loop (single pass)");
+                self.eval_block(body);
+            }
         }
     }
 
