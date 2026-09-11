@@ -43,9 +43,10 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Open*: traits, generics on impls, and operators as methods.
 *   [ ] **Generics**: Fully support generic type parameters (`<T>`) across functions and structs.
     *   *Status*: Parser has basic support (using `[...]`), but lowering and bridge need full integration.
-*   [ ] **Modules & Imports**: Implement `use` and multi-file compilation support.
-    *   *Parser*: `use` keyword.
-    *   *Orchestrator*: Handle file resolution and dependency graph.
+*   [x] **Modules & Imports** ([ADR-030](specification/adr/adr-030.md)): `use utils` brings in `utils.nika` beside the entry, every module becomes a `mod` at the crate root, and `stock::total(…)` lowers to itself - so ADR-011 D2 is untouched, because nothing resolved it.
+    *   *The argument*: multi-file compilation is **name resolution**, and the ledger has been the place for that since ADR-020 - `std.contracts` has had module-qualified keys from the day it existed. A program's own ledger takes the same shape, so the type checker, the `sync` check, provenance, Kap 5.1's options and ADR-025's loops work across files without changing.
+    *   *Privacy*: `pub` becomes `pub`, so Part I 9.2 is enforced by the language below; `NK1110` says it in Nikaia's words first. Two bugs one file could not show are fixed with it - the emitter made every struct field public, and `pub` on a field did not parse.
+    *   *Open*: nested module paths (refused with a sentence rather than guessed at), a grammar across a module boundary, and per-module incremental compilation - ADR-021 D6's unit is now the program (ADR-030 §7).
 
 ### Phase 2: Compiler Robustness (Middle-end)
 
@@ -53,6 +54,13 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Done (ADR-012)*: the AST carries spans, the `rust` backend emits a source map, and `nikaia --explain` reports rustc's JSON diagnostics - including the parser backend's frame check - on the `.nika` line that caused them.
     *   *Open*: expression-level spans - both the `sync` check and the type checker report on the enclosing statement (ADR-024 D7), and both get narrower the day expressions carry spans, without either changing - and the compiler's own `anyhow` errors, which are still text without a position.
 *   [x] **Kap 5.1's `Subject ; Config` protocol** (G18): a `;` in a signature, positional data before it and named options with defaults after it, on both the declaration and the call. The language below has neither named arguments nor defaults, so an option becomes an ordinary parameter in declaration order and a call fills in what it left out - which needs the *callee's* declaration, and is therefore read from the ledger. `fs::write` has the `append` and `create` its specification names. `NK1109` is an option the callee does not have.
+*   [x] **A signature may name its receiver's type arguments** ([ADR-031](specification/adr/adr-031.md)): `$V` in `HashMap::entry(&HashMap[$K, $V], key: ?) -> Entry[$V]`, bound at the call site from the receiver and substituted away. Closes the question ADR-029 left open and the wall three ADRs in a row ended at.
+    *   *The chain*: `HashMap[&str, Stats]` → `Entry[Stats]` → `fn(&$V)` is `fn(&Stats)` → the `a` in `.and_modify fn { a.add(v) }` is a `&Stats` → `a.add` resolves → `record` is `sync` without anyone writing the word.
+    *   *Why it is not ADR-024 D4 all over again*: an unbound variable becomes `?`, never a name, so it never survives into a comparison. That is what D4 was protecting against, kept by substitution rather than by erasure.
+    *   *The rule that keeps it safe*: a variable says what flows **out** - a result, a lambda's parameter - and never what flows in. Rust's collections take more than their type parameters suggest, so a variable in an argument would have rejected `counts.get(fragment)` in `k-nucleotide.nika`, which is correct code.
+    *   *Measured*: **18 of 18**. Every `sync` written by hand in this repository is now derivable. Corpus-wide 21 of 43 functions are `sync`; the rest do I/O and should not be.
+    *   *Open*: binding is from the receiver, positional, one pattern. Full unification (from arguments, nested, with constraints) is deliberately not done - the first entry that needs it is the argument for it.
+
 *   [x] **A higher-order function does what its lambda does** ([ADR-029](specification/adr/adr-029.md)): `sync = "from(f)"` names the parameter that decides, and the ledger's type language gains `fn(…)` so a lambda's parameters have types. Before it, no `map`, `filter`, `fold` or `sort_by_key` could appear inside `access` or `par_iter` over *any* lambda - a ledger entry holds for every caller, so a function running somebody else's code had to commit to the pessimistic answer.
     *   *Why it is sound*: a caller reads `from` as "adds no pausing of its own", which holds because the lambda runs *during* the call and its body is already counted in the function that writes it. A **detached** parameter would break that; the ledger cannot spell `@detached`, so a test over `std`'s own entries enforces the restriction instead.
     *   *Measured, honestly*: **nothing changed** on the corpus - 14 of 18, 20 of 43, both unchanged. No program here is unblocked by it. What it removes is a **false rejection**, pinned by a two-line test: a helper using `sort_by_key` over a pure lambda used to be `NK2202` when called from a lock.

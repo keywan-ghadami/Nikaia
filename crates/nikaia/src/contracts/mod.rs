@@ -381,8 +381,48 @@ impl Ledger {
     /// would be a different file for the same source, and `--locked` compares
     /// bytes. The compiler and `std` ship together, so there is exactly one
     /// answer here and no way to pass the wrong one.
+    /// A ledger with a header and nothing in it - what a program of several
+    /// files starts from before it absorbs its modules.
+    pub fn empty() -> Self {
+        Ledger {
+            version: VERSION,
+            toolchain: toolchain(),
+            inference: INFERENCE.to_string(),
+            ..Default::default()
+        }
+    }
+
     pub fn infer(parsed: &Parsed) -> Self {
         Self::infer_checked(parsed).0
+    }
+
+    /// Every entry of `other`, under `module::`.
+    ///
+    /// A program of several files has **one** ledger (Part III, 13.5 puts it at
+    /// the project root), and its keys are qualified exactly the way a caller
+    /// writes them - which is the shape `std.contracts` has had since ADR-020:
+    /// `fs::map`, `io::lines`, `text::digit_value`.
+    ///
+    /// That is what makes multi-file compilation almost free for everything
+    /// built on the ledger. The type checker, the `sync` check, the provenance
+    /// analysis, Kap 5.1's options and ADR-025's fallible loops all resolve a
+    /// call by asking a ledger for `a::b`. None of them learns a new trick to
+    /// work across files; the file they ask simply has more in it.
+    pub fn absorb(&mut self, module: Option<&str>, other: Ledger) {
+        for (name, contract) in other.functions {
+            let key = match module {
+                Some(module) => format!("{module}::{name}"),
+                None => name,
+            };
+            self.functions.insert(key, contract);
+        }
+        for (name, contract) in other.types {
+            let key = match module {
+                Some(module) => format!("{module}::{name}"),
+                None => name,
+            };
+            self.types.insert(key, contract);
+        }
     }
 
     /// The contracts, and the type checker's pass that helped produce them.

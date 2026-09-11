@@ -128,19 +128,48 @@ pub struct SourceMap {
 struct MapEntry {
     generated: std::ops::Range<usize>,
     source: Span,
+    /// Which file it came from, as an index into the program's units. A
+    /// single-file program has one, and it is 0.
+    unit: usize,
 }
 
 impl SourceMap {
-    /// The narrowest source span whose emitted text covers `offset`.
-    pub fn source_span(&self, offset: usize) -> Option<Span> {
+    /// The narrowest source span whose emitted text covers `offset`, and the
+    /// file it is in.
+    pub fn locate(&self, offset: usize) -> Option<(usize, Span)> {
         self.entries
             .iter()
             .find(|e| e.generated.contains(&offset))
-            .map(|e| e.source.clone())
+            .map(|e| (e.unit, e.source.clone()))
+    }
+
+    /// The narrowest source span whose emitted text covers `offset`.
+    pub fn source_span(&self, offset: usize) -> Option<Span> {
+        self.locate(offset).map(|(_, span)| span)
     }
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// This map, as it reads once its module's text has been placed `by` bytes
+    /// into a larger file - and tagged with which file it came from.
+    ///
+    /// A program of several modules is emitted one module at a time and joined;
+    /// this is what keeps ADR-012's promise across the join. Without it a
+    /// `rustc` message about the third module would be traded back for a place
+    /// in the first.
+    pub fn placed(mut self, by: usize, unit: usize) -> SourceMap {
+        for entry in &mut self.entries {
+            entry.generated = entry.generated.start + by..entry.generated.end + by;
+            entry.unit = unit;
+        }
+        self
+    }
+
+    /// Take everything `other` holds, which is already placed.
+    pub fn extend(&mut self, other: SourceMap) {
+        self.entries.extend(other.entries);
     }
 }
 
@@ -163,6 +192,9 @@ impl Out {
         self.map.entries.push(MapEntry {
             generated: start..self.buf.len(),
             source: span.clone(),
+            // The emitter writes one module at a time and does not know which:
+            // `SourceMap::placed` stamps it when the driver joins them.
+            unit: 0,
         });
         Ok(value)
     }
@@ -203,6 +235,80 @@ pub fn emit_program_with_trust(
     provenance: crate::contracts::Provenance,
 ) -> Result<Lowered> {
     Emitter::new(parsed, profile, provenance).program()
+}
+
+/// A module's items, with no preamble and no `mod` around them.
+///
+/// The driver writes the preamble once for the whole program and the `mod`
+/// header itself, because only it knows what the program is made of
+/// (`modules::collect`).
+///
+/// `contracts` are the **program's**, not this file's: a call to
+/// `page::render(entries, total)` fills in Kap 5.1's defaults from the
+/// declaration, and the declaration is in another file.
+pub fn emit_module_body(
+    parsed: &Parsed,
+    profile: Profile,
+    provenance: crate::contracts::Provenance,
+    contracts: &crate::contracts::Ledger,
+) -> Result<Lowered> {
+    Emitter::with_contracts(parsed, profile, provenance, contracts.clone()).items_only()
+}
+
+/// What a program's preamble has to say, over all of its files.
+///
+/// `uses_std` and the rest are per-file facts, and the preamble is written
+/// once - so they are joined here rather than guessed at from the entry.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Needs {
+    pub grammar: bool,
+    pub driver: bool,
+    pub std: bool,
+}
+
+impl Needs {
+    pub fn of(parsed: &Parsed, profile: Profile) -> Needs {
+        let emitter = Emitter::new(parsed, profile, crate::contracts::Provenance::Trusted);
+        Needs {
+            grammar: parsed
+                .program
+                .items
+                .iter()
+                .any(|i| matches!(i.node, Item::Grammar(_))),
+            driver: emitter.uses_driver(),
+            std: emitter.uses_std,
+        }
+    }
+
+    pub fn join(self, other: Needs) -> Needs {
+        Needs {
+            grammar: self.grammar || other.grammar,
+            driver: self.driver || other.driver,
+            std: self.std || other.std,
+        }
+    }
+
+    /// The lines at the top of the emitted file.
+    pub fn preamble(self) -> String {
+        let mut out = String::new();
+        if self.grammar {
+            out.push_str("use winnow_grammar::grammar;\n");
+        }
+        if self.driver {
+            out.push_str("use winnow_grammar::rt::Parallelism;\n");
+            out.push_str("use winnow_grammar::ParseContext;\n");
+        }
+        if self.std {
+            // Nikaia's `std` is a crate rather than a table in this file, so
+            // `fs::map`, `cli::args` and `HashMap` resolve as written and what
+            // they mean is code someone can read.
+            // `pub use`, because the grammar module the backend generates
+            // reaches these names through a glob of its own, and a private
+            // import is not re-exported into one.
+            out.push_str("pub use nikaia_std::prelude::*;\n");
+        }
+        out
+    }
 }
 
 /// `std`'s shipped contracts, parsed once.
@@ -286,6 +392,18 @@ enum Propagate {
 
 impl<'p> Emitter<'p> {
     fn new(parsed: &'p Parsed, profile: Profile, provenance: crate::contracts::Provenance) -> Self {
+        let own = crate::contracts::Ledger::infer(parsed);
+        Self::with_contracts(parsed, profile, provenance, own)
+    }
+
+    /// The same, against contracts that already exist - a program's rather than
+    /// a file's.
+    fn with_contracts(
+        parsed: &'p Parsed,
+        profile: Profile,
+        provenance: crate::contracts::Provenance,
+        own_contracts: crate::contracts::Ledger,
+    ) -> Self {
         let mut grammars = HashMap::new();
         let mut structs = HashSet::new();
         let mut methods = HashMap::new();
@@ -355,14 +473,27 @@ impl<'p> Emitter<'p> {
             // reads the ledger. Matching on the name `io::lines` here would
             // have caught the one-line form and quietly missed
             // `let s = io::lines()` followed by `for line in s`.
-            fallible_loops: crate::check::fallible_loops(parsed),
-            own_contracts: crate::contracts::Ledger::infer(parsed),
+            fallible_loops: crate::check::fallible_loops_against(parsed, &own_contracts),
+            own_contracts,
             library: std_ledger(),
         }
     }
 
     fn text(&self, sym: Symbol) -> &str {
         self.parsed.text(sym)
+    }
+
+    /// A module's items and nothing else - no preamble, no `mod` header.
+    fn items_only(&self) -> Result<Lowered> {
+        let mut out = Out::default();
+        for item in &self.parsed.program.items {
+            out.from(&item.span, |out| self.item(out, &item.node))?;
+            out.push("\n");
+        }
+        Ok(Lowered {
+            rust: out.buf,
+            map: out.map,
+        })
     }
 
     fn program(&self) -> Result<Lowered> {
@@ -495,7 +626,8 @@ impl<'p> Emitter<'p> {
                     // Public, because the actions that build this struct are
                     // generated into the grammar's own module.
                     out.push(&format!(
-                        "    pub {}: {},\n",
+                        "    {}{}: {},\n",
+                        if field.is_public { "pub " } else { "" },
                         self.text(field.name),
                         self.ty(&field.ty, Lifetimes::NAMED)
                     ));
@@ -2300,6 +2432,26 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
                         }
                         '(' | '[' => nesting += 1,
                         ')' | ']' => nesting -= 1,
+                        // `::` is a path, not a format specifier. A hole is
+                        // Nikaia source, and Nikaia source names things across
+                        // modules (Part I, 9.1) - `"{utils::double(21)}"` was
+                        // read as the expression `utils` written with the
+                        // specifier `:double(21)`, which is a format string
+                        // nobody wrote and a program nobody meant.
+                        ':' if chars.peek() == Some(&':') => {
+                            let second = chars.next().expect("peeked");
+                            match &mut spec {
+                                Some(spec) => {
+                                    spec.push(c);
+                                    spec.push(second);
+                                }
+                                None => {
+                                    hole.push(c);
+                                    hole.push(second);
+                                }
+                            }
+                            continue;
+                        }
                         // The first colon that is not inside a call or an index
                         // separates the expression from how it is to be
                         // written, exactly as a format string does elsewhere.

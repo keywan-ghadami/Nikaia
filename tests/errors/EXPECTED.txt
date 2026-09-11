@@ -69,7 +69,7 @@ Parse error:
 expected `}`; found unexpected token `,` at line 2, column 12
    2 |     a: i32,,
                   ^
-note: also possible here: `//`, identifier
+note: also possible here: `//`, `pub`, identifier
 in struct_item
 in item
 in item 1

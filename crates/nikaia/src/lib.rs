@@ -10,4 +10,5 @@ pub mod contracts;
 pub mod diagnostics;
 pub mod emit;
 pub mod interpreter;
+pub mod modules;
 pub mod parser;

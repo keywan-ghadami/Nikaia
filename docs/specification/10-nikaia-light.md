@@ -1032,6 +1032,26 @@ While Nikaia Lite enforces a strict single-threaded model for user logic ("The H
 ### 9.1. Modules and Files
 Every file in Nikaia (e.g., `utils.nika`) is implicitly a **Module**.
 
+`use utils` brings one in, and it names the file `utils.nika` beside the
+program's entry:
+
+```nika
+// file: main.nika
+use utils
+
+fn main() {
+    println("{utils::double(21)}")
+}
+```
+
+A module of your program is **one name**. `use std::fs` is the one `use` with a
+path in it, and it names the library rather than a file
+([ADR-030](adr/adr-030.md) D1).
+
+Two files may import each other. Nothing about a module is an order of
+declaration: the compiler reads the files the entry reaches, and what they say
+about each other is the same however it got there.
+
 ### 9.2. Visibility Rules (Privacy)
 Nikaia enforces strict encapsulation to prevent tight coupling between parts of your code.
 
@@ -1042,6 +1062,19 @@ Nikaia enforces strict encapsulation to prevent tight coupling between parts of 
 2.  **The `pub` Keyword:**
     * To allow other modules to use an item, prefix it with `pub`.
     * To allow other modules to access a specific field of a struct, prefix the field with `pub`.
+    * A **public type may keep its fields private**, and 9.3 is about why that
+      is the ordinary case rather than an inconvenience.
+
+Reaching a private item from another file is `NK1110`, and says which file
+keeps it:
+
+```text
+error[NK1110]: `secret` is private to `utils.nika`
+   4 |     let n = utils::secret()
+           ^
+     = an item is private to the file that declares it unless it says `pub` (Part I, 9.2)
+     help: write `pub fn secret` in `utils.nika`, or reach it through something that is public
+```
 
 ### 9.3. Granular Control
 While `pub` makes an item available generally, strict privacy forces developers to create safe interfaces (Constructors and Methods) rather than exposing raw data.

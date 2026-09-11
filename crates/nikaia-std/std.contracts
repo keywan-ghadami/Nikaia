@@ -123,6 +123,16 @@ signature = "(?, f: fn(?)) -> ?"
 # an entry does claim is its **arity**, which is checked - so the risk of being
 # wrong here is real and the corpus is what holds it down.
 #
+# **A signature may name its receiver's type arguments** (ADR-031): `$V` in
+# `HashMap::entry` is whatever the map holds, bound at the call site and
+# substituted away. A variable that stays unbound becomes `?`, never a name.
+# The rule for where one may appear is narrow and deliberate: **in what flows
+# out** - a result, a lambda's parameter - and never in an argument. What flows
+# out is a promise this file makes and is wrong on its own account; what flows
+# in is a constraint on somebody's program, and Rust's collections take more
+# than their type parameters suggest (`get` by anything the key borrows as), so
+# a variable there would reject correct code.
+#
 # **A higher-order method carries no `sync`, deliberately.** Whether
 # `and_modify` pauses depends on the lambda it is given, and a ledger cannot say
 # "it depends" yet: `sync = "from(f)"` is the shape that would, and it is not
@@ -143,12 +153,16 @@ signature = "(f64) -> f64"
 [fn."HashMap::entry"]
 pub = true
 sync = true
-signature = "(&HashMap[?, ?], key: ?) -> Entry"
+signature = "(&HashMap[$K, $V], key: ?) -> Entry[$V]"
 
+# `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
+# borrows as, so `m.get("x")` on a `HashMap[String, …]` is correct and `$K`
+# would reject it. The rule is ADR-031's: a variable says what flows *out*, and
+# `?` stays for what flows *in*.
 [fn."HashMap::get"]
 pub = true
 sync = true
-signature = "(&HashMap[?, ?], key: ?) -> ?"
+signature = "(&HashMap[$K, $V], key: ?) -> $V"
 
 [fn."HashMap::keys"]
 pub = true
@@ -177,18 +191,18 @@ signature = "(&HashMap[?, ?]) -> ?"
 [fn."Entry::and_modify"]
 pub = true
 sync = "from(f)"
-signature = "(Entry, f: fn(?)) -> Entry"
+signature = "(Entry[$V], f: fn(&$V)) -> Entry[$V]"
 
 [fn."Entry::or_insert"]
 pub = true
 sync = true
-signature = "(Entry, value: ?) -> ?"
+signature = "(Entry[$V], value: ?) -> &$V"
 
 # Also runs its lambda, before it returns.
 [fn."Entry::or_insert_with"]
 pub = true
 sync = "from(f)"
-signature = "(Entry, f: fn()) -> ?"
+signature = "(Entry[$V], f: fn()) -> &$V"
 
 [fn."String::chars"]
 pub = true
@@ -224,7 +238,7 @@ signature = "() -> Vec[?]"
 [fn."Vec::push"]
 pub = true
 sync = true
-signature = "(&Vec[?], value: ?)"
+signature = "(&Vec[$T], value: ?)"
 
 [fn."Vec::sort"]
 pub = true
@@ -234,7 +248,7 @@ signature = "(&Vec[?])"
 [fn."Vec::sort_by_key"]
 pub = true
 sync = "from(f)"
-signature = "(&Vec[?], f: fn(?)) -> ?"
+signature = "(&Vec[$T], f: fn(&$T)) -> ?"
 
 [fn."str::chars"]
 pub = true

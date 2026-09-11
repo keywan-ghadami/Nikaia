@@ -175,6 +175,73 @@ fn a_helper_that_uses_an_iterator_method_may_be_called_from_a_lock() {
     assert!(found.is_empty(), "{found:?}");
 }
 
+/// The chain, end to end, on the shape that held the last three ADRs up
+/// (ADR-031).
+///
+/// `HashMap[&str, Stats]` binds `$V` to `Stats`, so `entry` hands back an
+/// `Entry[Stats]`, so `and_modify`'s `fn(&$V)` is a `fn(&Stats)`, so the `a` in
+/// the lambda is a `&Stats`, so `a.add(v)` resolves to `Stats::add`, which is
+/// pure - and `record` is `sync` without anyone writing the word.
+///
+/// Every one of those links had to exist. This is the test that they do.
+#[test]
+fn a_map_of_structs_types_its_lambda_all_the_way_down() {
+    let l = ledger(
+        "use std::collections::HashMap\n\
+         pub struct Stats { n: i64 }\n\
+         impl Stats {\n\
+             pub fn(first: i64) -> Stats { return Stats(n: first) }\n\
+             fn add(&mut self, x: i64) { self.n += x }\n\
+         }\n\
+         pub struct Summary { stations: HashMap[&str, Stats] }\n\
+         impl Summary {\n\
+             fn record(&mut self, name: &str, v: i64) {\n\
+                 self.stations.entry(name).and_modify fn { a.add(v) }.or_insert_with fn { Stats(v) }\n\
+             }\n\
+         }",
+    );
+
+    assert_eq!(l.functions["Summary::record"].sync, Sync::Inferred);
+}
+
+/// A variable in an **argument** would reject correct programs, so there is
+/// none (ADR-031 D3).
+///
+/// Rust's `HashMap::get` takes anything the key borrows as, so a map with
+/// `String` keys is correctly asked with a `&str` - `k-nucleotide.nika` does
+/// exactly this. Writing `key: $K` would have made the checker reject it, which
+/// is the one thing the checker may not do. The rule that prevents it is that a
+/// variable says what flows *out*; `?` stays for what flows *in*.
+#[test]
+fn a_key_may_be_given_as_something_it_borrows_as() {
+    let source = "use std::collections::HashMap\n\
+                  fn find(m: HashMap[String, i64]) -> i64 { let hit = m.get(\"x\") return 1 }";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let library = Ledger::parse(STD).expect("std's ledger parses");
+    let own = Ledger::infer(&parsed);
+
+    let findings = nikaia::check::check(&parsed, &own, &library).findings;
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+/// A receiver that says nothing degrades to `?` rather than guessing.
+///
+/// `HashMap::new()` gives a map whose type arguments are unknown, so `$V` binds
+/// to nothing and the lambda's parameter is `?`. The chain above simply stops
+/// being able to help, which is the correct failure: an unbound variable is the
+/// absence of a claim, never a claim about a type called `$V`.
+#[test]
+fn an_unknown_element_type_does_not_become_a_claim() {
+    let l = ledger(
+        "use std::collections::HashMap\n\
+         fn build() { let m = HashMap::new() m.entry(\"x\").and_modify fn { a.whatever() } }",
+    );
+
+    // `a.whatever()` cannot be resolved, so the claim is refused - and refused
+    // for the right reason rather than by an error about `$V`.
+    assert_eq!(l.functions["build"].sync, Sync::No);
+}
+
 /// **`from` is only sound for a lambda that runs before the call returns.**
 ///
 /// A caller reads `from(f)` as "this call adds no pausing of its own", and that

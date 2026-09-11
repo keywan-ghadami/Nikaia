@@ -406,9 +406,12 @@ grammar! {
 
         rule field_def_tail -> FieldDef = "," f:field_def -> { f }
 
+        // Kap 9.2: `pub` on a field, which is a different question from `pub`
+        // on the struct - a public type may keep its parts to itself, and 9.3
+        // says that is the point.
         rule field_def -> FieldDef =
-            name:NAME ":" ty:type_ref -> {
-                FieldDef { name, ty }
+            vis:kw_pub? name:NAME ":" ty:type_ref -> {
+                FieldDef { name, ty, is_public: vis.is_some() }
             }
 
         // --- Argumente & Typen ---
