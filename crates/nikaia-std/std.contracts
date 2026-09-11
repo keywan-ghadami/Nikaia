@@ -39,6 +39,14 @@
 # `?` is the absence of a claim (ADR-024 D1) and it is the true one: the arity
 # is still checked, and the type is not claimed because there is no one type.
 #
+# `touches` says which resources a function reaches and whether it changes them
+# (ADR-033, Part I 8.1.1). It is what lets two operations that meet on nothing
+# run at the same time. **Absent means it touches everything**, which is the
+# opposite of how an absent `throws` reads and is deliberate: an effect nobody
+# described has to order against everything, or a missing contract would make a
+# program wrong rather than merely slow. Only the entries below say it; every
+# other function in this file keeps the order it was written in.
+#
 # `provenance` marks a **source**: a function whose result is bytes that entered
 # the program from outside, and who chose them (ADR-010 D2). Its absence is not
 # "trusted" - it is "this is not a source", which is what almost every function
@@ -58,6 +66,7 @@ signature = "() -> ?"
 
 [fn."fs::map"]
 pub = true
+touches = ["file(path) read"]
 throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> Mapped"
@@ -70,18 +79,21 @@ signature = "(&Mapped) -> &str"
 
 [fn."fs::read"]
 pub = true
+touches = ["file(path) read"]
 throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> Vec[u8]"
 
 [fn."fs::read_to_string"]
 pub = true
+touches = ["file(path) read"]
 throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> String"
 
 [fn."fs::write"]
 pub = true
+touches = ["file(path) write"]
 throws = ["?"]
 signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
 

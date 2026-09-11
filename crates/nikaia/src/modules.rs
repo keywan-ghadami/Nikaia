@@ -200,6 +200,15 @@ impl Program {
     /// below rather than re-implemented here - the same move ADR-017 D2 made
     /// with `html::Render`.
     pub fn emit(&self, profile: crate::emit::Profile) -> Result<crate::emit::Lowered> {
+        self.emit_ordered(profile, crate::emit::Ordering::default())
+    }
+
+    /// The same, saying how strictly the written order is taken (ADR-033).
+    pub fn emit_ordered(
+        &self,
+        profile: crate::emit::Profile,
+        ordering: crate::emit::Ordering,
+    ) -> Result<crate::emit::Lowered> {
         use crate::emit::{Lowered, Needs, SourceMap};
 
         let trust = crate::contracts::trust::analyse(&self.units[0].parsed, &std_ledger());
@@ -218,7 +227,8 @@ impl Program {
         // The modules first, then the root: an item at the root may name a
         // module, and a reader should meet the parts before the whole.
         for (at, unit) in self.units.iter().enumerate() {
-            let body = crate::emit::emit_module_body(
+            let body = crate::emit::emit_module_body_ordered(
+                ordering,
                 &unit.parsed,
                 profile,
                 trust.provenance,
@@ -239,7 +249,8 @@ impl Program {
             }
         }
 
-        let entry = crate::emit::emit_module_body(
+        let entry = crate::emit::emit_module_body_ordered(
+            ordering,
             &self.units[0].parsed,
             profile,
             trust.provenance,

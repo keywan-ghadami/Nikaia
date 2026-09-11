@@ -22,8 +22,10 @@
 // compiler that infers more will write a different name there, and `--locked`
 // will say so rather than quietly accepting the weaker answer.
 
+pub mod order;
 pub mod sync;
 pub mod throws;
+pub mod touch;
 pub mod trust;
 pub mod ty;
 
@@ -193,6 +195,20 @@ pub struct FnContract {
     /// Sorted, because 13.5 makes the file a pure function of (source,
     /// toolchain) and `--locked` compares it byte for byte.
     pub throws: Vec<String>,
+    /// Which resources it reaches, and whether it changes them (ADR-033).
+    ///
+    /// **Empty means it touches everything**, which is the opposite of how
+    /// `throws` above reads an empty list and is deliberate: an unknown effect
+    /// has to order against everything, or a missing contract would make a
+    /// program wrong rather than merely slow. [`touches_known`] is the bit that
+    /// tells "nobody said" from "it says it touches nothing".
+    pub touches: Vec<touch::Touch>,
+    /// Whether the `touches` above is an answer at all.
+    ///
+    /// A function that genuinely reaches nothing writes `touches = []`, and
+    /// that is a *claim* - it may overlap with anything. A function nobody
+    /// described has no key, and that is the absence of one.
+    pub touches_known: bool,
     /// This function is a **source**: its result is bytes that entered the
     /// program from outside, and this is who chose them (ADR-010 D2).
     ///
@@ -629,6 +645,12 @@ impl Ledger {
                 // touches this one, because an assertion is what `NK2202`
                 // exists to contradict.
                 sync: if *is_sync { Sync::Asserted } else { Sync::No },
+                // Nothing a `.nika` file declares reaches a resource this
+                // vocabulary can name yet: `fs` and `io` are `std`'s, and
+                // `std` writes its own down (ADR-033 §6). An empty list with
+                // `touches_known` false is "nobody said", which orders.
+                touches: Vec::new(),
+                touches_known: false,
                 // The *declaration* says only that it can fail. Which errors
                 // is a question about the body and about everything the body
                 // reaches, so `throws::infer` answers it afterwards - the same
@@ -732,6 +754,17 @@ impl Ledger {
                     contract.borrows.join(" | ")
                 ));
             }
+            if contract.touches_known {
+                out.push_str(&format!(
+                    "touches = [{}]\n",
+                    contract
+                        .touches
+                        .iter()
+                        .map(|t: &touch::Touch| format!("\"{}\"", t.text()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             if let Some(provenance) = contract.provenance {
                 out.push_str(&format!("provenance = \"{}\"\n", provenance.as_str()));
             }
@@ -830,6 +863,13 @@ impl Ledger {
                         "sync" => entry.sync = sync_of(value, at())?,
                         "throws" => entry.throws = throws_of(value, at())?,
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
+                        "touches" => {
+                            entry.touches = string_list(value, at())?
+                                .iter()
+                                .map(|t| touch::Touch::parse(t))
+                                .collect::<Result<Vec<_>>>()?;
+                            entry.touches_known = true;
+                        }
                         "provenance" => {
                             entry.provenance = Some(provenance_of(&unquote(value, at())?, at())?)
                         }

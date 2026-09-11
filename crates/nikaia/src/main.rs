@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use nikaia::contracts::{self, sync, Ledger, STD};
-use nikaia::emit::{self, Profile};
+use nikaia::emit::{self, Ordering, Profile};
 use nikaia::{check, diagnostics, interpreter, modules, parser};
 
 #[derive(Parser, Debug)]
@@ -60,6 +60,15 @@ pub struct Cli {
     /// recommended CI line, and the reason the file is committed.
     #[arg(long)]
     pub locked: bool,
+
+    /// How strictly the written order of two statements is taken (ADR-033).
+    ///
+    /// `effects` (the default) lets two operations that touch disjoint
+    /// resources overlap; `strict` keeps the written order everywhere and does
+    /// not apply the analysis. The manifest key of Part III 13.3 is specified
+    /// and unimplemented, so this is where the choice lives today.
+    #[arg(long, default_value = "effects")]
+    pub ordering: String,
 
     /// Lower from scratch, ignoring the build cache (ADR-021).
     ///
@@ -239,8 +248,11 @@ fn explain(args: &Cli, source: &str) -> Result<()> {
     use std::io::Read;
 
     let profile = Profile::parse(&args.profile)?;
+    // The same ordering the build used, or the map would point into a file this
+    // run did not emit.
+    let ordering = Ordering::parse(&args.ordering)?;
     let parsed = parser::parse_to_ast(source)?;
-    let lowered = emit::emit_program(&parsed, profile)?;
+    let lowered = emit::emit_program_ordered(&parsed, profile, ordering)?;
 
     let mut rustc_json = String::new();
     std::io::stdin().read_to_string(&mut rustc_json)?;
@@ -283,6 +295,7 @@ const CONTRACTS: &str = "contracts";
 
 fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     let profile = Profile::parse(&args.profile)?;
+    let ordering = Ordering::parse(&args.ordering)?;
     let output_path = args
         .output
         .clone()
@@ -295,7 +308,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     // first failure direction, a key that moves with the checkout.
     let layout = Layout::resolve(&args.input);
     let unit = layout.unit_name(&args.input);
-    let choices = Choices::new(&args.profile, "rust");
+    let choices = Choices::with_ordering(&args.profile, "rust", &args.ordering);
 
     // `--trust` is an explanation, so it is answered here rather than in the
     // miss branch below: a build that reuses a cached lowering still answers
@@ -376,7 +389,7 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
                 )?;
             }
 
-            let lowered = program.emit(profile)?;
+            let lowered = program.emit_ordered(profile, ordering)?;
             let ledger = program.contracts.render();
 
             if let Some(cache) = &mut cache {

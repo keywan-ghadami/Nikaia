@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Built (0.0.9 - ADR-033's first increment: two reads that meet on nothing)
+
+- **Two adjacent `let`s whose calls reach different files now run at the same time.** [ADR-033](docs/specification/adr/adr-033.md) §6's first increment, end to end: the ledger gained a `touches` column, `contracts/order.rs` decides whether two statements may overlap, and the emitter lowers a pair to `std::thread::scope`. `std::thread::scope` and nothing else - `std`'s I/O is blocking Rust behind `fs::read`, so overlapping it means threads, and a scoped join needs no runtime and no dependency.
+- **Not taken on trust**: `tests/ordering.rs` compiles the emitted Rust and runs it, and the program prints what the sequential one printed. A lowering that produces plausible-looking Rust which does not build is worth nothing.
+- **Eight reasons two statements must *not* overlap**, each its own test, because the decision is only safe if every "no" is reliable: a data dependency; a write to the same file; a file the compiler cannot name (it is then every file of its kind); a function nobody described (`println` has no `touches`, which is also what keeps two `println`s in order without a special rule for it); a handler that can `return`; an argument that is not a literal; and a block's tail.
+- **A panic is resumed, not unwrapped.** A program that would have panicked still panics with its own message and its own payload; turning it into `called Result::unwrap on an Err` would be the lowering putting its own words in the program's mouth.
+- **`--ordering strict` turns it off** (D8), and the switch is real rather than decorative: the same source lowers to exactly the program this compiler emitted before any of this. The `nikaia.toml` key of Part III 13.3 is still specified and unimplemented, so the choice lives on the CLI today.
+
+### Decided (0.0.9 - ADR-034: a handler that can return makes the next statement conditional)
+
+- **The first thing building ADR-033 corrected in it.** D5 forbids running an operation early that might not have run at all, and named a branch as the way to be uncertain. `let a = fs::read_to_string(p) catch { return }` is a second way, and it is the shape real Nikaia code is written in: both statements are unconditional, neither is inside an `if`, the touch sets are disjoint - and if the first read fails, the sequential program **never performs the second one at all**.
+- **[ADR-034](docs/specification/adr/adr-034.md) D2 states the rule generally** so a third case does not need a third ADR: *an operation may be started early only if the program as written would certainly have performed it.* A branch is one way to be uncertain; a diverting handler, a `break` and an early `return` are three more, and the sentence covers all of them where a list would not have.
+- **Why it got its own record rather than four quiet lines of code**: ADR-033 is marked provisional because a decision of that size is expected to need corrections, and a provisional decision that quietly acquires patches is not provisional but vague. It is also the first evidence about ADR-033 that came from building rather than from thinking, which §7 said was owed.
+
+### Also found by building it
+
+- **`ordering` had to become a build-cache dimension.** It changes the emitted Rust, so a key without it would let `--ordering strict` be served the overlapped artifact a previous run recorded - a cache handing back a program nobody asked for. ADR-021 D5's own rule ("build-time choices reach the key"), met from a new direction.
+- **A `throws` function body has a statement loop of its own**, separate from a block's, because its last statement may need wrapping in `Ok(…)`. Two loops deciding independently what may be reordered is two rules waiting to disagree, so the pairing lives in one helper both call.
+- **Not one example in the repository overlaps.** Every one of them either chains its reads or names its paths with a variable. A test asserts it, so the day one does is a day somebody is told. That is the measurement ADR-033 §7 could not take, taken as far as this corpus allows - and the answer is that the corpus is not evidence either way.
+- **A pre-existing bug, ruled out rather than fixed**: `fs::read_to_string(p) catch { "" }` emits Rust that does not compile, because the handler is a `&str` and the call hands back a `String` (ADR-024 D5's divergence). It fails identically with and without this change, and the tests here write `catch { "".to_string() }` to step around it rather than to hide it.
+
 ### Decided, not built (0.0.9 - ADR-033: program order is a guarantee where it is observable)
 
 - **The decision, in one rule**: every operation is known by **what it touches** - which file, which socket, which lock - and *two operations whose touch sets are disjoint have no order between them*. Everything else keeps the order it was written in. `let a = fs::read("x")` beside `let b = fs::read("y")` costs 40 ms rather than 80, and nothing is written to get it. [ADR-033](docs/specification/adr/adr-033.md), Part I 8.1.1.

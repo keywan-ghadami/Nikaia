@@ -1,0 +1,260 @@
+//! Order is kept where it can be seen (ADR-033, Part I 8.1.1).
+//!
+//! The first increment: two adjacent `let`s whose calls reach different files
+//! are lowered to run at the same time. Everything here is either that working,
+//! or one of the reasons it must not - and the second list is the longer one on
+//! purpose, because the decision is only safe if every "no" is reliable.
+//!
+//! The lowering is not taken on trust: the emitted Rust is compiled and run,
+//! and the program prints what the sequential one would have printed.
+
+mod common;
+
+use std::path::PathBuf;
+
+use nikaia::emit::{self, Ordering, Profile};
+use nikaia::parser::parse_to_ast;
+
+fn lowered(source: &str, ordering: Ordering) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit::emit_program_ordered(&parsed, Profile::Advanced, ordering)
+        .expect("the source lowers")
+        .rust
+}
+
+/// Whether the emitted Rust runs the two calls together.
+fn overlaps(source: &str) -> bool {
+    lowered(source, Ordering::Effects).contains("std::thread::scope")
+}
+
+const TWO_READS: &str = "use std::fs\n\
+     fn main() throws {\n\
+         let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+         let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+         println(\"{a.len()} {b.len()}\")\n\
+     }";
+
+/// Two reads of different files meet on nothing.
+#[test]
+fn two_reads_of_different_files_overlap() {
+    assert!(
+        overlaps(TWO_READS),
+        "{}",
+        lowered(TWO_READS, Ordering::Effects)
+    );
+}
+
+/// … and the emitted Rust compiles and prints what the sequential one would.
+///
+/// The half that cannot be checked by reading the output: a lowering that
+/// produces plausible-looking Rust which does not build, or builds and prints
+/// something else, is worth nothing at all.
+#[test]
+fn the_overlapped_program_compiles_and_runs() {
+    let dir = common::scratch_dir("ordering");
+    let source = dir.join("two_reads.rs");
+    std::fs::write(&source, lowered(TWO_READS, Ordering::Effects)).expect("write the Rust");
+    std::fs::write(dir.join("eins.txt"), "hallo").expect("write eins");
+    std::fs::write(dir.join("zwei.txt"), "welt!!").expect("write zwei");
+
+    let binary = dir.join("two_reads");
+    let built = common::compile(&source, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "the overlapped lowering does not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "5 6");
+}
+
+/// `ordering = "strict"` turns it off, and that is the whole of what it does.
+///
+/// ADR-033 D8: not an aid to be removed later. The same source, both ways, and
+/// the strict one is the program this compiler emitted before any of this.
+#[test]
+fn strict_ordering_leaves_the_program_alone() {
+    let strict = lowered(TWO_READS, Ordering::Strict);
+    assert!(!strict.contains("std::thread::scope"), "{strict}");
+    assert!(strict.contains("let a = match"), "{strict}");
+    assert!(strict.contains("let b = match"), "{strict}");
+}
+
+// --- and every reason two statements must keep their order --------------------
+
+/// A data dependency: the second uses what the first bound.
+#[test]
+fn a_data_dependency_keeps_the_order() {
+    assert!(!overlaps(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(a) catch { \"\".to_string() }\n\
+             println(\"{b.len()}\")\n\
+         }"
+    ));
+}
+
+/// The same file, written by one of them.
+#[test]
+fn a_write_to_the_same_file_keeps_the_order() {
+    assert!(!overlaps(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::write(\"log.txt\", \"x\") catch { }\n\
+             let b = fs::read_to_string(\"log.txt\") catch { \"\".to_string() }\n\
+             println(\"{b.len()}\")\n\
+         }"
+    ));
+}
+
+/// A file this compiler cannot name is every file of its kind (ADR-033 D4).
+///
+/// `fs::read_to_string(pfad)` where `pfad` is computed could be the file the
+/// other one writes. The alternative to keeping the order is a program that is
+/// right on some inputs and wrong on others.
+#[test]
+fn a_file_that_cannot_be_named_keeps_the_order() {
+    assert!(!overlaps(
+        "use std::fs\n\
+         fn main(pfad: &str) throws {\n\
+             let a = fs::write(\"log.txt\", \"x\") catch { }\n\
+             let b = fs::read_to_string(pfad) catch { \"\".to_string() }\n\
+             println(\"{b.len()}\")\n\
+         }"
+    ));
+}
+
+/// A function nobody described touches everything.
+///
+/// `println` has no `touches` in `std.contracts`, so it orders against
+/// everything - which is also what makes two `println`s keep their order, the
+/// case any model like this has to get right without a special rule for it.
+#[test]
+fn a_function_with_no_contract_keeps_the_order() {
+    assert!(!overlaps(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+             let b = etwas_unbekanntes() catch { \"\".to_string() }\n\
+             println(\"{a.len()}\")\n\
+         }"
+    ));
+}
+
+/// A handler that can leave the function makes the next statement conditional.
+///
+/// This is what building the increment found, and it was not in ADR-033 D5 when
+/// it was written (ADR-034). If the first read fails and its handler `return`s,
+/// the sequential program never performs the second read at all - so performing
+/// it early is speculation, which D5 forbids.
+#[test]
+fn a_diverting_handler_keeps_the_order() {
+    assert!(!overlaps(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { return }\n\
+             let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+             println(\"{a.len()} {b.len()}\")\n\
+         }"
+    ));
+}
+
+/// An argument that is not a literal is not sent to another thread.
+///
+/// The first increment's own restriction rather than the rule's: a closure that
+/// captures nothing cannot capture something that must not cross a thread, and
+/// what may cross one deserves its own decision.
+#[test]
+fn a_non_literal_argument_keeps_the_order() {
+    assert!(!overlaps(
+        "use std::fs\n\
+         fn main(eins: &str, zwei: &str) throws {\n\
+             let a = fs::read_to_string(eins) catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(zwei) catch { \"\".to_string() }\n\
+             println(\"{a.len()} {b.len()}\")\n\
+         }"
+    ));
+}
+
+/// A value-returning function overlaps the same way - its tail is the
+/// expression, and the two `let`s before it are an ordinary pair.
+///
+/// The guard against pairing the tail itself is defensive rather than
+/// observable: a block's last statement being a `let` means the block hands
+/// back nothing, so a value-returning body cannot end in one. It is in the code
+/// because a rule that holds by accident somewhere else is a rule that breaks
+/// when the accident does.
+#[test]
+fn a_value_returning_body_overlaps_before_its_tail() {
+    assert!(overlaps(
+        "use std::fs\n\
+         fn beides() -> i64 throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+             a.len() + b.len()\n\
+         }"
+    ));
+}
+
+/// Every `.nika` in the repository lowers the same under both orderings, or
+/// differs only by an overlap.
+///
+/// The corpus guard, in the form this decision needs: turning the analysis on
+/// must not change a program into one that does not compile, and the cheapest
+/// check of that is that the two lowerings agree wherever no pair was found.
+#[test]
+fn the_corpus_lowers_under_both_orderings() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut seen = 0;
+    let mut overlapped = Vec::new();
+
+    for dir in ["examples", "benches"] {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("nika") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read it");
+            let Ok(parsed) = parse_to_ast(&source) else {
+                continue;
+            };
+            let one = emit::emit_program_ordered(&parsed, Profile::Advanced, Ordering::Effects);
+            let other = emit::emit_program_ordered(&parsed, Profile::Advanced, Ordering::Strict);
+            match (one, other) {
+                (Ok(one), Ok(other)) => {
+                    seen += 1;
+                    if one.rust != other.rust {
+                        overlapped.push(path.file_name().unwrap().to_string_lossy().to_string());
+                    }
+                }
+                // A file the bootstrap compiler cannot lower at all fails the
+                // same way under both, which is not this test's business.
+                (one, other) => assert_eq!(one.is_err(), other.is_err(), "{}", path.display()),
+            }
+        }
+    }
+
+    assert!(seen > 0, "no example was lowered");
+    // Today: none of them. Every example either chains its reads or names its
+    // paths with a variable. That is a fact about the corpus worth having
+    // written down rather than discovered later - it is why ADR-033 could not
+    // be measured on it, and it is what the first real application has to
+    // change for the decision to have been worth making.
+    assert!(
+        overlapped.is_empty(),
+        "these examples now lower differently: {overlapped:?}"
+    );
+}

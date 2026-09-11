@@ -30,11 +30,13 @@ We have successfully implemented a "Vertical Slice" of the compiler that can com
 
 ### Phase 0: The Execution Model (ADR-033, decided and unbuilt)
 
-*   [ ] **Order is kept where it can be seen** ([ADR-033](specification/adr/adr-033.md), Part I 8.1.1): every operation is known by **what it touches**, and two operations touching disjoint resources have no order between them. Decided, **provisional and unmeasured**, switchable off with `ordering = "strict"`.
+*   [~] **Order is kept where it can be seen** ([ADR-033](specification/adr/adr-033.md), Part I 8.1.1): every operation is known by **what it touches**, and two operations touching disjoint resources have no order between them. Decided, **provisional and unmeasured**, switchable off with `ordering = "strict"`.
     *   *Why it is here and not in Phase 4*: it changes what a program **means**, not how fast it runs. Everything below is built on an execution model, so this is the one decision that is cheaper to make before the parts than after them.
     *   *Why it is safe to adopt incrementally*: an unknown touch set means "touches everything", so a program built against libraries that describe nothing behaves exactly as it does today. Programs get faster as `std.contracts` grows - the same shape as ADR-028 and ADR-031, where writing a contract down is what let a caller earn `sync`.
     *   *The first increment, to argue about before any code*: two unconditional `fs::read` calls with disjoint literal paths, lowered to a concurrent join. It needs `touches` for two `std` functions, a dependency check between two statements, and one emitter change. If that cannot be made to work cleanly, the rest does not deserve attempting.
-    *   *Open*: the whole of it. No `touches` column, no `ordering` key, no `seq`, no dependency graph in the emitter - and `task::scope`/`select`, which the runtime side builds on, are unimplemented too.
+    *   *Built*: the first increment, end to end. Two adjacent `let`s whose calls reach different files lower to `std::thread::scope`; `touches` is a ledger column; `--ordering strict` turns it off; `tests/ordering.rs` compiles and runs the result and holds the eight reasons a pair must *not* overlap.
+    *   *Corrected by building it* ([ADR-034](specification/adr/adr-034.md)): a `catch` handler that can `return` makes the next statement conditional, which D5 had not named. And `ordering` had to become a build-cache dimension, or `--ordering strict` would be served the overlapped artifact.
+    *   *Open*: `seq`, the `nikaia.toml` key (the choice is on the CLI today), more than two statements at a time, arguments that are not literals, a `touches` vocabulary past `file` and `stdout` - and `task::scope`/`select`, which the runtime side builds on.
     *   *The debt*: measure how much unconditional, independent I/O real programs actually contain, once there is an application big enough to carry the measurement. If the answer is "almost none", the decision was wrong and `strict` becomes the default.
 
 ### Phase 1: Language Completeness (Frontend)

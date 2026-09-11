@@ -52,13 +52,29 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub struct Choices {
     pub profile: String,
     pub backend: String,
+    /// ADR-033: how strictly the written order is taken.
+    ///
+    /// It changes the emitted Rust, so it is a dimension of the key. Leaving it
+    /// out would let a build with `--ordering strict` serve the overlapped
+    /// artifact a previous run recorded - a cache returning a program nobody
+    /// asked for, which is the failure this struct exists to make impossible.
+    pub ordering: String,
 }
 
 impl Choices {
     pub fn new(profile: impl Into<String>, backend: impl Into<String>) -> Self {
+        Self::with_ordering(profile, backend, "effects")
+    }
+
+    pub fn with_ordering(
+        profile: impl Into<String>,
+        backend: impl Into<String>,
+        ordering: impl Into<String>,
+    ) -> Self {
         Self {
             profile: profile.into(),
             backend: backend.into(),
+            ordering: ordering.into(),
         }
     }
 }
@@ -176,6 +192,7 @@ impl Key {
         b.field("toolchain", toolchain);
         b.field("profile", &choices.profile);
         b.field("backend", &choices.backend);
+        b.field("ordering", &choices.ordering);
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same

@@ -46,6 +46,31 @@ pub enum Profile {
     Advanced,
 }
 
+/// How strictly the written order of two statements is taken (ADR-033, D8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ordering {
+    /// Two operations that touch disjoint resources may overlap.
+    #[default]
+    Effects,
+    /// The written order, always. The analysis is not applied.
+    ///
+    /// Not an aid to be removed later: it is the escape for a project that does
+    /// not want this, and the way to rule the analysis out when chasing a bug.
+    Strict,
+}
+
+impl Ordering {
+    pub fn parse(name: &str) -> Result<Ordering> {
+        match name {
+            "effects" => Ok(Ordering::Effects),
+            "strict" => Ok(Ordering::Strict),
+            other => Err(anyhow!(
+                "unknown ordering `{other}` (expected effects or strict)"
+            )),
+        }
+    }
+}
+
 impl Profile {
     pub fn parse(name: &str) -> Result<Profile> {
         match name {
@@ -221,8 +246,17 @@ impl Out {
 }
 
 pub fn emit_program(parsed: &Parsed, profile: Profile) -> Result<Lowered> {
+    emit_program_ordered(parsed, profile, Ordering::default())
+}
+
+/// The same, saying how strictly the written order is to be taken (ADR-033).
+pub fn emit_program_ordered(
+    parsed: &Parsed,
+    profile: Profile,
+    ordering: Ordering,
+) -> Result<Lowered> {
     let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
-    emit_program_with_trust(parsed, profile, trust.provenance)
+    Emitter::new(parsed, profile, trust.provenance, ordering).program()
 }
 
 /// The same, with the provenance already decided.
@@ -234,7 +268,7 @@ pub fn emit_program_with_trust(
     profile: Profile,
     provenance: crate::contracts::Provenance,
 ) -> Result<Lowered> {
-    Emitter::new(parsed, profile, provenance).program()
+    Emitter::new(parsed, profile, provenance, Ordering::default()).program()
 }
 
 /// A module's items, with no preamble and no `mod` around them.
@@ -252,7 +286,22 @@ pub fn emit_module_body(
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
 ) -> Result<Lowered> {
-    Emitter::with_contracts(parsed, profile, provenance, contracts.clone()).items_only()
+    emit_module_body_ordered(Ordering::default(), parsed, profile, provenance, contracts)
+}
+
+/// The same, saying how strictly the written order is taken (ADR-033).
+///
+/// The ordering is the first parameter because it is the one a caller is most
+/// likely to be threading through from a flag, and burying it behind four
+/// others is how it ends up defaulted by accident.
+pub fn emit_module_body_ordered(
+    ordering: Ordering,
+    parsed: &Parsed,
+    profile: Profile,
+    provenance: crate::contracts::Provenance,
+    contracts: &crate::contracts::Ledger,
+) -> Result<Lowered> {
+    Emitter::with_contracts(parsed, profile, provenance, contracts.clone(), ordering).items_only()
 }
 
 /// What a program's preamble has to say, over all of its files.
@@ -268,7 +317,12 @@ pub struct Needs {
 
 impl Needs {
     pub fn of(parsed: &Parsed, profile: Profile) -> Needs {
-        let emitter = Emitter::new(parsed, profile, crate::contracts::Provenance::Trusted);
+        let emitter = Emitter::new(
+            parsed,
+            profile,
+            crate::contracts::Provenance::Trusted,
+            Ordering::default(),
+        );
         Needs {
             grammar: parsed
                 .program
@@ -338,6 +392,8 @@ struct Emitter<'p> {
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
     library: crate::contracts::Ledger,
+    /// ADR-033: whether two statements that meet on nothing may overlap.
+    ordering: Ordering,
     /// What the program's `impl` blocks declare, which is what makes the fold
     /// adapter of D2 a lookup rather than a guess.
     methods: HashMap<(Symbol, Symbol), Method>,
@@ -391,9 +447,14 @@ enum Propagate {
 }
 
 impl<'p> Emitter<'p> {
-    fn new(parsed: &'p Parsed, profile: Profile, provenance: crate::contracts::Provenance) -> Self {
+    fn new(
+        parsed: &'p Parsed,
+        profile: Profile,
+        provenance: crate::contracts::Provenance,
+        ordering: Ordering,
+    ) -> Self {
         let own = crate::contracts::Ledger::infer(parsed);
-        Self::with_contracts(parsed, profile, provenance, own)
+        Self::with_contracts(parsed, profile, provenance, own, ordering)
     }
 
     /// The same, against contracts that already exist - a program's rather than
@@ -403,6 +464,7 @@ impl<'p> Emitter<'p> {
         profile: Profile,
         provenance: crate::contracts::Provenance,
         own_contracts: crate::contracts::Ledger,
+        ordering: Ordering,
     ) -> Self {
         let mut grammars = HashMap::new();
         let mut structs = HashSet::new();
@@ -476,6 +538,7 @@ impl<'p> Emitter<'p> {
             fallible_loops: crate::check::fallible_loops_against(parsed, &own_contracts),
             own_contracts,
             library: std_ledger(),
+            ordering,
         }
     }
 
@@ -846,7 +909,19 @@ impl<'p> Emitter<'p> {
 
         out.push("{\n");
         let last = body.stmts.len().saturating_sub(1);
-        for (i, stmt) in body.stmts.iter().enumerate() {
+        let mut i = 0;
+        while i < body.stmts.len() {
+            // The same pairing as in `block_opening_with`, through the same
+            // helper. A `throws` body has a loop of its own because its last
+            // statement may need wrapping in `Ok(…)`, and two loops that decide
+            // this separately would drift.
+            let tail_at = if returns_value { Some(last) } else { None };
+            if self.overlap_at(out, &body.stmts, i, tail_at, depth + 1, flow)? {
+                i += 2;
+                continue;
+            }
+
+            let stmt = &body.stmts[i];
             out.push(&inner_pad);
             // A value-returning `throws` function ends in its value; one that
             // returns nothing ends in the `Ok(())` below, so its last statement
@@ -863,6 +938,7 @@ impl<'p> Emitter<'p> {
                 Ok(())
             })?;
             out.push("\n");
+            i += 1;
         }
         if !returns_value {
             out.push(&format!("{inner_pad}Ok(())\n"));
@@ -1441,7 +1517,22 @@ impl<'p> Emitter<'p> {
             out.push("\n");
         }
         let last = block.stmts.len() - 1;
-        for (i, stmt) in block.stmts.iter().enumerate() {
+        let mut i = 0;
+        while i < block.stmts.len() {
+            // ADR-033: two statements that meet on nothing need not wait for one
+            // another. Only a *pair* today, and only where neither is the tail -
+            // a block's last statement is its value (Kap 3.1) and lowering it
+            // through a join would change what the block hands back.
+            // Neither may be the tail: a block's last statement is its value
+            // (Kap 3.1), and lowering it through a join would change what the
+            // block hands back.
+            let tail_at = if tail { Some(last) } else { None };
+            if self.overlap_at(out, &block.stmts, i, tail_at, depth + 1, flow)? {
+                i += 2;
+                continue;
+            }
+
+            let stmt = &block.stmts[i];
             out.push(&inner_pad);
             out.from(&stmt.span, |out| {
                 self.stmt(
@@ -1454,9 +1545,153 @@ impl<'p> Emitter<'p> {
                 )
             })?;
             out.push("\n");
+            i += 1;
         }
         out.push(&pad);
         out.push("}");
+        Ok(())
+    }
+
+    /// Write `stmts[i]` and `stmts[i + 1]` as one overlapped pair, where they may
+    /// be one (ADR-033).
+    ///
+    /// `Ok(false)` means nothing was written and the caller should emit
+    /// `stmts[i]` the ordinary way. The two statement loops in this file - a
+    /// block's and a `throws` body's - both go through here, because a rule
+    /// about what may be reordered that two places decide separately is a rule
+    /// that will eventually be two rules.
+    ///
+    /// `tail_at` is the index of the statement that is the block's **value**,
+    /// where there is one. Neither half of a pair may be it: a block's last
+    /// statement is what it hands back (Kap 3.1), and a join hands back a tuple.
+    fn overlap_at(
+        &self,
+        out: &mut Out,
+        stmts: &[Spanned<Stmt>],
+        i: usize,
+        tail_at: Option<usize>,
+        depth: usize,
+        flow: Flow,
+    ) -> Result<bool> {
+        if self.ordering != Ordering::Effects || i + 1 >= stmts.len() {
+            return Ok(false);
+        }
+        if tail_at.is_some_and(|tail| tail == i || tail == i + 1) {
+            return Ok(false);
+        }
+        let (earlier, later) = (&stmts[i], &stmts[i + 1]);
+        if !self.may_overlap(&earlier.node, &later.node) {
+            return Ok(false);
+        }
+
+        out.push(&"    ".repeat(depth));
+        self.overlapped(out, earlier, later, depth, flow)?;
+        out.push("\n");
+        Ok(true)
+    }
+
+    /// Whether two adjacent statements may run at the same time (ADR-033).
+    ///
+    /// Both have to be operations this compiler can account for *completely* -
+    /// `contracts::order::operation` says `None` for everything else - and their
+    /// touch sets have to meet on nothing either of them writes. A `None` on
+    /// either side is an admission of ignorance and keeps the order, which is
+    /// the same answer a real dependency gets and deliberately so (D4).
+    fn may_overlap(&self, earlier: &Stmt, later: &Stmt) -> bool {
+        let earlier = crate::contracts::order::operation(
+            self.parsed,
+            earlier,
+            &self.own_contracts,
+            &self.library,
+        );
+        let later = crate::contracts::order::operation(
+            self.parsed,
+            later,
+            &self.own_contracts,
+            &self.library,
+        );
+        match (earlier, later) {
+            (Some(earlier), Some(later)) => crate::contracts::order::may_overlap(&earlier, &later),
+            _ => false,
+        }
+    }
+
+    /// Two `let`s, lowered to run at the same time and be collected together.
+    ///
+    /// ```text
+    /// let (a, b) = std::thread::scope(|scope| {
+    ///     let first  = scope.spawn(|| … );
+    ///     let second = scope.spawn(|| … );
+    ///     (first.join()…, second.join()…)
+    /// });
+    /// ```
+    ///
+    /// `std::thread::scope` and nothing else: `std`'s I/O is blocking Rust
+    /// (`std::fs::read` behind `fs::read`), so overlapping it means threads, and
+    /// a scoped one is the join that needs no runtime and no dependency.
+    ///
+    /// A panic inside either is **resumed** rather than unwrapped, so a program
+    /// that would have panicked still panics with its own message and its own
+    /// payload. Turning somebody's panic into `called Result::unwrap on an Err`
+    /// would be this lowering putting its own words in the program's mouth.
+    fn overlapped(
+        &self,
+        out: &mut Out,
+        earlier: &Spanned<Stmt>,
+        later: &Spanned<Stmt>,
+        depth: usize,
+        flow: Flow,
+    ) -> Result<()> {
+        let (
+            Stmt::Let {
+                name: first_name,
+                mutable: first_mut,
+                value: first_value,
+                ..
+            },
+            Stmt::Let {
+                name: second_name,
+                mutable: second_mut,
+                value: second_value,
+                ..
+            },
+        ) = (&earlier.node, &later.node)
+        else {
+            unreachable!("`may_overlap` accepts only two `let`s");
+        };
+
+        let pad = "    ".repeat(depth);
+        let inner = "    ".repeat(depth + 1);
+        let bind = |mutable: &bool, name: Symbol| {
+            format!("{}{}", if *mutable { "mut " } else { "" }, self.text(name))
+        };
+
+        out.push(&format!(
+            "// ADR-033: these two meet on nothing, so neither waits for the other.\n{pad}"
+        ));
+        out.push(&format!(
+            "let ({}, {}) = std::thread::scope(|scope| {{\n{inner}",
+            bind(first_mut, *first_name),
+            bind(second_mut, *second_name),
+        ));
+
+        out.push("let first = scope.spawn(|| ");
+        out.from(&earlier.span, |out| {
+            self.expr(out, first_value, depth + 1, flow)
+        })?;
+        out.push(&format!(");\n{inner}"));
+
+        out.push("let second = scope.spawn(|| ");
+        out.from(&later.span, |out| {
+            self.expr(out, second_value, depth + 1, flow)
+        })?;
+        out.push(&format!(");\n{inner}"));
+
+        out.push("(first.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)),\n");
+        out.push(&format!(
+            "{inner} second.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))\n{pad}"
+        ));
+        out.push("});");
         Ok(())
     }
 
