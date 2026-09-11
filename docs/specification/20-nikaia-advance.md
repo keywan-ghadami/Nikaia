@@ -33,8 +33,11 @@ grammar Json {
 
     rule pair -> Pair = key:string ":" => val:value -> { Pair { key, val } }
 
-    // Lexical rule (uppercase): no whitespace inside a hex byte.
-    rule HEX -> u8 = d:hex_digit{2} -> { u8::from_str_radix(d, 16)? }
+    // Lexical rule (uppercase): no whitespace inside a hex byte. Two hex digits
+    // always fit in a `u8`, so this action cannot fail; where one can, what its
+    // failure means is decided by the commit point above it
+    // ([ADR-023](adr/adr-023.md) D9).
+    rule HEX -> u8 = d:hex_digit{2} -> { hex_byte(d) }
 }
 ```
 

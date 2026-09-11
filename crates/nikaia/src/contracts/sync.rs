@@ -475,6 +475,7 @@ fn visit_stmt(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
             visit_expr(value, f);
         }
         Stmt::For { iter, .. } => visit_expr(iter, f),
+        Stmt::While { cond, .. } => visit_expr(cond, f),
         Stmt::Return(Some(value)) => visit_expr(value, f),
         Stmt::Return(None) => {}
         Stmt::Expr(expr) => visit_expr(expr, f),
@@ -483,7 +484,7 @@ fn visit_stmt(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
 
 fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
     match stmt {
-        Stmt::For { body, .. } => f(body),
+        Stmt::For { body, .. } | Stmt::While { body, .. } => f(body),
         Stmt::Let { value, .. } | Stmt::Expr(value) => visit_expr_blocks(value, f),
         Stmt::Assign { target, value, .. } => {
             visit_expr_blocks(target, f);
