@@ -512,10 +512,13 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             receiver,
             method,
             args,
+            config,
         } => {
             walk(parsed, receiver, out);
-            for arg in args {
-                walk(parsed, arg, out);
+            // Kap 5.1's options are values like any other, and a call this
+            // walk did not reach into is a call whose names it does not know.
+            for value in args.iter().chain(config.iter().map(|option| &option.value)) {
+                walk(parsed, value, out);
             }
             out.methods.push(parsed.text(*method).to_string());
         }
