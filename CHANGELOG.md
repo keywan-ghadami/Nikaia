@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Built (0.0.9 - ADR-005 D8: the ledger's byte-determinism is checked, not asserted)
+
+- **`nikaia.contracts` is now compared across two processes**, for every example the bootstrap compiler can lower (10 of 11), at one thread and at four. D8 has said since it was written that the ledger is a pure function of (source tree, toolchain) byte for byte, and that the enforcement is "build twice and compare" - and nothing did.
+- **Two processes is the load-bearing half, and the reason is worth keeping.** A hash map's iteration order is stable *within* a process and randomised *between* them, because the SipHash seed is per-process. So a same-process double run passes over D8's first banned item - the one that is easiest to write by accident and hardest to see in review. Verified by injecting an eight-key `HashMap` iteration into the ledger's renderer: the test fails on it and goes green again when it is removed.
+- **Not built: the second operating system.** D8 also asks for the comparison on two, which would catch the `readdir`-order and locale rows rather than the hash-map one. It costs a second CI matrix leg and is not wired up.
+
 ### Built (0.0.9 - ADR-037 D5 and ADR-033 D8: the switches live in the manifest)
 
 - **`nikaia.toml` carries the build switches, and a flag overrides them for one build.** `[build] target`, `[build] user-parallelism` and `[build] ordering` were specified and unread - the choice lived only on the command line, which makes a project's setting something every invocation has to remember. They are properties of a project, and a committed value is one a reviewer sees. `--target`, `--user-parallelism` and `--ordering` override for a single build, which is what a benchmark and a bug hunt need.
