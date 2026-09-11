@@ -45,6 +45,12 @@ which is what a benchmark and a bug hunt need, while the committed value is the
 one a reviewer sees (ADR-037 D5). A key `[build]` does not know is a typo and
 fails the build rather than being ignored.
 
+**What is *not* here is as much the point.** The manifest carries what the
+**compiler** must know. How the program behaves on the machine it runs on — how
+many I/O workers, how large the pool for user code, which I/O mechanism, how
+long shutdown drains — is 13.3b's file, read at startup by whoever runs the
+program ([ADR-038](adr/adr-038.md) D5).
+
 ```toml
 [package]
 name = "hyper-core"
@@ -66,14 +72,10 @@ target = "x86_64-linux"
 # and changes nothing your program prints.
 user-parallelism = "no"
 
-# How long the runtime waits at program end for pending resource cleanups
-# (flushes, rollbacks, connection shutdowns — see Part I, 6.4 and ADR-006).
-# Generous default: "30s". On expiry, remaining cleanups are cancelled
-# (their synchronous fallback runs) and the program exits with a warning
-# naming every resource that did not finish cleanly. "0" disables draining.
-# This deadline cannot hang: the timer runs in the runtime itself, and
-# cancelling a cleanup always terminates (the fallback cannot pause).
-cleanup-deadline = "30s"
+# `cleanup-deadline` was here and has moved to the runtime configuration
+# file (13.3b, ADR-038 D5): how long a program waits at exit is a property of
+# the machine it runs on, and a build-time key cannot be tuned by the operator.
+# A manifest that still carries it compiles, and says where it went.
 
 # How strictly the written order of two operations is taken (ADR-033, Part I 8.1.1).
 #   "effects" (default) - two operations that touch disjoint resources may
@@ -104,6 +106,63 @@ opt-level = "z"     # Optimize for binary size
 opt-level = 3       # Maximize throughput
 lto = true          # Link Time Optimization
 ```
+
+### 13.3b. Runtime Configuration (`nikaia-runtime.toml`)
+A compiled program is tuned by the person running it, who is not the person who
+compiled it. Four settings, read when the program starts
+([ADR-038](adr/adr-038.md) D5):
+
+```toml
+# How many I/O threads the runtime runs. One always does, and it is the
+# compiler's thread rather than yours: what runs on it is `std`'s own code, so
+# it exists at `user-parallelism = "no"` too (ADR-037 D2, ADR-038 D4).
+# More than one is what lets a pair of operations overlap on a machine with no
+# completion queue.
+io-workers = 1
+
+# How large the pool for code *you* wrote is, at `user-parallelism = "yes"`.
+# "0" means as many as the machine has, which is not the same as a count
+# somebody typed. Read at both settings and used at one, because a
+# configuration file that silently drops a key you wrote is worse than one that
+# reads a key it will not use.
+user-pool = 0
+
+# Which mechanism serves a file (ADR-038 D3).
+#   "auto"     (default) - the kernel completes it where this machine can, and
+#                          the blocking path where it cannot. Decided when the
+#                          program starts, never when it was compiled: a binary
+#                          built on a machine with io_uring runs on one without.
+#   "uring"              - pinned to completion. A machine without it is a
+#                          refusal to start, not a silent fallback - the point
+#                          of pinning is to find out.
+#   "blocking"           - pinned to the blocking path, whatever the machine has.
+io-method = "auto"
+
+# How long the runtime waits at program end for pending resource cleanups
+# (flushes, rollbacks, connection shutdowns — see Part I, 6.4 and ADR-006 D5).
+# Generous default: "30s". On expiry, remaining cleanups are cancelled (their
+# synchronous fallback runs) and the program exits with a warning naming every
+# resource that did not finish cleanly. "0" disables draining. This deadline
+# cannot hang: the timer runs in the runtime itself, and cancelling a cleanup
+# always terminates (the fallback cannot pause).
+cleanup-deadline = "30s"
+```
+
+Four keys and no fifth. A key outside them is a typo and fails, the same rule
+`[build]` follows. The file is read from the working directory, and
+`NIKAIA_RUNTIME_CONFIG` names one outright — for one binary in several
+deployments. No file at all is the defaults above.
+
+A build switch is **not** an operating property and does not belong here:
+`target` and `user-parallelism` change what the program *means* and stay in
+`nikaia.toml` (ADR-037 D5).
+
+> **Status:** built, and its four settings reach the runtime. What reads them is
+> `nikaia_std::rt`; `cleanup-deadline` bounds the drain of pending I/O, and the
+> parked-cleanup queue [ADR-006](adr/adr-006.md) D3 describes does not exist
+> yet, because `Cleanup` does not. **The file's name and search path are not
+> decided by an ADR** — D5 names the four settings and says "read at startup",
+> and this spelling is the implementation's choice until a record makes it.
 
 ### 13.4. Build Scripts (`build.nika`)
 If a project requires custom build steps (e.g., compiling C-code or generating proto-files), you can place a `build.nika` file in the root. This script is compiled and executed **before** the main build.
@@ -518,6 +577,16 @@ What must **not** happen is what a scanner that reports its error afterwards doe
 It is `std::fs`'s shape minus what a stream cannot keep, and the same "looks blocking, is not"
 applies: no `async` on the signature, no `await` at the call. On a single-threaded runtime the event loop runs
 another task while the pipe is empty; with threads the read may resume on a different one.
+
+> **Status:** the runtime underneath exists and standard input is not on it yet.
+> [ADR-038](adr/adr-038.md) D3's mechanism serves **files** — `fs::read`,
+> `fs::read_to_string` and `fs::write` are completed by the kernel where the
+> machine can, and by the runtime's I/O thread where it cannot. `io::lines` and
+> the two whole-stream reads here are still an ordinary blocking read on the
+> calling thread: a pipe is neither a file nor a socket, and which half of D3
+> it belongs to is not decided. What the surface says is unaffected, which is
+> the point of the surface.
+
 What *is* visible is the rule that matters — **a `sync` function cannot call it** (Part II, 12.1),
 which is what keeps a `par_iter` body from waiting on a pipe.
 
@@ -691,6 +760,30 @@ pub fn write(path: Path, data: &[u8]; append: bool = false, create: bool = true)
 since Part I 5.1's `;` section parses — and `map`. `open`/`File` and the directory functions are
 not here yet; `lines` and `bytes` are gone for a reason of their own, below.
 
+> **Status of "the runtime's reactor" above.** It exists, and this is what it
+> is ([ADR-038](adr/adr-038.md) D3, D4).
+>
+> * `read`, `read_to_string` and `write` go through it. Where the machine has a
+>   completion queue the **kernel performs the read** and reports when it is
+>   done; where it does not — an older kernel, a sandbox that forbids the
+>   syscalls — the runtime's own I/O thread performs it. Which one is decided
+>   **when the program starts**, never when it was compiled, and an operator may
+>   pin it (13.3b).
+> * It is **running before your first statement**, so an operation costs no
+>   thread start and no thread wake-up. That is measured rather than claimed:
+>   a pair of reads put in flight together costs **nothing per pair** on the
+>   completion path, against the ~46 µs a thread vehicle costs
+>   ([ADR-033](adr/adr-033.md) §8.4, ADR-038 §4.3).
+> * `map` is **not** on it, and will not be: it hands back pages the operating
+>   system owns, and there is no transfer for a completion queue to report.
+> * What is **not** built is the state machine this paragraph describes. Stage 0
+>   emits a direct call, and the call blocks the calling thread while the kernel
+>   works — so the program's meaning is what this section says, and its
+>   concurrency is not yet. Two operations that meet on nothing *can* be put in
+>   flight together, and the compiler does not yet lower a statement pair onto
+>   that: at `user_parallelism = no`, `ordering = "effects"` still degrades to
+>   `strict` ([ADR-033](adr/adr-033.md) §8.2b).
+
 `read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 
 **Reading a large file: `map`, and the grammar**
@@ -818,13 +911,29 @@ Some modules are only available, or behave restrictively, depending on the machi
         * **Strict Implicit Move:** To ensure thread safety without complex lifetime tracking, Nikaia enforces **Implicit Move Semantics** for all tasks spawned this way. Ownership of variables used inside the `spawn` block is automatically transferred to the new thread.
     * **At `user_parallelism = no`, and on `wasm32-*` whatever it says:** Direct usage of `std::thread` is a **compile-time error**. A share-nothing architecture is what makes `user_parallelism = no` mean something, and what keeps a program compatible with WASM hosts.
 
+> **Status:** the thread count this switch decides is built
+> ([ADR-038](adr/adr-038.md) D4, §4.1): at `no` the runtime starts its I/O
+> workers and nothing else, so there is no vehicle for anything **you** wrote
+> to run on; at `yes` a pool for user code starts with it, sized by
+> `user-pool` (13.3b). `spawn` and `task::scope` themselves are not built, and
+> the refusal at `no` is `task::both` degrading rather than a diagnostic
+> ([ADR-033](adr/adr-033.md) §8.2b).
+
 **`std::db` (Universal SQL)**
 Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.
 
 * **Zero-Blocking Guarantee:** Database operations are implicitly asynchronous. They never block the Event Loop, nor the Compute Scheduler where there is one.
 * **Architecture Adapter:** The implementation switches automatically based on the compilation target:
-    * **Native Targets:** Utilizes a dedicated, hidden I/O thread (powered by `tokio-rusqlite`) to offload blocking filesystem operations.
+    * **Native Targets:** Utilizes the runtime's own dedicated I/O thread to offload blocking filesystem operations.
     * **WASM Targets:** Automatically spawns a **Web Worker** and utilizes the **OPFS** (Origin Private File System). This enables native-grade, persistent SQL performance in the browser without freezing the UI thread.
+
+> **Status:** not built. The I/O thread the native adapter would offload to
+> does exist ([ADR-038](adr/adr-038.md) D4): it starts before `main`, and what
+> runs on it is `std`'s own code — which is why it may exist at
+> `user_parallelism = no` at all (ADR-037 D2). Nothing of `std::db` itself
+> exists, and no record decides which SQLite binding it would be. An earlier
+> draft of this section named `tokio-rusqlite`, which is exactly the kind of
+> dependency-by-repetition [ADR-038](adr/adr-038.md) §1 was written about.
 
 ```nika
 use std::db::sqlite

@@ -12,8 +12,21 @@ memmap2 = "0.9"
 # metadata rather than guessing among the copies in the deps directory.
 winnow-grammar = { workspace = true }
 # The UTF-8 check `fs::map` owes its `&str` views is chunked across this pool.
-# The same pool the parallel piece driver uses, so a program has one.
+# The same pool the parallel piece driver uses, so a program has one - and the
+# pool ADR-038 D4 starts for user code at `user_parallelism = yes`.
 rayon = "1.10"
+# ADR-038 D3's readiness half: `epoll`/`kqueue`/IOCP and nothing else. No
+# executor, no task model, no opinion about what the program does when a socket
+# is ready - which is what keeps D1's and D3's decisions from being remade by a
+# dependency.
+polling = "3.11"
+
+# ADR-038 D3's completion half. A *target* gate and not a feature gate: the
+# bindings do not exist off Linux at all. On Linux whether the ring is used is
+# decided at **run time** (`rt::config::Method::Auto` probes the kernel), so a
+# binary built on a machine with io_uring still runs on one without it.
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
 
 [build-dependencies]
 # Parts of this crate are written in Nikaia (`src/*.nika`) and compiled to Rust

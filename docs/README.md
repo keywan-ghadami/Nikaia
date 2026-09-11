@@ -55,6 +55,9 @@ is normative and nothing may depend on it to know what a program means.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps, and why ADR-004 D3's in-memory
   exit is not worth building yet.
+* [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
+  runtime that is already running, and the finding that only the completion
+  path gets ADR-033 §8.5's zero.
 * [`technical_notes.md`](technical_notes.md) — `rustc_private` internals as
   found on the pinned nightly.
 * [`toolchain_architecture.md`](toolchain_architecture.md) — how the crates in

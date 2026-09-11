@@ -34,6 +34,11 @@ pub struct Manifest {
     dependencies: BTreeMap<String, Dependency>,
     /// `[build.<target>]` - `opt-level` and `lto`, per machine (Part III 13.3).
     codegen: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    /// What this manifest carries that the compiler no longer reads, and where
+    /// it went. Printed once per build rather than returned as an error:
+    /// failing a manifest somebody already wrote to the specification would
+    /// punish them for the move ([ADR-038](../../../docs/specification/adr/adr-038.md) D5).
+    notes: Vec<String>,
     /// The directory the manifest was found in, and therefore the project root.
     /// `None` when there was no manifest at all.
     root: Option<PathBuf>,
@@ -59,11 +64,27 @@ pub enum Dependency {
 /// otherwise, and saying so beats a switch that silently stayed at its default:
 /// `user_parallelism` with an underscore is the mistake this catches.
 ///
-/// `cleanup-deadline` is here without being read. Part III 13.3 documents it
-/// and [ADR-006](../../../docs/specification/adr/adr-006.md) decides it, so a
-/// manifest that follows the specification must not be refused by a compiler
-/// that has not caught up with it yet.
+/// The list is `target` and `user-parallelism` (ADR-037 D5), `ordering`
+/// ([ADR-033](../../../docs/specification/adr/adr-033.md) D8), and the one key
+/// that has **moved out** - see [`MOVED`].
 const KNOWN: &[&str] = &["target", "user-parallelism", "ordering", "cleanup-deadline"];
+
+/// The keys the manifest still accepts and the compiler no longer reads,
+/// with where each of them went.
+///
+/// `cleanup-deadline` is [ADR-038](../../../docs/specification/adr/adr-038.md)
+/// D5's move: how long a program waits at exit for pending cleanup
+/// ([ADR-006](../../../docs/specification/adr/adr-006.md) D5) is an operating
+/// property, and a build-time key cannot be tuned by the operator - who is not
+/// the person who compiled it. It stays accepted, with a note that says where
+/// it went, because refusing it would fail a manifest written to the
+/// specification that documented it.
+const MOVED: &[(&str, &str)] = &[(
+    "cleanup-deadline",
+    "the runtime configuration file `nikaia-runtime.toml`, read when the program \
+     starts by the person running it (ADR-038 D5). How long a program waits at \
+     exit is an operating property, and the compiler no longer reads this key",
+)];
 
 /// What a `[build.<target>]` table may carry (Part III 13.3). Same rule as
 /// `[build]`: a key nothing reads is a typo, and a silently ignored `opt_level`
@@ -129,6 +150,15 @@ impl Manifest {
                     KNOWN.join(", ")
                 ));
             }
+            if let Some((_, went)) = MOVED.iter().find(|(moved, _)| *moved == key.as_str()) {
+                manifest
+                    .notes
+                    .push(format!("`{key}` in `[build]` has moved to {went}"));
+                // Not carried into `build`: a key nothing reads must not be
+                // reachable through `setting`, or a later reader would resolve
+                // it from the wrong file.
+                continue;
+            }
             // Every switch is a word, so a bare `no` (TOML's boolean) or a
             // count is the plausible mistake. Reporting the type here would
             // hide the *reason* - `Build::parse` explains why a count is not a
@@ -147,6 +177,12 @@ impl Manifest {
     /// The project root - the directory the manifest sits in.
     pub fn root(&self) -> Option<&Path> {
         self.root.as_deref()
+    }
+
+    /// What this manifest says that the compiler no longer reads, and where it
+    /// went. One line each, for a build to print once.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
     }
 
     /// `[package] name`, which becomes the Cargo package and the binary's name.
@@ -377,11 +413,34 @@ mod tests {
         assert!(format!("{error:#}").contains("rust"), "{error:#}");
     }
 
-    /// Specified, decided, and not yet read. Refusing it would make the
-    /// specification's own example manifest fail to compile.
+    /// ADR-038 D5 moved it to the runtime configuration file. It is still
+    /// accepted here - refusing it would fail a manifest written to the
+    /// specification that documented it - and the note says where it went.
     #[test]
-    fn the_cleanup_deadline_is_accepted_before_it_is_honoured() {
-        Manifest::parse("[build]\ncleanup-deadline = \"30s\"\n").expect("parses");
+    fn the_cleanup_deadline_is_accepted_and_says_where_it_went() {
+        let manifest = Manifest::parse("[build]\ncleanup-deadline = \"30s\"\n").expect("parses");
+        let note = manifest
+            .notes()
+            .first()
+            .expect("a moved key leaves a note rather than failing the build");
+        assert!(note.contains("cleanup-deadline"), "{note}");
+        assert!(note.contains("nikaia-runtime.toml"), "{note}");
+        assert!(note.contains("ADR-038 D5"), "{note}");
+
+        // …and nothing reads it from here any more, so a later reader cannot
+        // resolve it out of the wrong file.
+        assert_eq!(
+            manifest.setting("cleanup-deadline", None, "unread"),
+            "unread"
+        );
+    }
+
+    /// A manifest that says nothing about a moved key has nothing to report,
+    /// so an ordinary build prints no note at all.
+    #[test]
+    fn a_manifest_without_a_moved_key_has_nothing_to_say() {
+        let manifest = Manifest::parse("[build]\nordering = \"strict\"\n").expect("parses");
+        assert!(manifest.notes().is_empty());
     }
 
     /// A bare `no` is TOML's boolean, and the reason it is wrong belongs to the

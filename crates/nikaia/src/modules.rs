@@ -233,6 +233,7 @@ impl Program {
                 build,
                 trust.provenance,
                 &self.contracts,
+                false,
             )?;
             match &unit.module {
                 Some(module) => {
@@ -255,6 +256,9 @@ impl Program {
             build,
             trust.provenance,
             &self.contracts,
+            // The crate root, and the only place ADR-038 D4's generated
+            // `fn main` may be written.
+            true,
         )?;
         map.extend(entry.map.placed(rust.len(), 0));
         rust.push_str(&entry.rust);

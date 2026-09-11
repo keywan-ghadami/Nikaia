@@ -84,8 +84,52 @@ pub fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
 ///
 /// Fails as the file system does, and additionally when the file is not
 /// UTF-8 - the same rule `map` follows, for the same reason.
+///
+/// **The read goes through the runtime**
+/// ([ADR-038](../../../docs/specification/adr/adr-038.md) D3): the kernel
+/// completes it where the machine has a completion queue, and an I/O worker
+/// performs it where it does not. Which one is invisible from here and
+/// invisible from a `.nika` file - that is what "one `std` surface" means, and
+/// it is why the next change of mechanism is a `std` change rather than a
+/// compiler change (ADR-033 §8.4 gave the same reason for `task::both`).
 pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
-    std::fs::read_to_string(path)
+    let bytes = read(path)?;
+    // The same check `map` makes, and the same reason: a parser handed bytes
+    // that are not text would find that out one view at a time.
+    if let Err(at) = validate(&bytes) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("not UTF-8 at byte {at}"),
+        ));
+    }
+    // SAFETY: `validate` checked the whole of `bytes` as UTF-8 just above, and
+    // nothing has touched them since.
+    Ok(unsafe { String::from_utf8_unchecked(bytes) })
+}
+
+/// Two files, **both in flight at once**, answered in the order they were
+/// asked for.
+///
+/// ADR-033 §8.5's prediction, as a function: two operations that meet on
+/// nothing and do not wait for each other, with **no thread started or woken
+/// for the pair** - the cost §8.4 measured at ~46 µs for `task::both` and
+/// could not remove with any user-space vehicle.
+///
+/// It is available at `user_parallelism = no`, and that is not a loophole: the
+/// two reads are `std`'s own operations and nothing the *user* wrote runs
+/// concurrently ([ADR-037](../../../docs/specification/adr/adr-037.md) D2,
+/// [ADR-016](../../../docs/specification/adr/adr-016.md) D3). The emitter does
+/// **not** lower a statement pair onto it - at `no`, `ordering = "effects"`
+/// still degrades to `strict` (ADR-033 §8.2b), and changing that is ADR-033's
+/// decision to make rather than this one's.
+pub fn read_both(
+    a: impl AsRef<Path>,
+    b: impl AsRef<Path>,
+) -> (
+    Result<Vec<u8>, std::io::Error>,
+    Result<Vec<u8>, std::io::Error>,
+) {
+    crate::rt::io::read_both(a.as_ref(), b.as_ref())
 }
 
 /// A whole file, as bytes.
@@ -95,7 +139,7 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> 
 /// to cut a `&str` out of it. Reach for this where the bytes are the point -
 /// an image, a checksum, a format with a length prefix.
 pub fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
-    std::fs::read(path)
+    crate::rt::io::read(path.as_ref())
 }
 
 /// A whole file, written.
@@ -137,21 +181,11 @@ pub fn write(
     append: bool,
     create: bool,
 ) -> Result<(), std::io::Error> {
-    use std::io::Write;
-
-    // The common case is the one `std::fs::write` already is, and it is worth
-    // keeping on that path: one call, no handle to close.
-    if !append && create {
-        return std::fs::write(path, data);
-    }
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .append(append)
-        .truncate(!append)
-        .create(create)
-        .open(path)?;
-    file.write_all(data.as_ref())
+    // Through the runtime, like the reads (ADR-038 D3). The bytes travel as a
+    // borrowed slice and the runtime owns the copy only where the *kernel*
+    // needs one to outlive the submission - which is the completion path, and
+    // is `rt::uring`'s soundness rule rather than a convenience.
+    crate::rt::io::write(path.as_ref(), data.as_ref(), append, create)
 }
 
 /// Below this, the pool costs more than the check does.

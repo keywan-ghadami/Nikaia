@@ -297,6 +297,19 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
     project.drive(subcommand, &program_args, args.no_cache, args.locked)
 }
 
+/// What the manifest still accepts and the compiler no longer reads.
+///
+/// A note rather than a failure: [ADR-038](../../docs/specification/adr/adr-038.md)
+/// D5 moved `cleanup-deadline` to the runtime configuration file, and a
+/// manifest written to the specification that documented it must not stop
+/// compiling because of the move. The note is what makes the move discoverable
+/// instead of silent.
+fn report_moved_keys(manifest: &Manifest) {
+    for note in manifest.notes() {
+        eprintln!("note: {note}");
+    }
+}
+
 /// The single-file path, unchanged: `nikaia --input x.nika --backend …`.
 fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
     // Resolved before anything is read, so a mistyped switch - in the manifest
@@ -305,6 +318,7 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
     // emitting code for a different machine than the one named would be worse
     // than any name this switch replaced (ADR-037 D1).
     let manifest = Manifest::find(input)?;
+    report_moved_keys(&manifest);
     let settings = Settings::resolve(
         &manifest,
         args.target.as_deref(),
