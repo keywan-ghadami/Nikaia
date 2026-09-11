@@ -139,8 +139,8 @@ fn show(value: Json, indent: i32) {
     match value {
         Json::Null => { print("null") }
         Json::Bool(b) => { if b { print("true") } else { print("false") } }
-        Json::Number(n) => { print("{n}") }
-        Json::Text(raw) => { print("\"{raw}\"") }
+        Json::Number(n) => { print(f"{n}") }
+        Json::Text(raw) => { print(f"\"{raw}\"") }
 
         Json::Array(items) => {
             if items.len() == 0 {
@@ -151,28 +151,30 @@ fn show(value: Json, indent: i32) {
                 for item in items {
                     if !first { print(",\n") }
                     first = false
-                    print("{inner}")
+                    print(f"{inner}")
                     show(item, indent + 1)
                 }
-                print("\n{pad}]")
+                print(f"\n{pad}]")
             }
         }
 
-        // `{{` is a literal brace, as in any format string - the same rule
-        // `println` follows, because an interpolated string *is* one.
+        // **A brace is a brace** (ADR-035). Until every string stopped being a
+        // template, a program that writes JSON had to double every one of
+        // these - `print("{{}}")` to print `{}` - and the most ordinary thing a
+        // JSON writer does was the thing the syntax made hardest to read.
         Json::Object(fields) => {
             if fields.len() == 0 {
-                print("{{}}")
+                print("{}")
             } else {
-                print("{{\n")
+                print("{\n")
                 let mut first = true
                 for field in fields {
                     if !first { print(",\n") }
                     first = false
-                    print("{inner}\"{field.key}\": ")
+                    print(f"{inner}\"{field.key}\": ")
                     show(field.value, indent + 1)
                 }
-                print("\n{pad}}}")
+                print(f"\n{pad}}}")
             }
         }
     }
@@ -243,7 +245,7 @@ fn main() throws {
     let path = cli::args().nth(1) ?? "data.json"
 
     let text = fs::read_to_string(&path) catch {
-        eprintln("cannot read {path}: {error}")
+        eprintln(f"cannot read {path}: {error}")
         return
     }
 
@@ -251,7 +253,7 @@ fn main() throws {
     // there could not be: a JSON document has no boundary a cutter could find
     // without parsing it, which is the shape ADR-009's frames are *not* for.
     let document = dsl Json_ from text catch {
-        eprintln("{path}: {error}")
+        eprintln(f"{path}: {error}")
         return
     }
 
@@ -259,5 +261,5 @@ fn main() throws {
 
     show(document, 0)
     println("")
-    println("longest string: {widest} characters")
+    println(f"longest string: {widest} characters")
 }

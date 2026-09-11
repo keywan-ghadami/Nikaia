@@ -61,7 +61,7 @@ The exact same grammar processes user input or network data while the program ru
 ```nika
 fn parse_input(input: String) throws ParseError {
     let data = dsl Json from input
-    println("Parsed: {data}")
+    println(f"Parsed: {data}")
 }
 ```
 
@@ -557,8 +557,8 @@ let data = [1, 2, 3]
 // 'task::scope' waits for all inner tasks before it returns.
 task::scope fn(s) {
     // Note: s.spawn is tied to the scope, unlike global spawn.
-    s.spawn fn { println("Reading: {data}") } // Safe Borrow
-    s.spawn fn { println("Reading: {data}") } // Safe Borrow
+    s.spawn fn { println(f"Reading: {data}") } // Safe Borrow
+    s.spawn fn { println(f"Reading: {data}") } // Safe Borrow
 }
 // 'data' is still valid here
 ```

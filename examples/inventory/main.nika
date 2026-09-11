@@ -44,12 +44,12 @@ fn main() throws {
     let out = cli::args().nth(2) ?? "report.html"
 
     let data = fs::map(&path) catch {
-        eprintln("cannot open {path}: {error}")
+        eprintln(f"cannot open {path}: {error}")
         return
     }
 
     let mut entries = stock::read(&data) catch {
-        eprintln("{path}: {error}")
+        eprintln(f"{path}: {error}")
         return
     }
 
@@ -60,9 +60,9 @@ fn main() throws {
     let markup = page::render(entries, total)
 
     fs::write(&out, &markup) catch {
-        eprintln("cannot write {out}: {error}")
+        eprintln(f"cannot write {out}: {error}")
         return
     }
 
-    println("{count} items, {total} in total")
+    println(f"{count} items, {total} in total")
 }

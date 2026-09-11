@@ -48,7 +48,9 @@ pub struct Row {
 // check runs through the loop's body, so nothing becomes safe by being
 // repeated.
 //
-// `{{` is a literal brace, the same rule an interpolated string follows - a
+// A template's holes need no `f`: `dsl html { … }` is already the mark that
+// says there is code in here, and ADR-035's rule is that the mark sits on the
+// construct. `{{` is a literal brace, the same rule an `f"…"` follows - a
 // template shares the syntax rather than inventing a second one.
 fn table(rows: Vec[Row]) -> String {
     return dsl html {
@@ -80,6 +82,6 @@ fn main() {
     rows.push(Row { name: "a<b & c", note: "\"quoted\"", shade: "even" })
     rows.push(Row { name: "O'Hara", note: "</td> is not a tag here", shade: "odd" })
 
-    println("{table(rows)}")
-    println("{emphasised(\"Ada\")}")
+    println(f"{table(rows)}")
+    println(f"{emphasised(\"Ada\")}")
 }

@@ -809,9 +809,9 @@ fn the_provenance_chooses_the_map() {
 fn a_pausing_call_inside_a_hole_costs_the_sync_claim() {
     let l = ledger(
         "use std::io\n\
-         pub fn hidden() -> String { return \"hello {io::read_to_string()}\" }\n\
-         pub fn plain() -> String { let who = io::read_to_string() return \"hello {who}\" }\n\
-         pub fn pure() -> String { let n = 1 return \"hello {n}\" }",
+         pub fn hidden() -> String { return f\"hello {io::read_to_string()}\" }\n\
+         pub fn plain() -> String { let who = io::read_to_string() return f\"hello {who}\" }\n\
+         pub fn pure() -> String { let n = 1 return f\"hello {n}\" }",
     );
 
     assert!(
@@ -831,7 +831,7 @@ fn a_pausing_call_inside_a_hole_costs_the_sync_claim() {
 fn a_sync_function_may_not_pause_inside_a_hole_either() {
     let found = violations(
         "use std::io\n\
-         pub fn greet() -> String sync { return \"hello {io::read_to_string()}\" }",
+         pub fn greet() -> String sync { return f\"hello {io::read_to_string()}\" }",
     );
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].caller, "greet");

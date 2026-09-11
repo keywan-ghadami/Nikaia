@@ -371,7 +371,7 @@ fn parentheses_without_a_comma_are_still_grouping() {
 #[test]
 fn an_implicit_lambda_sees_the_names_in_a_string_hole() {
     let source =
-        "fn f(xs: List) -> String {\n    return xs.map fn { \"{a.0}={a.1}\" }.join(\",\")\n}\n";
+        "fn f(xs: List) -> String {\n    return xs.map fn { f\"{a.0}={a.1}\" }.join(\",\")\n}\n";
     let emitted = emit(source, Profile::Advanced);
     assert!(emitted.contains("map(|a|"), "{emitted}");
     assert!(!emitted.contains("map(||"), "{emitted}");

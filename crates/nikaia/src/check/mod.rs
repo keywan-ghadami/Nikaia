@@ -31,9 +31,32 @@ use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, Un
 use crate::contracts::{ty, ty::Ty, FnContract, Ledger};
 use crate::parser::Parsed;
 
+/// Whether a finding stops the build.
+///
+/// Everything the checker says is an **error** but one, and that one is a
+/// migration: ADR-035 gave the interpolated string an `f`, and a string written
+/// before it looks exactly like one that meant its braces. A warning is what
+/// that deserves - it cannot be an error, because `"{ margin: 0 }"` is correct
+/// CSS and rejecting it would break the property this checker is built on (it
+/// never refuses a program that is right); and it cannot be silence, because a
+/// silent change of meaning is what Part III C.1 calls a compiler bug.
+///
+/// **It is temporary on purpose.** The variant exists for one release, with the
+/// one code that uses it, and goes when the corpus has moved (ADR-035 D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Severity {
+    /// The build stops.
+    #[default]
+    Error,
+    /// The build goes on and the programmer is told.
+    Warning,
+}
+
 /// One thing the checker is sure about.
 #[derive(Debug, Clone)]
 pub struct Finding {
+    /// Whether it stops the build.
+    pub severity: Severity,
     /// The statement it is in.
     pub span: Span,
     /// Its `NK1xxx` code, from the catalogue in Part III, C.3.
@@ -490,23 +513,22 @@ impl<'a> Checker<'a> {
             // Rust string literal, which is a view of static text. The checker
             // says what is emitted - see ADR-024 D5.
             //
-            // **Unless it has a hole in it.** `"{a} rows"` is not a literal in
-            // the emitted Rust, it is a `format!`, and a `format!` is a
-            // `String`. Two spellings in Nikaia, two types below, and the
-            // checker follows the lowering rather than the syntax.
+            // **The type comes from the syntax** (ADR-035 D3). `"…"` is a view
+            // of static text and `f"…"` is a `format!`, which is a `String` -
+            // and which one a literal is can be read off its first character
+            // rather than worked out from whether somebody happened to type a
+            // brace somewhere in it.
             Expr::LitStr(text) => {
-                // **A hole is checked like anything else.** It is Nikaia source
-                // written inside a literal, and until this walk existed it was
-                // source no analysis could see - the same mistake was caught
-                // outside a hole and silently passed inside one.
+                self.unmarked_hole(text, span);
+                Ty::view("str")
+            }
+            // **A hole is checked like anything else** (ADR-032 D3). It is
+            // Nikaia source written inside a literal, and until that walk
+            // existed it was source no analysis could see - the same mistake
+            // was caught outside a hole and silently passed inside one.
+            Expr::LitInterpolated(_) => {
                 self.holes(expr, span);
-                match crate::emit::interpolation(text) {
-                    Ok((_, holes)) if !holes.is_empty() => Ty::named("String"),
-                    Ok(_) => Ty::view("str"),
-                    // A literal the emitter will refuse. It reports that in its
-                    // own words; this one says nothing rather than guessing.
-                    Err(_) => Ty::Unknown,
-                }
+                Ty::named("String")
             }
             Expr::LitChar(_) => Ty::named("char"),
             Expr::LitBool(_) => Ty::named("bool"),
@@ -826,6 +848,95 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **The one thing this checker warns about rather than refusing** - a
+    /// plain string that was written when every string was a template
+    /// (ADR-035 D5).
+    ///
+    /// Two shapes, because the change has two halves. `"hello {name}"` used to
+    /// interpolate and is now text, and `"{{}}"` used to *be* `{}` and is now
+    /// four characters. Both change what a program prints without changing
+    /// whether it compiles, and Part III C.1 calls a silent change of meaning a
+    /// bug in this compiler.
+    ///
+    /// **Why a warning and not an error.** `"{ margin: 0 }"` is correct CSS and
+    /// `"\\d{3}"` a correct regular expression; refusing either would break the
+    /// property the whole checker rests on - that it never rejects a program
+    /// that is right. So the test is deliberately narrow: the braces have to
+    /// hold something that **parses as an expression and resolves to something
+    /// that is actually here** - a variable in scope, or a function a ledger
+    /// knows. A name nobody declared is text, and text says nothing.
+    fn unmarked_hole(&mut self, text: &str, span: &Span) {
+        if text.contains("{{") || text.contains("}}") {
+            self.warn_migration(
+                span,
+                "a doubled brace in a plain string is now two braces".to_string(),
+                format!(
+                    "`{{{{` escaped a brace while every string was a template. A plain string needs no escape: write `\"{}\"`",
+                    text.replace("{{", "{").replace("}}", "}")
+                ),
+            );
+            return;
+        }
+
+        for hole in brace_groups(text) {
+            let Ok(parsed) = crate::parser::parse_expression(&self.parsed.interner, &hole) else {
+                continue;
+            };
+            if !self.names_something_here(&parsed) {
+                continue;
+            }
+            self.warn_migration(
+                span,
+                format!("`{{{hole}}}` here is text, and used to be a hole"),
+                format!("write `f\"{text}\"` if the value was meant to appear (Part I, 2.5)"),
+            );
+            return;
+        }
+    }
+
+    fn warn_migration(&mut self, span: &Span, message: String, help: String) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Warning,
+            span: span.clone(),
+            code: "NK1111",
+            message,
+            notes: vec![
+                "every string interpolated before ADR-035; now only `f\"…\"` does".to_string(),
+            ],
+            help: Some(help),
+        });
+    }
+
+    /// Whether an expression names anything that exists here - a variable in
+    /// scope or a function some ledger has. This is what keeps the warning off
+    /// a stylesheet: `margin` is nobody's variable.
+    fn names_something_here(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(name) => {
+                let name = self.parsed.text(*name);
+                self.lookup(name).is_some() || self.resolve(name).is_some()
+            }
+            Expr::Field { base, .. } => self.names_something_here(base),
+            Expr::MethodCall { receiver, .. } => self.names_something_here(receiver),
+            Expr::Call { func, args, .. } => {
+                self.names_something_here(func) || args.iter().any(|a| self.names_something_here(a))
+            }
+            Expr::Path(segments) => {
+                let name = segments
+                    .iter()
+                    .map(|s| self.parsed.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                self.resolve(&name).is_some()
+            }
+            Expr::Binary { lhs, rhs, .. } => {
+                self.names_something_here(lhs) || self.names_something_here(rhs)
+            }
+            Expr::Unary { expr, .. } => self.names_something_here(expr),
+            _ => false,
+        }
+    }
+
     /// Every expression a literal hides, walked where it stands.
     ///
     /// The result is discarded: what a hole evaluates to is the emitter's
@@ -904,6 +1015,7 @@ impl<'a> Checker<'a> {
 
         if wanted.len() != found.len() {
             self.checked.findings.push(Finding {
+                severity: Severity::Error,
                 span: span.clone(),
                 code: "NK1101",
                 message: format!(
@@ -951,6 +1063,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             self.checked.findings.push(Finding {
+                severity: Severity::Error,
                 span: span.clone(),
                 code: "NK1102",
                 message: format!(
@@ -988,6 +1101,7 @@ impl<'a> Checker<'a> {
             other => unreachable!("no code for `{other}`"),
         };
         self.checked.findings.push(Finding {
+            severity: Severity::Error,
             span,
             code,
             message: message(&found.text(), &want.text()),
@@ -1002,6 +1116,7 @@ impl<'a> Checker<'a> {
             return;
         }
         self.checked.findings.push(Finding {
+            severity: Severity::Error,
             span: span.clone(),
             code: "NK1108",
             message: format!("this is `{}`, and a condition is a `bool`", found.text()),
@@ -1030,6 +1145,7 @@ impl<'a> Checker<'a> {
         // at (ADR-025 §7).
         if bindings != 1 {
             self.checked.findings.push(Finding {
+            severity: Severity::Error,
                 span: span.clone(),
                 code: "NK2701",
                 message: format!("a `for` over `{name}` binds one name, and this binds {bindings}"),
@@ -1045,6 +1161,7 @@ impl<'a> Checker<'a> {
             return;
         }
         self.checked.findings.push(Finding {
+            severity: Severity::Error,
             span: span.clone(),
             code: "NK2701",
             message: "this function can fail because a turn of this loop can fail".to_string(),
@@ -1074,6 +1191,7 @@ impl<'a> Checker<'a> {
             return;
         }
         self.checked.findings.push(Finding {
+            severity: Severity::Error,
             span: span.clone(),
             code: "NK1110",
             message: format!("`{item}` is private to `{module}.nika`"),
@@ -1095,6 +1213,7 @@ impl<'a> Checker<'a> {
         let names: Vec<&str> = signature.config.iter().map(|c| c.name.as_str()).collect();
         let near = nearest(name, &names);
         self.checked.findings.push(Finding {
+            severity: Severity::Error,
             span: span.clone(),
             code: "NK1109",
             message: format!("`{key}` has no option `{name}`"),
@@ -1116,6 +1235,7 @@ impl<'a> Checker<'a> {
         let names: Vec<&str> = declared.iter().map(|(f, _)| f.as_str()).collect();
         let near = nearest(field, &names);
         self.checked.findings.push(Finding {
+            severity: Severity::Error,
             span: span.clone(),
             code: "NK1107",
             message: format!("`{ty}` has no field `{field}`"),
@@ -1477,4 +1597,41 @@ fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Every `{…}` group in a string, by the text between the braces.
+///
+/// An escape is skipped whole, so the `{` of a `\u{0041}` does not start one -
+/// the same rule the emitter's `interpolation` follows, and for the same
+/// reason: a string keeps its escapes as written, so a scanner that does not
+/// know that reads `"\u{0041}"` as a hole named `0041`.
+fn brace_groups(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                if chars.next() == Some('u') && chars.peek() == Some(&'{') {
+                    for c in chars.by_ref() {
+                        if c == '}' {
+                            break;
+                        }
+                    }
+                }
+            }
+            '{' => {
+                let mut group = String::new();
+                for c in chars.by_ref() {
+                    if c == '}' {
+                        found.push(group);
+                        break;
+                    }
+                    group.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+    found.retain(|g| !g.trim().is_empty());
+    found
 }

@@ -88,7 +88,7 @@ fn a_program_of_two_files_compiles_and_runs() {
                 "use utils\n\
                  \n\
                  fn main() {\n\
-                 \x20   println(\"{utils::double(21)} {utils::answer()}\")\n\
+                 \x20   println(f\"{utils::double(21)} {utils::answer()}\")\n\
                  }\n",
             ),
         ],
@@ -159,7 +159,7 @@ fn a_private_item_cannot_be_reached_from_another_file() {
                 "use utils\n\
                  \n\
                  fn main() {\n\
-                 \x20   println(\"{utils::secret()}\")\n\
+                 \x20   println(f\"{utils::secret()}\")\n\
                  }\n",
             ),
         ],
@@ -226,7 +226,7 @@ fn the_ledger_of_a_program_is_deterministic() {
             ("b.nika", "pub fn two() -> i32 { return 2 }\n"),
             (
                 "main.nika",
-                "use b\nuse a\n\nfn main() { println(\"{a::one()}{b::two()}\") }\n",
+                "use b\nuse a\n\nfn main() { println(f\"{a::one()}{b::two()}\") }\n",
             ),
         ],
     );
@@ -259,7 +259,7 @@ fn two_modules_may_import_each_other() {
             ),
             (
                 "main.nika",
-                "use a\nuse b\n\nfn main() { println(\"{b::two()}\") }\n",
+                "use a\nuse b\n\nfn main() { println(f\"{b::two()}\") }\n",
             ),
         ],
     );

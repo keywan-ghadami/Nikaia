@@ -59,6 +59,13 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Privacy*: `pub` becomes `pub`, so Part I 9.2 is enforced by the language below; `NK1110` says it in Nikaia's words first. Two bugs one file could not show are fixed with it - the emitter made every struct field public, and `pub` on a field did not parse.
     *   *Open*: nested module paths (refused with a sentence rather than guessed at), a grammar across a module boundary, and per-module incremental compilation - ADR-021 D6's unit is now the program (ADR-030 §7).
 
+*   [x] **`f"…"` interpolates, `"…"` is text** ([ADR-035](specification/adr/adr-035.md)): the mark sits on the literal that holds code, and three quarters of all string literals became inert.
+    *   *What it cost before*: `examples/json.nika` wrote `print("{{}}")` to print `{}`; `1brc.nika` ended on `println("{{{body}}}")`. Measured: 212 literals, **56** with a hole, **154** plain - the plain ones paid for a feature they did not use.
+    *   *The root cause*: the distinction already existed in the emitter, in the type (ADR-024 D5) and, since ADR-032, in every analysis - decided three times by scanning text, and invisible to the person writing the string. The mark belongs on the construct, which `dsl html`, a grammar and a `spawn` already knew.
+    *   *The type follows the syntax* (D3), retiring ADR-032 D5: adding a brace to a message can no longer change its type.
+    *   *The break is a warning and not forever* (D5): `NK1111`, the first thing this checker warns about rather than refuses, narrow enough that `"{ margin: 0 }"` stays silent. Out one release from now.
+    *   *Open*: `NK1111` and `Severity::Warning` come out in the next release; holes are still parsed in the emitter rather than living in the AST (ADR-032 §3), which the `f` makes smaller rather than settles.
+
 *   [x] **A hole is code, and every analysis sees it** ([ADR-032](specification/adr/adr-032.md)): the expression inside `"{…}"` and inside a `dsl html` template is walked by the type checker and by the `sync` analysis, like the same expression written on a line of its own.
     *   *The bug*: a hole is parsed in the **emitter**, so "parsed" and "analysed" had come apart for one construct - `let n = add(1)` was `NK1101` and `println("{add(1)}")` was silence, and ADR-017's templates inherited the same blindness two ADRs later.
     *   *Why it was more than a missed diagnostic*: `sync` is inferred from what a body calls, so `pub fn greet() -> String { return "hello {io::read_to_string()}" }` was recorded `sync = "inferred"` - a false claim in a shipped ledger, in the direction ADR-027 D2 and ADR-010 D1 both call a vulnerability generator.

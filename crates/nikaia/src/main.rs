@@ -108,15 +108,26 @@ fn check(
 ) -> Result<()> {
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
 
-    let findings = check::check_program(parsed, own, &library, modules).findings;
+    let all = check::check_program(parsed, own, &library, modules).findings;
     let violations = sync::check(parsed, own, &library);
-    if findings.is_empty() && violations.is_empty() {
+    if all.is_empty() && violations.is_empty() {
         return Ok(());
     }
 
+    // A warning is printed and does not stop anything. There is one, and it is
+    // a migration (ADR-035 D5): a string written before `f"…"` existed looks
+    // exactly like one that meant its braces, and neither refusing it nor
+    // saying nothing would be right.
     let path = path.display().to_string();
-    for finding in &findings {
+    for finding in &all {
         eprint!("{}", diagnostics::render_finding(finding, &path, source));
+    }
+    let findings: Vec<&check::Finding> = all
+        .iter()
+        .filter(|f| f.severity == check::Severity::Error)
+        .collect();
+    if findings.is_empty() && violations.is_empty() {
+        return Ok(());
     }
     for violation in &violations {
         eprint!(
@@ -129,7 +140,11 @@ fn check(
     // The `NK1xxx` family is types; anything else the checker reports is a rule
     // of its own and should not be summarised as one. Today that is `NK2701`,
     // a loop whose step can fail in a function that does not say so.
-    let (types, rules): (Vec<_>, Vec<_>) = findings.iter().partition(|f| f.code.starts_with("NK1"));
+    let (types, rules): (Vec<&check::Finding>, Vec<&check::Finding>) = findings
+        .iter()
+        .copied()
+        .partition(|f| f.code.starts_with("NK1"));
+
     if !types.is_empty() {
         refused.push(format!(
             "{} type error{}",

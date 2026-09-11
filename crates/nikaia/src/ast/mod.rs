@@ -194,7 +194,21 @@ pub enum Expr {
     /// `(a, b)` - Kap 4.5. Two or more values of different types, with no
     /// name for the pair and none for its parts.
     Tuple(Vec<Expr>),
+    /// `"…"` - Kap 2.5. **Inert text.** A `{` is a brace and nothing else, so
+    /// a program that writes JSON, CSS or a regular expression says what it
+    /// means. The body is kept as written, escapes and all, for the same
+    /// reason `LitChar` is.
     LitStr(String),
+    /// `f"… {expr} …"` - Kap 2.5. **Text with code in it**, and the `f` is what
+    /// says so ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+    ///
+    /// This is a separate variant rather than a flag for a reason the compiler
+    /// has already paid for once: before ADR-032 every analysis walked past a
+    /// string as if it held no code, because *whether* it did was a property of
+    /// its text and nothing made anyone look. A variant makes the question
+    /// unavoidable - every `match` on an expression has to say what it does
+    /// with this one, and the compiler names the sites that forgot.
+    LitInterpolated(String),
     /// Kap 2.2: `'a'`, `'\n'`. The body is kept **as written**, escape and
     /// all: the language below spells a character literal the same way, so the
     /// lowering is a transcription and nothing has to decode it twice.

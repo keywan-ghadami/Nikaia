@@ -227,7 +227,7 @@ fn main() throws {
     // grammar's `par_fold` uses every core, not for the mapping - and under
     // Lite the same program still runs, on one core.
     let data = fs::map(&path) catch {
-        eprintln("cannot open {path}: {error}")
+        eprintln(f"cannot open {path}: {error}")
         return
     }
 
@@ -253,11 +253,12 @@ fn main() throws {
             let s = &totals.stations[a]
             // 1BRC prints one decimal; a hole may say how it is written, after
             // the colon, as a format string does anywhere else.
-            "{a}={s.min as f64 / 10.0:.1}/{s.mean():.1}/{s.max as f64 / 10.0:.1}"
+            f"{a}={s.min as f64 / 10.0:.1}/{s.mean():.1}/{s.max as f64 / 10.0:.1}"
         }
         .join(", ")
 
-    // `{{` and `}}` are literal braces, as in any format string; 1BRC wants the
-    // whole line wrapped in one pair.
-    println("{{{body}}}")
+    // `{{` and `}}` are literal braces: this one *is* an `f"…"`, so the escape
+    // is the one a format string has always had. Only a string that
+    // interpolates pays for it now (ADR-035 D1).
+    println(f"{{{body}}}")
 }

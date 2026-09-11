@@ -98,12 +98,12 @@ fn main() throws {
     let out = cli::args().nth(2) ?? "report.html"
 
     let data = fs::map(&path) catch {
-        eprintln("cannot open {path}: {error}")
+        eprintln(f"cannot open {path}: {error}")
         return
     }
 
     let mut entries = dsl Stock from data catch {
-        eprintln("{path}: {error}")
+        eprintln(f"{path}: {error}")
         return
     }
 
@@ -124,7 +124,7 @@ fn main() throws {
     // is an ordinary failure: the page is worth nothing if it did not land, so
     // the program says so and stops rather than reporting success.
     fs::write(&out, &markup) catch {
-        eprintln("cannot write {out}: {error}")
+        eprintln(f"cannot write {out}: {error}")
         return
     }
 
@@ -133,5 +133,5 @@ fn main() throws {
     // `crates/nikaia/tests/examples.rs`, in scratch directories of their own,
     // and what a program prints has to be the same under both. The page is the
     // deliverable, and the test reads it back.
-    println("{count} items, {total} in total")
+    println(f"{count} items, {total} in total")
 }
