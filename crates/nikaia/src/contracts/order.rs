@@ -23,7 +23,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::ast::{Expr, Stmt};
+use crate::ast::{Expr, Item, Stmt};
 use crate::parser::Parsed;
 
 use super::touch::Reached;
@@ -58,16 +58,65 @@ pub fn operation(
     own: &Ledger,
     library: &Ledger,
 ) -> Option<Operation> {
+    match accounted(parsed, stmt, own, library) {
+        Accounted::Operation(operation) => Some(operation),
+        _ => None,
+    }
+}
+
+/// A statement, reduced - or the reason it could not be.
+///
+/// The reason is the whole point (ADR-033 D9). Nikaia has no `allow_parallel`,
+/// so the only thing standing between a refusal and a mystery is the compiler
+/// being able to say which refusal it was.
+#[derive(Debug, Clone)]
+pub enum Accounted {
+    Operation(Operation),
+    /// Not a `let` whose value is one plain call.
+    NotAPlainCall,
+    /// Its `catch` handler can leave the function, so the statement after it is
+    /// conditional on this one having succeeded (ADR-034).
+    DivertingHandler,
+    /// Nothing describes what the call reaches, so it reaches everything (D4).
+    NoTouches(String),
+    /// An argument that is not a literal, which the first increment will not
+    /// send to another thread.
+    NonLiteralArgument(String),
+}
+
+impl Accounted {
+    /// One line, for a report a person reads - and, where there is one, the way
+    /// out. A refusal a reader can act on is worth several they cannot.
+    pub fn why(&self) -> String {
+        match self {
+            Accounted::Operation(_) => "it is an operation".to_string(),
+            Accounted::NotAPlainCall => "one of them is not a `let` of a single call".to_string(),
+            Accounted::DivertingHandler => {
+                "its `catch` can leave the function, so the next statement might never have run \
+                 - write the handler so it hands back a value instead, and check afterwards"
+                    .to_string()
+            }
+            Accounted::NoTouches(name) => {
+                format!("nothing says what `{name}` reaches, so it reaches everything")
+            }
+            Accounted::NonLiteralArgument(name) => {
+                format!("`{name}` is given an argument that is not a literal")
+            }
+        }
+    }
+}
+
+fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Accounted {
     let Stmt::Let {
         name, value, ty, ..
     } = stmt
     else {
-        return None;
+        return Accounted::NotAPlainCall;
     };
     // A written type would have to be carried onto one element of a tuple
     // pattern. Nothing needs it yet.
     if ty.is_some() {
-        return None;
+        return Accounted::NotAPlainCall;
     }
 
     // A real program writes `fs::read_to_string(p) catch { … }`, so the call is
@@ -82,17 +131,17 @@ pub fn operation(
     // thing building this found, and it is recorded in ADR-034.
     let value = match value {
         Expr::TryCatch { expr, handler } if !diverts(&handler.stmts) => &**expr,
-        Expr::TryCatch { .. } => return None,
+        Expr::TryCatch { .. } => return Accounted::DivertingHandler,
         other => other,
     };
 
     let Expr::Call { func, args, config } = value else {
-        return None;
+        return Accounted::NotAPlainCall;
     };
     // Kap 5.1's options are values like any other and would have to be walked
     // for dependencies. They are not, so a call that uses them is refused.
     if !config.is_empty() {
-        return None;
+        return Accounted::NotAPlainCall;
     }
 
     let callee = match &**func {
@@ -102,19 +151,24 @@ pub fn operation(
             .map(|s| parsed.text(*s))
             .collect::<Vec<_>>()
             .join("::"),
-        _ => return None,
+        _ => return Accounted::NotAPlainCall,
     };
 
     // The contract has to be found *and* has to describe its effects. An entry
     // without `touches` is the absence of an answer (ADR-033 D4).
-    let (key, contract) = own
+    let Some((key, contract)) = own
         .lookup(&callee)
         .or_else(|| library.lookup(&callee))
-        .filter(|(_, contract)| contract.touches_known)?;
+        .filter(|(_, contract)| contract.touches_known)
+    else {
+        return Accounted::NoTouches(callee);
+    };
 
     // Which argument goes with which parameter, so that `file(path)` can be
     // turned into "the file named by this call's first argument".
-    let signature = contract.signature.as_ref()?;
+    let Some(signature) = contract.signature.as_ref() else {
+        return Accounted::NoTouches(key);
+    };
     let parameters: Vec<&str> = signature
         .arguments()
         .iter()
@@ -148,7 +202,7 @@ pub fn operation(
     // cheapest possible answer to a question - what may be sent - that deserves
     // its own decision rather than an implicit one here.
     if !args.iter().all(is_literal) {
-        return None;
+        return Accounted::NonLiteralArgument(key);
     }
 
     let mut mentions = BTreeSet::new();
@@ -156,7 +210,7 @@ pub fn operation(
         names_in(parsed, arg, &mut mentions);
     }
 
-    Some(Operation {
+    Accounted::Operation(Operation {
         binds: Some(parsed.text(*name).to_string()),
         mentions,
         reaches,
@@ -164,27 +218,99 @@ pub fn operation(
     })
 }
 
-/// Whether `later` may run at the same time as `earlier`.
+/// Why two statements keep the order they were written in - or that they need
+/// not (ADR-033 D9).
+///
+/// The analysis knew every one of these and threw all but the boolean away. It
+/// is kept because the decision *not* to give the language a word for "run
+/// these together anyway" is only defensible if the compiler can say what it
+/// refused and why: a silent refusal with no way to ask is the trap the
+/// keyword would have been an escape from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    /// They meet on nothing and neither waits for the other.
+    Overlap,
+    /// `later` uses what `earlier` bound.
+    DataDependency(String),
+    /// Both bind the same name, so the order decides which value survives.
+    Shadowed(String),
+    /// Their touch sets meet on something one of them writes.
+    SameResource { kind: String, named: Option<String> },
+    /// One of them is not a statement this analysis can account for at all -
+    /// a call it cannot resolve, a handler that can leave the function, an
+    /// argument that is not a literal. An admission of ignorance, and it keeps
+    /// the order for the same reason a real dependency does (D4).
+    NotAccountedFor,
+}
+
+impl Verdict {
+    pub fn is_overlap(&self) -> bool {
+        matches!(self, Verdict::Overlap)
+    }
+
+    /// One line, for a report a person reads.
+    pub fn why(&self) -> String {
+        match self {
+            Verdict::Overlap => "they meet on nothing".to_string(),
+            Verdict::DataDependency(name) => format!("the second uses `{name}`"),
+            Verdict::Shadowed(name) => format!("both bind `{name}`"),
+            Verdict::SameResource {
+                kind,
+                named: Some(named),
+            } => {
+                format!("both reach {kind} `{named}`, and one writes it")
+            }
+            Verdict::SameResource { kind, named: None } => {
+                format!("both reach a {kind} this compiler cannot name, and one writes it")
+            }
+            Verdict::NotAccountedFor => {
+                "one of them is not something this compiler can account for".to_string()
+            }
+        }
+    }
+}
+
+/// Whether `later` may run at the same time as `earlier`, and why not.
 ///
 /// Both halves of the rule, in the order they are cheapest to refuse:
 /// a **data** dependency - `later` uses what `earlier` bound - and an **effect**
 /// dependency, where their touch sets meet on something one of them writes.
-pub fn may_overlap(earlier: &Operation, later: &Operation) -> bool {
+pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
     if let Some(bound) = &earlier.binds {
         if later.mentions.contains(bound) {
-            return false;
+            return Verdict::DataDependency(bound.clone());
         }
     }
     // Two `let`s of the same name would make the order decide which value
     // survives. The parser allows shadowing, so this is reachable.
     if earlier.binds.is_some() && earlier.binds == later.binds {
-        return false;
+        return Verdict::Shadowed(earlier.binds.clone().unwrap_or_default());
     }
 
-    !earlier
-        .reaches
-        .iter()
-        .any(|a| later.reaches.iter().any(|b| a.conflicts_with(b)))
+    for a in &earlier.reaches {
+        for b in &later.reaches {
+            if a.conflicts_with(b) {
+                // The one that is named is the more useful half to print; where
+                // neither is, saying so is the point.
+                let named = a
+                    .named
+                    .clone()
+                    .filter(|_| !a.unknown)
+                    .or_else(|| b.named.clone().filter(|_| !b.unknown));
+                return Verdict::SameResource {
+                    kind: a.kind.clone(),
+                    named,
+                };
+            }
+        }
+    }
+
+    Verdict::Overlap
+}
+
+/// The same question as a boolean, for a caller that only has to decide.
+pub fn may_overlap(earlier: &Operation, later: &Operation) -> bool {
+    verdict(earlier, later).is_overlap()
 }
 
 /// Whether an argument is a literal - something with no name in it at all.
@@ -295,5 +421,103 @@ fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
         // Anything with a block in it is not an [`Operation`] in the first
         // place, so a name inside one never has to be found here.
         _ => {}
+    }
+}
+
+/// Every adjacent pair in a program, and what was decided about it (ADR-033 D9).
+///
+/// The answer to "why did these two not run together", which is the question a
+/// language without an `allow_parallel` owes its user. Nothing prints it on its
+/// own: it is asked for (`--overlaps`), because a compiler that volunteered a
+/// paragraph per pair would be noise in exactly the programs that are fine.
+pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger) -> String {
+    let mut out = String::new();
+
+    for item in &parsed.program.items {
+        match &item.node {
+            Item::Fn { .. } => function_report(parsed, &item.node, None, own, library, &mut out),
+            Item::Impl {
+                target, methods, ..
+            } => {
+                let target = parsed.text(target.name).to_string();
+                for method in methods {
+                    function_report(parsed, &method.node, Some(&target), own, library, &mut out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if out.is_empty() {
+        out.push_str("no two adjacent statements in this program were compared.\n");
+    }
+    out
+}
+
+fn function_report(
+    parsed: &Parsed,
+    item: &Item,
+    target: Option<&str>,
+    own: &Ledger,
+    library: &Ledger,
+    out: &mut String,
+) {
+    let Item::Fn { name, body, .. } = item else {
+        return;
+    };
+    let own_name = match name {
+        Some(name) => parsed.text(*name).to_string(),
+        None => "new".to_string(),
+    };
+    let key = match target {
+        Some(target) => format!("{target}::{own_name}"),
+        None => own_name,
+    };
+
+    let mut lines = Vec::new();
+    for pair in body.stmts.windows(2) {
+        let earlier = accounted(parsed, &pair[0].node, own, library);
+        let later = accounted(parsed, &pair[1].node, own, library);
+
+        let (mark, what, why) = match (&earlier, &later) {
+            (Accounted::Operation(earlier), Accounted::Operation(later)) => {
+                let verdict = verdict(earlier, later);
+                let mark = if verdict.is_overlap() {
+                    "together"
+                } else {
+                    "in order"
+                };
+                (
+                    mark,
+                    format!("{} / {}", earlier.callee, later.callee),
+                    verdict.why(),
+                )
+            }
+            // One of the two could not be reduced at all, and *that* reason is
+            // the one worth printing: it is the one a reader can usually act on.
+            (
+                refused @ (Accounted::NotAPlainCall
+                | Accounted::DivertingHandler
+                | Accounted::NoTouches(_)
+                | Accounted::NonLiteralArgument(_)),
+                other,
+            )
+            | (other @ Accounted::Operation(_), refused) => {
+                let named = match other {
+                    Accounted::Operation(operation) => operation.callee.clone(),
+                    _ => "…".to_string(),
+                };
+                ("in order", named, refused.why())
+            }
+        };
+        lines.push(format!("    {mark:9} {what} - {why}"));
+    }
+
+    if !lines.is_empty() {
+        out.push_str(&format!("{key}:\n"));
+        for line in lines {
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
 }

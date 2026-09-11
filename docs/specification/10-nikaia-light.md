@@ -1031,6 +1031,22 @@ seq {
 
 That is the trade the rule is built on: the common path is the fast and safe one and costs nothing to write, and the exception costs a line and is visible where it matters.
 
+**There is no way to say "run these together anyway", and that is deliberate.** The one refusal where you might want to — a `catch` that leaves the function, which makes everything after it conditional — has a clearer form already:
+
+```nika
+// Kept in order: if the first fails, the second would never have run.
+let k = lade_kunde(id) catch { return Seite::leer() }
+let e = hole_empfehlungen()  catch { … }
+
+// Runs together, and reads better: the failure and the decision to stop are
+// two different things.
+let k = lade_kunde(id) catch { Kunde::unbekannt() }
+let e = hole_empfehlungen()  catch { Empfehlungen::leer() }
+if k.ist_unbekannt() { return Seite::leer() }
+```
+
+**When you want to know why two things did not run together, ask:** `nikaia --input x.nika --overlaps` prints every adjacent pair, which of them run together, and for the rest the reason and — where there is one — what to write instead. It changes nothing about the program; it explains a decision, the way `--trust` does for where a program's bytes came from.
+
 The whole thing can be turned off for a project with `ordering = "strict"` in `nikaia.toml` (Part III, 13.3), which restores the written order everywhere.
 
 ### 8.2. Spawning Tasks

@@ -258,3 +258,92 @@ fn the_corpus_lowers_under_both_orderings() {
         "these examples now lower differently: {overlapped:?}"
     );
 }
+
+// --- why a pair did not overlap (ADR-033 D9) ---------------------------------
+
+fn report(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let library = nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    nikaia::contracts::order::report(&parsed, &own, &library)
+}
+
+/// The refusal that the language decided **not** to give a keyword names its
+/// own way out.
+///
+/// ADR-033 D9: Nikaia has no `allow_parallel`, on the argument that the one
+/// case it would serve has a clearer spelling already. That argument only holds
+/// if the compiler says so - a silent refusal with no way to ask would be
+/// exactly the trap the keyword was supposed to be an escape from.
+#[test]
+fn a_diverting_handler_is_told_what_to_write_instead() {
+    let why = report(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { return }\n\
+             let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+             println(\"x\")\n\
+         }",
+    );
+    assert!(why.contains("can leave the function"), "{why}");
+    assert!(why.contains("hands back a value instead"), "{why}");
+}
+
+/// A resource collision names the resource.
+#[test]
+fn a_collision_names_the_file_it_is_about() {
+    let why = report(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::write(\"log.txt\", \"x\") catch { }\n\
+             let b = fs::read_to_string(\"log.txt\") catch { \"\".to_string() }\n\
+             println(\"x\")\n\
+         }",
+    );
+    assert!(why.contains("both reach file `log.txt`"), "{why}");
+    assert!(why.contains("one writes it"), "{why}");
+}
+
+/// A function nobody described says that, rather than "not accounted for".
+#[test]
+fn an_undescribed_call_is_named() {
+    let why = report(
+        "fn main() throws {\n\
+             let a = unbekannt() catch { \"\".to_string() }\n\
+             let b = auch_unbekannt() catch { \"\".to_string() }\n\
+             println(\"x\")\n\
+         }",
+    );
+    assert!(
+        why.contains("nothing says what `unbekannt` reaches"),
+        "{why}"
+    );
+}
+
+/// A pair that does overlap says so, so the report is readable as a whole and
+/// not only as a list of complaints.
+#[test]
+fn a_pair_that_overlaps_is_reported_too() {
+    let why = report(TWO_READS);
+    assert!(why.contains("together"), "{why}");
+    assert!(why.contains("they meet on nothing"), "{why}");
+}
+
+/// The rewrite the refusal recommends actually works.
+///
+/// The whole argument against `allow_parallel` is that `catch { return }`
+/// conflates two things - what to do about the failure, and whether to go on -
+/// and that separating them is clearer *and* overlaps. If the rewrite did not
+/// overlap, the advice would be wrong and the keyword would be needed.
+#[test]
+fn the_recommended_rewrite_overlaps() {
+    assert!(overlaps(
+        "use std::fs\n\
+         fn main() throws {\n\
+             let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+             if a.is_empty() { return }\n\
+             println(\"{a.len()} {b.len()}\")\n\
+         }"
+    ));
+}

@@ -80,6 +80,16 @@ pub struct Cli {
     #[arg(long)]
     pub no_cache: bool,
 
+    /// Print which adjacent statements run together and why the rest do not
+    /// (ADR-033 D9).
+    ///
+    /// Nikaia has no `allow_parallel`: the overlap is the default and the
+    /// refusals are the compiler's own. That is only fair if the refusals can
+    /// be asked about, and this is the asking. Like `--trust`, it explains a
+    /// decision rather than changing one.
+    #[arg(long)]
+    pub overlaps: bool,
+
     /// Print where this program's bytes came from and which hash its maps got
     /// (ADR-010 D7).
     ///
@@ -331,6 +341,13 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
     // built with. Provenance is a function of the source and of what `std`'s
     // ledger says about the sources it calls, and both are already in the key -
     // the compiler's fingerprint covers `std.contracts` by name (`build.rs`).
+    if args.overlaps {
+        let parsed = parser::parse_to_ast(source)?;
+        let library = Ledger::parse(STD).context("std's shipped ledger")?;
+        let own = Ledger::infer(&parsed);
+        print!("{}", contracts::order::report(&parsed, &own, &library));
+    }
+
     if args.trust {
         let parsed = parser::parse_to_ast(source)?;
         let library = Ledger::parse(STD).context("std's shipped ledger")?;
