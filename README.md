@@ -266,10 +266,10 @@ It is a permission, not a count: *how many* threads serve a `yes` is the runtime
 because the right answer belongs to the machine and not to the source file.
 
 **The word *your* is load-bearing.** It bounds your program, not the compiler: reading a file
-may still validate its text on four cores at `0`, because that is not code you wrote and it
+may still validate its text on four cores at `no`, because that is not code you wrote and it
 changes nothing your program prints.
 
-Because the difference lives in the compiler rather than in your source, a library built at `0`
+Because the difference lives in the compiler rather than in your source, a library built at `no`
 is checked against the rules parallel code needs too — you cannot accidentally ship something
 that only works single-threaded.
 
@@ -297,8 +297,8 @@ fn main() {
     println("Starting Nikaia Server on :8080")
 
     // `spawn` behaves polymorphically:
-    // - at user_parallelism = 0: green thread on the main loop
-    // - above 0:                 task on the thread pool
+    // - at user_parallelism = no:  green thread on the main loop
+    // - at user_parallelism = yes: task on the thread pool
     // Syntax: Uses 'fn' block for lambdas (no '||')
     spawn fn {
         http::Server::new()

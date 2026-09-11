@@ -794,7 +794,7 @@ Some modules are only available, or behave restrictively, depending on the machi
 * **`std::thread` / `spawn`**:
     * **At `user_parallelism = yes`:** Supports full concurrency. The primary mechanism is `spawn`.
         * **Strict Implicit Move:** To ensure thread safety without complex lifetime tracking, Nikaia enforces **Implicit Move Semantics** for all tasks spawned this way. Ownership of variables used inside the `spawn` block is automatically transferred to the new thread.
-    * **At `0`, and on `wasm32-*`:** Direct usage of `std::thread` is a **compile-time error**. A share-nothing architecture is what makes `user_parallelism = no` mean something, and what keeps a program compatible with WASM hosts.
+    * **At `user_parallelism = no`, and on `wasm32-*` whatever it says:** Direct usage of `std::thread` is a **compile-time error**. A share-nothing architecture is what makes `user_parallelism = no` mean something, and what keeps a program compatible with WASM hosts.
 
 **`std::db` (Universal SQL)**
 Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.
@@ -831,12 +831,16 @@ Errors arising from external circumstances (File not found, Network timeout).
 * **Handling:** Enforced by the compiler via `catch{}` blocks or propagation.
 
 ### A.2. Unrecoverable Errors (`panic`)
-Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). The behavior differs drastically with `user_parallelism`:
+Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). What a panic does depends on **both** switches, and on different grounds:
 
-| Setting | Panic Behavior | Consequence |
+| `user_parallelism` | Panic Behavior | Consequence |
 | :--- | :--- | :--- |
-| **`0`** | **Abort** | The entire process terminates immediately. In WebAssembly, this triggers a "Trap". There is no stack unwinding, resulting in minimal binary size. |
-| **Above `0`** | **Task Poisoning** | Only the affected Task (Green Thread) is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked as "poisoned" to prevent other threads from accessing corrupted state. |
+| **`no`** | **Abort** | The process terminates immediately. There is no second piece of your code in flight to isolate the failure from, so unwinding would buy nothing and is not done — which also leaves a smaller binary. |
+| **`yes`** | **Task Poisoning** | Only the affected task is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked "poisoned" so no other thread reads state a half-finished task left behind. |
+
+The `target` decides this independently where the machine leaves no choice: on
+`wasm32-unknown` a panic is a **trap** and the module is done, whatever
+`user_parallelism` says, because the host offers nothing to unwind to.
 
 On **every** panic path — including the abort and the WASM trap — the application's **Panic Hook** runs first (Part I, 7.2): one global, `sync` handler receiving message, location, and stack trace, intended for crash dumps and reports. This rides on the backend's panic machinery, which invokes the hook before aborting even under `panic = abort`. See [ADR-006](adr/adr-006.md), D6.
 
