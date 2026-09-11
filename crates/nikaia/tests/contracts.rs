@@ -92,25 +92,117 @@ fn a_method_call_is_resolved_through_the_receiver() {
     assert_eq!(l.functions["shouty"].sync, Sync::No);
 }
 
-/// A method that runs a lambda carries no `sync`, so a caller of one does not
-/// get the promise either.
+/// A higher-order method hands on whatever its lambda does (ADR-029).
 ///
-/// `Entry::and_modify` does whatever its lambda does. Until a ledger can say
-/// `sync = "from(f)"` (ADR-027 §7), the honest entry is one with no `sync` on
-/// it, and this is what that costs: the type resolves, and the claim still does
-/// not follow.
+/// This is the whole of `sync = "from(f)"`. `and_modify` cannot commit to one
+/// answer for every caller, because `fn { a + 1 }` and `fn { io::read()… }` are
+/// the same `and_modify` and only one of them can pause. Before this it had to
+/// commit, and the honest commitment was the pessimistic one - so nothing
+/// containing a `map`, a `filter` or an `and_modify` could be `sync`, whatever
+/// its lambda did, and nothing containing one could go inside `access`.
 #[test]
-fn a_higher_order_method_does_not_hand_on_a_promise() {
+fn a_higher_order_method_hands_on_what_its_lambda_does() {
     let l = ledger(
         "use std::collections::HashMap\n\
-         fn bump(m: HashMap[&str, i64]) { m.entry(\"x\").or_insert(0) }\n\
-         fn tweak(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }",
+         use std::io\n\
+         fn pure(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }\n\
+         fn pausing(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { io::read() catch { } } }",
     );
 
-    // `entry` and `or_insert` are both plain computation.
-    assert_eq!(l.functions["bump"].sync, Sync::Inferred);
-    // `and_modify` runs what it is given, and says so by saying nothing.
-    assert_eq!(l.functions["tweak"].sync, Sync::No);
+    assert_eq!(l.functions["pure"].sync, Sync::Inferred);
+    assert_eq!(l.functions["pausing"].sync, Sync::No);
+}
+
+/// … and the check agrees, on a function that wrote `sync` by hand.
+///
+/// The two analyses read the same contract, so a `map` over a pure lambda is
+/// not a violation and a `map` over a pausing one still is. The second half is
+/// the one that matters: `from(f)` must not become a way to smuggle I/O into a
+/// lock.
+#[test]
+fn from_does_not_let_io_into_a_sync_function() {
+    let clean =
+        violations("fn scale(xs: Vec[i64]) -> i64 sync { xs.sort_by_key fn { a } return 1 }");
+    assert!(clean.is_empty(), "{clean:?}");
+
+    let dirty = violations(
+        "use std::io\n\
+         fn scale(xs: Vec[i64]) -> i64 sync { xs.sort_by_key fn { io::read() catch { } } return 1 }",
+    );
+    assert_eq!(dirty.len(), 1, "{dirty:?}");
+    assert_eq!(dirty[0].callee, "io::read");
+}
+
+/// The crossover, in the smallest program that shows it.
+///
+/// A helper nobody annotated uses an iterator method over a pure lambda, and a
+/// `sync` function calls it. Before `from(f)`, `sort_by_key` had to be recorded
+/// as able to pause - it cannot say "it depends" - so the helper could not be
+/// `sync`, and the call was reported:
+///
+/// ```text
+/// error[NK2202]: `im_lock` is `sync`, and `ordne` can pause
+/// ```
+///
+/// That was a **correct program being rejected**, which is the one thing the
+/// compiler is not allowed to do. Nothing about the helper could pause; the
+/// ledger simply had no way to say so.
+#[test]
+fn a_helper_that_uses_an_iterator_method_may_be_called_from_a_lock() {
+    let source = "fn ordne(xs: Vec[i64]) -> i64 { xs.sort_by_key fn { a } return 1 }\n\
+                  fn im_lock(xs: Vec[i64]) -> i64 sync { return ordne(xs) }";
+
+    assert_eq!(ledger(source).functions["ordne"].sync, Sync::Inferred);
+    let found = violations(source);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// **`from` is only sound for a lambda that runs before the call returns.**
+///
+/// A caller reads `from(f)` as "this call adds no pausing of its own", and that
+/// holds because the lambda's body is part of the function that writes it -
+/// Part I 5.4's `@immediate` - so its calls are already counted there. A
+/// parameter the callee **stored or spawned** (`@detached`) would break it: the
+/// lambda's calls would belong to nobody the caller is counting, and a pausing
+/// body would slip into a lock with the ledger saying it could not.
+///
+/// The ledger cannot spell `@detached` yet, so this is the guard: every `std`
+/// entry that says `from` must name a parameter that is a lambda, and `std` has
+/// no detached one. The day it does, `from` needs a companion and this test is
+/// where that is noticed.
+#[test]
+fn a_detached_lambda_may_not_use_from() {
+    let shipped = std::fs::read_to_string(repo_root().join("crates/nikaia-std/std.contracts"))
+        .expect("std ships a ledger");
+    let shipped = Ledger::parse(&shipped).expect("std's ledger parses");
+
+    let mut checked = 0;
+    for (name, contract) in &shipped.functions {
+        let Some(parameter) = contract.sync.from() else {
+            continue;
+        };
+        let signature = contract
+            .signature
+            .as_ref()
+            .unwrap_or_else(|| panic!("`{name}` says `from({parameter})` and has no signature"));
+        let found = signature
+            .arguments()
+            .iter()
+            .find(|(argument, _)| argument == parameter)
+            .unwrap_or_else(|| {
+                panic!("`{name}` says `from({parameter})` and has no parameter `{parameter}`")
+            });
+        assert!(
+            matches!(found.1, nikaia::contracts::ty::Ty::Fn { .. }),
+            "`{name}` says `from({parameter})`, and `{parameter}` is `{}` rather than a lambda",
+            found.1.text()
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no `from` entry was checked, so nothing was proved"
+    );
 }
 
 /// The type checker does not depend on the `sync` it helps infer.

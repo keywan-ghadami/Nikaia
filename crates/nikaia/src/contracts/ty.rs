@@ -46,6 +46,19 @@ pub enum Ty {
     },
     /// `(A, B)` - a fixed number of parts and no name.
     Tuple(Vec<Ty>),
+    /// `fn(&Stats)` - a parameter that takes a lambda, and what the lambda is
+    /// handed when it runs (ADR-029).
+    ///
+    /// **Only a ledger writes one.** Nikaia's own grammar has no syntax for a
+    /// function type, so no `.nika` source can declare a parameter of this
+    /// shape; these exist because `std`'s higher-order functions are Rust and
+    /// something has to say what `and_modify` passes its lambda. Without that,
+    /// the `a` in `fn { a.add(t) }` has no type, nothing it is called on
+    /// resolves, and the function around it cannot be shown to be `sync`.
+    ///
+    /// What the lambda *hands back* is deliberately absent: nothing needs it
+    /// yet, and a spelling is easier to add than to change.
+    Fn { params: Vec<Ty> },
 }
 
 impl Ty {
@@ -80,6 +93,13 @@ impl Ty {
         match (self, expected) {
             (Ty::Unknown, _) | (_, Ty::Unknown) => true,
             (Ty::Tuple(a), Ty::Tuple(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.fits(b))
+            }
+            // Two lambdas fit when they take the same things. A lambda never
+            // fits a named type and no named type fits a lambda - which is a
+            // claim, so it is only made where both sides are written down, and
+            // `Unknown` above has already taken every other case.
+            (Ty::Fn { params: a }, Ty::Fn { params: b }) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.fits(b))
             }
             (
@@ -117,6 +137,13 @@ impl Ty {
         if let Some(inner) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
             return Ty::Tuple(split_args(inner).iter().map(|p| Ty::parse(p)).collect());
         }
+        // `fn(&Stats)`, and `fn()` for a lambda that is handed nothing. Read
+        // before the `&`, because a function type is never a view.
+        if let Some(inner) = text.strip_prefix("fn(").and_then(|t| t.strip_suffix(')')) {
+            return Ty::Fn {
+                params: split_args(inner).iter().map(|p| Ty::parse(p)).collect(),
+            };
+        }
         let (view, rest) = match text.strip_prefix('&') {
             Some(rest) => (true, rest.trim()),
             None => (false, text),
@@ -149,6 +176,9 @@ impl Ty {
         match self {
             Ty::Unknown => Ty::Unknown,
             Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| p.erase(parameters)).collect()),
+            Ty::Fn { params } => Ty::Fn {
+                params: params.iter().map(|p| p.erase(parameters)).collect(),
+            },
             Ty::Named { name, args, view } => {
                 if args.is_empty() && parameters.contains(name) {
                     return Ty::Unknown;
@@ -191,6 +221,10 @@ impl fmt::Display for Ty {
             Ty::Tuple(parts) => {
                 let parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
                 write!(f, "({})", parts.join(", "))
+            }
+            Ty::Fn { params } => {
+                let params: Vec<String> = params.iter().map(|p| p.to_string()).collect();
+                write!(f, "fn({})", params.join(", "))
             }
             Ty::Named { name, args, view } => {
                 if *view {
@@ -283,5 +317,49 @@ mod tests {
         assert!(Ty::parse("Vec[?]").fits(&Ty::parse("Vec[Row]")));
         assert!(Ty::parse("(i32, ?)").fits(&Ty::parse("(i32, String)")));
         assert!(!Ty::parse("(i32, ?)").fits(&Ty::parse("(String, String)")));
+    }
+}
+
+#[cfg(test)]
+mod fn_type_tests {
+    use super::*;
+
+    /// A function type reads back the way it was written (ADR-029).
+    #[test]
+    fn a_function_type_round_trips() {
+        for text in ["fn()", "fn(&Stats)", "fn(&str, i64)", "fn(?)"] {
+            assert_eq!(Ty::parse(text).text(), text, "{text}");
+        }
+    }
+
+    /// `fn(&Stats)` is not a type named `fn(&Stats)`.
+    ///
+    /// The parse is ordered so that a function type is recognised before the
+    /// `&` and the `[…]` are looked for; without that it fell through to
+    /// `Named` and the whole spelling became a name.
+    #[test]
+    fn a_function_type_is_not_a_name() {
+        let parsed = Ty::parse("fn(&Stats)");
+        assert!(matches!(parsed, Ty::Fn { .. }), "{parsed:?}");
+        let Ty::Fn { params } = parsed else {
+            unreachable!("just matched")
+        };
+        assert_eq!(params, vec![Ty::view("Stats")]);
+    }
+
+    /// It fits another lambda of the same shape, and nothing else that is
+    /// written down.
+    #[test]
+    fn a_function_type_fits_its_own_shape() {
+        let one = Ty::parse("fn(&Stats)");
+        assert!(one.fits(&Ty::parse("fn(&Stats)")));
+        assert!(!one.fits(&Ty::parse("fn(i64)")));
+        assert!(!one.fits(&Ty::parse("fn()")));
+        // A named type and a lambda are different claims.
+        assert!(!one.fits(&Ty::named("Stats")));
+        assert!(!Ty::named("Stats").fits(&one));
+        // `?` is the absence of a claim, so it still fits both ways.
+        assert!(one.fits(&Ty::Unknown));
+        assert!(Ty::Unknown.fits(&one));
     }
 }

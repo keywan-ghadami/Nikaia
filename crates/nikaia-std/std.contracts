@@ -105,7 +105,8 @@ signature = "() -> String"
 
 [fn."list::ListExt::map"]
 pub = true
-signature = "(?, f: ?) -> ?"
+sync = "from(f)"
+signature = "(?, f: fn(?)) -> ?"
 
 # --- Written by hand: the collections and text the language below provides ---
 #
@@ -169,21 +170,25 @@ pub = true
 sync = true
 signature = "(&HashMap[?, ?]) -> ?"
 
-# Runs the lambda it is given, so what it does is what the lambda does. No
-# `sync` here until a ledger can say `from(f)`.
+# Runs the lambda it is given, so what it does is what the lambda does - which
+# is what `from(f)` says (ADR-029). Sound because the lambda runs *during* the
+# call: its body belongs to the function that writes it, and its calls are
+# counted there. A method that **stored** its lambda could not say this.
 [fn."Entry::and_modify"]
 pub = true
-signature = "(Entry, f: ?) -> Entry"
+sync = "from(f)"
+signature = "(Entry, f: fn(?)) -> Entry"
 
 [fn."Entry::or_insert"]
 pub = true
 sync = true
 signature = "(Entry, value: ?) -> ?"
 
-# Also runs its lambda. Same reason, same omission.
+# Also runs its lambda, before it returns.
 [fn."Entry::or_insert_with"]
 pub = true
-signature = "(Entry, f: ?) -> ?"
+sync = "from(f)"
+signature = "(Entry, f: fn()) -> ?"
 
 [fn."String::chars"]
 pub = true
@@ -225,6 +230,11 @@ signature = "(&Vec[?], value: ?)"
 pub = true
 sync = true
 signature = "(&Vec[?])"
+
+[fn."Vec::sort_by_key"]
+pub = true
+sync = "from(f)"
+signature = "(&Vec[?], f: fn(?)) -> ?"
 
 [fn."str::chars"]
 pub = true

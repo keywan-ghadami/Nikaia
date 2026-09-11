@@ -142,7 +142,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | key | on | meaning |
 | :--- | :--- | :--- |
 | `pub` | fn, type | reachable from outside the unit that declares it |
-| `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O. `true` where the source asserted it, `"inferred"` where the body implies it ([ADR-027](adr/adr-027.md)) |
+| `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O. `true` where the source asserted it, `"inferred"` where the body implies it ([ADR-027](adr/adr-027.md)), `"from(f)"` where the lambda it is given decides ([ADR-029](adr/adr-029.md)) |
 | `throws` | fn | Kap 7.1: it may fail |
 | `returns` | fn | what the result may point into — `borrows(a \| b)` |
 | `signature` | fn | its parameters, its **options** and its result, as the source writes them: `"(path: ?, data: ?; append: bool = false, create: bool = true)"`. An option carries its default, because a call that leaves one out still passes a value and only the declaration knows which (Part I, 5.1). A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one |
@@ -157,6 +157,14 @@ Only what is *true* is written: a `sync = false` on every entry would treble the
 **`sync` is written down in two ways, because it is arrived at in two ways** ([ADR-027](adr/adr-027.md)). `sync = true` is a promise the *source* made, and `NK2202` is what the compiler says when the body contradicts it. `sync = "inferred"` is a promise the *body* implies: nothing the function calls can pause, so it cannot pause, and saying otherwise would be the ledger recording something it had already read and knew better about.
 
 A **caller** does not distinguish them. Both mean "this cannot pause", both satisfy `access` and `par_iter`, and any code that asks the ledger the caller's question gets one answer. A **diff** must distinguish them, and that is the whole reason the file spells them differently: withdrawing an asserted `sync` is a decision someone made and has to have meant, while losing an inferred one is a *consequence* of an edit somewhere else — usually in a function further down. The two deserve different sentences, and a `bool` cannot produce them.
+
+**A function that runs somebody else's code says so** ([ADR-029](adr/adr-029.md)). `xs.map fn { a + 1 }` cannot pause and `xs.map fn { io::read()… }` can, and they are the same `map`. A ledger entry has to hold for every caller, so without a way to say "it depends" a higher-order function has to commit to the pessimistic answer — and since `access`, `par_iter` and a scope's tasks all gate on a `sync` lambda, that commitment reads as *no `map`, `filter` or `fold` inside a lock, over any lambda at all*.
+
+`sync = "from(f)"` is the way to say it, naming the parameter that decides. A caller reads it as **"this call adds no pausing of its own"**, which is sound because the lambda runs *during* the call: its body is part of the function that writes it, and that function has already counted its calls. `from` adds nothing because there is nothing left to add.
+
+That reason is also the limit. A parameter the callee **stores or spawns** — Part I 5.4's `@detached` — breaks it, because then the lambda's calls belong to nobody the caller is counting. `from` is for an immediate lambda only, and until the ledger can spell `@detached` that rule is held by a test over `std`'s own entries rather than by the file format.
+
+The type it names is a **function type**, `fn(&Stats)`, which is the other half of the same decision: it says what the lambda is handed, so that the `a` in `fn { a.add(t) }` has a type and what it is called on can be resolved. Only a ledger writes one — Nikaia's grammar has no syntax for a function type, so no source program can declare a parameter of that shape.
 
 The two are also arrived at with opposite caution, which is worth stating plainly because it looks like an inconsistency and is not:
 

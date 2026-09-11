@@ -107,7 +107,7 @@ impl Provenance {
 /// "an analysis that fails open is a vulnerability generator" (`Provenance`,
 /// above). So it fails closed, and the gap between the two polarities is
 /// exactly where a person writes `sync` by hand and gets it checked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Sync {
     /// Not `sync`: something it calls can pause, or something it calls cannot
     /// be resolved and therefore cannot be vouched for.
@@ -119,14 +119,42 @@ pub enum Sync {
     /// Written in the source. `NK2202` is what happens when the body
     /// contradicts it.
     Asserted,
+    /// **It does whatever the lambda it is given does** - `sync = "from(f)"`,
+    /// naming the parameter that decides (ADR-029).
+    ///
+    /// `xs.map fn { a + 1 }` cannot pause and `xs.map fn { io::read()… }` can,
+    /// and they are the same `map`. Without this a higher-order function has to
+    /// commit to one answer for every caller, and the honest one is the
+    /// pessimistic one - so no `map`, `filter` or `and_modify` could appear
+    /// inside `access` or `par_iter`, whatever its lambda did.
+    ///
+    /// **A caller reads this as "this call adds no pausing of its own"**, and
+    /// that is sound for one reason: the lambda runs *during* the call, so its
+    /// body is part of the function that writes it, and its calls are already
+    /// counted there (Part I, 5.4's `@immediate`). A parameter the callee
+    /// **stores or spawns** - `@detached` - would break that, because then the
+    /// lambda's calls belong to nobody the caller is counting. The ledger
+    /// cannot spell `@detached` yet, so the rule is written down instead:
+    /// `from` is for a lambda that runs before the call returns, and
+    /// `a_detached_lambda_may_not_use_from` in `tests/contracts.rs` is what
+    /// stops the one `std` entry that could get this wrong.
+    From(String),
 }
 
 impl Sync {
     /// Whether a caller may treat it as `sync` - which is the question every
     /// caller actually has, and the one place the two positive states are
     /// deliberately the same.
-    pub fn is_sync(self) -> bool {
+    pub fn is_sync(&self) -> bool {
         !matches!(self, Sync::No)
+    }
+
+    /// The parameter that decides, where one does.
+    pub fn from(&self) -> Option<&str> {
+        match self {
+            Sync::From(name) => Some(name),
+            _ => None,
+        }
     }
 }
 
@@ -605,9 +633,10 @@ impl Ledger {
             // `true` is the promise the source made, `"inferred"` the one the
             // body implies. Absent is still "not `sync`", so a reader that only
             // asks `is_sync` reads this file exactly as it did before.
-            match contract.sync {
+            match &contract.sync {
                 Sync::Asserted => out.push_str("sync = true\n"),
                 Sync::Inferred => out.push_str("sync = \"inferred\"\n"),
+                Sync::From(name) => out.push_str(&format!("sync = \"from({name})\"\n")),
                 Sync::No => {}
             }
             if contract.throws {
@@ -908,10 +937,21 @@ fn sync_of(value: &str, at: usize) -> Result<Sync> {
         "true" => Ok(Sync::Asserted),
         "false" => Ok(Sync::No),
         "\"inferred\"" => Ok(Sync::Inferred),
-        other => Err(anyhow!(
-            "line {at}: `sync` is `true` (the source says so) or `\"inferred\"` \
-             (the body implies it), not `{other}`"
-        )),
+        other => {
+            let named = other
+                .strip_prefix("\"from(")
+                .and_then(|rest| rest.strip_suffix(")\""))
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            match named {
+                Some(name) => Ok(Sync::From(name.to_string())),
+                None => Err(anyhow!(
+                    "line {at}: `sync` is `true` (the source says so), `\"inferred\"` \
+                     (the body implies it) or `\"from(f)\"` (its lambda decides), \
+                     not `{other}`"
+                )),
+            }
+        }
     }
 }
 

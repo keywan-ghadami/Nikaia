@@ -383,6 +383,25 @@ be "whatever somebody remembered to annotate", and the safe path would be the
 narrow one. It is the other way round: the safe path is open by default, and it
 closes only where something really can pause.
 
+**A library function that runs your lambda does what your lambda does.** `xs.map`,
+`xs.filter`, `xs.sort_by_key` and the rest cannot commit to one answer — the
+same `map` cannot pause over `fn { a + 1 }` and can over a lambda that reads a
+file — so their contracts say *the lambda decides* ([ADR-029](adr/adr-029.md)).
+That is why this is fine:
+
+```nika
+counter.access fn { a + xs.sort_by_key fn { b } }   // pure lambda, pure call
+```
+
+and this is still refused:
+
+```nika
+counter.access fn { xs.map fn { fs::read("log") } } // the lambda does I/O
+```
+
+You never write anything for this. It matters because without it *no* iterator
+method could appear inside `access` or `par_iter`, whatever its lambda did.
+
 **So what is the keyword for?** The same thing `@borrowed` is for in Part I,
 6.6: saying a property out loud so that losing it becomes an error rather than a
 silent change. Write `sync` where the promise matters to you — the inner loop

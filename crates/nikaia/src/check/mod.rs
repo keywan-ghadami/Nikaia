@@ -535,11 +535,13 @@ impl<'a> Checker<'a> {
                 args,
             } => {
                 let on = self.expr(receiver, span);
-                let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
                 let Ty::Named { name, .. } = &on else {
                     // The receiver's type is not known, so neither is what this
                     // calls. Recorded, because "I could not find out" is an
                     // answer somebody downstream has to act on.
+                    args.iter().for_each(|a| {
+                        self.expr(a, span);
+                    });
                     self.reached_method(None);
                     return Ty::Unknown;
                 };
@@ -547,10 +549,21 @@ impl<'a> Checker<'a> {
                 let Some((key, contract)) = self.method(&key) else {
                     // The type is known and no ledger describes this method of
                     // it - `HashMap::entry` until something writes it down.
+                    args.iter().for_each(|a| {
+                        self.expr(a, span);
+                    });
                     self.reached_method(None);
                     return Ty::Unknown;
                 };
                 self.reached_method(Some(&key));
+
+                // The arguments are walked **after** the contract is in hand,
+                // which is what lets a lambda's parameters have types (ADR-029).
+                // The old order walked them first and could not: `a` in
+                // `.and_modify fn { a.add(t) }` is named nowhere and typed by
+                // nothing but the callee's signature.
+                let expected = expected_arguments(contract);
+                let found = self.arguments_given(args, &expected, span);
                 self.arguments(&key, contract, &found, &[], span)
             }
 
@@ -1036,6 +1049,74 @@ impl<'a> Checker<'a> {
     /// under. A library writes the module in front of it (`fs::Mapped::deref`)
     /// and the receiver's type does not carry one, so the suffix is what
     /// matches - name-for-name resolution, as everywhere else.
+    /// Walk a call's arguments, telling a lambda what it will be handed.
+    ///
+    /// The types come from the callee's signature, so this can only run once
+    /// the callee is known - which is why the resolution moved ahead of the
+    /// walk (ADR-029). An argument whose parameter says nothing is walked
+    /// exactly as it was before.
+    fn arguments_given(&mut self, args: &[Expr], expected: &[Ty], span: &Span) -> Vec<Ty> {
+        args.iter()
+            .enumerate()
+            .map(|(at, arg)| match (arg, expected.get(at)) {
+                (
+                    Expr::Closure {
+                        params,
+                        implicit,
+                        body,
+                    },
+                    Some(Ty::Fn { params: given }),
+                ) => self.lambda(params, *implicit, body, given),
+                _ => self.expr(arg, span),
+            })
+            .collect()
+    }
+
+    /// A lambda whose parameters have types, because the callee said so.
+    ///
+    /// The implicit form is the one that matters and the one that had no way
+    /// to work: `fn { a.add(t) }` records **no parameters at all** in the AST -
+    /// Part I 5.3 settles how many it takes from which of `a`, `b`, `c` the
+    /// body mentions, and that is decided when it is emitted. So the names are
+    /// bound here, in order, to whatever the signature says the lambda is
+    /// handed. A body that mentions fewer of them simply leaves the later
+    /// bindings unused.
+    fn lambda(
+        &mut self,
+        params: &[winnow_grammar::Symbol],
+        implicit: bool,
+        body: &Block,
+        given: &[Ty],
+    ) -> Ty {
+        const IMPLICIT: [&str; 3] = ["a", "b", "c"];
+
+        let names: Vec<String> = if implicit {
+            IMPLICIT
+                .iter()
+                .take(given.len())
+                .map(|n| n.to_string())
+                .collect()
+        } else {
+            params
+                .iter()
+                .map(|p| self.parsed.text(*p).to_string())
+                .collect()
+        };
+
+        let frame = names
+            .into_iter()
+            .enumerate()
+            .map(|(at, name)| (name, given.get(at).cloned().unwrap_or(Ty::Unknown)))
+            .collect();
+
+        self.scope.push(frame);
+        self.block(body);
+        self.scope.pop();
+        // What a lambda hands back is not written down anywhere yet, and
+        // claiming it here would be inventing one (ADR-029 D1).
+        Ty::Unknown
+    }
+
     /// Note where a method call in the function being walked went (ADR-028).
     ///
     /// `None` is "I could not find out", and it is recorded rather than
@@ -1248,4 +1329,22 @@ fn list(names: &[&str]) -> String {
                 .join(", ")
         ),
     }
+}
+
+/// The types a callee's parameters expect, as a call site sees them.
+///
+/// A method's receiver is the first parameter, so the arguments a *call* writes
+/// are the ones after it - `Signature::arguments` already draws that line.
+fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
+    contract
+        .signature
+        .as_ref()
+        .map(|signature| {
+            signature
+                .arguments()
+                .iter()
+                .map(|(_, ty)| ty.clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }
