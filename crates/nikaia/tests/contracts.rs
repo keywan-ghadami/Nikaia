@@ -29,7 +29,7 @@ fn a_declaration_is_recorded_as_it_was_written() {
     );
 
     let pure = &l.functions["pure"];
-    assert!(pure.public && !pure.throws);
+    assert!(pure.public && pure.throws.is_empty());
     assert_eq!(pure.sync, Sync::Asserted, "the source wrote the word");
 
     // Neither of these says `sync`, and neither of them calls anything, so
@@ -38,11 +38,11 @@ fn a_declaration_is_recorded_as_it_was_written() {
     // about. `throws` and `sync` are orthogonal: a function may fail without
     // pausing, and `risky` is one.
     let risky = &l.functions["risky"];
-    assert!(!risky.public && risky.throws);
+    assert!(!risky.public && !risky.throws.is_empty());
     assert_eq!(risky.sync, Sync::Inferred);
 
     let plain = &l.functions["plain"];
-    assert!(!plain.public && !plain.throws);
+    assert!(!plain.public && plain.throws.is_empty());
     assert_eq!(plain.sync, Sync::Inferred);
 }
 

@@ -23,6 +23,7 @@
 // will say so rather than quietly accepting the weaker answer.
 
 pub mod sync;
+pub mod throws;
 pub mod trust;
 pub mod ty;
 
@@ -47,13 +48,20 @@ pub const STD: &str = include_str!("../../../nikaia-std/std.contracts");
 /// Recorded in the header so that a ledger can say what it knows, and a ledger
 /// produced by reading signatures must not be mistaken for one produced by
 /// reading bodies. Stage 0 reads signatures for the borrow contract and for
-/// `throws`; since ADR-027 it reads **bodies** for `sync`, and the name says
-/// which half is which. The whole-program analysis of ADR-005 D3 will read
-/// bodies for the borrow contract too and will write a different name again.
-pub const INFERENCE: &str = "stage0-signatures+sync-bodies";
+/// `throws`; since ADR-027 it reads **bodies** for `sync` and since ADR-023 D1
+/// for the *errors* a `throws` names, and the name says which half is which.
+/// The whole-program analysis of ADR-005 D3 will read bodies for the borrow
+/// contract too and will write a different name again.
+pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies";
 
 /// The format version of the file itself.
-pub const VERSION: u32 = 1;
+///
+/// 2 since [ADR-023](../../../../docs/specification/adr/adr-023.md) D1: `throws`
+/// was a boolean and is a list of the errors that can leave the function. A
+/// version 1 file still reads - `true` is taken as `["?"]`, which is what it
+/// always meant - and the version is what tells a *reader* that the file it has
+/// may say more than it knows how to use.
+pub const VERSION: u32 = 2;
 
 /// Who supplied the bytes a source hands back (ADR-010 D1).
 ///
@@ -172,8 +180,19 @@ pub struct FnContract {
     ///
     /// Present, it says which of the two kinds it is - see [`Sync`].
     pub sync: Sync,
-    /// Kap 7.1: it may fail, so its result is a `Result`.
-    pub throws: bool,
+    /// Kap 7.1: it may fail, and **with what** - the error types that can leave
+    /// it, inferred over the call graph ([ADR-023](../../../../docs/specification/adr/adr-023.md) D1).
+    ///
+    /// Empty means it cannot fail, which is why nothing is written for it: the
+    /// file says only what is true. A `"?"` among the names is the absence of a
+    /// claim in ADR-024 D1's sense - this function fails with something the
+    /// compiler cannot name, today because `std`'s failures are Rust's and have
+    /// no Nikaia type. A caller reads `["?"]` as "it fails" and gets exactly
+    /// what the old boolean gave, which is what makes the change additive.
+    ///
+    /// Sorted, because 13.5 makes the file a pure function of (source,
+    /// toolchain) and `--locked` compares it byte for byte.
+    pub throws: Vec<String>,
     /// This function is a **source**: its result is bytes that entered the
     /// program from outside, and this is who chose them (ADR-010 D2).
     ///
@@ -527,6 +546,10 @@ impl Ledger {
 
         let checked = crate::check::check(parsed, &ledger, std_ledger());
         sync::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
+        // Kap 7.1: `throws` in the source says *that* it fails; this says with
+        // what (ADR-023 D1). After `sync`, because both read bodies and only
+        // this one needs nothing from the other.
+        throws::infer(&mut ledger, parsed, std_ledger());
         (ledger, checked)
     }
 
@@ -606,7 +629,15 @@ impl Ledger {
                 // touches this one, because an assertion is what `NK2202`
                 // exists to contradict.
                 sync: if *is_sync { Sync::Asserted } else { Sync::No },
-                throws: *throws,
+                // The *declaration* says only that it can fail. Which errors
+                // is a question about the body and about everything the body
+                // reaches, so `throws::infer` answers it afterwards - the same
+                // arrangement `sync` has since ADR-027.
+                throws: if *throws {
+                    vec![UNNAMED_ERROR.to_string()]
+                } else {
+                    Vec::new()
+                },
                 signature: Some(Signature {
                     params,
                     config: config
@@ -661,8 +692,13 @@ impl Ledger {
         out.push_str("# Do not edit by hand - it is regenerated on every build.\n");
         out.push_str("#\n");
         out.push_str("# What a caller has to know about a function it cannot see the body of:\n");
-        out.push_str("# whether it may pause (`sync`), whether it may fail (`throws`), and what\n");
-        out.push_str("# its result may point into (`returns`). Part III, 13.5.\n");
+        out.push_str("# whether it may pause (`sync`), whether it may fail and with what\n");
+        out.push_str(
+            "# (`throws`), and what its result may point into (`returns`). Part III, 13.5.\n",
+        );
+        out.push_str("#\n");
+        out.push_str("# A `\"?\"` among the errors is the absence of a claim: it fails, with\n");
+        out.push_str("# something this compiler cannot name.\n");
         out.push_str(&format!("version = {}\n", self.version));
         out.push_str(&format!("toolchain = \"{}\"\n", self.toolchain));
         out.push_str(&format!("inference = \"{}\"\n", self.inference));
@@ -681,8 +717,14 @@ impl Ledger {
                 Sync::From(name) => out.push_str(&format!("sync = \"from({name})\"\n")),
                 Sync::No => {}
             }
-            if contract.throws {
-                out.push_str("throws = true\n");
+            if !contract.throws.is_empty() {
+                let names = contract
+                    .throws
+                    .iter()
+                    .map(|e| format!("\"{e}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("throws = [{names}]\n"));
             }
             if !contract.borrows.is_empty() {
                 out.push_str(&format!(
@@ -786,7 +828,7 @@ impl Ledger {
                     match key {
                         "pub" => entry.public = value == "true",
                         "sync" => entry.sync = sync_of(value, at())?,
-                        "throws" => entry.throws = value == "true",
+                        "throws" => entry.throws = throws_of(value, at())?,
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
                         "provenance" => {
                             entry.provenance = Some(provenance_of(&unquote(value, at())?, at())?)
@@ -1005,6 +1047,23 @@ fn provenance_of(value: &str, at: usize) -> Result<Provenance> {
             "line {at}: a provenance is `trusted` or `untrusted`, not `{other}`"
         )),
     }
+}
+
+/// The name an error gets when the compiler cannot name it - ADR-024 D1's `?`,
+/// which is the absence of a claim rather than a type.
+pub const UNNAMED_ERROR: &str = "?";
+
+/// Kap 7.1: the errors that can leave a function.
+///
+/// A ledger written before [ADR-023](../../../../docs/specification/adr/adr-023.md)
+/// D1 spells this `true`, and reading that as "it does not fail" would be the
+/// worst of the three possible mistakes - so it is read as `["?"]`, which is
+/// what `true` always meant: it fails, with something this file does not name.
+fn throws_of(value: &str, at: usize) -> Result<Vec<String>> {
+    if value == "true" {
+        return Ok(vec![UNNAMED_ERROR.to_string()]);
+    }
+    string_list(value, at)
 }
 
 fn string_list(value: &str, at: usize) -> Result<Vec<String>> {

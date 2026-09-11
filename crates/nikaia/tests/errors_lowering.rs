@@ -8,8 +8,14 @@
 
 mod common;
 
+use nikaia::contracts::Ledger;
 use nikaia::emit::{emit_program, Profile};
 use nikaia::parser::parse_to_ast;
+
+/// The ledger this source produces, rendered the way it is committed.
+fn ledger_for(source: &str) -> String {
+    Ledger::infer(&parse_to_ast(source).expect("the source parses")).render()
+}
 
 fn emit(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -175,4 +181,96 @@ fn an_error_is_declared_raised_caught_and_printed() {
         .expect("run the program");
     let out = String::from_utf8_lossy(&run.stdout);
     assert_eq!(out.trim(), "no config at app.conf", "stdout was: {out:?}");
+}
+
+// --- the ledger ------------------------------------------------------------
+
+/// ADR-023 D1: `throws` in the source says *that* a function fails; the ledger
+/// says with what, inferred over the call graph.
+#[test]
+fn the_ledger_names_the_errors_a_function_throws() {
+    let ledger = ledger_for(
+        r#"
+        enum ConfigError { NotFound }
+        fn load() throws -> i64 { throw ConfigError::NotFound }
+        "#,
+    );
+    assert!(
+        ledger.contains(r#"throws = ["ConfigError"]"#),
+        "expected the error named, got:\n{ledger}"
+    );
+}
+
+/// Nothing marks a failing call (D8), so propagation is what a call does - and
+/// the set grows along the call graph without anyone writing it down.
+#[test]
+fn an_error_set_grows_through_a_caller() {
+    let ledger = ledger_for(
+        r#"
+        enum ConfigError { NotFound }
+        enum NetError { Timeout }
+        fn load() throws -> i64 { throw ConfigError::NotFound }
+        fn fetch() throws -> i64 { throw NetError::Timeout }
+        fn both() throws -> i64 { let a = load() return fetch() }
+        "#,
+    );
+    let both = ledger
+        .split("[fn.\"both\"]")
+        .nth(1)
+        .expect("an entry for `both`");
+    assert!(
+        both.contains(r#"throws = ["ConfigError", "NetError"]"#),
+        "both callees' errors should reach it:\n{ledger}"
+    );
+}
+
+/// Mutual recursion terminates because the sets only grow and the names are
+/// finite - the same reason `sync`'s greatest fixpoint terminates going the
+/// other way.
+#[test]
+fn mutual_recursion_settles() {
+    let ledger = ledger_for(
+        r#"
+        enum E { X }
+        fn ping(n: i32) throws -> i32 { if n == 0 { throw E::X } return pong(n - 1) }
+        fn pong(n: i32) throws -> i32 { return ping(n - 1) }
+        "#,
+    );
+    let pong = ledger
+        .split("[fn.\"pong\"]")
+        .nth(1)
+        .expect("an entry for `pong`");
+    assert!(
+        pong.contains(r#"throws = ["E"]"#),
+        "`pong` reaches `ping`'s error:\n{ledger}"
+    );
+}
+
+/// A failure the compiler cannot name is `?`, ADR-024 D1's absence of a claim -
+/// never silence, because reading "I cannot see it" as "it does not fail" is
+/// the direction ADR-010 D1 calls a vulnerability generator.
+#[test]
+fn what_cannot_be_named_is_a_question_mark() {
+    let ledger = ledger_for(r#"fn reads() throws -> String { return io::read_to_string() }"#);
+    assert!(
+        ledger.contains(r#"throws = ["?"]"#),
+        "`std`'s failures have no Nikaia name yet:\n{ledger}"
+    );
+}
+
+/// A declared `throws` never loses its entry. The declaration is a promise a
+/// caller already relies on, and inference is here to say more than it.
+#[test]
+fn a_declared_throws_keeps_its_entry() {
+    let ledger = ledger_for(r#"fn maybe() throws -> i64 { return 1 }"#);
+    assert!(ledger.contains(r#"throws = ["?"]"#), "{ledger}");
+}
+
+/// A function that cannot fail says nothing, because the file says only what is
+/// true (13.5).
+#[test]
+fn a_function_that_cannot_fail_has_no_entry() {
+    let ledger = ledger_for(r#"fn pure(n: i64) -> i64 { return n }"#);
+    // The header explains the key, so look for the key being *set*.
+    assert!(!ledger.contains("throws = "), "{ledger}");
 }

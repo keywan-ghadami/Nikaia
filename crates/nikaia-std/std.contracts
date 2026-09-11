@@ -4,8 +4,13 @@
 # builds against contracts rather than guesses. This is that file for `std`, and
 # it is the one a program's compiler reads when the program calls `io::…` or
 # `fs::…` - what a caller has to know about a function it cannot see the body
-# of: whether it may pause (`sync`), whether it may fail (`throws`), and what its
-# result may point into (`returns`).
+# of: whether it may pause (`sync`), whether it may fail and with what
+# (`throws`), and what its result may point into (`returns`).
+#
+# `throws = ["?"]` on every entry here is not a placeholder but the honest
+# answer: these functions fail with Rust's errors, which have no Nikaia type to
+# name (ADR-023 D1, and ADR-024 D1's `?` - the absence of a claim). A caller
+# reads it as "it fails", which is what the boolean before it said.
 #
 # **Two origins, and the difference is not hidden.** The entries for modules
 # written in Nikaia are *inferred* by the Stage 0 compiler from their source,
@@ -40,9 +45,9 @@
 # is. Every source `std` has today is the operator's own: a file they named, a
 # pipe they connected, the arguments they typed. The untrusted ones - `http`,
 # `net`, `db` - arrive with the modules that have them.
-version = 1
+version = 2
 toolchain = "nikaia 0.1.0"
-inference = "stage0-signatures+sync-bodies"
+inference = "stage0-signatures+sync-bodies+throws-bodies"
 
 # --- Written by hand: the modules that are still Rust ------------------------
 
@@ -53,7 +58,7 @@ signature = "() -> ?"
 
 [fn."fs::map"]
 pub = true
-throws = true
+throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> Mapped"
 
@@ -65,19 +70,19 @@ signature = "(&Mapped) -> &str"
 
 [fn."fs::read"]
 pub = true
-throws = true
+throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> Vec[u8]"
 
 [fn."fs::read_to_string"]
 pub = true
-throws = true
+throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> String"
 
 [fn."fs::write"]
 pub = true
-throws = true
+throws = ["?"]
 signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
 
 [fn."html::escape"]
@@ -88,7 +93,7 @@ signature = "(text: &str) -> ?"
 
 [fn."io::read"]
 pub = true
-throws = true
+throws = ["?"]
 provenance = "trusted"
 signature = "() -> Vec[u8]"
 
@@ -99,7 +104,7 @@ signature = "() -> Lines"
 
 [fn."io::read_to_string"]
 pub = true
-throws = true
+throws = ["?"]
 provenance = "trusted"
 signature = "() -> String"
 
