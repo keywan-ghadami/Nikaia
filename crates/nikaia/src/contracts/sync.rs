@@ -514,7 +514,7 @@ pub(super) fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
 /// it is a detached context (Part I, 5.4) and is not walked here.
 fn visit_expr_blocks(expr: &Expr, f: &mut impl FnMut(&Block)) {
     match expr {
-        Expr::Block(block) | Expr::Closure { body: block, .. } => f(block),
+        Expr::Block(block) | Expr::Seq(block) | Expr::Closure { body: block, .. } => f(block),
         Expr::Call { func, args, config } => {
             visit_expr_blocks(func, f);
             args.iter().for_each(|a| visit_expr_blocks(a, f));

@@ -499,6 +499,19 @@ error[NK2201]: cannot wait for I/O while holding locked data
 
 This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. The runtime checks described above (a reentrancy check on one thread, poisoning on several) remain as a safety net for the remaining edge cases — e.g. accidentally re-entering the *same* lock through a chain of `sync` calls — but well-formed code never triggers them.
 
+**And a lock is a resource, so two `access` blocks on the same lock keep their order.** Part I 8.1.1 says that two operations whose touch sets are disjoint have no order between them, and a lock is one of the things a touch set can name: both `access` blocks reach the lock and both change it, so they are ordered by the same rule that orders two `println`s, rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3). Two `access` blocks on *different* locks meet on nothing and need not wait for each other.
+
+> **Status.** The compiler does not yet know a lock as a named resource — no entry in any ledger
+> claims one, because nothing in the corpus has asked for one
+> ([ADR-028](adr/adr-028.md) D5: an entry exists because a program asked for it, never
+> speculatively). Until one does, an `access` block is an operation whose touches cannot be
+> determined, so it counts as touching everything and keeps its place. That is the same answer this
+> section promises, reached by ignorance rather than by a contract — right today, and not something
+> to rely on: the moment anything else in the pair is described, the contract is what has to say
+> it.
+
+Where you need an order between two locks, or between a lock and something else, that the touch sets cannot see, `seq { … }` (Part I 8.1.1) is how a program says so. Its keyword is provisional.
+
 ### 12.3. Deadlock Prevention: Atomic Composition
 The classic cause of deadlocks is inconsistent locking order (Thread 1 locks A then B; Thread 2 locks B then A).
 In Nikaia, trying to nest locks manually is considered an anti-pattern and often a compile-time error.

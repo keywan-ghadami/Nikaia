@@ -7,7 +7,7 @@
 // no order between them* - and this file is the part of it that looks at a
 // program rather than at a contract. It answers one question:
 //
-//     may these two adjacent statements overlap?
+//     may these adjacent statements overlap?
 //
 // **It says "no" for every reason it can think of, and for every reason it
 // cannot.** That polarity is the decision (ADR-033 D4): a statement whose
@@ -17,9 +17,15 @@
 // and the two are deliberately worth the same.
 //
 // What this is *not*: a scheduler, a cost model, or an answer for a whole
-// block. It is ADR-033 §6 - a pair of adjacent statements - and everything it
-// refuses today it refuses for a reason written down here rather than for lack
-// of a case.
+// block. It answers about a **run** of adjacent statements - a pair, or a group
+// of three or more where every one of them meets every other on nothing
+// ([`group_of`]) - and everything it refuses today it refuses for a reason
+// written down here rather than for lack of a case.
+//
+// It also knows nothing about the build. Whether two operations *may* overlap
+// is a question about the program; whether a vehicle exists to overlap them
+// with, and whether the program wrote `seq` around them, are the emitter's
+// (ADR-033 §8.2b). No switch reaches this file, and none may.
 //
 // **The shapes it sees** (ADR-033 §8.3's first item). The first increment read
 // one shape: a `let` bound to exactly one call. Measuring it found that 101 of
@@ -114,6 +120,21 @@ pub enum Accounted {
     UncaughtFailure(String),
     /// Nothing describes what the call reaches, so it reaches everything (D4).
     NoTouches(String),
+    /// Something describes what the call reaches, in a word this compiler does
+    /// not know - so it reaches everything, for D4's reason and not for want of
+    /// a contract.
+    ///
+    /// The two are worth telling apart in a report: `NoTouches` is a gap
+    /// somebody can close by writing a line, and this one is a ledger written
+    /// against a newer vocabulary than this compiler has. It is refused rather
+    /// than ignored because an unknown kind is *different* from every kind
+    /// there is, and therefore disjoint from all of them - a typo that bought
+    /// an overlap would be the worst shape a mistake in this analysis can take
+    /// (`contracts::touch::KINDS`).
+    UnknownResource {
+        callee: String,
+        kind: String,
+    },
     /// A value that is not a literal, which this increment will not send to
     /// another thread.
     ///
@@ -148,6 +169,12 @@ impl Accounted {
             }
             Accounted::NoTouches(name) => {
                 format!("nothing says what `{name}` reaches, so it reaches everything")
+            }
+            Accounted::UnknownResource { callee, kind } => {
+                format!(
+                    "`{callee}` says it reaches a `{kind}`, which this compiler does not know \
+                     about - so it reaches everything, and a newer toolchain is what reads it"
+                )
             }
             Accounted::NonLiteralArgument(name) => {
                 format!("`{name}` is not a literal, and only literals are sent to another thread")
@@ -257,6 +284,19 @@ fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Ac
         // would perform work the program as written might never have performed.
         if !caught && !contract.throws.is_empty() {
             return Accounted::UncaughtFailure(key);
+        }
+
+        // A resource this compiler has no name for is one it cannot compare,
+        // and the failure mode is the dangerous direction: an unknown kind
+        // differs from every kind there is, so it would be disjoint from all of
+        // them and the pair would overlap. D4's answer instead - it reaches
+        // everything - and the whole entry goes with it, because an entry is
+        // only as readable as its least readable line.
+        if let Some(touch) = contract.touches.iter().find(|t| !t.kind_is_known()) {
+            return Accounted::UnknownResource {
+                callee: key,
+                kind: touch.kind.clone(),
+            };
         }
 
         // Which argument goes with which parameter, so that `file(path)` can be
@@ -522,6 +562,17 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             }
             out.methods.push(parsed.text(*method).to_string());
         }
+        // A `seq` block states the order of the statements **inside** it
+        // (ADR-033 D7) and says nothing about the statement next to it. So the
+        // block as a whole is refused, which is the fail-closed answer and the
+        // only one D7 decides: a reader who writes `seq` has said the compiler
+        // cannot see what the order is for, and a compiler that then moved the
+        // block itself would be answering a question it was just told it could
+        // not answer.
+        Expr::Seq(_) => out.refuse(Accounted::Opaque(
+            "a `seq` block, whose order the program states itself",
+        )),
+
         // Everything with its own control flow: what runs inside it is decided
         // while it runs, and D5 allows only operations that certainly run.
         _ => out.refuse(Accounted::Opaque("something with its own control flow")),
@@ -545,7 +596,23 @@ pub enum Verdict {
     /// Both bind the same name, so the order decides which value survives.
     Shadowed(String),
     /// Their touch sets meet on something one of them writes.
-    SameResource { kind: String, named: Option<String> },
+    SameResource {
+        kind: String,
+        named: Option<String>,
+        /// The resource has no name because this compiler could not read one,
+        /// rather than because the kind has only one of it.
+        ///
+        /// Two answers that both say "no name" and mean opposite things: there
+        /// is exactly one `stdout`, and `fs::write(pfad, …)` reaches a file
+        /// nobody here can identify. A report that called the first one
+        /// unnameable would be telling a reader to go and name something that
+        /// has no name to give.
+        unnameable: bool,
+    },
+    /// Their touch sets meet on two resources that are named differently and
+    /// may be the same thing - `stdout` and `stderr` under `2>&1`
+    /// (`contracts::touch::FAMILIES`).
+    SameDestination { one: String, other: String },
     /// One of them is not a statement this analysis can account for at all -
     /// a call it cannot resolve, a handler that can leave the function, an
     /// argument that is not a literal. An admission of ignorance, and it keeps
@@ -567,11 +634,25 @@ impl Verdict {
             Verdict::SameResource {
                 kind,
                 named: Some(named),
+                ..
             } => {
                 format!("both reach {kind} `{named}`, and one writes it")
             }
-            Verdict::SameResource { kind, named: None } => {
+            Verdict::SameResource {
+                kind,
+                unnameable: true,
+                ..
+            } => {
                 format!("both reach a {kind} this compiler cannot name, and one writes it")
+            }
+            Verdict::SameResource { kind, .. } => {
+                format!("both reach {kind}, and one writes it")
+            }
+            Verdict::SameDestination { one, other } => {
+                format!(
+                    "one reaches {one} and the other {other}, and those may be the same \
+                     destination - `seq` is how a program says so"
+                )
             }
             Verdict::NotAccountedFor => {
                 "one of them is not something this compiler can account for".to_string()
@@ -600,6 +681,14 @@ pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
     for a in &earlier.reaches {
         for b in &later.reaches {
             if a.conflicts_with(b) {
+                // Two kinds that conflict at all are two names for what may be
+                // one thing, and saying which two is the whole of the answer.
+                if a.kind != b.kind {
+                    return Verdict::SameDestination {
+                        one: a.kind.clone(),
+                        other: b.kind.clone(),
+                    };
+                }
                 // The one that is named is the more useful half to print; where
                 // neither is, saying so is the point.
                 let named = a
@@ -609,6 +698,7 @@ pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
                     .or_else(|| b.named.clone().filter(|_| !b.unknown));
                 return Verdict::SameResource {
                     kind: a.kind.clone(),
+                    unnameable: named.is_none() && (a.unknown || b.unknown),
                     named,
                 };
             }
@@ -618,9 +708,62 @@ pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
     Verdict::Overlap
 }
 
-/// The same question as a boolean, for a caller that only has to decide.
-pub fn may_overlap(earlier: &Operation, later: &Operation) -> bool {
-    verdict(earlier, later).is_overlap()
+/// Whether a whole **run** of operations may run as one group, and why not
+/// (ADR-033 §6, "more than two statements at a time").
+///
+/// **Every pair, not every adjacent pair.** Disjointness is not transitive, and
+/// this is the one place where believing it would be a soundness hole rather
+/// than a missed optimisation:
+///
+/// ```text
+/// let a = fs::read_to_string("eins.txt")   // reads eins.txt
+/// let b = fs::read_to_string("zwei.txt")   // reads zwei.txt
+/// fs::write("eins.txt", "x")               // writes eins.txt
+/// ```
+///
+/// The two adjacent pairs are each disjoint. The run is not: the third meets
+/// the first, and in a group they all run at once, so a chain of adjacent
+/// answers would have overlapped a read of a file with the write of it. So this
+/// asks about `(i, j)` for every `i < j`, and the pair it names in a refusal is
+/// the *earliest* such pair - which is also the one a reader is looking at.
+///
+/// D6 needs nothing extra from a group. Members that meet on nothing cannot
+/// observe one another's effects, and the operations this analysis accounts for
+/// either cannot fail or catch their failure into a value
+/// ([`Accounted::UncaughtFailure`]), so there is no error left whose order
+/// could be decided by a race.
+pub fn group_verdict(run: &[Operation]) -> Verdict {
+    for (at, earlier) in run.iter().enumerate() {
+        for later in &run[at + 1..] {
+            let verdict = verdict(earlier, later);
+            if !verdict.is_overlap() {
+                return verdict;
+            }
+        }
+    }
+    Verdict::Overlap
+}
+
+/// How many operations from the front of `run` may go together.
+///
+/// A **prefix** and not the largest subset, deliberately: a group is a run of
+/// statements the emitter replaces in place, so leaving one out of the middle
+/// would reorder the ones after it past the one left behind. The answer is
+/// therefore the longest prefix every member of which meets every other on
+/// nothing, and `0` where that is fewer than two.
+pub fn group_of(run: &[Operation]) -> usize {
+    let mut taken = 1.min(run.len());
+    while taken < run.len() {
+        if !group_verdict(&run[..taken + 1]).is_overlap() {
+            break;
+        }
+        taken += 1;
+    }
+    if taken < 2 {
+        0
+    } else {
+        taken
+    }
 }
 
 /// The ledger key of the call an expression performs, where it performs one.
@@ -661,7 +804,7 @@ fn diverts(stmts: &[crate::ast::Spanned<Stmt>]) -> bool {
 fn holds_throw(expr: &Expr) -> bool {
     match expr {
         Expr::Throw(_) => true,
-        Expr::Block(block) => diverts(&block.stmts),
+        Expr::Block(block) | Expr::Seq(block) => diverts(&block.stmts),
         Expr::If {
             then_branch,
             else_branch,
@@ -763,7 +906,7 @@ fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
                 }
             }
         }
-        Expr::Block(block) | Expr::Closure { body: block, .. } => {
+        Expr::Block(block) | Expr::Seq(block) | Expr::Closure { body: block, .. } => {
             names_in_block(parsed, block, out)
         }
         Expr::If {
@@ -972,6 +1115,7 @@ fn function_report(
                 | Accounted::DivertingHandler
                 | Accounted::UncaughtFailure(_)
                 | Accounted::NoTouches(_)
+                | Accounted::UnknownResource { .. }
                 | Accounted::NonLiteralArgument(_)),
                 other,
             )
