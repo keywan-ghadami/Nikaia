@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Measured (0.0.9 - ADR-033 §8: what the overlap actually bought)
+
+- **Nothing in this repository overlaps, and the reason is the analysis, not the code.** `--overlaps` weighs **127 adjacent statement pairs across `examples/` and refuses all 127**; the emitted Rust is byte-identical under `--ordering effects` and `--ordering strict` for all ten files the bootstrap compiler can lower, and not one `std::thread::scope` is produced. But **101 of the 127 fall out before any `touches` set is consulted**, on "one of them is not a `let` of a single call" - the analysis only looks at a shape almost nothing is written in. 12 are ADR-034's conditional handler. Only 14 are the ledger's fail-closed polarity doing its job. A zero produced that way measures the analysis, not the corpus.
+- **The lowering is a pessimisation below ~256 KB per operation**, and this is now measured rather than suspected. `benches/overlap/` builds the two shapes the emitter produces for the same two reads and times them: **0.04×** at 5 bytes per file, **0.13×** at 64 KiB, crossover near 256 KiB, then **2.5×** at 1 MiB and **6.75×** at 8 MiB. Two spawns and two joins cost about **100 µs per pair, paid unconditionally**. A fixed 100 µs tax on two operations that may each take a microsecond is the opposite of the goal these decisions serve.
+- **Nothing changes yet, deliberately.** ADR-033 §7 owed a measurement on *real programs* and this corpus still is not one. The debt is now two debts instead: widen the analysis past `let x = f(…)` so its silence means something, and find a vehicle that beats 100 µs - a cost estimate in the ledger, the Advanced profile's pool instead of raw spawns, or `strict` as the default with overlap as the opt-in. In that order; the second must not be decided before the first is done.
+- **`benches/overlap/run.sh` is the number to beat**, kept as plain `rustc`-buildable std so it can be read next to the generated Rust.
+
 ### Decided and built (0.0.9 - ADR-033 D9: no `allow_parallel`, and the compiler says why instead)
 
 - **The obvious companion to `seq` is refused, and the reasoning is written down because it will be proposed again.** `try_join { }` is out twice over: it names what the compiler already does, so writing it would make the fast path the thing you ask for - the design ADR-033 exists to invert - and `tokio::try_join!` means *cancel the others on the first error*, the opposite of D6. Borrowing the name would borrow the wrong expectation.

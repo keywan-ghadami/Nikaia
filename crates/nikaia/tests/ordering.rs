@@ -248,11 +248,13 @@ fn the_corpus_lowers_under_both_orderings() {
     }
 
     assert!(seen > 0, "no example was lowered");
-    // Today: none of them. Every example either chains its reads or names its
-    // paths with a variable. That is a fact about the corpus worth having
-    // written down rather than discovered later - it is why ADR-033 could not
-    // be measured on it, and it is what the first real application has to
-    // change for the decision to have been worth making.
+    // Today: none of them. `--overlaps` says why, and the answer is not the
+    // one this comment used to give: of 127 refused pairs, 101 fall out on
+    // "not a `let` of a single call" - before any `touches` set is consulted.
+    // So the zero measures how narrow the analysis is, not how sequential the
+    // corpus is (ADR-033 §8.1). Worth having written down rather than
+    // rediscovered: widening the shapes comes before any conclusion about
+    // whether `ordering = "effects"` earns being the default.
     assert!(
         overlapped.is_empty(),
         "these examples now lower differently: {overlapped:?}"
