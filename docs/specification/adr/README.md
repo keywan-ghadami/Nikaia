@@ -38,7 +38,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [005](adr-005.md) | The borrow model: four groups of lifetime situation, and which the compiler solves silently. No lifetime annotations, ever | Accepted | inference, ledger |
+| [005](adr-005.md) | The borrow model: four groups of lifetime situation, and which the compiler solves silently. No lifetime annotations, ever | Accepted | inference, ledger; D8's CI tests are not |
 | [006](adr-006.md) | `Cleanup` — teardown that performs I/O, inserted by the compiler on every exit path | Accepted | no |
 | [008](adr-008.md) | Tethered slices in user structs: the tether-state lattice, and one handle per container rather than per token | Accepted | views |
 
@@ -46,7 +46,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [007](adr-007.md) | The scannerless grammar protocol and hybrid DSL binding; retires `unsafe asm` as a core construct | Accepted | grammar, `dsl` |
+| [007](adr-007.md) | The scannerless grammar protocol and hybrid DSL binding; retires `unsafe asm` as a core construct | Accepted | D1–D4, D6, D8; D5 and D7 are not |
 | [009](adr-009.md) | Parallel parsing: frames, monoid folds, and where a format assumption is written down | Accepted | frames, `par_fold` |
 | [011](adr-011.md) | Stage 0 lowering — the grammar protocol onto the parser backend, name for name | Accepted | yes |
 | [016](adr-016.md) | The UTF-8 check is divided across frames, not skipped | Accepted | yes |
@@ -93,7 +93,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [023](adr-023.md) | What `throws` declares, where the error set lives, and what an error carries | Accepted | `throw`, `catch`, the set |
+| [023](adr-023.md) | What `throws` declares, where the error set lives, and what an error carries | Accepted | `throw`, `catch`, the inferred set, the site |
 | [025](adr-025.md) | A loop's step can fail, and the enclosing function gains a `throws` for it | Accepted | yes |
 | [036](adr-036.md) | A stack trace is asked for; the site is free | Accepted | yes |
 
@@ -102,7 +102,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [026](adr-026.md) | Compile-time I/O — what a build may read, and what may run while it reads | **Open** | no |
-| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7) | first increment |
+| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | first increment, `--overlaps` |
 | [034](adr-034.md) | A handler that can `return` makes the next statement conditional, so it may not be started early | Accepted | yes |
 
 ## What supersedes what
@@ -140,6 +140,9 @@ header:
 | [023](adr-023.md) D7 | [036](adr-036.md) | `{error:full}` as a format spec; `f"{error.full()}"` needs no new syntax |
 | [032](adr-032.md) D5 | [035](adr-035.md) | a brace deciding a literal's type — the `f` decides it now |
 | [033](adr-033.md) D5 | [034](adr-034.md) D2 (amends) | "started early" widened from *a branch* to *anything the program might not have performed* |
+| [027](adr-027.md) §7 | [029](adr-029.md) | effect polymorphism — a higher-order function's `sync` now depends on its lambda |
+| [028](adr-028.md) D6 | [029](adr-029.md) | a higher-order method carrying no `sync` at all |
+| [029](adr-029.md) §4 | [031](adr-031.md) | a signature naming its receiver's type arguments |
 
 ## Writing a new one
 
