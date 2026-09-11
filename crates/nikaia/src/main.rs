@@ -347,9 +347,9 @@ fn lower_to_rust(args: &Cli, source: &str) -> Result<()> {
         // question about the build, and two settings answer it no on their
         // own - so say which, rather than letting the report read as a
         // promise the emitter is not keeping.
-        if !profile.threads() {
+        if !profile.user_parallelism() {
             println!(
-                "note: `--profile {}` has no threads, so nothing below overlaps in this build.",
+                "note: `--profile {}` runs user code on one thread, so nothing below overlaps in this build.",
                 args.profile
             );
         } else if args.ordering != "effects" {

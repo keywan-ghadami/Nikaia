@@ -90,17 +90,31 @@ impl Profile {
         }
     }
 
-    /// Whether the emitter may spawn an OS thread at all.
+    /// Whether two pieces of **user** code may run at the same time.
     ///
-    /// Lite is *"a strict single-threaded model for user logic"* (Part I,
-    /// 11.6), and Part III 19.4 promises a `--target=wasm32-unknown` build
-    /// that generates no OS-level mutexes or atomics - on that target
-    /// `std::thread::scope` does not link. So this is not a preference the
-    /// analysis may override: ADR-033 decides whether two operations *may*
-    /// overlap, and this decides whether there is anything to overlap them
-    /// with. Under Lite the answer is no, and `--ordering effects` degrades
-    /// to `strict` the same way `par_fold` degrades to `fold` (ADR-009).
-    pub fn threads(self) -> bool {
+    /// Not "does the process have more than one thread": Lite has a second one
+    /// and always did. Part I 8.4's Runtime Sidecar offloads blocking I/O to a
+    /// background thread on native (a Web Worker on WASM) so the event loop
+    /// never stalls, and it stays safe because *user code never runs there* -
+    /// the exchange is message passing, so there is nothing to race over. What
+    /// Lite forbids is the other thing: *"a strict single-threaded model for
+    /// user logic"*.
+    ///
+    /// `task::both(|| …, || …)` puts user closures on two threads, so it is
+    /// forbidden under Lite whatever the analysis says - ADR-033 decides
+    /// whether two operations *may* overlap, and this decides whether a
+    /// vehicle exists to overlap them with. `rayon::join` is also not a
+    /// vehicle on `wasm32-unknown`, where it does not link (Part III 19.4).
+    ///
+    /// This is **not** a statement that ADR-033 is meaningless under Lite. Two
+    /// reads in flight at once with their results collected on the main thread
+    /// is concurrency without parallelism, which is precisely what an event
+    /// loop and a sidecar are for - and it would carry none of the per-pair
+    /// thread wake-up §8.4 measured. Lite's own vehicle for that is not built
+    /// (no event loop, no sidecar, no async lowering), so `effects` degrades
+    /// to `strict` here the way `par_fold` degrades to `fold` (ADR-009) -
+    /// for now, and for a narrower reason than "Lite has no threads".
+    pub fn user_parallelism(self) -> bool {
         match self {
             Profile::Lite => false,
             Profile::Advanced => true,
@@ -1618,7 +1632,10 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<bool> {
-        if !self.profile.threads() || self.ordering != Ordering::Effects || i + 1 >= stmts.len() {
+        if !self.profile.user_parallelism()
+            || self.ordering != Ordering::Effects
+            || i + 1 >= stmts.len()
+        {
             return Ok(false);
         }
         if tail_at.is_some_and(|tail| tail == i || tail == i + 1) {
