@@ -177,7 +177,7 @@ fn collect(parsed: &Parsed, block: &Block, own: &Ledger, library: &Ledger, into:
                 // A method call, or a call nobody can name. Either can fail, and
                 // treating "I cannot see it" as "it does not fail" is the one
                 // direction ADR-010 D1 calls a vulnerability generator.
-                Some(Reached::Method) | Some(Reached::Opaque) => {
+                Some(Reached::Method) | Some(Reached::Opaque(_)) => {
                     into.direct.insert(UNNAMED_ERROR.to_string());
                 }
                 None => {}

@@ -267,7 +267,7 @@ fn collect_reach(
                 Some(Reached::Own(name)) => {
                     reach.calls.insert(name);
                 }
-                Some(Reached::Library { sync: false, .. }) | Some(Reached::Opaque) => {
+                Some(Reached::Library { sync: false, .. }) | Some(Reached::Opaque(_)) => {
                     reach.blocked = true
                 }
                 // Answered per function by the type checker, and merged in by
@@ -373,7 +373,11 @@ pub(super) enum Reached {
     /// Also everything that is not a plain call but still *runs* something -
     /// `spawn`, a `dsl` - because a body containing one is not the pure CPU
     /// task Part II 12.1 describes, whatever the thing it runs turns out to do.
-    Opaque,
+    ///
+    /// `Some(name)` where the source wrote one and no ledger knew it, `None`
+    /// for a construct that has no callee to name. Both block, and the name is
+    /// carried only so the diagnostic can say which call it was about.
+    Opaque(Option<String>),
 }
 
 /// What a call resolves to, by the same rule for both analyses.
@@ -395,14 +399,14 @@ pub(super) fn reached(
                 .collect::<Vec<_>>()
                 .join("::"),
             // A call through anything else is a target we cannot name.
-            _ => return Some(Reached::Opaque),
+            _ => return Some(Reached::Opaque(None)),
         },
         // Answered by the type checker rather than here (ADR-028).
         Expr::MethodCall { .. } => return Some(Reached::Method),
         // Starts a task, or runs a grammar whose actions are arbitrary Nikaia.
         // Neither is pure computation this compiler can see the end of.
         Expr::Spawn { .. } | Expr::Dsl { .. } | Expr::DslFrom { .. } => {
-            return Some(Reached::Opaque)
+            return Some(Reached::Opaque(None))
         }
         _ => return None,
     };
@@ -431,7 +435,7 @@ pub(super) fn reached(
         });
     }
 
-    Some(Reached::Opaque)
+    Some(Reached::Opaque(Some(name)))
 }
 
 /// The name a call resolves to, when a ledger says it can pause.
@@ -447,15 +451,26 @@ fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Optio
             (!contract.sync.is_sync()).then_some((name, false))
         }
         Reached::Library { key, sync } => (!sync).then_some((key, true)),
-        // The check deliberately does not use ADR-028's resolution, and the
-        // reason is the diagnostic rather than the analysis. `NK2202` names one
-        // call and puts a caret under it; the checker answers per *function*,
-        // because `Symbol` carries no position and there is nothing to key a
-        // call site by. "Something in here pauses" is not a message Part III
-        // C.2 allows. So the check stays permissive here until expression-level
-        // spans exist, and the inference - which needs no caret - does not wait
-        // for them.
-        Reached::Method | Reached::Opaque => None,
+        // A method call the check deliberately does not resolve, and the reason
+        // is the diagnostic rather than the analysis: `NK2202` names one call
+        // and puts a caret under it, where the type checker answers per
+        // *function*. The **inference** merges that answer in per function
+        // (`reach_of`), so nothing is lost - the claim is still taken away.
+        Reached::Method => None,
+        // An unresolvable call is a different case and may not be permissive
+        // here. The inference already takes `sync` away for one
+        // ([ADR-027](adr-027.md) D2, conservative in the restrictive
+        // direction), but D4 says an **assertion** is never overwritten by the
+        // inference - so a source that writes `sync` and calls something no
+        // ledger knows used to keep `sync = true` in a file that ships
+        // ([ADR-020](adr-020.md)), and a consumer's `par_iter` body would
+        // believe it. That is the polarity [ADR-010](adr-010.md) D1 forbids,
+        // paid for a caret: and the caret is available, because Part III C.2
+        // reports this checker and `NK2202` at *statement* granularity already.
+        Reached::Opaque(name) => Some((
+            name.unwrap_or_else(|| "something this compiler cannot resolve".to_string()),
+            false,
+        )),
     }
 }
 

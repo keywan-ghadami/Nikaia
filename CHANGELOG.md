@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed (0.0.9 - ADR-027: an asserted `sync` survived a call nothing could resolve)
+
+- **A `sync` a source asserted was kept even where the body called something no ledger knows**, and the ledger that ships recorded `sync = true` for it. ADR-027 D2 makes the *inference* conservative in the restrictive direction and D4 says an **assertion** is never overwritten by the inference - so the two together left the assertion standing, and a consumer's `par_iter` body would have believed it. `sync` gates `access`, `access_all`, `par_iter`, a scope's tasks and the panic hook, so this is the gate on every safe concurrency primitive Chapter 12 has.
+- **The permissiveness was bought with a diagnostic and was buying nothing.** The check returned no violation for an unresolvable call because `NK2202` wants a caret on the call and the type checker answers per function. But Part III C.2 reports this checker at *statement* granularity already, which is a position - so the caret was available all along, and the polarity ADR-010 D1 exists to protect was being paid for it.
+- **A method call stays permissive there, and that is a different case**, not the same hole: the type checker resolves one (ADR-028) and the inference merges its answer in per function, so the claim is still taken away where it has to be. A test pins that too, so the fix cannot later be read as making every unresolved thing an error.
+- **Found by the ADR-038 D7 experiment.** A `sync` function calling into a foreign crate is exactly this shape, and a foreign crate has no contract by definition.
+
 ### Built (0.0.9 - ADR-021 D2: the lockfile records what Cargo resolved, and the bridge compiles at 2021)
 
 - **`nikaia.lock` now carries `[dependencies]`, which ADR-021 D2 has asked for since it was written.** The versions only started existing an hour earlier: since [ADR-002](docs/specification/adr/adr-002.md) D1 a project build generates a `Cargo.toml` and Cargo resolves a real `Cargo.lock` beside it under `target/`, and nothing carried the answer across. Until it did, the one file whose job is to answer *does this build the same thing for you as for me?* answered it **only about the Nikaia half** - source hashes, toolchain and compiler fingerprint, and not a word about which `regex` was linked.

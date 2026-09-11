@@ -151,6 +151,50 @@ fn a_while_body_is_walked_like_any_other() {
     assert_eq!(l.functions["counts"].sync, Sync::Inferred);
 }
 
+/// An asserted `sync` may not survive a call nothing can resolve.
+///
+/// [ADR-027](../../../docs/specification/adr/adr-027.md) D2 makes the
+/// *inference* conservative in the restrictive direction, and D4 says an
+/// **assertion** is never overwritten by it. Those two together meant a source
+/// that wrote `sync` and called something no ledger knows kept `sync = true` -
+/// in a file that ships ([ADR-020](../../../docs/specification/adr/adr-020.md)),
+/// so a consumer's `par_iter` body would believe it.
+///
+/// The check was permissive here for a diagnostic reason: `NK2202` wants a
+/// caret on the call. But the caret is available - Part III C.2 reports this
+/// checker at *statement* granularity already - so the permissiveness was
+/// buying nothing and costing the polarity
+/// [ADR-010](../../../docs/specification/adr/adr-010.md) D1 exists to protect.
+///
+/// Found by the ADR-038 D7 experiment: a `sync` function calling into a foreign
+/// crate is exactly this shape, and a foreign crate has no contract by
+/// definition.
+#[test]
+fn an_asserted_sync_does_not_survive_an_unresolvable_call() {
+    let source = "fn versprochen(n: i64) -> i64 sync { fremd::macht_irgendwas(n) return n + 1 }";
+
+    let found = violations(source);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].callee.contains("fremd::macht_irgendwas"),
+        "and it must name the call rather than the function: {found:?}"
+    );
+}
+
+/// A method call stays permissive here, and that is not the same hole.
+///
+/// `stats.add(5)` names `add` and says nothing about what `stats` is. The
+/// **type checker** resolves it (ADR-028) and the inference merges that answer
+/// in per function, so the claim is still taken away where it has to be - the
+/// check simply is not the place that does it. The test above must not be read
+/// as making every unresolved thing an error.
+#[test]
+fn a_method_call_is_asked_elsewhere_rather_than_refused_here() {
+    let source = "fn ordne(xs: Vec[i64]) -> i64 { xs.sort_by_key fn { a } return 1 }\n\
+                  fn im_lock(xs: Vec[i64]) -> i64 sync { return ordne(xs) }";
+    assert!(violations(source).is_empty());
+}
+
 /// The crossover, in the smallest program that shows it.
 ///
 /// A helper nobody annotated uses an iterator method over a pure lambda, and a
