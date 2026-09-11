@@ -206,8 +206,6 @@ For tethered slices the guarantee is stated positively: **the source text cannot
 
 > **Design Note (implementation):** Tethering is the architecture the async ecosystem converged on for zero-copy I/O (`bytes::Bytes` in Rust: a reference-counted buffer plus offsets); interning is what compiler front-ends converged on for symbol tables. A future optimization may replace the tether's reference count with compiler-verified self-referential storage — the driver controls all access patterns and could prove the invariants itself — but that is an internal optimization avenue, not a semantic change. Because grammars compile to direct byte-stream consumers, a parser may also use SIMD matching specialized to its own syntax. See [ADR-005](adr/adr-005.md) D4 and [ADR-007](adr/adr-007.md) §4.
 
-> **Correction (0.0.7):** Drafts up to 0.0.6 justified zero-copy parsing by claiming "the borrow checker ensures you cannot use a token after the original text has been deleted." That has it backwards — the borrow checker would *reject* such a program, which is the problem tethering exists to solve, not evidence that it is already handled.
-
 **What a rule is called, when it fails where it began**
 
 A grammar rule with several alternatives fails by reporting what each of them

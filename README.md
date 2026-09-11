@@ -143,11 +143,13 @@ does this file close" is otherwise a genuinely hard question.
 
 ### How is that even possible?
 
-Nikaia is not a new backend. It lowers to a stable intermediate representation and then drives
-`rustc` directly through its internal driver API, pinned to one exact nightly per release.
-That is what makes points 1, 2 and 3 tractable: the hard safety machinery already exists and
-is battle-tested — Nikaia's job is to stop making humans operate it by hand.
-→ [ADR-001](docs/specification/adr/adr-001.md), [Toolchain architecture](docs/toolchain_architecture.md)
+Nikaia is not a new backend. The frontend lowers to a stable intermediate representation,
+**Bridge-IR**, and a separate executor takes it from there — today by emitting Rust and
+invoking `rustc`, pinned to one exact nightly per release. That is what makes points 1, 2 and 3
+tractable: the hard safety machinery already exists and is battle-tested — Nikaia's job is to
+stop making humans operate it by hand. Keeping the generated Rust readable is deliberate, not a
+stopgap: it is how a compiler bug stays inspectable.
+→ [ADR-003](docs/specification/adr/adr-003.md), [Toolchain architecture](docs/toolchain_architecture.md)
 
 ---
 
@@ -320,8 +322,8 @@ Nikaia is an experiment conducted in the open, and the specification is far ahea
 compiler. Concretely:
 
 * ✅ **Specification 0.0.7** — syntax, profiles, unified types, borrow model, cleanup
-  semantics, grammar protocol. Ten ADRs recording *why*, including the ones that reverse an
-  earlier decision.
+  semantics, grammar protocol. Thirty-six [ADRs](docs/specification/adr/README.md) record
+  *why*, including the ones that reverse an earlier decision.
 * 🚧 **0.0.8 (unreleased)** — tethered slices in user structs, parallel parsing, input
   provenance. See the [CHANGELOG](CHANGELOG.md).
 * 🚧 **Bootstrap compiler (Stage 0)** — a Rust front-end that lowers to a Bridge IR and drives
@@ -383,7 +385,7 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 | know why the project exists at all | [manifesto.md](manifesto.md) |
 | learn the language | [Spec Part I](docs/specification/10-nikaia-light.md) |
 | see the concurrency and parallelism model | [Spec Part II](docs/specification/20-nikaia-advance.md) |
-| understand a design decision | [the ADRs](docs/specification/adr) |
+| understand a design decision | [the ADR index](docs/specification/adr/README.md) |
 | see real programs | [examples/](examples/) |
 | let a model write Nikaia for you | [the spec](docs/specification) + [examples/](examples/) in one context |
 | work on the compiler | [toolchain architecture](docs/toolchain_architecture.md) |

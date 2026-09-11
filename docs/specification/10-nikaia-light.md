@@ -495,17 +495,15 @@ fn init {
 ```
 
 ### 5.2. There Is One Lambda Form
-Earlier drafts had a second one, `fn: expression`, for single-line logic. It is **removed**
-([ADR-022](adr/adr-022.md)), and 5.3 is the whole of what a lambda looks like.
+A lambda is written `fn { … }`, and 5.3 is the whole of it. There is no second, shorter form for
+single-line bodies.
 
-It was four characters shorter than the block and cost three things. It did not grow: a body that
-gained a second line had to change *form* rather than gain a line, which the flagship example had
-already had to do. It was a second way to write the same thing, so every reader had to know when
-to use which. And its body ran to the end of the expression, so a `.method()` chained after it
-landed **inside** the lambda — silently, with no error and a different program.
-
-Writing it today is an error that says so, because the form was in this specification and someone
-will have it in their fingers.
+The short form `fn: expression` is **not** part of the language. It saved four characters and its
+body ran to the end of the expression, so a `.method()` chained after it landed *inside* the
+lambda — silently, and a different program. Writing it is a compile error that names the block
+form, rather than a parse failure, because the form appeared in earlier versions of this
+specification and readers will have it in their fingers. Full reasoning:
+[ADR-022](adr/adr-022.md).
 
 ### 5.3. Lambdas (`fn { ... }`)
 When logic requires multiple steps, use a Block Lambda. You can choose between implicit arguments (for speed) or explicit arguments (for clarity).
@@ -937,12 +935,12 @@ beneath it where another error joined on the way — a cleanup that failed while
 unwinding is attached to the original as a *secondary* error rather than replacing it (6.4). The
 site costs nothing at run time: the compiler knew it and wrote it into the binary as text.
 
-**A stack trace is not among them, and that is measured rather than assumed.** Capturing one costs
-about **28 300 instructions per error** — sixteen times the whole of a program that raises twenty
-thousand of them ([ADR-036](adr/adr-036.md)). Errors here are the *expected* kind, so that is a bill
-a program pays per rejected line, for a value almost nothing reads. `NIKAIA_TRACE=1` asks for one;
-without it there is none, and the long form **says so** rather than leaving you to wonder whether
-one was lost.
+**A stack trace is not among them.** Errors here are the *expected* kind — a missing file, a line
+that does not parse — and capturing a trace for each one costs far more than raising it, so a
+program would pay that per rejected line for a value almost nothing reads. `NIKAIA_TRACE=1` asks
+for one; without it there is none, and the long form **says so** rather than leaving you to wonder
+whether one was lost. What that costs, and why the cost decided it, is
+[ADR-036](adr/adr-036.md).
 
 **Printing it: short is the default.**
 
@@ -1009,7 +1007,12 @@ Within one task the order is exactly the order you wrote: `let a = fs::read("x")
 
 ### 8.1.1. Order Is Kept Where It Can Be Seen
 
-> **Note:** this section describes a decision ([ADR-033](adr/adr-033.md)), not current behaviour. Nothing of it is implemented. It is written down here because it changes what a program *means*, and a decision of that kind belongs in the specification before it belongs in the compiler.
+> **Status.** This section is specified ahead of the compiler, because it changes what a program
+> *means* and a decision of that kind belongs here before it belongs in the implementation
+> ([ADR-033](adr/adr-033.md), still marked provisional). Built today: two adjacent statements whose
+> calls reach different resources do overlap, `--overlaps` explains every pair, and
+> `--ordering strict` restores the written order everywhere. Not built: `seq { … }`, the
+> `ordering` key in `nikaia.toml`, and overlapping anything wider than a `let` of a single call.
 
 Two lines that never meet have no reason to wait for one another:
 

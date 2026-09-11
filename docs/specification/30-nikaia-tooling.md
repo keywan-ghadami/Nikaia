@@ -396,15 +396,14 @@ of which validates its own operands.
 
 ### 16.1. Why not a core construct
 
-Earlier drafts (up to 0.0.5) specified an `unsafe asm` block with register constraints
-(`in(reg)`, `out(reg)`, `clobber("cc")`) built into the language. That construct assumed the
-target has registers.
+A built-in `asm` block with register constraints — `in(reg)`, `out(reg)`, `clobber("cc")` —
+would assume every target has registers. Nikaia's Lite profile targets **WebAssembly**
+(Chapter 15), and WASM is a *stack machine*: there is nothing for `in(reg)` to mean. A core
+construct that cannot be given meaning on a first-class target is a defect in the core, not in
+the target.
 
-Nikaia's Lite profile targets **WebAssembly** (Chapter 15), and WASM is a *stack machine*:
-there are no registers to constrain, and no meaning to give `in(reg)`. A core construct that
-cannot be given meaning on a first-class target is a defect in the core, not in the target.
-Moving instructions into DSLs lets each backend define exactly the operand model its hardware
-has. See [ADR-007](adr/adr-007.md), D6.
+As a DSL instead, each backend defines exactly the operand model its hardware has, and the
+grammar that validates it ([ADR-007](adr/adr-007.md), D6).
 
 ### 16.2. Usage
 
@@ -663,7 +662,7 @@ not here yet; `lines` and `bytes` are gone for a reason of their own, below.
 
 **Reading a large file: `map`, and the grammar**
 
-There is no `fs::lines` and no `fs::bytes`. Earlier drafts of this chapter specified both, and [ADR-025](adr/adr-025.md) D3 removed them rather than deferring them. The reasons are worth stating where a reader will look for the functions:
+There is no `fs::lines` and no `fs::bytes`, and there will not be. The reasons are stated here because this is where a reader looks for them ([ADR-025](adr/adr-025.md) D3):
 
 * **The specified shape cannot exist.** `lines(path)` was to open the file *and* yield tethered `&str` — so the returned value would own the buffer and hand out views into itself. That is the one thing an iterator may not do, and it is why the language below allocates a string per line when it offers the same function.
 * **The shape that works is two calls, and it is the model.** `fs::map(path)` owns the pages; `.lines()` borrows views of them. One value owns a buffer, another borrows from it, and Part I 6.6 and [ADR-008](adr/adr-008.md) rest on keeping those apart.
@@ -862,7 +861,7 @@ pub fn scope(f: fn(Scope))
 
 # Appendix C: The Diagnostics Contract
 
-Nikaia compiles through the Rust toolchain (ADR-001/002), but the Rust compiler's error messages — lifetimes, borrow traits, generated code — are exactly the vocabulary Nikaia promises its users they never need. This appendix makes diagnostic quality a **testable requirement**, not an aspiration. Full rationale: [ADR-005](adr/adr-005.md), D7.
+Nikaia compiles through the Rust toolchain ([ADR-003](adr/adr-003.md)), but the Rust compiler's error messages — lifetimes, borrow traits, generated code — are exactly the vocabulary Nikaia promises its users they never need. This appendix makes diagnostic quality a **testable requirement**, not an aspiration. Full rationale: [ADR-005](adr/adr-005.md), D7.
 
 ### C.1. The Iron Rule
 
