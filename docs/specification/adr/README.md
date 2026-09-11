@@ -109,7 +109,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [038](adr-038.md) | The runtime and the HTTP server are ours: `rustls` bound, `io_uring` for files, readiness for sockets, and a Rust crate may bring its own runtime under two rules | Accepted | no |
+| [038](adr-038.md) | The runtime and the HTTP server are ours: `rustls` bound, `io_uring` for files, readiness for sockets, and a Rust crate may bring its own runtime under two rules | Accepted | **D3, D4, D5** — the runtime starts before `main`, files complete (with the blocking path as a run-time-detected fallback), sockets signal readiness, and `nikaia-runtime.toml` carries the four settings; D1's HTTP server, D2's `rustls`, D6's parser and D7's two rules are not built |
 
 ### Build switches
 

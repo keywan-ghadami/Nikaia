@@ -296,6 +296,31 @@ fn a_throw_carries_the_site_it_came_from() {
     );
 }
 
+/// …and `main` is not an exception, though its name in the lowering is.
+///
+/// [ADR-038](../../../docs/specification/adr/adr-038.md) D4 gives `fn main` to
+/// the runtime and emits the program's own entry point under a name the author
+/// never wrote. The *site* is the author's word, so it stays `main`: a site
+/// naming the emitter's wrapper would be ADR-023 D6's whole point undone by an
+/// implementation detail.
+#[test]
+fn a_throw_in_main_names_main_and_not_the_lowering() {
+    let rust = emit(
+        r#"
+        enum E { X }
+        fn main() throws { throw E::X }
+        "#,
+    );
+    assert!(
+        rust.contains(r#"nikaia_std::error::raise(E::X, "main")"#),
+        "the site is the name the author wrote:\n{rust}"
+    );
+    assert!(
+        rust.contains("fn __nikaia_main"),
+        "…and the lowering did rename the function, or this proves nothing:\n{rust}"
+    );
+}
+
 /// The whole of Kap 7.1's reporting rule, compiled and run: `{error}` is the
 /// message and nothing else, `error.full()` adds the site, and the trace is
 /// absent unless the program asked - with its absence stated rather than left

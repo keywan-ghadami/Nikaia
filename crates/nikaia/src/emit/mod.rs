@@ -421,7 +421,14 @@ pub fn emit_module_body(
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
 ) -> Result<Lowered> {
-    emit_module_body_ordered(Ordering::default(), parsed, build, provenance, contracts)
+    emit_module_body_ordered(
+        Ordering::default(),
+        parsed,
+        build,
+        provenance,
+        contracts,
+        false,
+    )
 }
 
 /// The same, saying how strictly the written order is taken (ADR-033).
@@ -429,14 +436,22 @@ pub fn emit_module_body(
 /// The ordering is the first parameter because it is the one a caller is most
 /// likely to be threading through from a flag, and burying it behind four
 /// others is how it ends up defaulted by accident.
+///
+/// `entry` says whether these items are the crate root's. Only the crate root
+/// may carry the `fn main` Rust runs, and ADR-038 D4 makes that one generated
+/// function rather than the program's own - so a module is emitted with
+/// `false` and a `main` in it stays as written.
 pub fn emit_module_body_ordered(
     ordering: Ordering,
     parsed: &Parsed,
     build: Build,
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
+    entry: bool,
 ) -> Result<Lowered> {
-    Emitter::with_contracts(parsed, build, provenance, contracts.clone(), ordering).items_only()
+    Emitter::with_contracts(parsed, build, provenance, contracts.clone(), ordering)
+        .for_entry(entry)
+        .items_only()
 }
 
 /// What a program's preamble has to say, over all of its files.
@@ -558,6 +573,16 @@ struct Emitter<'p> {
     /// name. A `;` at a call means options everywhere else, and this is what
     /// says which calls mean the other thing.
     dsl_drivers: HashSet<String>,
+    /// Whether these items are the crate root - the one file that may carry
+    /// the program's entry point.
+    ///
+    /// [ADR-038](../../../docs/specification/adr/adr-038.md) D4 starts the
+    /// runtime before the first statement the user wrote, and the way to do
+    /// that is to write the `fn main` Rust runs and call the program's own
+    /// `main` from inside it. That may only happen once per program, so a
+    /// module's items are emitted with this `false` and a `main` in them is
+    /// left exactly as written.
+    entry: bool,
 }
 
 /// What an `impl` says about a method. Enough to adapt a `&mut self` method to
@@ -583,6 +608,19 @@ impl Method {
 /// and the emitted Rust needs a name for it that no program can collide with.
 const SELF_DSL: &str = "Self::dsl";
 const DSL_PARAMETER: &str = "NikaiaDsl";
+
+/// The name a Nikaia program gives its entry point.
+const MAIN: &str = "main";
+
+/// What the program's own `main` is called in the emitted Rust.
+///
+/// `fn main` belongs to the runtime now
+/// ([ADR-038](../../../docs/specification/adr/adr-038.md) D4): it starts the
+/// I/O worker, calls this, and drains. The name is spelled so that no Nikaia
+/// program plausibly collides with it, and a `rustc` diagnostic about the
+/// program's body still lands on the `.nika` source because the body's spans
+/// are unchanged (ADR-012).
+const PROGRAM_MAIN: &str = "__nikaia_main";
 
 /// What surrounds the statements being emitted.
 #[derive(Debug, Clone, Copy)]
@@ -712,7 +750,14 @@ impl<'p> Emitter<'p> {
             library: std_ledger(),
             ordering,
             dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
+            entry: true,
         }
+    }
+
+    /// The same, said of a module rather than of the crate root.
+    fn for_entry(mut self, entry: bool) -> Self {
+        self.entry = entry;
+        self
     }
 
     fn text(&self, sym: Symbol) -> &str {
@@ -727,6 +772,7 @@ impl<'p> Emitter<'p> {
             out.from(&item.span, |out| self.item(out, &item.node))?;
             out.push("\n");
         }
+        self.entry_point(&mut out);
         Ok(Lowered {
             rust: out.buf,
             map: out.map,
@@ -775,11 +821,93 @@ impl<'p> Emitter<'p> {
             out.from(&item.span, |out| self.item(out, &item.node))?;
             out.push("\n");
         }
+        self.entry_point(&mut out);
 
         Ok(Lowered {
             rust: out.buf,
             map: out.map,
         })
+    }
+
+    /// The program's own `main`, if this file carries one the runtime can wrap.
+    ///
+    /// `Some(throws)` for the plain shape - `fn main()` or `fn main() throws`,
+    /// no receiver, no parameters, no returned value - and `None` for anything
+    /// else, including a `main` in a module rather than at the crate root. A
+    /// `main` this does not recognise is emitted exactly as written and keeps
+    /// its name, because a wrapper that guessed at a signature would be worse
+    /// than no wrapper at all.
+    fn user_main(&self) -> Option<bool> {
+        if !self.entry {
+            return None;
+        }
+        self.parsed
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                Item::Fn {
+                    name: Some(name),
+                    receiver: None,
+                    args,
+                    config,
+                    spread: None,
+                    ret_type: None,
+                    throws,
+                    ..
+                } if self.text(*name) == MAIN && args.is_empty() && config.is_empty() => {
+                    Some(*throws)
+                }
+                _ => None,
+            })
+    }
+
+    /// The `fn main` Rust runs: ADR-038 D4, as five lines of generated code.
+    ///
+    /// The runtime is started *before* the program's first statement and
+    /// drained after its last, so an operation inside the program costs no
+    /// thread start and no thread wake-up - which is
+    /// [ADR-033](../../../docs/specification/adr/adr-033.md) §8.4's finding
+    /// read the other way round.
+    ///
+    /// What starts is what
+    /// [ADR-037](../../../docs/specification/adr/adr-037.md) D2 allows, and
+    /// the *compiler* is what knows which: `user_parallelism` is a build
+    /// switch, so it is written into this call rather than read from the
+    /// operator's runtime configuration file (ADR-038 D5 has four settings and
+    /// this is not one of them).
+    fn entry_point(&self, out: &mut Out) {
+        let Some(throws) = self.user_main() else {
+            return;
+        };
+        let user_code = match self.build.user_parallelism {
+            UserParallelism::No => "Sequential",
+            UserParallelism::Yes => "Concurrent",
+        };
+        let ret = if throws {
+            " -> Result<(), Box<dyn std::error::Error>>"
+        } else {
+            ""
+        };
+
+        for line in [
+            "",
+            "// ADR-038 D4: the runtime is running before the program's first",
+            "// statement, so an operation inside it costs no thread wake-up. What",
+            "// starts is what `user_parallelism` allows (ADR-037 D2): the I/O",
+            "// worker always, a pool for user code only at `yes`.",
+        ] {
+            out.push(line);
+            out.push("\n");
+        }
+        out.push(&format!("fn main(){ret} {{\n"));
+        out.push(&format!(
+            "    let nikaia_runtime = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code});\n"
+        ));
+        out.push(&format!("    let outcome = {PROGRAM_MAIN}();\n"));
+        out.push("    nikaia_runtime.finish();\n");
+        out.push("    outcome\n");
+        out.push("}\n");
     }
 
     /// Whether any `dsl … from …` in the program reaches a parallel entry rule.
@@ -1087,9 +1215,23 @@ impl<'p> Emitter<'p> {
             Some(name) => self.text(*name).to_string(),
             None => "new".to_string(),
         };
+        // ADR-038 D4: `fn main` is the runtime's, and the program's own entry
+        // point is called from inside it. Only at the crate root, and only for
+        // the shape `entry_point` writes a wrapper for - `user_main` and this
+        // ask the same question, so a renamed function always has a caller.
+        //
+        // The **source** name is kept for the body, because it is what an
+        // error raised in here reports as its site (ADR-023 D6, ADR-036): a
+        // `throw` in `main` says `main`, and the name this emitter chose for
+        // the lowering is not something the author ever wrote.
+        let emitted = if depth == 0 && name == MAIN && self.user_main().is_some() {
+            PROGRAM_MAIN.to_string()
+        } else {
+            name.clone()
+        };
 
         out.push(&format!(
-            "{vis}fn {name}{}({}){ret} ",
+            "{vis}fn {emitted}{}({}){ret} ",
             dsl.unwrap_or_default(),
             params.join(", ")
         ));

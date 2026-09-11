@@ -477,6 +477,13 @@ impl Project {
         }
 
         let manifest = Manifest::read(&layout.root.join("nikaia.toml"))?;
+        // ADR-038 D5 moved `cleanup-deadline` out of the manifest. The key is
+        // still accepted, and the note is what keeps the move from being
+        // silent - a manifest whose setting stopped being read without saying
+        // so is the mistake `[build]`'s unknown-key check already exists for.
+        for note in manifest.notes() {
+            eprintln!("note: {note}");
+        }
         let settings = Settings::resolve(&manifest, target, user_parallelism, ordering)?;
         if let Some(missing) = settings.build.target.unbuildable() {
             bail!(

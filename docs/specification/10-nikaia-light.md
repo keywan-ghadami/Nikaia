@@ -1142,6 +1142,24 @@ While `user_parallelism = no` keeps your own logic on one thread ("The Happy Pat
 * **Safety Guarantee:** Data exchange occurs via strict message passing (ownership transfer). Since user code never accesses the Sidecar memory directly, **Race Conditions** remain impossible.
 * **Non-Blocking:** From the developer's perspective, a database call is simply an async yield point. The Runtime guarantees that the main loop never stalls waiting for disk I/O.
 
+> **Status:** the sidecar exists; the yield point does not.
+>
+> The runtime starts **before your first statement**, with one I/O thread
+> always and a pool for your own code only at `user_parallelism = yes`
+> ([ADR-038](adr/adr-038.md) D4). What runs on that thread is `std`'s own code
+> and nothing else — the boundary is a closed list of operations rather than a
+> queue of closures, which is what makes "user code never accesses the Sidecar
+> memory" a property of the compiler rather than a promise
+> ([ADR-037](adr/adr-037.md) D2, ADR-038 §4.2). A file read is handed to the
+> **kernel** where the machine can complete it, so the commonest heavy
+> operation involves no sidecar thread at all (ADR-038 D3).
+>
+> What is not built is the last bullet. Stage 0 emits a direct call, and the
+> call blocks the calling thread while the kernel works: there is no state
+> machine, so there is no other task for the main loop to run in the meantime.
+> The two halves this section promises therefore arrive in order — the thread
+> that never stalls is here, and the yield point that would use it is not.
+
 ---
 
 ## Chapter 9: Project Organization and Visibility

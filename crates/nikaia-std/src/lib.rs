@@ -21,6 +21,7 @@ pub mod hash;
 pub mod html;
 pub mod io;
 pub mod list;
+pub mod rt;
 pub mod task;
 
 /// The parser backend a generated program's grammars run on.
@@ -42,6 +43,11 @@ pub mod prelude {
     pub use crate::io;
     pub use crate::list::ListExt;
     pub use crate::task;
+    // `rt` is in the prelude so that the `fn main` the emitter writes can name
+    // `rt::start` without a `use` the program did not ask for. Nothing in a
+    // `.nika` file reaches it: ADR-038 D3's whole point is that a program says
+    // `fs::read_to_string(p)` and the runtime is invisible.
+    pub use crate::rt;
     pub use crate::text::digit_value;
     pub use std::collections::HashMap;
 }
