@@ -364,9 +364,14 @@ fn short_is_safe_and_full_is_asked_for() {
     // wonder whether one was lost.
     assert!(out.contains("NIKAIA_TRACE=1"), "stdout was:\n{out}");
 
-    // Asked for, there is one.
+    // Asked for, there is one - and `NIKAIA_TRACE` alone has to be enough.
+    // `RUST_BACKTRACE` is cleared deliberately: leaving it to the environment
+    // is what once let a `Backtrace::capture()` that needs it pass locally and
+    // fail in CI.
     let traced = std::process::Command::new(&binary)
         .env("NIKAIA_TRACE", "1")
+        .env_remove("RUST_BACKTRACE")
+        .env_remove("RUST_LIB_BACKTRACE")
         .output()
         .expect("run the program with tracing on");
     let traced = String::from_utf8_lossy(&traced.stdout);
