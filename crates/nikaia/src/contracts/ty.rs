@@ -46,6 +46,32 @@ pub enum Ty {
     },
     /// `(A, B)` - a fixed number of parts and no name.
     Tuple(Vec<Ty>),
+    /// `$V` - a name in a *library's* signature that stands for a type the
+    /// receiver supplies (ADR-030).
+    ///
+    /// `HashMap::entry(&HashMap[$K, $V], key: ?) -> Entry[$V]` says the result
+    /// holds whatever the map holds. At a call site the receiver's actual type
+    /// binds the variables and they are **substituted away**; one that stays
+    /// unbound becomes `Unknown`, never a name.
+    ///
+    /// That last sentence is the whole safety argument, and it is why this does
+    /// not contradict [ADR-024] D4. D4 erases a Nikaia function's `T` to `?`
+    /// because a `T` that survives into a comparison makes the checker report
+    /// that `i32` is not `T` - a false positive. A variable here never survives
+    /// into a comparison: it is bound and replaced, or it is `?`.
+    ///
+    /// The sigil is not decoration. `T`, `K`, `V` are also perfectly good type
+    /// names, and a rule that guessed from capitalisation would silently turn
+    /// somebody's type into a hole.
+    ///
+    /// [ADR-024]: ../../../docs/specification/adr/adr-024.md
+    Var {
+        name: String,
+        /// `&$V` - the `&` belongs to the *use*, not to what the receiver
+        /// bound. `and_modify` hands its lambda a reference to whatever the map
+        /// holds, so the signature writes `fn(&$V)` and `$V` is still `Stats`.
+        view: bool,
+    },
     /// `fn(&Stats)` - a parameter that takes a lambda, and what the lambda is
     /// handed when it runs (ADR-029).
     ///
@@ -102,6 +128,11 @@ impl Ty {
             (Ty::Fn { params: a }, Ty::Fn { params: b }) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.fits(b))
             }
+            // A variable that reaches a comparison was never bound, and an
+            // unbound variable is the absence of a claim rather than a claim
+            // about a type called `$V`. `substitute` is supposed to have
+            // removed it; this is the belt to that pair of braces.
+            (Ty::Var { .. }, _) | (_, Ty::Var { .. }) => true,
             (
                 Ty::Named {
                     name: a,
@@ -148,6 +179,14 @@ impl Ty {
             Some(rest) => (true, rest.trim()),
             None => (false, text),
         };
+        // After the `&`, because `&$V` is a view of what `$V` binds to and not
+        // a type whose name begins with a dollar.
+        if let Some(name) = rest.strip_prefix('$').filter(|name| !name.is_empty()) {
+            return Ty::Var {
+                name: name.to_string(),
+                view,
+            };
+        }
         match rest.find('[') {
             Some(at) if rest.ends_with(']') => Ty::Named {
                 name: rest[..at].trim().to_string(),
@@ -178,6 +217,12 @@ impl Ty {
             Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| p.erase(parameters)).collect()),
             Ty::Fn { params } => Ty::Fn {
                 params: params.iter().map(|p| p.erase(parameters)).collect(),
+            },
+            // A library's variable is not a Nikaia function's generic, and
+            // erasing one is not the other's business.
+            Ty::Var { name, view } => Ty::Var {
+                name: name.clone(),
+                view: *view,
             },
             Ty::Named { name, args, view } => {
                 if args.is_empty() && parameters.contains(name) {
@@ -225,6 +270,12 @@ impl fmt::Display for Ty {
             Ty::Fn { params } => {
                 let params: Vec<String> = params.iter().map(|p| p.to_string()).collect();
                 write!(f, "fn({})", params.join(", "))
+            }
+            Ty::Var { name, view } => {
+                if *view {
+                    f.write_str("&")?;
+                }
+                write!(f, "${name}")
             }
             Ty::Named { name, args, view } => {
                 if *view {
@@ -361,5 +412,180 @@ mod fn_type_tests {
         // `?` is the absence of a claim, so it still fits both ways.
         assert!(one.fits(&Ty::Unknown));
         assert!(Ty::Unknown.fits(&one));
+    }
+}
+
+/// Bind a library signature's type variables from the receiver's actual type
+/// (ADR-031).
+///
+/// **One level, positional, receiver only.** `HashMap[$K, $V]` against
+/// `HashMap[&str, Stats]` binds `$K` and `$V`; a pattern that is not a variable
+/// is compared no further, and nothing is bound from an argument. That is not
+/// an implementation shortcut - it is the decision. Binding from arguments and
+/// matching nested patterns is where a signature language grows into a
+/// unification algorithm, and each step of that wants its own reason.
+///
+/// A mismatch binds nothing rather than failing. This is not a check: the
+/// question is what the receiver can *tell* the signature, and a receiver that
+/// tells it nothing leaves the variables unbound, which `substitute` turns into
+/// `?`.
+pub fn bind(pattern: &Ty, actual: &Ty, out: &mut std::collections::BTreeMap<String, Ty>) {
+    match (pattern, actual) {
+        // The `&` in `&$V` says how the *method* takes it, not what the
+        // receiver holds, so it is dropped when binding and reapplied when
+        // substituting.
+        (Ty::Var { name, .. }, actual) => {
+            out.entry(name.clone()).or_insert_with(|| actual.clone());
+        }
+        (
+            Ty::Named {
+                name: pattern_name,
+                args: pattern_args,
+                ..
+            },
+            Ty::Named {
+                name: actual_name,
+                args: actual_args,
+                ..
+            },
+        ) if pattern_name == actual_name && pattern_args.len() == actual_args.len() => {
+            for (pattern, actual) in pattern_args.iter().zip(actual_args) {
+                bind(pattern, actual, out);
+            }
+        }
+        // The view flag is deliberately not compared: `&HashMap[$K, $V]` must
+        // bind against a `HashMap[…]` held by value and the other way round,
+        // because a signature writes the receiver the way the method takes it
+        // and a caller holds it however it holds it.
+        _ => {}
+    }
+}
+
+/// Replace a signature's variables with what the receiver bound them to.
+///
+/// **An unbound variable becomes `Unknown`, never a name.** That is the whole
+/// safety argument for [`Ty::Var`] and the reason this does not contradict
+/// ADR-024 D4: a variable never survives into a comparison, so the checker is
+/// never in a position to report that `i32` is not `$V`.
+pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty {
+    match ty {
+        Ty::Var { name, view } => match bound.get(name) {
+            Some(Ty::Named { name, args, .. }) if *view => Ty::Named {
+                name: name.clone(),
+                args: args.clone(),
+                view: true,
+            },
+            Some(bound) => bound.clone(),
+            None => Ty::Unknown,
+        },
+        Ty::Named { name, args, view } => Ty::Named {
+            name: name.clone(),
+            args: args.iter().map(|a| substitute(a, bound)).collect(),
+            view: *view,
+        },
+        Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| substitute(p, bound)).collect()),
+        Ty::Fn { params } => Ty::Fn {
+            params: params.iter().map(|p| substitute(p, bound)).collect(),
+        },
+        Ty::Unknown => Ty::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod variable_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn bound_from(pattern: &str, actual: &str) -> BTreeMap<String, Ty> {
+        let mut out = BTreeMap::new();
+        bind(&Ty::parse(pattern), &Ty::parse(actual), &mut out);
+        out
+    }
+
+    /// A variable reads back the way it is written, and is not a name.
+    #[test]
+    fn a_variable_round_trips_and_is_not_a_name() {
+        assert_eq!(
+            Ty::parse("$V"),
+            Ty::Var {
+                name: "V".to_string(),
+                view: false
+            }
+        );
+        assert_eq!(Ty::parse("&$V").text(), "&$V");
+        assert_eq!(Ty::parse("$V").text(), "$V");
+        assert_eq!(Ty::parse("Entry[$V]").text(), "Entry[$V]");
+        assert_eq!(Ty::parse("fn(&$V)").text(), "fn(&$V)");
+        // A type genuinely called `V` is still a type called `V`.
+        assert_eq!(Ty::parse("V"), Ty::named("V"));
+    }
+
+    /// The receiver binds the variables, one level and by position.
+    #[test]
+    fn the_receiver_binds_what_the_signature_names() {
+        let bound = bound_from("&HashMap[$K, $V]", "HashMap[&str, Stats]");
+        assert_eq!(bound["K"], Ty::view("str"));
+        assert_eq!(bound["V"], Ty::named("Stats"));
+    }
+
+    /// A receiver that says nothing binds nothing, and nothing is `?`.
+    ///
+    /// `let m = HashMap::new()` gives `HashMap[?, ?]`, and the honest answer
+    /// downstream is "no claim" rather than a guess.
+    #[test]
+    fn a_receiver_that_says_nothing_leaves_the_variables_unbound() {
+        let bound = bound_from("&HashMap[$K, $V]", "HashMap[?, ?]");
+        assert_eq!(
+            substitute(&Ty::parse("Entry[$V]"), &bound),
+            Ty::parse("Entry[?]")
+        );
+
+        // A different type altogether binds nothing at all.
+        let none = bound_from("&HashMap[$K, $V]", "Vec[i64]");
+        assert!(none.is_empty());
+        assert_eq!(substitute(&Ty::parse("$V"), &none), Ty::Unknown);
+    }
+
+    /// An unbound variable becomes `?` - never a type called `$V`.
+    ///
+    /// This is the property ADR-024 D4 was protecting when it erased a generic
+    /// to `?`, kept here by substitution rather than by erasure.
+    #[test]
+    fn an_unbound_variable_becomes_unknown() {
+        let empty = BTreeMap::new();
+        assert_eq!(substitute(&Ty::parse("$V"), &empty), Ty::Unknown);
+        assert_eq!(
+            substitute(&Ty::parse("fn(&$V)"), &empty),
+            Ty::parse("fn(?)"),
+        );
+        // And it fits anything, so a leak cannot become a false rejection.
+        assert!(Ty::parse("$V").fits(&Ty::named("i32")));
+        assert!(Ty::named("i32").fits(&Ty::parse("$V")));
+    }
+
+    /// The chain the whole decision exists for.
+    ///
+    /// `HashMap[&str, Stats]` → `Entry[Stats]` → `fn(&Stats)`, which is what
+    /// gives the `a` in `.and_modify fn { a.add(t) }` a type.
+    #[test]
+    fn the_chain_from_a_map_to_a_lambda_parameter() {
+        let at_entry = bound_from("&HashMap[$K, $V]", "HashMap[&str, Stats]");
+        let entry = substitute(&Ty::parse("Entry[$V]"), &at_entry);
+        assert_eq!(entry, Ty::parse("Entry[Stats]"));
+
+        let at_and_modify = bound_from("Entry[$V]", &entry.text());
+        let lambda = substitute(&Ty::parse("fn(&$V)"), &at_and_modify);
+        assert_eq!(lambda, Ty::parse("fn(&Stats)"));
+    }
+
+    /// The view flag does not stop a binding.
+    ///
+    /// A signature writes the receiver the way the method takes it, and a
+    /// caller holds it however it holds it; requiring the two to agree would
+    /// make every `&`-taking method fail to bind.
+    #[test]
+    fn a_view_binds_against_a_value() {
+        let bound = bound_from("&Vec[$T]", "Vec[i64]");
+        assert_eq!(bound["T"], Ty::named("i64"));
     }
 }

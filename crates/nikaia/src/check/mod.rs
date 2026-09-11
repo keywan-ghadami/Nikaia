@@ -28,7 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
-use crate::contracts::{ty::Ty, FnContract, Ledger};
+use crate::contracts::{ty, ty::Ty, FnContract, Ledger};
 use crate::parser::Parsed;
 
 /// One thing the checker is sure about.
@@ -595,14 +595,24 @@ impl<'a> Checker<'a> {
                 };
                 self.reached_method(Some(&key));
 
+                // What the receiver's own type tells the signature (ADR-031).
+                // `HashMap[&str, Stats]` against `&HashMap[$K, $V]` binds `$V`
+                // to `Stats`, so `-> Entry[$V]` is an `Entry[Stats]` and the
+                // next call in the chain has something to bind from in turn.
+                let bound = bindings(contract, &on);
+
                 // The arguments are walked **after** the contract is in hand,
                 // which is what lets a lambda's parameters have types (ADR-029).
                 // The old order walked them first and could not: `a` in
                 // `.and_modify fn { a.add(t) }` is named nowhere and typed by
                 // nothing but the callee's signature.
-                let expected = expected_arguments(contract);
+                let expected: Vec<Ty> = expected_arguments(contract)
+                    .iter()
+                    .map(|ty| ty::substitute(ty, &bound))
+                    .collect();
                 let found = self.arguments_given(args, &expected, span);
-                self.arguments(&key, contract, &found, &[], span)
+                let result = self.arguments(&key, contract, &found, &[], span);
+                ty::substitute(&result, &bound)
             }
 
             Expr::Field { base, name } => {
@@ -1396,6 +1406,25 @@ fn list(names: &[&str]) -> String {
                 .join(", ")
         ),
     }
+}
+
+/// What the receiver's actual type binds this signature's variables to.
+///
+/// The receiver is the signature's first parameter where there is one, so this
+/// is one `bind` against one pattern - the narrowness is ADR-031's decision
+/// rather than a gap. A signature with no variables produces an empty map and
+/// every substitution below is the identity.
+fn bindings(contract: &FnContract, receiver: &Ty) -> BTreeMap<String, Ty> {
+    let mut bound = BTreeMap::new();
+    let Some(signature) = &contract.signature else {
+        return bound;
+    };
+    if let Some((name, pattern)) = signature.params.first() {
+        if name == "self" {
+            ty::bind(pattern, receiver, &mut bound);
+        }
+    }
+    bound
 }
 
 /// The types a callee's parameters expect, as a call site sees them.

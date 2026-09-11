@@ -166,6 +166,12 @@ A **caller** does not distinguish them. Both mean "this cannot pause", both sati
 
 That reason is also the limit. A parameter the callee **stores or spawns** — Part I 5.4's `@detached` — breaks it, because then the lambda's calls belong to nobody the caller is counting. `from` is for an immediate lambda only, and until the ledger can spell `@detached` that rule is held by a test over `std`'s own entries rather than by the file format.
 
+**A signature may name its receiver's type arguments** ([ADR-031](adr/adr-031.md)). `HashMap::entry` is written `(&HashMap[$K, $V], key: ?) -> Entry[$V]`: the result holds whatever the map holds. At a call site the receiver's actual type binds the variables and they are substituted away, so `HashMap[&str, Stats]` makes that result an `Entry[Stats]`, and `and_modify`'s `fn(&$V)` a `fn(&Stats)` — which is what gives the `a` in `fn { a.add(t) }` a type at all.
+
+**An unbound variable becomes `?`, never a name**, and that is the whole of why this is safe. A variable that survived into a comparison would make the checker report that `i32` is not `$V` — the false positive ADR-024 D4 erases generics to avoid. Here it cannot survive: it is bound and replaced, or it is the absence of a claim. A map built by `HashMap::new()` says nothing about what it holds, binds nothing, and the chain stops helping rather than guessing.
+
+**A variable says what flows *out*; `?` stays for what flows *in*.** It may appear in a result and in a lambda's parameter type, and never in an argument. What flows out is a promise the ledger makes and is wrong on its own account; what flows in is a constraint on somebody's program — and the language below deliberately accepts more than its type parameters suggest, so a variable there would reject correct code. Binding itself is narrow on purpose: from the receiver, by position, one pattern. This is the first inference in this file's type language rather than more vocabulary, and widening it is meant to be a decision rather than a diff.
+
 The type it names is a **function type**, `fn(&Stats)`, which is the other half of the same decision: it says what the lambda is handed, so that the `a` in `fn { a.add(t) }` has a type and what it is called on can be resolved. Only a ledger writes one — Nikaia's grammar has no syntax for a function type, so no source program can declare a parameter of that shape.
 
 The two are also arrived at with opposite caution, which is worth stating plainly because it looks like an inconsistency and is not:
