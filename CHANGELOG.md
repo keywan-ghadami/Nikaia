@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed (0.0.9 - two claims the withdrawal left standing)
+
+- **ADR-021 D9 said Cranelift was "switchable", and it is not.** The switch is `[profile.dev] codegen-backend`, which is not a stabilised Cargo key - `cargo build` refuses the manifest outright, naming the feature. It needed the nightly ADR-001 D1 withdrew. The *decision* is untouched: Cranelift was already off by default and §4's measurement still says why. What changed is the price of turning it on, which is now a whole toolchain rather than a profile key.
+- **`docs/std-sysroot.md` carried 931 MB for `rustc-dev`**, a figure `docs/nightly-cost.md` §4 had already corrected to 654 MB - 931 MB is `lib/rustlib/<triple>`, which holds `rust-std`'s rlibs too. A notes file quoting a number another notes file measured properly is the drift the layering exists to prevent, so it now says which is which.
+
 ### Withdrawn (0.0.9 — the nightly toolchain, the Bridge-IR backend and the `rustc_ast` path)
 
 - **Nikaia lowers `.nika` to Rust source text, and that is the only code generator.** Three things that existed to make a second one possible are **withdrawn**: the pinned nightly toolchain, the **Bridge-IR** protocol, and the `rustc_ast` lowering that consumed it. `--backend` takes `interpreter` and `rust`; `rust` keeps its name, because it says what comes out and because the specification, the cache's backend dimension and every test already spell it. The decision is the owner's and is recorded as a **withdrawal** under `docs/README.md` §2: the specification and the ADRs are rewritten as though none of the three had been there, one sentence justifies direct lowering ([ADR-004](docs/specification/adr/adr-004.md) D1), and this entry plus [`docs/withdrawn-one-way-down.md`](docs/withdrawn-one-way-down.md) are where everything else goes.

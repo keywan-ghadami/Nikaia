@@ -114,7 +114,9 @@ log line says Cargo was quiet; an unmoved mtime says the file was not written.
 
 **Installation size cannot decide where `std` comes from.** The toolchain this
 was measured on — the pinned nightly with `rustc-dev` — is 1.4 GB, of which
-`rustc-dev` alone is 931 MB. `nikaia-std`'s rlib is 1.9 MB. (That nightly is
+`rustc-dev` alone is 654 MB (the 931 MB this note first quoted was
+`lib/rustlib/<triple>`, which holds `rust-std`'s rlibs too — `nightly-cost.md`
+§4 measured it properly afterwards). `nikaia-std`'s rlib is 1.9 MB. (That nightly is
 withdrawn; against the 602 MiB a stable toolchain weighs the conclusion is
 unchanged, two and a half orders of magnitude instead of three.) Whether `std`
 ships pre-built, ships as sources, or is built locally moves something orders of
