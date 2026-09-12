@@ -176,3 +176,59 @@ fn an_unmapped_diagnostic_says_so_rather_than_guessing() {
         "{rendered}"
     );
 }
+
+/// What **`cargo`** writes is read by the same function, and it is the project
+/// build's only channel (ADR-005 D7, Part III C.1).
+///
+/// `cargo --message-format=json` wraps each `rustc` diagnostic in a line of its
+/// own and mixes in lines of its own that are not diagnostics at all. Both have
+/// to be handled here, because until they were, `nikaia build` handed Cargo's
+/// stderr to the terminal and every backend error reached the user as Rust about
+/// a generated file.
+///
+/// The diagnostic below is an `E0277`, which is the class ADR-005 D7 was short
+/// of: `Send`, `sync` and every future marker rule surfaces as a trait bound,
+/// and D7's seven were all borrow, ownership or lifetime errors.
+#[test]
+fn a_trait_bound_error_from_cargo_is_placed_in_the_nika_file() {
+    let lowered = lower(GOOD);
+    // A byte the map knows. Which byte is the emitter's business, so it is
+    // found rather than guessed: the first one the map covers at all.
+    let offset = (0..lowered.rust.len())
+        .find(|at| lowered.map.source_span(*at).is_some())
+        .expect("the map covers some of what was emitted");
+
+    let end = offset + 7;
+    let message = format!(
+        r#"{{"reason":"compiler-message","message":{{"message":"`Rc<String>` cannot be sent between threads safely","code":{{"code":"E0277"}},"level":"error","spans":[{{"file_name":"digits.rs","byte_start":{offset},"byte_end":{end},"line_start":7,"column_start":5,"is_primary":true}}],"children":[{{"level":"help","message":"within `LocalHandle`, the trait `Send` is not implemented for `Rc<String>`"}}]}}}}"#
+    );
+    let json = format!(
+        "{}\n{message}\n{}\n",
+        r#"{"reason":"compiler-artifact","target":{"name":"digits"}}"#,
+        r#"{"reason":"build-finished","success":false}"#,
+    );
+
+    let translated = diagnostics::translate_units(&json, &lowered.map, &[GOOD]);
+    assert_eq!(
+        translated.len(),
+        1,
+        "Cargo's own lines carry no diagnostic: {translated:#?}"
+    );
+    let placed = translated[0]
+        .location
+        .as_ref()
+        .expect("the map knows where the entry came from");
+    assert_eq!(placed.unit, 0);
+
+    let rendered = diagnostics::render(&translated[0], "digits.nika", GOOD, "digits.rs");
+    assert!(rendered.starts_with("error: digits.nika:"), "{rendered}");
+    assert!(
+        !rendered.contains("digits.rs"),
+        "and not against the generated Rust: {rendered}"
+    );
+    assert!(
+        rendered.contains("the trait `Send` is not implemented"),
+        "the note comes through - the **text** is still Rust's, which ADR-005 \
+         D7 records as the open half: {rendered}"
+    );
+}

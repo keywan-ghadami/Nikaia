@@ -159,21 +159,28 @@ fn a_nikaia_program_serves_one_request_through_hyper() {
 /// Question 2, first rule: a value that may **not** cross a thread, handed to
 /// a thread the foreign runtime owns.
 ///
-/// It is refused - and by whom is the finding. There is no structural `Send`
-/// check in this compiler (ADR-005 Group B, `NK25xx`, ADR-037 §3, all
-/// unbuilt), so what refuses it is `rustc`, reporting `E0277` against the
-/// generated Rust. Part III C.1 calls that a compiler bug; this test records
-/// the state of affairs rather than blessing it, and is the regression test for
-/// the day someone fixes it - at which point it fails and says so.
+/// It is refused, and **by whom depends on who can decide**. The structural
+/// `Send` check (ADR-005 §1 Group B, `NK2501`/`NK2502`) decides what is written
+/// down: a `Shared` is `MayNot` and is refused in Nikaia words with a caret in
+/// the `.nika` file. This program's value is not written down - it is *borrowed
+/// from the foreign crate*, so its type has no ledger entry and the verdict is
+/// `Undecided`, which is not permission and not a refusal either
+/// (`contracts::send`). So what refuses this one is still `rustc`.
+///
+/// What changed is the half Part III C.1 actually calls a bug: the refusal now
+/// arrives **against the `.nika` line**, because ADR-005 D7 enumerates `E0277`
+/// and `nikaia build` reads `cargo --message-format=json` through
+/// `diagnostics::translate` instead of handing Cargo's stderr to the terminal.
+/// The *text* is still `rustc`'s, which D7 records as the open half.
 #[test]
 #[ignore = "runs cargo and fetches hyper and tokio from crates.io"]
-fn a_value_that_may_not_cross_a_thread_is_refused_by_rustc_and_not_by_nikaia() {
+fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
     let built = nikaia("build", &experiment().join("crossing"));
     assert!(
         !built.status.success(),
         "an `Rc` reached a foreign thread and the build succeeded. If this \
          fires, read `docs/foreign-runtime.md` - it is either a real \
-         unsoundness or the structural `Send` check has landed: {}",
+         unsoundness or something about the crossing has changed: {}",
         said(&built)
     );
 
@@ -183,21 +190,30 @@ fn a_value_that_may_not_cross_a_thread_is_refused_by_rustc_and_not_by_nikaia() {
         "the refusal is a `Send` refusal: {complaint}"
     );
 
-    // The finding, asserted so that it cannot quietly stop being true.
+    // The half that is fixed: the place. Part III C.1's Iron Rule.
     assert!(
-        complaint.contains("E0277"),
-        "it arrives as a raw rustc error code, which Part III C.1 calls a bug \
-         in this compiler: {complaint}"
+        complaint.contains("src/main.nika:"),
+        "the refusal names the `.nika` line the author wrote: {complaint}"
     );
     assert!(
-        complaint.contains("gen/foreign_runtime_crossing.rs"),
-        "and points at the generated Rust rather than at the `.nika` line: \
-         {complaint}"
+        complaint.contains("across_a_thread"),
+        "and shows the statement it is about: {complaint}"
     );
+    assert!(
+        !complaint.contains("gen/foreign_runtime_crossing.rs:"),
+        "and no longer points into a file the author has never read: {complaint}"
+    );
+
+    // The half that is open, asserted so that it cannot quietly stop being
+    // true: the *text* is still Rust's, which ADR-005 D7 records rather than
+    // solves. A frontend check cannot translate it, because the type it is
+    // about was never written in Nikaia.
     assert!(
         !complaint.contains("NK25"),
-        "there is no NK-coded diagnostic for this yet; if one has appeared, \
-         this test is what has to change: {complaint}"
+        "this crossing is `Undecided` for the structural check - the value's \
+         type comes from the foreign crate - so there is no `NK25xx` for it. A \
+         code appearing here means the check has learned to decide it, and this \
+         test is what has to change: {complaint}"
     );
 }
 

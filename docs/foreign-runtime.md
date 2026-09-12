@@ -472,3 +472,47 @@ Nothing here changes a decision. Four things are open, in the order they will bi
 And one thing to add rather than decide: D7's first rule is enforceable only as far as the foreign
 crate is honest (§3.5). A structural `Send` check would not have caught `smuggled/`, and the record
 reads as though it would.
+
+---
+
+## 7. Postscript — what §6 asked, and what has since been decided
+
+**Date:** September 12, 2026. Added to the record rather than edited into it: the
+experiment above is what was measured on the 11th, and the four open items are
+what it handed over. Three are now answered in the records that own them, and
+this note is where a reader of §6 finds out.
+
+1. **`Shared` lands *after* `NK25xx`.** The structural `Send` check is built —
+   [ADR-005](specification/adr/adr-005.md) §5 — and §3.2's asymmetry cannot
+   arrive unannounced: a value that may not cross a thread is refused as
+   `NK2501` into a task and `NK2502` into a call this compiler cannot see the end
+   of, in Nikaia words and in the `.nika` file, with the same verdict at both
+   settings of `user_parallelism`. The "cheap version" §6 proposed is what was
+   built, including Group B's own phrasing: at `no` the task crossing is a lint,
+   because the task does not run there.
+2. **The project path gets the interception.** §3.4's two blockers are both gone:
+   `nikaia build` reads `cargo --message-format=json` through
+   `diagnostics::translate`, so the caret lands on the `.nika` line. `crossing/`
+   is still refused by `rustc` rather than by the frontend — its value's type
+   comes from the foreign crate, so the structural check's answer is *undecided*,
+   which is neither permission nor a refusal — but the refusal now names the line
+   the author wrote. The **text** is still Rust's, which is the second decision
+   §6 separated out and which is still open.
+3. **`E0277` is in [ADR-005](specification/adr/adr-005.md) D7's enumerated
+   classes.** §3.3's fourth finding, recorded where the promise lives.
+4. **D7's second rule — refuse or wrap — is still open.** §4.3 is unchanged and
+   still the argument; [ADR-006](specification/adr/adr-006.md) is unbuilt, so
+   nothing has been built that would decide it.
+
+And the addition §6 asked for rather than a decision: D7's first rule now says
+that it reaches only as far as a foreign crate is honest, with §3.5 as its
+evidence.
+
+**One thing this experiment could not have predicted, and which the check
+produced.** A value that may not cross at `no` may not cross at `yes` either,
+because the verdict is not allowed to consult the switch — so once `Shared`
+exists, a `Shared` will not cross a thread at all, and Part II 12.2's shared
+counter is the program that wants to. [ADR-037](specification/adr/adr-037.md) D3
+already names the way out and leaves it open ("whether the *choice between `Rc`
+and `Arc`* could be made per value rather than per build"). That is now the
+question standing directly in front of `Shared`, and it was not on §6's list.

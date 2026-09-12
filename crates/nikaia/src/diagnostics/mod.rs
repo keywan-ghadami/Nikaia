@@ -43,6 +43,14 @@ pub struct Location {
     pub line: usize,
     pub column: usize,
     pub span: Span,
+    /// Which file of the program, as an index into the units the map was built
+    /// from. A single-file program has one, and it is 0.
+    ///
+    /// The map has carried this since a program could be several files
+    /// (ADR-012); until the project build started reading these messages,
+    /// nothing asked for it, and a message about the third module would have
+    /// been printed against the first module's text.
+    pub unit: usize,
 }
 
 /// Turn `rustc --error-format=json` output about the emitted Rust into
@@ -51,12 +59,39 @@ pub struct Location {
 /// Lines that are not JSON, and diagnostics that carry no information about a
 /// place (rustc's own "aborting due to N previous errors"), are dropped.
 pub fn translate(rustc_json: &str, map: &SourceMap, source: &str) -> Vec<Diagnostic> {
-    let lines = LineIndex::new(source);
+    translate_units(rustc_json, map, &[source])
+}
+
+/// The same, for a program of several files - and for what **`cargo`** writes.
+///
+/// Two things make one function serve both. A program is several `.nika` files
+/// joined into one Rust file (Part I 9.1), and the map already knows which file
+/// each span came from, so the line a message is about has to be looked up in
+/// that file's text rather than in the first one's. And `cargo
+/// --message-format=json` wraps each `rustc` diagnostic in a line of its own
+/// (`{"reason": "compiler-message", "message": {...}}`), which is one
+/// `["message"]` away from what `rustc --error-format=json` writes directly.
+///
+/// The second is why the project build can report anything at all. Until it
+/// existed, `nikaia build` handed Cargo's stderr to the terminal untouched, so
+/// every backend diagnostic reached the user as Rust about a generated file -
+/// which Part III C.1 calls a bug in this compiler, and which
+/// [ADR-005](../../../../docs/specification/adr/adr-005.md) D7 now enumerates
+/// `E0277` among.
+pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Diagnostic> {
+    let lines: Vec<LineIndex> = sources.iter().map(|s| LineIndex::new(s)).collect();
     let mut out = Vec::new();
 
-    for line in rustc_json.lines() {
+    for line in json.lines() {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
+        };
+        // Cargo's own lines ("compiler-artifact", "build-finished") carry no
+        // diagnostic; the one that does carries it under `message`.
+        let value = match value["reason"].as_str() {
+            Some("compiler-message") => value["message"].clone(),
+            Some(_) => continue,
+            None => value,
         };
 
         let level = value["level"].as_str().unwrap_or_default();
@@ -80,8 +115,8 @@ pub fn translate(rustc_json: &str, map: &SourceMap, source: &str) -> Vec<Diagnos
             .map(|l| l as usize);
         let location = primary
             .and_then(|s| s["byte_start"].as_u64())
-            .and_then(|offset| map.source_span(offset as usize))
-            .map(|span| lines.locate(span));
+            .and_then(|offset| map.locate(offset as usize))
+            .and_then(|(unit, span)| Some(lines.get(unit)?.locate(span, unit)));
 
         let notes = value["children"]
             .as_array()
@@ -250,7 +285,7 @@ impl LineIndex {
         Self { starts }
     }
 
-    fn locate(&self, span: Span) -> Location {
+    fn locate(&self, span: Span, unit: usize) -> Location {
         let line = match self.starts.binary_search(&span.start) {
             Ok(i) => i,
             Err(i) => i - 1,
@@ -260,6 +295,7 @@ impl LineIndex {
             line: line + 1,
             column: span.start - self.starts[line] + 1,
             span,
+            unit,
         }
     }
 }
