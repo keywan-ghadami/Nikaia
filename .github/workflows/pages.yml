@@ -82,6 +82,10 @@ jobs:
       - name: Highlight the code blocks
         working-directory: scripts/site-highlight
         run: |
+          # `actions/jekyll-build-pages` runs Jekyll inside a container, so
+          # `_site` comes back owned by that container's user and nothing the
+          # runner runs afterwards may write to it.
+          sudo chown -R "$(id -u):$(id -g)" ../../_site
           npm ci
           node highlight.mjs ../../_site
 
