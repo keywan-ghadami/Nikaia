@@ -12,15 +12,11 @@
 //! file name. So one anchor - the newest `nikaia_std`, of which a build has
 //! exactly one - and the rest is read, not guessed.
 //!
-//! **Read without `-Z`.** This used to ask `rustc -Zls=root` to print that
-//! dependency list, which is a nightly-only flag and was the only `-Z` in the
-//! workspace - so the test harness needed the pinned nightly even when nothing
-//! it compiled did, and a stable-toolchain build could not be checked against
-//! the corpus at all (`docs/nightly-cost.md`). The dependency's
-//! `extra-filename` is a plain string *inside* the metadata, so the same
-//! question is answered by asking it the other way round: of the candidate
-//! rlibs on disk, which one's filename hash appears in the anchor's bytes.
-//! Exactly one may, and the helper refuses to guess if that is not so.
+//! **Read with nothing unstable.** A dependency's `extra-filename` is a plain
+//! string *inside* the metadata, so the question is answered by asking it the
+//! other way round rather than by asking the compiler to list anything: of the
+//! candidate rlibs on disk, which one's filename hash appears in the anchor's
+//! bytes. Exactly one may, and the helper refuses to guess if that is not so.
 
 #![allow(dead_code)]
 

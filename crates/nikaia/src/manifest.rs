@@ -103,7 +103,7 @@ impl Manifest {
     /// so a file cannot be cached as part of one project and compiled with
     /// another's switches. One root-finder, deliberately.
     pub fn find(input: &Path) -> Result<Manifest> {
-        let layout = bridge_orchestrator::cache::Layout::resolve(input);
+        let layout = orchestrator::cache::Layout::resolve(input);
         if !layout.in_project {
             return Ok(Manifest::default());
         }

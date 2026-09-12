@@ -1,23 +1,9 @@
 // crates/nikaia/src/main.rs
 //
-// `rustc_private` is the bridge backend's, not this binary's: it is declared
-// only when `rustc-backend` is on, so that `cargo build -p nikaia
-// --no-default-features` produces a compiler on a stable toolchain
-// (ADR-001 D1, and `docs/nightly-cost.md` for what that weighs).
-#![cfg_attr(feature = "rustc-backend", feature(rustc_private))]
-
-// `rustc-executor` links against the compiler's own dylibs, which carry their
-// own copies of `std`/`core`. Declaring `rustc_driver` here too makes this
-// binary link the same dylib set instead of the regular rlib `std`; without it
-// every shared crate "shows up twice" and linking fails.
-#[cfg(feature = "rustc-backend")]
-extern crate rustc_driver;
+// The whole compiler builds on stable: nothing here needs an unstable feature,
+// and the Rust this binary emits needs none either (ADR-001 D1).
 
 use anyhow::{bail, Context, Result};
-#[cfg(feature = "rustc-backend")]
-use bridge_ir::BridgeModule;
-#[cfg(feature = "rustc-backend")]
-use bridge_orchestrator::LanguageFrontend;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -41,16 +27,12 @@ pub struct Cli {
     #[arg(short, long)]
     pub input: Option<PathBuf>,
 
-    /// `interpreter`, `rust` (the default) or `bridge`.
+    /// `interpreter` or `rust` (the default).
     ///
-    /// `rust` is what a bare invocation uses (ADR-004 D4): it is the backend
-    /// that carries the whole corpus, and the only one that is in every build,
-    /// because `bridge` is what links `rustc_private` and so what needs the
-    /// pinned nightly.
-    ///
-    /// `bridge` is present when the `rustc-backend` feature is; a build without
-    /// it refuses the flag by name rather than serving another backend
-    /// (ADR-021 D14).
+    /// `rust` is what a bare invocation uses and is the only code generator
+    /// (ADR-004 D1): a `.nika` file becomes Rust source text, which `rustc`
+    /// then compiles. `interpreter` runs the program instead of emitting
+    /// anything (ADR-002 D2).
     ///
     /// `cranelift` and `llvm` are named by ADR-002 but not implemented; they
     /// are rejected rather than silently treated as something else
@@ -181,29 +163,11 @@ pub enum Command {
     },
 }
 
-/// What *this* build can be asked for, for a refusal to name (ADR-021 D14).
+/// What this build can be asked for, for a refusal to name (ADR-021 D9).
 ///
-/// The list is the build's and not the language's: a refusal that offered a
-/// backend this binary does not contain would send the reader straight into a
-/// second refusal, which is the same fault as answering with the wrong backend.
-#[cfg(feature = "rustc-backend")]
-const AVAILABLE: &str = "interpreter, rust, bridge";
-/// The same list on a build made without `rustc-backend` (ADR-021 D14).
-#[cfg(not(feature = "rustc-backend"))]
+/// Every build of this compiler has both, so the list does not vary - but a
+/// refusal still prints it, because a reader told only *no* has to guess.
 const AVAILABLE: &str = "interpreter, rust";
-
-/// Bridge-IR is what the bridge backend consumes, and nothing else in the
-/// binary asks for it, so a build without that backend has no frontend to
-/// register.
-#[cfg(feature = "rustc-backend")]
-struct NikaiaFrontend;
-
-#[cfg(feature = "rustc-backend")]
-impl LanguageFrontend for NikaiaFrontend {
-    fn parse(&self, source: &str) -> Result<BridgeModule> {
-        parser::parse_to_bridge(source)
-    }
-}
 
 /// `rustc --error-format=json … | nikaia --input x.nika --explain`
 ///
@@ -457,23 +421,16 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
 
     match args.backend.as_str() {
         "interpreter" => {
-            // For the interpreter, we need to parse to AST, not BridgeIR.
             let parsed = parser::parse_to_ast(&source)?;
             let interpreter = interpreter::Interpreter::new(parsed.interner.clone());
             interpreter.run(&parsed);
             Ok(())
         }
         "rust" => lower_to_rust(input, args, &settings, &source),
-        "bridge" => run_bridge_backend(input, &source),
         // ADR-002 named these and nothing ever matched them, so they ran as
         // whatever the default was without saying so. Accepting a flag and
         // quietly doing something else is worse than either implementing or
-        // refusing it.
-        //
-        // This is the *never implemented* refusal of ADR-021 D14, and it says
-        // so in those words: there is nothing to install and no build of this
-        // compiler has it, which is exactly what distinguishes it from the
-        // `bridge` refusal below.
+        // refusing it (ADR-021 D9).
         backend @ ("cranelift" | "llvm") => bail!(
             "backend `{backend}` is not implemented: no build of this compiler has it, \
              and there is nothing to install that would add it (ADR-002 names it; \
@@ -481,64 +438,10 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
              Available here: {AVAILABLE}."
         ),
         other => bail!(
-            "unknown backend `{other}` (expected interpreter, rust or bridge; \
+            "unknown backend `{other}` (expected interpreter or rust; \
              available here: {AVAILABLE})"
         ),
     }
-}
-
-/// The Bridge-IR backend (ADR-004 D2): lower, print the crate, hand it to
-/// `rustc`. It is the only part of the compiler that links `rustc_private`, so
-/// it is the only part that needs the pinned nightly and its `rustc-dev`
-/// component (ADR-001 D1).
-#[cfg(feature = "rustc-backend")]
-fn run_bridge_backend(input: &std::path::Path, source: &str) -> Result<()> {
-    // For compilation backends we use the orchestrator flow (or similar)
-    let bridge_module = NikaiaFrontend.parse(source)?;
-
-    // Output name based on input
-    let file_stem = input.file_stem().unwrap().to_str().unwrap();
-    let output_path = format!("./{}", file_stem);
-
-    println!("Compiling {} to {}...", input.display(), output_path);
-
-    // Manually call the backend executor
-    rustc_executor::execute(&bridge_module, &output_path)?;
-
-    println!("Compilation successful: {}", output_path);
-
-    Ok(())
-}
-
-/// The same backend on a build that does not contain it.
-///
-/// A compiler built `--no-default-features` has no `rustc_private` linkage and
-/// so needs no nightly, which since ADR-004 D4 is what an installation is
-/// allowed to be rather than a reduced one. What it must not do is quietly
-/// compile through some other backend: that is ADR-021 D9's rule, and D14
-/// extends it to a backend that was **compiled out** rather than never written.
-///
-/// The two refusals have to be told apart from the message alone, because the
-/// reader's next move differs. This one is *it exists and this build does not
-/// contain it*, and it names the feature, the toolchain component and roughly
-/// what that weighs, because there is something to do about it. `cranelift`'s
-/// is *nothing implements it*, and offers no remedy because none exists.
-#[cfg(not(feature = "rustc-backend"))]
-fn run_bridge_backend(_input: &std::path::Path, _source: &str) -> Result<()> {
-    bail!(
-        "backend `bridge` is not compiled into this nikaia: it exists, and this \
-         build does not contain it (ADR-004 D2 is the backend and D4 is why it is \
-         optional; ADR-001 D1 is the toolchain it needs).\n\
-         This build was made without the `rustc-backend` feature, so it links \
-         no `rustc_private` and needs no nightly toolchain.\n\
-         To get it: install the nightly named in \
-         `bridge-toolchain/rust-toolchain.toml` with its `rustc-dev` component \
-         (`scripts/bridge-toolchain.sh` does that, about 0.8 GB more on disk) \
-         and rebuild with default features on it.\n\
-         Nothing else is missing: `rust` is the default backend here and in a \
-         build that has the bridge (ADR-004 D4).\n\
-         Available here: {AVAILABLE}."
-    )
 }
 
 pub fn main() -> Result<()> {

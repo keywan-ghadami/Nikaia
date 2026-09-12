@@ -1,5 +1,5 @@
 [package]
-name = "bridge-orchestrator"
+name = "orchestrator"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,4 +11,3 @@ serde_json = "1.0"
 sha2 = "0.10"
 toml = "0.9"
 which = "6.0"
-bridge-ir = { workspace = true }

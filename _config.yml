@@ -47,15 +47,11 @@ exclude:
   - Cargo.toml
   - Cargo.lock
   - rust-toolchain.toml
-  - bridge-toolchain/
-  - check_rustc.rs
   - hello_world.rs
   - hello_world
   - .github/
   # patches and findings handed to dependencies, not written for readers here
   - docs/upstream/
-  # a scratch note recording a local rustup path
-  - findthesource.md
 
 # Publish the rendered page, not a second copy of the Markdown beside it.
 optional_front_matter:

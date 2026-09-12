@@ -685,7 +685,7 @@ mod tests {
             key_with(
                 "0.1.0",
                 "rustc-x",
-                &Choices::new("x86_64-linux/auto", "bridge"),
+                &Choices::new("x86_64-linux/auto", "interpreter"),
                 "a",
                 "s"
             ),
