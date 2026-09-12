@@ -8,3 +8,8 @@ node_modules/
 
 # Subagent git worktrees (created by the agent harness, never part of the project).
 .claude/worktrees/
+
+# Stray build artifacts that were committed once at the repository root.
+/hello_world
+/hello_world.rs
+/check_rustc.rs
