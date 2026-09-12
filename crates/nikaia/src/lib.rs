@@ -15,3 +15,4 @@ pub mod modules;
 pub mod parser;
 pub mod project;
 pub mod sysroot;
+pub mod views;

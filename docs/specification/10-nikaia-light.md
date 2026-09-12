@@ -867,6 +867,21 @@ Nothing about the program changes — except that an escape is now a compile err
 
 **The one case that is an error.** If a slice escapes and its buffer cannot be shared — it lives on the stack, or came from a foreign library — no tether is possible. The compiler says so and offers the ways out, `.to_owned()` among them. It never inserts that copy on your behalf: an invisible copy in a loop over a billion rows is exactly the kind of surprise Nikaia refuses to produce. (Details: [ADR-008](adr/adr-008.md).)
 
+**A parameter written `&str` may not be kept past its call.** A view inside a struct carries the buffer it points into, because the struct's own declaration says it holds a view; a parameter written `&str` on its own says only that the call may look at one. So a function that stores such a parameter — into a field of its subject, into a struct it hands back, into a task — is refused as `NK2302` (Part III, C.3), and the way to write it is to put the view in a struct and take the struct:
+
+```nika
+@borrowed
+struct Reading { name: &str, temp: i32 }
+
+impl Summary {
+    fn record(&mut self, m: Reading) { … }     // and not `name: &str`
+}
+```
+
+Handing a view back out of the buffer it came from is **not** this rule: `fn count(seq: &str, k: usize) -> HashMap[&str, Tally]` returns views of `seq`, and the result points into `seq` and nothing else. Why a parameter is not given a buffer of its own to name is [ADR-005](adr/adr-005.md) D1 — the language has no syntax for one — and what a struct carries instead is [ADR-008](adr/adr-008.md) D1.
+
+> **Status:** the refusal is built, and it is **wider than the rule**: where a view is handed to a call on the subject, the compiler cannot see whether the callee keeps it and reports it as kept. So a read-only call such as `self.names.contains_key(name)` is refused today, and the message is the same one.
+
 **One honest cost.** A tether keeps the *whole* buffer alive, not just the part you pointed at. Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB. Where that looks like a mistake the compiler warns and suggests `.to_owned()`.
 
 ### 6.7. The Borrow Contract Ledger

@@ -170,6 +170,10 @@ pub fn check_program(
     // A separate walk because it answers a question about a *statement's
     // holes* rather than about a type, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::dsl::check(parsed));
+    // A naked view parameter that is kept past the call (`NK2302`). Also a
+    // separate walk, and for the same reason: it asks where a *value* goes
+    // rather than what a type is, and it needs no ledger to answer it.
+    checker.checked.findings.extend(crate::views::check(parsed));
     checker.checked.findings.sort_by_key(|f| f.span.start);
     checker.checked
 }

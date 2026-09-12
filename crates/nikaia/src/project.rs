@@ -346,10 +346,11 @@ pub fn check(
 
     let mut refused = Vec::new();
     // One line per family, because a family is what a reader can act on in one
-    // go. The `NK1xxx` codes are types; `NK25xx` is a value on the wrong
-    // thread; `NK2605` and `NK2701` are one rule counted together, because
-    // they *are* one rule (ADR-025 D1) - a call that can fail, written or not,
-    // in a function that does not declare `throws`.
+    // go. The `NK1xxx` codes are types; `NK23xx` is a view kept past its call;
+    // `NK25xx` is a value on the wrong thread; `NK2605` and `NK2701` are one
+    // rule counted together, because they *are* one rule (ADR-025 D1) - a call
+    // that can fail, written or not, in a function that does not declare
+    // `throws`.
     let count = |family: &str| {
         findings
             .iter()
@@ -369,7 +370,17 @@ pub fn check(
             plural(crossings)
         ));
     }
-    let rules = findings.len() - types - crossings;
+    // `NK23xx` is aliasing: who else points at the thing this one is about.
+    // Counted on its own because the way out is a different one - a shape to
+    // change rather than a declaration to add.
+    let aliases = count("NK23");
+    if aliases > 0 {
+        refused.push(format!(
+            "{aliases} view{} kept past the call that was given it",
+            plural(aliases)
+        ));
+    }
+    let rules = findings.len() - types - crossings - aliases;
     if rules > 0 {
         refused.push(format!(
             "{rules} place{} that can fail without saying so",
