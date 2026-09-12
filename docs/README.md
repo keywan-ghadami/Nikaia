@@ -55,6 +55,9 @@ is normative and nothing may depend on it to know what a program means.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps, and why ADR-004 D3's in-memory
   exit is not worth building yet.
+* [`nightly-cost.md`](nightly-cost.md) — what the pinned nightly is actually
+  needed for, what `-Zpolonius=next` would buy and cost, and what a stable-only
+  installation weighs.
 * [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
   runtime that is already running, and the finding that only the completion
   path gets ADR-033 §8.5's zero.

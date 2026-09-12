@@ -59,3 +59,43 @@ jobs:
             ./target/release/nikaia --input "$sample" --backend interpreter
             echo "::endgroup::"
           done
+
+  # The compiler without its Bridge-IR backend, on a stable toolchain.
+  #
+  # `rustc-backend` is the only thing in the workspace that links
+  # `rustc_private`, so it is the only thing that needs ADR-001 D1's pinned
+  # nightly. Turning it off has to keep producing a whole compiler - the `rust`
+  # backend, the interpreter, projects, the ledger - and `--backend bridge` has
+  # to fail by name rather than fall through (ADR-021 D9). Both are claims, so
+  # both are tested; `docs/nightly-cost.md` is what they were measured against.
+  stable_without_the_bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Deliberately *not* `rustup show`: reading `rust-toolchain.toml` is what
+      # this leg exists to avoid. No nightly, and no `rustc-dev`.
+      - name: Install a stable toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-stable-
+
+      - name: Build the compiler without the bridge
+        run: rustup run stable cargo build -p nikaia --no-default-features --release
+
+      - name: No clippy warnings either
+        run: >
+          rustup run stable cargo clippy -p nikaia --no-default-features
+          --all-targets -- -D warnings
+
+      - name: Test
+        run: rustup run stable cargo test -p nikaia --no-default-features --release

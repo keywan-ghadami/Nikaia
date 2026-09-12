@@ -129,9 +129,13 @@ replaced is the *coupling*: the frontend no longer links `rustc_driver` and
 touch, and what later ADRs still cite, is everything in 001 and 002 that was
 never about that coupling:
 
-* ADR-001 D1, one exact nightly pinned per release — the premise
-  [005](adr-005.md) §1 Group B.2 rests on when it enables `-Zpolonius=next`, and
-  the rule `rust-toolchain.toml` and [021](adr-021.md) implement.
+* ADR-001 D1, one exact nightly pinned per release — the rule
+  `rust-toolchain.toml` and [021](adr-021.md) implement, and the premise
+  [005](adr-005.md) §1 Group B.2 *would* rest on if `-Zpolonius=next` were
+  passed. It is not, anywhere, and the correction is in
+  [001](adr-001.md) D1 and [005](adr-005.md) D2: what the pin is actually paid
+  for is [004](adr-004.md)'s bridge backend and its `rustc_private`, and the
+  flag's price is measured at +7.1 % of a build for zero programs in the corpus.
 * ADR-001 D2, why the parser backend is `winnow-grammar` and not
   `syn-grammar` — cited by [007](adr-007.md).
 * ADR-001 D4, Stage 0 is a transpiler — cited by [011](adr-011.md),
