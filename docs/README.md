@@ -87,7 +87,9 @@ is normative and nothing may depend on it to know what a program means.
   path gets ADR-033 §8.5's zero.
 * [`rc-or-arc.md`](rc-or-arc.md) — what an atomic reference count costs, whether
   `Rc` and `Arc` differ in anything a program can observe, and the prototype that
-  asks ADR-037 D3's open question of a value instead of a build.
+  asked ADR-037 D3's open question of a value instead of a build. The method, the
+  machine and the false starts; §11 says which option the owner took, and
+  ADR-037 D6–D8 are the decision.
 * [`mutex-floor.md`](mutex-floor.md) — what an always-`Mutex` floor for
   `Locked` would cost against Part II 12.2's no-pausing rule: why blocking is
   not pausing in this language, the one ledger line the answer turns on, and

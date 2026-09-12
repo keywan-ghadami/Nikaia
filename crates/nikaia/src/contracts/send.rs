@@ -11,11 +11,24 @@
 // of the crossing is ADR-005 Group B: the answer has to be **the same at both
 // settings of `user_parallelism`**, so that a library written at one setting
 // cannot turn out to be un-compilable where it is used. A check that consulted
-// the switch would answer `yes` for `Shared` at `user_parallelism = yes` (where
-// the count is atomic) and `no` at `user_parallelism = no` (where it is not),
-// which is exactly the asymmetry Group B, `NK25xx` and ADR-037 §3 were all
-// written to prevent. So **no switch reaches this file, and none may** - the
-// same sentence `order.rs` opens with, for the same reason.
+// the switch would answer `yes` for a type whose expansion is safe at one
+// setting and not at the other, and `no` for the same type at the other - which
+// is exactly the asymmetry Group B, `NK25xx` and ADR-037 §3 were all written to
+// prevent. So **no switch reaches this file, and none may** - the same sentence
+// `order.rs` opens with, for the same reason.
+//
+// ## What ADR-037 D6 changed here, and what it did not
+//
+// `Shared` was that type, and it was the file's only `MayNot`. D6 removed the
+// cause rather than the symptom: `Shared` expands to an atomic count at **both**
+// settings, so its expansion no longer moves with the switch and there is
+// nothing for the verdict to take the worse of. `Shared` therefore joins
+// `CONTAINERS` and is answered by what it holds.
+//
+// **The rule above is untouched.** The verdict still never reads
+// `user_parallelism`, and it is still a property of the type. What changed is
+// one row of a table, and what follows from it is that **no type answers
+// `MayNot` today** - see [`Crossing::MayNot`], which says why the arm stays.
 //
 // ## Three answers and not two
 //
@@ -75,19 +88,24 @@ const PLAIN: &[&str] = &[
 
 /// A container is whatever it holds: it may cross exactly when every one of its
 /// arguments may.
-const CONTAINERS: &[&str] = &[
-    "BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Result", "Vec",
-];
-
-/// The one type the records say may not cross.
 ///
-/// Part I 6.2 and [ADR-037](../../../../docs/specification/adr/adr-037.md) D3:
-/// `Shared[T]` is a count of the value's owners, and the count is a plain one at
-/// `user_parallelism = no`. A second thread touching a plain count is the
-/// unsoundness ADR-038 D7's first rule exists to prevent - and because the
-/// verdict may not depend on the switch (see the module header), it is `MayNot`
-/// at **both** settings.
-const SHARED: &str = "Shared";
+/// **`Shared` is in this list since
+/// [ADR-037](../../../../docs/specification/adr/adr-037.md) D6**, and that is the
+/// whole of step 1. It used to be the one type the records made `MayNot`,
+/// because D3 expanded it from `user_parallelism` - a plain count at `no`, an
+/// atomic one at `yes` - and a verdict that may not consult the switch has to
+/// take the worse of the two settings for a type whose expansion moves with it.
+/// D6 stops the expansion moving: `Shared` is atomic at both settings, so it is
+/// a container like any other and is answered by what it holds.
+///
+/// Which is also why the single-column invariant in the module header matters
+/// here rather than being a note for later. An atomic count may cross only
+/// where the value under it may both **move** to another thread and be **looked
+/// at** from one - `Arc<T>` in the language below - and that is exactly the
+/// property every name in [`PLAIN`] and this list is required to have.
+const CONTAINERS: &[&str] = &[
+    "BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Result", "Shared", "Vec",
+];
 
 /// How far into a type this walks before giving up. A struct that holds itself
 /// through a container is a shape the ledger can hold, and this must terminate
@@ -100,6 +118,20 @@ pub enum Crossing {
     /// Every part of it may cross, and this compiler can see every part.
     May,
     /// A part of it may not, and the records say which.
+    ///
+    /// **No type answers this today, and that is a consequence of
+    /// [ADR-037](../../../../docs/specification/adr/adr-037.md) D6 rather than an
+    /// oversight.** `Shared` was the one type the records made non-crossable,
+    /// and D6 made it crossable by giving it one representation. The arm stays
+    /// because the reason it existed has not gone away - a type whose expansion
+    /// still moves with `user_parallelism` has to take the worse setting - and
+    /// `Locked` is the candidate D3's second half is about. Nothing here decides
+    /// that.
+    ///
+    /// So `NK2501` and `NK2502` are built, reachable, and fire on no program
+    /// this language can write. The walk below still has to be able to produce
+    /// this, which is why the arm is exercised directly in the tests rather than
+    /// through a source.
     MayNot {
         /// The part the answer is about - the whole type where the type itself
         /// is the problem, and the field's type where a field is.
@@ -133,32 +165,30 @@ impl Crossing {
     /// One concrete way out, as Part III C.2 requires of every diagnostic.
     /// `None` where there is nothing to get out of.
     ///
-    /// The way out of a `Shared` crossing is the one Part I 6.2 already gives:
-    /// `Shared` is written by hand, so a value that crosses is written without
-    /// it and each thread gets its own. Where the part that may not cross is
-    /// something else, the honest advice is the other half - do not cross it.
+    /// One sentence, because a refusal has one honest remedy: a value that may
+    /// not cross stays where it was built. It used to have a second - "write
+    /// `Vec[i64]` instead of `Shared[Vec[i64]]` and give each thread its own" -
+    /// which went with [`Crossing::MayNot`]'s only producer (ADR-037 D6).
     pub fn way_out(&self) -> Option<String> {
-        let (part, _) = self.refused()?;
-        Some(match held_by(part) {
-            Some(held) => format!(
-                "write `{held}` where the value crosses and give each thread its own, \
-                 or keep the work on one thread"
-            ),
-            None => "keep the value on the thread that built it".to_string(),
-        })
+        self.refused()?;
+        Some("keep the value on the thread that built it".to_string())
     }
 
     /// One line saying why a value of this type may not cross, for a
     /// diagnostic's note. `None` where it may.
     ///
     /// Part III C.2: no Rust vocabulary, and the sentence has to mean something
-    /// to a reader who has never heard of a reference count either.
+    /// to a reader who has never heard of a reference count either. Which is why
+    /// the `MayNot` line no longer names one: the count was `Shared`'s reason and
+    /// `Shared` is not this answer any more, so the sentence says what the walk
+    /// actually knows - the records name this part, and they name it at both
+    /// settings.
     pub fn note(&self) -> Option<String> {
         match self {
             Crossing::May => None,
             Crossing::MayNot { part, at } => Some(format!(
-                "`{part}`{} counts its owners, and at `user_parallelism = no` it counts them \
-                 in a way only one thread may touch (Part I, 6.2)",
+                "`{part}`{} is one the records say may not be on a thread other than the one \
+                 that built it, at either setting of `user_parallelism` (Part III, C.5)",
                 match at {
                     Some(at) => format!(", {at},"),
                     None => String::new(),
@@ -170,15 +200,6 @@ impl Crossing {
             )),
         }
     }
-}
-
-/// What a `Shared` holds: `Shared[Vec[i64]]` → `Vec[i64]`, and `None` for
-/// anything else. What a paste-ready help needs, and nothing more.
-fn held_by(part: &str) -> Option<&str> {
-    part.trim_start_matches('&')
-        .strip_prefix(SHARED)?
-        .strip_prefix('[')?
-        .strip_suffix(']')
 }
 
 /// Every name a task's body mentions.
@@ -231,12 +252,6 @@ fn walk(
         // its parts.
         Ty::Tuple(parts) => join(parts.iter().map(|p| walk(p, own, library, seen, depth - 1))),
         Ty::Named { name, args, .. } => {
-            if name == SHARED {
-                return Crossing::MayNot {
-                    part: ty.text(),
-                    at: None,
-                };
-            }
             if PLAIN.contains(&name.as_str()) {
                 // A plain type with arguments is not the plain type: `String[T]`
                 // is a name this compiler does not know.
@@ -377,18 +392,81 @@ mod tests {
         }
     }
 
-    /// `Shared` may not, at either setting - which is the whole of Group B.
+    /// `Shared` is answered by what it holds, at either setting - ADR-037 D6,
+    /// and the one row of the table step 1 moved.
+    ///
+    /// The count is atomic at both settings now, so there is nothing for the
+    /// verdict to take the worse of and `Shared` is a container like `Vec`.
     #[test]
-    fn a_shared_may_not_cross() {
-        assert!(matches!(of("Shared[String]"), Crossing::MayNot { .. }));
-        assert!(matches!(of("&Shared[String]"), Crossing::MayNot { .. }));
-        // Transitively: a container of one is no better than the one.
-        assert!(matches!(of("Vec[Shared[i64]]"), Crossing::MayNot { .. }));
+    fn a_shared_is_answered_by_what_it_holds() {
+        assert_eq!(of("Shared[String]"), Crossing::May);
+        assert_eq!(of("&Shared[String]"), Crossing::May);
+        assert_eq!(of("Vec[Shared[i64]]"), Crossing::May);
+        assert_eq!(of("(i64, Shared[i64])"), Crossing::May);
+
+        // …and it is answered by what it holds in the other direction too: a
+        // `Shared` of something nothing describes is undecided, not permitted.
+        // Part II 12.2's counter is this case, and `Locked` is what decides it -
+        // which ADR-037 D3's second half leaves open and D6 does not touch.
+        assert!(matches!(
+            of("Shared[Locked[i32]]"),
+            Crossing::Undecided { .. }
+        ));
         assert!(matches!(
             of("HashMap[String, Shared[Locked[i64]]]"),
-            Crossing::MayNot { .. }
+            Crossing::Undecided { .. }
         ));
-        assert!(matches!(of("(i64, Shared[i64])"), Crossing::MayNot { .. }));
+        // A bare `Shared` said nothing about what it holds, and what it holds is
+        // the whole question.
+        assert!(matches!(of("Shared"), Crossing::Undecided { .. }));
+    }
+
+    /// No type this walk can be asked about answers `MayNot`, and the arm is
+    /// still whole.
+    ///
+    /// Two assertions, because the pair is the honest state of the check after
+    /// ADR-037 D6: there is no program that reaches `NK2501` or `NK2502`, and
+    /// the sentences those two would print are not allowed to rot while there is
+    /// not. A type whose expansion still moves with `user_parallelism` is what
+    /// would fill it, and that is D3's second half.
+    #[test]
+    fn no_type_answers_may_not_today_and_the_arm_is_still_whole() {
+        let (own, library) = ledgers();
+        for (name, contract) in own.types.iter().chain(library.types.iter()) {
+            let answer = crossing(&Ty::named(name), &own, &library);
+            assert!(answer.refused().is_none(), "`{name}`: {answer:?}");
+            let _ = contract;
+        }
+        for text in [
+            "Shared[String]",
+            "Shared[Locked[i32]]",
+            "Vec[Shared[i64]]",
+            "Mapped",
+            "?",
+        ] {
+            assert!(of(text).refused().is_none(), "{text}");
+        }
+
+        let refused = Crossing::MayNot {
+            part: "Locked[i32]".to_string(),
+            at: Some("which its field `hits` holds".to_string()),
+        };
+        assert_eq!(
+            refused.refused(),
+            Some(("Locked[i32]", Some("which its field `hits` holds")))
+        );
+        let note = refused.note().expect("a refusal has a note");
+        assert!(note.contains("`Locked[i32]`"), "{note}");
+        assert!(note.contains("field `hits`"), "{note}");
+        assert!(note.contains("either setting"), "{note}");
+        // Part III C.2: no Rust vocabulary in a diagnostic, ever.
+        for word in ["Rc", "Arc", "Send", "E0277", "lifetime", "borrow"] {
+            assert!(!note.contains(word), "`{word}` in: {note}");
+        }
+        assert_eq!(
+            refused.way_out().as_deref(),
+            Some("keep the value on the thread that built it")
+        );
     }
 
     /// A type nothing describes is undecided, and undecided is not `May`.
@@ -406,6 +484,10 @@ mod tests {
 
     /// A struct is its fields, through the ledger - which is what makes the
     /// rule structural as Group B requires.
+    ///
+    /// The field that decides is an **undecided** one since ADR-037 D6, because
+    /// no type is refused any more. The walk is the same walk: what changed is
+    /// which of the two non-`May` answers it finds at the bottom of it.
     #[test]
     fn a_struct_is_its_fields() {
         let (mut own, library) = ledgers();
@@ -422,7 +504,7 @@ mod tests {
         own.types.insert(
             "Counter".to_string(),
             TypeContract {
-                fields: vec![("hits".to_string(), Ty::parse("Shared[i64]"))],
+                fields: vec![("hits".to_string(), Ty::parse("Shared[Locked[i64]]"))],
                 ..TypeContract::default()
             },
         );
@@ -439,18 +521,21 @@ mod tests {
             crossing(&Ty::named("Reading"), &own, &library),
             Crossing::May
         );
-        let refused = crossing(&Ty::named("Counter"), &own, &library);
-        assert!(matches!(refused, Crossing::MayNot { .. }), "{refused:?}");
+        let undecided = crossing(&Ty::named("Counter"), &own, &library);
         assert!(
-            refused
+            matches!(undecided, Crossing::Undecided { .. }),
+            "{undecided:?}"
+        );
+        assert!(
+            undecided
                 .note()
-                .expect("a refusal has a note")
-                .contains("hits"),
-            "the note names the field: {refused:?}"
+                .expect("a non-`May` answer has a note")
+                .contains("Locked[i64]"),
+            "the note names the part nothing describes: {undecided:?}"
         );
         assert!(matches!(
             crossing(&Ty::named("Report"), &own, &library),
-            Crossing::MayNot { .. }
+            Crossing::Undecided { .. }
         ));
     }
 
@@ -475,7 +560,7 @@ mod tests {
             "Ring".to_string(),
             TypeContract {
                 fields: vec![
-                    ("held".to_string(), Ty::parse("Shared[i64]")),
+                    ("held".to_string(), Ty::parse("Shared[Locked[i64]]")),
                     ("next".to_string(), Ty::parse("Option[Ring]")),
                 ],
                 ..TypeContract::default()
@@ -483,16 +568,35 @@ mod tests {
         );
         assert!(matches!(
             crossing(&Ty::named("Ring"), &own, &library),
-            Crossing::MayNot { .. }
+            Crossing::Undecided { .. }
         ));
     }
 
     /// A refusal beats an admission of ignorance, because a reader can act on
     /// it (ADR-033 D9's rule for the same kind of choice).
+    ///
+    /// Asked of [`join`] directly, because no type produces a refusal to put on
+    /// one side of it any more (ADR-037 D6). The rule is still the rule, and the
+    /// day a type needs `MayNot` again this is what decides which of two true
+    /// answers gets printed.
     #[test]
     fn a_refusal_is_reported_over_an_undecided_part() {
-        let answer = of("HashMap[?, Shared[i64]]");
-        assert!(matches!(answer, Crossing::MayNot { .. }), "{answer:?}");
+        let refused = Crossing::MayNot {
+            part: "Held".to_string(),
+            at: None,
+        };
+        let unknown = Crossing::Undecided {
+            part: "?".to_string(),
+        };
+        for order in [
+            vec![unknown.clone(), refused.clone()],
+            vec![refused.clone(), unknown.clone()],
+            vec![Crossing::May, unknown.clone(), refused.clone()],
+        ] {
+            assert_eq!(join(order.into_iter()), refused);
+        }
+        // …and an undecided part still beats a `May` one.
+        assert_eq!(join([Crossing::May, unknown.clone()].into_iter()), unknown);
     }
 
     /// `std`'s own opaque types are undecided and not refused: their fields are

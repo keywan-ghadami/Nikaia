@@ -114,15 +114,17 @@ pub struct Cli {
     #[arg(long)]
     pub overlaps: bool,
 
-    /// Print which `Rc` and which `Arc` a per-value choice would pick, and why
-    /// ([ADR-037](../../../docs/specification/adr/adr-037.md) D3's open
-    /// question).
+    /// Print which reference count each `Shared` value gets, and why
+    /// ([ADR-037](../../../docs/specification/adr/adr-037.md) D7).
     ///
-    /// **An experiment and not a build mode.** `Shared` is unbuilt, D3's choice
-    /// is per build, and nothing this prints reaches the emitter - it exists so
-    /// the open question can be asked of a real program instead of argued
-    /// about. `docs/rc-or-arc.md` is what it belongs to. Like `--trust` and
-    /// `--overlaps`, it explains rather than changes.
+    /// **An explanation and not a switch.** The atomic count is the floor (D6)
+    /// and the analysis only ever takes one away, where it can prove nothing
+    /// crosses a thread with a value. Nikaia has no way to *ask* for the cheaper
+    /// count - D8 enumerates every fallback and answers "would an override
+    /// help?" no for all of them - and that is only fair if the fallbacks can be
+    /// asked about. This is the asking, and it is what a person reads when they
+    /// want the 9 ns back. Like `--trust` and `--overlaps`, it explains a
+    /// decision rather than changing one.
     #[arg(long)]
     pub sharing: bool,
 
@@ -271,11 +273,12 @@ fn lower_to_rust(
     }
 
     if args.sharing {
-        // No switch reaches the analysis, so none is printed beside it: the
-        // question "must this count be atomic" is about the program, and
-        // ADR-037 D3's per-build expansion is what this report is an
-        // experiment *against*. What the build would actually emit today is
-        // `Rc` at `no` and `Arc` at `yes`, for every `Shared` alike.
+        // No switch reaches the analysis, so none is printed beside it - and
+        // since ADR-037 D6 that is not a caveat but the point: the count is
+        // atomic at both settings, so "must this one be atomic" is a question
+        // about the program and has one answer per build. Unlike `--overlaps`,
+        // which has to say which setting made its report hypothetical, this
+        // report says the same thing whatever the switches are.
         let parsed = parser::parse_to_ast(source)?;
         let library = Ledger::parse(STD).context("std's shipped ledger")?;
         let own = Ledger::infer(&parsed);
