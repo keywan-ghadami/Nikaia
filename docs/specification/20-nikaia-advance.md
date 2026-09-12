@@ -518,6 +518,12 @@ error[NK2201]: cannot wait for I/O while holding locked data
         fs::write("log", "{snapshot}")
 ```
 
+> **Status.** Not built. `Locked[T]` and `access` are accepted by the front end and handed to the
+> backend, which has no such type, so no program on this page compiles; and nothing raises
+> `NK2201`, so the refusal above does not happen — an `access` with I/O in it passes every check
+> the compiler has. Both implementations, their costs and this rule are specified ahead of the
+> compiler.
+
 This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. The runtime checks described above (a reentrancy check on one thread, poisoning on several) remain as a safety net for the remaining edge cases — e.g. accidentally re-entering the *same* lock through a chain of `sync` calls — but well-formed code never triggers them.
 
 **And a lock is a resource, so two `access` blocks on the same lock keep their order.** Part I 8.1.1 says that two operations whose touch sets are disjoint have no order between them, and a lock is one of the things a touch set can name: both `access` blocks reach the lock and both change it, so they are ordered by the same rule that orders two `println`s, rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3). Two `access` blocks on *different* locks meet on nothing and need not wait for each other.
