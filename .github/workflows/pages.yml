@@ -64,6 +64,27 @@ jobs:
           source: ./
           destination: ./_site
 
+      # Rouge, which Jekyll highlights with, has no lexer for Nikaia, so the
+      # 180 ```nika blocks in the specification and the decision records reach
+      # the page as undifferentiated text while the Rust beside them is
+      # coloured. The grammar that says what a Nikaia token is already exists
+      # and is already tested — `editors/vscode/syntaxes/nikaia.tmLanguage.json`
+      # — and Shiki tokenizes with the same library `editors/test/` does, so
+      # this applies that one file to the built site. It runs after Jekyll and
+      # before the upload, over `_site` rather than over the sources.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scripts/site-highlight/package-lock.json
+
+      - name: Highlight the code blocks
+        working-directory: scripts/site-highlight
+        run: |
+          npm ci
+          node highlight.mjs ../../_site
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
 

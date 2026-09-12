@@ -16,9 +16,9 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  ![Version](https://img.shields.io/badge/version-0.0.7-blue.svg)
-  ![Status](https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg)
-  ![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)
+  <img src="https://img.shields.io/badge/version-0.0.7-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
+  <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
 </div>
 
 ---
