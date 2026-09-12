@@ -58,6 +58,9 @@ is normative and nothing may depend on it to know what a program means.
 * [`std-sysroot.md`](std-sysroot.md) — what `std`'s build graph cost when `std`
   had the compiler as a build dependency, the 58 packages that existed only for
   that, and the two things that were expected to decide it and did not.
+* [`nightly-cost.md`](nightly-cost.md) — what the pinned nightly is actually
+  needed for, what `-Zpolonius=next` would buy and cost, and what a stable-only
+  installation weighs.
 * [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
   runtime that is already running, and the finding that only the completion
   path gets ADR-033 §8.5's zero.

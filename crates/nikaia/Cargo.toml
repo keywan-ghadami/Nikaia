@@ -8,16 +8,23 @@ default = ["rustc-backend"]
 # Turn on winnow's parser trace (`cargo run --features trace`). The grammar!
 # expansion checks this feature, so it must exist here too.
 trace = ["winnow-grammar/trace"]
-# The `nikaia` binary and its Bridge IR backend link the compiler's own
-# internals (ADR-004). The library does not, and the split stays: a tool that
-# only wants the emitter should not have to link `rustc_driver`. It is no longer
-# `nikaia-std` that uses it - since ADR-002 D4 `std` is built from sources with
-# its Nikaia half already lowered, and nothing in its build graph is this crate.
+# The Bridge IR backend links the compiler's own internals (ADR-004), and so
+# needs ADR-001 D1's pinned nightly with its `rustc-dev` component. Neither the
+# library nor the `rust` backend does, and the split stays: a tool that only
+# wants the emitter should not have to link `rustc_driver`, and a whole compiler
+# builds on stable without this feature. It is no longer `nikaia-std` that uses
+# the library either - since ADR-002 D4 `std` is built from sources with its
+# Nikaia half already lowered, and nothing in its build graph is this crate.
 rustc-backend = ["dep:rustc-executor"]
 
+# No `required-features`: the binary builds either way, and is a whole compiler
+# either way. `--no-default-features` drops the one backend that needs
+# `rustc_private`, which puts the build on a stable toolchain and saves the
+# 0.9 GB `rustc-dev` weighs (`docs/nightly-cost.md`). `--backend bridge` on such
+# a build fails by name rather than falling through to another backend, which is
+# ADR-021 D9's rule.
 [[bin]]
 name = "nikaia"
-required-features = ["rustc-backend"]
 
 [build-dependencies]
 # `build.rs` fingerprints the compiler's own sources for the cache key.

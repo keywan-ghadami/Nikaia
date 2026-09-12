@@ -13,6 +13,12 @@
 //! what the program says. The subprocess is what makes that assertion cheap -
 //! there is no `rustc_private` in this file and nothing here links the
 //! compiler's internals.
+//!
+//! The backend is what `rustc-backend` switches on, and a build made without it
+//! has no bridge to drive - `--backend bridge` there fails by name instead
+//! (ADR-021 D9's rule), which `backend_absent.rs` is what checks. So this file
+//! is the feature's test and compiles only with it.
+#![cfg(feature = "rustc-backend")]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
