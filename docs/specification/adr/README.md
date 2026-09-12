@@ -38,7 +38,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [005](adr-005.md) | The borrow model: four groups of lifetime situation, and which the compiler solves silently. No lifetime annotations, ever | Accepted | inference, ledger, D8's cross-process check; not its second OS |
+| [005](adr-005.md) | The borrow model: four groups of lifetime situation, and which the compiler solves silently. No lifetime annotations, ever | Accepted | inference, ledger, D8's cross-process check (not its second OS), and §1 Group B's structural `Send` check — `NK2501`/`NK2502`, one verdict at both settings of `user_parallelism` (§5). D7 now translates a trait bound's **position**; its text stays Rust's |
 | [006](adr-006.md) | `Cleanup` — teardown that performs I/O, inserted by the compiler on every exit path | Accepted | no |
 | [008](adr-008.md) | Tethered slices in user structs: the tether-state lattice, and one handle per container rather than per token | Accepted | views |
 
@@ -109,13 +109,13 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [038](adr-038.md) | The runtime and the HTTP server are ours: `rustls` bound, `io_uring` for files, readiness for sockets, and a Rust crate may bring its own runtime under two rules | Accepted | **D3, D4, D5** — the runtime starts before `main`, files complete (with the blocking path as a run-time-detected fallback), sockets signal readiness, and `nikaia-runtime.toml` carries the four settings; D1's HTTP server, D2's `rustls`, D6's parser and D7's two rules are not built |
+| [038](adr-038.md) | The runtime and the HTTP server are ours: `rustls` bound, `io_uring` for files, readiness for sockets, and a Rust crate may bring its own runtime under two rules | Accepted | **D3, D4, D5** — the runtime starts before `main`, files complete (with the blocking path as a run-time-detected fallback), sockets signal readiness, and `nikaia-runtime.toml` carries the four settings; D7's **first** rule is enforced by [005](adr-005.md) §5's `Send` check, as far as a foreign signature is honest; D1's HTTP server, D2's `rustls`, D6's parser and D7's second rule are not built |
 
 ### Build switches
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` says whether the **user's** code may run concurrently — and the compiler's own threads are not the user's | Accepted | D1–D5; `wasm32-unknown` is refused rather than mis-emitted |
+| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` says whether the **user's** code may run concurrently — and the compiler's own threads are not the user's | Accepted | D1–D5; `wasm32-unknown` is refused rather than mis-emitted; §3's structural `Send` check is [005](adr-005.md) §5, and the switch reaches its severity and never its verdict |
 
 ## What supersedes what
 

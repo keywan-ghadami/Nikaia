@@ -28,8 +28,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
-use crate::contracts::{ty, ty::Ty, FnContract, Ledger};
+use crate::contracts::{send, ty, ty::Ty, FnContract, Ledger};
 use crate::parser::Parsed;
+
+/// The note every `NK25xx` carries, because it is the reason the code exists.
+///
+/// ADR-005 §1 Group B and ADR-037 §3: the verdict may not depend on
+/// `user_parallelism`, or a library written at one setting would turn out
+/// un-compilable at the other - which is the failure the check was decided to
+/// prevent rather than a property of it.
+const SAME_AT_BOTH: &str = "a value may cross a thread only if it may cross any thread, \
+     so the answer is the same at both settings of `user_parallelism` and a library built at \
+     one stays usable at the other (Part III, C.3)";
 
 /// Whether a finding stops the build.
 ///
@@ -59,7 +69,9 @@ pub struct Finding {
     pub severity: Severity,
     /// The statement it is in.
     pub span: Span,
-    /// Its `NK1xxx` code, from the catalogue in Part III, C.3.
+    /// Its `NK` code, from the catalogue in Part III, C.3. Mostly `NK1xxx`,
+    /// which is types; `NK2501`/`NK2502` are a value on the wrong thread and
+    /// `NK2701` a loop that can fail without saying so.
     pub code: &'static str,
     /// The headline, which says what is wrong and never how to think about it.
     pub message: String,
@@ -841,6 +853,10 @@ impl<'a> Checker<'a> {
             }
 
             Expr::Spawn { body, .. } => {
+                // **Before** the body is walked, so that the task's own `let`s
+                // are not yet in scope: a name bound inside the task is the
+                // task's own and crosses nothing.
+                self.crosses_into_a_task(body, span);
                 self.expr(body, span);
                 Ty::Unknown
             }
@@ -998,6 +1014,10 @@ impl<'a> Checker<'a> {
         }
 
         let Some((key, contract)) = self.resolve(&name) else {
+            // A call nothing describes is a call this compiler cannot see the
+            // end of, and a thread of its own is among the things it may do
+            // (ADR-038 D7). What it is handed is therefore handed across.
+            self.crosses_into_an_unseen_call(&name, args, &found, config, &passed, span);
             return Ty::Unknown;
         };
         self.reachable(&name, contract, span);
@@ -1215,6 +1235,129 @@ impl<'a> Checker<'a> {
                 "write `pub fn {item}` in `{module}.nika`, or reach it through something that is public"
             )),
         });
+    }
+
+    // --- crossing a thread (ADR-005 §1 Group B, `NK25xx`) -------------------
+    //
+    // Two places a value the *program* wrote reaches another thread, and the
+    // verdict is the same in both: a value may cross a thread only if it may
+    // cross any thread (ADR-038 D7). `contracts::send` owns the walk and the
+    // reason; these two own the span and the sentence.
+    //
+    // Both report on `MayNot` and say nothing on `Undecided`, which is
+    // `contracts::send`'s module header: refusing what this compiler cannot
+    // decide would reject correct programs, and an undecided crossing is not
+    // accepted here - `rustc` still type-checks the emitted crate, and
+    // ADR-005 D7's `E0277` translation reports that refusal against this same
+    // `.nika` line.
+    //
+    // **A method call is not asked**, and the limit is worth naming: a foreign
+    // Rust function is reached by a qualified path (`hyper_shim::serve`), which
+    // is what a name-for-name lowering makes callable at all (ADR-011 D2), so
+    // the call form below is the one ADR-038 D7 is about. A method on a receiver
+    // whose type no ledger describes would need the same question asked of its
+    // arguments, and nothing in the corpus reaches it - ADR-028 D5's rule, that
+    // an entry exists because a program asked for it.
+
+    /// Part II 11.2: a task runs on a thread of its own, so everything it takes
+    /// with it has to be able to cross one (`NK2501`).
+    ///
+    /// Over-approximate in the direction that costs nothing: the walk collects
+    /// every name the body mentions, including function and field names, and a
+    /// name that is not in scope is not found and says nothing.
+    fn crosses_into_a_task(&mut self, body: &Expr, span: &Span) {
+        for name in send::names_used(self.parsed, body) {
+            let Some(ty) = self.lookup(&name) else {
+                continue;
+            };
+            let crossing = send::crossing(&ty, self.own, self.library);
+            if crossing.refused().is_none() {
+                continue;
+            }
+            let notes = [
+                Some(
+                    "a task runs on a thread of its own, so everything it uses has to be able \
+                     to cross one (Part II, 11.2)"
+                        .to_string(),
+                ),
+                crossing.note(),
+                Some(SAME_AT_BOTH.to_string()),
+            ];
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2501",
+                message: format!("`{name}` may not cross into a task, and this task uses it"),
+                notes: notes.into_iter().flatten().collect(),
+                help: crossing.way_out(),
+            });
+        }
+    }
+
+    /// ADR-038 D7: a value handed to a call this compiler cannot see the end of
+    /// may reach a thread that call owns (`NK2502`).
+    ///
+    /// A Rust dependency may bring its own runtime, so "what does it do with
+    /// what I gave it" has no answer here - and a thread of its own is among the
+    /// answers. D7's first rule is therefore the same rule as `NK2501`'s, asked
+    /// at a call instead of at a task.
+    ///
+    /// **Unlike `NK2501` this is not hypothetical at `user_parallelism = no`.**
+    /// The switch bounds what the *program* runs at once (ADR-037 D2); a foreign
+    /// runtime's threads are not the program's, so the crossing is real at both
+    /// settings and so is the refusal.
+    fn crosses_into_an_unseen_call(
+        &mut self,
+        callee: &str,
+        args: &[Expr],
+        found: &[Ty],
+        config: &[ast::ConfigArg],
+        passed: &[(String, Ty)],
+        span: &Span,
+    ) {
+        let positional = args
+            .iter()
+            .zip(found)
+            .enumerate()
+            .map(|(at, (expr, ty))| (self.names_the_argument(expr, at), ty));
+        let named = config
+            .iter()
+            .zip(passed)
+            .map(|(arg, (_, ty))| (format!("`{}`", self.parsed.text(arg.name)), ty));
+
+        for (what, ty) in positional.chain(named).collect::<Vec<_>>() {
+            let crossing = send::crossing(ty, self.own, self.library);
+            if crossing.refused().is_none() {
+                continue;
+            }
+            let notes = [
+                Some(format!(
+                    "nothing written down describes `{callee}`, so this compiler cannot see the \
+                     end of it - and starting a thread of its own is among the things it may do \
+                     (Part III, 15.2)"
+                )),
+                crossing.note(),
+                Some(SAME_AT_BOTH.to_string()),
+            ];
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2502",
+                message: format!("{what} may not cross a thread, and `{callee}` may put it on one"),
+                notes: notes.into_iter().flatten().collect(),
+                help: crossing.way_out(),
+            });
+        }
+    }
+
+    /// What to call one argument of a call in a message: its own name where it
+    /// has one, and its place where it does not.
+    fn names_the_argument(&self, expr: &Expr, at: usize) -> String {
+        match expr {
+            Expr::Variable(name) => format!("`{}`", self.parsed.text(*name)),
+            Expr::Field { name, .. } => format!("the `{}` this passes", self.parsed.text(*name)),
+            _ => format!("what this passes as argument {}", at + 1),
+        }
     }
 
     /// An option the callee does not have (Kap 5.1).

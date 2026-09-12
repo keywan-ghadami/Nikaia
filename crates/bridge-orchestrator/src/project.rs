@@ -26,8 +26,9 @@
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// `[package]` of the generated manifest.
 #[derive(Debug, Clone)]
@@ -216,6 +217,61 @@ impl Cargo {
             .status()
             .with_context(|| format!("running `cargo {subcommand}`"))?;
         Ok(status.code().unwrap_or(1))
+    }
+
+    /// The same, with `--message-format=json`, handing back what the backend
+    /// said instead of letting it reach the terminal.
+    ///
+    /// **The one channel a frontend can read a backend diagnostic on.** Cargo's
+    /// human-readable rendering goes to stderr already formatted and spanned
+    /// against a generated file, which is the thing a language frontend must not
+    /// let a user see; `--message-format=json` puts every `rustc` diagnostic on
+    /// *stdout*, one JSON object per line, where something can trade its byte
+    /// offsets for places in the source the user wrote.
+    ///
+    /// Only stdout is captured. Cargo's progress ("Compiling", "Finished") and
+    /// anything it says about resolution stay on stderr and still reach the
+    /// user as they happen, because none of that is about the program's text.
+    ///
+    /// Never used for `run`: the program's own output is on stdout too, and a
+    /// compiler that swallowed it to read diagnostics would be reading the wrong
+    /// thing at the worst moment.
+    pub fn messages(&self, subcommand: &str, args: &[String]) -> Result<(i32, String)> {
+        let mut command = Command::new(cargo_binary());
+        command.arg(subcommand);
+        command.arg("--manifest-path").arg(&self.manifest);
+        if let Some(dir) = &self.target_dir {
+            command.arg("--target-dir").arg(dir);
+        }
+        command.arg("--message-format=json");
+        command.args(args);
+        command.env("RUSTC_WORKSPACE_WRAPPER", &self.wrapper);
+        for (name, value) in &self.env {
+            command.env(name, value);
+        }
+        // **stdout piped, stderr inherited, and spelling both out is the point.**
+        // `Command::output` pipes *both*, which would swallow Cargo's progress
+        // and - worse - anything it says that is not a `rustc` diagnostic at
+        // all: a manifest it cannot parse, a dependency it cannot resolve. Those
+        // are not about the program's text, nobody translates them, and a build
+        // that failed in silence is the one outcome worse than an untranslated
+        // error.
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::inherit());
+
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("running `cargo {subcommand}`"))?;
+        let mut messages = String::new();
+        if let Some(stdout) = child.stdout.as_mut() {
+            stdout
+                .read_to_string(&mut messages)
+                .context("reading what the backend said")?;
+        }
+        let status = child
+            .wait()
+            .with_context(|| format!("waiting for `cargo {subcommand}`"))?;
+        Ok((status.code().unwrap_or(1), messages))
     }
 }
 

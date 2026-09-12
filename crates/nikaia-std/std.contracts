@@ -69,6 +69,13 @@
 # `touches = []` would be a claim about somebody else's code, exactly as
 # `sync = "from(f)"` records for pausing (ADR-027 §7).
 #
+# `crosses` on a `[type."…"]` says a value of that type **may cross a thread**
+# (ADR-005 §1 Group B, `NK25xx`). It is only ever written for a type whose parts
+# are Rust: a Nikaia `struct` records its `fields` and the check walks those,
+# structurally, which is what that record asks for. Its absence is "nobody said"
+# and not "it may not" - and "nobody said" is not permission, so the compiler
+# will not put such a value on a thread of its own choosing.
+#
 # `provenance` marks a **source**: a function whose result is bytes that entered
 # the program from outside, and who chose them (ADR-010 D2). Its absence is not
 # "trusted" - it is "this is not a source", which is what almost every function
@@ -90,7 +97,7 @@ inference = "stage0-signatures+sync-bodies+throws-bodies"
 pub = true
 touches = ["args read"]
 provenance = "trusted"
-signature = "() -> ?"
+signature = "() -> Args"
 
 [fn."eprint"]
 pub = true
@@ -369,6 +376,16 @@ signature = "(&str) -> &str"
 pub = true
 sync = true
 signature = "(c: char) -> i32"
+
+# What the program was started with, and the one type here that says it **may
+# cross a thread** (`crosses`, ADR-005 §1 Group B). Its parts are Rust, so
+# `contracts::send` cannot walk them and would answer "nobody said" - which is
+# not permission, and would have cost `cli::args` the overlapping that the
+# `touches` line above bought it (ADR-033 §8.1). The claim is a promise about a
+# Rust type, written here and reviewed like code, exactly as `sync = true` is.
+[type."cli::Args"]
+pub = true
+crosses = true
 
 [type."fs::Mapped"]
 pub = true

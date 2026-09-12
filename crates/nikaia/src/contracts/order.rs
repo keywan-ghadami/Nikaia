@@ -135,6 +135,18 @@ pub enum Accounted {
         callee: String,
         kind: String,
     },
+    /// What it hands back may not cross a thread, or nothing written down says
+    /// it may (ADR-005 §1 Group B).
+    ///
+    /// An overlapped operation runs in a closure somewhere else and hands its
+    /// value back, so the result crosses a thread. `contracts::send` answers
+    /// whether it may, and anything but yes keeps the statement where it was
+    /// written - the crossing question answered with D4's polarity. The way to
+    /// buy the overlap back is the same as for `touches`: write the type down.
+    MayNotCross {
+        callee: String,
+        crossing: super::send::Crossing,
+    },
     /// A value that is not a literal, which this increment will not send to
     /// another thread.
     ///
@@ -174,6 +186,12 @@ impl Accounted {
                 format!(
                     "`{callee}` says it reaches a `{kind}`, which this compiler does not know \
                      about - so it reaches everything, and a newer toolchain is what reads it"
+                )
+            }
+            Accounted::MayNotCross { callee, crossing } => {
+                format!(
+                    "what `{callee}` hands back would have to cross a thread, and {}",
+                    crossing.note().unwrap_or_else(|| "it may not".to_string())
                 )
             }
             Accounted::NonLiteralArgument(name) => {
@@ -304,6 +322,27 @@ fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Ac
         let Some(signature) = contract.signature.as_ref() else {
             return Accounted::NoTouches(key);
         };
+
+        // **And what it hands back has to be able to cross a thread**
+        // (ADR-005 §1 Group B). Overlapping puts this operation inside a closure
+        // that runs elsewhere and hands its value back to the thread that
+        // started it, so the result crosses whether or not anything binds it.
+        // An answer that is not "it may" keeps the statement where it was
+        // written: this is a step the compiler was never obliged to take, so
+        // fail-closed costs only speed here - which is D4's polarity, applied to
+        // the crossing question instead of to a touch set.
+        //
+        // The *captures* need the same question asked of them, and today they
+        // cannot: `Accounted::NonLiteralArgument` means the closure captures
+        // nothing at all. This is the check that has to be asked about each
+        // captured name on the day that limit is lifted.
+        let crossing = super::send::crossing(&signature.result_or_unit(), own, library);
+        if !crossing.may() {
+            return Accounted::MayNotCross {
+                callee: key,
+                crossing,
+            };
+        }
         let parameters: Vec<&str> = signature
             .arguments()
             .iter()
@@ -847,7 +886,7 @@ fn literal_text(expr: &Expr) -> Option<String> {
 /// must not"). Where the names cannot be found structurally - inside the holes
 /// of an interpolated string, inside a `dsl` body - every word of the raw text
 /// counts as one.
-fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
+pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
     match expr {
         Expr::Variable(name) => {
             out.insert(parsed.text(*name).to_string());
@@ -974,7 +1013,11 @@ fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
 /// The names a statement *binds* are left out: a `let` inside a block
 /// introduces a name rather than reading one, so counting it would only refuse
 /// pairs that have nothing to do with each other.
-fn names_in_block(parsed: &Parsed, block: &crate::ast::Block, out: &mut BTreeSet<String>) {
+pub(super) fn names_in_block(
+    parsed: &Parsed,
+    block: &crate::ast::Block,
+    out: &mut BTreeSet<String>,
+) {
     for stmt in &block.stmts {
         match &stmt.node {
             Stmt::Let { value, .. } | Stmt::Expr(value) => names_in(parsed, value, out),
@@ -1116,6 +1159,7 @@ fn function_report(
                 | Accounted::UncaughtFailure(_)
                 | Accounted::NoTouches(_)
                 | Accounted::UnknownResource { .. }
+                | Accounted::MayNotCross { .. }
                 | Accounted::NonLiteralArgument(_)),
                 other,
             )

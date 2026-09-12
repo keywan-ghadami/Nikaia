@@ -149,6 +149,47 @@ fn editing_a_module_rather_than_the_entry_reaches_the_binary() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A backend diagnostic reaches the user against the `.nika` line that caused
+/// it, and not against the generated Rust (ADR-005 D7, Part III C.1).
+///
+/// **The project path had no interception at all.** `nikaia build` shelled out
+/// to `cargo` and handed its stderr to the terminal, so everything `rustc` said
+/// arrived as Rust about `target/nikaia/gen/….rs` - a file the author has never
+/// read - which C.1's Iron Rule calls a bug in this compiler. The machinery to
+/// place it existed and was only reachable through `--explain`; what was missing
+/// was the channel, and `cargo --message-format=json` is it.
+///
+/// The program here is one the frontend says nothing about and `rustc` refuses:
+/// `Ty::Unknown` means the checker does not guess at what a method on an integer
+/// is, so this is exactly the shape that used to escape to the terminal.
+#[test]
+fn a_backend_error_is_reported_against_the_nika_line() {
+    let dir = a_project(
+        "project-backend-error",
+        "[package]\nname = \"refused\"\nversion = \"0.1.0\"\n",
+        "fn main() {\n    let n = 1\n    println(f\"{n.frobnicate()}\")\n}\n",
+    );
+
+    let built = nikaia(&["build"], &dir);
+    assert!(!built.status.success(), "{}", said(&built));
+
+    let complaint = said(&built);
+    assert!(
+        complaint.contains("src/main.nika:3:"),
+        "the message names the `.nika` line: {complaint}"
+    );
+    assert!(
+        complaint.contains("n.frobnicate()"),
+        "and shows it, with a caret under it: {complaint}"
+    );
+    assert!(
+        !complaint.contains("target/nikaia/gen/refused.rs"),
+        "and no longer names the generated Rust: {complaint}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A machine the toolchain cannot build for is refused before `cargo` is
 /// started, with what is missing (ADR-037 D1). It never emits code for a
 /// different machine than the one named.

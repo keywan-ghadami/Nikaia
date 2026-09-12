@@ -23,6 +23,7 @@
 // will say so rather than quietly accepting the weaker answer.
 
 pub mod order;
+pub mod send;
 pub mod sync;
 pub mod throws;
 pub mod touch;
@@ -374,6 +375,21 @@ pub struct TypeContract {
     /// Every field, with its type - what a checker needs to say that `r.nmae`
     /// is not a field of `Row`.
     pub fields: Vec<(String, ty::Ty)>,
+    /// A value of this type **may cross a thread** (ADR-005 §1 Group B).
+    ///
+    /// Written by hand and never inferred, because it only ever answers for a
+    /// type whose parts this compiler cannot see: a Nikaia `struct` records its
+    /// `fields`, and `contracts::send` walks those - structurally, which is what
+    /// Group B asks for and what cannot be wrong. A Rust type has no fields
+    /// here, so without this key it is *undecided*, which is not permission
+    /// (ADR-010 D1): the compiler will not put it on a thread of its own
+    /// choosing.
+    ///
+    /// So this is the same kind of line as `sync = true` on a Rust function - a
+    /// promise about a body this compiler does not read, written in the file
+    /// that ships and reviewed like code. Its absence is never "it may not"; it
+    /// is "nobody said", and the two differ in who is to blame.
+    pub crosses: bool,
     /// Iterating a value of this type can **fail** (ADR-025 D6).
     ///
     /// A `for` over one is a place the enclosing function can fail from, and
@@ -548,6 +564,10 @@ impl Ledger {
                             public: *is_public,
                             borrowed: *is_borrowed,
                             fields: field_types,
+                            // Never inferred: a `struct` declared here records
+                            // its fields, and `contracts::send` walks those.
+                            // The key exists for types whose parts are Rust.
+                            crosses: false,
                             // Nothing a `.nika` file declares iterates at all
                             // yet, let alone fallibly: the types that do are
                             // `std`'s, and `std` writes them down (ADR-025 D6).
@@ -809,6 +829,9 @@ impl Ledger {
                         .join(", ")
                 ));
             }
+            if contract.crosses {
+                out.push_str("crosses = true\n");
+            }
             if contract.iterates_fallibly {
                 out.push_str("iterates = \"throws\"\n");
             }
@@ -901,6 +924,7 @@ impl Ledger {
                     match key {
                         "pub" => entry.public = value == "true",
                         "borrowed" => entry.borrowed = value == "true",
+                        "crosses" => entry.crosses = value == "true",
                         "tethered" => entry.tethered = string_list(value, at())?,
                         "iterates" => {
                             let value = unquote(value, at())?;

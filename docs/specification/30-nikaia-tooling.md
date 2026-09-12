@@ -246,6 +246,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
 | `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
+| `crosses` | type | a value of this type **may cross a thread** ([ADR-005](adr/adr-005.md) §1 Group B, `NK25xx`). Written by hand and never inferred, because it only ever answers for a type whose parts this compiler cannot walk: a Nikaia `struct` records its `fields`, and the check walks those. Its absence is "nobody said" and not "it may not" — and "nobody said" is not permission, so the compiler will not put such a value on a thread of its own choosing |
 | `touches` | fn | which resources it reaches and whether it reads or writes them — `["file(path) write", "stdout write"]` ([ADR-033](adr/adr-033.md)). **Absent means it touches everything**, so a function nobody has described orders against everything and stays where it was written. *Specified, not implemented.* |
 
 `signature` and `fields` are what make a *type* checker possible across a boundary whose bodies are not visible — the `NK1xxx` diagnostics above are all answered from them ([ADR-024](adr/adr-024.md)). They are also where the ledger's `?` earns its keep: it is **the absence of a claim**, and a checker reports a mismatch only where both sides are written down, so a contract that says less makes the compiler quieter and never wronger.
@@ -419,6 +420,10 @@ fn raw_alloc() {
 
 ### 15.2. Rust Integration (Deep Integration)
 Nikaia treats Rust Crates differently than C libraries. Because Rust has a strong type system, Nikaia can verify safety properties.
+
+**A value handed to a Rust function may reach a thread that function owns.** A Rust crate may bring its own runtime and its own threads ([ADR-038](adr/adr-038.md) D7), so a call whose body this compiler cannot see is a call that may put what it is given on a thread of its own — and a value may cross into a foreign thread only if it may cross *any* thread. The compiler refuses the crossing it can decide about as `NK2502` (Part III, C.5), at **both** settings of `user_parallelism`: that switch bounds what *your* code runs at once, and a foreign runtime's threads are not yours.
+
+The rule reaches exactly as far as the Rust signature is true. A Rust API that declares a type safe to send when it is not puts the value on another thread with nothing complaining, and no check in the frontend can see that: where Nikaia reads the signature, the value is crossable by declaration. That is the one place interoperability costs a guarantee rather than only convenience, and it is why a narrowing shim is worth reviewing like the boundary it is.
 
 **Mapping Types**
 * Rust `i32` -> Nikaia `i32`
@@ -1031,7 +1036,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Contract changes | `NK2401` a borrow contract change broke a caller, narrated from the ledger diff (13.5). Reserved: a `catch` that no longer covers every error that can reach it, narrated from the same diff — it needs the ledger to record the *set* rather than a boolean ([ADR-023](adr/adr-023.md) D1), which needs error types the compiler can lower. |
-| `NK25xx` | Portability | Reserved: the `Send` rules that parallel code needs, reported at `user_parallelism = no` as a lint, so a library built there stays usable at `yes`. |
+| `NK25xx` | Portability | The `Send` rules that parallel code needs ([ADR-005](adr/adr-005.md) §1 Group B), decided the same way at **both** settings of `user_parallelism` so that a library built at one stays usable at the other. `NK2501` a value that may not cross a thread is used by a task (Part II, 11.2) - an **error** at `user_parallelism = yes` and a **lint** at `no`, where the task does not run and so the crossing does not happen. `NK2502` a value that may not cross a thread is handed to a call this compiler cannot see the end of ([ADR-038](adr/adr-038.md) D7's foreign runtime) - an error at both settings, because a Rust dependency's own threads are not bounded by a switch about *your* code ([ADR-037](adr/adr-037.md) D2). Worked through in C.5. |
 | `NK26xx` | Resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). |
 | `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 
@@ -1066,5 +1071,45 @@ written on a line of its own ([ADR-032](adr/adr-032.md) D3). The `sync` analysis
 in both directions: a pausing call inside one costs an inferred `sync` and contradicts an asserted
 one. A hole whose text does not parse is reported by the emitter, which has the span, and the
 checker stays quiet about it rather than raising a second error for one mistake.
+
+### C.5. What a Crossing Refused Looks Like
+
+The `NK25xx` pair, on the two places a value the program wrote reaches another thread. Both come from one question asked of the value's *type* - **may a value of this type be on a thread other than the one that built it?** - and the answer is deliberately not allowed to depend on which build this is ([ADR-005](adr/adr-005.md) §1 Group B).
+
+A task runs somewhere else, so everything it uses goes with it:
+
+```text
+error[NK2501]: `counts` may not cross into a task, and this task uses it
+  --> app.nika:7:5
+   7 |     spawn({ total(counts) })
+           ^
+     = a task runs on a thread of its own, so everything it uses has to be able to cross one (Part II, 11.2)
+     = `Shared[Vec[i64]]` counts its owners, and at `user_parallelism = no` it counts them in a way only one thread may touch (Part I, 6.2)
+     = a value may cross a thread only if it may cross any thread, so the answer is the same at both settings of `user_parallelism` and a library built at one stays usable at the other (Part III, C.3)
+     help: write `Vec[i64]` where the value crosses and give each thread its own, or keep the work on one thread
+```
+
+…and a call whose body this compiler cannot see may start a thread of its own (15.1, [ADR-038](adr/adr-038.md) D7):
+
+```text
+error[NK2502]: `handle` may not cross a thread, and `hyper_shim::across_a_thread` may put it on one
+  --> app.nika:14:5
+  14 |     let crossed = hyper_shim::across_a_thread(handle)
+           ^
+     = nothing written down describes `hyper_shim::across_a_thread`, so this compiler cannot see the end of it - and starting a thread of its own is among the things it may do (Part III, 15.2)
+     = `Shared[String]` counts its owners, and at `user_parallelism = no` it counts them in a way only one thread may touch (Part I, 6.2)
+     help: write `String` where the value crosses and give each thread its own, or keep the work on one thread
+```
+
+Four things about that pair are deliberate.
+
+**The rule is structural and transitive.** A `struct` with one field that may not cross may not cross, and the note names the field that decided it rather than the struct. The fields come from the ledger (13.5), so the rule reaches a type declared in another file for the same reason a type error does.
+
+**Three answers, and the third is the design.** A type may cross, may not, or **nothing written down says**. The third is not permission - reading the absence of an answer as a yes is the polarity [ADR-010](adr/adr-010.md) D1 forbids - and it is not a refusal either, because this compiler knows the type of rather less than half of what a program writes and must never reject a program that is correct (C.4). So an undecided crossing is *handed on*: `rustc` still type-checks the emitted crate, and the trait-bound error it raises is reported against the `.nika` line by the translation C.1 requires. Nothing is silently accepted, and nothing correct is refused. A library may end the uncertainty about one of its own types with a line in its ledger, the way it already ends it about pausing.
+
+**One verdict, two severities.** At `user_parallelism = no` nothing you wrote runs concurrently, so the task above does not run and `NK2501`'s crossing does not happen: refusing it would refuse a program that compiles, and saying nothing would let a library built there turn out un-compilable at `yes`. A lint is the third answer, and it carries a note saying which of the two it is. `NK2502` is not downgraded, because a foreign runtime's threads run whatever this switch says.
+
+**The crossing the compiler chooses for itself gets no diagnostic at all.** Statement overlapping ([ADR-033](adr/adr-033.md)) puts each of a pair inside a closure that runs elsewhere, so what the pair hands back crosses a thread. Where that cannot be shown the statements simply keep the order they were written in, and `--overlaps` says so among the other refusals - because not overlapping is a step the compiler was never obliged to take, and costs speed rather than a program.
+
 
 

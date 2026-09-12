@@ -348,6 +348,13 @@ The `spawn` function is defined with the `@detached` attribute. This triggers **
 * **Why?** This guarantees thread safety where code runs in parallel, and prevents logic races or "Use-After-Free" where it does not. The parent scope cannot access the captured data while the detached task owns it.
 * **Copying:** If you need to keep data in the parent thread, you must explicitly call `.clone()` before spawning.
 
+#### What a task may take with it
+A task runs on a thread of its own, so **everything it uses has to be able to cross a thread**. The compiler checks that structurally, with no syntax to write and no annotation to forget ([ADR-005](adr/adr-005.md) §1 Group B): a type built out of plain data, and a struct or collection of those, may cross; a value that counts its owners may not, because at `user_parallelism = no` that count is one only a single thread may touch (Part I, 6.2). A struct with one such field is no better than the field.
+
+The answer is **the same at both settings**, so that a library written at one cannot turn out un-compilable where it is used. What the setting changes is only whether this build performs the crossing: at `no` nothing you wrote runs concurrently, so the task does not run and the refusal is a lint rather than an error. The diagnostic is `NK2501`, worked through in Part III C.5.
+
+> **Status.** The check runs; `spawn` itself does not yet lower, because the runtime integration it needs is the next step. So `NK2501` is reported ahead of the construct it is about — which is the right order, since the check is what has to exist before a value that may not cross one does.
+
 #### Return Values & Handles
 `spawn` always returns a `TaskHandle`. At `yes` it represents a running thread; at `no` a scheduled event. Calling `.await` or `.join()` on it works identically either way.
 

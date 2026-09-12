@@ -248,6 +248,7 @@ pub fn lower(input: &Path, settings: &Settings, no_cache: bool) -> Result<Lowere
                     &modules,
                     &unit.path,
                     &unit.source,
+                    &settings.user_parallelism,
                 )?;
             }
 
@@ -296,16 +297,24 @@ pub const CONTRACTS: &str = "contracts";
 ///
 /// Types are reported before suspension because a call that passes the wrong
 /// thing is usually why the rest of the file reads strangely.
+///
+/// `user_parallelism` reaches this and reaches **nothing inside the analyses**.
+/// The verdict of every rule is a property of the program, so no switch may
+/// change it (ADR-005 §1 Group B); what the switch does change is whether a
+/// refusal is about *this* build, and that is a question about severity. See
+/// [`lint_where_nothing_crosses`].
 pub fn check(
     parsed: &crate::parser::Parsed,
     own: &Ledger,
     modules: &BTreeSet<String>,
     path: &Path,
     source: &str,
+    user_parallelism: &str,
 ) -> Result<()> {
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
 
-    let all = check::check_program(parsed, own, &library, modules).findings;
+    let mut all = check::check_program(parsed, own, &library, modules).findings;
+    lint_where_nothing_crosses(&mut all, user_parallelism);
     let violations = sync::check(parsed, own, &library);
     if all.is_empty() && violations.is_empty() {
         return Ok(());
@@ -334,26 +343,34 @@ pub fn check(
     }
 
     let mut refused = Vec::new();
-    // The `NK1xxx` family is types; anything else the checker reports is a rule
-    // of its own and should not be summarised as one. Today that is `NK2701`,
-    // a loop whose step can fail in a function that does not say so.
-    let (types, rules): (Vec<&check::Finding>, Vec<&check::Finding>) = findings
-        .iter()
-        .copied()
-        .partition(|f| f.code.starts_with("NK1"));
+    // One line per family, because a family is what a reader can act on in one
+    // go. The `NK1xxx` codes are types; `NK25xx` is a value on the wrong thread;
+    // what is left is a rule of its own, which today is `NK2701`, a loop whose
+    // step can fail in a function that does not say so.
+    let count = |family: &str| {
+        findings
+            .iter()
+            .filter(|f| f.code.starts_with(family))
+            .count()
+    };
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
 
-    if !types.is_empty() {
+    let types = count("NK1");
+    if types > 0 {
+        refused.push(format!("{types} type error{}", plural(types)));
+    }
+    let crossings = count("NK25");
+    if crossings > 0 {
         refused.push(format!(
-            "{} type error{}",
-            types.len(),
-            if types.len() == 1 { "" } else { "s" }
+            "{crossings} value{} that may not cross a thread",
+            plural(crossings)
         ));
     }
-    if !rules.is_empty() {
+    let rules = findings.len() - types - crossings;
+    if rules > 0 {
         refused.push(format!(
-            "{} loop{} that can fail without saying so",
-            rules.len(),
-            if rules.len() == 1 { "" } else { "s" }
+            "{rules} loop{} that can fail without saying so",
+            plural(rules)
         ));
     }
     if !violations.is_empty() {
@@ -364,6 +381,43 @@ pub fn check(
         ));
     }
     bail!("{}", refused.join(", "))
+}
+
+/// The `NK25xx` codes whose crossing this build does not perform, reported as a
+/// lint rather than as an error.
+///
+/// Part III C.3 says the `Send` rules are "reported at `user_parallelism = no`
+/// as a lint, so a library built there stays usable at `yes`", and the reason is
+/// exact: at `no` nothing the program wrote runs concurrently (ADR-037 D2), so
+/// the emitter writes no `task::both` and no task - the crossing `NK2501` is
+/// about does not happen in *this* build. Refusing it would be refusing a
+/// program that compiles, which is the one thing the compiler may never do; and
+/// saying nothing would be ADR-005 §1 Group B's failure exactly, a library built
+/// at `no` that turns out un-compilable at `yes`. A lint is the third answer, and
+/// it is the one that record asked for.
+///
+/// **`NK2502` is not downgraded, and that is the decision.** A Rust dependency
+/// may bring its own runtime (ADR-038 D7), and its threads are not the
+/// program's: `user_parallelism` bounds what *you* wrote, which is ADR-037 D2's
+/// load-bearing "user". So that crossing is real at both settings and so is the
+/// refusal.
+///
+/// This is the only place a build switch meets a `NK25xx`, and it meets the
+/// **severity** rather than the verdict. The verdict is a property of the
+/// program and the analyses never see a switch.
+fn lint_where_nothing_crosses(findings: &mut [check::Finding], user_parallelism: &str) {
+    if user_parallelism != "no" {
+        return;
+    }
+    for finding in findings.iter_mut().filter(|f| f.code == "NK2501") {
+        finding.severity = check::Severity::Warning;
+        finding.notes.push(
+            "`user_parallelism = no` runs nothing you wrote concurrently, so this build does \
+             not perform the crossing - it is reported so that the same source still builds at \
+             `yes` (Part III, C.3)"
+                .to_string(),
+        );
+    }
 }
 
 /// Write the ledger, or - under `--locked` - check that it did not need
@@ -639,7 +693,20 @@ impl Project {
             env,
         };
 
-        let code = cargo.run(subcommand, &[], program_args)?;
+        // **`build` first, always, and its diagnostics read rather than
+        // relayed** (ADR-005 D7, Part III C.1). Cargo's stderr is Rust about a
+        // file the author never opened; `--message-format=json` is the channel
+        // the translator can read, and it is only usable for `build` - a `run`
+        // writes the *program's* output to the same stdout.
+        //
+        // So a `nikaia run` is a build and then a run, and the run is a no-op
+        // rebuild. That is the same shape the lowering already has (above): the
+        // work happens once, and the decision is made where it can be reported.
+        let (mut code, messages) = cargo.messages("build", &[])?;
+        self.report(&messages)?;
+        if code == 0 && subcommand == "run" {
+            code = cargo.run("run", &[], program_args)?;
+        }
 
         // Cargo has resolved by now, and only now: the versions do not exist
         // before it ran. A build that failed resolved nothing worth recording.
@@ -654,6 +721,55 @@ impl Project {
             }
         }
         Ok(code)
+    }
+
+    /// Say what the backend said, against the `.nika` line it was about.
+    ///
+    /// Part III C.1's Iron Rule: an untranslated backend error reaching the user
+    /// is a bug in this compiler. Until this existed the project build had no
+    /// interception at all - `cargo`'s stderr *was* the user interface - so every
+    /// class ADR-005 D7 enumerates, `E0277` among them since the structural
+    /// `Send` check landed, arrived as Rust about `target/nikaia/gen/….rs`.
+    ///
+    /// **The position is translated and the text is not**, which is ADR-012's
+    /// own choice and is honest for most of what arrives: the lowering is name
+    /// for name (ADR-011 D2), so "`xs` does not live long enough" is already a
+    /// sentence about the Nikaia source and only its place was wrong. It is
+    /// *not* honest for a trait-bound error, whose every noun is a Rust type the
+    /// author did not write - and rewriting one into Nikaia vocabulary is a
+    /// second question, recorded in ADR-005 D7 rather than answered here. What
+    /// the frontend can decide about a crossing it now refuses itself, with
+    /// `NK2501`/`NK2502` and Nikaia words.
+    ///
+    /// The map is rebuilt rather than carried: the lowering is deterministic, so
+    /// a second one gives the same map (ADR-012), and this way the cost is paid
+    /// only by a build the backend had something to say about.
+    fn report(&self, messages: &str) -> Result<()> {
+        if messages
+            .lines()
+            .all(|line| !line.contains("\"compiler-message\""))
+        {
+            return Ok(());
+        }
+
+        let program = modules::Program::read(&self.entry())?;
+        let lowered = program.emit_ordered(self.settings.build, self.settings.ordering)?;
+        let sources: Vec<&str> = program.sources();
+        let paths: Vec<String> = program
+            .units
+            .iter()
+            .map(|unit| unit.path.display().to_string())
+            .collect();
+        let generated = self.gen_dir().display().to_string();
+
+        for diagnostic in diagnostics::translate_units(messages, &lowered.map, &sources) {
+            let at = diagnostic.location.as_ref().map_or(0, |l| l.unit);
+            eprint!(
+                "{}",
+                diagnostics::render(&diagnostic, &paths[at], sources[at], &generated)
+            );
+        }
+        Ok(())
     }
 
     /// Copy the versions Cargo chose into `nikaia.lock` (ADR-021 D2).
