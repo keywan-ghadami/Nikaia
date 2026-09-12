@@ -264,6 +264,141 @@ fn a_written_call_propagates_its_failure() {
     );
 }
 
+/// The same, for a call on a **receiver**: `s.add(1)` takes the `?` too.
+///
+/// ADR-023 D8 does not distinguish the two shapes, and until now the compiler
+/// did: a fallible method call lowered only through a `catch`, so passing the
+/// failure on - the thing D8 says a call does by itself - was the one case you
+/// had to write more code for than the code you wanted.
+///
+/// What changed is not that the emitter learned to resolve receivers. There is
+/// one type checker (ADR-028), and it is the one that knows `s` is a `Stats` and
+/// that `Stats::add` carries `throws`. It writes that answer down as
+/// `check::Checked::fallible_methods` and the emitter looks it up, exactly as
+/// `fallible_loops` has been handed over since ADR-025 D7.
+///
+/// Compiled and run, because `Ok(s.add(1))` is a `Result` inside an `Ok` and
+/// only `rustc` says so.
+#[test]
+fn a_method_call_propagates_its_failure() {
+    let source = r#"
+        enum ZuVoll { Voll }
+
+        impl Error for ZuVoll {
+            fn message(&self) -> String { return "too full".to_string() }
+        }
+
+        struct Stats { n: i64 }
+
+        impl Stats {
+            pub fn(n: i64) -> Stats { return Stats(n: n) }
+            fn add(&self, v: i64) -> i64 throws {
+                if self.n + v > 100 { throw ZuVoll::Voll }
+                return self.n + v
+            }
+        }
+
+        fn record(s: Stats) -> i64 throws {
+            return s.add(1)
+        }
+
+        fn main() {
+            let first = record(Stats(2)) catch {
+                println(f"{error}")
+                return
+            }
+            println(f"{first}")
+            let second = record(Stats(500)) catch {
+                println(f"{error}")
+                return
+            }
+            println(f"{second}")
+        }
+    "#;
+    let rust = emit(source);
+    assert!(rust.contains("Ok(s.add(1)?)"), "{rust}");
+
+    let dir = common::scratch_dir("propagate-method");
+    let path = dir.join("prog.rs");
+    std::fs::write(&path, &rust).expect("write the emitted Rust");
+    let binary = dir.join("prog");
+    let compiled = common::compile(
+        &path,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(
+        out.trim(),
+        "3\ntoo full",
+        "the failure has to have travelled out of `record`; stdout was: {out:?}"
+    );
+}
+
+/// And the guarded half of a `catch` still does not take one.
+///
+/// One rule, asked in one place: the emitter's condition for a method call is
+/// the same `flow.throws && !flow.caught && <the callee can fail>` the call by
+/// name is given, and only the last question is answered from somewhere else.
+/// So `s.add(1) catch { … }` keeps the `Result` the `match` beside it needs,
+/// and the next call in the same function still propagates.
+#[test]
+fn a_caught_method_call_keeps_its_result() {
+    let rust = emit(
+        r#"
+        enum ZuVoll { Voll }
+
+        struct Stats { n: i64 }
+
+        impl Stats {
+            fn add(&self, v: i64) -> i64 throws {
+                if self.n + v > 100 { throw ZuVoll::Voll }
+                return self.n + v
+            }
+        }
+
+        fn record(s: Stats) -> i64 throws {
+            let first = s.add(1) catch { return 0 }
+            return first + s.add(2)
+        }
+        "#,
+    );
+    assert!(rust.contains("match s.add(1) {"), "{rust}");
+    assert!(!rust.contains("s.add(1)?"), "{rust}");
+    assert!(rust.contains("Ok(first + s.add(2)?)"), "{rust}");
+}
+
+/// A method no ledger describes is left exactly as it was.
+///
+/// The emitter adds nothing on a guess, and the checker's answer is an answer
+/// about calls it resolved: `text.len()` is `std`'s and cannot fail, and a
+/// method on a receiver whose type is not known produces no entry at all. Both
+/// come out without a `?`.
+#[test]
+fn a_method_that_cannot_fail_takes_no_question_mark() {
+    let rust = emit(
+        r#"
+        fn size(text: String) -> usize throws {
+            return text.len()
+        }
+        "#,
+    );
+    assert!(rust.contains("Ok(text.len())"), "{rust}");
+}
+
 /// `throws` names no type, and saying so is the parser's job (ADR-023 D1).
 ///
 /// The specification wrote `throws IoError` in four places, so this is a form

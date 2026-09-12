@@ -436,6 +436,10 @@ fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
         "which loops can fail changed once `sync` was filled in"
     );
     assert_eq!(
+        from_declarations.fallible_methods, from_finished.fallible_methods,
+        "which method calls can fail changed once `sync` was filled in"
+    );
+    assert_eq!(
         from_declarations.findings.len(),
         from_finished.findings.len(),
         "the findings changed once `sync` was filled in"

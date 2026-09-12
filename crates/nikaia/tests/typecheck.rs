@@ -712,6 +712,87 @@ fn a_method_that_can_fail_is_the_same_rule() {
     );
 }
 
+/// ...and it still refuses now that the `?` is emitted for it.
+///
+/// The two halves have to stay the two halves: the emitter writes the `?` only
+/// where the function declares `throws`, and this is what guarantees the `?`
+/// always has somewhere to go. An inference that gave `record` a `throws` it
+/// never wrote would have made the lowering work and the ledger lie (ADR-023
+/// D1, ADR-025 D1), so the refusal is load-bearing rather than a leftover.
+#[test]
+fn the_refusal_does_not_weaken_when_the_method_call_propagates() {
+    let body = "enum ZuVoll { Voll }\n\
+                struct Stats { n: i64 }\n\
+                impl Stats {\n\
+                    fn add(&self, v: i64) -> i64 throws {\n\
+                        if self.n + v > 100 { throw ZuVoll::Voll }\n\
+                        return self.n + v\n\
+                    }\n\
+                }\n";
+
+    // Undeclared: refused, and the set the emitter reads is not what decides it.
+    let (code, _) = one(&format!(
+        "{body}fn record(s: Stats) -> i64 {{ return s.add(1) }}"
+    ));
+    assert_eq!(code, "NK2605");
+
+    // Declared: nothing to say, and this is the program that lowers with a `?`.
+    let declared = format!("{body}fn record(s: Stats) -> i64 throws {{ return s.add(1) }}");
+    assert!(findings(&declared).is_empty(), "{:#?}", findings(&declared));
+
+    // Caught at the call: nothing to say either, and no `?` is emitted there.
+    let caught =
+        format!("{body}fn record(s: Stats) -> i64 {{ return s.add(1) catch {{ return 0 }} }}");
+    assert!(findings(&caught).is_empty(), "{:#?}", findings(&caught));
+}
+
+/// What the emitter is handed, said of the checker's own output.
+///
+/// ADR-028: there is one type checker, and the emitter is not a second one. So
+/// the answer about which method calls can fail is computed here, keyed by the
+/// statement it is in and the method's name, and the emitter looks it up. Two
+/// calls of the same name in one statement where only one can fail produce no
+/// entry at all - the set never claims a call fails that does not.
+#[test]
+fn the_checker_says_which_method_calls_can_fail() {
+    let source = "enum ZuVoll { Voll }\n\
+                  struct A { n: i64 }\n\
+                  impl A {\n\
+                      fn add(&self, v: i64) -> i64 throws {\n\
+                          if self.n > 100 { throw ZuVoll::Voll }\n\
+                          return self.n + v\n\
+                      }\n\
+                  }\n\
+                  struct B { n: i64 }\n\
+                  impl B {\n\
+                      fn add(&self, v: i64) -> i64 { return self.n + v }\n\
+                      fn plain(&self) -> i64 { return self.n }\n\
+                  }\n\
+                  fn one_of_them(a: A) -> i64 throws { return a.add(1) }\n\
+                  fn neither(b: B) -> i64 { return b.plain() }\n\
+                  fn both_names(a: A, b: B) -> i64 throws { return a.add(1) + b.add(2) }";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let fallible = nikaia::check::propagation_against(&parsed, &Ledger::infer(&parsed)).methods;
+
+    let names: Vec<&str> = fallible.iter().map(|(_, name)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["add"],
+        "only the resolved fallible call belongs in the set: {fallible:?}"
+    );
+
+    // And it is the one in `one_of_them`, not the pair in `both_names`: the
+    // statement there writes `add` twice and one of the two cannot fail, so the
+    // pair is removed rather than guessed at.
+    let at = fallible.iter().next().expect("one entry").0;
+    let line = source[..at].lines().count();
+    assert_eq!(
+        source.lines().nth(line - 1).unwrap_or_default().trim(),
+        "fn one_of_them(a: A) -> i64 throws { return a.add(1) }",
+        "the entry should be the statement in `one_of_them`"
+    );
+}
+
 /// A call nothing describes says nothing here.
 ///
 /// The checker answers only where the fact is written down (C.4). A foreign

@@ -608,6 +608,14 @@ struct Emitter<'p> {
     /// The `for` statements whose step can fail, by the byte they start at
     /// (ADR-025 D1).
     fallible_loops: std::collections::BTreeSet<usize>,
+    /// The method calls that can fail, by the byte their statement starts at
+    /// and the method's name (ADR-023 D8).
+    ///
+    /// Handed over exactly as `fallible_loops` is, and for the reason stated
+    /// there: `stats.add(5)` names `add` and says nothing about what `stats`
+    /// is, so only the type checker can say what it calls (ADR-028). Nothing
+    /// here resolves a receiver.
+    fallible_methods: std::collections::BTreeSet<(usize, String)>,
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
@@ -766,6 +774,15 @@ struct Flow<'a> {
     /// `catch` was written in, because a failure raised *there* leaves the
     /// function like any other.
     caught: bool,
+    /// The byte the statement being emitted starts at.
+    ///
+    /// It is here because the checker's answer about method calls is keyed by
+    /// it (`check::Checked::fallible_methods`), and an expression has no span
+    /// of its own to look itself up by. `stmt` sets it for every statement it
+    /// emits, so a statement nested in a block carries its own and not the
+    /// outer one's - which is what the checker records, because it walks
+    /// statements the same way.
+    statement: usize,
 }
 
 impl Flow<'_> {
@@ -774,6 +791,7 @@ impl Flow<'_> {
         origin: "",
         sequential: false,
         caught: false,
+        statement: usize::MAX,
     };
 
     /// The same surroundings, with reordering switched off for what is inside a
@@ -791,6 +809,11 @@ impl Flow<'_> {
             caught: true,
             ..self
         }
+    }
+
+    /// The same surroundings, for the statement that starts at this byte.
+    fn at(self, statement: usize) -> Self {
+        Flow { statement, ..self }
     }
 }
 
@@ -880,6 +903,17 @@ impl<'p> Emitter<'p> {
             }
         }
 
+        // One type check, both of its answers about where a failure leaves.
+        //
+        // ADR-025 D7 for the loops: the type checker knows which `for` iterates
+        // something whose step can fail, because it infers the iterator's type
+        // and reads the ledger. Matching on the name `io::lines` here would
+        // have caught the one-line form and quietly missed
+        // `let s = io::lines()` followed by `for line in s`. ADR-028 for the
+        // method calls: a receiver's type is the type checker's to know, and
+        // there is one type checker (ADR-028).
+        let propagation = crate::check::propagation_against(parsed, &own_contracts);
+
         Self {
             parsed,
             build,
@@ -892,12 +926,8 @@ impl<'p> Emitter<'p> {
             uses_std,
             fails,
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
-            // ADR-025 D7: the type checker knows which `for` iterates something
-            // whose step can fail, because it infers the iterator's type and
-            // reads the ledger. Matching on the name `io::lines` here would
-            // have caught the one-line form and quietly missed
-            // `let s = io::lines()` followed by `for line in s`.
-            fallible_loops: crate::check::fallible_loops_against(parsed, &own_contracts),
+            fallible_loops: propagation.loops,
+            fallible_methods: propagation.methods,
             own_contracts,
             library: std_ledger(),
             ordering,
@@ -1421,6 +1451,7 @@ impl<'p> Emitter<'p> {
             origin,
             sequential: false,
             caught: false,
+            statement: usize::MAX,
         };
 
         // A function body's last statement is the *function's* value, which is
@@ -2567,6 +2598,12 @@ impl<'p> Emitter<'p> {
         tail: Tail,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // Which statement this is, for the one thing that has to look itself up
+        // by it: a method call that can fail (ADR-023 D8). Shadowed rather than
+        // passed on separately, so that everything emitted from here - an
+        // expression, a nested block, a `catch` handler - sees the statement it
+        // is actually in.
+        let flow = flow.at(span.start);
         match stmt {
             Stmt::Let {
                 name,
@@ -2775,6 +2812,19 @@ impl<'p> Emitter<'p> {
                 self.args(out, args, depth, flow)?;
                 self.dsl_parameters(out, self.text(*method), args.len(), config, depth, flow)?;
                 out.push(")");
+
+                // ADR-023 D8, the method half. The same three conditions the
+                // call by name is given in `call` below, and the same rule -
+                // only the last question is asked of a different source,
+                // because the emitter cannot ask it itself. The enclosing
+                // function must be `throws`, or there is nowhere for the `?` to
+                // go, and `NK2605` has already refused the program where it is
+                // not. The call must not be the guarded half of a `catch`,
+                // which wants the `Result`. And the callee must be one the
+                // checker established can fail.
+                if flow.throws && !flow.caught && self.method_can_fail(flow, *method) {
+                    out.push("?");
+                }
             }
             Expr::Match { value, arms } => {
                 out.push("match ");
@@ -3089,10 +3139,10 @@ impl<'p> Emitter<'p> {
     /// reported every resolvable fallible call the function did not declare
     /// (`NK2605`); a call nothing describes reaches `rustc` as before.
     ///
-    /// A **method** call is not asked, because the emitter has no receiver
-    /// types: `stats.add(5)` names `add` and only the type checker knows what
-    /// it goes to (ADR-028). So a method that can fail still does not take a
-    /// `?` here, and `catch` is what lowers it today.
+    /// A **method** call is not asked here, because the answer is not the
+    /// emitter's to work out: `stats.add(5)` names `add` and only the type
+    /// checker knows what it goes to (ADR-028). `method_can_fail` reads the
+    /// answer the checker handed over instead.
     fn can_fail(&self, func: &Expr) -> bool {
         let name = match func {
             Expr::Variable(name) => self.text(*name).to_string(),
@@ -3109,6 +3159,20 @@ impl<'p> Emitter<'p> {
             .or_else(|| self.own_contracts.functions.get(&format!("{name}::new")))
             .or_else(|| self.library.lookup(&name).map(|(_, c)| c))
             .is_some_and(|contract| !contract.throws.is_empty())
+    }
+
+    /// Whether the checker said this method call can fail (Kap 7.1).
+    ///
+    /// A lookup, not an analysis: `fallible_methods` was computed by the one
+    /// type checker this compiler has, against the same ledgers the program is
+    /// built with, and nothing here resolves a receiver type. `false` where the
+    /// checker had no answer - an unresolved receiver, a method no ledger
+    /// describes, or two calls in one statement writing the same name where one
+    /// of them cannot fail - which is the emitter leaving the call exactly as it
+    /// was rather than guessing at it.
+    fn method_can_fail(&self, flow: Flow<'_>, method: Symbol) -> bool {
+        self.fallible_methods
+            .contains(&(flow.statement, self.text(method).to_string()))
     }
 
     /// The options a call by name has, from the contract that declares them.

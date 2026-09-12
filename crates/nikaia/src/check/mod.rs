@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::contracts::{send, ty, ty::Ty, FnContract, Ledger};
 use crate::parser::Parsed;
+use winnow_grammar::Symbol as Ident;
 
 /// The note every `NK25xx` carries, because it is the reason the code exists.
 ///
@@ -112,6 +113,23 @@ pub struct Checked {
     /// followed by `for line in stream` has to be the same as the one-line
     /// form, which matching on a name would not give (ADR-025 D7).
     pub fallible_loops: BTreeSet<usize>,
+    /// The **method calls that can fail**, as the byte the statement they
+    /// stand in starts at and the method's name (ADR-023 D8).
+    ///
+    /// The same arrangement as `fallible_loops`, for the same reason and said
+    /// once: a method call's callee is only known to something that knows the
+    /// receiver's type, the emitter has no types (ADR-028), so the answer is
+    /// computed here and handed over. The emitter writes the `?`.
+    ///
+    /// The statement and the name, because that is the most an `Expr` can be
+    /// pointed at: expressions carry no spans and a method name is an interned
+    /// symbol shared by every call that writes it. So a pair is recorded only
+    /// where **every** method call of that name in that statement can fail -
+    /// `a.read()` beside a `b.read()` that cannot is left out of the set
+    /// entirely rather than resolved by position. That is the same
+    /// fail-quietly this module's other answers keep: the set never claims a
+    /// call fails that does not.
+    pub fallible_methods: BTreeSet<(usize, String)>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -162,6 +180,8 @@ pub fn check_program(
         caught: false,
         current: None,
         modules: modules.clone(),
+        fallible_methods: BTreeSet::new(),
+        opaque_methods: BTreeSet::new(),
         checked: Checked::default(),
     };
     checker.collect_types();
@@ -175,7 +195,30 @@ pub fn check_program(
     // rather than what a type is, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::views::check(parsed));
     checker.checked.findings.sort_by_key(|f| f.span.start);
+    // Only the calls that provably fail, and only where the name is not also a
+    // call that does not: the emitter writes a `?` for each of these, and a `?`
+    // on something that is not a failure is a `rustc` error about a file the
+    // author never wrote.
+    checker.checked.fallible_methods = checker
+        .fallible_methods
+        .difference(&checker.opaque_methods)
+        .cloned()
+        .collect();
     checker.checked
+}
+
+/// Everything the emitter needs in order to make a failure travel: the loops
+/// whose step can fail and the method calls that can fail.
+///
+/// Both together because both come out of one pass, and a second pass would
+/// cost a whole type check to answer a question the first one already
+/// answered.
+#[derive(Debug, Clone, Default)]
+pub struct Propagation {
+    /// [`Checked::fallible_loops`].
+    pub loops: BTreeSet<usize>,
+    /// [`Checked::fallible_methods`].
+    pub methods: BTreeSet<(usize, String)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -189,10 +232,20 @@ pub fn fallible_loops(parsed: &Parsed) -> BTreeSet<usize> {
 /// The same, against contracts the caller already has - which for a program of
 /// several files is the **program's** ledger and not this file's (Part I, 9.1).
 pub fn fallible_loops_against(parsed: &Parsed, own: &Ledger) -> BTreeSet<usize> {
+    propagation_against(parsed, own).loops
+}
+
+/// Both halves of ADR-023 D8's propagation, against contracts the caller
+/// already has.
+pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
     let Ok(library) = Ledger::parse(crate::contracts::STD) else {
-        return BTreeSet::new();
+        return Propagation::default();
     };
-    check(parsed, own, &library).fallible_loops
+    let checked = check(parsed, own, &library);
+    Propagation {
+        loops: checked.fallible_loops,
+        methods: checked.fallible_methods,
+    }
 }
 
 struct Checker<'a> {
@@ -231,6 +284,12 @@ struct Checker<'a> {
     /// The modules this program is made of (Part I, 9.1). Empty for a single
     /// file, where no call crosses a file boundary.
     modules: BTreeSet<String>,
+    /// Method calls whose callee's contract says it can fail, and method calls
+    /// where that could not be established - both as the pair
+    /// [`Checked::fallible_methods`] is keyed by. The difference is the answer;
+    /// a name that is both in one statement is in neither.
+    fallible_methods: BTreeSet<(usize, String)>,
+    opaque_methods: BTreeSet<(usize, String)>,
     checked: Checked,
 }
 
@@ -654,6 +713,7 @@ impl<'a> Checker<'a> {
                         self.expr(a, span);
                     });
                     self.reached_method(None);
+                    self.method_propagates(*method, false, span);
                     return Ty::Unknown;
                 };
                 let key = format!("{name}::{}", self.parsed.text(*method));
@@ -664,9 +724,15 @@ impl<'a> Checker<'a> {
                         self.expr(a, span);
                     });
                     self.reached_method(None);
+                    self.method_propagates(*method, false, span);
                     return Ty::Unknown;
                 };
                 self.reached_method(Some(&key));
+                // ADR-023 D8: the failure leaves at the call, and the emitter
+                // is what writes that. Recorded whether or not the function
+                // around it declares `throws` - where it does not, `NK2605`
+                // below refuses the program and nothing is emitted at all.
+                self.method_propagates(*method, !contract.throws.is_empty(), span);
                 // A method call is a written call, so the rule reaches it too
                 // (`NK2605`) - and here the receiver's type was known and a
                 // ledger described the method, which is the only case this
@@ -1243,6 +1309,24 @@ impl<'a> Checker<'a> {
                  call, `… catch {{ … }}` (Part I, 7.1)"
             )),
         });
+    }
+
+    /// Where a method call stands in ADR-023 D8's propagation, for the emitter
+    /// ([`Checked::fallible_methods`]).
+    ///
+    /// Every method call reaches this, and `fails` says whether the ledger
+    /// describing its callee declares `throws`. A call whose receiver or whose
+    /// method could not be resolved arrives with `false`, which is not "it
+    /// cannot fail" but "there is no answer" - and it lands in the set that
+    /// *removes* the pair, so an unresolved call leaves the statement's name
+    /// alone rather than speaking for it.
+    fn method_propagates(&mut self, method: Ident, fails: bool, span: &Span) {
+        let key = (span.start, self.parsed.text(method).to_string());
+        if fails {
+            self.fallible_methods.insert(key);
+        } else {
+            self.opaque_methods.insert(key);
+        }
     }
 
     /// A loop over something whose step can fail (ADR-025 D1).
