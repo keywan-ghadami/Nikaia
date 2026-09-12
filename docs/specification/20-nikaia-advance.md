@@ -65,6 +65,12 @@ fn parse_input(input: String) throws ParseError {
 }
 ```
 
+> **Status:** **B is built and A is not.** There is no `const` in the parser at
+> all — at item level it is a parse error, and inside a function body `const X =
+> 1` is read as two statements — so the compile-time half of dual-mode parsing
+> has no syntax to be written in, and a `dsl … from …` runs at runtime wherever
+> it stands.
+
 ### 10.3. Code Generation (Quasi-Quoting)
 While parsing reads data, **Macros** create new code. Nikaia uses a mechanism called **Quasi-Quoting**. The `quote` block allows you to write Nikaia code as data templates and fill in the blanks with variables.
 
@@ -133,6 +139,12 @@ fn main() {
     println(score) // Works! Prints 100.
 }
 ```
+
+> **Status for 10.3 and 10.4:** **not built.** `macro` and `struct … with …` are
+> parse errors, and `quote { … }` is read as a name followed by a block rather
+> than as one construct — so nothing on these two pages is accepted as written,
+> and hygiene and injection have no construct to apply to. Nikaia's built
+> metaprogramming is `grammar` (10.1) and `dsl` (10.5).
 
 ### 10.5. Using DSLs (The `dsl` Keyword)
 While `quote` generates *Nikaia* code, the `dsl` keyword embeds **foreign syntax** directly into a Nikaia file — SQL, HTML, regex, assembly.
@@ -228,7 +240,9 @@ it; nothing compiles to something other than what it says.
 > eod` block is not resolved to a grammar at all: a body with `:name` holes
 > lowers whatever the target is called, its text reaching the driver with the
 > holes as written, and a body **without** holes is refused rather than given a
-> meaning this compiler would have to invent.
+> meaning this compiler would have to invent. And the grouped `use
+> nikaia_sql::{Database, mysql}` above is not built: a `use` takes one path
+> (Part I, 9.1), so a brace after `::` is a parse error.
 
 ### 10.6. Advanced Parser Features
 Nikaia grammars are designed for high-performance tooling.
@@ -551,6 +565,12 @@ access_all(account_a, account_b) fn(a, b) {
 }
 ```
 
+> **Status:** `counter.access fn { … }` is built as a method call with a trailing
+> lambda. The two forms above are not: a trailing lambda attaches only to a
+> method call and only with implicit arguments (Part I, 5.3), so `account.access
+> fn(to) { … }` and `access_all(…) fn(a, b) { … }` are each read as two
+> expressions rather than one.
+
 ### 12.4. Racing Tasks (`select`)
 Sometimes you want to run multiple tasks, but only care about the one that finishes *first*.
 
@@ -564,6 +584,10 @@ select {
 }
 ```
 *Note: When one branch wins, the other task is automatically cancelled and cleaned up.*
+
+> **Status:** not built. `select` is not a keyword in the parser and the block
+> above is a parse error, so nothing races two tasks today and the teardown rule
+> below is stated ahead of the construct it governs.
 
 **What "cleaned up" means precisely:** the losing task stops at its current pause point and its values are torn down. Resources with a pausable `cleanup` (Part I, 6.4) cannot be awaited by the *winner* — you should not pay for the loser's teardown — so the runtime **adopts** their `cleanup` runs and finishes them in the background ("parked cleanup"). The program will not exit before parked cleanups are done, bounded by the `cleanup-deadline` (Part III, 13.3). Errors from a parked cleanup have no caller to bubble to; they are reported through the runtime's error hook. See [ADR-006](adr/adr-006.md), D3.
 
@@ -615,6 +639,10 @@ task::scope fn(s) {
 }
 // 'data' is still valid here
 ```
+
+> **Status:** not built. `task::scope fn(s) { … }` does not parse as one
+> construct — a trailing lambda attaches only to a method call and only with
+> implicit arguments (Part I, 5.3) — and `NK2102` is not reported.
 
 **One rule differs with `user_parallelism`.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
 

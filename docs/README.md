@@ -66,6 +66,9 @@ is normative and nothing may depend on it to know what a program means.
   compile-time staging would pay, and what it costs to check one.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and
   what the compiler says about each, before and after.
+* [`spec-promises.md`](spec-promises.md) — every construct and command the
+  specification names, run against the compiler one probe at a time; the
+  evidence behind the **Status** notes in Parts I–III.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps: 0.64 % of a compile, which is what
   the text interface of ADR-004 D1 is paid for with.

@@ -58,6 +58,11 @@ override them for a single build ([ADR-037](adr/adr-037.md)).
 
 ## Chapter 2: Variables and Data Types
 
+A **comment** begins with `//` and runs to the end of the line. That is the only
+form. There is no block comment — `/* … */` is not one, and does not parse — and
+no doc comment: a `///` is an ordinary comment whose first character happens to
+be a slash.
+
 ### 2.1. Variables and Assignment
 A **Variable** is a named storage location in memory that holds a value. In Nikaia, variables are declared using the `let` keyword.
 
@@ -100,6 +105,10 @@ Nikaia provides basic types to represent simple values.
       `char`, and turning one into the other is a decision a program makes
       rather than something that happens to it.
 
+**A number is written in digits, and the exponent above is the only other thing
+in one.** There are no digit separators, no radix prefixes and no type suffixes,
+so `1_000`, `0xFF` and `1i64` are each not a number but a number beside a name.
+
 ### 2.3. Nullable Types (Null Safety)
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
 
@@ -114,6 +123,10 @@ maybe_string = "World"             // Valid (`mut`, as in 2.1)
 A literal is a **view** of text the program was compiled with, not a `String` — see 6.6, where
 an allocation happens only where you wrote that you wanted one, and [ADR-024](adr/adr-024.md) D5.
 `.to_string()` is how you say you want one.
+
+> **Status:** not built. A trailing `?` on a type is a parse error, and `null` is
+> read as an ordinary name rather than as a value — so neither line of the
+> example above is accepted as written, while `??` (3.5) is.
 
 ### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
@@ -154,6 +167,10 @@ apart from, so `"{"` is a brace and `"{{"` is two.
 
 The `f` and the quote are **one token**. `f"x"` interpolates; `f "x"` is a variable named `f`
 beside a string, and whitespace never decides what a program means.
+
+**A newline is an ordinary character in a literal.** Nothing ends one but the
+closing `"`, so a literal left unterminated runs on to the next `"` in the file
+or, if there is none, to the end of it.
 
 The type follows the syntax rather than the contents. `"…"` is a view of static text and `f"…"`
 builds a `String`, whether or not anyone put a hole in it — so adding a brace to a piece of text
@@ -311,6 +328,9 @@ let name = repo.find_user(id)?.full_name
 let display_name = name ?? "Guest"
 ```
 
+> **Status:** `??` is built. `?.` is not: there is no safe-navigation operator in
+> the parser, and a `?` after an expression is a parse error.
+
 ---
 
 ## Chapter 4: Data Structures
@@ -446,6 +466,11 @@ Nikaia includes built-in types for storing groups of data.
     scores["Player1"] = 100
     ```
     A map is hashed according to where its keys came from: keys derived from data a remote peer supplied are hashed with a random per-run key, so nobody can pick keys that make your program crawl, and keys from data you supplied are hashed with the fast function. You do not configure this and, in the ordinary case, you do not think about it — see Part III, 17.1, for the cases where you want the last word. One consequence is worth remembering here: **the order you get when iterating a map is not guaranteed** and may differ between runs.
+
+> **Status:** the **list literal is not built** — `[1, 2, 3]` is a parse error at
+> the `[`, and so is a list *type* written `[User]`. Built: the type `Vec[T]`,
+> the tuple, indexing (`xs[0]`), indexed assignment, and `HashMap::new()`.
+
 ### 4.6. Generics (Type Parameters)
 To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.
 
@@ -469,6 +494,11 @@ impl Summarize for User {
     }
 }
 ```
+
+> **Status:** `impl Summarize for User` is built. **`trait Summarize { … }` is
+> not** — a trait declaration is a parse error at the keyword, so a trait can be
+> implemented but not declared, and the traits that can be implemented today are
+> the ones the standard library and the Rust side already name.
 
 ---
 
@@ -587,6 +617,15 @@ users.map fn(user) {
     return user.name
 }
 ```
+
+> **Status:** both lambda forms are built, and so is the **trailing** form where
+> the arguments are implicit and the receiver is a method call, with or without
+> other arguments — `users.map fn { a.id }`, `numbers.reduce(0) fn { a + b }`,
+> and the chain above. Not built: a *trailing* `fn(name) { … }`, a trailing
+> lambda after a plain call or a path (`task::scope fn { … }`), and a `sync`
+> marker on a lambda — each of those is read as two expressions rather than one,
+> so the last example on this page means something other than what it says.
+
 ### 5.4. Contextual Capture (The Lifecycle Rule)
 Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at either `user_parallelism`.
 
@@ -623,20 +662,28 @@ spawn fn { println(prefix + "System started") }
 // println(prefix)
 ```
 
-#### C. Constraint Propagation (The Viral Rule)
+#### C. Where the Distinction Lives
 
-The distinction between immediate and detached is part of the function's type signature.
-* By default, function parameters accepting lambdas `fn()` are Immediate.
-* To accept a lambda that will be stored or spawned, you must explicitly mark the parameter as `@detached`.
-* **Safety Rule:** You cannot pass an immediate lambda to a detached parameter.
+Which of the two a lambda is in belongs to the **function that takes it**, not to
+the call: `map` is immediate for every caller and `spawn` is detached for every
+caller, and that is what lets the capture be decided where the lambda is
+written.
 
-```nika
-// Custom function wrapper for spawning
-fn launch_task(task: @detached fn()) {
-    // Valid: 'task' is marked detached, so we can pass it to 'spawn'
-    spawn(task)
-}
-```
+**It is not something your own function can declare.** Nikaia's type grammar has
+no function type — a parameter's type is a name with type arguments, optionally
+a view, or a tuple — so no `.nika` source takes a lambda and passes it on, and
+`@detached` is a property of the standard library's own entries rather than a
+word a program writes (Part III, Appendix B). What that closes off is **effect
+polymorphism**: a wrapper whose own immediacy would have to follow its
+parameter's ([ADR-029](adr/adr-029.md) D1). A lambda that must be moved is
+therefore handed to the detached function where it is written, not through a
+wrapper of your own.
+
+> **Status:** not built, and not writable — a parameter of function type is a
+> parse error, so `@detached` on one has nowhere to appear. The
+> immediate/detached rule itself is `std`'s, held by a check over `std`'s ledger
+> entries rather than by anything in a source file ([ADR-029](adr/adr-029.md)
+> D4); the capture it decides (`NK2101`, 8.3) is not reported yet.
 
 ---
 
@@ -956,6 +1003,11 @@ let config = load() catch {
 }
 ```
 
+> **Status:** the patterns of 3.4 are built. Two things in the example above are
+> not: **`..` in a named pattern**, so a `match` cannot yet bind some fields and
+> ignore the rest, and a bare `throw` as an arm's body — write the arm as a
+> block, `_ => { throw error }`.
+
 Two sets, and they are not the same one. The **variants of an error type** are closed, a `match`
 over them is exhaustive, and adding one is a breaking change — correctly. The **set of error types**
 arriving at a `catch` is open, and it grows when a callee gains a failure. Where that changes a
@@ -1218,7 +1270,7 @@ about each other is the same however it got there.
 Nikaia enforces strict encapsulation to prevent tight coupling between parts of your code.
 
 1.  **Private by Default:**
-    * Functions, Structs, Enums, and Constants are only visible inside the file they are defined in.
+    * Functions, Structs, Enums, and Constants are only visible inside the file they are defined in. (A `const` declaration has no syntax yet — Part II, 10.2.)
     * Struct Fields are only visible inside the file where the struct is defined.
 
 2.  **The `pub` Keyword:**
