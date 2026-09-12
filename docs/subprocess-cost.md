@@ -179,8 +179,10 @@ shaped build.
 
 Three things, and each matters more than the numbers above.
 
-**The path that holds the subprocess had never run.** `--backend bridge` is the **default**
-backend, and it panicked on every input, at the first symbol the lowering interned:
+**The path that holds the subprocess had never run.** `--backend bridge` was the **default**
+backend when this was measured — [ADR-004](specification/adr/adr-004.md) D4 has since made
+`rust` the default and the bridge optional, citing this section's "one of fifteen" for why —
+and it panicked on every input, at the first symbol the lowering interned:
 
 ```
 thread 'main' panicked at scoped-tls-1.0.1/src/lib.rs:168:9:

@@ -31,8 +31,8 @@ and a decision is not an implementation.
 | [001](adr-001.md) | One exact nightly pinned per release; the parser is generated from a grammar over bytes, not over Rust tokens | Accepted (§4 superseded by [003](adr-003.md)) | yes |
 | [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro; a project reaches `std` through a sysroot of pre-lowered sources, compiled into a keyed rlib cache | Accepted (§4 superseded by [003](adr-003.md)) | D1 for a Rust dependency; D4 - sysroot, pre-lowered `std`, rlib cache (97 packages to 46, 58 of them the compiler built twice); not a Nikaia dependency, not D2 |
 | [003](adr-003.md) | Hub-and-spoke: a frontend targets **Bridge-IR** and never `rustc_ast`; CLI, cache and Cargo wrapping are generic | Accepted | yes |
-| [004](adr-004.md) | One lowering builds `rustc_ast`; readable Rust is a *print* of it, never a second code generator | Accepted | D1, D2; D3's in-memory exit measured at 0.64 % and not built |
-| [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what | Accepted | key, store, lockfile - D2's resolved versions included (§5); not `--locked` for the lock |
+| [004](adr-004.md) | One lowering builds `rustc_ast`; readable Rust is a *print* of it, never a second code generator; the bridge backend is optional and `rust` is the default (D4) | Accepted | D1, D2, D4 - `rust` is what a bare `nikaia` uses and the bridge is the `rustc-backend` feature; D3's in-memory exit measured at 0.64 % and not built |
+| [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what; a backend that is not here refuses by name, and *compiled out* reads differently from *never implemented* (D9, D14) | Accepted | key, store, lockfile - D2's resolved versions included (§5); both refusals of D9 and D14; not `--locked` for the lock |
 
 ### Ownership, borrowing, cleanup
 
@@ -136,6 +136,8 @@ never about that coupling:
   [001](adr-001.md) D1 and [005](adr-005.md) D2: what the pin is actually paid
   for is [004](adr-004.md)'s bridge backend and its `rustc_private`, and the
   flag's price is measured at +7.1 % of a build for zero programs in the corpus.
+  Since [004](adr-004.md) D4 that backend is **optional** and is not the default,
+  so the pin is what *builds* the bridge rather than what an installation needs.
 * ADR-001 D2, why the parser backend is `winnow-grammar` and not
   `syn-grammar` — cited by [007](adr-007.md).
 * ADR-001 D4, Stage 0 is a transpiler — cited by [011](adr-011.md),
@@ -151,6 +153,8 @@ header:
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
 | [002](adr-002.md) D3 | [021](adr-021.md) D9 | Cranelift for "sub-second iterations" — never measured; measured, it buys 25 s against 26 s |
+| [002](adr-002.md) D3, [004](adr-004.md) | [004](adr-004.md) D4 | which backend a bare `nikaia` uses — `bridge` carried 1 of 15 corpus programs and its binary is not relocatable, so `rust` is the default and the bridge is optional. ADR-003's hub and spoke is untouched and the bridge is not deprecated |
+| [021](adr-021.md) D9 | [021](adr-021.md) D14 (extends) | a backend **compiled out** refuses like one never implemented, and the two messages must be distinguishable — one offers a component to install, the other offers nothing |
 | [013](adr-013.md) D5 | [022](adr-022.md) | `fn:` recorded as a chaining limitation; removed as a second way to say one thing |
 | [014](adr-014.md) D3 | [015](adr-015.md) | the measurement, once the backend's eager diagnostics were found to dominate it |
 | [014](adr-014.md) D1 | [002](adr-002.md) D4 | *when* `std`'s Nikaia half is lowered — a build script made the compiler a build-dependency of `std`, so Cargo built it again inside every project; release time now, and the `.rs` is committed |

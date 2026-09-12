@@ -145,11 +145,17 @@ does this file close" is otherwise a genuinely hard question.
 
 Nikaia is not a new backend. The frontend lowers to a stable intermediate representation,
 **Bridge-IR**, and a separate executor takes it from there — today by emitting Rust and
-invoking `rustc`, pinned to one exact nightly per release. That is what makes points 1, 2 and 3
-tractable: the hard safety machinery already exists and is battle-tested — Nikaia's job is to
-stop making humans operate it by hand. Keeping the generated Rust readable is deliberate, not a
-stopgap: it is how a compiler bug stays inspectable.
-→ [ADR-003](docs/specification/adr/adr-003.md), [Toolchain architecture](docs/toolchain_architecture.md)
+invoking `rustc`. That is what makes points 1, 2 and 3 tractable: the hard safety machinery
+already exists and is battle-tested — Nikaia's job is to stop making humans operate it by
+hand. Keeping the generated Rust readable is deliberate, not a stopgap: it is how a compiler
+bug stays inspectable.
+
+What you need installed to use it is **an ordinary stable Rust toolchain**. The backend that
+links `rustc`'s own internals — `--backend bridge` — is optional and is not what a bare
+`nikaia` uses; it is the one thing that wants the exact nightly pinned per release, and a
+build made without it refuses the flag by name rather than quietly doing something else.
+→ [ADR-003](docs/specification/adr/adr-003.md), [ADR-004](docs/specification/adr/adr-004.md) D4,
+[Toolchain architecture](docs/toolchain_architecture.md)
 
 ---
 
@@ -334,8 +340,10 @@ compiler. Concretely:
   *why*, including the ones that reverse an earlier decision.
 * 🚧 **0.0.8 (unreleased)** — tethered slices in user structs, parallel parsing, input
   provenance. See the [CHANGELOG](CHANGELOG.md).
-* 🚧 **Bootstrap compiler (Stage 0)** — a Rust front-end that lowers to a Bridge IR and drives
-  `rustc` to produce a binary. It handles functions and methods, `impl`, `struct` and `use`,
+* 🚧 **Bootstrap compiler (Stage 0)** — a Rust front-end that lowers a `.nika` file to readable
+  Rust and drives `rustc` to produce a binary; that is the `rust` backend, and it is what a bare
+  `nikaia` uses ([ADR-004](docs/specification/adr/adr-004.md) D4). The Bridge-IR backend beside
+  it is optional and carries far less. It handles functions and methods, `impl`, `struct` and `use`,
   control flow, `throws`/`catch`/`??`, string interpolation — and the whole `grammar` construct,
   `@frame` and `dsl … from …` included. **`examples/1brc.nika` compiles, runs and is a test.**
   Since [ADR-024](docs/specification/adr/adr-024.md) it also **checks types** — everything the

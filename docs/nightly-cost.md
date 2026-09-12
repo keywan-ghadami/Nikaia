@@ -340,6 +340,13 @@ or whether the bridge stays the default everywhere and a stable installation is 
 [ADR-021](specification/adr/adr-021.md) D9 own and neither makes. It is **not** answered here
 and nothing was changed to imply an answer: the default is still `bridge` in both builds.
 
+> **Answered since, by [ADR-004](specification/adr/adr-004.md) D4:** the default is `rust`
+> everywhere, and the bridge is optional rather than the backend every installation carries.
+> So the paragraph above describes the situation this file measured, not the one that
+> followed from it — a stable build is now a whole installation and `nikaia --input x.nika`
+> works there with nothing extra typed. The measurements are unchanged; what changed is the
+> decision they were handed to.
+
 ---
 
 ## 6. What this changes in the records, and what it does not
@@ -351,10 +358,13 @@ and nothing was changed to imply an answer: the default is still `bridge` in bot
 * [ADR-005](specification/adr/adr-005.md) D2 stands. Polonius does what D2 says it does, and
   the shape is reachable from Nikaia. What is corrected is everything written in the present
   tense about a flag nothing passes, and what is added is the price.
-* [ADR-004](specification/adr/adr-004.md) is untouched. The bridge backend exists, it is
-  still the default, and nothing here proposes removing it.
-* Unanswered, and handed on rather than decided: **what the default backend is on a build
-  that has no bridge.** Also still open from [`subprocess-cost.md`](subprocess-cost.md) §5 and
+* [ADR-004](specification/adr/adr-004.md) was untouched by this file. The bridge backend
+  exists, it was still the default when this was written, and nothing here proposed removing
+  it — nor does D4, which made it **optional** and not the default while leaving the backend
+  and [ADR-003](specification/adr/adr-003.md)'s hub and spoke exactly where they were.
+* Unanswered here, and handed on rather than decided — **what the default backend is on a build
+  that has no bridge** — and since answered by [ADR-004](specification/adr/adr-004.md) D4: it
+  is `rust`, on every build. Also still open from [`subprocess-cost.md`](subprocess-cost.md) §5 and
   adjacent to everything above: whether the executor should invoke the rustup shim or a named
   compiler. The two questions are the same question seen from either end — *which* `rustc`
   a Nikaia installation is entitled to assume.

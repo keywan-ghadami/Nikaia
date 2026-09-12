@@ -4,9 +4,9 @@
 //! `rustc` as a subprocess". Nothing ever ran it: `execute` reached
 //! `Symbol::intern` with no `rustc_span` session globals installed and
 //! panicked in `scoped-tls` before it printed a line, so `--backend bridge` -
-//! the **default** backend - failed on every input. It compiled, which is why
-//! it survived; `cargo check` cannot tell a lowering that works from one that
-//! aborts on its first interned symbol.
+//! which was then the **default** backend - failed on every input. It compiled,
+//! which is why it survived; `cargo check` cannot tell a lowering that works
+//! from one that aborts on its first interned symbol.
 //!
 //! This is the test that would have caught it, and it asserts the whole path
 //! rather than any part of it: `.nika` in, a binary out, and the binary prints
@@ -14,10 +14,18 @@
 //! there is no `rustc_private` in this file and nothing here links the
 //! compiler's internals.
 //!
+//! **Since ADR-004 D4 the default is `rust`, which makes this file carry more
+//! than it used to, not less.** While `bridge` was the default, every bare
+//! invocation in every test and every CI line drove this path, so the defect
+//! above was one command away from being noticed - and still was not. Now
+//! nothing reaches the bridge unless it says so, and these three tests are the
+//! whole of what does. A backend nobody exercises is how that panic happened the
+//! first time.
+//!
 //! The backend is what `rustc-backend` switches on, and a build made without it
 //! has no bridge to drive - `--backend bridge` there fails by name instead
-//! (ADR-021 D9's rule), which `backend_absent.rs` is what checks. So this file
-//! is the feature's test and compiles only with it.
+//! (ADR-021 D9's rule, as D14 extends it), which `backend_absent.rs` is what
+//! checks. So this file is the feature's test and compiles only with it.
 #![cfg(feature = "rustc-backend")]
 
 use std::path::{Path, PathBuf};
