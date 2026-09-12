@@ -9,10 +9,10 @@ default = ["rustc-backend"]
 # expansion checks this feature, so it must exist here too.
 trace = ["winnow-grammar/trace"]
 # The `nikaia` binary and its Bridge IR backend link the compiler's own
-# internals (ADR-004). The library does not, and `nikaia-std` uses it as a
-# build dependency to compile the parts of Nikaia's std that are written in
-# Nikaia - a build script that had to link `rustc_driver` would be neither
-# quick nor portable.
+# internals (ADR-004). The library does not, and the split stays: a tool that
+# only wants the emitter should not have to link `rustc_driver`. It is no longer
+# `nikaia-std` that uses it - since ADR-002 D4 `std` is built from sources with
+# its Nikaia half already lowered, and nothing in its build graph is this crate.
 rustc-backend = ["dep:rustc-executor"]
 
 [[bin]]
@@ -22,6 +22,9 @@ required-features = ["rustc-backend"]
 [build-dependencies]
 # `build.rs` fingerprints the compiler's own sources for the cache key.
 sha2 = "0.10"
+# ... and reads `[workspace.dependencies]` for the runtime versions a generated
+# program declares, which a sysroot has no workspace to carry (ADR-002 D4).
+toml = "0.9"
 
 [dependencies]
 bridge-orchestrator = { workspace = true }

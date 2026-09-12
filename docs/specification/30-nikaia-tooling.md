@@ -35,7 +35,50 @@ When you create a new project (`nikaia new my_project`), the following structure
 `Cargo.toml` ([ADR-002](adr/adr-002.md) D1 §5). `test`, `bench` and `fmt` are
 not. A single file outside a project is compiled with `nikaia --input
 <file>.nika`, which is not one of these commands and stays available on its own
-account ([ADR-021](adr/adr-021.md) D11).
+account ([ADR-021](adr/adr-021.md) D11). `nikaia lower-std` is 13.2b's
+toolchain-maintenance command and not one of these either.
+
+### 13.2b. Where `std` Comes From (the Sysroot)
+
+`std` is not a package a registry resolves, so it is not reached the way 13.3's
+`type = "rust"` dependencies are. A generated project depends on it **by path
+into a sysroot**: a directory that travels with the compiler and holds `std`'s
+sources. `NIKAIA_SYSROOT` names one; by default it is the checkout the compiler
+was built from, which is why a build inside the repository needs no configuration
+([ADR-002](adr/adr-002.md) D4).
+
+* **`std` ships as sources, with its Nikaia half already lowered.** The parts of
+  `std` written in Nikaia ([ADR-014](adr/adr-014.md) D1) are lowered to Rust at
+  release time, and the `.rs` sits beside the `.nika` it came from. **Building
+  `std` therefore needs nothing but `rustc`** — no compiler in the build graph,
+  which is what keeps a project's dependency graph to what the project asked for.
+  `nikaia lower-std` re-lowers it, by invoking the compiler **binary**.
+* **It is compiled once per machine, not once per project.** The compiled `std`
+  lives in the user's cache directory, in an entry keyed by the compiler's own
+  fingerprint, the toolchain, the `target`, and the codegen flags of
+  13.3's `[build.<target>]` table. Two builds that differ in any of those keep
+  their own entry rather than evicting each other's
+  ([ADR-021](adr/adr-021.md) D7). `NIKAIA_CACHE_DIR` moves the cache;
+  `CARGO_TARGET_DIR` switches it off, because a build that asked Cargo for a
+  directory gets it.
+* **`user-parallelism` is not one of those keys.** The switch reaches `std` as a
+  value its runtime is started with, never as a compile-time condition, so one
+  compiled `std` serves both settings ([ADR-037](adr/adr-037.md) D2).
+* **The constraint that makes the pre-lowering sound.** `std`'s Nikaia half is
+  lowered at **one** setting of the build switches, so nothing in it may lower
+  differently per switch. `Shared` is what that rules out for now
+  ([ADR-037](adr/adr-037.md) D3 makes it `Rc` or `Arc` from
+  `user-parallelism`), and the toolchain fails its own build rather than letting
+  such a file through.
+* **`std`'s ledger travels inside the compiler.** `std.contracts` (13.5) is part
+  of the compiler rather than of the sysroot copy it is read from, because a
+  ledger is not required to be stable across toolchain versions
+  ([ADR-005](adr/adr-005.md) D8) and a `std` paired with a different compiler
+  would describe a compiler that is not there.
+
+**Status:** built. What is not built is the packaging step that produces a
+sysroot outside a checkout; the layout and the variable exist
+([ADR-002](adr/adr-002.md) §5).
 
 ### 13.3. Manifest Configuration (`nikaia.toml`)
 The manifest defines project metadata and the two build switches of Part I 1.2.

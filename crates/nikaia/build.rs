@@ -45,6 +45,57 @@ fn main() {
         .map(|v| v.trim().to_string())
         .unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=NIKAIA_RUSTC_VERSION={version}");
+
+    runtime_dependencies();
+}
+
+/// The two crates besides `std` that *emitted Rust* can name, as the generated
+/// `Cargo.toml` will have to declare them (ADR-002 D1).
+///
+/// Baked in here rather than read from the workspace at run time, and that is
+/// ADR-002 D4's doing. The old code walked up from `nikaia-std`'s directory to
+/// find `[workspace.dependencies]`, which is true of a checkout and of nothing
+/// else: a sysroot is not a Cargo workspace and has no manifest above it. The
+/// versions are the *compiler's* own, because it is the compiler's emitter that
+/// writes `winnow::Parser` into a program - so they travel with the compiler,
+/// the same argument that keeps `std.contracts` inside this binary.
+///
+/// Still read rather than written down a second time: a program that linked a
+/// different `winnow` from the one `winnow-grammar` was built against is a type
+/// error at every `Stream` bound, so the two must not be able to drift.
+fn runtime_dependencies() {
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let workspace = manifest.join("../../Cargo.toml");
+    println!("cargo:rerun-if-changed={}", workspace.display());
+
+    let text = std::fs::read_to_string(&workspace).unwrap_or_else(|e| {
+        panic!(
+            "reading {} for the runtime's versions: {e}",
+            workspace.display()
+        )
+    });
+    let document: toml::Value =
+        toml::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", workspace.display()));
+
+    for (crate_name, variable) in [
+        ("winnow-grammar", "NIKAIA_RUNTIME_WINNOW_GRAMMAR"),
+        ("winnow", "NIKAIA_RUNTIME_WINNOW"),
+    ] {
+        let value = document
+            .get("workspace")
+            .and_then(|w| w.get("dependencies"))
+            .and_then(|d| d.get(crate_name))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} does not declare `{crate_name}` in `[workspace.dependencies]`, \
+                     and a generated program names it directly",
+                    workspace.display()
+                )
+            });
+        // One line, because a build script's output is line-oriented. Every
+        // dependency value Cargo accepts renders on one line as an inline table.
+        println!("cargo:rustc-env={variable}={value}");
+    }
 }
 
 /// SHA256 over everything that decides what the compiler emits: its own

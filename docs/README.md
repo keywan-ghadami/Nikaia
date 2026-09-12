@@ -55,6 +55,9 @@ is normative and nothing may depend on it to know what a program means.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps, and why ADR-004 D3's in-memory
   exit is not worth building yet.
+* [`std-sysroot.md`](std-sysroot.md) — what `std`'s build graph cost when `std`
+  had the compiler as a build dependency, the 58 packages that existed only for
+  that, and the two things that were expected to decide it and did not.
 * [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
   runtime that is already running, and the finding that only the completion
   path gets ADR-033 §8.5's zero.

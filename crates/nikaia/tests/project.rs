@@ -6,12 +6,16 @@
 //! are driven through the real binary, because "produces a running binary" is
 //! not a claim a unit test can make.
 //!
-//! The cargo-driven tests share one `CARGO_TARGET_DIR` under the workspace's
-//! own `target/`. Each project would otherwise build the compiler's runtime
-//! again from nothing, and four projects would pay for it four times.
+//! The cargo-driven tests share one `NIKAIA_CACHE_DIR` under the workspace's
+//! own `target/`. That is the **compiled-`std` cache** of ADR-002 D4 and not a
+//! test convenience: each project would otherwise build `std` and everything
+//! under it again from nothing, and the sharing is the decision being tested.
+//! `CARGO_TARGET_DIR` is deliberately *not* set, because setting it is the one
+//! way to switch that cache off.
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -21,8 +25,9 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// One directory, shared by every test here that actually runs `cargo`.
-fn shared_target_dir() -> PathBuf {
+/// One cache, shared by every test here that actually runs `cargo` - and not the
+/// developer's real one, which a test has no business writing into.
+fn shared_cache_dir() -> PathBuf {
     repo_root().join("target").join("nikaia-project-tests")
 }
 
@@ -42,7 +47,7 @@ fn nikaia(args: &[&str], dir: &Path) -> std::process::Output {
         .args(args)
         .arg("--project")
         .arg(dir)
-        .env("CARGO_TARGET_DIR", shared_target_dir())
+        .env("NIKAIA_CACHE_DIR", shared_cache_dir())
         .output()
         .expect("the nikaia binary runs")
 }
@@ -236,7 +241,7 @@ fn a_crates_io_dependency_never_reaches_the_wrapper() {
     let built = Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .args(["build", "--project"])
         .arg(&dir)
-        .env("CARGO_TARGET_DIR", shared_target_dir())
+        .env("NIKAIA_CACHE_DIR", shared_cache_dir())
         .env("NIKAIA_WRAPPER_TRACE", &trace)
         .output()
         .expect("the nikaia binary runs");
@@ -485,4 +490,99 @@ fn the_single_file_path_still_works_without_a_subcommand() {
     );
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **The compiled `std` is built once per machine, not once per project**
+/// (ADR-002 D4).
+///
+/// The old shape was worse than "slow": `nikaia-std` had the compiler as a build
+/// dependency, so Cargo compiled the compiler library again inside *every*
+/// project's `target/` - while the installed compiler was running and doing that
+/// very lowering. Two projects paid for it twice.
+///
+/// The claim is checked by the rlib's own modification time, because that is the
+/// only thing that can carry it. A "Compiling nikaia-std" line missing from a log
+/// says Cargo was quiet; an unmoved mtime says the file was not written.
+#[test]
+fn a_second_project_links_the_std_the_first_one_built() {
+    let first = a_project(
+        "project-std-cache-first",
+        "[package]\nname = \"first\"\nversion = \"0.1.0\"\n",
+        HELLO,
+    );
+    let built = nikaia(&["build"], &first);
+    assert!(built.status.success(), "{}", said(&built));
+
+    // Not "this build created it" - the tests in this file run in parallel and
+    // share the cache on purpose, so by now any of them may have been the one to
+    // compile it. That is the decision working, and what is left to check is that
+    // the *next* build does not write over it.
+    let after_first = compiled_stds(&shared_cache_dir());
+    assert!(
+        !after_first.is_empty(),
+        "a project build leaves a compiled std in the cache, under {}",
+        shared_cache_dir().display()
+    );
+
+    let second = a_project(
+        "project-std-cache-second",
+        "[package]\nname = \"second\"\nversion = \"0.1.0\"\n",
+        HELLO,
+    );
+    let built = nikaia(&["build"], &second);
+    assert!(built.status.success(), "{}", said(&built));
+
+    assert_eq!(
+        compiled_stds(&shared_cache_dir()),
+        after_first,
+        "the second project linked the compiled std the first one left and wrote \
+         no new one - neither a second copy nor a fresh write of this one"
+    );
+
+    // The defect this decision removes, stated as an absence: nothing of the
+    // compiler is in a project's build graph any more.
+    let lock = std::fs::read_to_string(second.join("target/nikaia/build/Cargo.lock"))
+        .expect("Cargo resolved the generated package");
+    for gone in ["name = \"nikaia\"", "name = \"clap\"", "name = \"sha2\""] {
+        assert!(
+            !lock.contains(gone),
+            "`{gone}` was one of the 58 packages that existed only to build std:\n{lock}"
+        );
+    }
+
+    std::fs::remove_dir_all(&first).ok();
+    std::fs::remove_dir_all(&second).ok();
+}
+
+/// Every compiled `std` under a cache directory, and when it was written.
+///
+/// Found on disk rather than derived from the key, so the test asserts what is
+/// there instead of repeating the code that put it there. A map and not one path
+/// because a cache carried over from an earlier toolchain holds an entry under an
+/// older key, and the question is whether *this* build wrote anything.
+fn compiled_stds(cache: &Path) -> BTreeMap<PathBuf, Option<std::time::SystemTime>> {
+    fn walk(dir: &Path, found: &mut BTreeMap<PathBuf, Option<std::time::SystemTime>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, found);
+            } else if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("libnikaia_std-") && n.ends_with(".rlib"))
+            {
+                let when = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.modified().ok());
+                found.insert(path, when);
+            }
+        }
+    }
+
+    let mut found = BTreeMap::new();
+    walk(cache, &mut found);
+    found
 }

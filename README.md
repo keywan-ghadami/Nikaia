@@ -382,8 +382,9 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
       instructions and system prompts, so a model can write correct Nikaia from context.
 - [ ] **Self-hosting:** the compiler compiles itself.
   - [x] The first `.nika` file the toolchain runs on: `crates/nikaia-std/src/text.nika`,
-    compiled into `std` by Stage 0 when `std` is built
-    ([ADR-014](docs/specification/adr/adr-014.md) D1). What a `std` file may contain is exactly
+    lowered into `std` by Stage 0 at release time, with the `.rs` committed beside it
+    ([ADR-014](docs/specification/adr/adr-014.md) D1,
+    [ADR-002](docs/specification/adr/adr-002.md) D4). What a `std` file may contain is exactly
     what the compiler can lower; the share grows as it does.
 
 ### Where to start reading

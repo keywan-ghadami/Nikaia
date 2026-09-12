@@ -10,9 +10,13 @@
 //! is stubbed: every function does what the specification says it does, or it
 //! is not here at all.
 //!
-//! Some of it is written in Nikaia. `build.rs` compiles every `src/*.nika`
-//! with the Stage 0 compiler when this crate is built, and the modules below
-//! include the result (ADR-014).
+//! Some of it is written in Nikaia (ADR-014 D1). The `.nika` source is the one
+//! to edit; the `.rs` beside it is what the Stage 0 compiler lowered it to, is
+//! committed, and is what the modules below include. **This crate has no build
+//! dependency on the compiler** and must not grow one: building `std` needs
+//! nothing but `rustc` (ADR-002 D4). `nikaia lower-std` regenerates the `.rs`,
+//! and `crates/nikaia/tests/sysroot.rs` fails if what is committed has drifted
+//! from what the compiler produces.
 
 pub mod cli;
 pub mod error;
@@ -28,9 +32,13 @@ pub mod task;
 pub use winnow_grammar;
 
 /// `std::text`, and the first module here that is Nikaia rather than Rust:
-/// `src/text.nika`, compiled by the Stage 0 compiler in `build.rs`.
+/// `src/text.nika`, lowered to `src/text.rs` by the Stage 0 compiler.
+///
+/// `include!` rather than `mod text;` so that the file keeps reading as what it
+/// is - the compiler's output, committed - rather than as something written by
+/// hand here.
 pub mod text {
-    include!(concat!(env!("OUT_DIR"), "/text.rs"));
+    include!("text.rs");
 }
 
 /// What a `use std::…` in a Nikaia program brings into scope.

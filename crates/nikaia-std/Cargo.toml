@@ -28,9 +28,10 @@ polling = "3.11"
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = "0.7"
 
-[build-dependencies]
-# Parts of this crate are written in Nikaia (`src/*.nika`) and compiled to Rust
-# by the Stage 0 compiler when this crate is built - the library only, without
-# the rustc backend and the compiler internals it links.
-nikaia = { path = "../nikaia", default-features = false }
-anyhow = { workspace = true }
+# **No build dependencies, and that is the point** (ADR-002 D4). This crate used
+# to build the Stage 0 compiler to lower its own `src/*.nika`, which meant Cargo
+# compiled the compiler library a second time inside every project's `target/` -
+# 58 of a hello-world's 103 resolved packages existed only for that, `clap`,
+# `toml`, `sha2` and `nikaia` itself among them. The Nikaia half is lowered at
+# release time now and the `.rs` is committed beside the `.nika`, so building
+# `std` needs nothing but `rustc`.
