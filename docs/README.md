@@ -70,6 +70,9 @@ is normative and nothing may depend on it to know what a program means.
   ADR-029 D3's `sync = "from(f)"` argument carries to the other two effect
   columns: the smallest program for each, the ledger it produced, and the one
   place the argument breaks.
+* [`spec-promises.md`](spec-promises.md) — every construct and command the
+  specification names, run against the compiler one probe at a time; the
+  evidence behind the **Status** notes in Parts I–III.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps: 0.64 % of a compile, which is what
   the text interface of ADR-004 D1 is paid for with.

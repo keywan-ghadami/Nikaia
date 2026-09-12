@@ -48,9 +48,12 @@ terms — there is nothing to install that would add them
 
 **Status:** `build` and `run` are built, over `nikaia.toml` translated to a
 `Cargo.toml` ([ADR-002](adr/adr-002.md) D1 §5). `test`, `bench` and `fmt` are
-not. A single file outside a project is compiled with `nikaia --input
-<file>.nika`, which is not one of these commands and stays available on its own
-account ([ADR-021](adr/adr-021.md) D11). `nikaia lower-std` is 13.2b's
+not, and neither is `new` — so 13.1's layout is what a project has, not yet what
+a command produces — nor `explain`, named in Part I 6.6 and 7.1. The binary's
+subcommands are `build`, `run` and `lower-std`, and nothing else. A single file
+outside a project is compiled with `nikaia --input <file>.nika`, which is not
+one of these commands and stays available on its own account
+([ADR-021](adr/adr-021.md) D11). `nikaia lower-std` is 13.2b's
 toolchain-maintenance command and not one of these either. Both backends above
 are built.
 
@@ -362,6 +365,13 @@ One consequence is worth stating for a library author: **writing a signature dow
 
 Testing and verification are first-class citizens in Nikaia.
 
+> **Status for the whole chapter:** not built. `test` and `bench` are parse
+> errors; `assert` is not a keyword, so `assert cond` is read as two statements
+> and `assert(cond)` as a call to a function of that name, and `assert cond,
+> "message"` does not parse at all. There is no `nikaia test` or `nikaia bench`
+> command (13.2), so no fuzzing, no `impl Generator` dispatch, no
+> `--with-asserts` and no `--history`.
+
 ### 14.1. Unit Tests (`test`)
 Standard tests check specific inputs. These blocks are only compiled during `nikaia test`.
 
@@ -476,6 +486,10 @@ fn raw_alloc() {
     unsafe { malloc(1024) }
 }
 ```
+
+> **Status:** not built. `extern "C"` is a parse error, and `unsafe` is not a
+> keyword — `unsafe { … }` is read as a name followed by a block, so the example
+> above means something other than what it says.
 
 ### 15.2. Rust Integration (Deep Integration)
 Nikaia treats Rust Crates differently than C libraries. Because Rust has a strong type system, Nikaia can verify safety properties.
@@ -598,8 +612,10 @@ declares a different vocabulary — `dsl wasm` has locals and a value stack, not
     errors through the same diagnostics contract as the rest of the compiler (Appendix C).
 *   **Optimization:** a backend DSL can emit target-specific or SIMD instructions without any
     change to the language.
-*   **`unsafe`:** this was the keyword's only specified use. It remains **reserved** for future
-    FFI work rather than being removed from the grammar.
+*   **`unsafe`:** this was the keyword's only specified use. It remains
+    **reserved** for the FFI work of 15.1 rather than being dropped from the
+    specification — the grammar has no `unsafe` to keep, so the reservation is a
+    name held open and nothing more.
 
 ---
 
@@ -1041,7 +1057,13 @@ On **every** panic path — including the abort and the WASM trap — the applic
 
 # Appendix B: Compiler Internals & Annotations
 
-To enforce the "Contextual Capture" rules (Chapter 5.4) without hard-coding specific function names into the compiler, Nikaia uses internal attributes. These are primarily used by the Standard Library but are available to library authors.
+To enforce the "Contextual Capture" rules (Chapter 5.4) without hard-coding specific function names into the compiler, Nikaia uses internal attributes. They belong to the Standard Library.
+
+> **Status:** not built, and not writable in a source file. Nikaia's type grammar
+> has no function type, so neither the signatures below nor `@detached` can be
+> written in a `.nika` file (Part I, 5.4 C); the ledger's type language spells
+> `fn(…)` but has no `capture_mode`, and the immediate/detached rule is held by a
+> check over `std`'s entries ([ADR-029](adr/adr-029.md) D1, D4).
 
 ### B.1. Capture Attributes
 
@@ -1100,6 +1122,11 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
+
+> **Status:** "defined so far" above means defined *here*, not emitted. The codes
+> the compiler reports are `NK1101`–`NK1113`, `NK2202`, `NK2501`, `NK2502` and
+> `NK2701`; `NK2101`, `NK2102`, `NK2201`, `NK2301`, `NK2401`, `NK2601`–`NK2604`
+> are specified ahead of the check that would raise them.
 
 ### C.4. What a Type Error Looks Like
 
