@@ -880,7 +880,9 @@ impl Summary {
 
 Handing a view back out of the buffer it came from is **not** this rule: `fn count(seq: &str, k: usize) -> HashMap[&str, Tally]` returns views of `seq`, and the result points into `seq` and nothing else. Why a parameter is not given a buffer of its own to name is [ADR-005](adr/adr-005.md) D1 — the language has no syntax for one — and what a struct carries instead is [ADR-008](adr/adr-008.md) D1.
 
-> **Status:** the refusal is built, and it is **wider than the rule**: where a view is handed to a call on the subject, the compiler cannot see whether the callee keeps it and reports it as kept. So a read-only call such as `self.names.contains_key(name)` is refused today, and the message is the same one.
+Where the thing it is stored into **already carries a buffer**, there is nothing to refuse: a method of a struct that holds a view has that struct's buffer in hand, so storing the parameter into one of its fields is accepted and the parameter is a view of *that* buffer. `fn note(&mut self, name: &str)` on a `Summary` holding `label: &str` compiles, and `name` is a view of the same buffer `label` points into — which narrows what a caller may pass and is why it is the signature rather than the body that changes.
+
+> **Status:** built for a **method of a struct that holds a view**, which is where a buffer is already named. Three cases are still refused: a function or method whose own subject holds no view (there is no buffer to name, even when the destination is a field of a struct that carries one); a view handed back through the result; and a view given to a task. Of the accepted cases, one is accepted without being decided: where the view is handed to a call on the subject, the compiler cannot see whether the callee keeps it, so it is treated as kept and the parameter is written as a view of the subject's buffer either way.
 
 **One honest cost.** A tether keeps the *whole* buffer alive, not just the part you pointed at. Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB. Where that looks like a mistake the compiler warns and suggests `.to_owned()`.
 

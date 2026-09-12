@@ -297,6 +297,20 @@ impl Lifetimes {
         reference: "&",
         params: "'a",
     };
+
+    /// The same, with the reference named: a view **of the input buffer** and
+    /// not of whatever the caller lends for the call.
+    ///
+    /// One parameter at a time, for the parameters `views::carried` says the
+    /// subject's own buffer already covers. Nothing else about the position
+    /// changes, which is why this is derived from the position rather than being
+    /// a fourth constant.
+    const fn of_the_input(self) -> Lifetimes {
+        Lifetimes {
+            reference: "&'a ",
+            params: self.params,
+        }
+    }
 }
 
 // --- The output, and the way back ---
@@ -576,6 +590,17 @@ struct Emitter<'p> {
     /// Structs that hold a view into the input, and so need the input lifetime
     /// wherever they are named.
     borrowing: HashSet<Symbol>,
+    /// The view parameters written as views of the *input* buffer rather than of
+    /// whatever the caller lends for the call, by the byte their method starts
+    /// at (`views::carried`).
+    ///
+    /// A parameter written `&str` says only "a view, for this call". Where the
+    /// method stores it into its subject, and the subject already carries the
+    /// input buffer, the view it stores is a view of **that** buffer - so the
+    /// parameter is written with the input lifetime and the signature says what
+    /// the body does. Where nothing names the buffer, `views::check` refuses the
+    /// program instead (`NK2302`), so this set is never a guess.
+    carries_input: HashMap<usize, HashSet<Symbol>>,
     grammars: HashMap<Symbol, &'p GrammarDef>,
     /// Declared struct names: `Stats(x)` is a call to a constructor, and only
     /// the declarations say which names are types.
@@ -859,6 +884,7 @@ impl<'p> Emitter<'p> {
             parsed,
             build,
             borrowing: borrowing_structs(parsed),
+            carries_input: crate::views::carried(parsed),
             grammars,
             structs,
             methods,
@@ -1135,7 +1161,7 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
-            Item::Fn { .. } => self.function(out, item, 0, Lifetimes::ELIDED),
+            Item::Fn { .. } => self.function(out, item, 0, Lifetimes::ELIDED, None),
             Item::Impl {
                 trait_name,
                 target,
@@ -1173,9 +1199,10 @@ impl<'p> Emitter<'p> {
                 };
                 out.push(&format!("{head} {{\n"));
                 for method in methods {
+                    let carries = self.carries_input.get(&method.span.start);
                     out.from(&method.span, |out| {
                         out.push("    ");
-                        self.function(out, &method.node, 1, lifetimes)
+                        self.function(out, &method.node, 1, lifetimes, carries)
                     })?;
                 }
                 out.push("}\n");
@@ -1221,9 +1248,10 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         out.push(&format!("impl{params} {target}{params} {{\n"));
         for method in methods {
+            let carries = self.carries_input.get(&method.span.start);
             out.from(&method.span, |out| {
                 out.push("    ");
-                self.function(out, &method.node, 1, lifetimes)
+                self.function(out, &method.node, 1, lifetimes, carries)
             })?;
         }
         out.push("}\n");
@@ -1247,6 +1275,10 @@ impl<'p> Emitter<'p> {
         item: &Item,
         depth: usize,
         lifetimes: Lifetimes,
+        // The parameters written as views of the input buffer rather than of
+        // the call (`Emitter::carries_input`). `None` where there is no such
+        // parameter, which is almost every function.
+        carries_input: Option<&HashSet<Symbol>>,
     ) -> Result<()> {
         let Item::Fn {
             name,
@@ -1283,9 +1315,16 @@ impl<'p> Emitter<'p> {
                 .to_string(),
             );
         }
+        // A parameter the subject's buffer covers is written as a view of that
+        // buffer, so the signature says what the body does with it; everything
+        // else keeps the position's own spelling.
+        let how = |name: Symbol| match carries_input.is_some_and(|set| set.contains(&name)) {
+            true => lifetimes.of_the_input(),
+            false => lifetimes,
+        };
         params.extend(
             args.iter()
-                .map(|a| format!("{}: {}", self.text(a.name), self.ty(&a.ty, lifetimes))),
+                .map(|a| format!("{}: {}", self.text(a.name), self.ty(&a.ty, how(a.name)))),
         );
         // Kap 5.1: the language below has neither named arguments nor defaults,
         // so an option becomes an ordinary parameter here - in declaration
@@ -1295,7 +1334,7 @@ impl<'p> Emitter<'p> {
         params.extend(
             config
                 .iter()
-                .map(|c| format!("{}: {}", self.text(c.name), self.ty(&c.ty, lifetimes))),
+                .map(|c| format!("{}: {}", self.text(c.name), self.ty(&c.ty, how(c.name)))),
         );
 
         // ADR-007 D5: `...args: Self::dsl` is the one parameter whose type the

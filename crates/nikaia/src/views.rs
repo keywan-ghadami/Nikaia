@@ -52,11 +52,40 @@
 // is **not** a destination here, because deciding it needs to know which buffer
 // each local views, which this compiler does not compute.
 //
+// ## One step further: a destination that already names the buffer
+//
+// A field is declared, and its declaration says which buffer it points into -
+// that is the whole of [ADR-008](../../docs/specification/adr/adr-008.md) D1. So
+// where the destination is a field of the **subject**, or of a struct built
+// inside an `impl` whose target holds a view, the buffer is already named and
+// the parameter can be written as a view *of that buffer* rather than refused.
+// [`Stored::carried`] is that bit, and the emitter reads it through [`carried`].
+//
+// This is not a second mechanism. It is the same question - where does the view
+// go - asked about one more link in the chain, and the refusal is what is left
+// where the chain runs out.
+//
 // ## Where the reach stops
 //
+// Four places, named so the next increment knows what it is extending:
+//
+//   1. **A buffer the emitter does not have in hand.** A free function, or a
+//      method of an `impl` whose target holds no view, has no named buffer to
+//      write, so a field destination there is still refused - including a struct
+//      the function builds and hands back.
+//   2. **The result.** Handing the view back would need the result's buffer
+//      written out too, which is a second edit to the signature and is not made.
+//   3. **A local.** A view that reaches a field through a local is followed by
+//      name (see [`Scanner::carriers`]) but a *local* is never itself a
+//      destination, because deciding one needs to know which buffer each local
+//      views.
+//   4. **The caller.** Writing the subject's buffer on a parameter narrows what
+//      callers may pass, and nothing here checks the call sites. Nothing in the
+//      corpus hands such a method a shorter-lived view; a program that did would
+//      be refused by the language below rather than here.
+//
 // One forward pass, no reassignment tracking, names only. A name that ever
-// carries the view keeps carrying it, and a view that reaches a field through a
-// local is missed.
+// carries the view keeps carrying it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -82,6 +111,19 @@ pub struct Stored {
     pub subject: Option<String>,
     /// Where the view goes.
     pub into: Destination,
+    /// Whether the destination's own buffer already names this view, *and* the
+    /// emitter has that buffer in hand where the parameter is written.
+    ///
+    /// True exactly for a field of the subject, or a call on the subject, inside
+    /// an `impl` whose target holds a view: there the subject names the buffer,
+    /// so the parameter is lowered as a view of it instead of being refused.
+    /// False is a refusal.
+    pub carried: bool,
+    /// The byte the function starts at, which is how the emitter finds the
+    /// parameter again.
+    pub method: usize,
+    /// The parameter's interned name, for the same reason.
+    pub symbol: Ident,
 }
 
 /// The kind of place a stored view reaches.
@@ -110,7 +152,15 @@ pub fn analyse(parsed: &Parsed) -> Vec<Stored> {
 
     for item in &parsed.program.items {
         match &item.node {
-            Item::Fn { .. } => scan(parsed, &borrowing, &fields, None, &item.node, &mut found),
+            Item::Fn { .. } => scan(
+                parsed,
+                &borrowing,
+                &fields,
+                None,
+                item.span.start,
+                &item.node,
+                &mut found,
+            ),
             Item::Impl {
                 target, methods, ..
             } => {
@@ -120,6 +170,7 @@ pub fn analyse(parsed: &Parsed) -> Vec<Stored> {
                         &borrowing,
                         &fields,
                         Some(target),
+                        method.span.start,
                         &method.node,
                         &mut found,
                     );
@@ -132,9 +183,29 @@ pub fn analyse(parsed: &Parsed) -> Vec<Stored> {
     found
 }
 
-/// The refusals: every stored naked view.
+/// The refusals: every stored naked view whose destination names no buffer.
 pub fn check(parsed: &Parsed) -> Vec<Finding> {
-    analyse(parsed).iter().map(finding).collect()
+    analyse(parsed)
+        .iter()
+        .filter(|stored| !stored.carried)
+        .map(finding)
+        .collect()
+}
+
+/// The parameters the emitter writes as views of the subject's buffer, by the
+/// byte the method they belong to starts at.
+///
+/// This is the whole of the extension in the emitter: a parameter in here is
+/// spelled with the buffer named, where before the choice was between an
+/// unwritable signature and a refusal.
+pub fn carried(parsed: &Parsed) -> HashMap<usize, HashSet<Ident>> {
+    let mut out: HashMap<usize, HashSet<Ident>> = HashMap::new();
+    for stored in analyse(parsed) {
+        if stored.carried {
+            out.entry(stored.method).or_default().insert(stored.symbol);
+        }
+    }
+    out
 }
 
 /// What one refusal says.
@@ -261,6 +332,7 @@ fn scan(
     borrowing: &HashSet<Ident>,
     fields: &HashMap<Ident, Vec<(String, Type)>>,
     target: Option<&Type>,
+    method: usize,
     item: &Item,
     out: &mut Vec<Stored>,
 ) {
@@ -301,6 +373,10 @@ fn scan(
     let subject_is_a_source = receiver.is_some_and(|r| r.is_ref);
     let result_holds_view = ret_type.as_ref().is_some_and(|ty| brings_buffer(&ty));
 
+    // Whether the subject names a buffer. Where it does, the emitter writes that
+    // buffer and `'a` is in scope on every method of the `impl`; where it does
+    // not, there is nothing to write and a stored view is still a refusal.
+    let subject_names_a_buffer = target.is_some_and(|t| borrowing.contains(&t.name));
     let subject_name = target.map(|t| parsed.text(t.name).to_string());
     let function = match name {
         Some(name) => parsed.text(*name).to_string(),
@@ -333,17 +409,26 @@ fn scan(
         };
         scanner.block(body, true);
 
-        // **One refusal per parameter.** Every store of the same view is the
-        // same mistake in the signature, and a reader fixes it once; the place
-        // reported is the one that says the most about where the view went
-        // (see [`rank`]).
-        let Some((span, into)) = scanner
+        // **One answer per parameter**, because one signature is what gets
+        // written: the parameter is lowered with the subject's buffer named only
+        // if *every* destination is one that buffer covers. A single destination
+        // it does not cover is a refusal, and that one is what the caret goes
+        // under - at the place that says the most about where the view went (see
+        // [`rank`]).
+        let (unreached, reached): (Vec<_>, Vec<_>) = scanner
             .found
             .into_iter()
-            .min_by_key(|(span, into)| (rank(into), span.start))
-        else {
-            continue;
+            .partition(|(_, into)| !covered_by_the_subject(subject_names_a_buffer, into));
+        let pick = |found: Vec<(Span, Destination)>| {
+            found
+                .into_iter()
+                .min_by_key(|(span, into)| (rank(into), span.start))
         };
+        let (carried, picked) = match unreached.is_empty() {
+            true => (true, pick(reached)),
+            false => (false, pick(unreached)),
+        };
+        let Some((span, into)) = picked else { continue };
         out.push(Stored {
             span,
             param: parsed.text(*param).to_string(),
@@ -351,8 +436,26 @@ fn scan(
             function: function.clone(),
             subject: subject_name.clone(),
             into,
+            carried,
+            method,
+            symbol: *param,
         });
     }
+}
+
+/// Whether the subject's own buffer already covers this destination.
+///
+/// A field is declared, and the declaration names the buffer (ADR-008 D1). So a
+/// field of the subject - and a call on the subject, which can only put the view
+/// somewhere the subject reaches - is covered as soon as the subject names a
+/// buffer at all. The result is not: covering it means writing the result's
+/// buffer too, which is the next increment and not this one.
+fn covered_by_the_subject(subject_names_a_buffer: bool, into: &Destination) -> bool {
+    subject_names_a_buffer
+        && matches!(
+            into,
+            Destination::Field { .. } | Destination::Subject { .. }
+        )
 }
 
 /// How much a destination says about where the view went, lowest first.
