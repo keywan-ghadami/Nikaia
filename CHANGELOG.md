@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Decided (0.0.9 - four things that had been left to a later reader)
+
+- **`seq` is the keyword, settled.** ADR-033 D7 wrote it down as a placeholder for "a word chosen later", and Part I 8.1.1 warned that a program written today might have to be renamed. It is kept: a second round of naming a block almost nobody writes buys nothing, and it already reads as *"in this order, whatever you think"*. The warning is gone from the specification.
+- **The runtime configuration file is `nikaia-runtime.toml` in the working directory**, with `NIKAIA_RUNTIME_CONFIG` naming one outright for a binary serving several machines. ADR-038 D5 named the four settings and said "read at startup" and nothing else, so the implementation had chosen a name under protest; it is decided now, with the keys spelled as `nikaia.toml`'s are because a person who has written one of the two files has already learned the convention.
+- **`stdout` and `stderr` are compared as one destination**, confirmed. They are two handles and one file the moment anybody types `2>&1`, which is why `println` / `eprintln` / `println` interleaved differently on every run of a redirected program. `seq` is what a program writes where the permissive reading would have been wanted.
+- **Standard input belongs to the readiness half of ADR-038 D3**, and stating it that way turns the rule the right way round: a pipe, a terminal and a socket all signal readiness honestly, and a read on one blocks only while there is nothing there. **A regular file is the exception** - always "ready", and the read blocks in the kernel anyway. So it is not "files and sockets" but "a regular file completes, everything else signals".
+
 ### Fixed (0.0.9 - ADR-027: an asserted `sync` survived a call nothing could resolve)
 
 - **A `sync` a source asserted was kept even where the body called something no ledger knows**, and the ledger that ships recorded `sync = true` for it. ADR-027 D2 makes the *inference* conservative in the restrictive direction and D4 says an **assertion** is never overwritten by the inference - so the two together left the assertion standing, and a consumer's `par_iter` body would have believed it. `sync` gates `access`, `access_all`, `par_iter`, a scope's tasks and the panic hook, so this is the gate on every safe concurrency primitive Chapter 12 has.

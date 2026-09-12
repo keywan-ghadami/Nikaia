@@ -1076,9 +1076,10 @@ seq {
 
 Inside the block the statements run in the order you wrote them, whatever their touch sets say, and that holds for anything written inside it — a nested block, an `if`, a loop. The block itself keeps its own place as well: you have just said the compiler cannot see what the order is for, so it does not move the block either. It changes nothing else: a `seq` block is a block, so it is an expression and has a value like any other (3.1).
 
-> **The keyword is provisional.** It has to read as *"in this order, whatever you think"*, and `seq`
-> is a placeholder for a word chosen later ([ADR-033](adr/adr-033.md) D7). The construct and its
-> meaning are decided; the spelling is not, and a program written today may have to be renamed.
+> **The keyword is `seq`, and it is settled** ([ADR-033](adr/adr-033.md) D7). It was written down
+> as a placeholder — it has to read as *"in this order, whatever you think"* — and kept, because a
+> second round of naming a block almost nobody writes buys nothing. A program written today does
+> not have to be renamed.
 
 That is the trade the rule is built on: the common path is the fast and safe one and costs nothing to write, and the exception costs a line and is visible where it matters.
 

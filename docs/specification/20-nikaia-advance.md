@@ -510,7 +510,7 @@ This turns the old advice "don't sleep while holding a lock" from a best practic
 > to rely on: the moment anything else in the pair is described, the contract is what has to say
 > it.
 
-Where you need an order between two locks, or between a lock and something else, that the touch sets cannot see, `seq { … }` (Part I 8.1.1) is how a program says so. Its keyword is provisional.
+Where you need an order between two locks, or between a lock and something else, that the touch sets cannot see, `seq { … }` (Part I 8.1.1) is how a program says so.
 
 ### 12.3. Deadlock Prevention: Atomic Composition
 The classic cause of deadlocks is inconsistent locking order (Thread 1 locks A then B; Thread 2 locks B then A).
