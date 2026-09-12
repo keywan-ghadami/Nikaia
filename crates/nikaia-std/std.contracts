@@ -66,8 +66,18 @@
 # analysis does not have its answer, so the functions that change what they are
 # given say nothing here and keep their order. The same goes for a function
 # that runs a lambda - `Vec::sort_by_key`, `Entry::and_modify` - where a
-# `touches = []` would be a claim about somebody else's code, exactly as
-# `sync = "from(f)"` records for pausing (ADR-027 §7).
+# `touches = []` would be a claim about somebody else's code.
+#
+# **And `sync`'s answer to that does not transfer here.** `sync = "from(f)"`
+# (ADR-029 D3) lets a higher-order function say "the lambda decides", sound
+# because `sync` is a fact about a whole *function* and the lambda's body is
+# walked as part of the function that writes it. `touches` is consumed per
+# **statement**, and nothing walks a lambda for an effect - so "the lambda
+# decides", read as "this call adds nothing", would buy an overlap on an
+# incomplete touch set. There is no `touches = "from(f)"`, and the entry a
+# higher-order function would need says *add* what the lambda reaches rather
+# than assume it away (ADR-029 D3, and `contracts::order`'s `Expr::Closure`
+# arm).
 #
 # `crosses` on a `[type."…"]` says a value of that type **may cross a thread**
 # (ADR-005 §1 Group B, `NK25xx`). It is only ever written for a type whose parts
@@ -210,12 +220,21 @@ signature = "(?, f: fn(?)) -> ?"
 # than their type parameters suggest (`get` by anything the key borrows as), so
 # a variable there would reject correct code.
 #
-# **A higher-order method carries no `sync`, deliberately.** Whether
-# `and_modify` pauses depends on the lambda it is given, and a ledger cannot say
-# "it depends" yet: `sync = "from(f)"` is the shape that would, and it is not
-# decided (ADR-027 §7). Claiming `sync = true` here would be a promise about
-# somebody else's code. So these resolve for the type checker and still cost a
-# caller its inferred `sync`, which is the correct answer until the shape exists.
+# **A higher-order method says `sync = "from(f)"`.** Whether `and_modify` pauses
+# depends on the lambda it is given, and the ledger can say "it depends" since
+# ADR-029 D3: `from(f)` names the parameter that decides, and a caller reads it
+# as "this call adds no pausing of its own". `sync = true` here would be a
+# promise about somebody else's code, and before `from` existed the honest
+# alternative was to say nothing and cost every caller its inferred `sync`.
+# The bound is ADR-029 D4: `from` is for a lambda that runs *before the call
+# returns*, because that is the only case whose calls the caller has already
+# counted. `a_detached_lambda_may_not_use_from` holds every `from` entry in this
+# file to it.
+#
+# It does not generalise to the other columns. `throws` needs nothing - a
+# lambda's failures are already in the enclosing function's error set, by the
+# same walk - and `touches` must not be read this way at all, for the reason the
+# header's note on `touches = []` gives.
 
 [fn."f64::abs"]
 pub = true
