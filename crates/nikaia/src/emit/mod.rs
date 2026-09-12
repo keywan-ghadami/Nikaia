@@ -655,6 +655,59 @@ const MAIN: &str = "main";
 /// are unchanged (ADR-012).
 const PROGRAM_MAIN: &str = "__nikaia_main";
 
+/// What the **last** statement of a block is, which is two questions and not
+/// one.
+///
+/// Nikaia's blocks are expressions (Part I, 3.1), so a block's last statement
+/// is usually its value. That much was a `bool`. What a `bool` could not say is
+/// *whose* value it is, and exactly one rewrite in this file needs to know:
+/// `return x` at the end of a function body is written as `x`, because the
+/// value a function body ends in **is** what the function hands back.
+///
+/// That is true of a function body. It is not true of a `match` arm, a `catch`
+/// handler, or a block used as a value - their last statement is the value of
+/// the *expression around them*, and a `return` inside one leaves the function
+/// past it. Writing such a `return` as a bare value is a different program:
+/// where the function returns something it is rustc's `E0308` about a file
+/// nobody wrote, and where it returns nothing **nothing complains at all** and
+/// the function runs on past the point the source said to leave
+/// ([`docs/nightly-cost.md`](../../../docs/nightly-cost.md) §3.3).
+///
+/// So the rewrite is allowed where this says [`Tail::Return`] and nowhere else.
+/// Everywhere else a `return` stays a `return`, which is always a legal Rust
+/// statement and always means what the source meant - ADR-011 D2's "the
+/// lowering is syntactic and never guesses a meaning", applied to the one place
+/// it had been guessing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tail {
+    /// Not a value position. The last statement is a statement like any other,
+    /// and keeps its semicolon.
+    Statement,
+    /// The last statement is the block's **value**, and that value is handed to
+    /// the expression around the block - not to whoever called the function.
+    Value,
+    /// The last statement is the **function's** (or the lambda's) return value.
+    /// Only here may a `return x` be written as `x`.
+    Return,
+}
+
+impl Tail {
+    /// Whether the last statement is the block's value at all - which is what
+    /// decides the semicolon, and what ADR-033's grouping may not take.
+    fn is_value(self) -> bool {
+        !matches!(self, Tail::Statement)
+    }
+
+    /// What the statement at `i` of a block whose last index is `last` is.
+    fn at(self, i: usize, last: usize) -> Self {
+        if i == last {
+            self
+        } else {
+            Tail::Statement
+        }
+    }
+}
+
 /// What surrounds the statements being emitted.
 #[derive(Debug, Clone, Copy)]
 struct Flow<'a> {
@@ -1312,8 +1365,16 @@ impl<'p> Emitter<'p> {
             sequential: false,
         };
 
+        // A function body's last statement is the *function's* value, which is
+        // the one place a `return x` may be written as `x`.
+        let tail = if returns_value {
+            Tail::Return
+        } else {
+            Tail::Statement
+        };
+
         if !throws {
-            return self.block(out, body, depth, flow, returns_value);
+            return self.block(out, body, depth, flow, tail);
         }
 
         let pad = "    ".repeat(depth);
@@ -1327,7 +1388,7 @@ impl<'p> Emitter<'p> {
             // helper. A `throws` body has a loop of its own because its last
             // statement may need wrapping in `Ok(…)`, and two loops that decide
             // this separately would drift.
-            let tail_at = if returns_value { Some(last) } else { None };
+            let tail_at = if tail.is_value() { Some(last) } else { None };
             let taken = self.overlap_at(out, &body.stmts, i, tail_at, depth + 1, flow)?;
             if taken > 0 {
                 i += taken;
@@ -1339,13 +1400,14 @@ impl<'p> Emitter<'p> {
             // A value-returning `throws` function ends in its value; one that
             // returns nothing ends in the `Ok(())` below, so its last statement
             // is a statement like any other.
-            let is_tail = returns_value && i == last;
+            let here = tail.at(i, last);
+            let wrap = here == Tail::Return;
             out.from(&stmt.span, |out| {
-                if is_tail {
+                if wrap {
                     out.push("Ok(");
                 }
-                self.stmt(out, &stmt.node, &stmt.span, depth + 1, is_tail, flow)?;
-                if is_tail {
+                self.stmt(out, &stmt.node, &stmt.span, depth + 1, here, flow)?;
+                if wrap {
                     out.push(")");
                 }
                 Ok(())
@@ -1406,7 +1468,10 @@ impl<'p> Emitter<'p> {
                     out.push(&format!("          {separator}"));
                     self.pattern(out, &alt.pattern)?;
                     out.push("\n            -> ");
-                    self.block(out, action, 3, Flow::PLAIN, true)?;
+                    // A grammar action is the rule's own body: what it ends
+                    // in is what the rule hands back, so a `return` there is
+                    // that value (ADR-009).
+                    self.block(out, action, 3, Flow::PLAIN, Tail::Return)?;
                     out.push("\n");
                 }
                 None => {
@@ -1561,7 +1626,14 @@ impl<'p> Emitter<'p> {
                         let accumulator = self.text(*accumulator);
                         out.push(&format!("|mut {accumulator}, {}| {{ ", self.text(*item)));
                         for stmt in &body.stmts {
-                            self.stmt(out, &stmt.node, &stmt.span, 0, false, Flow::PLAIN)?;
+                            self.stmt(
+                                out,
+                                &stmt.node,
+                                &stmt.span,
+                                0,
+                                Tail::Statement,
+                                Flow::PLAIN,
+                            )?;
                             out.push(" ");
                         }
                         out.push(&format!("{accumulator} }}"));
@@ -1878,17 +1950,13 @@ impl<'p> Emitter<'p> {
 
     // --- Statements and expressions ---
 
-    /// `tail` says whether the last statement is the block's value. It is for
-    /// an expression block (Part I, 3.1) and for a function that returns
-    /// something; a function with no return type has no value to leave behind,
-    /// so its last statement is a statement like any other.
-    /// `if c { … } else { … }`, where `tail` says whether the whole thing is in
-    /// value position.
+    /// `if c { … } else { … }`, where `tail` says what the whole thing is in
+    /// the position of ([`Tail`]).
     ///
-    /// It decides what the last statement of each branch means. In an
-    /// expression - `let x = if c { a } else { b }` - the branches *are* the
-    /// value and their last statement is written as one. As a statement they
-    /// are not, and a `return` in one has to stay a `return`.
+    /// It decides what the last statement of each branch means, and the branches
+    /// are in the same position the `if` is: as the tail of a function body they
+    /// carry the function's value, as `let x = if c { a } else { b }` they carry
+    /// the `let`'s, and as a statement they carry nothing.
     #[allow(clippy::too_many_arguments)]
     fn if_expr(
         &self,
@@ -1898,7 +1966,7 @@ impl<'p> Emitter<'p> {
         else_branch: Option<&Block>,
         depth: usize,
         flow: Flow<'_>,
-        tail: bool,
+        tail: Tail,
     ) -> Result<()> {
         out.push("if ");
         self.expr(out, cond, depth, flow)?;
@@ -1917,7 +1985,7 @@ impl<'p> Emitter<'p> {
         block: &Block,
         depth: usize,
         flow: Flow<'_>,
-        tail: bool,
+        tail: Tail,
     ) -> Result<()> {
         self.block_opening_with(out, block, depth, flow, tail, None)
     }
@@ -1934,7 +2002,7 @@ impl<'p> Emitter<'p> {
         block: &Block,
         depth: usize,
         flow: Flow<'_>,
-        tail: bool,
+        tail: Tail,
         opening: Option<&str>,
     ) -> Result<()> {
         if block.stmts.is_empty() {
@@ -1986,7 +2054,7 @@ impl<'p> Emitter<'p> {
             // may be the tail: a block's last statement is its value (Kap 3.1),
             // and lowering it through a join would change what the block hands
             // back.
-            let tail_at = if tail { Some(last) } else { None };
+            let tail_at = if tail.is_value() { Some(last) } else { None };
             let taken = self.overlap_at(out, &block.stmts, i, tail_at, depth + 1, flow)?;
             if taken > 0 {
                 i += taken;
@@ -2001,7 +2069,7 @@ impl<'p> Emitter<'p> {
                     &stmt.node,
                     &stmt.span,
                     depth + 1,
-                    tail && i == last,
+                    tail.at(i, last),
                     flow,
                 )
             })?;
@@ -2270,7 +2338,11 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(
                     "match {bytes} {{\n{pad}Ok(value) => value,\n{pad}Err(error) => "
                 ));
-                out.from(span, |out| self.block(out, handler, depth + 1, flow, true))?;
+                // The handler's value is the value of this `match`, not the
+                // function's, so a `return` in it stays a `return`.
+                out.from(span, |out| {
+                    self.block(out, handler, depth + 1, flow, Tail::Value)
+                })?;
                 out.push(&format!(",\n{close}}}"));
             }
         }
@@ -2424,16 +2496,17 @@ impl<'p> Emitter<'p> {
         }
     }
 
-    /// `is_tail` marks the last statement of a block: Nikaia's blocks are
-    /// expressions (Part I, 3.1), so the last expression is the value and keeps
-    /// no semicolon.
+    /// `tail` says what this statement is in the position of ([`Tail`]):
+    /// Nikaia's blocks are expressions (Part I, 3.1), so a block's last
+    /// statement is its value and keeps no semicolon - and where that value is
+    /// the *function's*, a `return x` is written as `x`.
     fn stmt(
         &self,
         out: &mut Out,
         stmt: &Stmt,
         span: &Span,
         depth: usize,
-        is_tail: bool,
+        tail: Tail,
         flow: Flow<'_>,
     ) -> Result<()> {
         match stmt {
@@ -2467,7 +2540,7 @@ impl<'p> Emitter<'p> {
                 out.push("while ");
                 self.expr(out, cond, depth, flow)?;
                 out.push(" ");
-                self.block(out, body, depth, flow, false)?;
+                self.block(out, body, depth, flow, Tail::Statement)?;
             }
 
             Stmt::For {
@@ -2498,13 +2571,26 @@ impl<'p> Emitter<'p> {
                     .fallible_loops
                     .contains(&span.start)
                     .then(|| format!("let {names} = {names}?;"));
-                self.block_opening_with(out, body, depth, flow, false, unwrap.as_deref())?;
+                self.block_opening_with(
+                    out,
+                    body,
+                    depth,
+                    flow,
+                    Tail::Statement,
+                    unwrap.as_deref(),
+                )?;
             }
-            // A `return` that is the last statement is the block's value, and
-            // is written as one: `fn f() -> T { return x }` is `{ x }`. In a
-            // `throws` function the caller of this wraps the tail in `Ok`, so
-            // the value is emitted bare here in both cases.
-            Stmt::Return(Some(value)) if is_tail => {
+            // A `return` that ends a *function body* is that function's
+            // value, and is written as one: `fn f() -> T { return x }` is
+            // `{ x }`. In a `throws` function the caller of this wraps the tail
+            // in `Ok`, so the value is emitted bare here in both cases.
+            //
+            // `Tail::Return` and not merely "last": the last statement of a
+            // `match` arm, a `catch` handler or a block used as a value is the
+            // value of the expression around it, and a `return` there leaves
+            // the function past that expression. It falls through to the arm
+            // below and stays a `return`.
+            Stmt::Return(Some(value)) if tail == Tail::Return => {
                 self.expr(out, value, depth, flow)?;
             }
             Stmt::Return(value) => {
@@ -2542,14 +2628,14 @@ impl<'p> Emitter<'p> {
                 else_branch.as_ref(),
                 depth,
                 flow,
-                is_tail,
+                tail,
             )?,
             Stmt::Expr(expr) => {
                 self.expr(out, expr, depth, flow)?;
                 // `if x { … };` is legal and noisy; a block-shaped statement
                 // ends where its brace does.
                 let block_shaped = matches!(expr, Expr::If { .. } | Expr::Block(_) | Expr::Seq(_));
-                if !is_tail && !block_shaped {
+                if !tail.is_value() && !block_shaped {
                     out.push(";");
                 }
             }
@@ -2587,13 +2673,19 @@ impl<'p> Emitter<'p> {
                 let path: Vec<&str> = segments.iter().map(|s| self.text(*s)).collect();
                 out.push(&self.path(&path));
             }
-            Expr::Block(block) => self.block(out, block, depth, flow, true)?,
+            // A block in *expression* position: its last statement is its
+            // own value, and a `return` inside it leaves the function around
+            // it - so it is not written as the block's value (`Tail`).
+            Expr::Block(block) => self.block(out, block, depth, flow, Tail::Value)?,
             // Part I 8.1.1: a plain Rust block, and the whole of what `seq`
             // does is in the `Flow` (ADR-033 D7). There is nothing to emit for
             // it because it asks for *less*: the order it states is the order
             // the statements are already written in, and what it withdraws is
             // this compiler's permission to change that.
-            Expr::Seq(block) => self.block(out, block, depth, flow.in_seq(), true)?,
+            Expr::Seq(block) => self.block(out, block, depth, flow.in_seq(), Tail::Value)?,
+            // An `if` in *expression* position - `let x = if c { a } else { b }`
+            // - hands its branch's value to whoever asked for it, so a `return`
+            // in a branch is the function's and stays one.
             Expr::If {
                 cond,
                 then_branch,
@@ -2605,7 +2697,7 @@ impl<'p> Emitter<'p> {
                 else_branch.as_ref(),
                 depth,
                 flow,
-                true,
+                Tail::Value,
             )?,
             Expr::Call { func, args, config } => self.call(out, func, args, config, depth, flow)?,
             Expr::MethodCall {
@@ -2692,7 +2784,7 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("|{}| ", params.join(", ")));
                 // A lambda's `return` leaves the lambda, not the function
                 // around it, so it never carries the enclosing `Ok`.
-                self.block(out, body, depth, Flow::PLAIN, true)?;
+                self.block(out, body, depth, Flow::PLAIN, Tail::Return)?;
             }
             Expr::Unary { op, expr } => {
                 out.push(unary_op(*op));
@@ -2732,7 +2824,13 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(
                     " {{\n{pad}Ok(value) => value,\n{pad}Err(error) => "
                 ));
-                self.block(out, handler, depth + 1, flow, true)?;
+                // Kap 7.1 and ADR-034: the handler's last statement is the
+                // value of the `catch`, so a `return` in it is the *function's*
+                // return and has to stay one. `contracts::order`'s `diverts`
+                // counts exactly that `return` when it refuses to overlap the
+                // guarded read, so dropping it here made the ordering analysis
+                // reason about a control flow the emitted program did not have.
+                self.block(out, handler, depth + 1, flow, Tail::Value)?;
                 out.push(&format!(",\n{close}}}"));
             }
             Expr::Try(inner) => {
