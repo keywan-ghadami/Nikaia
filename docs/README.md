@@ -66,6 +66,10 @@ is normative and nothing may depend on it to know what a program means.
   compile-time staging would pay, and what it costs to check one.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and
   what the compiler says about each, before and after.
+* [`from-for-throws-and-touches.md`](from-for-throws-and-touches.md) — whether
+  ADR-029 D3's `sync = "from(f)"` argument carries to the other two effect
+  columns: the smallest program for each, the ledger it produced, and the one
+  place the argument breaks.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps: 0.64 % of a compile, which is what
   the text interface of ADR-004 D1 is paid for with.

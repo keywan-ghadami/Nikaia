@@ -1242,3 +1242,77 @@ fn the_recommended_rewrite_overlaps() {
          }"
     ));
 }
+
+// --- a lambda's effects, and why `from(f)` stops at `sync` (ADR-029 D3) ------
+
+/// A lambda's own effects are **not** in the statement's touch set, where a
+/// `catch` handler's are - and that difference is why `from(f)` stops at `sync`.
+///
+/// For `sync` and for `throws`, a trailing lambda's body is walked *as part of
+/// the function that writes it* (`contracts::sync`'s `visit_expr_blocks`), which
+/// is what lets `sync = "from(f)"` be read as "this call adds no pausing of its
+/// own": whatever the lambda does is already counted at the call site. This
+/// analysis does no such walk - `contracts::order::walk` has no `Expr::Closure`
+/// arm - so the lambda's `println` never reaches a touch set at all. The
+/// statement is refused instead, which is D4's answer and the right one.
+///
+/// The contrast is the evidence. `a_handlers_own_effects_are_part_of_the_statement`
+/// above refuses its pair **naming `stdout`**, because the handler's write was
+/// counted into the statement. Here nothing names `stdout`, with `std`'s ledger
+/// or with one where `Vec::sort_by_key` claims `touches = []` outright: the
+/// effect was never counted, only stepped around. A `touches = "from(f)"` read
+/// the way D3 reads `sync`'s - "adds nothing" - would therefore buy the overlap
+/// on an incomplete touch set, and the two `println`s would interleave either
+/// way: D1 broken by an effect nobody counted, which is §8.3's handler hole in a
+/// third disguise.
+///
+/// The second source is the one that exercises the refusal itself. A *trailing*
+/// lambda today is refused two or three times over - the receiver is not a
+/// literal, what the method hands back has no `crosses` line - and those are the
+/// two refusals D9's table and ADR-005 §1 Group B call liftable. So the lambda
+/// arm is the one that has to hold when they are lifted, and a bare lambda
+/// statement is where it can be seen holding on its own.
+#[test]
+fn a_lambdas_own_effects_are_not_in_the_statements_touch_set() {
+    let trailing = "fn lauf(xs: Vec[i64]) {\n\
+         \x20   xs.sort_by_key fn { println(\"aus dem lambda\") return a }\n\
+         \x20   println(\"danach\")\n\
+         }";
+    let bare = "fn lauf() {\n\
+         \x20   let f = fn { println(\"aus dem lambda\") }\n\
+         \x20   println(\"danach\")\n\
+         }";
+    let permissive = format!(
+        "{}\n[fn.\"Vec::sort_by_key\"]\ntouches = []\n",
+        nikaia::contracts::STD
+    );
+
+    for source in [trailing, bare] {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        let own = nikaia::contracts::Ledger::infer(&parsed);
+        for ledger in [nikaia::contracts::STD.to_string(), permissive.clone()] {
+            let library = nikaia::contracts::Ledger::parse(&ledger).expect("the ledger parses");
+            let why = nikaia::contracts::order::report(&parsed, &own, &library, &|_| None);
+            assert!(
+                why.contains("in order"),
+                "a statement that runs a lambda may not overlap the one after it:\n{why}"
+            );
+            assert!(
+                !why.contains("stdout"),
+                "the lambda's own write reached a touch set after all, which would make \
+                 `from(f)`'s reading sound here:\n{why}"
+            );
+        }
+    }
+
+    // And the lambda is refused on its own account, not only by the limits
+    // around it.
+    let parsed = parse_to_ast(bare).expect("the source parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let library = nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger");
+    let why = nikaia::contracts::order::report(&parsed, &own, &library, &|_| None);
+    assert!(
+        why.contains("a lambda, whose body this analysis does not read"),
+        "{why}"
+    );
+}

@@ -626,6 +626,37 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             "a `seq` block, whose order the program states itself",
         )),
 
+        // A lambda. It would fall to the arm below anyway; it is named here
+        // because this is the one shape where the fail-closed answer differs
+        // from what the rest of the ledger does with the same lambda, and
+        // somebody will stand here wondering why.
+        //
+        // `sync` and `throws` walk a trailing lambda's body **as part of the
+        // function that writes it** (`contracts::sync`'s `visit_expr_blocks`),
+        // which is what lets ADR-029 D3 read `sync = "from(f)"` as "this call
+        // adds no pausing of its own": whatever the lambda does is already
+        // counted at the call site. Those two analyses ask about a *function*,
+        // so counting an effect anywhere in its body is enough.
+        //
+        // This one asks about a **statement**, and needs a touch set that is
+        // complete for that statement. So the same argument does not carry: the
+        // lambda's body is in the function and not in the value this walk
+        // reduced, and `names_in` below descends into it for a data dependency
+        // while nothing descends into it for an effect. D4's answer is the only
+        // one available - the statement reaches everything and keeps its place.
+        //
+        // Which is also why a `touches` key shaped like ADR-029's `from(f)` may
+        // not be *read* like it. "Adds nothing" would buy the overlap on a touch
+        // set missing everything the lambda reaches, and `println` inside the
+        // lambda would interleave with the one after it: ADR-033 D1 broken by an
+        // effect nobody counted, which is §8.3's `catch`-handler hole again. What
+        // a `touches` entry for a higher-order function would have to say is
+        // *add* what the lambda reaches, and everything where the lambda cannot
+        // be read - the polarity `walk_block` already gives a handler.
+        Expr::Closure { .. } => out.refuse(Accounted::Opaque(
+            "a lambda, whose body this analysis does not read",
+        )),
+
         // Everything with its own control flow: what runs inside it is decided
         // while it runs, and D5 allows only operations that certainly run.
         _ => out.refuse(Accounted::Opaque("something with its own control flow")),

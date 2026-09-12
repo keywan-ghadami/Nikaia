@@ -133,6 +133,47 @@ fn from_does_not_let_io_into_a_sync_function() {
     assert_eq!(dirty[0].callee, "io::read");
 }
 
+/// ADR-029 D3's reason carries to `throws`, so `from` needs nothing new for it.
+///
+/// D3 reads `sync = "from(f)"` as "this call adds no pausing of its own", sound
+/// because the lambda runs *during* the call and its calls are already counted in
+/// the function that writes it. `throws` is the same walk with the lattice turned
+/// around (`contracts::throws`), over the same `visit_expr_blocks` - so a lambda
+/// that fails puts its error in the **enclosing** function's set, which is where
+/// a caller of *that* function reads it. Nothing is left for a `throws` key on
+/// `sort_by_key` to add.
+///
+/// `"?"` is in the set beside `LeereZeile` for a second, independent reason:
+/// `contracts::throws` answers every method call with `"?"` rather than asking
+/// the type checker, so a higher-order call is already maximally fail-closed
+/// here. `from` could only ever make that *less* pessimistic, which is the
+/// direction ADR-010 D1 forbids.
+#[test]
+fn a_throwing_lambda_is_already_in_the_enclosing_functions_error_set() {
+    let l = ledger(
+        "enum LeereZeile { Leer }\n\
+         fn pruefe(n: &i64) -> i64 throws {\n\
+             if n == 0 { throw LeereZeile::Leer }\n\
+             return 1\n\
+         }\n\
+         fn sortiere(xs: Vec[i64]) -> i64 throws {\n\
+             xs.sort_by_key fn { pruefe(a) }\n\
+             return 1\n\
+         }\n\
+         fn ohne_lambda(xs: Vec[i64]) -> i64 throws {\n\
+             xs.sort_by_key fn { a }\n\
+             return 1\n\
+         }",
+    );
+
+    assert_eq!(l.functions["pruefe"].throws, ["LeereZeile"]);
+    assert_eq!(l.functions["sortiere"].throws, ["?", "LeereZeile"]);
+    // The same call over a lambda that cannot fail contributes only the `"?"`
+    // the method call itself is worth, so `LeereZeile` above came from the
+    // lambda's body and from nowhere else.
+    assert_eq!(l.functions["ohne_lambda"].throws, ["?"]);
+}
+
 /// A `while` body is part of the function around it.
 ///
 /// Here because `while` arrived from another branch while this analysis was
