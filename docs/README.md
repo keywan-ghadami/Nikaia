@@ -87,7 +87,9 @@ is normative and nothing may depend on it to know what a program means.
   path gets ADR-033 §8.5's zero.
 * [`rc-or-arc.md`](rc-or-arc.md) — what an atomic reference count costs, whether
   `Rc` and `Arc` differ in anything a program can observe, and the prototype that
-  asks ADR-037 D3's open question of a value instead of a build.
+  asked ADR-037 D3's open question of a value instead of a build. The method, the
+  machine and the false starts; §11 says which option the owner took, and
+  ADR-037 D6–D8 are the decision.
 * [`technical_notes.md`](technical_notes.md) — the compiler-internals findings
   from the path that was withdrawn; kept as the notebook page it is.
 * [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) — what the nightly

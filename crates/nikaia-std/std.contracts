@@ -86,6 +86,14 @@
 # and not "it may not" - and "nobody said" is not permission, so the compiler
 # will not put such a value on a thread of its own choosing.
 #
+# `sharing` on a `[fn."…"]` says which of a function's `Shared` positions are one
+# allocation and which reference count each of those classes gets (ADR-037 D7).
+# No `std` entry has one, because no `std` signature mentions `Shared` - and
+# `a_std_entry_that_takes_a_shared_needs_a_second_look` in
+# `crates/nikaia/tests/sharing.rs` is what makes somebody look on the day one
+# does: the analysis treats a described callee as accounted for, so an entry that
+# could keep a handle and cross a thread with it is a decision and not a line.
+#
 # `provenance` marks a **source**: a function whose result is bytes that entered
 # the program from outside, and who chose them (ADR-010 D2). Its absence is not
 # "trusted" - it is "this is not a source", which is what almost every function
@@ -94,7 +102,7 @@
 # `net`, `db` - arrive with the modules that have them.
 version = 2
 toolchain = "nikaia 0.1.0"
-inference = "stage0-signatures+sync-bodies+throws-bodies"
+inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 
 # --- Written by hand: the modules that are still Rust ------------------------
 

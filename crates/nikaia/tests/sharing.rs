@@ -1,22 +1,38 @@
-//! The per-value `Rc`/`Arc` prototype — [ADR-037](../../../docs/specification/adr/adr-037.md)
-//! D3's open question, asked of a value instead of a build.
+//! Which reference count a particular `Shared` value gets
+//! ([ADR-037](../../../docs/specification/adr/adr-037.md) D7).
 //!
-//! D3 says it itself: "whether the *choice between `Rc` and `Arc`* could be made
-//! per value rather than per build is a real question and is not answered here".
-//! `contracts::sharing` is the experiment, not the answer, and
-//! [`docs/rc-or-arc.md`](../../../docs/rc-or-arc.md) is the notebook page it
-//! belongs to: what the atomic costs, what was built, what was done by hand, and
-//! which cases came out atomic because nothing could decide them.
+//! **One rule, and every test here is about it:** *it may only ever take an
+//! atomic away.* D6 makes the atomic count the floor, and this analysis is an
+//! optimisation on top of it - it may lower a value to a plain count where it
+//! **proves** nothing crosses a thread with it, and where it cannot prove that
+//! the answer stays atomic. So the tests come in two kinds, and the second kind
+//! is the one that matters: the base case, without which an analysis that
+//! answered `atomic` for everything would pass every other test in the file;
+//! and the fail-closed cases, where being wrong is a data race rather than a
+//! missed 9 ns.
+//!
+//! [`docs/rc-or-arc.md`](../../../docs/rc-or-arc.md) is the experiment this grew
+//! out of: what the atomic costs, and the fail-open bug the prototype had - a
+//! `<struct>.<field>` slot guarded on "already known", which made the answer
+//! depend on the order somebody wrote their functions in. That test is here, and
+//! so are its siblings.
 //!
 //! **Every source here parses and is analysed for real.** `Shared` has no
 //! constructor - there is no `Rc::new` or `Arc::new` in the emitter - so a
 //! `Shared` can only arrive as a *declared type*, which is exactly how
-//! `tests/send.rs` reaches the same type. Nothing is emitted and no decision
-//! here reaches a build.
+//! `tests/send.rs` reaches the same type. Nothing is emitted.
 
-use nikaia::contracts::sharing::{self, Count};
+use nikaia::contracts::sharing::{self, Count, Fallback};
 use nikaia::contracts::{Ledger, TypeContract, STD};
 use nikaia::parser::parse_to_ast;
+
+/// A parsed program with the two ledgers every analysis here needs.
+fn ledgers(source: &str) -> (nikaia::parser::Parsed, Ledger, Ledger) {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    (parsed, own, library)
+}
 
 fn decisions(source: &str) -> Vec<sharing::Decision> {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -86,7 +102,7 @@ fn a_spawn_forces_the_atomic_count() {
     );
     assert_eq!(decision.count, Count::Atomic);
     assert!(
-        !decision.undecided,
+        !decision.undecided(),
         "a `spawn` is a crossing, not a mystery"
     );
     assert!(
@@ -105,7 +121,7 @@ fn a_parallel_lambda_forces_the_atomic_count() {
         "counts",
     );
     assert_eq!(decision.count, Count::Atomic);
-    assert!(!decision.undecided, "{decision:#?}");
+    assert!(!decision.undecided(), "{decision:#?}");
 }
 
 /// **Hard case three.** A call whose body this compiler cannot see comes out
@@ -124,7 +140,7 @@ fn a_call_this_compiler_cannot_see_the_end_of_comes_out_atomic() {
         "counts",
     );
     assert_eq!(decision.count, Count::Atomic);
-    assert!(decision.undecided, "nothing decided it: {decision:#?}");
+    assert!(decision.undecided(), "nothing decided it: {decision:#?}");
     assert!(
         decision
             .why
@@ -151,7 +167,7 @@ fn a_shared_in_a_published_signature_comes_out_atomic() {
         "counts",
     );
     assert_eq!(decision.count, Count::Atomic);
-    assert!(decision.undecided, "{decision:#?}");
+    assert!(decision.undecided(), "{decision:#?}");
     assert!(
         decision.why.as_deref().unwrap().contains("public"),
         "{decision:#?}"
@@ -350,7 +366,7 @@ fn the_one_shared_in_the_repository_comes_out_atomic_undecided() {
     assert_eq!(decision.value, "db");
     assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
     assert!(
-        decision.undecided,
+        decision.undecided(),
         "and it is atomic because nothing decided it: {decision:#?}"
     );
 }
@@ -378,4 +394,399 @@ fn the_report_names_what_it_could_not_decide() {
     let report = sharing::report(&parsed, &own, &library);
     assert!(report.contains("could not decide:"), "{report}");
     assert!(report.contains("1 plain, 1 atomic"), "{report}");
+}
+
+// --- fail-closed, and every sibling of the guard that failed open -----------
+
+/// A `Shared` that came out of a **call** is atomic, because the count belongs
+/// to the allocation and this analysis did not watch it being made.
+///
+/// This is the seed ADR-037 D6 made necessary rather than one the experiment
+/// found. While a `Shared` was `MayNot`, the overlapping analysis never put one
+/// on another thread; now `contracts::send` answers `May`, so an overlapped
+/// operation may run on a thread of its own and hand a `Shared` **back** across
+/// one (ADR-005 §5.2's `task::both` row). A handle whose origin is a call is
+/// exactly that value.
+#[test]
+fn a_shared_that_came_out_of_a_call_is_atomic() {
+    let decision = one(
+        "fn zaehle() -> i64 {\n\
+             let counts: Shared[Vec[i64]] = beschaffe()\n\
+             counts.len()\n\
+         }",
+        "counts",
+    );
+    assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+    assert_eq!(
+        decision.fallback,
+        Some(Fallback::UnseenOrigin),
+        "{decision:#?}"
+    );
+    assert!(
+        decision.why.as_deref().unwrap().contains("beschaffe"),
+        "and it names the call it came out of: {decision:#?}"
+    );
+}
+
+/// A `Shared` **read back out of a struct field** is the field's allocation, not
+/// a fresh one.
+///
+/// The sibling of `docs/rc-or-arc.md` §8's guard, in the other direction: the
+/// prototype joined a handle *put into* a field to the field's slot and did not
+/// join one *taken out*, so reading it back produced a class nothing forced and
+/// a plain count on a value that crosses. Both orders of the two functions are
+/// run, for the same reason the original test runs both.
+#[test]
+fn a_shared_read_out_of_a_field_is_the_fields_allocation() {
+    for source in [
+        "struct Counter { hits: Shared[i64] }\n\
+         fn hole(c: Counter) -> i64 {\n\
+             let h: Shared[i64] = c.hits\n\
+             1\n\
+         }\n\
+         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }",
+        "struct Counter { hits: Shared[i64] }\n\
+         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }\n\
+         fn hole(c: Counter) -> i64 {\n\
+             let h: Shared[i64] = c.hits\n\
+             1\n\
+         }",
+    ] {
+        let decision = one(source, "h");
+        assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+        // …and the reason is the crossing rather than the ignorance, because a
+        // reader can act on the first (ADR-033 D9's rule).
+        assert!(!decision.undecided(), "{decision:#?}");
+        assert!(
+            decision.why.as_deref().unwrap().contains("spawn"),
+            "{decision:#?}"
+        );
+    }
+}
+
+/// …and the same field, with nothing crossing, still lowers - which is what
+/// stops the test above from passing against an analysis that answers `atomic`.
+#[test]
+fn a_field_read_with_nothing_crossing_still_lowers() {
+    let decision = one(
+        "struct Counter { hits: Shared[i64] }\n\
+         fn hole(c: Counter) -> i64 {\n\
+             let h: Shared[i64] = c.hits\n\
+             1\n\
+         }",
+        "h",
+    );
+    assert_eq!(decision.count, Count::Plain, "{decision:#?}");
+}
+
+/// A handle **captured by a lambda** handed to a call nothing describes is
+/// atomic.
+///
+/// The prototype forced only a bare `Expr::Variable` argument, so a handle
+/// inside a closure, a tuple or any other expression went unaccounted for. A
+/// callee nothing describes may cross with whatever it is given, and what it is
+/// given includes the lambda's captures - so the walk over an argument is
+/// `send::names_used`, the same over-approximate one `spawn` uses.
+#[test]
+fn a_handle_captured_by_a_lambda_handed_to_an_unseen_call_is_atomic() {
+    let decision = one(
+        "fn zaehle(counts: Shared[Vec[i64]]) {\n\
+             fremd::spaeter(fn() { counts.len() })\n\
+         }",
+        "counts",
+    );
+    assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+    assert_eq!(
+        decision.fallback,
+        Some(Fallback::UnseenCall),
+        "{decision:#?}"
+    );
+}
+
+/// …and one inside a **tuple** handed to the same call, which is the same hole
+/// with a different expression in it.
+#[test]
+fn a_handle_inside_a_tuple_handed_to_an_unseen_call_is_atomic() {
+    let decision = one(
+        "fn zaehle(counts: Shared[Vec[i64]]) {\n\
+             fremd::nimm((1, counts))\n\
+         }",
+        "counts",
+    );
+    assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+    assert!(decision.undecided(), "{decision:#?}");
+}
+
+/// A handle handed over as an **option** - after the `;` - is atomic, because no
+/// contract says what happens to a `Shared` in one.
+#[test]
+fn a_handle_handed_over_as_an_option_is_atomic() {
+    let decision = one(
+        "fn zaehle(counts: Shared[Vec[i64]]) {\n\
+             fremd::lauf(1; mit: counts)\n\
+         }",
+        "counts",
+    );
+    assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+    assert_eq!(
+        decision.fallback,
+        Some(Fallback::UncoveredArgument),
+        "{decision:#?}"
+    );
+}
+
+/// A `Shared` **assigned into** a struct's field joins that field's allocation.
+#[test]
+fn a_shared_assigned_into_a_field_joins_the_fields_allocation() {
+    for source in [
+        "struct Counter { hits: Shared[i64] }\n\
+         fn setze(c: Counter, h: Shared[i64]) { c.hits = h }\n\
+         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }",
+        "struct Counter { hits: Shared[i64] }\n\
+         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }\n\
+         fn setze(c: Counter, h: Shared[i64]) { c.hits = h }",
+    ] {
+        let decision = one(source, "h");
+        assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+    }
+}
+
+/// A `Shared` held by a **public field of a public type** is atomic, which is
+/// the library boundary one level in from a signature.
+///
+/// A published field is a place code this build never reads can take the value
+/// out of, so nothing here can say that none of those places crosses. The
+/// private counterpart is what stops this from being "atomic always".
+#[test]
+fn a_public_field_of_a_public_type_is_atomic_and_a_private_one_is_not() {
+    let published = one(
+        "pub struct Counter { pub hits: Shared[i64] }\n\
+         fn zaehle(hits: Shared[i64]) -> i64 {\n\
+             let c = Counter { hits: hits }\n\
+             1\n\
+         }",
+        "hits",
+    );
+    assert_eq!(published.count, Count::Atomic, "{published:#?}");
+    assert_eq!(
+        published.fallback,
+        Some(Fallback::PublicField),
+        "{published:#?}"
+    );
+
+    let private = one(
+        "pub struct Counter { hits: Shared[i64] }\n\
+         fn zaehle(hits: Shared[i64]) -> i64 {\n\
+             let c = Counter { hits: hits }\n\
+             1\n\
+         }",
+        "hits",
+    );
+    assert_eq!(private.count, Count::Plain, "{private:#?}");
+}
+
+/// A **public function whose parameter holds** a `Shared` exposes the field, not
+/// only a parameter that *is* one.
+///
+/// `pub fn f(c: Counter)` hands a whole `Counter` to callers this build does not
+/// read, and the `Shared` in its field goes with it. The prototype forced only
+/// parameters that held a `Shared` directly, which left this one plain.
+#[test]
+fn a_public_parameter_that_holds_a_shared_exposes_the_field() {
+    let found = decisions(
+        "struct Counter { hits: Shared[i64] }\n\
+         pub fn zeige(c: Counter) -> i64 { 1 }\n\
+         fn baue(hits: Shared[i64]) -> Counter { Counter { hits: hits } }",
+    );
+    let decision = found
+        .iter()
+        .find(|d| d.value == "hits")
+        .unwrap_or_else(|| panic!("{found:#?}"));
+    assert_eq!(decision.count, Count::Atomic, "{found:#?}");
+    assert_eq!(
+        decision.fallback,
+        Some(Fallback::PublicSignature),
+        "{found:#?}"
+    );
+}
+
+// --- the ledger column -------------------------------------------------------
+
+/// The summary is a ledger column, beside `sync`, `throws`, `touches` and
+/// `borrows`.
+///
+/// `docs/rc-or-arc.md` §5.1 names the shape: which parameters and result are one
+/// class, and which count that class gets. The union-find that decides a count
+/// computes it already, which is what makes this a column and not a mechanism
+/// (ADR-020 D1).
+#[test]
+fn the_summary_is_a_ledger_column() {
+    let (_, own, _) = ledgers(
+        "fn weiter(counts: Shared[Vec[i64]]) -> Shared[Vec[i64]] { counts }\n\
+         fn kreuze(hits: Shared[i64]) { spawn({ println(f\"{hits}\") }) }\n\
+         fn schlicht(x: i64) -> i64 { x }",
+    );
+
+    // A parameter and the result it is handed back as are **one class**, and
+    // that is the half a caller could not work out for itself.
+    let weiter = &own.functions["weiter"].sharing;
+    assert_eq!(weiter.len(), 1, "{weiter:#?}");
+    assert_eq!(weiter[0].members, ["<result>", "counts"], "{weiter:#?}");
+    assert_eq!(weiter[0].count, Count::Plain, "{weiter:#?}");
+
+    let kreuze = &own.functions["kreuze"].sharing;
+    assert_eq!(kreuze.len(), 1, "{kreuze:#?}");
+    assert_eq!(kreuze[0].members, ["hits"], "{kreuze:#?}");
+    assert_eq!(kreuze[0].count, Count::Atomic, "{kreuze:#?}");
+
+    // ADR-020 D4: only what is true is written, and a function with no `Shared`
+    // position has nothing to say.
+    assert!(own.functions["schlicht"].sharing.is_empty());
+}
+
+/// …and it survives a round trip through the file, byte for byte.
+///
+/// Part III 13.5 makes the ledger a pure function of (source, toolchain) and
+/// `--locked` compares bytes, so the column has to render and parse back to the
+/// same thing and the classes have to be in a determined order.
+#[test]
+fn the_column_round_trips_through_the_file() {
+    let (_, own, _) = ledgers(
+        "fn weiter(counts: Shared[Vec[i64]]) -> Shared[Vec[i64]] { counts }\n\
+         fn kreuze(hits: Shared[i64]) { spawn({ println(f\"{hits}\") }) }",
+    );
+    let rendered = own.render();
+    assert!(
+        rendered.contains("sharing = [\"<result> | counts: plain\"]"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("sharing = [\"hits: atomic\"]"),
+        "{rendered}"
+    );
+
+    let read = Ledger::parse(&rendered).expect("a ledger this compiler wrote parses");
+    assert_eq!(
+        read.functions["weiter"].sharing,
+        own.functions["weiter"].sharing
+    );
+    assert_eq!(
+        read.functions["kreuze"].sharing,
+        own.functions["kreuze"].sharing
+    );
+    assert_eq!(
+        read.render(),
+        rendered,
+        "and rendering it again is the same bytes"
+    );
+}
+
+/// A `sharing` line this compiler could not have written is refused rather than
+/// read as something else.
+#[test]
+fn a_sharing_line_that_says_nothing_meaningful_is_refused() {
+    for line in [
+        "sharing = [\"counts\"]",
+        "sharing = [\"counts: maybe\"]",
+        "sharing = [\": plain\"]",
+    ] {
+        let text = format!(
+            "version = 2\ntoolchain = \"probe\"\ninference = \"probe\"\n\n[fn.\"f\"]\n{line}\n"
+        );
+        assert!(Ledger::parse(&text).is_err(), "{line}");
+    }
+}
+
+// --- the enumeration ---------------------------------------------------------
+
+/// Every fallback is enumerable, enumerated by `--sharing`, and answered by
+/// ADR-037 D8.
+///
+/// The closed list *is* the cost of the design, so the report prints all of it
+/// and marks the rows this program hit. A row added to `Fallback` without a
+/// remedy is a row D8 has not answered.
+#[test]
+fn every_fallback_is_enumerated_with_a_remedy() {
+    assert_eq!(Fallback::ALL.len(), 6, "{:?}", Fallback::ALL);
+    for fallback in Fallback::ALL {
+        assert!(!fallback.as_str().is_empty(), "{fallback:?}");
+        assert!(!fallback.remedy().is_empty(), "{fallback:?}");
+    }
+    // The one that wants nothing, because the answer is somebody else's.
+    assert!(
+        Fallback::PublicSignature.remedy().contains("nothing here"),
+        "{}",
+        Fallback::PublicSignature.remedy()
+    );
+
+    let (parsed, own, library) = ledgers(
+        "pub fn zaehle(counts: Shared[Vec[i64]]) -> i64 { counts.len() }\n\
+         fn lokal(hits: Shared[i64]) -> i64 { 1 }",
+    );
+    let report = sharing::report(&parsed, &own, &library);
+    for fallback in Fallback::ALL {
+        assert!(
+            report.contains(fallback.as_str()),
+            "{fallback:?} in:\n{report}"
+        );
+    }
+    // The one this program hit is marked, and the ones it did not are not.
+    assert!(
+        report.contains(&format!("* {}", Fallback::PublicSignature.as_str())),
+        "{report}"
+    );
+    assert!(
+        report.contains("atomic is the floor and not a verdict"),
+        "and the report says which way the polarity runs: {report}"
+    );
+}
+
+/// `--sharing` has `--overlaps`' shape: a heading per function, one indented
+/// line per value, and the reason under it.
+#[test]
+fn the_report_has_the_shape_the_other_explanations_have() {
+    let (parsed, own, library) =
+        ledgers("fn kreuze(hits: Shared[i64]) { spawn({ println(f\"{hits}\") }) }");
+    let report = sharing::report(&parsed, &own, &library);
+    assert!(report.starts_with("kreuze:\n"), "{report}");
+    assert!(
+        report.contains("    atomic  `hits` (Shared[i64])"),
+        "{report}"
+    );
+    assert!(
+        report.contains("crosses: a `spawn` body uses it"),
+        "{report}"
+    );
+}
+
+/// No `std` entry takes or hands back a `Shared`, and the day one does somebody
+/// has to look at it.
+///
+/// The analysis treats a call the ledger describes as **accounted for**, which
+/// is what ADR-005 §5.2 already does for the same question - a contract is an
+/// account, and `std`'s are reviewed like code. What that rests on is that a
+/// described callee does not quietly stash a handle and cross with it, which is
+/// ADR-005 §5.3's "enforceable only as far as a foreign crate is honest". Today
+/// the exposure is **zero**, because no `std` signature mentions the type at
+/// all. This is the guard that notices when it stops being zero.
+#[test]
+fn a_std_entry_that_takes_a_shared_needs_a_second_look() {
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let mentions: Vec<&String> = library
+        .functions
+        .iter()
+        .filter(|(_, contract)| {
+            contract
+                .signature
+                .as_ref()
+                .is_some_and(|s| s.text().contains("Shared"))
+        })
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        mentions.is_empty(),
+        "a `std` entry now mentions `Shared`: {mentions:?}. `contracts::sharing` treats a \
+         described callee as accounted for, so somebody has to decide whether that entry may \
+         keep a handle and cross with it - see the module header."
+    );
 }

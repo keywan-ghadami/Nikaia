@@ -16,7 +16,10 @@
 // support - rather than by the whole-program analysis ADR-005 D3 describes.
 // `sync` is *inferred from the body* (ADR-027): a function that provably cannot
 // pause gets the promise whether or not anyone wrote the word, and where the
-// word is written it stays an assertion for `NK2202` to check.
+// word is written it stays an assertion for `NK2202` to check. `sharing` is
+// inferred from the bodies too (ADR-037 D7), and it is the one column that can
+// only ever get *better*: its floor is the safe answer, so a ledger that says
+// nothing about a `Shared` still describes a correct program.
 //
 // That is why the header names the inference that produced the ledger. A later
 // compiler that infers more will write a different name there, and `--locked`
@@ -52,11 +55,12 @@ pub const STD: &str = include_str!("../../../nikaia-std/std.contracts");
 /// Recorded in the header so that a ledger can say what it knows, and a ledger
 /// produced by reading signatures must not be mistaken for one produced by
 /// reading bodies. Stage 0 reads signatures for the borrow contract and for
-/// `throws`; since ADR-027 it reads **bodies** for `sync` and since ADR-023 D1
-/// for the *errors* a `throws` names, and the name says which half is which.
+/// `throws`; since ADR-027 it reads **bodies** for `sync`, since ADR-023 D1 for
+/// the *errors* a `throws` names, and since ADR-037 D7 for `sharing` - the name
+/// says which half is which.
 /// The whole-program analysis of ADR-005 D3 will read bodies for the borrow
 /// contract too and will write a different name again.
-pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies";
+pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies";
 
 /// The format version of the file itself.
 ///
@@ -235,6 +239,27 @@ pub struct FnContract {
     /// `borrows(a | b)`, which is the spec's own spelling and is the widest
     /// contract the signature can support.
     pub borrows: Vec<String>,
+    /// Which of its `Shared` positions are one allocation, and which reference
+    /// count each of those classes gets
+    /// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
+    ///
+    /// The **fifth** derived column, beside `sync`, `throws`, `touches` and
+    /// `borrows`, and a column rather than a mechanism: the ledger already
+    /// ships facts read off bodies (ADR-020 D1, D2), and this is one more of
+    /// them. `docs/rc-or-arc.md` §5.1 is where the shape comes from - the
+    /// summary that **composes** is "which parameters and result are one class,
+    /// and whether any of them crosses inside", and the union-find that decides
+    /// a count computes it already.
+    ///
+    /// **Empty means the function has no `Shared` position**, which is almost
+    /// every function, and is why nothing is written for it (ADR-020 D4). It is
+    /// not "nobody said": a function with a `Shared` parameter always gets an
+    /// entry, and the floor means the worst that entry can say is `atomic`.
+    ///
+    /// Only **caller-visible** positions are in it. A local's count is nobody's
+    /// business but its own function's, and putting one here would churn the
+    /// file on a rename.
+    pub sharing: Vec<sharing::Class>,
 }
 
 /// A function's parameters and result.
@@ -587,6 +612,11 @@ impl Ledger {
         // what (ADR-023 D1). After `sync`, because both read bodies and only
         // this one needs nothing from the other.
         throws::infer(&mut ledger, parsed, std_ledger());
+        // ADR-037 D7: which count each `Shared` class gets. Last, because it
+        // resolves a callee's parameters against the `signature` step 1 wrote
+        // and a type's parts against its `fields`, and reads nothing the two
+        // inferences above produced.
+        sharing::infer(&mut ledger, parsed, std_ledger());
         (ledger, checked)
     }
 
@@ -696,6 +726,11 @@ impl Ledger {
                         .map(|t| ty::Ty::from_ast(parsed, t).erase(&parameters)),
                 }),
                 borrows,
+                // `sharing::infer` reads the bodies afterwards, for the same
+                // reason `sync` does: the answer is about where a value goes
+                // and not about how it was declared. Empty until then, which is
+                // the floor written out - the safe answer needs no line.
+                sharing: Vec::new(),
                 // A source is where bytes enter the program from outside, and
                 // nothing a `.nika` file can write is one: `fs` and `io` are
                 // `std`, and `std` states its own (ADR-010 D2).
@@ -806,6 +841,17 @@ impl Ledger {
             if let Some(provenance) = contract.provenance {
                 out.push_str(&format!("provenance = \"{}\"\n", provenance.as_str()));
             }
+            if !contract.sharing.is_empty() {
+                out.push_str(&format!(
+                    "sharing = [{}]\n",
+                    contract
+                        .sharing
+                        .iter()
+                        .map(|class| format!("\"{}\"", class.text()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             if let Some(signature) = &contract.signature {
                 out.push_str(&format!("signature = \"{}\"\n", escape(&signature.text())));
             }
@@ -913,6 +959,20 @@ impl Ledger {
                         }
                         "provenance" => {
                             entry.provenance = Some(provenance_of(&unquote(value, at())?, at())?)
+                        }
+                        "sharing" => {
+                            entry.sharing = string_list(value, at())?
+                                .iter()
+                                .map(|class| {
+                                    sharing::Class::parse(class).ok_or_else(|| {
+                                        anyhow!(
+                                            "line {}: a sharing class is \
+                                             `a | b: plain` or `a | b: atomic`, not `{class}`",
+                                            at()
+                                        )
+                                    })
+                                })
+                                .collect::<Result<Vec<_>>>()?
                         }
                         "signature" => {
                             entry.signature = Some(Signature::parse(&unquote(value, at())?)?)

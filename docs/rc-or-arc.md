@@ -618,7 +618,45 @@ around it than in it: `Shared` moving into `CONTAINERS` deleted the file's only
 program. That belongs to D6 rather than here — it is a consequence of the
 decision and not a finding of this experiment.
 
-**Not taken from §9: A**, which would have left Part II 12.2's counter
-unwritable; and **B as §9 framed it**, a choice between two representations, with
-the emitter axis and the §5.1 boundary that come with it. §7's `Locked` half is
-not decided by any of this.
+**And then B on top of it, narrowed to an optimisation.** The prototype in
+`contracts::sharing` became the real thing under one rule
+([ADR-037](specification/adr/adr-037.md) D7): *it may only ever take an atomic
+away.* Atomic is the floor, and the analysis may lower a particular value to a
+plain count only where it **proves** nothing crosses with it. §2's gate is what
+lets it — nothing a program can observe distinguishes the two counts, and the one
+thing that does, a cleanup running on another thread, can only happen to a value
+that crosses, which is a value the analysis has no freedom about.
+
+So **§6's four cases stop being a cost and become the default**, and what §6
+called a regression on `examples/fortunes.nika`'s `db` is now simply the floor
+holding: `db` is atomic because nothing describes `fetch`, which is where it would
+have been anyway. Two of §6's own limits turned out to be fail-open holes rather
+than gaps, and they were found by asking what §8's guard had siblings — a handle
+read back *out* of a struct field, a handle captured by a lambda handed to an
+unseen call, a handle handed over as an option, a handle assigned into a field,
+and a `Shared` in a public *type's* field or behind a public parameter that merely
+*holds* one. And **step 1 created a seed that did not exist before**: while a
+`Shared` was `MayNot`, §4's decision not to seed `task::both` was safe because the
+overlapping analysis never put one on a thread; now it may, so a handle whose
+allocation this analysis did not watch being made is atomic.
+
+**What the owner did not take from §9.** There is no way for a programmer to ask
+for the cheaper count — [ADR-037](specification/adr/adr-037.md) D8 enumerates
+every fallback and answers "would an override help?" no for all of them, the way
+[ADR-033](specification/adr/adr-033.md) D9 did for the ordering analysis. And
+**§7's `Locked` half is not decided by any of it**: `RefCell` against `Mutex` is
+observable, so it is written rather than inferred, and what an always-`Mutex`
+floor would cost against Part II 12.2 is a separate question. **A** was not taken
+either, and it is the option that would have left 12.2's counter unwritable.
+
+**§9's three questions, as they stand now.** Question 1 is answered, and the
+answer is not the one either half of §9 framed: 9 ns was not worth a
+representation *axis*, so what was built is an optimisation on **one**
+representation rather than a choice between two — which is what makes §5.1's
+library boundary and §5.2's two `Counter`s stop being blocking problems, because
+there is only ever one `Counter`. Question 2 is open and is `Locked`'s. Question 3
+— source or artifact — no longer blocks anything here: a value the analysis
+cannot decide is atomic, which is what a published artifact contains, so a
+package that ships compiled code is served by the floor and one that ships source
+is served better. §5.1's option (3) is what the ledger's new `sharing` column is
+for.
