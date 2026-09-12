@@ -104,10 +104,12 @@ sysroot outside a checkout; the layout and the variable exist
 ### 13.3. Manifest Configuration (`nikaia.toml`)
 The manifest defines project metadata and the three build switches of Part I 1.2.
 
-They live in `[build]`, and a flag overrides any of them for a single build —
-which is what a benchmark and a bug hunt need, while the committed value is the
-one a reviewer sees (ADR-037 D5). A key `[build]` does not know is a typo and
-fails the build rather than being ignored.
+They live in `[build]`, and `--target` and `--user-parallelism` override those two
+for a single build — which is what a benchmark and a bug hunt need, while the
+committed value is the one a reviewer sees (ADR-037 D5). `reentrancy-check` is
+read from the manifest, and why it belongs there rather than in 13.3b's file is
+two paragraphs down. A key `[build]` does not know is a typo and fails the build
+rather than being ignored.
 
 **What is *not* here is as much the point.** The manifest carries what the
 **compiler** must know. How the program behaves on the machine it runs on — how
@@ -359,7 +361,9 @@ Only what is *true* is written: a `sync = false` on every entry would treble the
 
 **`sync` is written down in two ways, because it is arrived at in two ways** ([ADR-027](adr/adr-027.md)). `sync = true` is a promise the *source* made, and `NK2202` is what the compiler says when the body contradicts it. `sync = "inferred"` is a promise the *body* implies: nothing the function calls can pause, so it cannot pause, and saying otherwise would be the ledger recording something it had already read and knew better about.
 
-A **caller** does not distinguish them. Both mean "this cannot pause", both satisfy the `sync` half of what `access` and `par_iter` require, and any code that asks the ledger the caller's question gets one answer. `sync` is a half rather than the whole since [ADR-039](adr/adr-039.md) D3: a body may go inside a lock only if it cannot pause **and** reaches no lock of its own, and `locks` is the second condition. A **diff** must distinguish them, and that is the whole reason the file spells them differently: withdrawing an asserted `sync` is a decision someone made and has to have meant, while losing an inferred one is a *consequence* of an edit somewhere else — usually in a function further down. The two deserve different sentences, and a `bool` cannot produce them.
+A **caller** does not distinguish them. Both mean "this cannot pause", both satisfy the `sync` half of what `access` and `par_iter` require, and any code that asks the ledger the caller's question gets one answer. A **diff** must distinguish them, and that is the whole reason the file spells them differently: withdrawing an asserted `sync` is a decision someone made and has to have meant, while losing an inferred one is a *consequence* of an edit somewhere else — usually in a function further down. The two deserve different sentences, and a `bool` cannot produce them.
+
+**`sync` is one of two conditions for a body inside a lock, not the whole of it.** Since [ADR-039](adr/adr-039.md) D3 a body goes inside a lock only if it cannot pause **and** reaches no lock of its own — the first is `sync`, the second is `locks`, and a caller that checks one of them has checked half.
 
 **`throws` is a set for the same reason**, and it is the second key this argument has been made about. A boolean answers "can this fail", which is what a *caller* needs in order to declare its own `throws` — and nothing else. A `catch` needs more: whether it still covers everything that can reach it. That question has an answer only if the ledger names the errors, and the answer changes when a function three modules down gains a `throw`. Recorded as a set, the diff says which error appeared and which `catch` stopped covering its arrivals; recorded as a boolean, it says nothing at all, because `true` was already `true`. The narration is `NK24xx` (Appendix C), the same machinery a changed borrow contract uses.
 
@@ -1109,6 +1113,10 @@ The `target` decides this independently where the machine leaves no choice: on
 
 **The third switch changes nothing on this page.** `reentrancy-check` (13.3) decides whether a compiled program still notices a lock taken while a lock is held. Taking one is refused when you build ([ADR-039](adr/adr-039.md) D2), so in a program the compiler accepted the check cannot fire, and if it ever does the refusal has a hole rather than the program ([ADR-039](adr/adr-039.md) D8). The re-entrancy panic Part II 12.2 describes at `user_parallelism = no` is that check and nothing else, which is why the table above does not carry a row for it. **Poisoning is unchanged by any of this**: at `no` a panic is an abort, so nobody survives for whom poisoning would be done, and the `yes` row stays the only place it happens ([ADR-039](adr/adr-039.md) D1).
 
+> **Status:** the third switch, the check it controls and `SharedMut[T]` itself
+> are specified and not built (13.3, [ADR-039](adr/adr-039.md) §4). Nothing in
+> that changes what this table says about `user_parallelism` and `target`.
+
 On **every** panic path — including the abort and the WASM trap — the application's **Panic Hook** runs first (Part I, 7.2): one global, `sync` handler receiving message, location, and stack trace, intended for crash dumps and reports. This rides on the backend's panic machinery, which invokes the hook before aborting even under `panic = abort`. See [ADR-006](adr/adr-006.md), D6.
 
 # Appendix B: Compiler Internals & Annotations
@@ -1335,8 +1343,8 @@ error[NK2205]: this `set` reads `kasse` while computing what to store in it
      help: write `kasse.update fn(old) { old + 100 }`
 ```
 
-That second one is syntactic: it catches the `get` written inside the `set` and
-not the same pair spread over two lines, which is the shape people write
+That second one is syntactic: it catches the `get` written inside the `set`,
+which is the shape people write, and not the same pair spread over two lines
 ([ADR-039](adr/adr-039.md) D10).
 
 And the foreign call, judged by what its arguments can reach (15.2):
