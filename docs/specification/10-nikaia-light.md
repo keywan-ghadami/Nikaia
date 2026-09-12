@@ -181,6 +181,13 @@ let result = {
 }
 ```
 
+A block's last line is the **block's** value; `return` is the **function's**. So
+a `return` written at the end of a block that is itself a value — a `match` arm
+(3.4), an `if` branch whose value is taken (3.2), a `catch` handler (7.1), a
+`seq` block (8.1.1) — leaves the enclosing function rather than handing that
+block a value. The one block that is its own function is a lambda, whose
+`return` leaves the lambda (5.3).
+
 ### 3.2. Conditional Logic (if / else)
 The `if` expression checks a condition (a `bool`). If true, it executes the first block; otherwise, it executes the `else` block. Since `if` is an expression, it can be assigned to a variable.
 

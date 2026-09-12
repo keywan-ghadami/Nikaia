@@ -1,0 +1,237 @@
+//! What `return` means where it is not the last thing a function does.
+//!
+//! Part I 7.1: `return` leaves the **function**. Nikaia's blocks are
+//! expressions (Part I 3.1), so a `return` can sit at the end of something that
+//! is itself a value - a `match` arm, an `if` branch in value position, a
+//! `catch` handler, a `seq` block - and there the two readings come apart: the
+//! value of the expression around it, or the value of the function past it. The
+//! language has one answer and it is the second.
+//!
+//! **These are run and not read, wherever there is something to run.** The
+//! lowering turned `1 => { return 10 }` into `1 => { 10 }`, which is not a
+//! broken-looking program: where the types line up it compiles, prints
+//! something, and is simply a different program from the one that was written.
+//! A test that only compiled it would have passed, and a test that compared
+//! emitted text would have been asserting the emitter agrees with itself. So
+//! each shape is lowered, compiled as Rust, run, and its output compared against
+//! what the source means. The one exception says in its own comment why it
+//! cannot be run.
+
+mod common;
+
+use nikaia::emit::{emit_program, Build};
+use nikaia::parser::parse_to_ast;
+
+fn lowered(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit_program(&parsed, Build::default())
+        .expect("the source lowers")
+        .rust
+}
+
+/// Lower, compile, run, and hand back what it printed.
+fn output_of(purpose: &str, source: &str, files: &[(&str, &str)]) -> String {
+    let dir = common::scratch_dir(purpose);
+    let rust = dir.join(format!("{purpose}.rs"));
+    std::fs::write(&rust, lowered(source)).expect("write the Rust");
+    for (name, body) in files {
+        std::fs::write(dir.join(name), body).expect("write a fixture file");
+    }
+
+    let binary = dir.join(purpose);
+    let built = common::compile(&rust, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{}",
+        String::from_utf8_lossy(&built.stderr),
+        lowered(source)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let printed = String::from_utf8_lossy(&run.stdout).to_string();
+    // The scratch directory holds a linked binary, and the corpus runs often.
+    // Removed here and not before the assertions above: a failing test's
+    // artefacts are what diagnoses it.
+    let _ = std::fs::remove_dir_all(&dir);
+    printed
+}
+
+/// **The silent case, and the reason this file exists.**
+///
+/// A function with no return value, one `match` arm that leaves it, and a
+/// statement after the `match` that the arm was written to skip. Dropping the
+/// `return` makes the arm's value the arm's value and nothing else, so the
+/// function runs on - and because both readings type-check, *nothing*
+/// complains. The only witness is what it prints.
+const VOID_MATCH: &str = "fn note(n: i64) {\n\
+     \x20   println(f\"nothing to announce for {n}\")\n\
+     }\n\
+     \n\
+     fn announce(n: i64) {\n\
+     \x20   match n {\n\
+     \x20       0 => { return note(n) }\n\
+     \x20       _ => { println(f\"n is {n}\") }\n\
+     \x20   }\n\
+     \x20   println(\"checked\")\n\
+     }\n\
+     \n\
+     fn main() {\n\
+     \x20   announce(0)\n\
+     \x20   announce(7)\n\
+     }\n";
+
+#[test]
+fn a_return_in_a_match_arm_leaves_a_function_that_returns_nothing() {
+    // `announce(0)` takes the arm that returns, so it never reaches `checked`.
+    // `announce(7)` takes the other one and does.
+    assert_eq!(
+        output_of("return-void-match", VOID_MATCH, &[]),
+        "nothing to announce for 0\nn is 7\nchecked\n"
+    );
+}
+
+/// The same in a function that *does* return a value, where the arms happen to
+/// agree on a type - so this one is silent too, rather than the `E0308` the
+/// mismatched shape gives.
+const VALUE_MATCH: &str = "fn pick(n: i64) -> i64 {\n\
+     \x20   match n {\n\
+     \x20       1 => { return 10 }\n\
+     \x20       _ => { 20 }\n\
+     \x20   }\n\
+     \x20   30\n\
+     }\n\
+     \n\
+     fn main() {\n\
+     \x20   println(f\"{pick(1)} {pick(2)}\")\n\
+     }\n";
+
+#[test]
+fn a_return_in_a_match_arm_leaves_a_function_that_returns_a_value() {
+    assert_eq!(output_of("return-value-match", VALUE_MATCH, &[]), "10 30\n");
+}
+
+/// An `if` whose value is taken - `let x = if c { … } else { … }` - is the same
+/// situation with a different keyword, and had the same defect. The `if` in
+/// *statement* position was already right; this is the half that was not.
+const IF_AS_VALUE: &str = "fn pick(c: bool) -> i64 {\n\
+     \x20   let x = if c { return 1 } else { 2 }\n\
+     \x20   x + 100\n\
+     }\n\
+     \n\
+     fn main() {\n\
+     \x20   println(f\"{pick(true)} {pick(false)}\")\n\
+     }\n";
+
+#[test]
+fn a_return_in_an_if_used_as_a_value_leaves_the_function() {
+    assert_eq!(output_of("return-if-value", IF_AS_VALUE, &[]), "1 102\n");
+}
+
+/// A block used as a value, and a `seq` block - which is a block that has
+/// withdrawn a reordering permission and nothing else (ADR-033 D7). Both had the
+/// same defect.
+///
+/// **Read rather than run, and the shape is the reason.** For a block's *last*
+/// statement to be a `return`, the block has to leave the function every time it
+/// is entered - so the value it was written to hand back is never produced and
+/// there is nothing to print. Before the fix the block handed back the returned
+/// expression and the program ran on; now it returns, and a `let` bound to such a
+/// block is a `let` bound to nothing, which rustc says so about. That is the one
+/// emission in this file whose *verdict* changes, and it changes from "compiles,
+/// and is a different program" to an honest complaint about dead code.
+const BLOCK_AS_VALUE: &str = "fn pick() -> i64 {\n\
+     \x20   let x = seq {\n\
+     \x20       return 1\n\
+     \x20   }\n\
+     \x20   let y = {\n\
+     \x20       return 2\n\
+     \x20   }\n\
+     \x20   3\n\
+     }\n";
+
+#[test]
+fn a_return_in_a_block_used_as_a_value_leaves_the_function() {
+    let rust = lowered(BLOCK_AS_VALUE);
+    assert!(rust.contains("let x = { return 1; };"), "{rust}");
+    assert!(rust.contains("let y = { return 2; };"), "{rust}");
+}
+
+/// **A `catch` handler, which is the one the ordering analysis has an opinion
+/// about.**
+///
+/// [ADR-034](../../../docs/specification/adr/adr-034.md) is about exactly this
+/// handler: one that can `return` makes the *next* statement conditional on the
+/// guarded operation having succeeded, so the two may not be overlapped.
+/// `contracts::order`'s `diverts` counts the `return` at the end of the handler
+/// when it refuses - while the emitter was dropping it, which made the analysis
+/// reason about a control flow the emitted program did not have. The handler's
+/// value and the read's value agree on a type here, so nothing complained.
+const CATCH_HANDLER: &str = "use std::fs\n\
+     \n\
+     fn label(path: String) throws -> String {\n\
+     \x20   let text = fs::read_to_string(&path) catch { return \"missing\".to_string() }\n\
+     \x20   f\"read {text.len()} bytes\"\n\
+     }\n\
+     \n\
+     fn main() {\n\
+     \x20   let here = label(\"there.txt\".to_string()) catch { \"failed\".to_string() }\n\
+     \x20   println(here)\n\
+     \x20   let gone = label(\"absent.txt\".to_string()) catch { \"failed\".to_string() }\n\
+     \x20   println(gone)\n\
+     }\n";
+
+#[test]
+fn a_return_in_a_catch_handler_leaves_the_function() {
+    assert_eq!(
+        output_of("return-catch", CATCH_HANDLER, &[("there.txt", "hallo")]),
+        "read 5 bytes\nmissing\n"
+    );
+}
+
+/// … and the analysis and the lowering now agree about that handler: `diverts`
+/// says it leaves the function, and the emitted Rust says so too.
+#[test]
+fn the_ordering_analysis_and_the_lowering_agree_about_a_diverting_handler() {
+    let rust = lowered(CATCH_HANDLER);
+    assert!(
+        rust.contains("return Ok(\"missing\""),
+        "the handler's `return` is gone from the lowering:\n{rust}"
+    );
+}
+
+/// The rewrite that *is* right, and which none of this may take away: a
+/// function body ending in `return x` is written as `{ x }`, because the value a
+/// function body ends in is what the function hands back.
+#[test]
+fn a_return_at_the_end_of_a_function_is_still_its_value() {
+    let rust = lowered("fn f(c: bool) -> i64 {\n    if c {\n        return 1\n    } else {\n        return 2\n    }\n}\n");
+    assert!(rust.contains("if c { 1 } else { 2 }"), "{rust}");
+    assert!(!rust.contains("return"), "{rust}");
+}
+
+/// A loop body is not a value, and a `return` in one was always kept. Pinned
+/// because the fix moved the code that decides it.
+#[test]
+fn a_return_in_a_loop_body_is_kept() {
+    let rust = lowered(
+        "fn f(n: i64) -> i64 {\n    for i in 0..n {\n        if i > 2 {\n            return i\n        }\n    }\n    0\n}\n",
+    );
+    assert!(rust.contains("return i;"), "{rust}");
+}
+
+/// A lambda's `return` leaves the **lambda**, so its body's last statement is
+/// its own value and the rewrite applies there as it does to a function.
+#[test]
+fn a_return_at_the_end_of_a_lambda_is_the_lambdas_value() {
+    let rust =
+        lowered("fn f(xs: Vec[i64]) -> i64 {\n    let y = xs.map fn { return a + 1 }\n    0\n}\n");
+    assert!(rust.contains("|a| { a + 1 }"), "{rust}");
+}

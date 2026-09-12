@@ -172,13 +172,138 @@ design:
 * the same thing over a `HashMap[&str, …]` is rejected by **both**, with `E0621`: Stage 0
   elides the key's lifetime in `fn get_or_insert(&mut self, key: &str)` where the field it
   inserts into is `HashMap<&'a str, …>`. The program never reaches the borrow checker's
-  flow analysis, because elision gets there first;
+  flow analysis, because elision gets there first. **Still open, and §3.3.2 says why it is
+  a decision and not a patch;**
 * writing the branch as a `match` with `return x` in an arm emits `x` — Stage 0 **drops the
   `return`** from a match arm whose body is a value, turning a control-flow statement into
   the arm's value. Here it surfaces as `E0308` (incompatible arm types); in a function
   returning nothing it would surface as a silently different program. `return` with no
-  value in an arm is kept, so the bug is narrow and is not this file's business to fix —
-  recorded so it is not found twice.
+  value in an arm is kept, so the bug looked narrow. **Fixed, and it was not narrow:
+  §3.3.1.**
+
+### 3.3.1 The dropped `return`: what it actually was, and the four shapes it reached
+
+The cause was not in `match`. One `bool` named `tail` carried two questions at once through
+`crates/nikaia/src/emit/mod.rs`: *is this statement the block's value* — which decides the
+semicolon, and is a fact about Part I 3.1 — and *is this block's value the function's return
+value*, which is what licenses writing `fn f() -> T { return x }` as `{ x }`. The second is
+true of a function body. It is false of every block that is a value handed to the expression
+around it, and `expr()` handed all of them `tail = true` on the way in, because at that point
+it had only the one flag to hand them.
+
+So the rewrite fired everywhere a block sat in value position, and the same one line of
+`Stmt::Return` accounts for four shapes. Probed one at a time, before and after:
+
+| where the `return` is | emitted before | emitted after |
+| :--- | :--- | :--- |
+| the end of a `match` arm | `1 => { 10 }` | `1 => { return 10; }` |
+| the end of an `if` branch whose value is taken | `let x = if c { 1 } else { 2 };` | `let x = if c { return 1; } else { 2 };` |
+| the end of a `catch` handler | `Err(error) => { 0 }` | `Err(error) => { return Ok(0); }` |
+| the end of a block or `seq` block used as a value | `let x = { 1 };` | `let x = { return 1; };` |
+| the end of a loop body, a `for` or a `while` | `return i;` | unchanged |
+| the end of a function body, or of a lambda | `{ x }` | unchanged |
+
+The last two rows are the point of the table: a loop body was never in value position, and a
+function body's tail is the one place where the value *is* the function's, so the rewrite that
+was right stays. Fixing the cause is one three-state `Tail` in place of the `bool` —
+`Statement`, `Value`, `Return` — and the rewrite is allowed only at `Return`.
+
+**The `catch` row is the one to read twice.** [ADR-034](specification/adr/adr-034.md) D1 is
+about exactly that handler: one that can `return` makes the next statement conditional on the
+guarded operation having succeeded, so the two may not be overlapped, and
+`contracts::order`'s `diverts` counts any `return` anywhere in the handler when it refuses. It
+was counting a `return` the emitter then deleted — an analysis reasoning about a control flow
+the emitted program did not have. It is conservative in the safe direction (it refuses an
+overlap the program did not need) so it produced no wrong schedule, but the two halves of the
+compiler disagreed about what the handler did, and only one of them was right.
+
+**Why it was silent, which is the part the `E0308` above understates.** The failure mode
+depends on whether the two readings happen to agree on a type, not on whether the function
+returns anything:
+
+```nika
+fn announce(n: i64) {
+    match n {
+        0 => { return note(n) }
+        _ => { println(f"n is {n}") }
+    }
+    println("checked")
+}
+```
+
+`announce(0)` printed `checked`. Nothing in rustc has anything to say about it, because both
+readings of the arm are `()`; the only witness is the output. The same holds in a
+value-returning function whose arms agree on a type, and in the `catch` handler above whose
+fallback has the type the read has. `E0308` is what you get when the types happen to
+disagree — the loud minority of the cases, and the reason this was recorded here as narrow.
+
+`crates/nikaia/tests/returns.rs` is that program and five others, lowered, compiled as Rust,
+run where there is something to run, and compared against what the source means. All six fail
+on the commit before the fix, and **four of them fail as a wrong printed answer** and not as a
+compile error: the `match` in a function returning nothing printed `checked` as well, the
+`match` in one returning a value answered `30 30` for `10 30`, the `if` answered `101 102` for
+`1 102`, and the `catch` handler answered `read 7 bytes` for `missing`.
+
+**One shape's verdict changes, and it is worth naming.** A `let` bound to a block that returns
+unconditionally — `let x = { return 1 }` — used to compile, because the lowering quietly turned
+it into `let x = { 1 }`. It now lowers to `let x = { return 1; };`, whose binding has no value
+and which rustc says so about. That is an honest complaint about dead code in place of a
+different program, and nothing in `examples/`, `tests/` or `crates/nikaia-std` writes it: the
+whole corpus is unchanged at both switches, on the pinned nightly and on stable, at dev and
+release, and `tests/errors/EXPECTED.txt` does not move. What *does* change in the corpus is
+`examples/json.nika`'s `longest`, whose four arms each end in a `return` and now say so; it
+compiles and prints what it printed.
+
+### 3.3.2 The elided key lifetime: not fixed, because the fix is a decision
+
+The `E0621` above is one line to make go away and the wrong line to write. Stage 0 spells a
+view's lifetime by **position** and by nothing else
+([ADR-011](specification/adr/adr-011.md) D6, which is
+[ADR-008](specification/adr/adr-008.md) in the only form a bootstrap compiler can express it):
+named inside the grammar module and on the structs it builds, elided in a free function's
+signature, and — in a method of an `impl` whose receiver holds views — elided on the `&` while
+every named type takes `'a`. That third spelling is what makes `examples/1brc.nika` work:
+`fn record(&mut self, m: Reading)` becomes `m: Reading<'a>`, and the key reaches
+`HashMap<&'a str, Stats>` inside the struct it came in.
+
+It has no answer for a **bare `&str` parameter**, because that parameter is two different
+things and the signature cannot say which:
+
+* a key that will be **stored** — `fn get_or_insert(&mut self, key: &str)` inserting into
+  `HashMap<&'a str, …>` — needs `&'a str`, and gets `E0621` without it;
+* a view that will only be **inspected** — `fn note(&mut self, probe: &str)` — must *not* have
+  `'a`. Checked rather than assumed: with `&'a str` on that parameter, a caller that builds
+  the probe locally and hands the receiver back to its own caller is refused with `E0515`,
+  and the same program with the lifetime elided compiles and runs. A shared-reference method
+  is not affected either way, because `&Cache<'a>` is covariant in `'a` and `&mut Cache<'a>`
+  is not — so the shape that breaks is precisely `&mut self` plus a view parameter that is
+  never stored.
+
+One spelling cannot serve both, and the source writes no lifetime to choose with
+([ADR-005](specification/adr/adr-005.md) D1, ADR-008 D1) — so the **use** has to decide, and
+deciding it per view is ADR-008 D2's tether lattice, whose "least state that makes the program
+valid" is the same question one level up and which that record's own status line says is not
+built. Two things are the owner's:
+
+1. whether the answer comes from the beginnings of that solver in Stage 0, or from a fourth
+   positional rule — and if the latter, which programs it is allowed to start refusing, since
+   `'a`-everywhere refuses the `E0515` shape above and elision refuses the `E0621` one;
+2. if a fourth positional rule, whether the method declares a lifetime of its own —
+   `fn get_or_insert<'k>(&mut self, key: &'k str)` with `'k: 'a` — which makes the signature
+   carry a lifetime relation the source never wrote, and is what ADR-008 D9 rejected explicit
+   regions for.
+
+A partial fix is worse than none here: it would make the storing shape compile and leave the
+inspecting one failing differently, in a compiler whose whole claim about lifetimes is that
+the position decides and the author never writes one.
+
+**And `E0621` is not translated.** [ADR-005](specification/adr/adr-005.md) D7 enumerates
+E0382, E0499, E0502, E0505, E0506, E0597, E0716 and — added after the foreign-runtime
+experiment — E0277. `E0621` is in none of them. `crates/nikaia/src/diagnostics` translates the
+*place* for every code, so the message does land on the `.nika` line; the text does not, and
+here the text is `help: add explicit lifetime 'a to the type of key`, whose every noun is
+something ADR-008 D1 says the author never writes. That is D7's own `E0277` failure at a
+second code, and it is a second reason this half is a record's business and not a patch's.
 
 ### 3.4 What it would cost
 
