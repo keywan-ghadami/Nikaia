@@ -1,0 +1,14 @@
+{
+  "name": "nikaia-tmlanguage-test",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Scope tests for editors/vscode/syntaxes/nikaia.tmLanguage.json, run through vscode-textmate.",
+  "type": "module",
+  "scripts": {
+    "test": "node scope-test.mjs"
+  },
+  "dependencies": {
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.2.0"
+  }
+}

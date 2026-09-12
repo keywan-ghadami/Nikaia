@@ -43,6 +43,10 @@ exclude:
   - tests/
   - benches/
   - scripts/
+  # the TextMate grammar and the VS Code extension around it. Jekyll highlights
+  # with Rouge, which does not read a TextMate grammar, so nothing here reaches
+  # the site's code blocks either way.
+  - editors/
   - target/
   - Cargo.toml
   - Cargo.lock
