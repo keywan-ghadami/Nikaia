@@ -75,6 +75,9 @@ exclude:
   - .github/
   # patches and findings handed to dependencies, not written for readers here
   - docs/upstream/
+  # the logo's source image: 2816x1536 and 5 MB, kept in the repository and
+  # not published. `nikaia-logo.jpg` is what the README shows.
+  - 1768075880760.jpg
 
 # Publish the rendered page, not a second copy of the Markdown beside it.
 optional_front_matter:

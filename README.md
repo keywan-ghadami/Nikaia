@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="1768075880760.jpg" alt="Nikaia Logo" width="300" />
+  <img src="nikaia-logo.jpg" alt="Nikaia Logo" width="300" height="164" />
   <h1>N I K A I A</h1>
   <p><strong>Good wins.</strong></p>
 
