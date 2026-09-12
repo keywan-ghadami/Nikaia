@@ -13,12 +13,14 @@
     <a href="#-code-example">Example</a> •
     <a href="#-where-the-project-actually-stands">Status</a> •
     <a href="docs/specification">Specification</a> •
+    <a href="https://keywan-ghadami.github.io/Nikaia/">Documentation site</a> •
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
   <img src="https://img.shields.io/badge/version-0.0.7-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
+  <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
 </div>
 
 ---
