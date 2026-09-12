@@ -540,7 +540,16 @@ const cases = [
 
 function listNika(dir, acc = []) {
   for (const entry of readdirSync(dir)) {
-    if (entry === ".git" || entry === "target" || entry === "node_modules") continue;
+    // `.claude` holds subagent git worktrees - whole copies of this repository.
+    // Walking one counts every corpus file twice and attributes a finding to a
+    // path that will not exist tomorrow.
+    if (
+      entry === ".git" ||
+      entry === ".claude" ||
+      entry === "target" ||
+      entry === "node_modules"
+    )
+      continue;
     const p = join(dir, entry);
     const st = statSync(p);
     if (st.isDirectory()) listNika(p, acc);
