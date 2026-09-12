@@ -359,7 +359,9 @@ fn probe_library() -> Ledger {
 fn report_against_probe(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
-    order::report(&parsed, &own, &probe_library())
+    // Every vehicle available: this file asks what the *program* allows, and a
+    // build caveat per pair would be noise in a test about crossing a thread.
+    order::report(&parsed, &own, &probe_library(), &|_| None)
 }
 
 /// Two operations that meet on nothing overlap - the control, without which the
