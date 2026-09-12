@@ -145,10 +145,49 @@ pub fn externs() -> Vec<String> {
 /// other's code.
 pub fn scratch_dir(purpose: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    sweep_stale_scratch_dirs();
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("nikaia-{purpose}-{}-{id}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch directory");
     dir
+}
+
+/// Remove scratch directories a previous run left behind.
+///
+/// A directory is kept after the test that made it, deliberately: a failure is
+/// much easier to look at with the emitted Rust and the binary still on disk.
+/// Nothing removed them afterwards, so they accumulated - a run of the suite
+/// leaves dozens, and they were found 891 deep and 2.1 GB heavy, with the
+/// filesystem full.
+///
+/// Six hours rather than "this run's are the only ones that matter": a
+/// directory from an hour ago is what somebody is in the middle of reading, and
+/// a concurrent second run of the suite has its own process id but no claim on
+/// ours. Once per process, because `readdir` over `/tmp` is not free and the
+/// answer cannot change usefully within one run.
+fn sweep_stale_scratch_dirs() {
+    static SWEPT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    SWEPT.get_or_init(|| {
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+            return;
+        };
+        let cutoff = std::time::Duration::from_secs(6 * 60 * 60);
+        for entry in entries.flatten() {
+            if !entry.file_name().to_string_lossy().starts_with("nikaia-") {
+                continue;
+            }
+            let stale = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .and_then(|at| at.elapsed().map_err(std::io::Error::other))
+                .is_ok_and(|age| age > cutoff);
+            if stale {
+                // Best effort: another run may be removing the same directory,
+                // and losing that race is not this run's problem.
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    });
 }
 
 /// Compile emitted Rust. `args` are rustc's, after the edition and the externs
