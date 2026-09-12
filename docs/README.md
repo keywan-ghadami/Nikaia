@@ -80,6 +80,10 @@ is normative and nothing may depend on it to know what a program means.
   path gets ADR-033 §8.5's zero.
 * [`technical_notes.md`](technical_notes.md) — the compiler-internals findings
   from the path that was withdrawn; kept as the notebook page it is.
+* [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) — what the nightly
+  toolchain, the Bridge-IR backend and the `rustc_ast` path were, what was
+  measured about them, and why they were withdrawn without a further
+  measurement.
 * [`toolchain_architecture.md`](toolchain_architecture.md) — how the crates in
   the workspace stack up.
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) — what runs
