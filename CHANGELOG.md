@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Changed (Parts I and II follow ADR-039: one shared mutable type, four doors, and nesting refused)
+
+- **Six sentences were false or incomplete and are now the rule as [ADR-039](docs/specification/adr/adr-039.md) decides it.** Part II 12.3's "often a compile-time error" is **always** (D2); Part II 12.2's safety-net sentence claimed the re-entrant case is not refused statically and is replaced by the refusal plus the check's new role, self-control rather than error handling (D2, D8); Part I 1.2's "exactly two things to choose" is three (D8); Part I 6.2 defined `Locked[T]` by the nesting that no longer exists (D9); Part I 6.3's "you must use the `.access()` method" is four doors (D10); and Part II 12.2's derivation from the `sync` lambda is replaced by the stronger sentence — while the lock is open in `get` and `set`, no code of the user's runs at all (D10).
+
+- **`SharedMut[T]` is the shared mutable type, from the start.** Part I 6.2 now says what each of `Shared[T]`, `SharedMut[T]` and `Locked[T]` is for — `Locked[T]` keeps its own use, individually locked fields inside a shared structure — and the hand-written `Shared[Locked[T]]` nesting is gone from every example in Parts I and II. Nothing is renamed: no program could write either type.
+
+- **The four doors are in Part II 12.2, with the beginner's view in Part I 6.3**, each with the one sentence that says why it is shaped that way, plus the two refusals that come with them (assignment names `set`; a `set` whose argument reads the same container names `update`). Part II 12.2's ordering rule is refined rather than contradicted: `get` is a read and the other three are writes, so two `get`s are unordered ([ADR-033](docs/specification/adr/adr-033.md) D2) and the writing forms keep their order.
+
+- **The lock-touching property is written down in Part II 12.3** — a second derived property per function beside `sync`, inferred over the same call graph, which is what catches chains and self-calls — together with why it is coarse, the warning never to answer 12.2's ordering question with it, and the rule that a function handed outward is judged by its body and never by its type. Part II 12.7 adds that opening a scope inside an open lock is refused, because the scope waits; Part II 11.2 adds that taking a lock inside a spawned task is the ordinary case, because it does not.
+
+- **Eight `Status` notes say what is built, and nothing in this entry is.** Part I 1.2 (the third switch), 6.2 and 6.3; Part II 11.2, 12.2 (two of them), 12.3 and 12.7 — four of them new, four corrected. Neither type is known to the checker, no door exists, no function carries the property, and no refusal is reported. Part II 12.2's old note claimed the front end accepts `Locked[T]` and hands it to the backend; the probe in [ADR-039](docs/specification/adr/adr-039.md) §1 shows the name is an error where it is written, and the note now says that.
+
+- **No rule was invented beyond the record.** [ADR-039](docs/specification/adr/adr-039.md) D6's foreign-call rule extends Part III 15.2's existing crossing sentence and is left to Part III. The diagnostics appendix needs codes for D2's nesting, D6's foreign call and D10's two refusals; the rules are written without a code until Appendix C allocates them.
+
+- **`cargo test --workspace` 532 passed, 0 failed** (unchanged — no test reads these pages); `cargo fmt --all --check` clean; `scripts/check-adr-refs.py` exit 0. Specification only: no `.rs` file is touched and no behaviour changes.
+
 ### Assessed (what a full answer to a stored view would have to track, and what a half-built one does)
 
 - **[`docs/stored-views.md`](docs/stored-views.md): an assessment, and it decides nothing.** What is built refuses a stored naked view or writes the subject's buffer out; the full rule is [ADR-008](docs/specification/adr/adr-008.md) D2's lattice, under which a stored view is neither an error nor a signature change but a **representation** change — the buffer takes a handle, the view becomes an offset and a length, and nothing is refused at all. The note asks what stands between the two, item by item.

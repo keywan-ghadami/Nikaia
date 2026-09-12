@@ -486,7 +486,7 @@ To share data that changes, you use **`SharedMut[T]`**: several owners, one valu
 **At `user_parallelism = no`:**
 * **Implementation:** Similar to a `RefCell` with a reentrancy check.
 * **Cost:** Extremely cheap (integer increment).
-* **Purpose:** It protects against **Logical Deadlocks** (e.g., Task A locks data, waits for network, Task B tries to lock same data -> Panic!). It does not use OS primitives.
+* **Purpose:** It is where a **Logical Deadlock** would be caught (e.g., Task A locks data, waits for network, Task B tries to lock same data -> Panic!) — a case 12.3 now refuses when you compile, which is why this check is self-control rather than error handling (below). It does not use OS primitives.
 
 **At `user_parallelism = yes`:**
 * **Implementation:** A real OS-level **Mutex** (Mutual Exclusion).
@@ -507,7 +507,7 @@ Each is shaped by what it is for:
 
 * **`set` needs no block** because arguments are evaluated before the call: whatever producing the new value costs, including waiting for I/O, is paid outside, and the lock is open for the duration of one store. `get` is the same in the other direction — one load.
 * **`update` is handed a copy and returns a copy.** No handle into the inside ever exists, so the question of whether a handle can outlive the block does not arise for that form at all.
-* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to append one — so it is the door that hands your block the value itself, and the door that carries every rule.
+* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to append one — so it is the one door that hands your block the value where it lies.
 
 Two mistakes are refused at the doors. **Assigning to a `SharedMut` directly** is refused, and the message names `set`: the value lives behind a lock, so replacing it is a call and not an assignment. And **a `set` whose argument contains a `get` on the same container** is refused, and the message names `update`, which is the door for a new value computed from the old one. The second check is syntactic: it catches what people write on one line and not the same thing spread over two.
 
