@@ -23,7 +23,7 @@ When you create a new project (`nikaia new my_project`), the following structure
     * **Source Hashing:** The SHA256 of each `.nika` source that took part, so an unchanged module skips parsing and expansion entirely.
     * **Resolved Versions:** The exact dependency versions, the toolchain version actually used, and the **Nikaia compiler's own version** - a changed emitter produces different output from identical input, so leaving it out makes the cache serve stale artifacts (ADR-021 D3). The dependency versions are the one thing here that is *recorded without being hashed into the key*: a dependency bump changes the machine code Cargo produces, never the Rust the compiler emits, and Cargo's own fingerprinting covers that half (ADR-021 §5).
     * **Declaration vs. record:** `nikaia.toml` states what the project *requires*; `nikaia.lock` records what was *resolved and used* - the same relationship `Cargo.toml` has with `Cargo.lock`.
-    * **Not in the lockfile:** build-time choices (both switches, opt-level, backend). They are hashed into the cache key but never written, or every change of switch would rewrite a committed file for no reason (ADR-021 D5).
+    * **Not in the lockfile:** build-time choices (all three switches, opt-level, backend). They are hashed into the cache key but never written, or every change of switch would rewrite a committed file for no reason (ADR-021 D5).
     * **Instant Builds:** On subsequent builds, if the hashes on disk haven't changed, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/` (git-ignored; the lockfile holds inputs, the store holds outputs). Keys are per translation unit, so one changed asset invalidates that unit, not the project (ADR-021 D6).
 * `nikaia.contracts`: The **Borrow Contract Ledger** (generated, commit it like the lockfile). Records the borrow contracts the compiler inferred for your functions and the tether relationships of your structs. It is both an incremental-build cache and the basis for the compiler's "what changed and what broke" error messages. Details in Chapter 13.5.
 * `src/`: The folder containing your source code.
@@ -102,7 +102,7 @@ sysroot outside a checkout; the layout and the variable exist
 ([ADR-002](adr/adr-002.md) §5).
 
 ### 13.3. Manifest Configuration (`nikaia.toml`)
-The manifest defines project metadata and the two build switches of Part I 1.2.
+The manifest defines project metadata and the three build switches of Part I 1.2.
 
 They live in `[build]`, and a flag overrides any of them for a single build —
 which is what a benchmark and a bug hunt need, while the committed value is the
@@ -114,6 +114,17 @@ fails the build rather than being ignored.
 many I/O workers, how large the pool for user code, which I/O mechanism, how
 long shutdown drains — is 13.3b's file, read at startup by whoever runs the
 program ([ADR-038](adr/adr-038.md) D5).
+
+**Why `reentrancy-check` is here and `cleanup-deadline` is not.** The two went
+opposite ways, so the line between them needs saying rather than assuming
+([ADR-039](adr/adr-039.md) D8). `cleanup-deadline` changes what a *running
+program waits for*, and the compiler need not know it — which is the migration
+note below. `reentrancy-check` changes **what the compiler emits**, and a choice
+the compiler acts on is the compiler's to read. It is a cache-key dimension like
+`target` and `user-parallelism` for the same reason ([ADR-037](adr/adr-037.md)
+D4), and it lives in the manifest rather than on the command line alone, because
+a build whose switches are not in the committed file cannot be reproduced from
+it.
 
 ```toml
 [package]
@@ -149,6 +160,20 @@ user-parallelism = "no"
 # want this, and the way to rule the analysis out when chasing a bug in the field.
 ordering = "effects"
 
+# Does the compiled program still notice a lock taken while a lock is held
+# (ADR-039 D8)?
+#   "on" (default) - the check is emitted, and a violation panics where it happens
+#   "off"          - it is not emitted
+# Taking a lock inside a lock is refused when you build (Part II 12.3,
+# ADR-039 D2), so in a program the compiler accepted this can never fire: what
+# it guards is a hole in that refusal, not a mistake in your program. Every
+# program the refusal accepts behaves the same at both settings - the switch
+# decides only whether a violation would be *noticed*, which is why turning it
+# off changes nothing a correct program means. Not a development aid to be
+# removed later: it is a guarantee that can be declined, the same escape
+# `ordering` is (ADR-033 D8).
+reentrancy-check = "on"
+
 [dependencies]
 # A Nikaia package. How one is resolved is not decided: no record names a
 # registry, a name space or a distribution format, so the compiler refuses this
@@ -170,6 +195,15 @@ opt-level = "z"     # Optimize for binary size
 opt-level = 3       # Maximize throughput
 lto = true          # Link Time Optimization
 ```
+
+> **Status:** `target`, `user-parallelism` and `ordering` are read, and so is the
+> moved `cleanup-deadline`, which compiles with a note saying where it went.
+> **`reentrancy-check` is specified and not built**: `[build]` does not know the
+> key, so a manifest that writes it today fails the build as a typo would — the
+> rule above, applied to a key the specification has and the compiler has not.
+> What it would switch is not built either, because nothing refuses the nesting
+> it is the self-check for and no lock exists to re-enter
+> ([ADR-039](adr/adr-039.md) §4, Part II 12.2).
 
 ### 13.3b. Runtime Configuration (`nikaia-runtime.toml`)
 A compiled program is tuned by the person running it, who is not the person who
@@ -306,23 +340,26 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O. `true` where the source asserted it, `"inferred"` where the body implies it ([ADR-027](adr/adr-027.md)), `"from(f)"` where the lambda it is given decides ([ADR-029](adr/adr-029.md)) |
 | `throws` | fn | Kap 7.1: it may fail, and **with what** — `throws = ["ConfigError", "IoError"]`, the set inferred over the call graph ([ADR-023](adr/adr-023.md) D1). Stage 0 writes `true`, because a compiler that cannot lower an error type has no names to put in a list |
 | `returns` | fn | what the result may point into — `borrows(a \| b)` |
-| `signature` | fn | its parameters, its **options** and its result, as the source writes them: `"(path: ?, data: ?; append: bool = false, create: bool = true)"`. An option carries its default, because a call that leaves one out still passes a value and only the declaration knows which (Part I, 5.1). A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one |
+| `signature` | fn | its parameters, its **options** and its result, as the source writes them: `"(path: ?, data: ?; append: bool = false, create: bool = true)"`. An option carries its default, because a call that leaves one out still passes a value and only the declaration knows which (Part I, 5.1). A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as `?`, because `T` is a name that stands for a type rather than being one. Shared mutable state is written `SharedMut[T]`, which is the one name the language has for it, so no internal spelling can reach an entry a reader sees ([ADR-039](adr/adr-039.md) D9) |
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
 | `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
 | `crosses` | type | a value of this type **may cross a thread** ([ADR-005](adr/adr-005.md) §1 Group B, `NK25xx`). Written by hand and never inferred, because it only ever answers for a type whose parts this compiler cannot walk: a Nikaia `struct` records its `fields`, and the check walks those. Its absence is "nobody said" and not "it may not" — and "nobody said" is not permission, so the compiler will not put such a value on a thread of its own choosing |
 | `touches` | fn | which resources it reaches and whether it reads or writes them — `["file(path) write", "stdout write"]` ([ADR-033](adr/adr-033.md)). **Absent means it touches everything**, so a function nobody has described orders against everything and stays where it was written. *Specified, not implemented.* |
+| `locks` | fn | whether the body may **acquire a lock**, anywhere it reaches: the property that decides whether a call may appear inside an open lock ([ADR-039](adr/adr-039.md) D3). Propagated over the same call graph as `sync` and from the opposite end — nobody touches a lock until something reached says it does. **An absent entry means it touches a lock**, which is the one inverted key in this file; see below. It is coarse on purpose: it says "a lock", never *which* lock, so it can never answer an ordering question. That is `touches`'s line above, and the two must not be mistaken for one another ([ADR-039](adr/adr-039.md) D4). *Specified, not implemented.* |
 | `sharing` | fn | which of its `Shared` positions are one allocation, and which reference count each of those classes gets — `["counts \| <result>: plain", "hits: atomic"]` ([ADR-037](adr/adr-037.md) D7). Two facts in one line, and the first is the one a caller could not work out for itself: `counts` and the result are **the same allocation**, so they have the same count whichever side of the call decides it. The count is `atomic` unless the compiler proved that nothing crosses a thread with the class. **Absent means the function has no `Shared` position**, which is almost every function — not "nobody said", because the atomic count is the floor and the worst an entry can say is `atomic` |
 
-**`sharing` is the fifth of these and the only one that cannot make a program wrong.** The other four are read as permissions of one kind or another — a caller that trusts a wrong `sync` puts a pausing body inside a lock. This one records an **optimisation** on a floor that is already safe ([ADR-037](adr/adr-037.md) D6): the worst a class can be given is the atomic count every `Shared` would otherwise have, so a ledger that says nothing, or says `atomic` about everything, still describes a program that runs correctly and merely pays about 9 ns per clone-and-drop pair for the privilege. What it buys is that the classes **compose** across a call: a build that can read a dependency's sources continues the analysis through its published functions without the two reference counts ever becoming two types.
+**`sharing` is the sixth of these and the only one that cannot make a program wrong.** The other five are read as permissions of one kind or another — a caller that trusts a wrong `sync` puts a pausing body inside a lock, and one that trusts a wrong `locks` puts a second lock inside the first. This one records an **optimisation** on a floor that is already safe ([ADR-037](adr/adr-037.md) D6): the worst a class can be given is the atomic count every `Shared` would otherwise have, so a ledger that says nothing, or says `atomic` about everything, still describes a program that runs correctly and merely pays about 9 ns per clone-and-drop pair for the privilege. What it buys is that the classes **compose** across a call: a build that can read a dependency's sources continues the analysis through its published functions without the two reference counts ever becoming two types.
 
 `signature` and `fields` are what make a *type* checker possible across a boundary whose bodies are not visible — the `NK1xxx` diagnostics above are all answered from them ([ADR-024](adr/adr-024.md)). They are also where the ledger's `?` earns its keep: it is **the absence of a claim**, and a checker reports a mismatch only where both sides are written down, so a contract that says less makes the compiler quieter and never wronger.
 
 Only what is *true* is written: a `sync = false` on every entry would treble the file and say nothing, and a diff should show a promise being made or withdrawn. **An absent `sync` therefore means not `sync`** — while an absent *entry* means nothing is known and a caller may not assume. That distinction is what makes the file worth shipping rather than deriving.
 
+**`locks` is the one key where absence means the opposite, and that is written here rather than left to be worked out.** **An absent `locks` means the function touches a lock.** For `sync`, absence lands on the restrictive answer and costs nothing. For this key it would land on *permission*, and an entry nobody wrote would be a hole through which every rule about taking a lock inside a lock falls — reading the absence of an answer as a yes is the polarity [ADR-010](adr/adr-010.md) D1 forbids ([ADR-039](adr/adr-039.md) D5). So this is the one key whose negative is worth the space: a function that reaches no lock says `locks = false`, and a function that says nothing is read as reaching one.
+
 **`sync` is written down in two ways, because it is arrived at in two ways** ([ADR-027](adr/adr-027.md)). `sync = true` is a promise the *source* made, and `NK2202` is what the compiler says when the body contradicts it. `sync = "inferred"` is a promise the *body* implies: nothing the function calls can pause, so it cannot pause, and saying otherwise would be the ledger recording something it had already read and knew better about.
 
-A **caller** does not distinguish them. Both mean "this cannot pause", both satisfy `access` and `par_iter`, and any code that asks the ledger the caller's question gets one answer. A **diff** must distinguish them, and that is the whole reason the file spells them differently: withdrawing an asserted `sync` is a decision someone made and has to have meant, while losing an inferred one is a *consequence* of an edit somewhere else — usually in a function further down. The two deserve different sentences, and a `bool` cannot produce them.
+A **caller** does not distinguish them. Both mean "this cannot pause", both satisfy the `sync` half of what `access` and `par_iter` require, and any code that asks the ledger the caller's question gets one answer. `sync` is a half rather than the whole since [ADR-039](adr/adr-039.md) D3: a body may go inside a lock only if it cannot pause **and** reaches no lock of its own, and `locks` is the second condition. A **diff** must distinguish them, and that is the whole reason the file spells them differently: withdrawing an asserted `sync` is a decision someone made and has to have meant, while losing an inferred one is a *consequence* of an edit somewhere else — usually in a function further down. The two deserve different sentences, and a `bool` cannot produce them.
 
 **`throws` is a set for the same reason**, and it is the second key this argument has been made about. A boolean answers "can this fail", which is what a *caller* needs in order to declare its own `throws` — and nothing else. A `catch` needs more: whether it still covers everything that can reach it. That question has an answer only if the ledger names the errors, and the answer changes when a function three modules down gains a `throw`. Recorded as a set, the diff says which error appeared and which `catch` stopped covering its arrivals; recorded as a boolean, it says nothing at all, because `true` was already `true`. The narration is `NK24xx` (Appendix C), the same machinery a changed borrow contract uses.
 
@@ -331,6 +368,8 @@ A **caller** does not distinguish them. Both mean "this cannot pause", both sati
 `sync = "from(f)"` is the way to say it, naming the parameter that decides. A caller reads it as **"this call adds no pausing of its own"**, which is sound because the lambda runs *during* the call: its body is part of the function that writes it, and that function has already counted its calls. `from` adds nothing because there is nothing left to add.
 
 That reason is also the limit. A parameter the callee **stores or spawns** — Part I 5.4's `@detached` — breaks it, because then the lambda's calls belong to nobody the caller is counting. `from` is for an immediate lambda only, and until the ledger can spell `@detached` that rule is held by a test over `std`'s own entries rather than by the file format.
+
+**`locks` needs no `from(f)`, and the reason bounds it the same way.** `sync` needs a fourth state because an entry for `map` has to answer a question whose answer is in the caller's lambda. `locks` is never asked of an entry at the moment it matters: the refusal is decided on the caller's own body, where the lambda is in front of the check, so what `sync` has to summarise in an entry this reads directly ([ADR-039](adr/adr-039.md) D3). The premise is the same immediate lambda — a lambda the callee stores or spawns is `@detached`'s case and not this one.
 
 **A signature may name its receiver's type arguments** ([ADR-031](adr/adr-031.md)). `HashMap::entry` is written `(&HashMap[$K, $V], key: ?) -> Entry[$V]`: the result holds whatever the map holds. At a call site the receiver's actual type binds the variables and they are substituted away, so `HashMap[&str, Stats]` makes that result an `Entry[Stats]`, and `and_modify`'s `fn(&$V)` a `fn(&Stats)` — which is what gives the `a` in `fn { a.add(t) }` a type at all.
 
@@ -343,7 +382,7 @@ The type it names is a **function type**, `fn(&Stats)`, which is the other half 
 The two are also arrived at with opposite caution, which is worth stating plainly because it looks like an inconsistency and is not:
 
 * The **check** on an assertion is conservative in the *permissive* direction. It reports only calls it can prove will pause, so it never rejects a correct program. A call it cannot resolve is not an error.
-* The **inference** is conservative in the *restrictive* direction. It claims `sync` only where every call resolves and every callee is `sync`; that same unresolvable call costs the function its claim. The entry is **shipped**, and a consumer will read it and put the function inside `access` — a wrong `sync` there is a pausing body inside a lock. The ledger already settled this for provenance: an analysis that fails open is a vulnerability generator.
+* The **inference** is conservative in the *restrictive* direction. It claims `sync` only where every call resolves and every callee is `sync`; that same unresolvable call costs the function its claim. The entry is **shipped**, and a consumer will read it and put the function inside `access` — a wrong `sync` there is a pausing body inside a lock, and a wrong `locks` is a second lock taken inside the first. The ledger already settled this for provenance: an analysis that fails open is a vulnerability generator.
 
 **What counts as resolvable is the type checker's answer, not a second opinion** ([ADR-028](adr/adr-028.md)). A call by name — `helper(x)`, `io::read_to_string()` — is looked up directly. A *method* call needs the receiver's type, and the compiler has one module that infers types; it records where each method call went, and the inference reads that rather than growing an inference of its own. So what the two analyses above can see grows whenever the type checker can name more, and neither of them changes when it does.
 
@@ -359,7 +398,7 @@ One consequence is worth stating for a library author: **writing a signature dow
 
 **Determinism guarantee.** The ledger is a **pure function of (source tree, toolchain)**: the same sources and the same pinned toolchain produce a byte-identical `nikaia.contracts` on every machine, every run, with any thread count. This is a hard guarantee (see [ADR-005](adr/adr-005.md), D8, including the implementation ban list and the CI tests that enforce it); a violation is treated as a compiler bug. Two consequences worth knowing:
 
-* There is exactly **one** ledger per project — it is valid at every setting of either switch. Borrow contracts and tether relationships are switch-independent by design; switch-dependent checks (such as thread-safety rules) are performed by the compiler directly and are never recorded in the ledger.
+* There is exactly **one** ledger per project — it is valid at every setting of every switch. Borrow contracts and tether relationships are switch-independent by design; switch-dependent checks (such as thread-safety rules) are performed by the compiler directly and are never recorded in the ledger.
 * Ledger stability is **not** promised across toolchain *upgrades* — a newer compiler may infer better contracts. The toolchain hash plus the explicit "caused by the toolchain update" narration make such diffs self-explaining instead of alarming.
 
 **Verification mode (`--locked`).** `nikaia build --locked` (and CI setups) verify instead of update: the compiler regenerates the contracts in memory and compares them byte-for-byte against the committed `nikaia.contracts`. Any difference fails the build with the narrated contract diff (see `NK2401` above). Because of the determinism guarantee, this check is exact and needs no tolerance or semantic comparison — the recommended CI line is simply building with `--locked`, which is equivalent to `git diff --exit-code nikaia.contracts` after a regular build.
@@ -502,6 +541,16 @@ Nikaia treats Rust Crates differently than C libraries. Because Rust has a stron
 **A value handed to a Rust function may reach a thread that function owns.** A Rust crate may bring its own runtime and its own threads ([ADR-038](adr/adr-038.md) D7), so a call whose body this compiler cannot see is a call that may put what it is given on a thread of its own — and a value may cross into a foreign thread only if it may cross *any* thread. The compiler refuses the crossing it can decide about as `NK2502` (Part III, C.5), at **both** settings of `user_parallelism`: that switch bounds what *your* code runs at once, and a foreign runtime's threads are not yours.
 
 The rule reaches exactly as far as the Rust signature is true. A Rust API that declares a type safe to send when it is not puts the value on another thread with nothing complaining, and no check in the frontend can see that: where Nikaia reads the signature, the value is crossable by declaration. That is the one place interoperability costs a guarantee rather than only convenience, and it is why a narrowing shim is worth reviewing like the boundary it is.
+
+**A call into foreign code is judged by what its arguments can reach.** Foreign code can only touch what it reaches, and this language has no global mutable data, so reachability is the whole question. If no lock is reachable from the arguments — transitively, and through the fields of a struct — the call is allowed, and the compiler says nothing about it at all. Otherwise it is refused as `NK2503` (C.3, worked through in C.6), and the way out is keeping the lock out of what the call can reach: hand over a copy of what it needs. This **extends** the foreign-thread rule above ([ADR-038](adr/adr-038.md) D7) to locks and displaces nothing in it ([ADR-039](adr/adr-039.md) D6).
+
+**"No lock reachable" is an answer, not the absence of one.** Where nothing written down says what a value contains, the question is *undecided* — C.5's third answer, which is not permission and is handed on rather than accepted. An undecided type is therefore not a type with no lock in it. The case that makes this worth its own sentence is a ledger entry with an **empty** field list, which is what a type whose fields are Rust has: read as a structure that looks like "nothing inside", and it means "nothing recorded" (13.5).
+
+> **Status:** not built. The rule needs a lock the compiler knows, and neither
+> `SharedMut[T]` nor `Locked[T]` is a type it has (Part II, 12.2;
+> [ADR-039](adr/adr-039.md) §4), so no call can have one among what its
+> arguments reach. `NK2503` is catalogued and not emitted (C.3). `NK2502` above
+> is built.
 
 **Mapping Types**
 * Rust `i32` -> Nikaia `i32`
@@ -1047,16 +1096,18 @@ Errors arising from external circumstances (File not found, Network timeout).
 * **Handling:** Enforced by the compiler via `catch{}` blocks or propagation.
 
 ### A.2. Unrecoverable Errors (`panic`)
-Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). What a panic does depends on **both** switches, and on different grounds:
+Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). Three build switches exist (13.3) and a panic depends on **two** of them — `user_parallelism` and `target` — on different grounds:
 
 | `user_parallelism` | Panic Behavior | Consequence |
 | :--- | :--- | :--- |
 | **`no`** | **Abort** | The process terminates immediately. There is no second piece of your code in flight to isolate the failure from, so unwinding would buy nothing and is not done — which also leaves a smaller binary. |
-| **`yes`** | **Task Poisoning** | Only the affected task is terminated. The worker thread catches the panic (Fault Isolation). Resources (`Locked[T]`) held by the task are marked "poisoned" so no other thread reads state a half-finished task left behind. |
+| **`yes`** | **Task Poisoning** | Only the affected task is terminated. The worker thread catches the panic (Fault Isolation). Resources (`SharedMut[T]`) held by the task are marked "poisoned" so no other thread reads state a half-finished task left behind. |
 
 The `target` decides this independently where the machine leaves no choice: on
 `wasm32-unknown` a panic is a **trap** and the module is done, whatever
 `user_parallelism` says, because the host offers nothing to unwind to.
+
+**The third switch changes nothing on this page.** `reentrancy-check` (13.3) decides whether a compiled program still notices a lock taken while a lock is held. Taking one is refused when you build ([ADR-039](adr/adr-039.md) D2), so in a program the compiler accepted the check cannot fire, and if it ever does the refusal has a hole rather than the program ([ADR-039](adr/adr-039.md) D8). The re-entrancy panic Part II 12.2 describes at `user_parallelism = no` is that check and nothing else, which is why the table above does not carry a row for it. **Poisoning is unchanged by any of this**: at `no` a panic is an abort, so nobody survives for whom poisoning would be done, and the `yes` row stays the only place it happens ([ADR-039](adr/adr-039.md) D1).
 
 On **every** panic path — including the abort and the WASM trap — the application's **Panic Hook** runs first (Part I, 7.2): one global, `sync` handler receiving message, location, and stack trace, intended for crash dumps and reports. This rides on the backend's panic machinery, which invokes the hook before aborting even under `panic = abort`. See [ADR-006](adr/adr-006.md), D6.
 
@@ -1119,10 +1170,10 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | :--- | :--- | :--- |
 | `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. `NK1109` a call names an option the callee does not have (Part I, 5.1). `NK1110` a call reaches an item another file keeps private (Part I, 9.2). All ten are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). `NK1111` (**warning, and temporary**) a plain string holds what looks like a hole, or a doubled brace that used to be an escape - the one-release migration to `f"…"` ([ADR-035](adr/adr-035.md) D5), and the only thing this checker warns about rather than refusing. `NK1112` a call does not pass a parameter the DSL statement it is given declares, and `NK1113` names one that statement does not have (Part II, 10.5) - answered from the statement's own body rather than from the ledger, because the body is where a `:name` is written ([ADR-007](adr/adr-007.md) D5). |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` where they run in parallel (Part II, 12.7). |
-| `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). |
+| `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). `NK2203` a lock taken while a lock is held — written one inside the other, reached through a chain of calls, or opened as a scope inside the block, because a scope's tasks run during the call and one of them waiting for the held lock is a deadlock rather than a risk ([ADR-039](adr/adr-039.md) D2, D3). The way out is asking for both at once: `access_all(a, b) fn(x, y) { … }` (Part II, 12.3). `NK2204` an assignment to a `SharedMut` directly; the message names the door — `kasse.set(42)` for `kasse = 42` ([ADR-039](adr/adr-039.md) D10). `NK2205` a `set` whose argument reads the same container with `get`; the message names `update`, which is handed the old value and returns the new one ([ADR-039](adr/adr-039.md) D10). Worked through in C.6. |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). `NK2302` a parameter written `&str` is kept past the call it was given in, and nothing names the buffer it views (Part I, 6.6). A view inside a struct carries the buffer it points into ([ADR-008](adr/adr-008.md) D1) and a naked one does not, so the message names the struct form as the way out. Reported where the destination names no buffer: a function or method whose subject holds no view, a view handed back through the result, a view given to a task. Where the destination *does* name one — a field of a subject that holds a view — the program is lowered instead, with the parameter written as a view of that buffer. That last case is accepted **without being decided**: a call on the subject may or may not keep what it is given, nothing written down says which, and an analysis that fails open here emits Rust that does not compile — so it is treated as keeping it ([ADR-010](adr/adr-010.md) D1's polarity, where the cost of the safe direction is a narrower signature rather than a refusal). |
 | `NK24xx` | Contract changes | `NK2401` a borrow contract change broke a caller, narrated from the ledger diff (13.5). Reserved: a `catch` that no longer covers every error that can reach it, narrated from the same diff — it needs the ledger to record the *set* rather than a boolean ([ADR-023](adr/adr-023.md) D1), which needs error types the compiler can lower. |
-| `NK25xx` | Portability | The `Send` rules that parallel code needs ([ADR-005](adr/adr-005.md) §1 Group B), decided the same way at **both** settings of `user_parallelism` so that a library built at one stays usable at the other. `NK2501` a value that may not cross a thread is used by a task (Part II, 11.2) - an **error** at `user_parallelism = yes` and a **lint** at `no`, where the task does not run and so the crossing does not happen. `NK2502` a value that may not cross a thread is handed to a call this compiler cannot see the end of ([ADR-038](adr/adr-038.md) D7's foreign runtime) - an error at both settings, because a Rust dependency's own threads are not bounded by a switch about *your* code ([ADR-037](adr/adr-037.md) D2). Worked through in C.5. |
+| `NK25xx` | Portability | The `Send` rules that parallel code needs ([ADR-005](adr/adr-005.md) §1 Group B), decided the same way at **both** settings of `user_parallelism` so that a library built at one stays usable at the other. `NK2501` a value that may not cross a thread is used by a task (Part II, 11.2) - an **error** at `user_parallelism = yes` and a **lint** at `no`, where the task does not run and so the crossing does not happen. `NK2502` a value that may not cross a thread is handed to a call this compiler cannot see the end of ([ADR-038](adr/adr-038.md) D7's foreign runtime) - an error at both settings, because a Rust dependency's own threads are not bounded by a switch about *your* code ([ADR-037](adr/adr-037.md) D2). Worked through in C.5. `NK2503` a call into foreign code from which a **lock** is reachable through its arguments, transitively and through the fields of a struct ([ADR-039](adr/adr-039.md) D6) — `NK2502`'s walk generalised rather than a second one of its own, and here the refusal is about the *call* rather than about a type crossing: a call that can reach no lock is allowed without a word, and the way out of one that can is keeping the lock out of its reach (15.2). Worked through in C.6. |
 | `NK26xx` | Failure declaration, resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). `NK2605` a **written** call that can fail, in a function that does not declare `throws` (Part I, 7.1) — answered from the ledger (13.5), so it says which contract it read and it grows as the ledger does. The same rule as `NK2601` and `NK2701` ([ADR-025](adr/adr-025.md) D1); what makes it the one that had to exist is that nothing else in the language says a function can fail, so accepting the program publishes `throws`'s *absence* as a fact about a body that contradicts it. |
 | `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 
@@ -1131,8 +1182,17 @@ The catalogue grows with the implementation; adding an NK code requires adding i
 > **Status:** "defined so far" above means defined *here*, not emitted. The codes
 > the compiler reports are `NK1101`–`NK1113`, `NK2202`, `NK2302`, `NK2501`,
 > `NK2502`, `NK2605` and `NK2701`; `NK2101`, `NK2102`, `NK2201`, `NK2301`,
-> `NK2401`, `NK2601`–`NK2604` are specified ahead of the check that would raise
-> them.
+> `NK2401`, `NK2601`–`NK2604` and `NK2203`–`NK2205`, `NK2503` are specified
+> ahead of the check that would raise them.
+>
+> **A code specified ahead of its check has no reproduction test, and must not
+> have one.** The paragraph above asks for one per code, and that obligation is
+> owed by a code the compiler emits: for these thirteen there is nothing to
+> reproduce, and a test that cannot fail would claim a check that is not there.
+> The four that [ADR-039](adr/adr-039.md) adds are in exactly the position of
+> the nine before them — catalogued, with their shapes written down (C.6), and
+> neither the types nor the checks they are about exist
+> ([ADR-039](adr/adr-039.md) §4).
 >
 > `NK2302` is the one code here whose question is answered without being
 > decided: a read-only call on a field that holds views is treated as keeping
@@ -1180,7 +1240,7 @@ checker stays quiet about it rather than raising a second error for one mistake.
 
 The `NK25xx` pair, on the two places a value the program wrote reaches another thread. Both come from one question asked of the value's *type* - **may a value of this type be on a thread other than the one that built it?** - and the answer is deliberately not allowed to depend on which build this is ([ADR-005](adr/adr-005.md) §1 Group B).
 
-> **Status: built, and no program reaches it.** A refusal needs a type the records say may not cross, and there is none. `Shared` was the one, and [ADR-037](adr/adr-037.md) D6 gives it a count that is atomic at every setting - so it crosses, answered by what it holds, and every value a Nikaia program can write crosses with it. The pair stays because the reason for it has not gone away: a type whose implementation *does* follow `user_parallelism` has to take the worse of the two settings, or a library written at one turns out un-compilable at the other. `Locked` is the candidate (Part II, 12.2), and nothing decides it yet. The two shapes below are what the pair prints for such a type, written with a hypothetical `Held` for exactly that reason.
+> **Status: built, and no program reaches it.** A refusal needs a type the records say may not cross, and there is none. `Shared` was the one, and [ADR-037](adr/adr-037.md) D6 gives it a count that is atomic at every setting - so it crosses, answered by what it holds, and every value a Nikaia program can write crosses with it. The pair stays because the reason for it has not gone away: a type whose implementation *does* follow `user_parallelism` has to take the worse of the two settings, or a library written at one turns out un-compilable at the other. The lock is that type, and [ADR-039](adr/adr-039.md) D1 is what decides it: it keeps one implementation per setting of `user_parallelism`, so it stays non-crossable at `no`, and the pair keeps the occupant it would otherwise never have had. **That occupant is not built**: neither `SharedMut[T]` nor `Locked[T]` is a type the compiler has ([ADR-039](adr/adr-039.md) §4, Part II 12.2), so the two shapes below keep their hypothetical `Held` until there is a real name to put in them.
 
 A task runs somewhere else, so everything it uses goes with it:
 
@@ -1213,7 +1273,7 @@ Four things about that pair are deliberate.
 
 **The rule is structural and transitive.** A `struct` with one field that may not cross may not cross, and the note names the field that decided it rather than the struct. The fields come from the ledger (13.5), so the rule reaches a type declared in another file for the same reason a type error does.
 
-**Three answers, and the third is the design.** A type may cross, may not, or **nothing written down says**. The third is not permission - reading the absence of an answer as a yes is the polarity [ADR-010](adr/adr-010.md) D1 forbids - and it is not a refusal either, because this compiler knows the type of rather less than half of what a program writes and must never reject a program that is correct (C.4). So an undecided crossing is *handed on*: `rustc` still type-checks the emitted crate, and the trait-bound error it raises is reported against the `.nika` line by the translation C.1 requires. Nothing is silently accepted, and nothing correct is refused. A library may end the uncertainty about one of its own types with a line in its ledger, the way it already ends it about pausing.
+**Three answers, and the third is the design.** A type may cross, may not, or **nothing written down says**. The third is not permission - reading the absence of an answer as a yes is the polarity [ADR-010](adr/adr-010.md) D1 forbids - and it is not a refusal either, because this compiler knows the type of rather less than half of what a program writes and must never reject a program that is correct (C.4). So an undecided crossing is *handed on*: `rustc` still type-checks the emitted crate, and the trait-bound error it raises is reported against the `.nika` line by the translation C.1 requires. Nothing is silently accepted, and nothing correct is refused. A library may end the uncertainty about one of its own types with a line in its ledger, the way it already ends it about pausing. The same third answer governs whether a call into foreign code can reach a lock (15.2, [ADR-039](adr/adr-039.md) D6): an undecided type is not a type with no lock in it, and "allowed silently" is for a call whose arguments reach nothing — never for one whose contents nobody wrote down.
 
 **One verdict, two severities.** At `user_parallelism = no` nothing you wrote runs concurrently, so the task above does not run and `NK2501`'s crossing does not happen: refusing it would refuse a program that compiles, and saying nothing would let a library built there turn out un-compilable at `yes`. A lint is the third answer, and it carries a note saying which of the two it is. `NK2502` is not downgraded, because a foreign runtime's threads run whatever this switch says.
 
@@ -1221,3 +1281,79 @@ Four things about that pair are deliberate.
 
 
 
+
+### C.6. What a Refused Lock Looks Like
+
+Four refusals come with the rule that a lock may not be taken while a lock is
+held, with the doors shared mutable state is reached through, and with a foreign
+call that could reach a lock ([ADR-039](adr/adr-039.md) D2, D6, D10). Each names
+a way out, as C.2 requires, and each way out is one line of code.
+
+> **Status: none of the four is emitted, and the type they are about does not
+> exist.** `SharedMut[T]`, `Locked[T]` and the four doors are specified and not
+> built, and no check refuses the nesting `NK2203` is for
+> ([ADR-039](adr/adr-039.md) §4, Part II 12.2 and 12.3). The shapes below are
+> what the codes print, specified ahead of the checks the way the rest of this
+> appendix is (C.3).
+
+A lock taken inside a lock, which is what `access_all` exists for (Part II, 12.3):
+
+```text
+error[NK2203]: `account_b` takes a lock, and a lock is already held here
+  --> main.nika:9:5
+   9 |     account_b.access fn(to) { to.balance += 100 }
+           ^
+     = the block this sits in holds `account_a` (main.nika:8), and one lock taken inside another is the inconsistent order two tasks deadlock on (Part II, 12.3)
+     help: ask for both at once, which locks them in one order for everybody:
+           access_all(account_a, account_b) fn(a, b) { … }
+```
+
+A chain reads the same, with one note more: it names the call, and the function
+inside it that takes the lock, because that is the line the reader has to change.
+A scope opened inside the block is the same refusal for the reason
+[ADR-039](adr/adr-039.md) D3 gives — the scope waits for its tasks, so a task
+waiting for the held lock waits for the block that is waiting for it.
+
+Then the two that come with the doors:
+
+```text
+error[NK2204]: `kasse` holds shared mutable state, and this assigns to it directly
+  --> main.nika:4:5
+   4 |     kasse = 42
+           ^
+     = a write goes through a door, because the lock has to be taken for it (Part II, 12.2)
+     help: write `kasse.set(42)`
+```
+
+```text
+error[NK2205]: this `set` reads `kasse` while computing what to store in it
+  --> main.nika:6:5
+   6 |     kasse.set(kasse.get() + 100)
+           ^
+     = `set` is for a value computed outside the lock, so this takes the lock twice: once to read and once to store
+     = making a new value out of the old one is what the third door is for, and it takes the lock once
+     help: write `kasse.update fn(old) { old + 100 }`
+```
+
+That second one is syntactic: it catches the `get` written inside the `set` and
+not the same pair spread over two lines, which is the shape people write
+([ADR-039](adr/adr-039.md) D10).
+
+And the foreign call, judged by what its arguments can reach (15.2):
+
+```text
+error[NK2503]: `hyper_shim::render` can reach a lock through `state`
+  --> main.nika:12:5
+  12 |     hyper_shim::render(state)
+           ^
+     = nothing written down describes `hyper_shim::render`, so this compiler cannot see what it does with what it is handed (Part III, 15.2)
+     = `state.counts` is a `SharedMut[i64]`, and a lock is what the call must not be able to reach
+     help: hand it a copy of what it needs instead of the container:
+           hyper_shim::render(state.counts.get())
+```
+
+The note names the **field** that decided it rather than the struct, the way
+`NK2501`'s does, and for the same reason: the fields come from the ledger (13.5),
+so the rule reaches a type declared in another file. A call whose arguments can
+reach no lock gets no diagnostic and no note — it is allowed silently, which is
+not the same as a call whose contents nobody wrote down (C.5).

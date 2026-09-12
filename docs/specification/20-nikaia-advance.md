@@ -369,6 +369,11 @@ The answer is **the same at both settings**, so that a library written at one ca
 
 > **Status.** The check runs; `spawn` itself does not yet lower, because the runtime integration it needs is the next step. So `NK2501` is reported ahead of the construct it is about — which is the right order, since the check is what has to exist before a value that may not cross one does.
 
+**Taking a lock inside a spawned task is the ordinary case.** A `spawn`'s body runs later and elsewhere rather than during the call, so it is not part of whatever its writer was holding at the time, and the rule that refuses a lock taken while a lock is held (12.3) does not reach into it. A scope is the other case, because it waits for its tasks — see 12.7 ([ADR-039](adr/adr-039.md) D3).
+
+> **Status:** not built. No function carries the lock-touching property of 12.3 yet, so nothing
+> here tells a spawned body from a scope's.
+
 #### Return Values & Handles
 `spawn` always returns a `TaskHandle`. At `yes` it represents a running thread; at `no` a scheduled event. Calling `.await` or `.join()` on it works identically either way.
 
@@ -433,8 +438,8 @@ fn total(p: &Player) -> i32 sync {
 ```
 
 This matters more than it looks. Every construct in this chapter that makes
-concurrency safe does it by demanding a `sync` lambda — `access`, `access_all`,
-`par_iter`, a scope's parallel tasks, the panic hook. If `sync` were
+concurrency safe does it by demanding a `sync` lambda — `access`, `update`,
+`access_all`, `par_iter`, a scope's parallel tasks, the panic hook. If `sync` were
 something you had to *enter*, the set of things those lambdas could call would
 be "whatever somebody remembered to annotate", and the safe path would be the
 narrow one. It is the other way round: the safe path is open by default, and it
@@ -473,10 +478,10 @@ written into the ledger and shipped, and a wrong one puts a pausing body inside
 somebody's lock. Writing `sync` yourself is how you overrule that — an
 assertion, checked as far as the compiler can see, and yours where it cannot.
 
-### 12.2. The Dual Nature of `Locked[T]`
-To share mutable data, you use the `Locked[T]` type. Its implementation follows `user_parallelism`, providing "Zero Cost Abstraction" relative to the requirements.
+### 12.2. The Dual Nature of the Lock
+To share data that changes, you use **`SharedMut[T]`**: several owners, one value, and the lock inside the type rather than in a second wrapper you write around it (Part I, 6.2). `Locked[T]` is the same lock on its own, for individually locked fields inside a shared structure ([ADR-039](adr/adr-039.md) D9). Everything in this section is about the lock, so it holds for both. Its implementation follows `user_parallelism`, providing "Zero Cost Abstraction" relative to the requirements.
 
-> **The `Shared` around it is no longer what stops the counter below crossing a thread.** `Shared[T]`'s count of owners is one a second thread may safely touch at every setting ([ADR-037](adr/adr-037.md) D6, Part I 6.2), so the handle may go into a task. What decides whether `Shared[Locked[T]]` may is therefore the **lock**, which is what this section is about — and the compiler says nothing about it either way today: nothing written down describes `Locked`, so the crossing is neither refused nor permitted in the frontend and the generated code is where it is settled (Part III, C.5).
+> **The owner count is no longer what stops the counter below crossing a thread.** The count of owners is one a second thread may safely touch at every setting ([ADR-037](adr/adr-037.md) D6, Part I 6.2), so the handle may go into a task. What decides whether a `SharedMut[T]` may is therefore the **lock**, which is what this section is about — and the compiler says nothing about it either way today: nothing written down describes the lock, so the crossing is neither refused nor permitted in the frontend and the generated code is where it is settled (Part III, C.5).
 
 **At `user_parallelism = no`:**
 * **Implementation:** Similar to a `RefCell` with a reentrancy check.
@@ -488,62 +493,81 @@ To share mutable data, you use the `Locked[T]` type. Its implementation follows 
 * **Cost:** Higher (Atomic operations).
 * **Purpose:** It protects against **Memory Corruption**. It ensures that two physical threads cannot write to the memory address at the same time.
 
+**Four Doors, Not One**
+A change to locked data has four shapes, and each has its own door. Only two of them run code of yours while the lock is open, and only those two carry the rules further down this section ([ADR-039](adr/adr-039.md) D10):
+
+| form | for | the block may wait |
+| :--- | :--- | :--- |
+| `kasse.get()` | taking a copy out | — |
+| `kasse.set(value)` | replacing; the value is computed outside | yes, outside |
+| `kasse.update fn(old) { old + 100 }` | new from old, small values | no |
+| `kasse.access fn(state) { … }` | in place, large values | no |
+
+Each is shaped by what it is for:
+
+* **`set` needs no block** because arguments are evaluated before the call: whatever producing the new value costs, including waiting for I/O, is paid outside, and the lock is open for the duration of one store. `get` is the same in the other direction — one load.
+* **`update` is handed a copy and returns a copy.** No handle into the inside ever exists, so the question of whether a handle can outlive the block does not arise for that form at all.
+* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to append one — so it is the door that hands your block the value itself, and the door that carries every rule.
+
+Two mistakes are refused at the doors. **Assigning to a `SharedMut` directly** is refused, and the message names `set`: the value lives behind a lock, so replacing it is a call and not an assignment. And **a `set` whose argument contains a `get` on the same container** is refused, and the message names `update`, which is the door for a new value computed from the old one. The second check is syntactic: it catches what people write on one line and not the same thing spread over two.
+
 **The `sync` Rule (No Pausing While Holding a Lock)**
 Holding a lock while the program pauses is dangerous *either way*: with threads it can block a whole CPU core; without them it can freeze other tasks that need the same data. Nikaia rules this out **at compile time**, using a keyword the language already has:
 
-> **`access` and `access_all` require a `sync` lambda — at every setting.**
+> **`update`, `access` and `access_all` require a lambda that is `sync` and touches no lock — at every setting.**
 
-A `sync` lambda (see 12.1) can never perform I/O and can never pause. Therefore, while you hold locked data, the program provably runs straight through: lock, compute, unlock. There is nothing to remember — if you try to do I/O inside `access`, the compiler stops you with a plain explanation:
+A `sync` lambda (see 12.1) can never perform I/O and can never pause, and a lambda that touches no lock cannot take a second one (12.3). So while locked data is open, the program runs straight through: lock, compute, unlock. **`get` and `set` need no condition at all, and for a stronger reason: while the lock is open in either of them, no code of yours runs, so there is nothing that could fall due** ([ADR-039](adr/adr-039.md) D10). If you try to do I/O inside `access`, the compiler stops you with a plain explanation:
 
 ```nika
-let counter: Shared[Locked[i32]] = ...
+let counter: SharedMut[i32] = ...
 
 // OK: pure computation
-counter.access fn { a += 1 }
+counter.update fn(old) { old + 1 }
 
 // Compiler Error: I/O inside a lock
-// counter.access fn { fs::write("log", "{a}") }
+// counter.access fn(n) { fs::write("log", "{n}") }
 ```
 
 ```text
 error[NK2201]: cannot wait for I/O while holding locked data
   --> main.nika:7
    |
- 7 | counter.access fn { fs::write("log", "{a}") }
-   |                    ^^^^^^^^^^^^^^^^^^^^^^ this writes to a file,
-   |                                            which makes the program pause
+ 7 | counter.access fn(n) { fs::write("log", "{n}") }
+   |                        ^^^^^^^^^^^^^^^^^^^^^^ this writes to a file,
+   |                                               which makes the program pause
    |
   note: while you hold locked data, every other task that needs it must wait.
         Pausing here could freeze them for a long time (or forever).
   help: copy the value out first, then do the I/O without holding the lock:
-        let snapshot = counter.access fn { a }
+        let snapshot = counter.get()
         fs::write("log", "{snapshot}")
 ```
 
-> **Status.** Not built. `Locked[T]` and `access` are accepted by the front end and handed to the
-> backend, which has no such type, so no program on this page compiles; and nothing raises
-> `NK2201`, so the refusal above does not happen — an `access` with I/O in it passes every check
-> the compiler has. Both implementations, their costs and this rule are specified ahead of the
-> compiler.
+> **Status.** Not built. `SharedMut[T]` and `Locked[T]` are not types the compiler knows — the name
+> is an error where you write it, and the backend has no lowering for either — none of the four
+> doors exists, and nothing raises `NK2201`, so the refusal above does not happen. Both
+> implementations, their costs, the four doors, the two refusals above and this rule are specified
+> ahead of the compiler.
 
-This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. The runtime checks described above (a reentrancy check on one thread, poisoning on several) remain as a safety net for the remaining edge cases — e.g. accidentally re-entering the *same* lock through a chain of `sync` calls — but well-formed code never triggers them.
+This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. Re-entering the *same* lock through a chain of calls is not an edge case left to the runtime either — 12.3 refuses that when you compile, and at every setting. The runtime checks described above keep their place for a different reason: the reentrancy check is now **self-control of that refusal rather than error handling.** No input can make it fire; if it ever fires, the compiler has a hole rather than the program having a bug. That is why it is a switch you can decline (Part I, 1.2) and why poisoning on several threads is left as it is ([ADR-039](adr/adr-039.md) D2, D8).
 
-**And a lock is a resource, so two `access` blocks on the same lock keep their order.** Part I 8.1.1 says that two operations whose touch sets are disjoint have no order between them, and a lock is one of the things a touch set can name: both `access` blocks reach the lock and both change it, so they are ordered by the same rule that orders two `println`s, rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3). Two `access` blocks on *different* locks meet on nothing and need not wait for each other.
+**And a lock is a resource, so two doors onto the same lock keep their order — where both of them write.** Part I 8.1.1 says that two operations whose touch sets are disjoint have no order between them, and a lock is one of the things a touch set can name. **`get` is a read; `set`, `update` and `access` are writes.** Two reads of one resource are unordered ([ADR-033](adr/adr-033.md) D2), so two `get`s on one lock may run in either order, while any two of the three writing forms are ordered by the same rule that orders two `println`s rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3, [ADR-039](adr/adr-039.md) D10). Two doors onto *different* locks meet on nothing and need not wait for each other.
 
 > **Status.** The compiler does not yet know a lock as a named resource — no entry in any ledger
 > claims one, because nothing in the corpus has asked for one
 > ([ADR-028](adr/adr-028.md) D5: an entry exists because a program asked for it, never
-> speculatively). Until one does, an `access` block is an operation whose touches cannot be
-> determined, so it counts as touching everything and keeps its place. That is the same answer this
-> section promises, reached by ignorance rather than by a contract — right today, and not something
-> to rely on: the moment anything else in the pair is described, the contract is what has to say
-> it.
+> speculatively). Until one does, a door onto a lock is an operation whose touches cannot be
+> determined, so it counts as touching everything and keeps its place. For the three writing forms
+> that is the same answer this section promises, reached by ignorance rather than by a contract; for
+> two `get`s it is a stricter one, because ignorance cannot tell a read from a write. Right today,
+> and not something to rely on: the moment anything else in the pair is described, the contract is
+> what has to say it.
 
 Where you need an order between two locks, or between a lock and something else, that the touch sets cannot see, `seq { … }` (Part I 8.1.1) is how a program says so.
 
 ### 12.3. Deadlock Prevention: Atomic Composition
 The classic cause of deadlocks is inconsistent locking order (Thread 1 locks A then B; Thread 2 locks B then A).
-In Nikaia, trying to nest locks manually is considered an anti-pattern and often a compile-time error.
+In Nikaia, taking a lock while a lock is held is **always** a compile-time error ([ADR-039](adr/adr-039.md) D2). What is refused is the nesting of lock *acquisitions* — one door (12.2) opened while another is still open — and not any way of spelling a type: one door on its own is one acquisition, whatever it opens.
 
 **The Solution: `access_all`**
 Instead of nesting `access` calls, Nikaia provides `access_all` to request multiple resources simultaneously.
@@ -552,8 +576,8 @@ Instead of nesting `access` calls, Nikaia provides `access_all` to request multi
 * **Safety:** It is mathematically impossible to create a deadlock cycle between A and B if everyone uses `access_all(A, B)`, because everyone will implicitly lock "Lower Address first, Higher Address second".
 
 ```nika
-let account_a: Shared[Locked[Account]] = ...
-let account_b: Shared[Locked[Account]] = ...
+let account_a: SharedMut[Account] = ...
+let account_b: SharedMut[Account] = ...
 
 // ERROR: Manual Nesting is forbidden to prevent Deadlocks.
 // Taking one lock inside another is what creates the inconsistent order
@@ -573,13 +597,23 @@ access_all(account_a, account_b) fn(a, b) {
 }
 ```
 
+**How the compiler sees a chain.** A nesting written one line inside the other is visible where it stands; a chain is not — your block calls a function of yours, which calls another, and the third one opens a lock. So every function carries a second derived property beside `sync` (12.1): **does it touch a lock.** It is inferred over the same call graph, never written by hand, and inside a blocking door (`update`, `access`, `access_all`) a call to anything that carries it is refused. That is what catches chains and self-calls, and it is what makes the rule above complete rather than only local ([ADR-039](adr/adr-039.md) D3).
+
+**The property is coarse, and deliberately so.** It says *"a lock"*, never *which* lock. A precise version would have to prove two handles distinct, and then whether a program compiles would depend on whether that proof happens to succeed — an unrelated line elsewhere could make unchanged code stop compiling. A refusal a programmer can read is the better failure ([ADR-039](adr/adr-039.md) D4).
+
+> **It must never be confused with 12.2's ordering rule.** That two writing doors onto the *same* lock keep their order needs to know *which* lock, and it comes from what the operation touches ([ADR-033](adr/adr-033.md) D2) — never from this property, which cannot tell two locks apart.
+
+**A function handed outward is judged by its body, never by its type.** Where one of these rules has to ask whether a lambda touches a lock and the lambda is not run on the spot — it is handed to foreign code, or kept by the callee — the answer is computed from the body: a lambda is its captures, and nothing writes those down, so no type could answer. Today that reaches a lambda at a call site and the standard library's own detached entries, because Nikaia's type grammar has no function type at all (Part I, 5.4); it widens the day that grammar gains one ([ADR-039](adr/adr-039.md) D7).
+
 > **Status:** the syntax of all three is built. A trailing lambda may name its
 > arguments, and it may follow a plain call as well as a method call (Part I,
 > 5.3), so `counter.access fn { … }`, `account.access fn(to) { … }` and
 > `access_all(account_a, account_b) fn(a, b) { … }` are each one call whose last
-> argument is the lambda. What is **not** built is what they call: `Locked[T]`,
-> `access` and `access_all` have no entry in `std`, and no check refuses the
-> manual nesting this section forbids or demands the `sync` lambda 12.2 does.
+> argument is the lambda. What is **not** built is what they call: `SharedMut[T]`,
+> `Locked[T]` and the four doors have no entry in `std`; no check refuses the
+> nesting this section forbids; no function carries the lock-touching property,
+> so nothing refuses a chain or a function handed outward; and nothing demands
+> the lambda 12.2 does.
 
 ### 12.4. Racing Tasks (`select`)
 Sometimes you want to run multiple tasks, but only care about the one that finishes *first*.
@@ -650,11 +684,14 @@ task::scope fn(s) {
 // 'data' is still valid here
 ```
 
+**A scope may not be opened while a lock is open.** Because the scope waits for its tasks, their bodies belong to the function that writes the scope, exactly as a trailing lambda's body does — so whatever a task touches, the surrounding function touches, including a lock (12.3). One consequence is worth stating on its own: opening a scope inside an open lock is refused. A task that wants the same lock waits for whoever holds it, and the holder waits for the end of the scope; that is a deadlock, not a precaution against one. A task started with `spawn` is the other case, because it runs later and elsewhere (11.2) ([ADR-039](adr/adr-039.md) D3).
+
 > **Status:** not built, though the syntax now is: `task::scope fn(s) { … }`
 > parses as one call with the lambda as its argument, and so does the
 > `s.spawn fn { … }` inside it (Part I, 5.3). What is missing is everything
 > underneath — `task::scope` has no entry in `std`, nothing waits the inner
-> tasks out, and `NK2102` is not reported.
+> tasks out, nothing propagates what a scope's tasks touch up to the surrounding
+> function or refuses a scope inside an open lock, and `NK2102` is not reported.
 
 **One rule differs with `user_parallelism`.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
 

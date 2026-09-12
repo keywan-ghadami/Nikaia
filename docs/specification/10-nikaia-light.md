@@ -16,10 +16,10 @@ In many languages, developers must choose between:
 
 Nikaia aims to combine the readability of a scripting language with the performance and safety of a systems language. The developer writes simple code that focuses on the logic (the "Happy Path"). The **Compiler** (the program that translates your code into machine-readable instructions) automatically handles the complex technical details in the background.
 
-### 1.2. One Language, Two Switches
+### 1.2. One Language, Three Switches
 There is one Nikaia. The same source compiles for every machine and at every
 setting, and prints the same bytes. What you choose when you build is **how**,
-never **what**, and there are exactly two things to choose.
+never **what**, and there are three things to choose.
 
 #### `target` — which machine
 A 64-core server has threads and unwinds a stack when something goes wrong;
@@ -51,8 +51,27 @@ of what your program prints. The rule is:
 > The compiler may use as many threads as the machine has, for as long as no
 > code **you** wrote runs concurrently.
 
-Both switches live in `nikaia.toml`, and `--target` and `--user-parallelism`
-override them for a single build ([ADR-037](adr/adr-037.md)).
+#### the re-entrancy check — should a broken rule be noticed?
+Taking a lock while a lock is held is refused when you compile (Part II, 12.3).
+The third switch decides whether a program *also* carries the run-time check
+that notices such a nesting if one ever gets through. It is on by default, and
+it can be declined.
+
+This is the switch's own guarantee of the rule above it: **for every program
+that obeys the nesting rule, both builds behave identically.** The check cannot
+fire in a correct compiler, so what it controls is not error handling but
+self-control — if it ever fires, the compiler has a hole, and without the check
+that hole would show up as a silent hang instead. It is not a development aid to
+be removed later; it is a guarantee that may be declined
+([ADR-039](adr/adr-039.md) D8, D2).
+
+> **Status:** not built. Nothing refuses the nesting of Part II 12.3, no
+> re-entrancy check is emitted, and `nikaia.toml` has no key for this one — the
+> switch is specified ahead of all three.
+
+All three live in `nikaia.toml`, and `--target` and `--user-parallelism`
+override the first two for a single build ([ADR-037](adr/adr-037.md),
+[ADR-039](adr/adr-039.md) D8).
 
 ---
 
@@ -706,18 +725,52 @@ You write `Shared[T]` yourself — it is not inferred, because sharing changes *
 
 **Where the compiler can prove that a particular value never leaves the thread that made it, it uses a cheaper count instead** ([ADR-037](adr/adr-037.md) D7). That is an optimisation and never a change of meaning: the program does the same thing either way, and the only difference is about 9 ns each time a handle is made and dropped — nothing at all for a handle you only read. **Where nothing proves it, the safe count is what you get**, and there is no way to ask for the other one: every case where the proof fails is a place something has not been written down, and writing it down is the way to the cheaper count. `nikaia --input x.nika --sharing` prints which count each of your values got, why, and what would have changed it. Like `--overlaps` and `--trust`, it explains a decision rather than changing one.
 
-* **`Shared[T]`**: Allows data to be owned by multiple parts of the program. The memory is only cleaned up when the *last* owner is finished.
-* **`Locked[T]`**: Allows data inside a `Shared` container to be modified (mutated). It acts as a gatekeeper to ensure safety.
+* **`Shared[T]`**: for a value several parts of the program own at once and nobody changes. The memory is only cleaned up when the *last* owner is finished.
+* **`SharedMut[T]`**: for a value several parts own at once and any of them may change. The lock that keeps the changes apart is part of the type — there is no second wrapper to write around it — and the changing is done through the four doors of 6.3. This is the common case, which is why it has the short name ([ADR-039](adr/adr-039.md) D9).
+* **`Locked[T]`**: for individually locked fields inside a shared structure — one lock per field rather than one lock around the whole of it. It is the same lock as the one inside `SharedMut[T]`, opened by the same four doors.
 
-### 6.3. The Access Pattern
-To modify data inside a `Locked` container, you must use the `.access()` method. This ensures that you have exclusive permission to change the data.
+> **Status:** not built. None of the three is a type the compiler knows: writing
+> `Shared[T]`, `SharedMut[T]` or `Locked[T]` names a type that does not exist,
+> and the backend has no lowering for any of them. What *is* built is the
+> reasoning above them — which owner count a `Shared` position gets is inferred,
+> and `--sharing` prints it ([ADR-037](adr/adr-037.md) D7,
+> [ADR-039](adr/adr-039.md) §4).
+
+### 6.3. Changing Shared Data: The Four Doors
+A value behind a lock is not changed by assignment — the lock has to be opened
+first, and the shape of the change decides which door you use:
 
 ```nika
-let data: Shared[Locked[i32]] = ...
+let kasse: SharedMut[i32] = ...
 
-// Uses short syntax where 'a' is the locked value
-data.access fn { a += 1 }
+let stand = kasse.get()              // take a copy out
+kasse.set(hole_neuen_stand())        // replace it; the new value comes from outside
+kasse.update fn(old) { old + 100 }   // new value from the old one
+
+// Where the value is large, change it in place rather than copying it out and back.
+let protokoll: SharedMut[Log] = ...
+protokoll.access fn(log) { log.add("gebucht") }
 ```
+
+Each door is shaped for what it is for:
+
+* **`get` and `set` take no block at all.** `get` copies the value out. `set`'s argument is computed *before* the call, so everything slow about producing the new value — including waiting for I/O — happens outside, and the lock is open for one store.
+* **`update` is handed a copy of the old value and returns the new one.** Nothing that points inside the lock ever exists, so there is nothing that could outlive the block.
+* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to append one. It hands your block the value itself.
+
+Because `update` and `access` run your code while the lock is open, that code
+must be able to run straight through: no I/O, and no second lock. The compiler
+checks both (Part II, 12.2 and 12.3).
+
+Two mistakes are refused by name. Assigning to a `SharedMut` directly —
+`kasse = 0` — is refused, and the message names `set`. And a `set` whose
+argument reads the same container, `kasse.set(kasse.get() + 100)`, is refused,
+and the message names `update`, which is the door for a new value computed from
+the old one ([ADR-039](adr/adr-039.md) D10).
+
+> **Status:** not built. None of the four doors exists: `get`, `set`, `update`,
+> `access` and `access_all` have no entry in `std`, nothing lowers them, and
+> neither of the two refusals above is reported.
 
 ### 6.4. Resource Cleanup (RAII)
 Since Nikaia does not use a Garbage Collector, resources must be cleaned up deterministically. Nikaia follows the **RAII** principle (Resource Acquisition Is Initialization).
