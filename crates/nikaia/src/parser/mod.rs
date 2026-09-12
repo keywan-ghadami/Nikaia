@@ -1050,11 +1050,32 @@ grammar! {
           | "." index:digits -> { Postfix::Field(_state.intern(&index)) }
 
 
-        // `fn: expr` and `fn { … }` - the arguments are implicit (`a`, `b`),
-        // and which of them the body actually uses is settled when it is
-        // emitted rather than guessed here.
+        // The lambda `closure_expr` reads, in the position where it follows
+        // the call instead of sitting inside its parentheses: the arguments
+        // are named or implicit (`a`, `b`), and which of the implicit names
+        // the body actually uses is settled when it is emitted rather than
+        // guessed here.
+        //
+        // `fn(user) { … }` is not a second lambda form - it is the explicit
+        // spelling of the one form (Kap 5.2), so both positions have to accept
+        // the same thing, and `closure_params` is shared with `closure_expr`
+        // rather than written twice.
+        //
+        // The named arm first, for the reason `closure_expr` puts it first: a
+        // PEG keeps the first alternative that matches, and the implicit arm
+        // matches the bare `fn` of `fn(user) { … }` and then fails on the `(`
+        // with the parameter list already unreachable. The `fn ":"` arm stays
+        // last and still wins at a `fn:`, because neither arm above it can
+        // match a colon.
         rule trailing_lambda -> Expr =
-            "fn" body:block -> {
+            "fn" "(" params:closure_params? ")" body:block -> {
+                Expr::Closure {
+                    params: params.unwrap_or_default(),
+                    implicit: false,
+                    body,
+                }
+            }
+          | "fn" body:block -> {
                 Expr::Closure { params: Vec::new(), implicit: true, body }
             }
             // ADR-022: `fn: expr` was removed, and a form that was in the
@@ -1378,8 +1399,24 @@ grammar! {
           | name:NAME -> { FieldInit { name, value: None } }
 
         // `Summary::new` is a path; `println(...)` a call; `acc` a variable.
+        //
+        // The trailing lambda belongs here as well as on a method (Kap 5.3):
+        // `access_all(a, b) fn(x, y) { … }` (Part II, 12.3) and `task::scope
+        // fn(s) { … }` (Part II, 12.7) are calls whose last argument stands
+        // outside the parentheses, and without this the lambda is a statement
+        // of its own and the call is made with one argument fewer - which
+        // type-checks in Rust often enough to be a different program rather
+        // than an error.
+        //
+        // A lambda with no parentheses before it is the *only* argument, so
+        // `task::scope fn(s) { … }` is a call even though `task::scope` on its
+        // own is a path. Nothing else can follow a path here, so the optional
+        // lambda cannot take a `{` that belonged to something else: it has to
+        // start with the keyword `fn`.
         rule path_expr -> Expr =
-            head:NAME tail:path_segment* args:call_arg_list? -> {
+            head:NAME tail:path_segment* args:call_arg_list?
+            lambda:trailing_lambda?
+            -> {
                 let mut segments = vec![head];
                 segments.extend(tail);
                 let base = if segments.len() == 1 {
@@ -1387,13 +1424,21 @@ grammar! {
                 } else {
                     Expr::Path(segments)
                 };
-                match args {
-                    Some((args, config)) => Expr::Call {
+                match (args, lambda) {
+                    (Some((mut args, config)), lambda) => {
+                        args.extend(lambda);
+                        Expr::Call {
+                            func: Box::new(base),
+                            args,
+                            config,
+                        }
+                    }
+                    (None, Some(lambda)) => Expr::Call {
                         func: Box::new(base),
-                        args,
-                        config,
+                        args: vec![lambda],
+                        config: Vec::new(),
                     },
-                    None => base,
+                    (None, None) => base,
                 }
             }
 
