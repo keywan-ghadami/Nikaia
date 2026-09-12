@@ -369,10 +369,13 @@ The answer is **the same at both settings**, so that a library written at one ca
 
 > **Status.** The check runs, and today no type reaches its refusing half: the lock and `SharedMut[T]` are the types that may not cross and neither is a type the compiler knows (6.2, Part III C.5). `spawn` itself does not yet lower either, because the runtime integration it needs is the next step. So `NK2501` is reported ahead of the construct it is about — which is the right order, since the check is what has to exist before a value that may not cross one does.
 
-**Taking a lock inside a spawned task is the ordinary case.** A `spawn`'s body runs later and elsewhere rather than during the call, so it is not part of whatever its writer was holding at the time, and the rule that refuses a lock taken while a lock is held (12.3) does not reach into it. A scope is the other case, because it waits for its tasks — see 12.7 ([ADR-039](adr/adr-039.md) D3).
+**The nesting rule does not reach into a spawned task, and a lock still cannot be handed to one.** Two different rules, and only the first is about nesting. A `spawn`'s body runs later and elsewhere rather than during the call, so it is not part of whatever its writer was holding at the time, and the rule that refuses a lock taken while a lock is held (12.3) does not reach into it ([ADR-039](adr/adr-039.md) D3). A scope is the other case, because it waits for its tasks — see 12.7.
 
-> **Status:** not built. No function carries the lock-touching property of 12.3 yet, so nothing
-> here tells a spawned body from a scope's.
+But the paragraph above is what decides whether a lock gets in there at all, and it says no. A lock's implementation follows `user_parallelism` (12.2), so the crossing verdict takes the worse of the two settings and answers *may not* — which is why `SharedMut[T]` cannot be captured by a `spawn`. What a task may do is build a lock of its own, and that shares nothing with anybody.
+
+> **This is an open question and not a rule at rest.** It means the counter of 12.2 — the program `user_parallelism = yes` exists to serve — cannot be written: the handle cannot reach a second task. [ADR-037](adr/adr-037.md) D6 named the lock as the candidate for the refusing arm and left the question to [ADR-037](adr/adr-037.md) D3's second half; [ADR-039](adr/adr-039.md) D1 answered that half by keeping both implementations, and this is the consequence it did not record. One of the two has to move: either the verdict stops taking the worse setting for this type, or the two implementations stop differing in whether they may cross. Nothing here guesses which.
+
+> **Status:** not built, in both halves. No function carries the lock-touching property of 12.3, so nothing tells a spawned body from a scope's; and no type reaches the refusing arm of the crossing check, because neither the lock nor `SharedMut[T]` is a type the compiler knows (6.2).
 
 #### Return Values & Handles
 `spawn` always returns a `TaskHandle`. At `yes` it represents a running thread; at `no` a scheduled event. Calling `.await` or `.join()` on it works identically either way.
