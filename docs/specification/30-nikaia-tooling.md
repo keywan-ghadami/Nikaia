@@ -11,13 +11,8 @@ A modern programming language is more than just a compiler. It requires a suite 
 
 **What you need installed.** A **stable** Rust toolchain, and nothing more. The
 compiler emits ordinary stable Rust and hands it to `cargo`, so a Nikaia
-installation assumes no unstable compiler feature and no `-Z` flag. The one
-exception is the optional Bridge-IR backend (`--backend bridge`), which links the
-Rust compiler's own internals: building it, and running a `nikaia` built with it,
-needs the one exact nightly the toolchain pins, with its `rustc-dev` component. A
-`nikaia` built without that backend refuses `--backend bridge` by name rather
-than compiling through a different one ([ADR-001](adr/adr-001.md) D5,
-[ADR-004](adr/adr-004.md), [ADR-021](adr/adr-021.md) D9).
+installation assumes no unstable compiler feature and no `-Z` flag
+([ADR-001](adr/adr-001.md) D1, [ADR-004](adr/adr-004.md) D1).
 
 ### 13.1. Project Structure
 When you create a new project (`nikaia new my_project`), the following structure is generated:
@@ -43,26 +38,21 @@ When you create a new project (`nikaia new my_project`), the following structure
 
 **Which backend a command uses.** `nikaia build` and `nikaia run` compile through
 the `rust` backend, the Stage 0 transpiler, and so does a single-file
-`nikaia --input <file>.nika` that names no `--backend`: it is the default, and it
-is in every installation. `--backend interpreter` runs a program instead of
-producing one.
-`--backend bridge` compiles Bridge-IR directly and is **optional**: an
-installation has it only if it was built with the `rustc-backend` feature, which
-needs the pinned nightly's `rustc-dev` component. A `nikaia` without it refuses
-`--backend bridge` by name and says what would add it; it never quietly compiles
-through a different backend. `cranelift` and `llvm` are named by
+`nikaia --input <file>.nika` that names no `--backend`: it is the default, it is
+the only code generator, and it is in every installation
+([ADR-004](adr/adr-004.md) D1). `--backend interpreter` runs a program instead of
+producing one. `cranelift` and `llvm` are named by
 [ADR-002](adr/adr-002.md) and not implemented, and are refused in their own
-terms — there is nothing to install that would add them. See
-[ADR-004](adr/adr-004.md) D4 and [ADR-021](adr/adr-021.md) D9, D14.
+terms — there is nothing to install that would add them
+([ADR-021](adr/adr-021.md) D9).
 
 **Status:** `build` and `run` are built, over `nikaia.toml` translated to a
 `Cargo.toml` ([ADR-002](adr/adr-002.md) D1 §5). `test`, `bench` and `fmt` are
 not. A single file outside a project is compiled with `nikaia --input
 <file>.nika`, which is not one of these commands and stays available on its own
 account ([ADR-021](adr/adr-021.md) D11). `nikaia lower-std` is 13.2b's
-toolchain-maintenance command and not one of these either. The three backends
-above are built; `bridge` carries far less of the language than `rust` does, which
-is why it is not the default.
+toolchain-maintenance command and not one of these either. Both backends above
+are built.
 
 ### 13.2b. Where `std` Comes From (the Sysroot)
 

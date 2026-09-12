@@ -35,17 +35,17 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [001](adr-001.md) | Stable is the toolchain a clone builds with, and the one exact nightly it still pins belongs to the Bridge-IR backend alone (D5, narrowing D1); the parser is generated from a grammar over bytes, not over Rust tokens | Accepted (§4 superseded by [003](adr-003.md)) | yes — stable at the root, the nightly in `bridge-toolchain/`, a CI leg each |
-| [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro; a project reaches `std` through a sysroot of pre-lowered sources, compiled into a keyed rlib cache | Accepted (§4 superseded by [003](adr-003.md)) | D1 for a Rust dependency; D4 - sysroot, pre-lowered `std`, rlib cache (97 packages to 46, 58 of them the compiler built twice); not a Nikaia dependency, not D2 |
-| [003](adr-003.md) | Hub-and-spoke: a frontend targets **Bridge-IR** and never `rustc_ast`; CLI, cache and Cargo wrapping are generic | Accepted | yes |
-| [004](adr-004.md) | One lowering builds `rustc_ast`; readable Rust is a *print* of it, never a second code generator; the bridge backend is optional and `rust` is the default (D4) | Accepted | D1, D2, D4 - `rust` is what a bare `nikaia` uses and the bridge is the `rustc-backend` feature; D3's in-memory exit measured at 0.64 % and not built |
-| [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what; a backend that is not here refuses by name, and *compiled out* reads differently from *never implemented* (D9, D14) | Accepted | key, store, lockfile - D2's resolved versions included (§5); both refusals of D9 and D14; not `--locked` for the lock |
+| [001](adr-001.md) | Stable is the toolchain, named in one file; the parser is generated from a grammar over bytes, not over Rust tokens; the build is staged and Stage 0 is a transpiler | Accepted | yes — one toolchain, one CI leg |
+| [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro; a project reaches `std` through a sysroot of pre-lowered sources, compiled into a keyed rlib cache | Accepted | D1 for a Rust dependency; D4 - sysroot, pre-lowered `std`, rlib cache (97 packages to 46, 58 of them the compiler built twice); not a Nikaia dependency, not D2 |
+| [003](adr-003.md) | The language and the machinery that compiles it are two programs, and the interface between them is Rust source text; CLI, cache and Cargo wrapping are generic | Accepted | yes |
+| [004](adr-004.md) | One lowering, and it emits Rust source text; the text a person reads is the text that is compiled | Accepted | yes — `crates/nikaia/src/emit`, what a bare `nikaia` runs |
+| [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what; a backend that is not here refuses by name (D9) | Accepted | key, store, lockfile - D2's resolved versions included (§5); D9's refusal; not `--locked` for the lock |
 
 ### Ownership, borrowing, cleanup
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [005](adr-005.md) | The borrow model: four groups of lifetime situation, and which the compiler solves silently. No lifetime annotations, ever. D9 refuses `-Zpolonius=next` and puts Group B.2 on the frontend's own desugaring | Accepted (D2's mechanism narrowed by D9) | inference, ledger, D8's cross-process check (not its second OS), and §1 Group B's structural `Send` check — `NK2501`/`NK2502`, one verdict at both settings of `user_parallelism` (§5). D7 now translates a trait bound's **position**; its text stays Rust's. D9's desugaring: not built |
+| [005](adr-005.md) | The borrow model: four groups of lifetime situation, and which the compiler solves silently. No lifetime annotations, ever. Group B.2 is the frontend's own desugaring (D2) | Accepted | inference, ledger, D8's cross-process check (not its second OS), and §1 Group B's structural `Send` check — `NK2501`/`NK2502`, one verdict at both settings of `user_parallelism` (§5). D7 now translates a trait bound's **position**; its text stays Rust's. D2's desugaring: not built |
 | [006](adr-006.md) | `Cleanup` — teardown that performs I/O, inserted by the compiler on every exit path | Accepted | no |
 | [008](adr-008.md) | Tethered slices in user structs: the tether-state lattice, and one handle per container rather than per token | Accepted | views |
 
@@ -128,44 +128,12 @@ and a decision is not an implementation.
 
 Every supersession in this directory is **partial** — a later record displaces
 a section or a numbered decision, never a whole ADR. That is why the superseded
-records are still cited by live ones and must not be deleted.
-
-**[003](adr-003.md) over [001](adr-001.md) and [002](adr-002.md).** What ADR-003
-replaced is the *coupling*: the frontend no longer links `rustc_driver` and
-`rustc_ast` directly, but speaks Bridge-IR to an orchestrator. What it did not
-touch, and what later ADRs still cite, is everything in 001 and 002 that was
-never about that coupling:
-
-* ADR-001 D1, one exact nightly pinned exactly — the rule [021](adr-021.md)
-  hashes into its key, now **narrowed by [001](adr-001.md) D5**: the toolchain a
-  clone builds with is **stable**, and the pin belongs to [004](adr-004.md)'s
-  bridge backend alone, named in `bridge-toolchain/rust-toolchain.toml` and
-  reached through `scripts/bridge-toolchain.sh`. Since [004](adr-004.md) D4 that
-  backend is **optional and not the default**, so the pin is what *builds* the
-  bridge rather than what an installation needs. The premise
-  [005](adr-005.md) §1 Group B.2 *would* have rested on — that the pin makes
-  `-Zpolonius=next` affordable — goes with it: the flag is passed nowhere, it
-  measures +7.1 % of a build for zero programs in the corpus, and
-  [005](adr-005.md) D9 refuses it.
-* ADR-001 D2, why the parser backend is `winnow-grammar` and not
-  `syn-grammar` — cited by [007](adr-007.md).
-* ADR-001 D4, Stage 0 is a transpiler — cited by [011](adr-011.md),
-  [012](adr-012.md), [014](adr-014.md).
-* ADR-002 D3 — a deterministic key over what a build read, the starting point
-  [021](adr-021.md) works out.
-
-Each of those sections is marked in place with what still stands.
-
-**The rest are single decisions**, each named in the superseding record's own
-header:
+records are still cited by live ones and must not be deleted. Each is named in
+the superseding record's own header:
 
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
-| [001](adr-001.md) D1 | [001](adr-001.md) D5 (narrows) | the *scope* of the pin — stable is what a clone builds with, and the nightly is the Bridge-IR backend's alone. The rule survives: a nightly that is used is pinned exactly, in one place nothing repeats |
-| [005](adr-005.md) D2 | [005](adr-005.md) D9 (narrows) | Group B.2's *mechanism* — `-Zpolonius=next` changes zero verdicts over the corpus at +7.11 % of a build and would put every user on a nightly, so D2's own entry-style fallback becomes the answer. The classification is untouched |
 | [002](adr-002.md) D3 | [021](adr-021.md) D9 | Cranelift for "sub-second iterations" — never measured; measured, it buys 25 s against 26 s |
-| [002](adr-002.md) D3, [004](adr-004.md) | [004](adr-004.md) D4 | which backend a bare `nikaia` uses — `bridge` carried 1 of 15 corpus programs and its binary is not relocatable, so `rust` is the default and the bridge is optional. ADR-003's hub and spoke is untouched and the bridge is not deprecated |
-| [021](adr-021.md) D9 | [021](adr-021.md) D14 (extends) | a backend **compiled out** refuses like one never implemented, and the two messages must be distinguishable — one offers a component to install, the other offers nothing |
 | [013](adr-013.md) D5 | [022](adr-022.md) | `fn:` recorded as a chaining limitation; removed as a second way to say one thing |
 | [014](adr-014.md) D3 | [015](adr-015.md) | the measurement, once the backend's eager diagnostics were found to dominate it |
 | [014](adr-014.md) D1 | [002](adr-002.md) D4 | *when* `std`'s Nikaia half is lowered — a build script made the compiler a build-dependency of `std`, so Cargo built it again inside every project; release time now, and the `.rs` is committed |

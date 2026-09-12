@@ -1,5 +1,13 @@
 # Technical Notes & Knowledge Base
 
+> **The path these notes are about is withdrawn.** Nothing in the toolchain links
+> `rustc_private` or builds a `rustc_ast::Crate` any more: a `.nika` file becomes
+> Rust source text and `rustc` compiles it like any other Rust
+> ([ADR-004](specification/adr/adr-004.md) D1). This page is kept as the notebook
+> page it is — these were real findings about a real compiler, and a notebook is
+> not edited when the experiment ends. `../CHANGELOG.md` and
+> [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) say what happened.
+
 ## Rust Compiler Internals (Nightly 2026-01-01)
 
 Integration with `rustc_private` revealed specific details about the internal AST structure which differs from older versions.

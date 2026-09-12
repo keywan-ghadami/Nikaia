@@ -1,21 +1,26 @@
-# What the pinned nightly is for, and what it costs
+# What the pinned nightly was for, and what it cost
 
 **Date:** September 12, 2026
-**Status:** measured; the decisions it produced are
-[ADR-001](specification/adr/adr-001.md) **D5** (stable is the toolchain; the pin
-is the bridge backend's alone) and [ADR-005](specification/adr/adr-005.md) **D9**
-(`-Zpolonius=next` refused; Group B.2 goes to the frontend's desugaring), on top
-of the corrected evidence paragraphs in D1 and D2 that this file was written for
-**Related:** [ADR-001](specification/adr/adr-001.md) D1 (the pin), [ADR-003](specification/adr/adr-003.md) D1
-(`rustc_private` confined to one crate), [ADR-004](specification/adr/adr-004.md) (the bridge backend
-that uses it), [ADR-005](specification/adr/adr-005.md) D2 (the Polonius case), [ADR-021](specification/adr/adr-021.md) D9
-(the precedent for refusing a backend by name), [`subprocess-cost.md`](subprocess-cost.md)
-(the same machine, the same method, the adjacent question)
+**Status:** measured, and kept. Everything this file measures — the pinned
+nightly, the Bridge-IR backend, the `rustc_ast` path and `-Zpolonius=next` — has
+since been **withdrawn** from the project. The withdrawal was decided *without a
+further measurement*, and every number below is the number it was decided on.
+Nothing here is revised: this is the notebook page, and a notebook page is not
+edited when the experiment ends. What happened, and why, is
+[`../CHANGELOG.md`](../CHANGELOG.md) and
+[`withdrawn-one-way-down.md`](withdrawn-one-way-down.md).
+**Related:** [ADR-001](specification/adr/adr-001.md) D1 (the toolchain, stable,
+as this file's third conclusion wanted), [ADR-005](specification/adr/adr-005.md)
+D2 (Group B.2, now the frontend's desugaring),
+[ADR-021](specification/adr/adr-021.md) D9 (the precedent for refusing a backend
+by name), [`subprocess-cost.md`](subprocess-cost.md) (the same machine, the same
+method, the adjacent question)
 
-[ADR-001](specification/adr/adr-001.md) D1 pins one exact nightly and justifies it with two
-things: `rustc_private`, and `-Z` flags. This file asks what each is actually for today, what
-it buys, and what it costs in the three terms a person installing a compiler feels —
-how big, how long, and which tools they must already have.
+At the time of writing, the project pinned one exact nightly `rustc` and justified
+it with two things: `rustc_private`, and `-Z` flags. This file asks what each is
+actually for, what it buys, and what it costs in the three terms a person
+installing a compiler feels — how big, how long, and which tools they must
+already have.
 
 **The three conclusions, first.**
 
@@ -40,8 +45,8 @@ how big, how long, and which tools they must already have.
 Intel Xeon @ 2.80 GHz, 4 vCPU, 15 GB RAM, Linux 6.18.44 x86_64 — a **shared virtual
 machine** with no `cpufreq` governor exposed, and the same box
 [`subprocess-cost.md`](subprocess-cost.md) used. `rustc 1.94.0-nightly (8d670b93d
-2025-12-31)`, which is the `nightly-2026-01-01` of `rust-toolchain.toml`
-([ADR-001](specification/adr/adr-001.md) D1); stable is `1.94.1 (e408947bf 2026-03-25)` for
+2025-12-31)`, which is the `nightly-2026-01-01` `rust-toolchain.toml` named at the time;
+stable is `1.94.1 (e408947bf 2026-03-25)` for
 the builds and `1.98.1 (48a229cea 2026-09-01)` for the installs, because an install measures
 what a person downloads *today* and a build has to match the rlibs already on disk.
 
@@ -70,7 +75,7 @@ Two `#![feature(…)]` attributes in the workspace, and both are the same one:
 
 | where | why |
 | :--- | :--- |
-| `crates/rustc-executor/src/lib.rs` | `#![feature(rustc_private)]` — the crate builds `rustc_ast` and prints it ([ADR-004](specification/adr/adr-004.md) D1, D2) |
+| `crates/rustc-executor/src/lib.rs` | `#![feature(rustc_private)]` — the crate built `rustc_ast` and printed it |
 | `crates/nikaia/src/main.rs` | the same attribute and `extern crate rustc_driver`, so the binary links the compiler's dylib set rather than a second copy of `std` |
 
 **No `-Z` flag is passed anywhere in a build.** The only one in the tree was
@@ -92,8 +97,8 @@ what proves (§5).
 whole compiler needed the nightly. Neither was a technical constraint: `rustc_executor` is
 named in exactly one place in `main.rs`. Both are now conditional on the feature, the
 `required-features` line is gone, and `cargo build -p nikaia --no-default-features`
-produces a compiler on stable. `rustc_private` stays confined to `rustc-executor`
-([ADR-003](specification/adr/adr-003.md) D1) — the frontend never gained any.
+produces a compiler on stable. `rustc_private` stays confined to `rustc-executor` — the
+frontend never gained any.
 
 ---
 
@@ -101,9 +106,9 @@ produces a compiler on stable. `rustc_private` stays confined to `rustc-executor
 
 [ADR-005](specification/adr/adr-005.md) D2 names one situation — conditional return of a
 borrow, the `get_or_insert` shape — as rejected by the stable borrow checker and accepted by
-`-Zpolonius=next`, and [ADR-001](specification/adr/adr-001.md) D1, ADR-005 §1 Group B.2 and
-the [ADR index](specification/adr/README.md) all rest on it. ADR-005 §5 already said the
-case is **not built**. What nobody had done is compile something twice and count.
+`-Zpolonius=next`. Three records rested on the flag at the time — the toolchain pin, ADR-005
+§1's Group B.2 and the [ADR index](specification/adr/README.md) — while ADR-005 §5 already said
+the case is **not built**. What nobody had done is compile something twice and count.
 
 ### 3.1 The positive controls, because a harness that finds nothing must first find something
 
@@ -333,7 +338,7 @@ So: **+7.1 % of a build, on every program, to accept a program nobody in this re
 written.** And it would cost one more thing that is not a percentage: the flag is `-Z`, so
 passing it would put *every user's* build on the pinned nightly, where today only the
 bridge backend's own compilation is. That is the trade the records should be read against,
-and it is why the correction in ADR-005 D2 leaves the decision where D2 put it rather than
+and it is why the correction in ADR-005 D2 left the classification where D2 put it rather than
 reversing it.
 
 ---
@@ -460,51 +465,52 @@ printed; `one_brc.rs`, `modules.rs`, `project.rs`, `ledger_determinism.rs` and
 `foreign_runtime.rs` do the same for their own programs. A second CI leg runs exactly that,
 so the claim cannot rot quietly.
 
-What a stable build does **not** have is the bridge backend, which is the default backend.
-So `nikaia --input x.nika` with no `--backend` fails there, by name, and the user has to say
-`--backend rust`. Whether that is acceptable — whether the default should resolve per build,
-or whether the bridge stays the default everywhere and a stable installation is a
-`--backend rust` installation — is a decision [ADR-004](specification/adr/adr-004.md) and
-[ADR-021](specification/adr/adr-021.md) D9 own and neither makes. It is **not** answered here
-and nothing was changed to imply an answer: the default is still `bridge` in both builds.
+What a stable build did **not** have is the bridge backend, which was the default
+backend when this was measured. So `nikaia --input x.nika` with no `--backend`
+failed there and the user had to say `--backend rust`. Whether that was
+acceptable — whether the default should resolve per build, or whether a stable
+installation is a `--backend rust` installation — was left open here and not
+implied either way.
 
-> **Answered since, by [ADR-004](specification/adr/adr-004.md) D4:** the default is `rust`
-> everywhere, and the bridge is optional rather than the backend every installation carries.
-> So the paragraph above describes the situation this file measured, not the one that
-> followed from it — a stable build is now a whole installation and `nikaia --input x.nika`
-> works there with nothing extra typed. The measurements are unchanged; what changed is the
-> decision they were handed to.
+> **What happened.** The question answered itself twice over. First the default
+> became `rust` everywhere, which made a stable build a whole installation. Then
+> the bridge, the nightly and the `rustc_ast` path were withdrawn, so there is one
+> code generator, one toolchain and nothing to select between: the "stable-only
+> installation" this section had to build on purpose is the only kind there is.
+> The measurements are unchanged.
 
 ---
 
-## 6. What this changes in the records, and what it does not
+## 6. What became of all this
 
 > **Written before the decision, and kept as written.** This section recorded
-> what the *measurements* changed, which was the evidence in two records and not
-> the records themselves. The owner then decided on top of them, and the two
-> bullets below are superseded by that decision rather than by any further
-> measurement: **[ADR-001](specification/adr/adr-001.md) D5** makes stable the
-> toolchain a clone builds with and leaves the pin to the bridge backend alone
-> (named now in `bridge-toolchain/rust-toolchain.toml`), and
-> **[ADR-005](specification/adr/adr-005.md) D9** refuses `-Zpolonius=next` and
-> gives Group B.2 to the entry-style desugaring D2 named as its own fallback.
-> Nothing in §1–§5 is revised: every number below and above is the number those
-> decisions were made on.
+> what the *measurements* changed, which was the evidence in two records rather
+> than the records themselves. What followed was not a further measurement but a
+> decision on top of these: the nightly toolchain, the Bridge-IR backend, the
+> `rustc_ast` path and `-Zpolonius=next` are **withdrawn**. Nothing in §1–§5 is
+> revised.
 
-* [ADR-001](specification/adr/adr-001.md) D1 stands — one exact nightly per release, and
-  `rust-toolchain.toml` as the single source of truth. What is corrected in it is the
-  *reason*: "`-Z` flags and `rustc_private`" is one item and not two, and the pin is paid for
-  by the bridge backend alone.
-* [ADR-005](specification/adr/adr-005.md) D2 stands. Polonius does what D2 says it does, and
-  the shape is reachable from Nikaia. What is corrected is everything written in the present
-  tense about a flag nothing passes, and what is added is the price.
-* [ADR-004](specification/adr/adr-004.md) was untouched by this file. The bridge backend
-  exists, it was still the default when this was written, and nothing here proposed removing
-  it — nor does D4, which made it **optional** and not the default while leaving the backend
-  and [ADR-003](specification/adr/adr-003.md)'s hub and spoke exactly where they were.
-* Unanswered here, and handed on rather than decided — **what the default backend is on a build
-  that has no bridge** — and since answered by [ADR-004](specification/adr/adr-004.md) D4: it
-  is `rust`, on every build. Also still open from [`subprocess-cost.md`](subprocess-cost.md) §5 and
-  adjacent to everything above: whether the executor should invoke the rustup shim or a named
-  compiler. The two questions are the same question seen from either end — *which* `rustc`
-  a Nikaia installation is entitled to assume.
+Read against that outcome, the three conclusions at the top of this file each
+turned out to be one half of it:
+
+* **`rustc_private` was the whole of the pin**, and the pin was paid for by one
+  optional backend. When that backend went, the pin had nothing left to buy.
+* **`-Z` bought nothing**, because no `-Z` flag was ever passed. Group B.2 is
+  answered by the frontend desugaring this file found the corpus already writing
+  ([ADR-005](specification/adr/adr-005.md) D2), and the flag was never picked up.
+* **The pin's cost to a user was not bytes but identity** — a non-relocatable
+  binary tied to one rustup home. That is the measurement that did the most work
+  and the one nothing argued back at.
+
+What the records say now: [ADR-001](specification/adr/adr-001.md) D1, the
+toolchain is stable and one file names it; [ADR-004](specification/adr/adr-004.md)
+D1, there is one lowering and it emits Rust source text;
+[ADR-005](specification/adr/adr-005.md) D2, Group B.2 is the frontend's to
+desugar. The full account, including what each withdrawn thing was for, is
+[`../CHANGELOG.md`](../CHANGELOG.md) and
+[`withdrawn-one-way-down.md`](withdrawn-one-way-down.md).
+
+One question this file handed on is still open and is unaffected by any of it:
+whether the compiler should invoke the rustup shim or a named compiler
+([`subprocess-cost.md`](subprocess-cost.md) §5) — *which* `rustc` a Nikaia
+installation is entitled to assume.
