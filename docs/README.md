@@ -88,6 +88,10 @@ is normative and nothing may depend on it to know what a program means.
 * [`rc-or-arc.md`](rc-or-arc.md) — what an atomic reference count costs, whether
   `Rc` and `Arc` differ in anything a program can observe, and the prototype that
   asks ADR-037 D3's open question of a value instead of a build.
+* [`mutex-floor.md`](mutex-floor.md) — what an always-`Mutex` floor for
+  `Locked` would cost against Part II 12.2's no-pausing rule: why blocking is
+  not pausing in this language, the one ledger line the answer turns on, and
+  the 11 ns an uncontended acquisition costs where it can never be contended.
 * [`technical_notes.md`](technical_notes.md) — the compiler-internals findings
   from the path that was withdrawn; kept as the notebook page it is.
 * [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) — what the nightly

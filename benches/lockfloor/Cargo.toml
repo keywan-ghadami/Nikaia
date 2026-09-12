@@ -1,0 +1,10 @@
+# What an uncontended lock acquisition costs, against a borrow flag.
+#
+# No dependency on purpose: `RefCell` and `Mutex` are the two implementations
+# Part II 12.2 names for `Locked[T]`, they are both in `std`, and anything else
+# here would be measuring a crate the emitter does not write.
+[package]
+name = "lockfloor-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
