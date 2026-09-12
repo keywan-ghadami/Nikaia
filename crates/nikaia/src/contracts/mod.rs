@@ -24,6 +24,7 @@
 
 pub mod order;
 pub mod send;
+pub mod sharing;
 pub mod sync;
 pub mod throws;
 pub mod touch;

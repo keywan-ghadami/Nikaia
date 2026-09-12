@@ -520,6 +520,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "refcount-bench"
+version = "0.0.0"
+
+[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
