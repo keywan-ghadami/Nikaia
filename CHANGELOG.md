@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Assessed (what a full answer to a stored view would have to track, and what a half-built one does)
+
+- **[`docs/stored-views.md`](docs/stored-views.md): an assessment, and it decides nothing.** What is built refuses a stored naked view or writes the subject's buffer out; the full rule is [ADR-008](docs/specification/adr/adr-008.md) D2's lattice, under which a stored view is neither an error nor a signature change but a **representation** change — the buffer takes a handle, the view becomes an offset and a length, and nothing is refused at all. The note asks what stands between the two, item by item.
+
+- **Of the seven things it would need, two are present, one is computed and thrown away, and four are not.** Present: which fields of a type hold a view, and which parameters a result may point into — the latter from the *signature* only, so `borrows(a | b)` says nothing about which one. Computed and discarded: the checker infers a type for every `let` and `Checked` exports only findings, loops and method calls; the channel for handing one more answer to the emitter already exists. Absent: which parameter of a `std` call keeps what it is given, a buffer variable per view position, a solver over them, and any representation other than a native reference.
+
+- **The decisive limit is that there is one buffer to name.** `crates/nikaia/src/emit/mod.rs` has a single `INPUT_LIFETIME`, and `contracts/trust.rs` already states the consequence in its own header. An analysis that proved a view came from a *different* buffer than its destination's would have nothing to emit, so it could only refuse — which is what the increment above already does for every destination it cannot name.
+
+- **A half-built version was built and measured, which is why the note has a recommendation rather than a hunch.** The obvious next step — letting a local whose declared type holds a view be a destination — refuses `examples/k-nucleotide.nika`: 32 files lower instead of 33. That program writes views of its parameter into a map it hands back and is correct, because the container's buffer *is* the parameter's, and what says so is the `return`. No amount of following where the view goes answers that; equating two buffer variables does. So widening the reach before the solver exists converts working programs into refusals, and the order is forced. The probe was reverted and the corpus is back to 33/22.
+
+- **Also recorded there, because it is a different defect and was left alone:** a free function taking a view-holding struct by value and handing one back fails with `E0106` whether or not the view is stored — the naked view is not what breaks it, so `NK2302` would be the wrong code to report. Nothing in the corpus writes the shape.
+
+- No new ADR, no decision, and no change to any program: this entry is a note and a `docs/README.md` line.
+
 ### Changed (where the destination already names a buffer, the view is lowered instead of refused)
 
 - **One step further along the same question, not a second mechanism.** `NK2302` asks where a naked view parameter's view goes. A **field** is declared, and its declaration says which buffer it points into ([ADR-008](docs/specification/adr/adr-008.md) D1) — so where the destination is a field of a subject that itself holds a view, the buffer is already named and the parameter is lowered as a view *of that buffer* rather than refused. `fn record(&mut self, name: &str, temp: i32)` on a `Summary` holding `HashMap[&str, Stats]` now emits `fn record(&mut self, name: &'a str, temp: i32)`, which compiles and runs — it is the program the `E0621` above was about. Part I 6.6's `Status` note and Appendix C.3's row say which cases are which.

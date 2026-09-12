@@ -66,6 +66,11 @@ is normative and nothing may depend on it to know what a program means.
   compile-time staging would pay, and what it costs to check one.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and
   what the compiler says about each, before and after.
+* [`stored-views.md`](stored-views.md) — the `E0621` a stored naked view used to
+  produce, the two increments of the analysis that replaced it, and what the full
+  tether lattice would have to track that they do not: the seven things it needs,
+  the two the compiler has, and the measurement showing that building the
+  reachable half first refuses a program in `examples/` that works today.
 * [`from-for-throws-and-touches.md`](from-for-throws-and-touches.md) — whether
   ADR-029 D3's `sync = "from(f)"` argument carries to the other two effect
   columns: the smallest program for each, the ledger it produced, and the one
