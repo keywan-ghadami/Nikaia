@@ -1,5 +1,10 @@
 /target
 /vendor
 
+# Dependencies of the TextMate grammar's scope test (editors/test). The lockfile
+# beside it is committed: it pins the version of the reference implementation the
+# test's result means anything against.
+node_modules/
+
 # Subagent git worktrees (created by the agent harness, never part of the project).
 .claude/worktrees/

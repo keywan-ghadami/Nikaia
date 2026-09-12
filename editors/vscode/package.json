@@ -1,0 +1,37 @@
+{
+  "name": "nikaia",
+  "displayName": "Nikaia",
+  "description": "Syntax highlighting for the Nikaia programming language.",
+  "version": "0.0.7",
+  "publisher": "nikaia",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/keywan-ghadami/Nikaia.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nikaia",
+        "aliases": ["Nikaia", "nikaia"],
+        "extensions": [".nika"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nikaia",
+        "scopeName": "source.nika",
+        "path": "./syntaxes/nikaia.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.sql.nika": "sql"
+        }
+      }
+    ]
+  }
+}

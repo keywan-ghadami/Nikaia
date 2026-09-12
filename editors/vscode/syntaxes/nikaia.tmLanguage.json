@@ -1,0 +1,906 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nikaia",
+  "scopeName": "source.nika",
+  "fileTypes": ["nika"],
+  "patterns": [{ "include": "#main" }],
+
+  "repository": {
+
+    "main": {
+      "patterns": [
+        { "include": "#comment" },
+
+        { "include": "#dsl-from" },
+        { "include": "#dsl-html" },
+        { "include": "#dsl-sql" },
+        { "include": "#dsl-generic" },
+        { "include": "#grammar-block" },
+
+        { "include": "#string-interpolated" },
+        { "include": "#string-escaped" },
+        { "include": "#string" },
+        { "include": "#char" },
+
+        { "include": "#attribute" },
+
+        { "include": "#self-dsl-type" },
+        { "include": "#use-declaration" },
+        { "include": "#item-declaration" },
+        { "include": "#impl-declaration" },
+        { "include": "#function-declaration" },
+
+        { "include": "#keyword" },
+
+        { "include": "#number" },
+
+        { "include": "#tuple-index" },
+        { "include": "#concurrency-method" },
+        { "include": "#method-call" },
+        { "include": "#field-access" },
+
+        { "include": "#type-primitive" },
+        { "include": "#type-support" },
+        { "include": "#type-name" },
+        { "include": "#namespace" },
+        { "include": "#path-member" },
+
+        { "include": "#function-call" },
+
+        { "include": "#parens" },
+        { "include": "#brackets" },
+        { "include": "#block" },
+
+        { "include": "#operator" },
+        { "include": "#punctuation" },
+
+        { "include": "#identifier" }
+      ]
+    },
+
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.nika",
+          "begin": "//",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.nika" }
+          },
+          "end": "$"
+        }
+      ]
+    },
+
+    "string": {
+      "name": "string.quoted.double.nika",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.nika" }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.nika" }
+      },
+      "patterns": [{ "include": "#string-escape" }]
+    },
+
+    "string-escaped": {
+      "comment": "A string literal written *inside* an `f\"…\"` hole. A hole is Nikaia source that was written inside a string literal, so the escaping it carries is that literal's, and the compiler undoes exactly two escapes — `\\\\\"` and `\\\\\\\\` — before parsing it. Without this rule the `\\\\\"` in `f\"{emphasised(\\\\\"Ada\\\\\")}\"` opens a string that never closes, and the rest of the file is coloured as one. A `\\\\\"` cannot occur outside a literal, so carrying the rule at top level costs nothing.",
+      "name": "string.quoted.double.nika",
+      "begin": "\\\\\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.nika" }
+      },
+      "end": "\\\\\"",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.nika" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.nika",
+          "match": "\\\\\\\\."
+        }
+      ]
+    },
+
+    "string-escape": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.unicode.nika",
+          "match": "\\\\u\\{[0-9A-Fa-f]*\\}"
+        },
+        {
+          "name": "constant.character.escape.nika",
+          "match": "\\\\."
+        }
+      ]
+    },
+
+    "string-interpolated": {
+      "name": "string.quoted.double.interpolated.nika",
+      "begin": "(f)(\")",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.interpolated.nika" },
+        "2": { "name": "punctuation.definition.string.begin.nika" }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.nika" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.brace.nika",
+          "match": "\\{\\{|\\}\\}"
+        },
+        { "include": "#string-escape" },
+        { "include": "#interpolation" },
+        {
+          "name": "invalid.illegal.stray-brace.nika",
+          "match": "\\}"
+        }
+      ]
+    },
+
+    "interpolation": {
+      "name": "meta.interpolation.nika",
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.interpolation.begin.nika" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.interpolation.end.nika" }
+      },
+      "patterns": [
+        {
+          "comment": "A hole is Nikaia source written inside a string literal, so the two characters the literal had to escape are undone before it is parsed.",
+          "name": "constant.character.escape.nika",
+          "match": "\\\\[\"\\\\]"
+        },
+        { "include": "#interpolation-format-spec" },
+        { "include": "#main" }
+      ]
+    },
+
+    "interpolation-format-spec": {
+      "comment": "The first colon that is not inside a call or an index says how the value is written, not which value. Calls and indexes are consumed by #parens / #brackets before this can see their colons.",
+      "begin": "(?<!:)(:)(?!:)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.separator.format-spec.nika" }
+      },
+      "end": "(?=\\})",
+      "contentName": "constant.other.format-spec.nika",
+      "patterns": []
+    },
+
+    "char": {
+      "comment": "Part I 2.2. A `char` is one Unicode scalar value, written between single quotes with the escapes a string uses. The body is kept as written — `'\\n'` is two characters here and one in the value.",
+      "patterns": [
+        {
+          "name": "string.quoted.single.nika",
+          "match": "'(\\\\.)'",
+          "captures": {
+            "1": { "name": "constant.character.escape.nika" }
+          }
+        },
+        {
+          "name": "string.quoted.single.nika",
+          "match": "'[^'\\\\]'"
+        }
+      ]
+    },
+
+    "attribute": {
+      "patterns": [
+        {
+          "name": "storage.modifier.attribute.nika",
+          "match": "@(borrowed|frame|detached|immediate)\\b"
+        },
+        {
+          "name": "storage.modifier.attribute.nika",
+          "match": "@[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+
+    "self-dsl-type": {
+      "comment": "ADR-007 D5: `Self::dsl` is the parameter type a DSL string generates, and it is the only type a typed spread can have. The `dsl` in it is a type's name, not the keyword.",
+      "match": "\\b(Self)(::)(dsl)\\b",
+      "captures": {
+        "1": { "name": "support.class.nika" },
+        "2": { "name": "punctuation.accessor.nika" },
+        "3": { "name": "support.type.dsl.nika" }
+      }
+    },
+
+    "use-declaration": {
+      "match": "\\b(use)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\s*::\\s*[A-Za-z_][A-Za-z0-9_]*)*)",
+      "captures": {
+        "1": { "name": "keyword.control.import.nika" },
+        "2": { "name": "entity.name.namespace.nika" }
+      }
+    },
+
+    "item-declaration": {
+      "patterns": [
+        {
+          "match": "\\b(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.struct.nika" },
+            "2": { "name": "entity.name.type.struct.nika" }
+          }
+        },
+        {
+          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.enum.nika" },
+            "2": { "name": "entity.name.type.enum.nika" }
+          }
+        },
+        {
+          "comment": "Specified in Part I 4.7 but not accepted by the parser today; the extra `.unimplemented` segment records that without changing how a theme colours it.",
+          "match": "\\b(trait)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.trait.unimplemented.nika" },
+            "2": { "name": "entity.name.type.trait.nika" }
+          }
+        },
+        {
+          "comment": "Part II 10.3. Not accepted by the parser today.",
+          "match": "\\b(macro)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.macro.unimplemented.nika" },
+            "2": { "name": "entity.name.function.macro.nika" }
+          }
+        },
+        {
+          "comment": "Part III 14.1/14.4. Not accepted by the parser today.",
+          "match": "\\b(test|bench)\\s+(?=\")",
+          "captures": {
+            "1": { "name": "keyword.declaration.test.unimplemented.nika" }
+          }
+        }
+      ]
+    },
+
+    "impl-declaration": {
+      "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s+(for)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+      "captures": {
+        "1": { "name": "keyword.declaration.impl.nika" },
+        "2": { "name": "entity.name.type.nika" },
+        "3": { "name": "keyword.declaration.impl.for.nika" },
+        "4": { "name": "entity.name.type.nika" }
+      }
+    },
+
+    "function-declaration": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.nika" },
+            "2": { "name": "entity.name.function.nika" }
+          }
+        },
+        {
+          "comment": "A lambda (`fn { … }`, `fn(a) { … }`) and the anonymous constructor (`pub fn(…)`) have the same shape and the same keyword.",
+          "name": "keyword.declaration.function.nika",
+          "match": "\\bfn\\b"
+        }
+      ]
+    },
+
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.nika",
+          "match": "\\b(if|else|match)\\b"
+        },
+        {
+          "name": "keyword.control.loop.nika",
+          "match": "\\b(while|for|in)\\b"
+        },
+        {
+          "name": "keyword.control.flow.nika",
+          "match": "\\b(return)\\b"
+        },
+        {
+          "comment": "ADR-023 / ADR-025: errors are not a Result. `throw` raises, `catch { … }` is a postfix expression that supplies a replacement value or leaves the function.",
+          "name": "keyword.control.exception.nika",
+          "match": "\\b(throw|catch)\\b"
+        },
+        {
+          "comment": "ADR-033 D7. `seq { … }` states an order the compiler cannot see.",
+          "name": "keyword.control.seq.nika",
+          "match": "\\bseq\\b(?=\\s*\\{)"
+        },
+        {
+          "name": "keyword.control.spawn.nika",
+          "match": "\\bspawn\\b"
+        },
+        {
+          "comment": "Part II 12.4. Not accepted by the parser today.",
+          "name": "keyword.control.select.unimplemented.nika",
+          "match": "\\bselect\\b(?=\\s*\\{)"
+        },
+        {
+          "comment": "Part II 10.5. A whole `dsl … { … } eod` is an embedded block and a `dsl … from …` its own match; this catches a `dsl` neither of them reached. `from` is deliberately NOT here — it is not a reserved word, and `fn countdown(from: i32)` in tests/samples/while_loop.nika uses it as a parameter name.",
+          "name": "keyword.control.dsl.nika",
+          "match": "(?<!::)\\b(dsl|eod)\\b"
+        },
+        {
+          "name": "keyword.declaration.variable.nika",
+          "match": "\\b(let)\\b"
+        },
+        {
+          "name": "storage.modifier.nika",
+          "match": "\\b(mut|pub)\\b"
+        },
+        {
+          "comment": "Part II 12.1. `sync` says out loud that a function can never pause; the compiler infers it either way.",
+          "name": "storage.modifier.sync.nika",
+          "match": "\\bsync\\b"
+        },
+        {
+          "comment": "Part I 7.1. `throws` names no type: what a function can fail with is inferred whole-program.",
+          "name": "storage.modifier.throws.nika",
+          "match": "\\bthrows\\b"
+        },
+        {
+          "name": "keyword.other.grammar.nika",
+          "match": "\\b(grammar|rule)\\b"
+        },
+        {
+          "comment": "Specified but not accepted by the parser today.",
+          "name": "keyword.other.unimplemented.nika",
+          "match": "\\b(const|macro|quote|with|test|bench|assert|extern|unsafe|trait)\\b"
+        },
+        {
+          "name": "constant.language.boolean.nika",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "comment": "Part I 2.3. Specified; the parser has no `null` literal and no `T?` type today.",
+          "name": "constant.language.null.unimplemented.nika",
+          "match": "\\bnull\\b"
+        },
+        {
+          "name": "variable.language.self.nika",
+          "match": "\\bself\\b"
+        },
+        {
+          "comment": "Part I 3.4: `_` matches anything and binds nothing — and only where no name follows it, because `_name` is a name.",
+          "name": "variable.language.wildcard.nika",
+          "match": "(?<![A-Za-z0-9_])_(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "keyword.operator.cast.nika",
+          "match": "\\bas\\b"
+        }
+      ]
+    },
+
+    "number": {
+      "patterns": [
+        {
+          "comment": "Part I 2.2. A float may carry an exponent. There are no digit separators, no radix prefixes and no literal suffixes in this language — `1_000`, `0xFF` and `1i64` are all three of them something else.",
+          "name": "constant.numeric.float.nika",
+          "match": "\\b[0-9]+\\.[0-9]+(?:[eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.float.nika",
+          "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.nika",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+
+    "tuple-index": {
+      "comment": "Part I 4.5: a tuple's parts are read by position, and the number is a field name.",
+      "match": "(\\.)([0-9]+)\\b",
+      "captures": {
+        "1": { "name": "punctuation.accessor.nika" },
+        "2": { "name": "constant.numeric.tuple-index.nika" }
+      }
+    },
+
+    "concurrency-method": {
+      "comment": "Part II 12.2/12.3/12.6 — the methods that demand a `sync` lambda, plus the two ways a task is joined.",
+      "match": "(\\.)\\s*(access_all|access|par_iter|await|join)\\b",
+      "captures": {
+        "1": { "name": "punctuation.accessor.nika" },
+        "2": { "name": "support.function.concurrency.nika" }
+      }
+    },
+
+    "method-call": {
+      "comment": "A trailing lambda may stand outside the parentheses, and where there are no other arguments the parentheses go with it (Part I 5.3).",
+      "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\(|\\s+fn\\b)",
+      "captures": {
+        "1": { "name": "punctuation.accessor.nika" },
+        "2": { "name": "entity.name.function.method.nika" }
+      }
+    },
+
+    "field-access": {
+      "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.accessor.nika" },
+        "2": { "name": "variable.other.member.nika" }
+      }
+    },
+
+    "type-primitive": {
+      "name": "support.type.primitive.nika",
+      "match": "\\b(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|usize|isize|f32|f64|bool|char|str)\\b"
+    },
+
+    "type-support": {
+      "comment": "Part I 6.2 and Part II 12: the types the language itself talks about.",
+      "name": "support.class.nika",
+      "match": "\\b(String|Vec|List|HashMap|HashSet|Shared|Locked|Cleanup|Drop|Error|TaskHandle|Path|Bytes|Pointer|Self)\\b"
+    },
+
+    "type-name": {
+      "name": "entity.name.type.nika",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+    },
+
+    "namespace": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)(?=\\s*::)",
+      "captures": {
+        "1": { "name": "entity.name.namespace.nika" }
+      }
+    },
+
+    "path-member": {
+      "match": "(?<=::)\\s*([a-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "entity.name.function.path.nika" }
+      }
+    },
+
+    "function-call": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.call.nika" }
+      }
+    },
+
+    "parens": {
+      "begin": "\\(",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.parens.begin.nika" }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.parens.end.nika" }
+      },
+      "patterns": [
+        { "include": "#config-zone" },
+        { "include": "#named-argument" },
+        { "include": "#main" }
+      ]
+    },
+
+    "config-zone": {
+      "comment": "Part I 5.1. The `;` inside a parameter list or a call separates the subject zone from the configuration zone; everything after it is named, never positional.",
+      "name": "meta.config-zone.nika",
+      "begin": ";",
+      "beginCaptures": {
+        "0": { "name": "punctuation.separator.config.nika" }
+      },
+      "end": "(?=\\))",
+      "patterns": [
+        { "include": "#spread-parameter" },
+        { "include": "#named-argument" },
+        { "include": "#main" }
+      ]
+    },
+
+    "spread-parameter": {
+      "comment": "ADR-007 D5: `...args: Self::dsl` is how a DSL driver accepts the deferred parameters a statement declared.",
+      "match": "(\\.\\.\\.)([A-Za-z_][A-Za-z0-9_]*)\\s*(:)\\s*(Self::dsl)",
+      "captures": {
+        "1": { "name": "keyword.operator.spread.nika" },
+        "2": { "name": "variable.parameter.nika" },
+        "3": { "name": "punctuation.separator.key-value.nika" },
+        "4": { "name": "support.type.dsl.nika" }
+      }
+    },
+
+    "named-argument": {
+      "match": "(?<![:\\w])([A-Za-z_][A-Za-z0-9_]*)\\s*(:)(?!:)",
+      "captures": {
+        "1": { "name": "variable.parameter.nika" },
+        "2": { "name": "punctuation.separator.key-value.nika" }
+      }
+    },
+
+    "brackets": {
+      "comment": "Part I 4.6: a type's parameters are written in square brackets — `Vec[i64]`, `HashMap[&str, Stats]`. The same brackets index a collection.",
+      "begin": "\\[",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.brackets.begin.nika" }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.brackets.end.nika" }
+      },
+      "patterns": [{ "include": "#main" }]
+    },
+
+    "block": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.block.begin.nika" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.nika" }
+      },
+      "patterns": [{ "include": "#main" }]
+    },
+
+    "operator": {
+      "patterns": [
+        {
+          "comment": "Part I 3.5. `??` supplies a fallback where a value is null.",
+          "name": "keyword.operator.coalesce.nika",
+          "match": "\\?\\?"
+        },
+        {
+          "comment": "Part I 3.5, specified; the parser has no safe-navigation operator today.",
+          "name": "keyword.operator.safe-navigation.unimplemented.nika",
+          "match": "\\?\\."
+        },
+        {
+          "name": "keyword.operator.arrow.nika",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.range.nika",
+          "match": "\\.\\.=|\\.\\."
+        },
+        {
+          "name": "keyword.operator.assignment.nika",
+          "match": "\\+=|-=|\\*=|/="
+        },
+        {
+          "name": "keyword.operator.comparison.nika",
+          "match": "==|!=|<=|>="
+        },
+        {
+          "name": "keyword.operator.logical.nika",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.assignment.nika",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.comparison.nika",
+          "match": "<|>"
+        },
+        {
+          "name": "keyword.operator.reference.nika",
+          "match": "&"
+        },
+        {
+          "name": "keyword.operator.arithmetic.nika",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.optional.nika",
+          "match": "\\?"
+        }
+      ]
+    },
+
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.accessor.nika", "match": "::" },
+        { "name": "punctuation.accessor.nika", "match": "\\." },
+        { "name": "punctuation.separator.comma.nika", "match": "," },
+        { "name": "punctuation.terminator.statement.nika", "match": ";" },
+        { "name": "punctuation.separator.key-value.nika", "match": ":" },
+        { "name": "punctuation.section.parens.end.nika", "match": "\\)" },
+        { "name": "punctuation.section.brackets.end.nika", "match": "\\]" },
+        { "name": "punctuation.section.block.end.nika", "match": "\\}" }
+      ]
+    },
+
+    "identifier": {
+      "comment": "The catch-all. Everything above it carries a meaning; this only says `this is a name`.",
+      "name": "variable.other.nika",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+    },
+
+    "grammar-block": {
+      "comment": "Part II 10.1. A grammar body is its own little language: rule names decide lexical (uppercase) from syntactic (lowercase), `=>` is a commit point, `->` introduces a typed action block, and the action block itself is ordinary Nikaia.",
+      "name": "meta.grammar.nika",
+      "begin": "\\b(grammar)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.grammar.nika" },
+        "2": { "name": "entity.name.type.grammar.nika" },
+        "3": { "name": "punctuation.section.block.begin.nika" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.nika" }
+      },
+      "patterns": [{ "include": "#grammar-body" }]
+    },
+
+    "grammar-body": {
+      "comment": "A rule's pattern language. `#grammar-parens` and `#grammar-brackets` recurse back into this list so that `dec[i64](digit+)` and `until(\";\" | frame_end)` read as patterns; a brace, on the other hand, falls through to #main, because every `{` in a grammar body opens either an action block or a repetition bound and both of those are ordinary Nikaia.",
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#string" },
+        { "include": "#char" },
+        { "include": "#frame-attribute" },
+        { "include": "#grammar-rule-lexical" },
+        { "include": "#grammar-rule-syntactic" },
+        { "include": "#grammar-label" },
+        { "include": "#grammar-commit" },
+        { "include": "#grammar-unchecked" },
+        { "include": "#grammar-builtin" },
+        { "include": "#grammar-binding" },
+        { "include": "#grammar-rule-reference" },
+        { "include": "#grammar-alternation" },
+        { "include": "#grammar-repetition" },
+        { "include": "#grammar-parens" },
+        { "include": "#grammar-brackets" },
+        { "include": "#main" }
+      ]
+    },
+
+    "grammar-parens": {
+      "begin": "\\(",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.parens.begin.nika" }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.parens.end.nika" }
+      },
+      "patterns": [{ "include": "#grammar-body" }]
+    },
+
+    "grammar-brackets": {
+      "begin": "\\[",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.brackets.begin.nika" }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.brackets.end.nika" }
+      },
+      "patterns": [{ "include": "#grammar-body" }]
+    },
+
+    "frame-attribute": {
+      "comment": "ADR-009 D1. `@frame`, `@frame(boundary: \"\\n\")`, `@frame(boundary: \"\\n\", unchecked)` — a keyed list, so a later cut-point key can be added without changing what the existing ones mean.",
+      "match": "(@frame)\\b",
+      "captures": {
+        "1": { "name": "storage.modifier.attribute.frame.nika" }
+      }
+    },
+
+    "grammar-rule-lexical": {
+      "comment": "An uppercase rule name is lexical: no whitespace is skipped between its parts.",
+      "match": "\\b(rule)\\s+([A-Z][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.grammar.rule.nika" },
+        "2": { "name": "entity.name.function.rule.lexical.nika" }
+      }
+    },
+
+    "grammar-rule-syntactic": {
+      "comment": "A lowercase rule name is syntactic: whitespace is skipped between its parts.",
+      "match": "\\b(rule)\\s+([a-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.grammar.rule.nika" },
+        "2": { "name": "entity.name.function.rule.syntactic.nika" }
+      }
+    },
+
+    "grammar-label": {
+      "comment": "Part II 10.6: `rule expr -> Expr # \"expression\"` names the rule for the message it gives when it fails where it began.",
+      "match": "(#)(?=\\s*\")",
+      "captures": {
+        "1": { "name": "punctuation.definition.label.nika" }
+      }
+    },
+
+    "grammar-commit": {
+      "comment": "Part II 10.1: past a commit point a later failure is an error, not a reason to try the next alternative.",
+      "name": "keyword.operator.commit.nika",
+      "match": "=>"
+    },
+
+    "grammar-builtin": {
+      "name": "support.function.grammar.nika",
+      "match": "\\b(par_fold|fold|until|list|recover|text|dec|peek|not|any|opt|digit1|digit|hex_digit|raw_ident|ident|line_ending|multispace0|multispace1|space0|space1|alpha1|alphanumeric1|frame_end)\\b"
+    },
+
+    "grammar-unchecked": {
+      "comment": "ADR-009 D1: `@frame(boundary: \"\\n\", unchecked)` skips the cut-point check. You assert the invariant, as with `unsafe`, and the word is there to grep for — so it gets a scope of its own.",
+      "name": "keyword.other.unchecked.nika",
+      "match": "\\bunchecked\\b"
+    },
+
+    "grammar-binding": {
+      "comment": "`name:pattern` binds what the pattern matched for the action block to use.",
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(:)(?!:)",
+      "captures": {
+        "1": { "name": "variable.parameter.nika" },
+        "2": { "name": "punctuation.separator.key-value.nika" }
+      }
+    },
+
+    "grammar-rule-reference": {
+      "comment": "An ALL-CAPS name in a grammar body is a reference to a lexical rule; a CamelCase one is a type, and falls through to #main.",
+      "name": "entity.name.function.rule.nika",
+      "match": "\\b[A-Z][A-Z0-9_]*\\b"
+    },
+
+    "grammar-alternation": {
+      "name": "keyword.operator.alternation.nika",
+      "match": "\\|"
+    },
+
+    "grammar-repetition": {
+      "comment": "ADR-009 D5: `*` and `+` say unbounded and mean it; a brace group states a fixed width.",
+      "name": "keyword.operator.repetition.nika",
+      "match": "[*+?]"
+    },
+
+    "dsl-from": {
+      "comment": "Part II 10.2: `dsl <Grammar> from <expr>` runs a named grammar over a value — at compile time in a `const`, at run time otherwise, with the same spelling.",
+      "match": "\\b(dsl)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+(from)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.dsl.nika" },
+        "2": { "name": "entity.name.type.grammar.nika" },
+        "3": { "name": "keyword.control.dsl.from.nika" }
+      }
+    },
+
+    "dsl-html": {
+      "comment": "Part II 10.5 with ADR-017. The body is markup, not Nikaia; `{…}` is a hole (a template's holes need no `f`) and `:name` is a capture from the enclosing scope.",
+      "name": "meta.embedded.block.html.nika",
+      "begin": "\\b(dsl)\\s+(html)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.dsl.nika" },
+        "2": { "name": "entity.name.type.dsl-target.nika" },
+        "3": { "name": "punctuation.section.embedded.begin.nika" }
+      },
+      "end": "(\\})[ \\t]+(eod)\\b",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.embedded.end.nika" },
+        "2": { "name": "keyword.control.dsl.eod.nika" }
+      },
+      "patterns": [{ "include": "#dsl-markup" }]
+    },
+
+    "dsl-sql": {
+      "comment": "A SQL body carries no `{…}` holes: its parameters are `:name`, resolved at run time as named arguments after the `;` (ADR-007 D5).",
+      "name": "meta.embedded.block.sql.nika",
+      "begin": "\\b(dsl)\\s+(mysql|postgres|postgresql|sqlite|sql)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.dsl.nika" },
+        "2": { "name": "entity.name.type.dsl-target.nika" },
+        "3": { "name": "punctuation.section.embedded.begin.nika" }
+      },
+      "end": "(\\})[ \\t]+(eod)\\b",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.embedded.end.nika" },
+        "2": { "name": "keyword.control.dsl.eod.nika" }
+      },
+      "contentName": "meta.embedded.sql.nika",
+      "patterns": [
+        { "include": "#dsl-parameter" },
+        { "include": "source.sql" }
+      ]
+    },
+
+    "dsl-generic": {
+      "comment": "An unknown target's body is foreign syntax and gets no Nikaia colouring at all — only the `:name` deferred parameters, which the compiler reads off the text whatever the grammar is.",
+      "name": "meta.embedded.block.nika",
+      "begin": "\\b(dsl)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.dsl.nika" },
+        "2": { "name": "entity.name.type.dsl-target.nika" },
+        "3": { "name": "punctuation.section.embedded.begin.nika" }
+      },
+      "end": "(\\})[ \\t]+(eod)\\b",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.embedded.end.nika" },
+        "2": { "name": "keyword.control.dsl.eod.nika" }
+      },
+      "contentName": "meta.embedded.foreign.nika",
+      "patterns": [{ "include": "#dsl-parameter" }]
+    },
+
+    "dsl-parameter": {
+      "comment": "ADR-007 D5. A `:name` is a hole because the body wrote a colon and a name; a path (`a::b`) and a time (`12:30`) are not.",
+      "match": "(?<![:A-Za-z0-9_])(:)([A-Za-z_][A-Za-z0-9_]*)\\b(?!:)",
+      "captures": {
+        "1": { "name": "punctuation.definition.parameter.dsl.nika" },
+        "2": { "name": "variable.parameter.dsl.nika" }
+      }
+    },
+
+    "dsl-hole": {
+      "comment": "ADR-035: `{{` is a literal brace here too — a template shares the syntax rather than inventing a second one.",
+      "patterns": [
+        {
+          "name": "constant.character.escape.brace.nika",
+          "match": "\\{\\{|\\}\\}"
+        },
+        { "include": "#interpolation" }
+      ]
+    },
+
+    "dsl-markup": {
+      "comment": "A deliberately small HTML: enough that markup reads as markup, and written here rather than delegated so that a hole inside a tag still reads as Nikaia.",
+      "patterns": [
+        {
+          "name": "comment.block.html.nika",
+          "begin": "<!--",
+          "end": "-->"
+        },
+        {
+          "name": "meta.tag.sgml.doctype.html.nika",
+          "match": "<!(?i:DOCTYPE)[^>]*>"
+        },
+        { "include": "#dsl-hole" },
+        { "include": "#dsl-parameter" },
+        {
+          "name": "meta.tag.html.nika",
+          "begin": "(</?)([A-Za-z_][A-Za-z0-9_.:-]*)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.html.nika" },
+            "2": { "name": "entity.name.tag.html.nika" }
+          },
+          "end": "/?>",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.tag.end.html.nika" }
+          },
+          "patterns": [
+            { "include": "#dsl-hole" },
+            { "include": "#dsl-parameter" },
+            {
+              "name": "entity.other.attribute-name.html.nika",
+              "match": "\\b[A-Za-z_][A-Za-z0-9_.:-]*(?=\\s*=)"
+            },
+            {
+              "name": "string.quoted.double.html.nika",
+              "begin": "\"",
+              "beginCaptures": {
+                "0": { "name": "punctuation.definition.string.begin.html.nika" }
+              },
+              "end": "\"",
+              "endCaptures": {
+                "0": { "name": "punctuation.definition.string.end.html.nika" }
+              },
+              "patterns": [{ "include": "#dsl-hole" }]
+            },
+            {
+              "comment": "`<for r in :rows>` is written as an element so that an editor that highlights markup keeps working (ADR-007 D4).",
+              "name": "keyword.control.template.nika",
+              "match": "\\b(in)\\b"
+            }
+          ]
+        },
+        {
+          "name": "constant.character.entity.html.nika",
+          "match": "&(?:[a-zA-Z0-9]+|#[0-9]+|#[xX][0-9a-fA-F]+);"
+        }
+      ]
+    }
+  }
+}
