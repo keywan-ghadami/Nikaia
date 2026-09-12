@@ -1,9 +1,11 @@
 # `Rc` or `Arc` — per build, or per value?
 
 **Date:** September 12, 2026
-**Status:** the experiment ran; the finding is evidence under
-[ADR-037](specification/adr/adr-037.md) D3 and **decides nothing**. D3's question is
-open, and it stays the repository owner's to close.
+**Status:** the experiment ran; the finding was evidence under
+[ADR-037](specification/adr/adr-037.md) D3, and the owner has since decided with
+it — see §11. This page keeps the **method, the machine and the false starts**,
+which is what a note is for; what was decided, and the one number it was decided
+on, are in the record.
 **Related:** [ADR-037](specification/adr/adr-037.md) D3 (the open question) and D2
 (the switch), [ADR-005](specification/adr/adr-005.md) §1 Group B and §5.3 (the check this
 would change), [ADR-006](specification/adr/adr-006.md) (cleanup, whose observability is
@@ -596,3 +598,27 @@ its `dsl postgres { … }` block is a grammar this compiler does not have. That 
 unrelated and pre-existing; the report is printed before the emitter runs, which
 is deliberate — `--sharing` answers a question about the program, and a program
 that does not lower still has one.
+
+---
+
+## 11. Which option the owner took
+
+**C.** `Shared` is an atomic count at **both** settings
+([ADR-037](specification/adr/adr-037.md) D6), and §9's reason is the one that
+decided it: the verdict of `NK25xx` is about a *type* and may never consult the
+switch, so a `Shared` whose expansion moved with the switch had to be refused a
+crossing at both settings — and Part II 12.2's counter is the program that wanted
+one. The price is §3's measured **+9 ns per clone-and-drop pair**, about 1 % of a
+loop with real work in it and 0 % of a handle that is read and not cloned; §3's
+expensive row is the contended one, and no choice reaches it.
+
+In `send.rs` it was the one line §9 said it would be, and the line cost more
+around it than in it: `Shared` moving into `CONTAINERS` deleted the file's only
+`MayNot` producer, so `NK2501` and `NK2502` are now built and reached by no
+program. That belongs to D6 rather than here — it is a consequence of the
+decision and not a finding of this experiment.
+
+**Not taken from §9: A**, which would have left Part II 12.2's counter
+unwritable; and **B as §9 framed it**, a choice between two representations, with
+the emitter axis and the §5.1 boundary that come with it. §7's `Locked` half is
+not decided by any of this.

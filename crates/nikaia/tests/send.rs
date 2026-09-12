@@ -16,11 +16,23 @@
 //! is here is the cases a corpus cannot contain, because nothing in the
 //! repository writes `Shared` - `Shared` is unbuilt, and this check is what has
 //! to exist before it lands.
+//!
+//! **Since [ADR-037](../../../docs/specification/adr/adr-037.md) D6 the second
+//! half has no input, and that is stated rather than worked around.** `Shared`
+//! was the one type `contracts::send` answered `may not` about; D6 gives it one
+//! representation at both settings, so it is answered by what it holds and no
+//! type in the language is refused a crossing. So the programs below that used
+//! to produce `NK2501` and `NK2502` now assert **silence**, the walk's own tests
+//! in `contracts::send` keep the refusal arm and its sentences whole, and the
+//! two codes stay built for the next type whose expansion moves with the switch.
+//! What is *not* here any more is an end-to-end rendering of either code, and
+//! there is no honest way to write one: a refusal can only come from a type the
+//! records name, and they name none.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use nikaia::check::{self, Finding, Severity};
+use nikaia::check::{self, Finding};
 use nikaia::contracts::order;
 use nikaia::contracts::send::{self, Crossing};
 use nikaia::contracts::{ty::Ty, Ledger, STD};
@@ -44,22 +56,6 @@ fn crossings(source: &str) -> Vec<Finding> {
         .into_iter()
         .filter(|f| f.code.starts_with("NK25"))
         .collect()
-}
-
-/// The one crossing a source is written to produce, rendered the way a user
-/// sees it.
-fn one(source: &str) -> (String, String) {
-    let found = crossings(source);
-    assert_eq!(
-        found.len(),
-        1,
-        "expected exactly one crossing, got {:#?}",
-        found.iter().map(|f| &f.message).collect::<Vec<_>>()
-    );
-    (
-        found[0].code.to_string(),
-        nikaia::diagnostics::render_finding(&found[0], "app.nika", source),
-    )
 }
 
 /// What `project::check` does with a program, which is where the build switch
@@ -179,82 +175,80 @@ fn a_value_whose_type_is_not_written_down_is_not_refused() {
 
 // --- what it catches --------------------------------------------------------
 
-/// `Shared` may not cross into a task, and the message says so in Nikaia words.
+/// A `Shared` crosses into a task, and nothing is said about it - **ADR-037 D6**.
 ///
-/// `Shared[T]` is a count of the value's owners, and at `user_parallelism = no`
-/// it is a count only one thread may touch ([ADR-037](adr-037.md) D3). Part III
-/// C.2 asks for a headline, the reason, and one paste-ready way out; all three
-/// are asserted here, because the catalogue *is* the test suite (C.1).
+/// This program was `NK2501`'s own example until the count stopped moving with
+/// the switch. `Shared[Vec[i64]]` is answered by `Vec[i64]` now, which may
+/// cross, so the task may take it. The verdict is still a property of the type
+/// and still never reads `user_parallelism`; what moved is one row of
+/// `contracts::send`'s table.
 #[test]
-fn a_shared_may_not_cross_into_a_task() {
-    let (code, rendered) = one("fn zaehle(counts: Shared[Vec[i64]]) {\n\
+fn a_shared_crosses_into_a_task() {
+    let clean = crossings(
+        "fn zaehle(counts: Shared[Vec[i64]]) {\n\
              spawn({ println(f\"{counts.len()}\") })\n\
-         }");
-    assert_eq!(code, "NK2501");
-    assert!(
-        rendered.starts_with(
-            "error[NK2501]: `counts` may not cross into a task, and this task uses it\n"
-        ),
-        "{rendered}"
+         }",
     );
-    assert!(rendered.contains("app.nika:2:"), "{rendered}");
-    assert!(rendered.contains('^'), "a caret, as C.2 asks: {rendered}");
-    assert!(
-        rendered.contains("`Shared[Vec[i64]]` counts its owners"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("help: write `Vec[i64]` where the value crosses"),
-        "the help is paste-ready: {rendered}"
-    );
-    // C.2's first requirement: no Rust vocabulary anywhere in it.
-    for word in ["Rc", "Arc", "Send", "E0277", "lifetime", "borrow"] {
-        assert!(!rendered.contains(word), "`{word}` in: {rendered}");
-    }
+    assert!(clean.is_empty(), "{clean:#?}");
 }
 
-/// The rule is **structural and transitive**, which is what Group B asks for: a
-/// struct with one `Shared` field is no more crossable than the field.
+/// The rule is still **structural and transitive**, which is what Group B asks
+/// for: a struct is exactly as crossable as its fields, in both directions.
 #[test]
-fn a_struct_that_holds_a_shared_may_not_cross_into_a_task() {
-    let (code, rendered) = one("struct Tally { hits: Shared[i64] }\n\
+fn a_struct_that_holds_a_shared_crosses_into_a_task() {
+    let clean = crossings(
+        "struct Tally { hits: Shared[i64] }\n\
          fn zaehle(t: Tally) {\n\
              spawn({ println(f\"{t.hits}\") })\n\
-         }");
-    assert_eq!(code, "NK2501");
+         }",
+    );
+    assert!(clean.is_empty(), "{clean:#?}");
+}
+
+/// …and a `Shared` of something nothing describes is **undecided**, which is not
+/// permission and is also not a refusal.
+///
+/// Part II 12.2's counter is this program. `Locked` is what decides it - its
+/// representation is what ADR-037 D3's second half is about, and D6 does not
+/// touch it - so nothing here is refused and nothing here is waved through:
+/// `rustc` type-checks the emitted crate and ADR-005 D7's translation reports
+/// its answer against this `.nika` line.
+#[test]
+fn a_shared_of_something_undescribed_is_not_refused_and_not_permitted() {
+    let clean = crossings(
+        "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+             spawn({ println(f\"{counter}\") })\n\
+         }",
+    );
+    assert!(clean.is_empty(), "not refused: {clean:#?}");
+
+    let parsed =
+        parse_to_ast("fn zaehle(counter: Shared[Locked[i32]]) { }").expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let answer = send::crossing(&Ty::parse("Shared[Locked[i32]]"), &own, &library);
     assert!(
-        rendered.contains("its field `hits`"),
-        "the note names the field that decided it: {rendered}"
+        matches!(answer, Crossing::Undecided { .. }),
+        "and not permitted either: {answer:?}"
     );
 }
 
-/// ADR-038 D7's first rule: a value handed to a call this compiler cannot see
-/// the end of may reach a thread that call owns.
+/// ADR-038 D7's first rule still has no `Shared` to refuse, so the foreign
+/// crossing of the `examples/foreign-runtime/crossing` shape is silent too.
 ///
-/// This is the `examples/foreign-runtime/crossing` shape, which the experiment
-/// measured as a raw `E0277` against a generated file.
+/// The rule is untouched - a call this compiler cannot see the end of may put
+/// what it is given on a thread of its own - and `contracts::sharing` is where
+/// that now costs something: the value's count stays atomic rather than the
+/// program being refused. `docs/rc-or-arc.md` §5.3 is the polarity, and
+/// `tests/sharing.rs` is where it is asserted.
 #[test]
-fn a_shared_may_not_cross_into_a_call_this_compiler_cannot_see() {
-    let (code, rendered) = one("fn ueber(handle: Shared[String]) {\n\
+fn a_shared_crosses_into_a_call_this_compiler_cannot_see() {
+    let clean = crossings(
+        "fn ueber(handle: Shared[String]) {\n\
              fremd::auf_einen_thread(handle)\n\
-         }");
-    assert_eq!(code, "NK2502");
-    assert!(
-        rendered.starts_with(
-            "error[NK2502]: `handle` may not cross a thread, and \
-             `fremd::auf_einen_thread` may put it on one\n"
-        ),
-        "{rendered}"
+         }",
     );
-    assert!(
-        rendered.contains("nothing written down describes `fremd::auf_einen_thread`"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("Part III, 15.2"),
-        "and points at the rule it is about: {rendered}"
-    );
-    assert!(rendered.contains("app.nika:2:"), "{rendered}");
+    assert!(clean.is_empty(), "{clean:#?}");
 }
 
 /// A call into a *described* function is not this, however unpleasant its
@@ -275,66 +269,80 @@ fn a_call_this_compiler_can_see_is_not_a_crossing() {
 
 // --- the asymmetry Group B exists to prevent --------------------------------
 
-/// **One verdict, two severities.** The check runs at both settings of
-/// `user_parallelism` and says the same thing; what the switch decides is
-/// whether *this* build performs the crossing.
-///
-/// At `no` nothing the program wrote runs concurrently (ADR-037 D2), so the
-/// emitter writes no task and the crossing does not happen - refusing would
-/// refuse a program that compiles. At `yes` it does happen. Part III C.3 asked
-/// for exactly this: "reported at `user_parallelism = no` as a lint, so a
-/// library built there stays usable at `yes`".
+/// **One verdict at both settings**, which is the property ADR-037 §5 asks this
+/// file to assert - and it is asserted by comparing verdicts rather than exit
+/// codes, because that is the only comparison that catches the failure.
 ///
 /// Accepted at `yes` and refused at `no` - or silent at `no` and refused at
-/// `yes` - is the failure Group B was written to prevent, and this is the test
-/// that neither has happened.
+/// `yes` - is what Group B was written to prevent. Since ADR-037 D6 the
+/// `Shared` programs are accepted at both, so the property holds from the other
+/// side: the same source, the same verdict, and the build goes on either way.
+///
+/// **The severity split is what has no input now.** `lint_where_nothing_crosses`
+/// downgrades `NK2501` at `no` and leaves `NK2502` alone, and both arms are
+/// still there for the next type whose expansion moves with the switch - which
+/// is exactly why D6 removed the cause and not the mechanism.
 #[test]
-fn a_task_crossing_is_a_lint_at_no_and_an_error_at_yes() {
-    let source = "fn zaehle(counts: Shared[Vec[i64]]) {\n\
-                      spawn({ println(f\"{counts.len()}\") })\n\
-                  }";
-
-    // The verdict itself does not move: the analysis never sees a switch.
-    let found = crossings(source);
-    assert_eq!(found.len(), 1, "{found:#?}");
-    assert_eq!(found[0].severity, Severity::Error);
-
-    assert_eq!(
-        refused_at(source, "no"),
-        None,
-        "at `no` the crossing does not happen, so it is a lint and the build goes on"
-    );
-    let refused = refused_at(source, "yes").expect("at `yes` it happens, so it is refused");
-    assert_eq!(refused, "1 value that may not cross a thread");
+fn the_verdict_is_the_same_at_both_settings() {
+    for source in [
+        "fn zaehle(counts: Shared[Vec[i64]]) {\n\
+             spawn({ println(f\"{counts.len()}\") })\n\
+         }",
+        "fn ueber(handle: Shared[String]) {\n\
+             fremd::auf_einen_thread(handle)\n\
+         }",
+        "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+             spawn({ println(f\"{counter}\") })\n\
+         }",
+    ] {
+        // The analysis never sees a switch, so there is one verdict to compare.
+        let found = crossings(source);
+        assert!(found.is_empty(), "{found:#?}");
+        assert_eq!(
+            refused_at(source, "no"),
+            refused_at(source, "yes"),
+            "{source}"
+        );
+        assert_eq!(refused_at(source, "no"), None, "{source}");
+    }
 }
 
-/// A crossing into a **foreign** thread is refused at both settings, and that
-/// is the decision rather than an oversight.
+/// Part II 12.2's counter, at both settings, which is the program D3's open
+/// question was wanted for.
 ///
-/// `user_parallelism` bounds what the *program* runs at once - ADR-037 D2's
-/// load-bearing "user". A Rust dependency's own runtime is not the program's, so
-/// the crossing is real at `no` too, and so is the refusal (ADR-038 D7).
+/// `Shared` no longer stands in front of it: the count is atomic at both
+/// settings, so the handle may cross. What is left is the **lock**, and this
+/// test says exactly what the compiler says about it today - nothing, because
+/// nothing written down describes `Locked`. Which of `RefCell` and `Mutex` it
+/// expands to is ADR-037 D3's second half and is not decided here, so this
+/// asserts the silence rather than a verdict about the lock.
 #[test]
-fn a_foreign_crossing_is_refused_at_both_settings() {
-    let source = "fn ueber(handle: Shared[String]) {\n\
-                      fremd::auf_einen_thread(handle)\n\
+fn the_shared_half_of_part_ii_12_2s_counter_no_longer_refuses() {
+    let source = "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+                      counter.access(fn(a) { a })\n\
+                      spawn({ println(f\"{counter}\") })\n\
                   }";
     for setting in ["no", "yes"] {
-        let refused = refused_at(source, setting)
-            .unwrap_or_else(|| panic!("a foreign crossing is refused at `{setting}` too"));
-        assert_eq!(refused, "1 value that may not cross a thread");
+        assert_eq!(refused_at(source, setting), None, "at `{setting}`");
     }
+    assert!(crossings(source).is_empty());
 }
 
 // --- the crossing the compiler chooses for itself ---------------------------
 
-/// A ledger with one crossable result and one that may not cross, so that the
-/// overlapping analysis can be asked about both.
+/// A ledger with one crossable result and one the compiler cannot decide about,
+/// so that the overlapping analysis can be asked about both.
 ///
 /// Hand-written rather than `std`'s, because nothing in `std` returns a value
 /// that may not cross a thread - which is the whole reason this check could be
 /// absent for so long without anything being unsound (`docs/foreign-runtime.md`
 /// §3.2).
+///
+/// **`probe::held` hands back `Shared[Locked[i64]]` rather than `Shared[i64]`
+/// since ADR-037 D6.** The overlapping analysis refuses anything but `May`, so
+/// what it needs here is a non-`May` answer and not specifically a refusal - and
+/// since D6 a `Shared` of plain data *is* `May`, which is a change to what this
+/// analysis lets through and is asserted below.
 fn probe_library() -> Ledger {
     Ledger::parse(
         "version = 2\n\
@@ -348,6 +356,12 @@ fn probe_library() -> Ledger {
          signature = \"() -> i64\"\n\
          \n\
          [fn.\"probe::held\"]\n\
+         pub = true\n\
+         sync = true\n\
+         touches = []\n\
+         signature = \"() -> Shared[Locked[i64]]\"\n\
+         \n\
+         [fn.\"probe::counted\"]\n\
          pub = true\n\
          sync = true\n\
          touches = []\n\
@@ -381,8 +395,30 @@ fn two_crossable_operations_still_overlap() {
     );
 }
 
-/// … and a pair whose result may not cross a thread keeps the order it was
-/// written in, with no diagnostic at all.
+/// A pair whose result is a `Shared` of plain data **does** overlap since
+/// ADR-037 D6 - and that is the one thing step 1 changes about the overlapping.
+///
+/// It is also where the floor in `contracts::sharing` earns its keep. An
+/// overlapped operation runs in a closure somewhere else and hands its value
+/// back, so this `Shared`'s count is touched on two threads - which is why the
+/// result of a call is a seed there and may never be lowered to a plain count.
+#[test]
+fn a_pair_whose_result_is_a_shared_of_plain_data_overlaps() {
+    let report = report_against_probe(
+        "fn main() {\n\
+             let a = probe::counted()\n\
+             let b = probe::counted()\n\
+             println(f\"{a} {b}\")\n\
+         }",
+    );
+    assert!(
+        report.contains("together  probe::counted / probe::counted"),
+        "{report}"
+    );
+}
+
+/// … and a pair whose result may not cross a thread, or nothing says may, keeps
+/// the order it was written in, with no diagnostic at all.
 ///
 /// This is the crossing the **compiler** chose: overlapping puts each statement
 /// in a closure that runs elsewhere and hands its value back, so the result

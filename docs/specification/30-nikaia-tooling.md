@@ -85,10 +85,12 @@ was built from, which is why a build inside the repository needs no configuratio
   compiled `std` serves both settings ([ADR-037](adr/adr-037.md) D2).
 * **The constraint that makes the pre-lowering sound.** `std`'s Nikaia half is
   lowered at **one** setting of the build switches, so nothing in it may lower
-  differently per switch. `Shared` is what that rules out for now
-  ([ADR-037](adr/adr-037.md) D3 makes it `Rc` or `Arc` from
-  `user-parallelism`), and the toolchain fails its own build rather than letting
-  such a file through.
+  differently per switch, and the toolchain fails its own build rather than
+  letting such a file through. `Shared` was what that ruled out and no longer is:
+  its count is atomic at every setting ([ADR-037](adr/adr-037.md) D6), so it
+  lowers the same way in every build and `std` may write one. What the
+  constraint still rules out is `Locked`, whose implementation does follow the
+  switch (Part II, 12.2).
 * **`std`'s ledger travels inside the compiler.** `std.contracts` (13.5) is part
   of the compiler rather than of the sysroot copy it is read from, because a
   ledger is not required to be stable across toolchain versions
@@ -1162,6 +1164,8 @@ checker stays quiet about it rather than raising a second error for one mistake.
 
 The `NK25xx` pair, on the two places a value the program wrote reaches another thread. Both come from one question asked of the value's *type* - **may a value of this type be on a thread other than the one that built it?** - and the answer is deliberately not allowed to depend on which build this is ([ADR-005](adr/adr-005.md) §1 Group B).
 
+> **Status: built, and no program reaches it.** A refusal needs a type the records say may not cross, and there is none. `Shared` was the one, and [ADR-037](adr/adr-037.md) D6 gives it a count that is atomic at every setting - so it crosses, answered by what it holds, and every value a Nikaia program can write crosses with it. The pair stays because the reason for it has not gone away: a type whose implementation *does* follow `user_parallelism` has to take the worse of the two settings, or a library written at one turns out un-compilable at the other. `Locked` is the candidate (Part II, 12.2), and nothing decides it yet. The two shapes below are what the pair prints for such a type, written with a hypothetical `Held` for exactly that reason.
+
 A task runs somewhere else, so everything it uses goes with it:
 
 ```text
@@ -1170,9 +1174,9 @@ error[NK2501]: `counts` may not cross into a task, and this task uses it
    7 |     spawn({ total(counts) })
            ^
      = a task runs on a thread of its own, so everything it uses has to be able to cross one (Part II, 11.2)
-     = `Shared[Vec[i64]]` counts its owners, and at `user_parallelism = no` it counts them in a way only one thread may touch (Part I, 6.2)
+     = `Held[i64]` is one the records say may not be on a thread other than the one that built it, at either setting of `user_parallelism` (Part III, C.5)
      = a value may cross a thread only if it may cross any thread, so the answer is the same at both settings of `user_parallelism` and a library built at one stays usable at the other (Part III, C.3)
-     help: write `Vec[i64]` where the value crosses and give each thread its own, or keep the work on one thread
+     help: keep the value on the thread that built it
 ```
 
 …and a call whose body this compiler cannot see may start a thread of its own (15.1, [ADR-038](adr/adr-038.md) D7):
@@ -1183,9 +1187,11 @@ error[NK2502]: `handle` may not cross a thread, and `hyper_shim::across_a_thread
   14 |     let crossed = hyper_shim::across_a_thread(handle)
            ^
      = nothing written down describes `hyper_shim::across_a_thread`, so this compiler cannot see the end of it - and starting a thread of its own is among the things it may do (Part III, 15.2)
-     = `Shared[String]` counts its owners, and at `user_parallelism = no` it counts them in a way only one thread may touch (Part I, 6.2)
-     help: write `String` where the value crosses and give each thread its own, or keep the work on one thread
+     = `Held[String]` is one the records say may not be on a thread other than the one that built it, at either setting of `user_parallelism` (Part III, C.5)
+     help: keep the value on the thread that built it
 ```
+
+**That is the one help sentence there is, and it used to be two.** While `Shared` was the refused type there was a second and better way out - write the value without the `Shared` and give each thread its own - and it went with the refusal. A value that may not cross has one honest remedy: it stays where it was built.
 
 Four things about that pair are deliberate.
 

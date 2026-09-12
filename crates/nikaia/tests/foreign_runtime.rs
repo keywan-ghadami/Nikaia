@@ -173,11 +173,14 @@ fn a_nikaia_program_serves_one_request_through_hyper() {
 ///
 /// It is refused, and **by whom depends on who can decide**. The structural
 /// `Send` check (ADR-005 §1 Group B, `NK2501`/`NK2502`) decides what is written
-/// down: a `Shared` is `MayNot` and is refused in Nikaia words with a caret in
-/// the `.nika` file. This program's value is not written down - it is *borrowed
-/// from the foreign crate*, so its type has no ledger entry and the verdict is
+/// down, and since [ADR-037](../../../docs/specification/adr/adr-037.md) D6 the
+/// records name no type it may refuse: `Shared` was the one, and D6 gives it a
+/// count that is atomic at both settings, so it is answered by what it holds.
+/// This program's value was never that case anyway - it is *borrowed from the
+/// foreign crate*, so its type has no ledger entry and the verdict is
 /// `Undecided`, which is not permission and not a refusal either
-/// (`contracts::send`). So what refuses this one is still `rustc`.
+/// (`contracts::send`). So what refuses this one is still `rustc`, and after D6
+/// that is true of every crossing.
 ///
 /// What changed is the half Part III C.1 actually calls a bug: the refusal now
 /// arrives **against the `.nika` line**, because ADR-005 D7 enumerates `E0277`

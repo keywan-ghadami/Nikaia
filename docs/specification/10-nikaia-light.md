@@ -697,7 +697,7 @@ When a variable goes out of **Scope** (usually at the end of the block `{}` wher
 ### 6.2. Unified Types
 To make coding easier, Nikaia provides smart types that handle memory logic for you.
 
-You write `Shared[T]` yourself — it is not inferred, because sharing changes *when* a value is cleaned up (6.4), and that is something your program can observe. What the compiler decides is the machinery underneath: at `user_parallelism = no` a plain reference count, above it an atomic one ([ADR-037](adr/adr-037.md) D3).
+You write `Shared[T]` yourself — it is not inferred, because sharing changes *when* a value is cleaned up (6.4), and that is something your program can observe. What the compiler decides is the machinery underneath: the count of owners is one a second thread may safely touch, at **every** setting of `user_parallelism` ([ADR-037](adr/adr-037.md) D6). That is what makes a `Shared` something you can hand to a task (Part II, 11.2) — the machinery cannot be safe in one build and unsafe in another, because a library you wrote at one setting has to keep working at the other.
 
 * **`Shared[T]`**: Allows data to be owned by multiple parts of the program. The memory is only cleaned up when the *last* owner is finished.
 * **`Locked[T]`**: Allows data inside a `Shared` container to be modified (mutated). It acts as a gatekeeper to ensure safety.

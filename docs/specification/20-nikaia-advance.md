@@ -476,6 +476,8 @@ assertion, checked as far as the compiler can see, and yours where it cannot.
 ### 12.2. The Dual Nature of `Locked[T]`
 To share mutable data, you use the `Locked[T]` type. Its implementation follows `user_parallelism`, providing "Zero Cost Abstraction" relative to the requirements.
 
+> **The `Shared` around it is no longer what stops the counter below crossing a thread.** `Shared[T]`'s count of owners is one a second thread may safely touch at every setting ([ADR-037](adr/adr-037.md) D6, Part I 6.2), so the handle may go into a task. What decides whether `Shared[Locked[T]]` may is therefore the **lock**, which is what this section is about — and the compiler says nothing about it either way today: nothing written down describes `Locked`, so the crossing is neither refused nor permitted in the frontend and the generated code is where it is settled (Part III, C.5).
+
 **At `user_parallelism = no`:**
 * **Implementation:** Similar to a `RefCell` with a reentrancy check.
 * **Cost:** Extremely cheap (integer increment).
