@@ -275,7 +275,27 @@ grammar! {
                 }
             }
 
-        rule kw_throws -> () = "throws" -> { () }
+        // ADR-023 D1: `throws` carries no type list. The specification itself
+        // wrote one in four places, so a reader will try it, and a parse error
+        // at the type name says nothing about why - it offered `->` and `sync`
+        // as if either were the point. The precedent is `trailing_lambda`
+        // below: a form that was in the specification deserves a sentence.
+        //
+        // `not(kw_sync)` because `fn f() throws sync { … }` is legal - `sync`
+        // may stand on either side of the return type - and `sync` is an
+        // ordinary identifier to `type_ref`.
+        rule kw_throws -> () =
+            "throws" not(kw_sync) type_refs fail(
+                "`throws` names no error type (ADR-023 D1): write `throws` on its own. \
+                 *Which* errors can leave a function follows from its body and from \
+                 everything the body reaches, so it is derived rather than written: \
+                 the set is inferred whole-program and recorded in `nikaia.contracts`, \
+                 beside the build (Part III, 13.5). Written by hand it would go stale \
+                 the first time a callee gained a failure - and a failure that comes \
+                 from a resource's cleanup would make you name a type you never \
+                 mentioned (ADR-006 D4)."
+            ) -> { () }
+          | "throws" -> { () }
 
         // Kap 4.2: `&mut self`, `&self`, `self` - the subject, when there is one.
         rule fn_params -> FnParams =

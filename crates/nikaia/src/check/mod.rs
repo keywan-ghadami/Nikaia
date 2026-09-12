@@ -70,8 +70,9 @@ pub struct Finding {
     /// The statement it is in.
     pub span: Span,
     /// Its `NK` code, from the catalogue in Part III, C.3. Mostly `NK1xxx`,
-    /// which is types; `NK2501`/`NK2502` are a value on the wrong thread and
-    /// `NK2701` a loop that can fail without saying so.
+    /// which is types; `NK2501`/`NK2502` are a value on the wrong thread,
+    /// `NK2605` a written call that can fail in a function that does not say
+    /// so, and `NK2701` the same for a loop's step.
     pub code: &'static str,
     /// The headline, which says what is wrong and never how to think about it.
     pub message: String,
@@ -158,6 +159,7 @@ pub fn check_program(
         scope: Vec::new(),
         expected: None,
         throwing: false,
+        caught: false,
         current: None,
         modules: modules.clone(),
         checked: Checked::default(),
@@ -207,6 +209,15 @@ struct Checker<'a> {
     /// Whether it declared `throws` - which is what says a failure may leave
     /// it, whether the failing call was written or implicit (ADR-025 D1).
     throwing: bool,
+    /// Whether the expression being walked is the guarded half of a `catch`.
+    ///
+    /// `fs::read_to_string(p) catch { … }` handles the failure where it
+    /// happens, so nothing leaves the function and `NK2605` has nothing to
+    /// say. It covers the **whole** guarded expression, because that is what
+    /// the handler runs for: in `outer(inner())` both calls are caught. The
+    /// handler's own body is not - a failure raised there propagates - so this
+    /// goes back to what it was before the handler is walked.
+    caught: bool,
     /// The function being walked, by the name the ledger records it under.
     ///
     /// `None` inside a grammar action, a `test` or a `bench` - code that
@@ -652,6 +663,11 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 };
                 self.reached_method(Some(&key));
+                // A method call is a written call, so the rule reaches it too
+                // (`NK2605`) - and here the receiver's type was known and a
+                // ledger described the method, which is the only case this
+                // compiler can answer at all.
+                self.may_fail_here(&key, contract, span);
 
                 // What the receiver's own type tells the signature (ADR-031).
                 // `HashMap[&str, Stats]` against `&HashMap[$K, $V]` binds `$V`
@@ -845,7 +861,14 @@ impl<'a> Checker<'a> {
             }
 
             Expr::TryCatch { expr, handler } => {
+                // Kap 7.1: the handler is what handles the failure, so the
+                // guarded expression is where a fallible call needs no
+                // `throws` on the function around it (`NK2605`). The handler
+                // itself is ordinary code again - a failure raised inside one
+                // leaves the function like any other.
+                let outer = std::mem::replace(&mut self.caught, true);
                 self.expr(expr, span);
+                self.caught = outer;
                 self.scope.push(vec![("error".to_string(), Ty::Unknown)]);
                 self.block(handler);
                 self.scope.pop();
@@ -1021,6 +1044,7 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         };
         self.reachable(&name, contract, span);
+        self.may_fail_here(&key, contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
         // whatever its declaration says about `Self`.
@@ -1159,6 +1183,61 @@ impl<'a> Checker<'a> {
             help: Some(
                 "compare it: `x != 0`, `text != \"\"`, `xs.len() > 0` (Part I, 3.2)".to_string(),
             ),
+        });
+    }
+
+    /// A written call to something that can fail (`NK2605`).
+    ///
+    /// ADR-025 D1 states the rule for the calls **nobody wrote** - a block's
+    /// closing brace, a loop's step - and says it is "exactly as a written
+    /// call would" behave. The written call is the case the rule was
+    /// generalised *from*, and it had no code: a function calling something
+    /// that can fail and declaring nothing lowered in silence, and the ledger
+    /// then published `[fn."ruft"] signature = "() -> String"` with no
+    /// `throws` at all - a committed file that other programs read
+    /// ([ADR-020](../../../../docs/specification/adr/adr-020.md)) saying a
+    /// function cannot fail when its body can. `rustc` was what refused the
+    /// program, about a file the author never wrote, which Part III C.1 calls
+    /// a bug in this compiler.
+    ///
+    /// Reported only where the callee's contract **says** it can fail, which
+    /// is what makes this need no guess: the ledger is the fact, and a callee
+    /// no ledger describes says nothing here (the same silence `NK2502`'s
+    /// method calls keep, C.4). So it never refuses a program that is right,
+    /// and it grows as the ledger does.
+    fn may_fail_here(&mut self, key: &str, contract: &FnContract, span: &Span) {
+        if contract.throws.is_empty() || self.throwing || self.caught {
+            return;
+        }
+        // A grammar action is not code inside a function, and its failure does
+        // not travel to one: past the `=>` it leaves the parser as the Nikaia
+        // error it is and reaches the `catch` beside the `dsl`
+        // ([ADR-023](../../../../docs/specification/adr/adr-023.md) D9). So
+        // there is no `throws` to demand and no function to name, and the same
+        // is true of a `test` or a `bench` body - which is where `current` is
+        // `None`, and the whole of where it is.
+        let Some(function) = self.current.clone() else {
+            return;
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2605",
+            message: format!("this function can fail because `{key}` can fail"),
+            notes: vec![
+                format!(
+                    "`{key}` carries `throws = {}` in the contracts this program is built \
+                     against (Part III, 13.5)",
+                    crate::contracts::throws_text(&contract.throws)
+                ),
+                "nothing marks a failing call, so a failure leaves at a call exactly as it \
+                 leaves at a block's closing brace or a loop's step (ADR-023 D8, ADR-025 D1)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "declare the error: add `throws` to `{function}` - or handle it at the \
+                 call, `… catch {{ … }}` (Part I, 7.1)"
+            )),
         });
     }
 

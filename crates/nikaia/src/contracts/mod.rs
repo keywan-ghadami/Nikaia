@@ -585,8 +585,10 @@ impl Ledger {
         sync::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
         // Kap 7.1: `throws` in the source says *that* it fails; this says with
         // what (ADR-023 D1). After `sync`, because both read bodies and only
-        // this one needs nothing from the other.
-        throws::infer(&mut ledger, parsed, std_ledger());
+        // this one needs nothing from the other - and both are handed the same
+        // `checked.methods`, because ADR-028's whole point is that there is one
+        // answer to what `a.add(v)` goes to and both walks read it.
+        throws::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
         (ledger, checked)
     }
 
@@ -778,13 +780,7 @@ impl Ledger {
                 Sync::No => {}
             }
             if !contract.throws.is_empty() {
-                let names = contract
-                    .throws
-                    .iter()
-                    .map(|e| format!("\"{e}\""))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push_str(&format!("throws = [{names}]\n"));
+                out.push_str(&format!("throws = {}\n", throws_text(&contract.throws)));
             }
             if !contract.borrows.is_empty() {
                 out.push_str(&format!(
@@ -1140,6 +1136,20 @@ fn provenance_of(value: &str, at: usize) -> Result<Provenance> {
 /// The name an error gets when the compiler cannot name it - ADR-024 D1's `?`,
 /// which is the absence of a claim rather than a type.
 pub const UNNAMED_ERROR: &str = "?";
+
+/// The `throws` list exactly as the ledger writes it.
+///
+/// One function, so that a diagnostic quoting the contract quotes the bytes a
+/// reader will find in `nikaia.contracts` rather than a paraphrase of them -
+/// Part III C.4's rule that **the note is the contract**.
+pub fn throws_text(throws: &[String]) -> String {
+    let names = throws
+        .iter()
+        .map(|e| format!("\"{e}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{names}]")
+}
 
 /// Kap 7.1: the errors that can leave a function.
 ///

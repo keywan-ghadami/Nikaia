@@ -17,13 +17,20 @@
 //!
 //! The call resolution is `sync`'s, not a second one. ADR-028 recorded what the
 //! alternative costs: two analyses that have to agree about what `stats.add(5)`
-//! goes to, and eventually do not.
+//! goes to, and eventually do not. That includes the **method** half of it: the
+//! type checker resolves a receiver and both walks read its answer, so
+//! `a.add(v)` in ADR-031's `HashMap[&str, Stats]` chain reaches `Stats::add`
+//! here for the same reason it reaches it in [`super::sync`]. Before that this
+//! file answered every method call with `"?"` - fail-closed and therefore not a
+//! bug, but a set that said "something I cannot name" about a call the compiler
+//! had already named.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::sync::{reached, visit_stmt, visit_stmt_blocks, Reached};
 use super::{FnContract, Ledger, UNNAMED_ERROR};
 use crate::ast::{Block, Expr, Item};
+use crate::check::MethodCalls;
 use crate::parser::Parsed;
 
 /// What one function contributes to its own error set before its callees are
@@ -45,13 +52,26 @@ struct Contrib {
 /// nothing keeps `["?"]` rather than losing its entry. That last case is the
 /// same shape as an asserted `sync` — the declaration is a promise a caller
 /// already relies on, and inference is here to say more than it, never less.
-pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
+///
+/// `resolved` is the type checker's answer to what a method call goes to
+/// (ADR-028), the same map [`super::sync::infer`] is handed. Having one of the
+/// two read it and the other not is what recorded `throws = ["?"]` for a
+/// function whose only failing call was `a.add(v)` - a chain
+/// `docs/from-for-throws-and-touches.md` §3 walks link by link, and which
+/// `sync` had been following all along.
+pub fn infer(
+    ledger: &mut Ledger,
+    parsed: &Parsed,
+    library: &Ledger,
+    resolved: &BTreeMap<String, MethodCalls>,
+) {
     let mut graph: BTreeMap<String, Contrib> = BTreeMap::new();
 
     for item in &parsed.program.items {
         match &item.node {
             Item::Fn { .. } => {
-                if let Some((name, contrib)) = contrib_of(parsed, &item.node, None, ledger, library)
+                if let Some((name, contrib)) =
+                    contrib_of(parsed, &item.node, None, ledger, library, resolved)
                 {
                     graph.insert(name, contrib);
                 }
@@ -61,9 +81,14 @@ pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
             } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
-                    if let Some((name, contrib)) =
-                        contrib_of(parsed, &method.node, Some(&target), ledger, library)
-                    {
+                    if let Some((name, contrib)) = contrib_of(
+                        parsed,
+                        &method.node,
+                        Some(&target),
+                        ledger,
+                        library,
+                        resolved,
+                    ) {
                         graph.insert(name, contrib);
                     }
                 }
@@ -122,6 +147,7 @@ fn contrib_of(
     target: Option<&str>,
     own: &Ledger,
     library: &Ledger,
+    resolved: &BTreeMap<String, MethodCalls>,
 ) -> Option<(String, Contrib)> {
     let Item::Fn {
         name, body, throws, ..
@@ -144,6 +170,37 @@ fn contrib_of(
 
     let mut contrib = Contrib::default();
     collect(parsed, body, own, library, &mut contrib);
+
+    // What the walk above left to somebody else: this function's method calls,
+    // as the type checker resolved them (ADR-028). Merged rather than
+    // reconciled, exactly as `sync::reach_of` merges them - the walk skips
+    // method calls entirely and this covers those and nothing else.
+    //
+    // The polarity is the one the module header states. `unresolved` is the
+    // absence of an answer and contributes `"?"`; a resolved callee
+    // contributes what *it* throws; and a callee that resolved to a name no
+    // ledger carries after all contributes `"?"` too, because "I cannot see
+    // it" may never be read as "it does not fail" (ADR-010 D1).
+    if let Some(methods) = resolved.get(&key) {
+        if methods.unresolved {
+            contrib.direct.insert(UNNAMED_ERROR.to_string());
+        }
+        for callee in &methods.resolved {
+            if own.functions.contains_key(callee) {
+                contrib.calls.insert(callee.clone());
+            } else {
+                match library.functions.get(callee) {
+                    Some(FnContract { throws, .. }) => {
+                        contrib.direct.extend(throws.iter().cloned());
+                    }
+                    None => {
+                        contrib.direct.insert(UNNAMED_ERROR.to_string());
+                    }
+                }
+            }
+        }
+    }
+
     Some((key, contrib))
 }
 
@@ -174,12 +231,19 @@ fn collect(parsed: &Parsed, block: &Block, own: &Ledger, library: &Ledger, into:
                         }
                     }
                 }
-                // A method call, or a call nobody can name. Either can fail, and
-                // treating "I cannot see it" as "it does not fail" is the one
-                // direction ADR-010 D1 calls a vulnerability generator.
-                Some(Reached::Method) | Some(Reached::Opaque(_)) => {
+                // A call nobody can name. It can fail, and treating "I cannot
+                // see it" as "it does not fail" is the one direction ADR-010 D1
+                // calls a vulnerability generator.
+                Some(Reached::Opaque(_)) => {
                     into.direct.insert(UNNAMED_ERROR.to_string());
                 }
+                // Answered per function by the type checker, and merged in by
+                // `contrib_of` once this walk is done - which is `sync`'s own
+                // arrangement, and the point of ADR-028's single resolution.
+                // An answer it could not find still arrives as `"?"`, so this
+                // is no less pessimistic than the `Opaque` line above; it is
+                // only less pessimistic about calls the compiler *can* name.
+                Some(Reached::Method) => {}
                 None => {}
             }
         });

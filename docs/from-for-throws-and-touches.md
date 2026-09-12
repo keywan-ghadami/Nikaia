@@ -129,36 +129,33 @@ signature = "(n: &i64) -> i64"
 
 [fn."sortiere"]
 sync = "inferred"
-throws = ["?", "LeereZeile"]
+throws = ["LeereZeile"]
 signature = "(xs: Vec[i64]) -> i64"
 ```
 
 `LeereZeile` is in `sortiere`'s set, and `ohne_lambda` — the same call with a
-lambda that cannot fail — has only the `"?"`. So the named error came from the
-lambda's body and from nowhere else: the caller's own analysis already counts
-what the lambda throws, at the point of the call. Both premises hold, for the
-same reason they hold for `sync`, and `throws` is a fact about a function in
-exactly the way `sync` is.
+lambda that cannot fail — has nothing in its set at all (its `["?"]` is the
+declaration's own floor, which a declared `throws` never drops below). So the
+named error came from the lambda's body and from nowhere else: the caller's own
+analysis already counts what the lambda throws, at the point of the call. Both
+premises hold, for the same reason they hold for `sync`, and `throws` is a fact
+about a function in exactly the way `sync` is.
 
-The `"?"` is the second, independent reason `throws` has nothing to gain.
-`contracts::throws` answers **every** method call with `"?"`:
+*(These two sets are what the run gives **after** §6's second finding was fixed.
+Before it, `sortiere` read `["?", "LeereZeile"]` and `ohne_lambda` got its `"?"`
+from the method call rather than from the declaration, because
+`contracts::throws` answered every method call with `"?"` instead of asking the
+type checker. The argument below does not depend on which it was.)*
 
-```rust
-// A method call, or a call nobody can name. Either can fail, and
-// treating "I cannot see it" as "it does not fail" is the one
-// direction ADR-010 D1 calls a vulnerability generator.
-Some(Reached::Method) | Some(Reached::Opaque(_)) => {
-    into.direct.insert(UNNAMED_ERROR.to_string());
-}
-```
+`throws` has a second, independent reason to gain nothing from a `from` key: a
+`throws = "from(f)"` read as "adds nothing" could only ever **remove** an error
+from a caller's set, never add one — and the direction that removes is the one
+[ADR-010](specification/adr/adr-010.md) D1 forbids. What the caller needs from a
+higher-order call is that the lambda's failures be **added**, and the walk
+already adds them. A `throws` column behaves exactly as `from` would want it to
+and has no key to add.
 
-So a higher-order call is already as pessimistic as the column can be. A
-`throws = "from(f)"` read as "adds nothing" would make it **less** pessimistic —
-it would be the one change that could remove the `"?"` — which is the direction
-[ADR-010](specification/adr/adr-010.md) D1 forbids. A `throws` column already
-behaves exactly as `from` would want it to and has no key to add.
-
-### The `and_modify` chain, for the precision it loses
+### The `and_modify` chain, and the precision it used to lose
 
 [ADR-031](specification/adr/adr-031.md)'s live example, with a failing `add`:
 
@@ -188,21 +185,37 @@ signature = "(&Stats, v: i64)"
 
 [fn."record"]
 sync = "inferred"
-throws = ["?"]
+throws = ["ZuVoll"]
 signature = "(m: HashMap[&str, Stats], v: i64)"
 ```
 
-`record` gets `["?"]` and not `["ZuVoll"]`. The lambda **was** walked — that is
-where the `"?"` came from — but `a.add(v)` is a *method* call, and
-`contracts::throws` does not ask the type checker what a method resolves to the
+**`record` used to get `["?"]` and not `["ZuVoll"]`.** The lambda *was* walked —
+that is where the `"?"` came from — but `a.add(v)` is a *method* call, and
+`contracts::throws` did not ask the type checker what a method resolves to the
 way `contracts::sync`'s `reach_of` does with ADR-028's `MethodCalls`. So the
-chain `HashMap[&str, Stats]` → `fn(&$V)` → `a.add(v)` → `Stats::add` is followed
-for `sync` and not for `throws`.
+chain `HashMap[&str, Stats]` → `fn(&$V)` → `a.add(v)` → `Stats::add` was
+followed for `sync` and not for `throws`, and the fix was the one argument this
+page predicted: `throws::infer` is handed the same `resolved` map, and merges it
+in the same place, by the same rule.
 
-That is a **precision** gap and not a soundness one: `"?"` is the widest claim
-the column can make, and a caller reads it as "it fails". It is also orthogonal
-to `from` — handing `throws::infer` the same `resolved` map `sync::infer` already
-gets would close it, and `from` would still have nothing to add afterwards.
+It was a **precision** gap and not a soundness one — `"?"` is the widest claim
+the column can make, and a caller reads it as "it fails". Which is why closing
+it has to be argued in the other direction, and here is that argument, because
+the change makes an answer *narrower* and that is normally the forbidden way:
+
+* every contribution that went is a contribution from a call the compiler
+  **named**. A receiver of unknown type and a method no ledger describes both
+  still arrive as `"?"`, from `MethodCalls::unresolved`, so "I cannot see it" is
+  still never read as "it does not fail";
+* what replaces the `"?"` is a *written-down* fact. `Vec::sort_by_key` carries
+  no `throws` in `std.contracts`, and an absent `throws` there means "it cannot
+  fail" — reviewed like code, and stated as such in that file's own header,
+  which contrasts it with an absent `touches` deliberately;
+* it is the same trust `sync` already places in the same map through the same
+  resolution, which is ADR-028's whole point: **one** answer to what `a.add(v)`
+  goes to, read by both walks. Two answers is what that record refused.
+
+`from` still has nothing to add afterwards.
 
 ---
 
@@ -342,7 +355,7 @@ costs. If the column ever needs it, it needs a word that says descend.
 | effect | does the caller's analysis already count the lambda, at the call? | what `from` needs |
 | :--- | :--- | :--- |
 | `sync` | **yes**, by `visit_expr_blocks`' `Expr::Closure` arm | the rule ADR-029 D3 built |
-| `throws` | **yes**, by the same walk — and a method call is already `"?"` | **nothing**, and no key either |
+| `throws` | **yes**, by the same walk — and what it cannot resolve is still `"?"` | **nothing**, and no key either |
 | `touches` | **no** — the consumer asks per *statement*, and no walk reads a lambda for an effect | not `from`'s reading; a *union* instruction under a different word |
 
 The rule, stated so that it says what it covers:
@@ -363,20 +376,137 @@ which is now a named refusal rather than a `_` arm.
 
 ## 6. Incidental findings
 
-* **A call that can fail, in a function that does not declare `throws`, is not
+All three are **fixed now**, and each is kept here with what was probed, because
+that is what this page is for.
+
+* **A call that can fail, in a function that does not declare `throws`, was not
   reported by Nikaia.** `fn ruft() -> i64 { return pruefe(0) }` where `pruefe`
-  is `throws` lowers without a diagnostic and records `ruft` as unable to fail;
-  the emitted Rust is `fn ruft() -> i64 { pruefe(0) }`, which `rustc` rejects.
-  `NK2601` and `NK2701` are both about *implicit* calls
-  ([ADR-025](specification/adr/adr-025.md) D1), and the explicit case has no
-  code. Nothing to do with lambdas — the same program without one behaves the
+  is `throws` lowered without a diagnostic and recorded `ruft` as unable to
+  fail; the emitted Rust was `fn ruft() -> i64 { pruefe(0) }`, which `rustc`
+  rejects. `NK2601` and `NK2701` are both about *implicit* calls
+  ([ADR-025](specification/adr/adr-025.md) D1), and the explicit case had no
+  code. Nothing to do with lambdas — the same program without one behaved the
   same way — but it is the reason §3's programs all declare `throws`.
-* **`contracts::throws` does not use ADR-028's method resolution**, where
-  `contracts::sync` does. §3's `and_modify` chain is what shows it: `ZuVoll`
-  becomes `"?"`. Fail-closed, so not urgent, and a one-argument change.
+
+  It is `NK2605` now, and §7 is the whole probe: the ledger it published, the
+  second half nobody had noticed (D8's propagation was not lowered at all), and
+  why the answer is to refuse the program rather than to infer the keyword.
+* **`contracts::throws` did not use ADR-028's method resolution**, where
+  `contracts::sync` does. §3's `and_modify` chain is what showed it: `ZuVoll`
+  became `"?"`. Fail-closed, so not urgent, and a one-argument change — which
+  is what it turned out to be. §3 now records the run both ways and the three
+  reasons the narrowing is a written-down fact rather than an assumption.
 * **Two leftover mentions of the withdrawn path** outside the files
-  `docs/README.md` allows them in: `docs/foreign-runtime.md` (line 42) calls
+  `docs/README.md` allows them in: `docs/foreign-runtime.md` (line 42) called
   `rustc 1.94.0-nightly` "the toolchain this repository named", which it no
   longer is, and [ADR-036](specification/adr/adr-036.md) §2 names the same
-  nightly as its measurement machine. Both are records of a measurement rather
-  than instructions to install anything, which is why neither is changed here.
+  nightly as its measurement machine.
+
+  The wording is fixed in the two notes and the **version is kept**: a note that
+  records which compiler a number was taken on is correct, and rewriting the
+  number would falsify the measurement. ADR-036 §2 is unchanged, and
+  deliberately: it names the compiler beside its instruction counts and makes no
+  claim about what this repository uses, so there is no tense in it to correct —
+  and an ADR is written once.
+
+---
+
+## 7. `NK2605`, end to end
+
+The reproduction is the two lines from §6, with `std` in place of a local
+`throws` function so that nothing about it depends on this file:
+
+```nika
+fn liest() -> String throws { return fs::read_to_string("x.txt") }
+fn ruft() -> String { return liest() }
+```
+
+### What it published
+
+Before: it lowered, silently, and `nikaia.contracts` said
+
+```toml
+[fn."liest"]
+throws = ["?"]
+signature = "() -> String"
+
+[fn."ruft"]
+signature = "() -> String"
+```
+
+An absent `throws` in that file means **it cannot fail** — the same file's
+`std` counterpart says so in its header, and contrasts it with an absent
+`touches` on purpose. So the committed, shipped, `--locked`-compared artifact
+carried a wrong fact about the one thing a caller cannot see: whether the
+callee can fail. That, and not the missing caret, is what made this the serious
+one of the four.
+
+### The second half, which the probe found on the way
+
+The emitted Rust was
+
+```rust
+fn ruft() -> String { liest() }
+```
+
+…and adding the `throws` the rule asks for gave
+
+```rust
+fn ruft() -> Result<String, Box<dyn std::error::Error>> { Ok(liest()) }
+```
+
+which `rustc` rejects too. **[ADR-023](specification/adr/adr-023.md) D8's
+propagation was not lowered at all.** Every fallible call in `examples/` has a
+`catch` beside it — all eight programs that can fail do, and `tally.nika`'s one
+propagation is a *loop's* step, which had its own `?` from
+[ADR-025](specification/adr/adr-025.md) — so nothing in the corpus ever asked
+for this one, and no test did either. A
+diagnostic whose `help:` produced that second failure would have moved
+Appendix C.1's violation one step later instead of removing it, so the `?` is
+emitted now for a call **by name**, and `a_written_call_propagates_its_failure`
+compiles and runs the result.
+
+A **method** call still does not take one: the emitter has no receiver types,
+which is exactly ADR-028's division of labour, and handing it the checker's
+answers is the shape `fallible_loops` already has. `NK2605` refuses a fallible
+method call all the same — the checker *does* know — so on a method the way out
+that lowers today is `catch`. Part I 7.1's Status note says so.
+
+### Which answer, and why not the other one
+
+The ledger stops publishing the wrong fact because **the program is refused**,
+before `Ledger::render` is reached. The alternative — infer `throws` for a
+function that never wrote it, the way `sync` is inferred — was rejected on
+three counts:
+
+1. [ADR-023](specification/adr/adr-023.md) D1 derives the error **set** and
+   leaves the declaration in the source: "in source, `throws` is bare". The
+   keyword is not derived truth; what it can fail *with* is.
+2. [ADR-025](specification/adr/adr-025.md) D1 has already decided the case, in
+   words: "the function **must** declare `throws`, and the compiler says which
+   implicit call is the reason". Inferring it instead would be a different
+   decision, and would need a record.
+3. It would publish a **new** false fact. `contracts::throws`'s walk does not
+   know about `catch`: `fn f() { g() catch { … } }` cannot fail, and an
+   inference blind to that would record that it can. Trading a false negative
+   for a false positive in a file other programs read is not an improvement —
+   ADR-027 D3's argument for why `Sync` has three states is the same argument.
+
+### The polarity, asked the way ADR-027 D4 asks it
+
+Can a declared `throws`, or its **absence**, outrank what the body does? Both,
+and they fail in opposite directions:
+
+| | what the source said | what the inference does | which way it fails |
+| :--- | :--- | :--- | :--- |
+| `throws` written, body cannot fail | it fails | keeps `["?"]` | **safe** — over-claims, a caller handles an error that cannot arrive |
+| `throws` written, body names errors | it fails | replaces `["?"]` with the names | exact; the names come from the body |
+| `throws` **absent**, body can fail | it cannot fail | *nothing* — no entry is made | **open**, and this was the defect |
+
+The third row is ADR-027 D4's hole mirrored. There, an **assertion** survived a
+body that contradicted it and kept `sync = true`. Here the **absence** of an
+assertion survived a body that contradicted it and kept "cannot fail". Same
+shape — the source's word beating the body — and opposite sign: an over-claim
+for `sync`, an under-claim for `throws`. Both fail open, which is why both had
+to go. The first two rows are the direction that is allowed to survive, and
+they still do.

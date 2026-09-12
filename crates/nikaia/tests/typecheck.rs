@@ -620,3 +620,105 @@ fn the_type_of_a_literal_is_read_off_its_first_character() {
     assert_eq!(code, "NK1104");
     assert!(findings("fn label() -> &str { return \"{ a brace }\" }").is_empty());
 }
+
+// --- a written call that can fail (ADR-023 D8, ADR-025 D1) -------------------
+
+/// `NK2605`: the function calls something that can fail and declares nothing.
+///
+/// The same rule as `NK2701` one line earlier in the block, and the case the
+/// rule was generalised *from*: ADR-025 D1 says an implicit fallible call
+/// "fails the enclosing function, exactly as a written call would" - and the
+/// written call had no code. So a caller lowered in silence, and the ledger
+/// then published `signature = "() -> String"` with no `throws` at all - a
+/// committed file that other programs read (ADR-020) saying a function cannot
+/// fail when its body provably can.
+#[test]
+fn a_written_call_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
+    let (code, message) = one(
+        "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+         fn ruft() -> String { return liest() }",
+    );
+    assert_eq!(code, "NK2605");
+    assert_eq!(message, "this function can fail because `liest` can fail");
+}
+
+/// The note is the contract, quoted from the ledger (Part III, C.4), and the
+/// help names both of the language's ways out.
+#[test]
+fn the_note_quotes_the_callees_contract_and_the_help_is_a_way_out() {
+    let found = findings(
+        "enum ConfigError { NotFound }\n\
+         fn liest() -> String throws { throw ConfigError::NotFound }\n\
+         fn ruft() -> String { return liest() }",
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(
+        found[0]
+            .notes
+            .iter()
+            .any(|n| n.contains(r#"`liest` carries `throws = ["ConfigError"]`"#)),
+        "{:#?}",
+        found[0].notes
+    );
+    let help = found[0].help.as_deref().unwrap_or_default();
+    assert!(help.contains("add `throws` to `ruft`"), "{help}");
+    assert!(help.contains("catch"), "{help}");
+}
+
+/// …and nothing at all once the function says so, or catches it.
+///
+/// Both of these are correct programs, and the one thing this checker may
+/// never do is refuse one.
+#[test]
+fn a_declared_throws_or_a_catch_is_the_end_of_it() {
+    let declared = "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+                    fn ruft() -> String throws { return liest() }";
+    assert!(findings(declared).is_empty(), "{:#?}", findings(declared));
+
+    let caught = "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+                  fn ruft() -> String { return liest() catch { return \"\".to_string() } }";
+    assert!(findings(caught).is_empty(), "{:#?}", findings(caught));
+}
+
+/// A `catch` covers what it guards and not what its **handler** does.
+///
+/// `contracts::order` reached the same conclusion about the same shape: the
+/// handler is ordinary code, and a failure raised inside one leaves the
+/// function like any other. Reading the handler as covered would be the
+/// fail-open direction ADR-010 D1 forbids.
+#[test]
+fn a_catch_handler_is_not_itself_caught() {
+    let (code, _) = one(
+        "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+         fn ruft() -> String { return liest() catch { return liest() } }",
+    );
+    assert_eq!(code, "NK2605");
+}
+
+/// A method call is a written call too, and the receiver's type is what makes
+/// it answerable (ADR-028).
+#[test]
+fn a_method_that_can_fail_is_the_same_rule() {
+    let (code, message) = one("enum ZuVoll { Voll }\n\
+         struct Stats { n: i64 }\n\
+         impl Stats {\n\
+             fn add(&self, v: i64) throws { if self.n > 100 { throw ZuVoll::Voll } }\n\
+         }\n\
+         fn record(s: Stats) { s.add(1) }");
+    assert_eq!(code, "NK2605");
+    assert_eq!(
+        message,
+        "this function can fail because `Stats::add` can fail"
+    );
+}
+
+/// A call nothing describes says nothing here.
+///
+/// The checker answers only where the fact is written down (C.4). A foreign
+/// function has no contract by definition, so this is silence and not
+/// approval - `rustc` still type-checks the emitted crate, and ADR-005 D7's
+/// translation reports its refusal against this same `.nika` line.
+#[test]
+fn a_callee_no_ledger_describes_is_not_guessed_at() {
+    assert!(findings("fn ruft() -> i64 { return fremd::macht_irgendwas(1) }").is_empty());
+}
