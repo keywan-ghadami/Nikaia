@@ -145,11 +145,17 @@ does this file close" is otherwise a genuinely hard question.
 
 Nikaia is not a new backend. The frontend lowers to a stable intermediate representation,
 **Bridge-IR**, and a separate executor takes it from there — today by emitting Rust and
-invoking `rustc`, pinned to one exact nightly per release. That is what makes points 1, 2 and 3
+invoking `rustc`. That is what makes points 1, 2 and 3
 tractable: the hard safety machinery already exists and is battle-tested — Nikaia's job is to
 stop making humans operate it by hand. Keeping the generated Rust readable is deliberate, not a
 stopgap: it is how a compiler bug stays inspectable.
-→ [ADR-003](docs/specification/adr/adr-003.md), [Toolchain architecture](docs/toolchain_architecture.md)
+
+**You need a stable Rust toolchain and nothing else.** The Rust that comes out uses no unstable
+feature, and no `-Z` flag is passed anywhere. A nightly is pinned — exactly, per release — for
+one optional thing: the Bridge-IR backend, which links the Rust compiler's own internals. Build
+without it and `cargo build -p nikaia --no-default-features` gives you the whole compiler on
+stable; build with it and `scripts/bridge-toolchain.sh` is the nightly's only door.
+→ [ADR-003](docs/specification/adr/adr-003.md), [ADR-001](docs/specification/adr/adr-001.md) D5, [Toolchain architecture](docs/toolchain_architecture.md)
 
 ---
 

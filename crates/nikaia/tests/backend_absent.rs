@@ -1,9 +1,10 @@
 //! A compiler built without the bridge backend says so, and compiles nothing.
 //!
 //! `rustc-backend` is the one feature that links `rustc_private`, and so the one
-//! feature that needs ADR-001 D1's pinned nightly with its `rustc-dev`
-//! component. Turning it off is what puts the build on a stable toolchain
-//! (`docs/nightly-cost.md`), and the thing that must not happen then is the one
+//! feature that needs the pinned nightly and its `rustc-dev` component -
+//! ADR-001 D5, which is why the rest of the workspace is on stable. Turning the
+//! feature off is the default for a clone, and the thing that must not happen
+//! then is the one
 //! ADR-021 D9 names about `cranelift`: a backend flag accepted and quietly
 //! served by a different backend. A backend that was configured out is refused
 //! exactly like one that was never written.
