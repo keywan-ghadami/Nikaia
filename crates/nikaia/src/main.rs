@@ -17,6 +17,7 @@ use nikaia::contracts::{self, Ledger, STD};
 use nikaia::emit;
 use nikaia::manifest::Manifest;
 use nikaia::project::{self, Project, Settings};
+use nikaia::sysroot::{self, Sysroot};
 use nikaia::{diagnostics, interpreter, parser};
 
 /// The Nikaia compiler: `nikaia build` for a project, `--input` for one file.
@@ -144,6 +145,21 @@ pub enum Command {
         project: Option<PathBuf>,
         #[arg(last = true)]
         args: Vec<String>,
+    },
+    /// Re-lower the sysroot's `std` from its `.nika` sources (ADR-002 D4).
+    ///
+    /// The release step, and the *only* way `std`'s Nikaia half is lowered. It
+    /// is a command on this **binary** on purpose: the alternative was
+    /// `nikaia-std` linking the compiler as a build dependency, which made Cargo
+    /// build the compiler a second time inside every project's `target/`.
+    ///
+    /// A binary install never needs to run it - the `.rs` ships beside the
+    /// `.nika`. A from-source install may.
+    LowerStd {
+        /// The sysroot. Defaults to `NIKAIA_SYSROOT`, or the checkout this
+        /// compiler was built from.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
     },
 }
 
@@ -323,11 +339,31 @@ fn overlaps_here(settings: &Settings) -> impl Fn(contracts::order::Vehicle) -> O
     }
 }
 
+/// `nikaia lower-std` (ADR-002 D4): `std`'s `.nika` half to the `.rs` beside it.
+fn lower_std(sysroot: Option<PathBuf>) -> Result<i32> {
+    let sysroot = match sysroot {
+        Some(root) => Sysroot::new(root),
+        None => Sysroot::resolve(),
+    };
+    let changed = sysroot::lower_std(&sysroot)?;
+    if changed.is_empty() {
+        println!(
+            "{} is already what this compiler lowers its `.nika` sources to.",
+            sysroot.std_dir().display()
+        );
+    }
+    for path in &changed {
+        println!("Lowered to {}", path.display());
+    }
+    Ok(0)
+}
+
 /// `nikaia build` and `nikaia run` (Part III 13.2).
 fn project_command(args: &Cli, command: &Command) -> Result<i32> {
     let (subcommand, directory, program_args) = match command {
         Command::Build { project } => ("build", project.clone(), Vec::new()),
         Command::Run { project, args } => ("run", project.clone(), args.clone()),
+        Command::LowerStd { sysroot } => return lower_std(sysroot.clone()),
     };
 
     let start = match directory {

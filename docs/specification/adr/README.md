@@ -29,7 +29,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [001](adr-001.md) | One exact nightly pinned per release; the parser is generated from a grammar over bytes, not over Rust tokens | Accepted (§4 superseded by [003](adr-003.md)) | yes |
-| [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro | Accepted (§4 superseded by [003](adr-003.md)) | D1 for a Rust dependency; not a Nikaia one, not D2 |
+| [002](adr-002.md) | The CLI wraps Cargo so crates.io works; compile-time code runs in an interpreter, not as a proc-macro; a project reaches `std` through a sysroot of pre-lowered sources, compiled into a keyed rlib cache | Accepted (§4 superseded by [003](adr-003.md)) | D1 for a Rust dependency; D4 - sysroot, pre-lowered `std`, rlib cache (97 packages to 46, 58 of them the compiler built twice); not a Nikaia dependency, not D2 |
 | [003](adr-003.md) | Hub-and-spoke: a frontend targets **Bridge-IR** and never `rustc_ast`; CLI, cache and Cargo wrapping are generic | Accepted | yes |
 | [004](adr-004.md) | One lowering builds `rustc_ast`; readable Rust is a *print* of it, never a second code generator | Accepted | D1, D2; D3's in-memory exit measured at 0.64 % and not built |
 | [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what | Accepted | key, store, lockfile - D2's resolved versions included (§5); not `--locked` for the lock |
@@ -70,7 +70,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [013](adr-013.md) | What Stage 0 refuses to infer; `std` is a crate, methods resolve through the receiver | Accepted | yes |
-| [014](adr-014.md) | `std` is written in Nikaia where it can be; `fs::map` maps, `par_fold` runs on rayon | Accepted | yes |
+| [014](adr-014.md) | `std` is written in Nikaia where it can be; `fs::map` maps, `par_fold` runs on rayon | Accepted (D1's *when* superseded by [002](adr-002.md) D4) | yes |
 | [018](adr-018.md) | The HTTP handler sees the request, because a lambda already could | Accepted | no |
 | [019](adr-019.md) | Standard input is a stream, read like everything else | Accepted | yes (`std::io`) |
 | [022](adr-022.md) | One lambda form. `fn:` is removed | Accepted | yes |
@@ -149,6 +149,7 @@ header:
 | [002](adr-002.md) D3 | [021](adr-021.md) D9 | Cranelift for "sub-second iterations" — never measured; measured, it buys 25 s against 26 s |
 | [013](adr-013.md) D5 | [022](adr-022.md) | `fn:` recorded as a chaining limitation; removed as a second way to say one thing |
 | [014](adr-014.md) D3 | [015](adr-015.md) | the measurement, once the backend's eager diagnostics were found to dominate it |
+| [014](adr-014.md) D1 | [002](adr-002.md) D4 | *when* `std`'s Nikaia half is lowered — a build script made the compiler a build-dependency of `std`, so Cargo built it again inside every project; release time now, and the `.rs` is committed |
 | [023](adr-023.md) D7 | [036](adr-036.md) | `{error:full}` as a format spec; `f"{error.full()}"` needs no new syntax |
 | [032](adr-032.md) D5 | [035](adr-035.md) | a brace deciding a literal's type — the `f` decides it now |
 | [033](adr-033.md) D5 | [034](adr-034.md) D2 (amends) | "started early" widened from *a branch* to *anything the program might not have performed* |

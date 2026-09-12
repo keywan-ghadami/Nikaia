@@ -34,6 +34,7 @@ use bridge_orchestrator::project::{
 use crate::contracts::{sync, Ledger, STD};
 use crate::emit::{Build, Ordering, Target};
 use crate::manifest::{Dependency, Manifest};
+use crate::sysroot::{Codegen, Sysroot};
 use crate::{check, diagnostics, modules};
 
 /// The extension a Nikaia source carries, and therefore the argument the
@@ -62,14 +63,6 @@ const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 /// cannot be checked by looking at what was built - only by asking what was
 /// asked for. Off unless the variable is set.
 pub const TRACE_VAR: &str = "NIKAIA_WRAPPER_TRACE";
-
-/// Where the compiler's own runtime lives, for the generated `Cargo.toml`.
-///
-/// `nikaia-std` is not published, so a generated project reaches it by path.
-/// The default is the checkout this compiler was built from, which is what
-/// makes a build work with no configuration at all inside the repository;
-/// `NIKAIA_STD_PATH` moves it for a compiler installed somewhere else.
-const STD_PATH_VAR: &str = "NIKAIA_STD_PATH";
 
 /// The build switches, resolved: flag over manifest over built-in default.
 ///
@@ -643,6 +636,20 @@ impl Project {
         })
     }
 
+    /// What this build asked the code generator for, as the compiled-`std` cache
+    /// keys it (ADR-002 D4).
+    ///
+    /// The same two sources the Cargo profile above is written from - the
+    /// machine's `[build.<target>]` table and the panic strategy that follows
+    /// from the machine - because it is exactly those that decide what `std`'s
+    /// machine code looks like.
+    fn codegen(&self) -> Codegen {
+        Codegen::new(
+            &self.manifest.codegen_for(&self.settings.target),
+            self.settings.panic_strategy(),
+        )
+    }
+
     /// Build the project, or build and run it.
     ///
     /// The lowering happens twice and that is deliberate: **here**, so the
@@ -682,12 +689,19 @@ impl Project {
 
         let cargo = Cargo {
             manifest,
-            // `CARGO_TARGET_DIR` is honoured where it is set, which is what
-            // lets a test share one directory across runs instead of building
-            // the runtime again for every project it makes.
+            // **The compiled-`std` cache** (ADR-002 D4). Cargo builds into a
+            // directory in the user's cache named by `Key::sysroot`, so the
+            // second project on this machine links the `std` the first one built
+            // instead of compiling it and everything under it again. It cannot
+            // live under this project's `target/`, because "shared between
+            // projects" is the whole of what it is for.
+            //
+            // `CARGO_TARGET_DIR` still wins where it is set. It is Cargo's own
+            // documented override and a build that asked for a directory has to
+            // get it.
             target_dir: match std::env::var_os("CARGO_TARGET_DIR") {
                 Some(_) => None,
-                None => Some(self.root.join("target").join("nikaia").join("cargo")),
+                None => Some(Sysroot::resolve().rlib_cache(&self.settings.target, &self.codegen())),
             },
             wrapper: std::env::current_exe().context("finding this compiler's own path")?,
             env,
@@ -828,79 +842,49 @@ impl Project {
 /// fetching anything, and a manifest that declared three crates regardless would
 /// make every project pay for the ones it does not use.
 ///
-/// The versions are read out of the compiler's own workspace rather than
-/// written down a second time. A program that linked a different `winnow` from
-/// the one `winnow-grammar` was built against is a type error at every `Stream`
+/// `std` is reached **by path into the sysroot** (ADR-002 D4). It is not
+/// published, so there is no registry to reach it through; what changed is that
+/// the path is a sysroot's rather than a checkout's, and that the sources there
+/// need nothing but `rustc` to build.
+///
+/// The other two versions are baked into this binary by `build.rs` rather than
+/// read from a workspace manifest at run time. A sysroot is not a Cargo
+/// workspace and has no `[workspace.dependencies]` above it - and these are the
+/// *compiler's* versions anyway, since it is the emitter that writes
+/// `winnow::Parser` into a program. Read at the compiler's build time rather
+/// than written down twice: a program that linked a different `winnow` from the
+/// one `winnow-grammar` was built against is a type error at every `Stream`
 /// bound, so the two must not be able to drift apart.
 fn runtime_dependencies(rust: &str) -> Result<BTreeMap<String, toml::Value>> {
     let mut out = BTreeMap::new();
-    let std_path = std_path();
 
     if rust.contains("nikaia_std") {
         let mut table = toml::Table::new();
         table.insert(
             "path".to_string(),
-            toml::Value::String(std_path.to_string_lossy().into_owned()),
+            toml::Value::String(Sysroot::resolve().std_dir().to_string_lossy().into_owned()),
         );
         out.insert("nikaia-std".to_string(), toml::Value::Table(table));
     }
 
     // `winnow_grammar` contains `winnow`, so a grammar pulls in both - which is
     // right: the expansion writes `winnow::Parser` as well.
-    let wanted: Vec<&str> = ["winnow-grammar", "winnow"]
-        .into_iter()
-        .filter(|name| rust.contains(&name.replace('-', "_")))
-        .collect();
-    if wanted.is_empty() {
-        return Ok(out);
-    }
-
-    let workspace = std_path
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| anyhow!("{} has no workspace above it", std_path.display()))?
-        .join("Cargo.toml");
-
-    let text = std::fs::read_to_string(&workspace).with_context(|| {
-        format!(
-            "reading {} for the runtime's versions; set {STD_PATH_VAR} if the \
-             compiler's checkout has moved",
-            workspace.display()
-        )
-    })?;
-    let document: toml::Value =
-        toml::from_str(&text).with_context(|| format!("parsing {}", workspace.display()))?;
-
-    for crate_name in wanted {
-        let value = document
-            .get("workspace")
-            .and_then(|w| w.get("dependencies"))
-            .and_then(|d| d.get(crate_name))
-            .ok_or_else(|| {
-                anyhow!(
-                    "{} does not declare `{crate_name}` in `[workspace.dependencies]`, \
-                     and a generated program names it directly",
-                    workspace.display()
-                )
+    for (crate_name, declaration) in [
+        ("winnow-grammar", env!("NIKAIA_RUNTIME_WINNOW_GRAMMAR")),
+        ("winnow", env!("NIKAIA_RUNTIME_WINNOW")),
+    ] {
+        if !rust.contains(&crate_name.replace('-', "_")) {
+            continue;
+        }
+        let value: toml::Value = toml::from_str(&format!("value = {declaration}"))
+            .map(|table: toml::Table| table["value"].clone())
+            .with_context(|| {
+                format!("the `{crate_name}` declaration this compiler was built with")
             })?;
-        out.insert(crate_name.to_string(), value.clone());
+        out.insert(crate_name.to_string(), value);
     }
 
     Ok(out)
-}
-
-/// The `nikaia-std` a generated project depends on.
-fn std_path() -> PathBuf {
-    match std::env::var_os(STD_PATH_VAR) {
-        Some(path) => PathBuf::from(path),
-        // The checkout this compiler was built from. `nikaia-std` is not
-        // published, so there is nowhere else to point.
-        None => {
-            let here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let path = here.join("..").join("nikaia-std");
-            path.canonicalize().unwrap_or(path)
-        }
-    }
 }
 
 /// The wrapper: what Cargo runs in `rustc`'s place, for workspace members.
@@ -1037,13 +1021,13 @@ mod tests {
         );
     }
 
-    /// The runtime the emitted Rust names, resolved out of the compiler's own
-    /// workspace. Written down a second time, the two copies would drift and a
-    /// program would link two `winnow`s.
+    /// The runtime the emitted Rust names: `std` by path into the sysroot, the
+    /// other two from the declarations `build.rs` baked in. Written down a second
+    /// time, the copies would drift and a program would link two `winnow`s.
     #[test]
-    fn the_runtime_is_read_from_the_compilers_own_workspace() {
+    fn the_runtime_travels_with_the_compiler() {
         let runtime = runtime_dependencies("use winnow_grammar::grammar; use nikaia_std::prelude;")
-            .expect("the compiler's workspace is readable");
+            .expect("the declarations this compiler was built with parse");
         assert!(runtime["nikaia-std"].get("path").is_some());
         assert!(runtime.contains_key("winnow-grammar"));
         assert!(

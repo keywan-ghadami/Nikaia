@@ -31,6 +31,14 @@ use std::path::{Path, PathBuf};
 /// artifact from an older scheme be served under a colliding key.
 const KEY_DOMAIN: &str = "nikaia-cache-key-v1";
 
+/// The domain of the *sysroot* key ([`Key::sysroot`]).
+///
+/// A separate domain and not a separate hash function: the two keys live in one
+/// module under one [`KeyBuilder`] so that D7's "every dimension is named in one
+/// place" still holds, and the domain is what makes a unit key and a sysroot key
+/// unable to collide even if their dimensions ever lined up.
+const SYSROOT_DOMAIN: &str = "nikaia-sysroot-key-v1";
+
 /// The lockfile format version, so a future reader can refuse rather than
 /// misread.
 const LOCK_VERSION: u32 = 1;
@@ -224,6 +232,49 @@ impl Key {
             b.field("asset-path", path);
             b.field("asset-hash", hash);
         }
+        Key(b.finish())
+    }
+
+    /// **The one place every dimension of the *sysroot* key is named**
+    /// (ADR-002 D4, which is D7 applied to a second store).
+    ///
+    /// The unit key above answers *what Rust does this `.nika` lower to*. This
+    /// one answers *which compiled `std` may this build link*, and the two sets
+    /// of dimensions are not the same set:
+    ///
+    /// * `compiler` and `toolchain` are in both. `std`'s Nikaia half is lowered
+    ///   by this emitter, and an rlib is only loadable by the `rustc` that wrote
+    ///   it.
+    /// * `target` is in, and `user_parallelism` is deliberately **not**: the
+    ///   switch reaches `std` as a runtime value, never as a `cfg`, so there is
+    ///   one compiled `std` per machine rather than one per build switch
+    ///   (ADR-002 D4).
+    /// * `codegen` is in - the rendered `[build.<target>]` table and the panic
+    ///   strategy. It is what makes a hardware-specific build a *dimension*
+    ///   rather than a reason to rebuild: `std`'s code runs inside every user
+    ///   program, so it is the one place where optimising for the machine in
+    ///   front of you pays, and two such builds have to be able to coexist.
+    ///
+    /// What is **out**, and why each is D7's "too much" direction here:
+    ///
+    /// * **The `std` sources' content hash.** What this key names is a
+    ///   directory, and *inside* it Cargo's own fingerprinting decides what is
+    ///   stale (D1). Hashing the tree as well would start a fresh directory for
+    ///   every edit to `crates/nikaia-std/src/fs.rs` and rebuild everything
+    ///   `std` depends on, to protect against a staleness Cargo has already
+    ///   ruled out.
+    /// * **The project**, its path and its resolved dependency versions. None
+    ///   of them can change a byte of the compiled `std`, and any of them would
+    ///   turn the one shared entry into a per-project one - which is the entire
+    ///   thing this cache exists to stop.
+    /// * **`ordering` and the lowering backend.** They change what a `.nika`
+    ///   file lowers to, and `std`'s Rust is not lowered by this build at all.
+    pub fn sysroot(compiler: &str, toolchain: &str, target: &str, codegen: &str) -> Self {
+        let mut b = KeyBuilder::new(SYSROOT_DOMAIN);
+        b.field("compiler", compiler);
+        b.field("toolchain", toolchain);
+        b.field("target", target);
+        b.field("codegen", codegen);
         Key(b.finish())
     }
 
@@ -482,7 +533,13 @@ impl Layout {
     /// artifacts are kept and never what they are keyed by, so it is not a
     /// dimension in D7's sense - and tests need somewhere that is not the
     /// developer's real cache.
-    fn user_cache_dir() -> PathBuf {
+    ///
+    /// Public because the compiled-`std` cache of ADR-002 D4 lives here too.
+    /// That cache is machine-wide by definition - the whole point is that a
+    /// second project does not rebuild it - so it cannot live under any one
+    /// project's `target/`, and this is the directory D11 already sanctions for
+    /// state that outlives one project.
+    pub fn user_cache_dir() -> PathBuf {
         for var in ["NIKAIA_CACHE_DIR", "XDG_CACHE_HOME"] {
             if let Some(dir) = std::env::var_os(var).filter(|v| !v.is_empty()) {
                 let dir = PathBuf::from(dir);

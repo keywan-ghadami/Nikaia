@@ -416,10 +416,8 @@ dependencies = [
 name = "nikaia-std"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "io-uring",
  "memmap2",
- "nikaia",
  "polling",
  "rayon",
  "winnow-grammar",
