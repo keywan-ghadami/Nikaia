@@ -186,6 +186,115 @@ fn an_error_is_declared_raised_caught_and_printed() {
     assert_eq!(out.trim(), "no config at app.conf", "stdout was: {out:?}");
 }
 
+/// ADR-023 D8: `throws` propagates on its own, and the lowering is where that
+/// becomes true rather than merely said.
+///
+/// Nothing marks a failing call in Nikaia; the language below marks every one,
+/// so the `?` is written here. Before this the emitted Rust was `Ok(liest())`,
+/// a `Result` inside an `Ok`, and the only shape of Kap 7.1 that lowered at all
+/// was a `catch` at the call. The whole corpus uses one, which is why no test
+/// found it.
+///
+/// Compiled and run, because "the emitted Rust is what `rustc` then rejects"
+/// is exactly what an assertion about the text would not have caught.
+#[test]
+fn a_written_call_propagates_its_failure() {
+    let source = r#"
+        enum ConfigError { NotFound(String) }
+
+        impl Error for ConfigError {
+            fn message(&self) -> String {
+                match self {
+                    ConfigError::NotFound(p) => { return f"no config at {p}" }
+                }
+            }
+        }
+
+        fn load(path: String) throws -> String {
+            throw ConfigError::NotFound(path)
+        }
+
+        fn ruft(path: String) throws -> String {
+            return load(path)
+        }
+
+        fn main() {
+            let text = ruft("app.conf".to_string()) catch {
+                println(f"{error}")
+                return
+            }
+            println(text)
+        }
+    "#;
+    let rust = emit(source);
+    // The written call takes the `?`...
+    assert!(rust.contains("Ok(load(path)?)"), "{rust}");
+    // ...and the `catch` does not, because the `match` beside it is what
+    // handles the failure.
+    assert!(rust.contains("match ruft("), "{rust}");
+    assert!(!rust.contains("ruft(\"app.conf\".to_string())?"), "{rust}");
+
+    let dir = common::scratch_dir("propagate");
+    let path = dir.join("prog.rs");
+    std::fs::write(&path, &rust).expect("write the emitted Rust");
+    let binary = dir.join("prog");
+    let compiled = common::compile(
+        &path,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let run = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(
+        out.trim(),
+        "no config at app.conf",
+        "the failure has to have travelled through `ruft`; stdout was: {out:?}"
+    );
+}
+
+/// `throws` names no type, and saying so is the parser's job (ADR-023 D1).
+///
+/// The specification wrote `throws IoError` in four places, so this is a form
+/// a reader will try. It used to be a parse error at the type name offering
+/// `->` and `sync` as alternatives - which says nothing about why - and the
+/// precedent for a sentence instead is `ADR-022`'s removed `fn: …`.
+#[test]
+fn throws_with_a_type_is_refused_with_the_reason() {
+    let refused = parse_to_ast("fn f() throws IoError { return 1 }")
+        .expect_err("`throws IoError` must not parse");
+    let message = format!("{refused:#}");
+    assert!(
+        message.contains("`throws` names no error type"),
+        "{message}"
+    );
+    assert!(message.contains("ADR-023 D1"), "{message}");
+    assert!(message.contains("nikaia.contracts"), "{message}");
+
+    // And every legal placement still parses - `sync` after `throws` included,
+    // which is what the refusal has to look past.
+    for legal in [
+        "fn a() throws { }",
+        "fn b() throws sync { }",
+        "fn c() throws -> i64 { return 1 }",
+        "fn d() -> i64 throws { return 1 }",
+        "fn e() -> i64 sync throws { return 1 }",
+    ] {
+        assert!(parse_to_ast(legal).is_ok(), "{legal} should parse");
+    }
+}
+
 // --- the ledger ------------------------------------------------------------
 
 /// ADR-023 D1: `throws` in the source says *that* a function fails; the ledger
@@ -276,6 +385,77 @@ fn a_function_that_cannot_fail_has_no_entry() {
     let ledger = ledger_for(r#"fn pure(n: i64) -> i64 { return n }"#);
     // The header explains the key, so look for the key being *set*.
     assert!(!ledger.contains("throws = "), "{ledger}");
+}
+
+/// **The ledger never publishes "cannot fail" about a body that can.**
+///
+/// The subject here is the committed file, not the message. `nikaia.contracts`
+/// is read by other programs ([ADR-020](../../../docs/specification/adr/adr-020.md)),
+/// so the worst outcome of the hole `NK2605` closes was never the missing
+/// caret: it was this program compiling and shipping
+///
+/// ```toml
+/// [fn."ruft"]
+/// signature = "() -> String"
+/// ```
+///
+/// with no `throws` at all.
+///
+/// **Which of the two answers, and why this one.** The inference is *not*
+/// extended to give `ruft` a `throws` it never declared, the way `sync` is
+/// inferred. ADR-023 D1 derives the error **set** and leaves the declaration
+/// in the source - "in source, `throws` is bare" - and ADR-025 D1 says what
+/// happens when a body contradicts it in so many words: "the function must
+/// declare `throws`, and the compiler says which implicit call is the reason".
+/// Inferring the keyword would also have to know about `catch`, which this
+/// walk does not: `fn f() { g() catch { … } }` cannot fail, and an inference
+/// blind to that would publish the *opposite* false fact about it. So the
+/// program is refused, before `Ledger::render` is ever reached - `project.rs`
+/// checks every unit and then renders - and a wrong fact that is never
+/// computed is never published.
+#[test]
+fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
+    let source = "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+                  fn ruft() -> String { return liest() }\n\
+                  fn main() { }";
+
+    // What the ledger *would* say, which is why the program may not get there.
+    let would_say = ledger_for(source);
+    assert!(
+        would_say.contains("[fn.\"ruft\"]\nsignature = \"() -> String\"\n"),
+        "the inference records the declaration as written:\n{would_say}"
+    );
+
+    // And it does not get there. `project::lower` checks every unit and only
+    // then calls `Ledger::render`, so a refusal here is the file never being
+    // written - there is no path in the compiler that renders a ledger for a
+    // program this says no to.
+    let dir = common::scratch_dir("ledger-refused");
+    let path = dir.join("prog.nika");
+    std::fs::write(&path, source).expect("write the program");
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let refused = nikaia::project::check(
+        &parsed,
+        &Ledger::infer(&parsed),
+        &std::collections::BTreeSet::new(),
+        &path,
+        source,
+        "no",
+    );
+    let error = format!("{:#}", refused.expect_err("the build must refuse this"));
+    assert!(error.contains("can fail without saying so"), "{error}");
+
+    // Declared, the entry says what is true - and says it with `"?"`, because
+    // `std`'s failures have no Nikaia name (ADR-024 D1).
+    let declared = ledger_for(
+        "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+         fn ruft() -> String throws { return liest() }\n\
+         fn main() { }",
+    );
+    assert!(
+        declared.contains("[fn.\"ruft\"]\nthrows = [\"?\"]\nsignature = \"() -> String\"\n"),
+        "{declared}"
+    );
 }
 
 // --- the site, and the trace ------------------------------------------------

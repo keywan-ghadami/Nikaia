@@ -747,7 +747,7 @@ impl Cleanup for BufferedFile {
     // Pausable teardown. May pause, may fail.
     // The compiler calls it automatically at the end of the scope —
     // on normal exit AND while an error is bubbling up.
-    fn cleanup(&mut self) throws IoError {
+    fn cleanup(&mut self) throws {
         self.flush()
     }
 
@@ -762,7 +762,7 @@ impl Cleanup for BufferedFile {
 
 You never call `cleanup` yourself, and you cannot forget it — the compiler inserts the call at the end of the block, exactly like `drop`. The only visible difference: the end of the block becomes a place where the function may briefly pause (like any other I/O), and the truth about errors surfaces (next paragraph).
 
-**Cleanup errors are real errors.** If closing a resource can fail, the function that owns it can fail — Nikaia does not hide this (silently losing data at close time is a decades-old bug class in other languages). If `cleanup` declares `throws IoError`, the surrounding function needs `throws IoError` too, and the compiler tells you precisely why:
+**Cleanup errors are real errors.** If closing a resource can fail, the function that owns it can fail — Nikaia does not hide this (silently losing data at close time is a decades-old bug class in other languages). If `cleanup` declares `throws`, the surrounding function needs `throws` too, and the compiler tells you precisely why:
 
 ```text
 error[NK2601]: this function can fail because closing `f` can fail
@@ -772,7 +772,7 @@ error[NK2601]: this function can fail because closing `f` can fail
    |         ^ `f` is a buffered file; writing its remaining data
    |           to disk at the end of this function can fail
    |
-  help: declare the error:  fn save_report(text: String) throws IoError
+  help: declare the error:  fn save_report(text: String) throws
   help: or handle it precisely by closing explicitly:
         f.close() catch { ... }
 ```
@@ -977,6 +977,34 @@ control flow of a Nikaia program without the line showing it: a call may **pause
 end may **pause and fail** (6.4), a call may **fail** (here), and a loop's step may fail
 ([ADR-025](adr/adr-025.md)). Marking one of them would claim the other three were absent.
 
+**Because nothing marks it, the compiler insists on the declaration.** A call that can fail, in a
+function that does not say `throws`, is **refused** — `NK2605` — rather than lowered:
+
+```text
+error[NK2605]: this function can fail because `liest` can fail
+  --> app.nika:2:23
+   2 | fn ruft() -> String { return liest() }
+                             ^
+     = `liest` carries `throws = ["?"]` in the contracts this program is built against (Part III, 13.5)
+     = nothing marks a failing call, so a failure leaves at a call exactly as it leaves at a block's closing brace or a loop's step (ADR-023 D8, ADR-025 D1)
+     help: declare the error: add `throws` to `ruft` - or handle it at the call, `… catch { … }` (Part I, 7.1)
+```
+
+on `fn liest() -> String throws { return fs::read_to_string("x.txt") }` one line above. The shape
+is Appendix C.4's: the caret is on the statement, **the note is the contract** quoted from the
+ledger the call was resolved against, and the help is one of the two things a reader can type.
+
+Two things rest on that refusal. The signature is the only place the source says a function can
+fail, so a caller that does not say it has said something false; and `nikaia.contracts` records
+`throws` per function and is **committed and read by other programs** (Part III, 13.5), so
+accepting the program would publish that `ruft` cannot fail.
+
+> **Status:** built for a call **by name** — a function of this program, of another of its
+> modules, or of `std`. A **method** call that can fail is refused by `NK2605` all the same, but
+> the lowering does not yet propagate one: on a method, `catch` at the call is the shape that
+> compiles today. A call nothing describes is neither refused nor propagated, and reaches the
+> backend as before.
+
 **Handling: `catch`.** The block supplies the replacement value — or it leaves the function.
 
 ```nika
@@ -1054,6 +1082,12 @@ tree is two features further along ([ADR-023](adr/adr-023.md) D6).
 end of a block, where a resource is cleaned up (6.4, `NK2601`), and a loop's step over a fallible
 stream ([ADR-025](adr/adr-025.md), `NK2701`). In both the enclosing function gains a `throws`, and
 the compiler says which resource or which loop it was.
+
+**It is one rule with three sites**, stated generally by [ADR-025](adr/adr-025.md) D1: where a
+call can fail — written by you or performed by the language — the failure fails the enclosing
+function, the function must declare `throws`, and the compiler names the call that is the reason.
+`NK2605` is the written call, `NK2601` the closing brace, `NK2701` the loop's step; three codes
+because three messages have three different things to point at, and one rule behind them.
 
 ### 7.2. Unrecoverable Errors (`panic`)
 These are logical bugs, like trying to access the 10th item in a list of 5 items. Nikaia stops the execution to prevent incorrect behavior. Where the machine cannot unwind, this ends the process safely.

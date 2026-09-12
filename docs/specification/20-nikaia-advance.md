@@ -59,7 +59,7 @@ const CONFIG: Json::Value = dsl Json from "config.json"
 The exact same grammar processes user input or network data while the program runs.
 
 ```nika
-fn parse_input(input: String) throws ParseError {
+fn parse_input(input: String) throws {
     let data = dsl Json from input
     println(f"Parsed: {data}")
 }

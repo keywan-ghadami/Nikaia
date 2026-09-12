@@ -143,11 +143,20 @@ fn from_does_not_let_io_into_a_sync_function() {
 /// a caller of *that* function reads it. Nothing is left for a `throws` key on
 /// `sort_by_key` to add.
 ///
-/// `"?"` is in the set beside `LeereZeile` for a second, independent reason:
-/// `contracts::throws` answers every method call with `"?"` rather than asking
-/// the type checker, so a higher-order call is already maximally fail-closed
-/// here. `from` could only ever make that *less* pessimistic, which is the
-/// direction ADR-010 D1 forbids.
+/// **The `"?"` that used to stand beside `LeereZeile` is gone**, and that is
+/// the second thing asserted here. `contracts::throws` answered every method
+/// call with `"?"` rather than asking the type checker, so `sortiere` read
+/// "fails with `LeereZeile`, or with something I cannot name" about a call the
+/// compiler had already named. Since ADR-028's resolution is handed to this
+/// walk too, `xs.sort_by_key` resolves to `Vec::sort_by_key`, whose entry in
+/// `std.contracts` carries no `throws` - and an absent `throws` there is a
+/// written-down "it cannot fail", reviewed like code, which is the opposite of
+/// how an absent `touches` reads and is deliberate (that file's own header).
+///
+/// So the set is narrower and nothing is assumed: the pessimism that went was
+/// pessimism about a **named** call, and every call the compiler still cannot
+/// name - a receiver of unknown type, a method no ledger describes - arrives
+/// as `"?"` exactly as before. `ohne_lambda` below is that floor held to.
 #[test]
 fn a_throwing_lambda_is_already_in_the_enclosing_functions_error_set() {
     let l = ledger(
@@ -167,10 +176,12 @@ fn a_throwing_lambda_is_already_in_the_enclosing_functions_error_set() {
     );
 
     assert_eq!(l.functions["pruefe"].throws, ["LeereZeile"]);
-    assert_eq!(l.functions["sortiere"].throws, ["?", "LeereZeile"]);
-    // The same call over a lambda that cannot fail contributes only the `"?"`
-    // the method call itself is worth, so `LeereZeile` above came from the
-    // lambda's body and from nowhere else.
+    assert_eq!(l.functions["sortiere"].throws, ["LeereZeile"]);
+    // The same call over a lambda that cannot fail contributes nothing at all,
+    // so `LeereZeile` above came from the lambda's body and from nowhere else.
+    // The entry stays `["?"]` because the *declaration* is a promise a caller
+    // already relies on and the inference is here to say more than it, never
+    // less (ADR-027 D4's polarity, in `throws`).
     assert_eq!(l.functions["ohne_lambda"].throws, ["?"]);
 }
 

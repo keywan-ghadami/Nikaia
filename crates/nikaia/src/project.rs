@@ -346,9 +346,10 @@ pub fn check(
 
     let mut refused = Vec::new();
     // One line per family, because a family is what a reader can act on in one
-    // go. The `NK1xxx` codes are types; `NK25xx` is a value on the wrong thread;
-    // what is left is a rule of its own, which today is `NK2701`, a loop whose
-    // step can fail in a function that does not say so.
+    // go. The `NK1xxx` codes are types; `NK25xx` is a value on the wrong
+    // thread; `NK2605` and `NK2701` are one rule counted together, because
+    // they *are* one rule (ADR-025 D1) - a call that can fail, written or not,
+    // in a function that does not declare `throws`.
     let count = |family: &str| {
         findings
             .iter()
@@ -371,7 +372,7 @@ pub fn check(
     let rules = findings.len() - types - crossings;
     if rules > 0 {
         refused.push(format!(
-            "{rules} loop{} that can fail without saying so",
+            "{rules} place{} that can fail without saying so",
             plural(rules)
         ));
     }

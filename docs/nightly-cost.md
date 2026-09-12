@@ -302,13 +302,15 @@ A partial fix is worse than none here: it would make the storing shape compile a
 inspecting one failing differently, in a compiler whose whole claim about lifetimes is that
 the position decides and the author never writes one.
 
-**And `E0621` is not translated.** [ADR-005](specification/adr/adr-005.md) D7 enumerates
-E0382, E0499, E0502, E0505, E0506, E0597, E0716 and — added after the foreign-runtime
-experiment — E0277. `E0621` is in none of them. `crates/nikaia/src/diagnostics` translates the
-*place* for every code, so the message does land on the `.nika` line; the text does not, and
-here the text is `help: add explicit lifetime 'a to the type of key`, whose every noun is
-something ADR-008 D1 says the author never writes. That is D7's own `E0277` failure at a
-second code, and it is a second reason this half is a record's business and not a patch's.
+**And `E0621`'s *text* is not translated.** [ADR-005](specification/adr/adr-005.md) D7 now
+enumerates it — E0382, E0499, E0502, E0505, E0506, E0597, E0716, E0621, plus E0277 added after
+the foreign-runtime experiment — and when this was written it did not, which is what this
+paragraph found. Being in the enumeration is worth exactly what it is worth:
+`crates/nikaia/src/diagnostics` translates the *place* for every code, so the message already
+landed on the `.nika` line and still does. The **text** does not, and here the text is
+`help: add explicit lifetime 'a to the type of key`, whose every noun is something ADR-008 D1
+says the author never writes. That is D7's own `E0277` failure at a second code — the half it
+records as open — and it is a second reason this is a record's business and not a patch's.
 
 ### 3.4 What it would cost
 

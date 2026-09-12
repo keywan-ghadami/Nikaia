@@ -31,8 +31,9 @@ involves no thread at all — which is
 Intel Xeon @ 2.10 GHz, **4 vCPU**, 15 GB RAM, Linux 6.18.44 x86_64 — a shared virtual machine
 with no `cpufreq` governor exposed, and a box that other work was using throughout: the load
 average was **1.5 to 2.1** before and after every block, and it is printed by the script beside
-every table rather than assumed away. `rustc 1.94.0-nightly (8d670b93d 2025-12-31)`, the
-toolchain this repository named when the block was run. `--release`. `io_uring` is available on this
+every table rather than assumed away. `rustc 1.94.0-nightly (8d670b93d 2025-12-31)` — the
+compiler the block was run under, kept for that reason and not because this repository names it:
+since [ADR-001](specification/adr/adr-001.md) D1 the channel is stable. `--release`. `io_uring` is available on this
 kernel and `io-method = "auto"` chose it, which the binary prints before it measures anything.
 
 Same machine class as [ADR-033](specification/adr/adr-033.md) §8.4's "4 vCPU container", so the

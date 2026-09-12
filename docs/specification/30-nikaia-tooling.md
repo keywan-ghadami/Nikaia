@@ -1118,15 +1118,21 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). |
 | `NK24xx` | Contract changes | `NK2401` a borrow contract change broke a caller, narrated from the ledger diff (13.5). Reserved: a `catch` that no longer covers every error that can reach it, narrated from the same diff — it needs the ledger to record the *set* rather than a boolean ([ADR-023](adr/adr-023.md) D1), which needs error types the compiler can lower. |
 | `NK25xx` | Portability | The `Send` rules that parallel code needs ([ADR-005](adr/adr-005.md) §1 Group B), decided the same way at **both** settings of `user_parallelism` so that a library built at one stays usable at the other. `NK2501` a value that may not cross a thread is used by a task (Part II, 11.2) - an **error** at `user_parallelism = yes` and a **lint** at `no`, where the task does not run and so the crossing does not happen. `NK2502` a value that may not cross a thread is handed to a call this compiler cannot see the end of ([ADR-038](adr/adr-038.md) D7's foreign runtime) - an error at both settings, because a Rust dependency's own threads are not bounded by a switch about *your* code ([ADR-037](adr/adr-037.md) D2). Worked through in C.5. |
-| `NK26xx` | Resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). |
+| `NK26xx` | Failure declaration, resource cleanup & crash path | `NK2601` function must declare `throws` because a resource's implicit cleanup can fail (Part I, 6.4). `NK2602` a resource with pausable cleanup must not go out of scope in a `sync` context. `NK2603` (warning) cleanup-deadline exceeded at shutdown; lists the resources that did not finish cleanly. `NK2604` only the application may set the panic hook, and the hook must be `sync` (Part I, 7.2). `NK2605` a **written** call that can fail, in a function that does not declare `throws` (Part I, 7.1) — answered from the ledger (13.5), so it says which contract it read and it grows as the ledger does. The same rule as `NK2601` and `NK2701` ([ADR-025](adr/adr-025.md) D1); what makes it the one that had to exist is that nothing else in the language says a function can fail, so accepting the program publishes `throws`'s *absence* as a fact about a body that contradicts it. |
 | `NK27xx` | Implicit calls | `NK2701` a loop whose step can fail, in a function that does not declare `throws` ([ADR-025](adr/adr-025.md) D5). The same rule as `NK2601` one line earlier in the block: where the language performs a call nobody wrote, a failure of it fails the enclosing function. |
 
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
 
 > **Status:** "defined so far" above means defined *here*, not emitted. The codes
-> the compiler reports are `NK1101`–`NK1113`, `NK2202`, `NK2501`, `NK2502` and
-> `NK2701`; `NK2101`, `NK2102`, `NK2201`, `NK2301`, `NK2401`, `NK2601`–`NK2604`
-> are specified ahead of the check that would raise them.
+> the compiler reports are `NK1101`–`NK1113`, `NK2202`, `NK2501`, `NK2502`,
+> `NK2605` and `NK2701`; `NK2101`, `NK2102`, `NK2201`, `NK2301`, `NK2401`,
+> `NK2601`–`NK2604` are specified ahead of the check that would raise them.
+>
+> `NK2605` is reported for a call whose callee a ledger describes — a function
+> in this program, one in another module of it, or one of `std`'s, by name or
+> as a method on a receiver whose type is known. A call **nothing** describes
+> is silence rather than approval, which is C.4's property for every check
+> here: it never refuses a program that is right.
 
 ### C.4. What a Type Error Looks Like
 

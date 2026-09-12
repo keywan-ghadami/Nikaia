@@ -732,6 +732,15 @@ struct Flow<'a> {
     /// from inside a `seq` was not written inside it, and its own order is its
     /// own business.
     sequential: bool,
+    /// Kap 7.1: what is being emitted is the guarded half of a `catch`, so a
+    /// failure in it is handled here rather than propagated.
+    ///
+    /// It reaches inward for the same reason `sequential` does: in
+    /// `outer(inner()) catch { … }` the handler runs for either call, so
+    /// neither propagates. The handler's own body is emitted with the flow the
+    /// `catch` was written in, because a failure raised *there* leaves the
+    /// function like any other.
+    caught: bool,
 }
 
 impl Flow<'_> {
@@ -739,6 +748,7 @@ impl Flow<'_> {
         throws: false,
         origin: "",
         sequential: false,
+        caught: false,
     };
 
     /// The same surroundings, with reordering switched off for what is inside a
@@ -746,6 +756,14 @@ impl Flow<'_> {
     fn in_seq(self) -> Self {
         Flow {
             sequential: true,
+            ..self
+        }
+    }
+
+    /// The same surroundings, for the expression a `catch` guards.
+    fn guarded(self) -> Self {
+        Flow {
+            caught: true,
             ..self
         }
     }
@@ -1363,6 +1381,7 @@ impl<'p> Emitter<'p> {
             throws,
             origin,
             sequential: false,
+            caught: false,
         };
 
         // A function body's last statement is the *function's* value, which is
@@ -2817,7 +2836,10 @@ impl<'p> Emitter<'p> {
                     Expr::DslFrom { grammar, input } => {
                         self.dsl_from(out, *grammar, input, depth, flow, Propagate::No)?
                     }
-                    _ => self.expr(out, expr, depth, flow)?,
+                    // A written call inside the guarded half must not take the
+                    // `?` either, for exactly the same reason: the `match`
+                    // below is what handles the failure.
+                    _ => self.expr(out, expr, depth, flow.guarded())?,
                 }
                 let pad = "    ".repeat(depth + 1);
                 let close = "    ".repeat(depth);
@@ -2869,6 +2891,41 @@ impl<'p> Emitter<'p> {
     /// no such thing, so the declaration decides: a name that is a struct is a
     /// call to the `new` its `impl` provides.
     fn call(
+        &self,
+        out: &mut Out,
+        func: &Expr,
+        args: &[Expr],
+        config: &[crate::ast::ConfigArg],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        self.called(out, func, args, config, depth, flow)?;
+
+        // ADR-023 D8: `throws` propagates on its own, so a call to something
+        // that can fail is where the failure leaves - and in the language below
+        // that is spelled `?`. This is the written-call twin of the `?` a
+        // fallible loop's step gets above: the same rule, one line earlier
+        // (ADR-025 D1).
+        //
+        // Three conditions, and each removes a way of being wrong. The
+        // enclosing function must be `throws`, or there is nowhere for the `?`
+        // to go - and `NK2605` has already refused the program where it is
+        // not, so this is not a silent choice. The call must not be the
+        // guarded half of a `catch`, which wants the `Result` itself. And the
+        // callee's contract must **say** it can fail, so nothing is added on a
+        // guess: a call no ledger describes is left exactly as it was.
+        //
+        // A lambda's body is emitted with `Flow::PLAIN`, so a fallible call
+        // inside one never takes a `?` from the function around it - which is
+        // right, because its `return` leaves the lambda and not the function.
+        if flow.throws && !flow.caught && self.can_fail(func) {
+            out.push("?");
+        }
+        Ok(())
+    }
+
+    /// The call itself, without ADR-023 D8's propagation.
+    fn called(
         &self,
         out: &mut Out,
         func: &Expr,
@@ -2981,6 +3038,38 @@ impl<'p> Emitter<'p> {
         }
         out.push(" }");
         Ok(())
+    }
+
+    /// Whether the contracts say a call by name can fail (Kap 7.1).
+    ///
+    /// The same resolution `options_of` uses, and for the same reason: the
+    /// callee's contract is the fact, and this unit's own comes before `std`'s
+    /// because a local name shadows nothing in a library. `false` where the
+    /// callee cannot be resolved - which is the emitter *not guessing* rather
+    /// than an answer, and is safe here because the checker has already
+    /// reported every resolvable fallible call the function did not declare
+    /// (`NK2605`); a call nothing describes reaches `rustc` as before.
+    ///
+    /// A **method** call is not asked, because the emitter has no receiver
+    /// types: `stats.add(5)` names `add` and only the type checker knows what
+    /// it goes to (ADR-028). So a method that can fail still does not take a
+    /// `?` here, and `catch` is what lowers it today.
+    fn can_fail(&self, func: &Expr) -> bool {
+        let name = match func {
+            Expr::Variable(name) => self.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| self.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => return false,
+        };
+        self.own_contracts
+            .functions
+            .get(&name)
+            .or_else(|| self.own_contracts.functions.get(&format!("{name}::new")))
+            .or_else(|| self.library.lookup(&name).map(|(_, c)| c))
+            .is_some_and(|contract| !contract.throws.is_empty())
     }
 
     /// The options a call by name has, from the contract that declares them.

@@ -99,13 +99,19 @@ Note that `--explain` (read `rustc` JSON on stdin) and the `nikaia explain`
 ## The diagnostics
 
 Codes the compiler emits: `NK1101`–`NK1113`, `NK2202`, `NK2501`, `NK2502`,
-`NK2701`. Codes Part III C.3 catalogues and nothing raises: `NK2101`, `NK2102`,
-`NK2201`, `NK2301`, `NK2401`, `NK2601`, `NK2602`, `NK2603`, `NK2604`.
+`NK2605`, `NK2701`. Codes Part III C.3 catalogues and nothing raises: `NK2101`,
+`NK2102`, `NK2201`, `NK2301`, `NK2401`, `NK2601`, `NK2602`, `NK2603`, `NK2604`.
+
+`NK2605` was added after this page was written, for the shape
+[`from-for-throws-and-touches.md`](from-for-throws-and-touches.md) §6 found: a
+written call that can fail, in a function that declares nothing.
 
 ## Left for the owner
 
-Three things are **not** decided here and the specification is unchanged at
-every one of their sites.
+Three things were **not** decided here and the specification was unchanged at
+every one of their sites. The second has since been decided; the note is kept
+with what it was, because a page that quietly loses a finding cannot be read
+against the day it was written.
 
 1. **`spawn`.** The specification writes `spawn fn { … }` twelve times
    — six in Part I (5.4 B, 8.2, and four in 8.3, two of them inside `NK2101`'s
@@ -121,10 +127,17 @@ every one of their sites.
    closer to the truth, and still an error. Whether `spawn` is a keyword form
    that becomes a task or a `std` function that takes a lambda is the decision
    left here; nothing in the parser's `spawn` rule changed.
-2. **`throws` with a type.** Part I 7.1 states that `throws` names no types and
-   the parser agrees. Part I 6.4 writes `fn cleanup(&mut self) throws IoError`
-   (once in code, twice in prose, once in `NK2601`'s `help:`) and Part II 10.2 B
-   writes `throws ParseError`. `throws IoError` does not parse.
+2. ~~**`throws` with a type.**~~ **Settled, and fixed.** Part I 7.1 states that
+   `throws` names no types and the parser agrees; the four sites that
+   contradicted it — Part I 6.4 once in code, twice in prose and once inside
+   `NK2601`'s own `help:`, and Part II 10.2 B's `throws ParseError` — are
+   corrected to Part I 7.1's form. `throws IoError` still does not parse, and
+   the refusal is now a sentence rather than a parse error at the type name:
+   `kw_throws` carries a `fail(…)` citing [ADR-023](specification/adr/adr-023.md)
+   D1 and pointing at `nikaia.contracts`, on the precedent of ADR-022's removed
+   `fn: …` form in the same file. The `help:` line was the worst of the four,
+   because the compiler's own suggested fix told the user to write what the
+   compiler refuses.
 3. **Where the honest fix is a removal.** Part II 10.3–10.4 is two pages of
    `macro` and `quote` with nothing underneath them, and Part III Chapter 14 is
    a whole chapter. Each now carries a Status note; whether a chapter specified

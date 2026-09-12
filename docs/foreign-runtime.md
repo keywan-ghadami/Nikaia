@@ -39,8 +39,10 @@ same time". This is that program, and what it found.
 ## 1. The machine and the method
 
 Intel Xeon @ 2.10 GHz, 4 vCPU, 15 GB RAM, Linux 6.18.44 x86_64 — a shared virtual machine.
-`rustc 1.94.0-nightly (8d670b93d 2025-12-31)`, the toolchain this repository named
-when these programs were run. crates.io was reachable;
+`rustc 1.94.0-nightly (8d670b93d 2025-12-31)` — the compiler these programs were built with on
+the day, kept because a measurement is worth what the compiler under it was. It is **not** a
+toolchain this repository names: since [ADR-001](specification/adr/adr-001.md) D1 the channel is
+stable, and `rust-toolchain.toml` says so and nothing else. crates.io was reachable;
 every dependency below was fetched, not vendored.
 
 Four programs, all in [`examples/foreign-runtime/`](../examples/foreign-runtime):
