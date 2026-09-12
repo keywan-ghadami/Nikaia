@@ -16,10 +16,14 @@ In many languages, developers must choose between:
 
 Nikaia aims to combine the readability of a scripting language with the performance and safety of a systems language. The developer writes simple code that focuses on the logic (the "Happy Path"). The **Compiler** (the program that translates your code into machine-readable instructions) automatically handles the complex technical details in the background.
 
-### 1.2. One Language, Three Switches
+### 1.2. One Language, and the Switches
 There is one Nikaia. The same source compiles for every machine and at every
 setting, and prints the same bytes. What you choose when you build is **how**,
-never **what**, and there are three things to choose.
+never **what**.
+
+These are the things to choose. They are named rather than counted: the count
+has been wrong twice — once by leaving `ordering` out and once by leaving the
+re-entrancy check out — and a number nobody maintains reads as a promise.
 
 #### `target` — which machine
 A 64-core server has threads and unwinds a stack when something goes wrong;
@@ -51,9 +55,22 @@ of what your program prints. The rule is:
 > The compiler may use as many threads as the machine has, for as long as no
 > code **you** wrote runs concurrently.
 
+#### `ordering` — how strictly is the written order taken?
+Two operations that touch nothing in common may overlap, because the order
+between them is not something a program can observe (Chapter 8.1.1).
+
+* `effects` (the default) — the order is kept wherever it is observable, and
+  only there.
+* `strict` — the written order, always; the analysis is not applied.
+
+`strict` is not a development aid to be removed later. It is the escape for a
+program whose author does not want this, and for ruling out a bug in the
+analysis in the field. A semantic default that cannot be switched off is a
+decision imposed rather than offered ([ADR-033](adr/adr-033.md) D8).
+
 #### the re-entrancy check — should a broken rule be noticed?
 Taking a lock while a lock is held is refused when you compile (Part II, 12.3).
-The third switch decides whether a program *also* carries the run-time check
+This switch decides whether a program *also* carries the run-time check
 that notices such a nesting if one ever gets through. It is on by default, and
 it can be declined.
 
@@ -66,12 +83,12 @@ be removed later; it is a guarantee that may be declined
 ([ADR-039](adr/adr-039.md) D8, D2).
 
 > **Status:** not built. Nothing refuses the nesting of Part II 12.3, no
-> re-entrancy check is emitted, and `nikaia.toml` has no key for this one — the
-> switch is specified ahead of all three.
+> re-entrancy check is emitted, and `nikaia.toml` has no key for this one — it
+> is the one switch here specified ahead of the manifest that would carry it.
 
-All three live in `nikaia.toml`, and `--target` and `--user-parallelism`
-override the first two for a single build ([ADR-037](adr/adr-037.md),
-[ADR-039](adr/adr-039.md) D8).
+Each of them lives in `nikaia.toml`, and `--target` and `--user-parallelism`
+override those two for a single build ([ADR-037](adr/adr-037.md),
+[ADR-033](adr/adr-033.md) D8, [ADR-039](adr/adr-039.md) D8).
 
 ---
 

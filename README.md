@@ -92,7 +92,7 @@ ended in consensus rather than in one side defeating the other. The rest of the 
 
 ## 💎 What Nikaia does differently
 
-The two switches are the *packaging*. These are the actual claims — each one is specified, and
+The switches are the *packaging*. These are the actual claims — each one is specified, and
 each one links to the decision record that argues it:
 
 **1. Functions have no colour.**
@@ -184,7 +184,7 @@ that question:
 * **Fewer decisions to get wrong.** `Rc` or `Arc`? The sync or the async variant of this API? Is
   this future `Send`? Each is a coin flip a generator can lose, and losing it surfaces as an
   error three modules away, in code the author has never read. In Nikaia these decisions are not
-  in the source at all — the two switches settle them at build time.
+  in the source at all — the build switches settle them at build time.
 
 This is also the honest answer to a new language's chicken-and-egg problem. Nobody has to learn
 Nikaia to get something out of it: hand a model the specification and your requirements, and let

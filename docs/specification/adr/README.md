@@ -134,6 +134,7 @@ the superseding record's own header:
 
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
+| [021](adr-021.md) D5 | [039](adr-039.md) D8 (amends) | the cache-key enumeration: the re-entrancy switch is a fourth dimension, because a build with the check and one without lower the same source to different Rust |
 | [005](adr-005.md) D6 | [039](adr-039.md) D2 (narrows) | the runtime reentrancy check as the backstop for re-entering one lock through a chain of `sync` calls — that case is refused at compile time now, and the check becomes self-control of the new rule |
 | [002](adr-002.md) D3 | [021](adr-021.md) D9 | Cranelift for "sub-second iterations" — never measured; measured, it buys 25 s against 26 s |
 | [013](adr-013.md) D5 | [022](adr-022.md) | `fn:` recorded as a chaining limitation; removed as a second way to say one thing |

@@ -23,7 +23,7 @@ When you create a new project (`nikaia new my_project`), the following structure
     * **Source Hashing:** The SHA256 of each `.nika` source that took part, so an unchanged module skips parsing and expansion entirely.
     * **Resolved Versions:** The exact dependency versions, the toolchain version actually used, and the **Nikaia compiler's own version** - a changed emitter produces different output from identical input, so leaving it out makes the cache serve stale artifacts (ADR-021 D3). The dependency versions are the one thing here that is *recorded without being hashed into the key*: a dependency bump changes the machine code Cargo produces, never the Rust the compiler emits, and Cargo's own fingerprinting covers that half (ADR-021 §5).
     * **Declaration vs. record:** `nikaia.toml` states what the project *requires*; `nikaia.lock` records what was *resolved and used* - the same relationship `Cargo.toml` has with `Cargo.lock`.
-    * **Not in the lockfile:** build-time choices (all three switches, opt-level, backend). They are hashed into the cache key but never written, or every change of switch would rewrite a committed file for no reason (ADR-021 D5).
+    * **Not in the lockfile:** build-time choices (every switch of Part I 1.2, opt-level, backend). They are hashed into the cache key but never written, or every change of switch would rewrite a committed file for no reason (ADR-021 D5).
     * **Instant Builds:** On subsequent builds, if the hashes on disk haven't changed, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/` (git-ignored; the lockfile holds inputs, the store holds outputs). Keys are per translation unit, so one changed asset invalidates that unit, not the project (ADR-021 D6).
 * `nikaia.contracts`: The **Borrow Contract Ledger** (generated, commit it like the lockfile). Records the borrow contracts the compiler inferred for your functions and the tether relationships of your structs. It is both an incremental-build cache and the basis for the compiler's "what changed and what broke" error messages. Details in Chapter 13.5.
 * `src/`: The folder containing your source code.
@@ -102,7 +102,7 @@ sysroot outside a checkout; the layout and the variable exist
 ([ADR-002](adr/adr-002.md) §5).
 
 ### 13.3. Manifest Configuration (`nikaia.toml`)
-The manifest defines project metadata and the three build switches of Part I 1.2.
+The manifest defines project metadata and the build switches of Part I 1.2.
 
 They live in `[build]`, and `--target` and `--user-parallelism` override those two
 for a single build — which is what a benchmark and a bug hunt need, while the
