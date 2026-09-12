@@ -1,10 +1,6 @@
 // crates/nikaia/src/parser/mod.rs
 use crate::ast;
 use anyhow::Result;
-use bridge_ir::{
-    BridgeBlock, BridgeCall, BridgeExpr, BridgeFunction, BridgeItem, BridgeLetStmt, BridgeLiteral,
-    BridgeModule, BridgeStmt,
-};
 use winnow::stream::LocatingSlice;
 use winnow::Parser;
 use winnow_grammar::{grammar, InternerContext, ParseContext, ParseInput, Symbol};
@@ -30,10 +26,6 @@ impl Parsed {
     pub fn text(&self, sym: Symbol) -> &str {
         self.interner.resolve(sym)
     }
-}
-
-pub fn parse_to_bridge(input: &str) -> Result<BridgeModule> {
-    lower_program(&parse_to_ast(input)?)
 }
 
 /// Parse one expression, interning into an existing table.
@@ -1456,91 +1448,5 @@ grammar! {
 
         rule digits -> String =
             d:digit1 -> { d.to_string() }
-    }
-}
-
-// --- Lowering (AST -> Bridge) ---
-
-fn lower_program(parsed: &Parsed) -> Result<BridgeModule> {
-    let mut items = Vec::new();
-    for item in &parsed.program.items {
-        if let Some(bridge_item) = lower_item(parsed, &item.node, item.span.clone())? {
-            items.push(bridge_item);
-        }
-    }
-
-    Ok(BridgeModule {
-        name: "main".to_string(),
-        items,
-    })
-}
-
-fn lower_item(parsed: &Parsed, item: &ast::Item, span: ast::Span) -> Result<Option<BridgeItem>> {
-    match item {
-        ast::Item::Fn {
-            name: Some(name),
-            body,
-            ..
-        } => Ok(Some(BridgeItem::Function(BridgeFunction {
-            name: parsed.text(*name).to_string(),
-            args: vec![],
-            ret_type: None,
-            body: lower_block(parsed, body)?,
-            span,
-        }))),
-        // A grammar is not a Bridge item: it lowers onto the parser backend,
-        // which is the `rust` emitter's job. Dropping it silently would compile
-        // a program with its parser missing.
-        ast::Item::Grammar(def) => Err(anyhow::anyhow!(
-            "grammar `{}` cannot be lowered through the bridge backend; use --backend=rust",
-            parsed.text(def.name)
-        )),
-        _ => Ok(None),
-    }
-}
-
-fn lower_block(parsed: &Parsed, block: &ast::Block) -> Result<BridgeBlock> {
-    let mut stmts = Vec::new();
-    for stmt in &block.stmts {
-        stmts.push(lower_stmt(parsed, &stmt.node, stmt.span.clone())?);
-    }
-    Ok(BridgeBlock { stmts, span: 0..0 })
-}
-
-fn lower_stmt(parsed: &Parsed, stmt: &ast::Stmt, span: ast::Span) -> Result<BridgeStmt> {
-    match stmt {
-        ast::Stmt::Let { name, value, .. } => Ok(BridgeStmt::Let(BridgeLetStmt {
-            name: parsed.text(*name).to_string(),
-            ty: None,
-            init: Some(lower_expr(parsed, value)?),
-            span,
-        })),
-        ast::Stmt::Expr(expr) => Ok(BridgeStmt::Expr(lower_expr(parsed, expr)?)),
-        _ => Err(anyhow::anyhow!("Unsupported statement type")),
-    }
-}
-
-fn lower_expr(parsed: &Parsed, expr: &ast::Expr) -> Result<BridgeExpr> {
-    match expr {
-        ast::Expr::LitInt(i) => Ok(BridgeExpr::Literal(BridgeLiteral::Int(*i))),
-        ast::Expr::LitStr(s) => Ok(BridgeExpr::Literal(BridgeLiteral::String(s.clone()))),
-        // The bridge carries literals, and an `f"…"` is a `format!` - a call,
-        // whose holes are expressions this lowering has no place to put.
-        ast::Expr::LitInterpolated(_) => Err(anyhow::anyhow!(
-            "an `f\"…\"` cannot be lowered to the bridge: it is built at run time"
-        )),
-        ast::Expr::Variable(id) => Ok(BridgeExpr::Variable(parsed.text(*id).to_string())),
-        ast::Expr::Call { func, args, .. } => {
-            let mut bridge_args = Vec::new();
-            for arg in args {
-                bridge_args.push(lower_expr(parsed, arg)?);
-            }
-            Ok(BridgeExpr::Call(BridgeCall {
-                func: Box::new(lower_expr(parsed, func)?),
-                args: bridge_args,
-                span: 0..0,
-            }))
-        }
-        _ => Err(anyhow::anyhow!("Unsupported expression type: {:?}", expr)),
     }
 }

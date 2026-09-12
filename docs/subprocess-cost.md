@@ -1,14 +1,21 @@
-# What the `rustc` subprocess costs — and what ADR-004 D3 would actually buy
+# What the `rustc` subprocess costs — and what skipping it would have bought
 
 **Date:** September 11, 2026
-**Status:** measured; the decision it produced is [ADR-004](specification/adr/adr-004.md) D3's evidence paragraph
-**Related:** [ADR-004](specification/adr/adr-004.md) (D2 ships the subprocess, D3 keeps the
-in-memory exit open), [ADR-003](specification/adr/adr-003.md) D1 (`rustc_private` confined
-to one crate), [ADR-012](specification/adr/adr-012.md) (diagnostics read the generated file)
+**Status:** measured, and kept. The record then said the in-memory exit — feeding
+a `rustc_ast::Crate` to `rustc_interface::run_compiler` instead of printing it —
+"can be added when the subprocess cost is worth removing". This file put the
+number on it. That exit, and the whole `rustc_ast` path it belonged to, has since
+been **withdrawn** (§6): the numbers below are unrevised, because they are part of
+why. `../CHANGELOG.md` and [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md)
+carry the account.
+**Related:** [ADR-004](specification/adr/adr-004.md) D1 (the one lowering, which
+emits text, and whose price §4 is), [ADR-003](specification/adr/adr-003.md) D1
+(the text interface), [ADR-012](specification/adr/adr-012.md) (diagnostics read
+the generated file)
 
-[ADR-004](specification/adr/adr-004.md) D3 says the in-memory exit "can be added when the
-subprocess cost is worth removing", and nobody had ever put a number on that cost. This is the
-number, the method, the machine, and the three things the measurement found that are not timings.
+Nobody had ever put a number on what invoking `rustc` as a child process costs.
+This is the number, the method, the machine, and the three things the measurement
+found that are not timings.
 
 **The conclusion, first:** the subprocess is not worth removing, and the largest part of what it
 costs is not the subprocess.
@@ -19,7 +26,7 @@ costs is not the subprocess.
 
 Intel Xeon @ 2.10 GHz, 4 vCPU, 15 GB RAM, Linux 6.18.44 x86_64 — a **shared virtual machine**
 with no `cpufreq` governor exposed. `rustc 1.94.0-nightly (8d670b93d 2025-12-31)`, which is the
-`nightly-2026-01-01` of `rust-toolchain.toml` ([ADR-001](specification/adr/adr-001.md) D1).
+`nightly-2026-01-01` this repository named when the block was run.
 
 `docs/staging-candidates.md` §2 sets this repository's standard: *wall-clock on a shared machine
 is not a measurement; an instruction count is deterministic and diffable*. So the decision rests
@@ -157,7 +164,8 @@ an over-estimate in that it also parses arguments and writes to stdout:
 **That pair is the finding.** The subprocess is a quarter of the cost of compiling a three-line
 program and **0.64 % of the cost of compiling the largest program in the corpus**, and three
 quarters of even that 0.64 % is starting a process rather than the round trip through text. The
-round trip itself — the thing D3 is about, skipping rustc's parser — is **0.161 %**.
+round trip itself — the part an in-memory exit would remove, skipping rustc's parser — is
+**0.161 %**.
 
 ### A project of many files
 
@@ -170,8 +178,8 @@ codegen. The share falls.
 The one thing that would invert this is named so it can be watched: if
 [ADR-003](specification/adr/adr-003.md) D2's build graph ever splits a program into several Rust
 crates, each crate becomes an invocation and the fixed cost multiplies by the crate count. **That
-is the condition under which D3 is worth re-measuring** — not a bigger program, a differently
-shaped build.
+is the condition under which the fixed cost is worth re-measuring** — not a bigger program, a
+differently shaped build.
 
 ---
 
@@ -180,9 +188,9 @@ shaped build.
 Three things, and each matters more than the numbers above.
 
 **The path that holds the subprocess had never run.** `--backend bridge` was the **default**
-backend when this was measured — [ADR-004](specification/adr/adr-004.md) D4 has since made
-`rust` the default and the bridge optional, citing this section's "one of fifteen" for why —
-and it panicked on every input, at the first symbol the lowering interned:
+backend when this was measured — the default changed to `rust` on the strength of this section's
+"one of fifteen", and the bridge was withdrawn altogether not long after — and it panicked on
+every input, at the first symbol the lowering interned:
 
 ```
 thread 'main' panicked at scoped-tls-1.0.1/src/lib.rs:168:9:
@@ -212,7 +220,8 @@ binary are byte-identical before and after
 compares what the two binaries print — so the sentence "nothing Bridge-IR can express tells the two
 apart" is an assertion rather than a claim, and stops being true loudly.
 
-**The `rustc_ast::Crate` that D1 builds is print-only, so D3 does not cost nothing to keep open.**
+**The `rustc_ast::Crate` the bridge lowering built was print-only, so the in-memory exit did not
+cost nothing to keep open.**
 Every node it creates carries `NodeId::from_u32(0)` — which is `CRATE_NODE_ID` — and `DUMMY_SP`.
 rustc's own parser writes `DUMMY_NODE_ID` (`NodeId::MAX`) instead, and macro expansion asserts it
 before assigning a real one:
@@ -251,15 +260,15 @@ end to end on the one program that does reach it:
 
 Even here, where the fixed cost has almost nothing to hide behind, the in-memory exit is worth
 **33 %** of the build and **two thirds of that 33 % is rustup**. Twenty-two of those percentage
-points are reachable without any of D3: naming a compiler instead of the shim, two lines, no new
-`rustc_private` surface — `crates/nikaia/build.rs` already records the `rustc` that built the
+points are reachable without the in-memory exit at all: naming a compiler instead of the shim, two
+lines, no new `rustc_private` surface — `crates/nikaia/build.rs` already records the `rustc` that built the
 compiler as `NIKAIA_RUSTC`, and `crates/nikaia/tests/common/mod.rs` already invokes it that way.
 
 **Left undone on purpose, because it is a decision no record has made.** *Which* `rustc` the
 executor invokes is not a performance question. The shim is what makes
-[ADR-001](specification/adr/adr-001.md) D1's "the pinned nightly is the single source of truth"
+[ADR-001](specification/adr/adr-001.md) D1's "one file is the single source of truth"
 true at run time — it reads `rust-toolchain.toml` on every invocation — and the two answers come
-apart for a user whose own project pins something else. Choosing between "the toolchain resolved
+apart for a user whose own project names something else. Choosing between "the toolchain resolved
 where the build runs" and "the toolchain that built this compiler" is an ADR's job, not a
 benchmark's, so it is recorded here and not acted on.
 
@@ -270,18 +279,24 @@ benchmark's, so it is recorded here and not acted on.
 Nothing consuming `rustc_interface::run_compiler` was written. A feature that removes 0.64 % of
 the cost of the largest program in the corpus, on a code path that can compile one program in that
 corpus, whose AST would not reach codegen without a node-id and span discipline nobody has built,
-is a feature nobody needed. D3 stands exactly as written — the exit stays open, and it is still
-the right shape, because D1 really does build the AST once.
+is a feature nobody needed.
 
-What changed is that the sentence "can be added when the subprocess cost is worth removing" now
-has an answer attached to it, and the answer is *not yet, and here is what would change it*:
+The record kept the exit open on the strength of "the lowering builds the AST anyway", and the
+paragraph above is what took that away: it did not build an AST anything but a printer could use.
+Three things would have changed the answer —
 
 1. the orchestrator splitting a program into several Rust crates, so the per-invocation cost
    multiplies ([ADR-003](specification/adr/adr-003.md) D2's build graph);
-2. Bridge-IR growing wide enough that a real program can reach the bridge backend at all;
-3. the lowering acquiring node ids and spans for some other reason, which would make the exit
-   genuinely free to open, as D3 believed it already was.
+2. Bridge-IR growing wide enough that a real program could reach the bridge backend at all;
+3. the lowering acquiring node ids and spans for some other reason, which would have made the exit
+   genuinely free to open, as the record believed it already was.
+
+— and **none of the three happened.** The exit, the Bridge-IR protocol and the `rustc_ast` lowering
+are withdrawn; the compiler emits Rust source text and hands `rustc` a file, which is the path §3
+and §4 measured and the 0.64 % is the whole price of
+([ADR-004](specification/adr/adr-004.md) D1). Condition 1 is still the thing to watch, and now it
+is about the fixed cost of an extra invocation rather than about an exit from an AST nobody builds.
 
 And one open question is handed on rather than answered: two thirds of the per-invocation cost is
-the rustup shim, and whether the executor should invoke the shim or a named compiler is a
+the rustup shim, and whether the compiler should invoke the shim or a named compiler is a
 toolchain-identity decision that belongs to a record, not to this file (§5).

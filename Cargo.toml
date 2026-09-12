@@ -1,18 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/bridge-ir",
-    "crates/bridge-orchestrator",
-    "crates/rustc-executor",
+    "crates/orchestrator",
     "crates/nikaia",
     "crates/nikaia-std",
     "benches/overlap",
 ]
 
 [workspace.dependencies]
-bridge-ir = { path = "crates/bridge-ir" }
-bridge-orchestrator = { path = "crates/bridge-orchestrator" }
-rustc-executor = { path = "crates/rustc-executor" }
+orchestrator = { path = "crates/orchestrator" }
 nikaia-std = { path = "crates/nikaia-std" }
 # `rayon`: `parse_<rule>_pieces` runs the pieces of a `par_fold` on rayon's
 # pool. It is the runtime of every generated program, and it is set here rather

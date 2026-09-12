@@ -1,17 +1,11 @@
 //! What a bare `nikaia --input x.nika` does, and what it must keep doing
-//! (ADR-004 D4).
+//! (ADR-004 D1).
 //!
-//! The default backend is `rust`, the Stage 0 transpiler. It is the backend
-//! that carries the corpus, and the only one every build contains — `bridge` is
-//! what links `rustc_private`, so a build that has it is a build tied to one
-//! nightly at one path.
-//!
-//! This file has **no `#![cfg]`**, on purpose: the default is the same word in
-//! both builds, and a test of it that only ran in one of them would be a test of
-//! the feature rather than of the default. The half that can only be checked
-//! where the bridge is absent — that the refusal names the feature and the
-//! component — is `backend_absent.rs`; the half that needs the bridge present is
-//! `bridge_backend.rs`.
+//! The default backend is `rust`, the Stage 0 transpiler, and it is the only
+//! code generator there is: a `.nika` file becomes Rust source text and `rustc`
+//! compiles that. The other value `--backend` takes, `interpreter`, emits
+//! nothing at all, so there is exactly one answer a bare invocation could have
+//! and this is the test that it gives it.
 
 mod common;
 
@@ -33,9 +27,8 @@ fn nikaia(args: &[&str]) -> Output {
         .expect("the nikaia binary runs")
 }
 
-/// The whole of ADR-004 D4, as a command line: no `--backend`, and Rust comes
-/// out. Before D4 this invocation went to the bridge backend, which could carry
-/// one program in the corpus and needed the pinned nightly to exist at all.
+/// The whole of ADR-004 D1, as a command line: no `--backend`, and Rust comes
+/// out.
 #[test]
 fn a_bare_invocation_lowers_to_rust() {
     let dir = common::scratch_dir("backend-default-bare");
@@ -107,11 +100,10 @@ fn the_default_is_the_rust_backend_and_not_a_lookalike() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// ADR-021 D5 makes the backend a dimension of the cache key, so the question
-/// D4 raises is whether the default change forks the store: two spellings of one
-/// lowering filling two entries, or worse, one entry answering for the other
-/// backend. It is one entry, because the cache records the lowering that made the
-/// artifact and the bridge backend consults no cache at all.
+/// ADR-021 D5 makes the backend a dimension of the cache key, so the question is
+/// whether the two spellings of one lowering fork the store - two entries for
+/// one answer. They do not: the cache records the lowering that made the
+/// artifact, and there is one lowering.
 #[test]
 fn the_default_and_the_explicit_flag_share_one_cache_entry() {
     let dir = common::scratch_dir("backend-default-cache");
@@ -151,10 +143,8 @@ fn the_default_and_the_explicit_flag_share_one_cache_entry() {
 }
 
 /// The flags that explain a decision rather than changing one live in the `rust`
-/// backend, so before D4 a bare `nikaia --input x.nika --overlaps` went to the
-/// bridge and the question was dropped on the floor. Part I 8.1.1 writes that
-/// command line without a `--backend`; this is what makes the specification's
-/// own line true.
+/// backend, and Part I 8.1.1 writes that command line without a `--backend`.
+/// This is what makes the specification's own line true.
 #[test]
 fn the_explanations_answer_without_being_told_which_backend() {
     let dir = common::scratch_dir("backend-default-explains");
@@ -200,16 +190,14 @@ fn the_explanations_answer_without_being_told_which_backend() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// ADR-021 D14: the two refusals are different refusals, and a reader has to be
-/// able to tell which one they got from the message alone.
+/// ADR-021 D9: a backend this compiler cannot serve is refused **by name**,
+/// never answered by a different backend.
 ///
-/// `cranelift` was never written, so there is nothing to install and the message
-/// offers nothing — naming a feature or a toolchain component here would send a
-/// reader after a build that does not exist. The other half, the backend that
-/// *does* exist and was compiled out, is asserted in `backend_absent.rs`, which
-/// is the only build where it can be reached.
+/// `cranelift` and `llvm` were named by ADR-002 and never written, so the
+/// message says that nothing implements them and offers no remedy, because
+/// there is none to offer.
 #[test]
-fn a_backend_that_was_never_written_refuses_differently() {
+fn a_backend_that_was_never_written_refuses_by_name() {
     for backend in ["cranelift", "llvm"] {
         let run = nikaia(&[
             "--input",
@@ -229,9 +217,8 @@ fn a_backend_that_was_never_written_refuses_differently() {
             "and say that nothing implements it: {said}"
         );
         assert!(
-            !said.contains("rustc-dev") && !said.contains("rustc-backend"),
-            "it must offer no remedy, because there is none - that wording \
-             belongs to the backend that exists and was compiled out: {said}"
+            said.contains("nothing to install"),
+            "and offer no remedy, because there is none: {said}"
         );
     }
 }

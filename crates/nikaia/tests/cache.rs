@@ -1,6 +1,6 @@
 //! The build cache, driven by the real emitter (ADR-021).
 //!
-//! `bridge-orchestrator` unit-tests the key's dimensions against synthetic
+//! `orchestrator` unit-tests the key's dimensions against synthetic
 //! records. What it cannot check from there is the thing the ADR is actually
 //! worried about: that the artifacts the cache hands back are the ones the
 //! emitter would have produced. That needs a real `.nika` file whose lowering
@@ -14,9 +14,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-use bridge_orchestrator::cache::{Artifacts, Cache, Choices};
 use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
+use orchestrator::cache::{Artifacts, Cache, Choices};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")

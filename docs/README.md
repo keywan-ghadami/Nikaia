@@ -67,19 +67,23 @@ is normative and nothing may depend on it to know what a program means.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and
   what the compiler says about each, before and after.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
-  process costs, against the codegen it wraps, and why ADR-004 D3's in-memory
-  exit is not worth building yet.
+  process costs, against the codegen it wraps: 0.64 % of a compile, which is what
+  the text interface of ADR-004 D1 is paid for with.
 * [`std-sysroot.md`](std-sysroot.md) — what `std`'s build graph cost when `std`
   had the compiler as a build dependency, the 58 packages that existed only for
   that, and the two things that were expected to decide it and did not.
-* [`nightly-cost.md`](nightly-cost.md) — what the pinned nightly is actually
-  needed for, what `-Zpolonius=next` would buy and cost, and what a stable-only
-  installation weighs.
+* [`nightly-cost.md`](nightly-cost.md) — what a toolchain weighs, what the
+  nightly-only borrow checker would have bought and cost, and the measurements
+  that led to the withdrawal recorded in `CHANGELOG.md`.
 * [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
   runtime that is already running, and the finding that only the completion
   path gets ADR-033 §8.5's zero.
-* [`technical_notes.md`](technical_notes.md) — `rustc_private` internals as
-  found on the pinned nightly.
+* [`technical_notes.md`](technical_notes.md) — the compiler-internals findings
+  from the path that was withdrawn; kept as the notebook page it is.
+* [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) — what the nightly
+  toolchain, the Bridge-IR backend and the `rustc_ast` path were, what was
+  measured about them, and why they were withdrawn without a further
+  measurement.
 * [`toolchain_architecture.md`](toolchain_architecture.md) — how the crates in
   the workspace stack up.
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) — what runs

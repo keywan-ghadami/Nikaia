@@ -32,7 +32,7 @@ Intel Xeon @ 2.10 GHz, **4 vCPU**, 15 GB RAM, Linux 6.18.44 x86_64 — a shared 
 with no `cpufreq` governor exposed, and a box that other work was using throughout: the load
 average was **1.5 to 2.1** before and after every block, and it is printed by the script beside
 every table rather than assumed away. `rustc 1.94.0-nightly (8d670b93d 2025-12-31)`, the
-`nightly-2026-01-01` of `rust-toolchain.toml`. `--release`. `io_uring` is available on this
+toolchain this repository named when the block was run. `--release`. `io_uring` is available on this
 kernel and `io-method = "auto"` chose it, which the binary prints before it measures anything.
 
 Same machine class as [ADR-033](specification/adr/adr-033.md) §8.4's "4 vCPU container", so the

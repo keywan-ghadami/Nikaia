@@ -15,7 +15,7 @@
 //! the manifest.
 //!
 //! What is generic about all this lives in
-//! [`bridge_orchestrator::project`] ([ADR-003](../../../docs/specification/adr/adr-003.md)
+//! [`orchestrator::project`] ([ADR-003](../../../docs/specification/adr/adr-003.md)
 //! D2): rendering a manifest, running `cargo`, splitting a `rustc` command
 //! line. What is here is Nikaia's half - which file is the entry, which
 //! switches were chosen, and what the lowering does.
@@ -25,8 +25,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use bridge_orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
-use bridge_orchestrator::project::{
+use orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
+use orchestrator::project::{
     record_extra_dependencies, resolved_versions, write_if_changed, Cargo, CargoProject,
     Invocation, Package, Profile,
 };
@@ -145,19 +145,13 @@ impl Settings {
     /// The cache's view of this build (ADR-021 D5).
     ///
     /// The backend is `"rust"` because it names **the lowering that produced the
-    /// artifact**, not the flag the user typed. Only the `rust` backend reaches
-    /// this function: the bridge backend hands its `BridgeModule` straight to
-    /// `rustc-executor` and consults no cache, so no `bridge` entry has ever
-    /// existed to be served to a `rust` build or the reverse.
-    ///
-    /// This is why [ADR-004](../../docs/specification/adr/adr-004.md) D4's change
-    /// of default cannot touch the cache: before it, a bare invocation cached
-    /// nothing and `--backend rust` cached under `"rust"`; after it, a bare
-    /// invocation *is* `--backend rust` and shares that one entry, which is
-    /// correct because it is the same lowering. The dimension itself stays in
-    /// [`bridge_orchestrator::cache::Key::build`] (D5, D7) so that the day a
-    /// second backend caches, the literal here becomes that backend's name and
-    /// the two cannot collide.
+    /// artifact**, not the flag the user typed, and a bare invocation *is*
+    /// `--backend rust` ([ADR-004](../../docs/specification/adr/adr-004.md) D1),
+    /// so the two spellings share one entry - which is correct, because it is
+    /// one lowering. The dimension itself stays in
+    /// [`orchestrator::cache::Key::build`] (D5, D7) so that the day a second
+    /// backend caches, the literal here becomes that backend's name and the two
+    /// cannot collide.
     pub fn choices(&self) -> Choices {
         Choices::with_ordering(
             format!("{}/{}", self.target, self.user_parallelism),

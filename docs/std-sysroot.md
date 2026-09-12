@@ -7,9 +7,9 @@ from what the shape of the problem suggested.
 
 ## 1. The machine
 
-A shared virtual machine, `x86_64-unknown-linux-gnu`, 4 cores visible, pinned
-toolchain `nightly-2026-01-01` (`rustc 1.94.0-nightly 8d670b93d`) with
-`rustc-dev`. Cargo's package cache warm in every measurement — the question is
+A shared virtual machine, `x86_64-unknown-linux-gnu`, 4 cores visible, on the
+toolchain this repository named at the time — `nightly-2026-01-01`
+(`rustc 1.94.0-nightly 8d670b93d`) with `rustc-dev`. Cargo's package cache warm in every measurement — the question is
 what is *compiled*, not what is downloaded, and a cold registry would add a
 constant to both sides.
 
@@ -80,10 +80,11 @@ accounting artefact and the names are not:
 > utf8parse, version_check, which, windows-sys, windows-targets, and the eight
 > `windows_*` target crates, winnow, winsafe, zmij
 
-`nikaia`, `bridge-ir` and `bridge-orchestrator` are the compiler. It was being
-built inside the project's `target/` by the project's own build — while the
-installed compiler was running, and doing the very lowering that build script
-existed to do.
+`nikaia`, `bridge-ir` and `bridge-orchestrator` are the compiler, under the names
+its crates had when this was measured — `bridge-ir` has since been withdrawn and
+`bridge-orchestrator` is now `orchestrator`. It was being built inside the
+project's `target/` by the project's own build — while the installed compiler was
+running, and doing the very lowering that build script existed to do.
 
 The **1** that is left is `version_check`, the build script of a crate `std`
 genuinely depends on. It is not a residue of the defect and there is nothing to
@@ -111,11 +112,13 @@ log line says Cargo was quiet; an unmoved mtime says the file was not written.
 
 ## 5. Two things that were expected to matter and did not
 
-**Installation size cannot decide where `std` comes from.** The pinned nightly
-with `rustc-dev` is 1.4 GB, of which `rustc-dev` alone is 931 MB.
-`nikaia-std`'s rlib is 1.9 MB. Whether `std` ships pre-built, ships as sources,
-or is built locally moves something three orders of magnitude below what already
-dominates a Nikaia installation — so the argument had to be made on build
+**Installation size cannot decide where `std` comes from.** The toolchain this
+was measured on — the pinned nightly with `rustc-dev` — is 1.4 GB, of which
+`rustc-dev` alone is 931 MB. `nikaia-std`'s rlib is 1.9 MB. (That nightly is
+withdrawn; against the 602 MiB a stable toolchain weighs the conclusion is
+unchanged, two and a half orders of magnitude instead of three.) Whether `std`
+ships pre-built, ships as sources, or is built locally moves something orders of
+magnitude below what already dominates a Nikaia installation — so the argument had to be made on build
 behaviour, and the size question is simply not in it. This is worth writing down
 because "ship it pre-built, it's only a few megabytes" is the intuitive answer and
 it optimises a rounding error.

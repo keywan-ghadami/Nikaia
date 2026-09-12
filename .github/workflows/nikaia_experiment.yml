@@ -8,20 +8,20 @@ env:
 jobs:
   # The compiler, on the toolchain a clone of this repository builds with.
   #
-  # This is the leg that must be green for the project to be healthy (ADR-001
-  # D5). Nothing in the workspace needs a nightly except the optional Bridge-IR
-  # backend, so everything here runs on `rust-toolchain.toml`'s stable: the
-  # `rust` backend, the interpreter, projects, the ledger, the whole test suite.
+  # There is one leg because there is one toolchain (ADR-001 D1): nothing in the
+  # workspace needs a nightly, so everything runs on `rust-toolchain.toml`'s
+  # stable - the `rust` backend, the interpreter, projects, the ledger, the whole
+  # test suite.
   bootstrap_compiler:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Version pinning per ADR-001 D1 and D5: `rust-toolchain.toml` is the
-      # single source of truth for this leg's channel and components, and
-      # `rustup show` installs exactly what it names, so nothing is duplicated
-      # here and nothing can drift.
+      # Version pinning per ADR-001 D1: `rust-toolchain.toml` is the single
+      # source of truth for the channel and its components, and `rustup show`
+      # installs exactly what it names, so nothing is duplicated here and
+      # nothing can drift.
       - name: Install the toolchain the repository names
         run: rustup show
 
@@ -50,20 +50,14 @@ jobs:
       - name: Check ADR citations resolve
         run: python3 scripts/check-adr-refs.py
 
-      # `--no-default-features` drops the one feature that links
-      # `rustc_private`. What is left has to be a whole compiler, and
-      # `--backend bridge` has to fail by name rather than fall through to
-      # another backend (ADR-021 D9) - both are claims, so both are tested.
-      - name: Build the compiler
-        run: cargo build -p nikaia --no-default-features --release
+      - name: Build the workspace
+        run: cargo build --workspace --release
 
       - name: No clippy warnings
-        run: >
-          cargo clippy -p nikaia --no-default-features
-          --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test -p nikaia --no-default-features --release
+        run: cargo test --workspace --release
 
       # The driver needs an input file, so run it on the samples rather than
       # bare `cargo run`, which only prints clap's usage error and exits 2.
@@ -74,55 +68,3 @@ jobs:
             ./target/release/nikaia --input "$sample" --backend interpreter
             echo "::endgroup::"
           done
-
-  # The Bridge-IR backend, on the nightly it is the only reason for.
-  #
-  # `rustc-backend` is the only thing in the workspace that links
-  # `rustc_private`, and `rustc_private` moves on every nightly (ADR-003 §1), so
-  # a backend that is not built is a backend that rots. This leg is what keeps
-  # it from rotting: the whole workspace, `rustc-executor` included, on the one
-  # exact nightly `bridge-toolchain/rust-toolchain.toml` names.
-  #
-  # `scripts/bridge-toolchain.sh` installs that channel with its components and
-  # runs the command on it. The channel is written in one file and read by one
-  # script, so this workflow never spells a nightly and cannot drift from it
-  # (ADR-001 D1's rule, D5's location).
-  bridge_backend:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install the bridge backend's pinned nightly
-        run: scripts/bridge-toolchain.sh
-
-      - name: Cache cargo registry and build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: >-
-            ${{ runner.os }}-cargo-bridge-${{ hashFiles('**/Cargo.lock',
-            'bridge-toolchain/rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-bridge-
-
-      - name: Verify Environment
-        run: scripts/bridge-toolchain.sh rustc --version
-
-      - name: Check formatting
-        run: scripts/bridge-toolchain.sh cargo fmt --all --check
-
-      - name: Check ADR citations resolve
-        run: python3 scripts/check-adr-refs.py
-
-      - name: Build the workspace, bridge backend included
-        run: scripts/bridge-toolchain.sh cargo build --workspace --release
-
-      - name: No clippy warnings either
-        run: >
-          scripts/bridge-toolchain.sh cargo clippy --all-targets -- -D warnings
-
-      - name: Test
-        run: scripts/bridge-toolchain.sh cargo test --workspace --release

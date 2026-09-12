@@ -4,13 +4,13 @@
 //! other half - translating a project manifest into a `Cargo.toml`, driving
 //! `cargo` over it and injecting `RUSTC_WORKSPACE_WRAPPER` (ADR-002 D1,
 //! ADR-003 D2) - is [`project`]. What is still a placeholder is
-//! [`Orchestrator::run`] below, the Bridge-IR path through `rustc-executor`.
+//! [`Orchestrator::run`] below, the one-file path from a source file to the
+//! Rust source text a language frontend lowers it to.
 
 pub mod cache;
 pub mod project;
 
 use anyhow::{Context, Result};
-use bridge_ir::BridgeModule;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -24,8 +24,16 @@ pub struct Cli {
     pub output: Option<PathBuf>,
 }
 
+/// What a language has to offer this orchestrator: a lowering from its own
+/// source text to Rust source text (ADR-003 D1).
+///
+/// The interface is text because the interface between the language and the
+/// machinery that compiles it is text: everything the orchestrator does with the
+/// answer - hash it, store it, write it where `cargo` will find it - it does to
+/// bytes, and a frontend that produced anything else would have to be understood
+/// here.
 pub trait LanguageFrontend {
-    fn parse(&self, source: &str) -> Result<BridgeModule>;
+    fn lower(&self, source: &str) -> Result<String>;
 }
 
 pub struct Orchestrator<F: LanguageFrontend> {
@@ -43,18 +51,13 @@ impl<F: LanguageFrontend> Orchestrator<F> {
         let source = std::fs::read_to_string(&args.input)
             .with_context(|| format!("Failed to read input file: {:?}", args.input))?;
 
-        let bridge_module = self.frontend.parse(&source)?;
+        let rust = self.frontend.lower(&source)?;
 
-        let bridge_json = serde_json::to_string(&bridge_module)?;
-
-        // Invoke rustc-executor
-        // This is a simplified version. In a real scenario, we'd pass the bridge_json
-        // to the executor, potentially via a temporary file or stdin.
-        // For this vertical slice, we'll assume the executor is available in the path or we call it directly.
-
-        println!("Generated Bridge IR: {}", bridge_json);
-
-        // TODO: Call rustc-executor with the generated Bridge IR
+        match &args.output {
+            Some(path) => std::fs::write(path, &rust)
+                .with_context(|| format!("Failed to write output file: {path:?}"))?,
+            None => print!("{rust}"),
+        }
 
         Ok(())
     }

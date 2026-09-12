@@ -1,10 +1,9 @@
-# Stable is what a clone of this repository builds with (ADR-001 D5).
+# Stable is the toolchain, and the only one (ADR-001 D1).
 #
-# Nothing in the workspace needs a nightly except the optional Bridge-IR
-# backend: no `-Z` flag is passed in any build, and `rustc_private` is reachable
-# only through `nikaia`'s `rustc-backend` feature. The nightly that feature does
-# need is named in exactly one place, `bridge-toolchain/rust-toolchain.toml`,
-# and `scripts/bridge-toolchain.sh` is how you build on it.
+# Nothing in the workspace needs a nightly: no `-Z` flag is passed in any build,
+# no crate declares a `#![feature(…)]`, and the Rust the compiler emits uses no
+# unstable feature either. This file is the single source of truth for the
+# channel, and the channel is never repeated anywhere else.
 [toolchain]
 channel = "stable"
 # rustfmt/clippy are needed by scripts/pre-commit.sh and CI.
