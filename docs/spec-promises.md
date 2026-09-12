@@ -23,6 +23,11 @@ records what happened, in three kinds:
   brace-led thing after it becomes a statement of its own.
 * **built** — the construct exists and lowers.
 
+Four rows were re-run after the run below, because the parser changed under
+them: the three trailing-lambda rows are now **built**, and the row they were
+re-run beside — `fn(a) sync { … }` — is unchanged. Those four say "re-run" in
+the Result column; every other row is the original run.
+
 ## The constructs
 
 | Construct | Specified in | Result |
@@ -62,10 +67,10 @@ records what happened, in three kinds:
 | `fn f(g: @detached fn())` | I 5.4 C | parse error: *expected type; found `@`* |
 | `x.m fn { … }` | I 5.3 | **built** |
 | `x.m(a) fn { … }` | I 5.3 | **built** |
-| `x.m fn(a) { … }` | I 5.3, II 12.3 | parses, means something else: `users.map; \|user\| { … };` |
-| `f(a, b) fn(x, y) { … }` | II 12.3 | parses, means something else: `access_all(a, b); \|x, y\| { … };` |
-| `p::q fn(s) { … }` / `p::q fn { … }` | II 12.7 | parses, means something else: `task::scope; \|s\| { … };` |
-| `fn(a) sync { … }` | I 7.2 | parses, means something else: `fn(a); sync { a };` |
+| `x.m fn(a) { … }` | I 5.3, II 12.3 | **built** (re-run after the trailing lambda took a parameter head): `users.map(\|user\| { … })` |
+| `f(a, b) fn(x, y) { … }` | II 12.3 | **built** (re-run): `access_all(a, b, \|x, y\| { … })` |
+| `p::q fn(s) { … }` / `p::q fn { … }` | II 12.7 | **built** (re-run): `task::scope(\|s\| { … })` — the callee has no `std` entry, so the *call* is what is built |
+| `fn(a) sync { … }` | I 7.2 | parses, means something else: `fn(a); sync { a };` — re-run, unchanged: a parameter list is followed by the body and by nothing else |
 | `1_000` | I 2.2 (silent) | parses, means something else: `let x = 1; _000;` |
 | `0xFF` | I 2.2 (silent) | parses, means something else: `let x = 0; xFF;` |
 | `1i64` | I 2.2 (silent) | parses, means something else: `let x = 1; i64;` |
@@ -106,7 +111,16 @@ every one of their sites.
    — six in Part I (5.4 B, 8.2, and four in 8.3, two of them inside `NK2101`'s
    own text and `help:`) and six in Part II (11.2, 12.5, two in 12.7, and two
    inside `NK2102`'s text and `help:`) — and the parser is `spawn "(" expr ")"`.
-   `spawn fn { … }` parses, and means `spawn; || { … };`.
+   `spawn fn { … }` parsed as `spawn; || { … };`, two statements.
+
+   **Re-run after the trailing lambda reached a path.** It is now *one*
+   expression, `spawn(|| { … })`, and `spawn fn(x) { … }` likewise — a call to a
+   function named `spawn`, which is what the source says and what nothing
+   provides. `rustc` moved from `cannot find value 'spawn' in this scope` to
+   `cannot find function 'spawn' in this scope`: the same `E0425`, one noun
+   closer to the truth, and still an error. Whether `spawn` is a keyword form
+   that becomes a task or a `std` function that takes a lambda is the decision
+   left here; nothing in the parser's `spawn` rule changed.
 2. **`throws` with a type.** Part I 7.1 states that `throws` names no types and
    the parser agrees. Part I 6.4 writes `fn cleanup(&mut self) throws IoError`
    (once in code, twice in prose, once in `NK2601`'s `help:`) and Part II 10.2 B

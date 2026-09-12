@@ -565,11 +565,13 @@ access_all(account_a, account_b) fn(a, b) {
 }
 ```
 
-> **Status:** `counter.access fn { … }` is built as a method call with a trailing
-> lambda. The two forms above are not: a trailing lambda attaches only to a
-> method call and only with implicit arguments (Part I, 5.3), so `account.access
-> fn(to) { … }` and `access_all(…) fn(a, b) { … }` are each read as two
-> expressions rather than one.
+> **Status:** the syntax of all three is built. A trailing lambda may name its
+> arguments, and it may follow a plain call as well as a method call (Part I,
+> 5.3), so `counter.access fn { … }`, `account.access fn(to) { … }` and
+> `access_all(account_a, account_b) fn(a, b) { … }` are each one call whose last
+> argument is the lambda. What is **not** built is what they call: `Locked[T]`,
+> `access` and `access_all` have no entry in `std`, and no check refuses the
+> manual nesting this section forbids or demands the `sync` lambda 12.2 does.
 
 ### 12.4. Racing Tasks (`select`)
 Sometimes you want to run multiple tasks, but only care about the one that finishes *first*.
@@ -640,9 +642,11 @@ task::scope fn(s) {
 // 'data' is still valid here
 ```
 
-> **Status:** not built. `task::scope fn(s) { … }` does not parse as one
-> construct — a trailing lambda attaches only to a method call and only with
-> implicit arguments (Part I, 5.3) — and `NK2102` is not reported.
+> **Status:** not built, though the syntax now is: `task::scope fn(s) { … }`
+> parses as one call with the lambda as its argument, and so does the
+> `s.spawn fn { … }` inside it (Part I, 5.3). What is missing is everything
+> underneath — `task::scope` has no entry in `std`, nothing waits the inner
+> tasks out, and `NK2102` is not reported.
 
 **One rule differs with `user_parallelism`.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
 

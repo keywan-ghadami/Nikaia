@@ -558,6 +558,9 @@ fn init {
 A lambda is written `fn { … }`, and 5.3 is the whole of it. There is no second, shorter form for
 single-line bodies.
 
+Naming the arguments — `fn(user) { … }`, 5.3 Option B — is that one form spelled out rather than a
+second one: the body is a block either way, and both spellings go in all the same places.
+
 The short form `fn: expression` is **not** part of the language. It saved four characters and its
 body ran to the end of the expression, so a `.method()` chained after it landed *inside* the
 lambda — silently, and a different program. Writing it is a compile error that names the block
@@ -618,13 +621,15 @@ users.map fn(user) {
 }
 ```
 
-> **Status:** both lambda forms are built, and so is the **trailing** form where
-> the arguments are implicit and the receiver is a method call, with or without
-> other arguments — `users.map fn { a.id }`, `numbers.reduce(0) fn { a + b }`,
-> and the chain above. Not built: a *trailing* `fn(name) { … }`, a trailing
-> lambda after a plain call or a path (`task::scope fn { … }`), and a `sync`
-> marker on a lambda — each of those is read as two expressions rather than one,
-> so the last example on this page means something other than what it says.
+> **Status:** built, in both spellings and in both positions. A trailing lambda
+> may name its arguments or leave them implicit, and it may follow a method
+> call with or without other arguments, a plain call, or a path:
+> `users.map fn { a.id }`, `users.map fn(user) { … }`,
+> `numbers.reduce(0) fn { a + b }`, `access_all(a, b) fn(x, y) { … }` (Part II,
+> 12.3), `task::scope fn(s) { … }` (Part II, 12.7), and the chain above. **Not
+> built:** an effect marker on a lambda. A parameter list is followed by the
+> body and by nothing else, so `fn(info) sync { … }` (7.2) ends the lambda at
+> the `sync` and the line is read as three expressions rather than one.
 
 ### 5.4. Contextual Capture (The Lifecycle Rule)
 Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at either `user_parallelism`.
@@ -1077,6 +1082,13 @@ The rules, told straight:
 * **It runs on every panic, on every target** — right before the trap where the machine traps, before the task is poisoned where it unwinds. Supervisors (Part II, 12.8) receive their crash information from the same `info`.
 * **Blocking is allowed here — briefly.** Where the process is ending anyway it costs nothing. Where the program keeps running, keep the hook short and hand heavy reporting to something you started earlier.
 * **Diagnosis, not cleanup.** Do not try to flush buffered files or finish transactions from the hook — those objects may be broken in exactly the way that caused the panic. That is why panics skip destructors, and the hook does not reopen that door. If the hook itself panics, the process aborts immediately.
+
+> **Status:** not built. There is no `std::panic`, and the line above does not
+> parse as one construct either: a lambda's parameter list is followed by its
+> body and by nothing else (5.3), so the `sync` marker ends the lambda and
+> `panic::on_panic fn(info) sync { … }` is read as three expressions. The
+> trailing lambda itself is built, named arguments included — it is the marker
+> between the parameters and the block that has no grammar.
 
 ---
 
