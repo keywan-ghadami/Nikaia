@@ -5,6 +5,13 @@ answer.** It is written once, it is not edited as the code moves on, and when a
 later decision changes it the change is recorded as a new ADR that says which
 one it displaces.
 
+A decision the project **withdraws** is the exception, and it is removed rather
+than superseded: the records are rewritten as though it had never been there,
+with one sentence for what is done instead. A reader is owed the reason for the
+current answer, not the route to it — the route is `CHANGELOG.md` and the notes.
+The test of which case you are in: a supersession leaves a live citation behind,
+a withdrawal leaves none ([`docs/README.md`](../../README.md) §2).
+
 ## What goes where
 
 | | holds | does not hold |

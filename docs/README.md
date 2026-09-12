@@ -36,10 +36,24 @@ a number is what decided it.
 Start at the [ADR index](specification/adr/README.md): every record, what it
 decides, whether it is built, and what supersedes what.
 
-An ADR is written once. When a later decision changes it, the change is a new
-ADR that names the section or `Dn` it displaces — never a silent edit. That is
-why records marked *superseded* are still here and still cited: every
+An ADR is written once. When a later decision **changes** it, the change is a
+new ADR that names the section or `Dn` it displaces — never a silent edit. That
+is why records marked *superseded* are still here and still cited: every
 supersession in this project is **partial**.
+
+**But a decision that is *withdrawn* is removed, not superseded.** When the
+project stops doing something altogether — a dependency it no longer has, a
+mechanism it no longer builds, a path nothing takes — the records are rewritten
+as though it had never been there, and one sentence says what is done instead.
+The ADRs do not owe a reader every loop the project turned; they owe the reason
+the current answer is the answer. Where the withdrawn thing went, and why, is
+[`../CHANGELOG.md`](../CHANGELOG.md) and these notes — which is what they are
+for.
+
+The line between the two: a supersession leaves a **live citation** behind,
+because something still rests on the displaced part. A withdrawal leaves none.
+If after the rewrite anything still cites it, it was a supersession and the
+rewrite was wrong.
 
 ## 3. The notes — this directory
 
