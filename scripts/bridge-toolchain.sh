@@ -10,6 +10,14 @@
 # exactly what the file names, the same mechanism CI uses for the stable
 # toolchain at the root. The channel is read back out of the same file so that
 # the command can run at the workspace root, where the manifest is.
+#
+# The build gets a target directory of its own, and that is not tidiness. Two
+# toolchains sharing one `target/deps` put two rustcs' rlibs in one directory,
+# and `crates/nikaia/tests/common/mod.rs` finds the crates a generated program
+# links by *reading that directory* - it cannot tell a stable `winnow_grammar`
+# from a nightly one, so the test compiles against the wrong copy and rustc says
+# "compiled by an incompatible version of rustc" about a file nobody chose.
+# `CARGO_TARGET_DIR` from the environment still wins, for a caller who knows.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -37,6 +45,8 @@ if [ "$#" -eq 0 ]; then
 fi
 
 cd "$root"
+CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$root/target/bridge}
+export CARGO_TARGET_DIR
 # `rustup run` puts the toolchain in the environment, which outranks the
 # repository root's `rust-toolchain.toml`.
 exec rustup run "$channel" "$@"
