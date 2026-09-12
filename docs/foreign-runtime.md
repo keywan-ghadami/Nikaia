@@ -429,8 +429,14 @@ a_read_against_foreign:
 
 The control pair overlaps, so the report is not merely a build with overlapping switched off. Every
 pair with a foreign call in it is kept in order, and the reason given is the absent `touches` and
-not something that happens to coincide with it. The emitter agrees: exactly one `task::both` in the
+not something that happens to coincide with it. The emitter agrees: exactly one overlap in the
 lowered program, inside `control`.
+
+*(Updated for [ADR-033](specification/adr/adr-033.md) D10. That overlap was a `task::both` when this
+was written and is now `task::read_pair` — the control is two file reads, and two reads are carried
+by the runtime with no thread of the program's in them. Which also means the `--user-parallelism yes`
+in the command above is no longer needed to see it: the assertion on every `cargo test` runs at both
+settings, and finds no `task::both` at either.)*
 
 The `nikaia.contracts` a foreign-calling project writes mentions the foreign crate nowhere at all,
 which is D4 working as designed rather than a gap — the entry's absence *is* the conservative

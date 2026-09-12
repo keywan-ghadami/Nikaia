@@ -27,6 +27,13 @@
 // with, and whether the program wrote `seq` around them, are the emitter's
 // (ADR-033 §8.2b). No switch reaches this file, and none may.
 //
+// [`vehicle`] is not an exception to that, and the distinction is worth stating
+// because it looks like one. *Which* vehicle a pair would need - `std` putting
+// two operations in flight, or two closures carrying the program's own code -
+// is read off the statements and is therefore this file's (ADR-033 D10).
+// Whether this build *has* that vehicle is two methods on `emit::Build`, and
+// the answers differ: one of them is `user_parallelism`'s and the other is not.
+//
 // **The shapes it sees** (ADR-033 §8.3's first item). The first increment read
 // one shape: a `let` bound to exactly one call. Measuring it found that 101 of
 // 127 refused pairs in `examples/` fell out on that alone, before any `touches`
@@ -47,7 +54,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::ast::{BinaryOp, Expr, Item, Stmt};
+use crate::ast::{BinaryOp, Expr, Item, Spanned, Stmt};
 use crate::parser::Parsed;
 
 use super::touch::Reached;
@@ -144,6 +151,13 @@ pub enum Accounted {
     /// implicit answer here - D9's table calls it "an implementation limit, not
     /// a language question", and it is the one refusal in that table a wider
     /// analysis alone cannot lift.
+    ///
+    /// **D10's vehicle has no closure in it**, so that argument does not reach
+    /// a completion pair - and the refusal stays anyway. A path this compiler
+    /// cannot read is a file it cannot *name*, which is what D4 answers with
+    /// "it reaches everything": the pair would be refused one line further down
+    /// for a reason that has nothing to do with threads. Lifting this is still
+    /// the decision it always was.
     NonLiteralArgument(String),
 }
 
@@ -579,6 +593,142 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
     }
 }
 
+/// What would have to carry an overlap, where one is allowed.
+///
+/// **Still a question about the program** (ADR-033 §8.2b's category
+/// distinction), which is why it is answered here: *whether* two operations may
+/// overlap and *what kind of thing would have to run them* are both read off
+/// the statements. Whether this build *has* that thing is the emitter's
+/// question, and no switch reaches this file to answer it.
+///
+/// The distinction is ADR-033 D10's, and it is the one `user_parallelism` was
+/// always about: one of these puts code the program wrote in flight twice and
+/// the other does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Vehicle {
+    /// `std` performs both operations and `std` does the waiting: two reads
+    /// handed to the runtime, which is already running. **No thread carries
+    /// anything the user wrote**, so this is legitimate at
+    /// `user_parallelism = no` as well - and it costs nothing measurable
+    /// (ADR-038 §4.3).
+    Completion,
+    /// Each statement goes into a closure that runs somewhere else, so two
+    /// pieces of the program's own code are in flight at once. Only
+    /// `user_parallelism = yes` permits that (ADR-037 D2), and it costs a
+    /// thread wake-up per pair (ADR-033 §8.4).
+    UserClosures,
+}
+
+/// The `std` file reads `std` can put in flight by itself, as a **closed** list.
+///
+/// Closed for `contracts::touch::KINDS`' reason: a name this compiler guessed
+/// at would buy an overlap rather than fail to buy one. An entry here is a
+/// promise that `nikaia_std::task::read_pair` performs exactly what the call
+/// performs, so it is two names and not a pattern, and adding a third is a
+/// `std` function and a measurement rather than a line here.
+///
+/// `fs::write` is deliberately absent: the runtime has no pair vehicle for two
+/// writes, and ADR-038 §4.3 measured a pair of *reads*.
+const IN_FLIGHT_READS: [&str; 2] = ["fs::read", "fs::read_to_string"];
+
+/// One statement that is exactly one `std` file read, where it is one.
+///
+/// Everything the emitter needs to write the pair, and nothing it would have to
+/// find out for itself: two places deciding what a statement is are two rules
+/// waiting to disagree (ADR-033 §6's own reason for one helper).
+#[derive(Debug, Clone)]
+pub struct InFlightRead<'a> {
+    /// The ledger key, which is one of [`IN_FLIGHT_READS`].
+    pub callee: String,
+    /// The path it reads, which is a literal - the same restriction the rest of
+    /// this analysis makes, and here it is also what makes the argument safe to
+    /// write into a call the emitter assembles.
+    pub path: &'a Expr,
+    /// Its `catch` handler, where it has one. It cannot divert ([`accounted`]
+    /// refuses that), and it runs where it was written: after both reads have
+    /// been collected, on the one thread the program has.
+    pub handler: Option<&'a crate::ast::Block>,
+}
+
+/// Whether this statement is a `std` file read the runtime can put in flight.
+///
+/// Asked only about a statement [`operation`] has already accounted for - this
+/// adds the *shape* question on top of the touch-set one, and answers `None`
+/// for every shape it is not certain of.
+///
+/// **The callee has to be `std`'s own.** A program that defines its own
+/// `fs::read` is answered `None`, because the lowering performs
+/// `nikaia_std`'s read and not whatever that name resolves to - which is D4's
+/// polarity applied to a name rather than to an effect.
+pub fn in_flight_read<'a>(
+    parsed: &Parsed,
+    stmt: &'a Stmt,
+    own: &Ledger,
+    library: &Ledger,
+) -> Option<InFlightRead<'a>> {
+    let value = match stmt {
+        Stmt::Let {
+            ty: None, value, ..
+        }
+        | Stmt::Expr(value) => value,
+        _ => return None,
+    };
+    let (call, handler) = match value {
+        Expr::TryCatch { handler, .. } if diverts(&handler.stmts) => return None,
+        Expr::TryCatch { expr, handler } => (&**expr, Some(handler)),
+        other => (other, None),
+    };
+    let Expr::Call { args, config, .. } = call else {
+        return None;
+    };
+    if !config.is_empty() || args.len() != 1 {
+        return None;
+    }
+    // A literal, for the same reason the touch sets need one: a path this
+    // compiler cannot read is a file it cannot name (D4), and a path it can is
+    // a value it can write into the call it assembles.
+    if !matches!(args[0], Expr::LitStr(_)) {
+        return None;
+    }
+    let callee = callee_of(parsed, call)?;
+    if own.lookup(&callee).is_some() {
+        return None;
+    }
+    let (key, _) = library.lookup(&callee)?;
+    if !IN_FLIGHT_READS.contains(&key.as_str()) {
+        return None;
+    }
+    Some(InFlightRead {
+        callee: key,
+        path: &args[0],
+        handler,
+    })
+}
+
+/// What an overlap of `stmts` would have to be carried by.
+///
+/// [`Vehicle::Completion`] for a **pair** of `std` file reads, and
+/// [`Vehicle::UserClosures`] for everything else. A pair and not a longer run:
+/// the runtime's pair vehicle takes two paths, and a run of three is
+/// `task::both` nested - ADR-033 D10 names an n-ary completion run as not
+/// built rather than as decided against.
+pub fn vehicle(
+    parsed: &Parsed,
+    stmts: &[Spanned<Stmt>],
+    own: &Ledger,
+    library: &Ledger,
+) -> Vehicle {
+    if stmts.len() == 2
+        && stmts
+            .iter()
+            .all(|stmt| in_flight_read(parsed, &stmt.node, own, library).is_some())
+    {
+        Vehicle::Completion
+    } else {
+        Vehicle::UserClosures
+    }
+}
+
 /// Why two statements keep the order they were written in - or that they need
 /// not (ADR-033 D9).
 ///
@@ -1009,24 +1159,51 @@ fn words_in(text: &str, out: &mut BTreeSet<String>) {
     }
 }
 
+/// What a build answers about a vehicle: `None` where it has one, and otherwise
+/// the reason it has not, in the build's own words.
+///
+/// A function and not a switch, because no switch may reach this file
+/// (ADR-033 §8.2b). The caller knows `--user-parallelism`, `--target` and
+/// `--ordering`; this file knows which vehicle a pair would need, and the
+/// report is the two halves put together - per pair, which is the whole of what
+/// D10 changed about it.
+pub type Carries<'a> = &'a dyn Fn(Vehicle) -> Option<String>;
+
 /// Every adjacent pair in a program, and what was decided about it (ADR-033 D9).
 ///
 /// The answer to "why did these two not run together", which is the question a
 /// language without an `allow_parallel` owes its user. Nothing prints it on its
 /// own: it is asked for (`--overlaps`), because a compiler that volunteered a
 /// paragraph per pair would be noise in exactly the programs that are fine.
-pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger) -> String {
+///
+/// **Three answers and not two** (ADR-033 D10). `together` is a pair that
+/// overlaps *in this build*; `would` is one the program allows and this build
+/// has no vehicle for, with `carries` naming the switch that decided it; and
+/// `in order` is the program's own refusal. Before D10 the build's half was one
+/// note at the top, and at `user_parallelism = no` that note became a
+/// half-truth the moment some pairs overlapped and others did not.
+pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger, carries: Carries<'_>) -> String {
     let mut out = String::new();
 
     for item in &parsed.program.items {
         match &item.node {
-            Item::Fn { .. } => function_report(parsed, &item.node, None, own, library, &mut out),
+            Item::Fn { .. } => {
+                function_report(parsed, &item.node, None, own, library, carries, &mut out)
+            }
             Item::Impl {
                 target, methods, ..
             } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
-                    function_report(parsed, &method.node, Some(&target), own, library, &mut out);
+                    function_report(
+                        parsed,
+                        &method.node,
+                        Some(&target),
+                        own,
+                        library,
+                        carries,
+                        &mut out,
+                    );
                 }
             }
             _ => {}
@@ -1045,6 +1222,7 @@ fn function_report(
     target: Option<&str>,
     own: &Ledger,
     library: &Ledger,
+    carries: Carries<'_>,
     out: &mut String,
 ) {
     let Item::Fn {
@@ -1096,16 +1274,19 @@ fn function_report(
         let (mark, what, why) = match (&earlier, &later) {
             (Accounted::Operation(earlier), Accounted::Operation(later)) => {
                 let verdict = verdict(earlier, later);
-                let mark = if verdict.is_overlap() {
-                    "together"
-                } else {
-                    "in order"
-                };
-                (
-                    mark,
-                    format!("{} / {}", earlier.callee, later.callee),
-                    verdict.why(),
-                )
+                let named = format!("{} / {}", earlier.callee, later.callee);
+                // The program allows it; now the build. A pair that needs a
+                // vehicle this build has not is neither `together` - it does not
+                // run together - nor `in order` for a reason of the program's,
+                // and saying either would be the half-truth D10 removed.
+                match (
+                    verdict.is_overlap(),
+                    carries(vehicle(parsed, pair, own, library)),
+                ) {
+                    (true, None) => ("together", named, verdict.why()),
+                    (true, Some(why)) => ("would", named, format!("{}, but {why}", verdict.why())),
+                    (false, _) => ("in order", named, verdict.why()),
+                }
             }
             // One of the two could not be reduced at all, and *that* reason is
             // the one worth printing: it is the one a reader can usually act on.

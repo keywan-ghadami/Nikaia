@@ -1044,6 +1044,14 @@ Within one task the order is exactly the order you wrote: `let a = fs::read("x")
 > written type; a call with options; standard input, a socket and a lock as resources — nothing
 > asks for one yet, so all three of them count as touching everything; and nothing infers what a
 > function of your own touches, so every one of those counts as touching everything too.
+>
+> **And which of them your build performs depends on `user_parallelism` (1.2).** A pair of **file
+> reads** overlaps at either setting: the operations are the standard library's, nothing you wrote
+> is in flight twice, and no promise of `no` is touched ([ADR-033](adr/adr-033.md) D10). Everything
+> else above needs `user-parallelism = "yes"`, because running it means running two pieces of *your*
+> code at once — at `no` the analysis still answers, and `--overlaps` marks such a pair `would`
+> rather than `together`. Two writes in flight, and a run of three reads rather than two, are not
+> built at `no` yet: a run of three overlaps its first two and leaves the third where you wrote it.
 
 Two lines that never meet have no reason to wait for one another:
 
@@ -1096,7 +1104,7 @@ let e = hole_empfehlungen()  catch { Empfehlungen::leer() }
 if k.ist_unbekannt() { return Seite::leer() }
 ```
 
-**When you want to know why two things did not run together, ask:** `nikaia --input x.nika --overlaps` prints every adjacent pair, which of them run together, and for the rest the reason and — where there is one — what to write instead. It changes nothing about the program; it explains a decision, the way `--trust` does for where a program's bytes came from.
+**When you want to know why two things did not run together, ask:** `nikaia --input x.nika --overlaps` prints every adjacent pair, which of them run together, and for the rest the reason and — where there is one — what to write instead. A pair marked `would` is one your program allows and this build has no way to run: the line names the switch, because "they did not run together" without a reason is exactly what this flag exists to prevent. It changes nothing about the program; it explains a decision, the way `--trust` does for where a program's bytes came from.
 
 The whole thing can be turned off for a project with `ordering = "strict"` in `nikaia.toml` (Part III, 13.3), which restores the written order everywhere.
 

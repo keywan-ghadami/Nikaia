@@ -1,10 +1,12 @@
 # What an operation costs on a runtime that is already running
 
-**Date:** September 11, 2026
-**Status:** measured; the numbers it produced are [ADR-038](specification/adr/adr-038.md) §4.3's evidence
+**Date:** September 11, 2026; §6 added September 12
+**Status:** measured; the numbers it produced are [ADR-038](specification/adr/adr-038.md) §4.3's
+evidence, and §6's are [ADR-033](specification/adr/adr-033.md) D10's — including what a re-run of
+§2 on the same box a day later says about how far an absolute microsecond here travels
 **Related:** [ADR-038](specification/adr/adr-038.md) D3 (the I/O split) and D4 (the runtime starts
 before `main`), [ADR-033](specification/adr/adr-033.md) §8.4 (the 46 µs per-pair wake-up this is
-measured against) and §8.5 (the prediction this settles),
+measured against), §8.5 (the prediction this settles) and D10 (the lowering §6 measures),
 [ADR-037](specification/adr/adr-037.md) D2 (whose thread the I/O thread is)
 
 [ADR-033](specification/adr/adr-033.md) §8.5 wrote down a prediction and said in the same
@@ -178,3 +180,100 @@ The script prints the machine, the load average before and after each block, and
 own report of what it started on — `io-workers=2 io-method=auto (chose completion) user-pool=4
 cleanup-deadline=30s user-code=concurrent` — so a table can always be read back to the
 configuration that produced it.
+
+---
+
+## 6. The same thing end to end, and what the re-run found
+
+**Date:** September 12, 2026 · the numbers [ADR-033](specification/adr/adr-033.md) D10 and §8.5.1
+rest on
+
+§1 to §5 measure `nikaia_std` from Rust. That answers what the *function* costs and not what the
+*lowering* costs, and ADR-033 D10 is a lowering: at `user_parallelism = no` a pair of `std` file
+reads is emitted as `nikaia_std::task::read_pair`. So the same question was put to a `.nika`
+program through the whole pipeline — the ordering analysis, the emitter, `cargo`, the runtime.
+
+### 6.1 The method
+
+`benches/overlap/pair.nika`, built twice by `benches/overlap/lowered.sh` from **one source**: once
+at `ordering = "effects"`, where the two reads lower onto the completion pair, and once at
+`ordering = "strict"`, where they are two statements one after the other. `user_parallelism = no`
+in both, which is the point — before D10 there was no overlap to measure there at all. The script
+greps the emitted Rust for `task::read_pair` and prints what it found, so a measurement of two
+identical binaries cannot pass for a result.
+
+The program reads the same two files in a loop and sums their lengths; nothing else in the loop
+body performs an operation, so the pair is the pair and the loop is the repeat count. **200 000
+pairs per run, nine repeats, timed as whole-process wall clock** — the two binaries start the same
+runtime and differ only in the pair, so process start cancels in the difference and is 0.01 µs a
+pair besides. A 64-pair warm-up precedes every block. Both of
+[ADR-038](specification/adr/adr-038.md) D3's mechanisms are measured, because D10's decision is
+about the second one.
+
+**The machine:** the same class as §1 — Intel Xeon @ 2.10 GHz, 4 vCPU, 15 GB RAM,
+Linux 6.18.44 x86_64, a shared VM with other work on it. Load average **1.0 to 1.7** through every
+block, printed by the script. `rustc 1.94.0-nightly (8d670b93d 2025-12-31)`. `io-workers = 2`.
+
+One thing to know about the build: a Nikaia project has **one** profile (`dev`, with `opt-level`
+from `[build.x86_64-linux]`), so a lowered program runs with `debug_assertions` on, where §2's
+figures are `--release`. Turning them off with `CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false` moves the
+baseline from 5.70 to 5.38 µs a pair and leaves the difference at −0.80 µs (sd 0.20): it is a tax on
+both binaries and not on the lowering. The headline rows below are what `nikaia build` actually
+produces.
+
+### 6.2 What the lowering costs
+
+Mean over nine repeats of 200 000 pairs, 5 bytes a file, with the range and standard deviation.
+
+| mechanism | `strict` baseline | `effects − strict`, per pair |
+| :--- | ---: | ---: |
+| completion (`io-method = auto`) | 5.70 µs | **−0.87** [−1.05, −0.62] sd 0.14 |
+| blocking fallback (pinned) | 4.01 µs | **−0.05** [−0.23, +0.07] sd 0.10 |
+
+Both rows are D10 working as written. The overlap is **free and slightly better than free** where
+the kernel performs the pair — one `io_uring_enter` where the sequential program pays two, the
+saving §3 already explained as arithmetic. And it is **exactly nothing** on the fallback, because
+there the lowering does not overlap at all: D10 refuses the fallback's per-pair wake-up rather than
+paying it, and the measurement is what says the refusal is in the code.
+
+What makes that second row worth the run: `fs::read_both`, which *does* overlap on the fallback,
+costs **+53.98 µs** a pair on this box (§6.3). The same pair, the same mechanism, through the
+function the compiler chose instead: −0.05 µs. That is the difference between the two `std`
+functions being a decision rather than a naming accident.
+
+### 6.3 The re-run, which is the finding
+
+The numbers above do not match §2's, and the gap is **the machine and not the lowering**. The
+control is the same binary §2 was measured with, run on the same box within the hour:
+
+| `benches/overlap/runtime.sh`'s binary, 20 000 pairs × 9 | §2, Sept 11 | §6, Sept 12 |
+| :--- | ---: | ---: |
+| `seq` baseline, completion | 3.34 µs | 5.3 µs |
+| `both − seq`, completion | −0.25 (sd 0.65) | **−0.98** [−1.37, −0.70] sd 0.23 |
+| `join − seq`, completion | +59.17 (sd 1.36) | **+111.81** [+107.50, +115.31] sd 2.08 |
+| `both − seq`, blocking | +37.87 (sd 0.89) | **+53.98** [+50.43, +55.10] sd 1.43 |
+| `join − seq`, blocking | +51.91 (sd 3.83) | **+92.31** [+84.32, +99.35] sd 4.71 |
+
+Everything on this box-day is 1.4 to 1.9 times §2's figure, the baseline included. A shared virtual
+machine is not the same machine from one day to the next, and §4 already said a cross-mechanism
+claim here would need a quiet box and an instruction count.
+
+**So the end-to-end number and the `std` surface agree**: −0.87 µs a pair for the lowering against
+−0.98 µs for the function it calls, measured hours apart on one box. There is no cost hiding in the
+emitter, which is what the end-to-end run was for. What there is instead is a reminder with a
+number on it: **§2's absolute microsecond figures are not reproducible on a different day on this
+hardware, and its conclusions are — because every one of them is a sign, a flatness, or a ratio.**
+`both` is zero on completion and a flat fixed cost on the fallback; `join` is two orders of
+magnitude worse than either; the fallback's crossover is where ADR-033 §8.2 put it. None of that
+moved.
+
+A number quoted from §2 in an ADR should therefore be read as "about this, on a 4-vCPU shared VM",
+which is how [ADR-033](specification/adr/adr-033.md) D10 quotes it.
+
+### 6.4 How to run it again
+
+```sh
+benches/overlap/lowered.sh                          # both mechanisms, 200 000 pairs, 9 repeats
+benches/overlap/lowered.sh /tmp/somewhere 20000 3   # …in a named directory, quicker
+benches/overlap/runtime.sh /tmp/elsewhere 9         # the control above
+```

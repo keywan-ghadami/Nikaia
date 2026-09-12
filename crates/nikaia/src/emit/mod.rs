@@ -32,7 +32,17 @@ use crate::ast::{
     BinaryOp, Block, Expr, FnArg, FoldSpec, FrameAttr, GrammarDef, GrammarRule, Item, MatchPattern,
     Pattern, Receiver, Repeat, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
+use crate::contracts::order::Vehicle;
 use crate::parser::{parse_expression, Parsed};
+
+/// The names a completion pair binds for the two answers, before either
+/// handler runs (ADR-033 D10).
+///
+/// `__nikaia_` for the reason the generated entry point is `__nikaia_main`: a
+/// `catch` handler is code the program wrote, it is emitted inside the block
+/// these are bound in, and it must not find one of these where it meant a name
+/// of its own.
+const PAIR: &str = "__nikaia_pair_";
 
 /// The machine a program is built for (ADR-037 D1).
 ///
@@ -120,34 +130,44 @@ impl Build {
         self.user_parallelism.parallelism(self.target)
     }
 
-    /// Whether a vehicle exists here for running two pieces of **user** code
-    /// at the same time (ADR-033 §8.2).
+    /// **May two pieces of the program's own code run at the same time?**
+    /// (ADR-037 D2.)
     ///
-    /// Not "does the process have more than one thread". It has a second one
-    /// at `user_parallelism = no` too, and always did: Part I 8.4's Runtime
-    /// Sidecar offloads blocking I/O to a background thread on native (a Web
-    /// Worker on WASM) so the event loop never stalls, and it stays safe
-    /// precisely because *user code never runs there* - the exchange is
-    /// ownership-transferring message passing, so there is nothing to race
-    /// over. What `no` forbids is the other thing: that anything **you** wrote
-    /// is in flight twice at once (Part I 1.2).
+    /// This gates `task::both` and nothing else. `task::both(|| …, || …)` puts
+    /// two user closures on two threads, so it is out at
+    /// `user_parallelism = no` whatever the analysis says - ADR-033 decides
+    /// whether two operations *may* overlap, and this decides whether there is
+    /// anything to overlap them with. A target without threads answers no for
+    /// the second reason: `rayon::join` does not link on `wasm32-unknown`
+    /// (Part III 15.3).
     ///
-    /// `task::both(|| …, || …)` puts two user closures on two threads, so it
-    /// is out at `no` whatever the analysis says - ADR-033 decides whether two
-    /// operations *may* overlap, and this decides whether there is anything to
-    /// overlap them with. A target without threads answers no for the second
-    /// reason: `rayon::join` does not link on `wasm32-unknown` (Part III 15.3).
-    ///
-    /// This is **not** a statement that ADR-033 means nothing at `no`. Two
-    /// reads in flight at once with their results collected on the main thread
-    /// in written order is concurrency without parallelism, which is what an
-    /// event loop and a sidecar are *for* - and it would carry none of the
-    /// per-pair thread wake-up ADR-033 §8.4 measured. That vehicle is not
-    /// built (no event loop, no sidecar, no async lowering), so `effects`
-    /// degrades to `strict` here the way `par_fold` degrades to `fold`
-    /// (ADR-009) - for now, and for a narrower reason than "no threads".
+    /// **Not the same question as [`Build::overlaps_operations`]**, and the
+    /// whole of ADR-033 D10 is that difference. "Two pieces of your code at
+    /// once" is forbidden at `no`; "two operations in flight at once" is not,
+    /// and never was - Part I 8.4's runtime has had a second thread at `no`
+    /// since ADR-038 D4, and it is safe precisely because *user code never
+    /// runs there*. What `no` forbids is that anything **you** wrote is in
+    /// flight twice at once (Part I 1.2), which is why the word in
+    /// `user_parallelism` is `user`.
     pub fn overlaps_user_code(self) -> bool {
         self.user_parallelism.is_concurrent() && self.target.has_threads()
+    }
+
+    /// **May two operations be in flight at the same time?** (ADR-033 D10.)
+    ///
+    /// True at **both** settings of `user_parallelism`, because the vehicle it
+    /// gates carries no code the program wrote: two reads handed to the
+    /// runtime are two operations the kernel performs while the program is
+    /// suspended at both of them, and `std` is what waits. Nothing of the
+    /// user's is in flight twice, so ADR-037 D2's promise is untouched - and
+    /// `nikaia_std::rt` keeps it by construction rather than by convention,
+    /// since an I/O worker's inbox takes operations and no variant of one can
+    /// carry a closure (ADR-038 §4.2).
+    ///
+    /// What it asks of the build is therefore only whether `std`'s runtime is
+    /// there at all. `user_parallelism` has no say in it; the *target* does.
+    pub fn overlaps_operations(self) -> bool {
+        self.target.has_runtime()
     }
 }
 
@@ -173,6 +193,19 @@ impl Target {
     /// Whether this machine has threads at all. A target without them bounds
     /// `user_parallelism` to `0` however it is set.
     pub fn has_threads(self) -> bool {
+        matches!(self, Target::X86_64Linux)
+    }
+
+    /// Whether `std`'s own runtime exists for this machine (ADR-038 D4): the
+    /// I/O worker that is running before `main`, and the completion queue where
+    /// the kernel has one.
+    ///
+    /// The same answer as [`Target::has_threads`] today and a different
+    /// question, which is why it is a second method rather than a second
+    /// caller. `wasm32-unknown` has neither `io_uring` nor a thread to fall
+    /// back to; a machine with threads but no completion queue has the runtime,
+    /// and `std` is what decides there what a pair costs.
+    pub fn has_runtime(self) -> bool {
         matches!(self, Target::X86_64Linux)
     }
 
@@ -2007,6 +2040,15 @@ impl<'p> Emitter<'p> {
     /// `contracts::order` for the reason §8.2b gives about the build switches:
     /// whether two operations *may* overlap is a question about the program,
     /// and `contracts::order` answers only that one.
+    ///
+    /// **Two vehicles, and this is where the build answers for them**
+    /// (ADR-033 D10). A run of statements that would each go into a closure
+    /// needs `user_parallelism = yes`; a *pair* of `std` file reads needs only
+    /// `std`'s runtime, because the kernel performs both and nothing the user
+    /// wrote is in flight twice. So a longer run whose vehicle this build has
+    /// not may still narrow to its first pair, and a pair of reads takes the
+    /// completion path at `yes` as well - it is measurably the cheaper one, and
+    /// both print the same bytes.
     fn overlap_at(
         &self,
         out: &mut Out,
@@ -2016,11 +2058,7 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<usize> {
-        if !self.build.overlaps_user_code()
-            || self.ordering != Ordering::Effects
-            || flow.sequential
-            || i + 1 >= stmts.len()
-        {
+        if self.ordering != Ordering::Effects || flow.sequential || i + 1 >= stmts.len() {
             return Ok(0);
         }
         // The run stops before the block's value, and a value at `i` itself
@@ -2047,15 +2085,196 @@ impl<'p> Emitter<'p> {
                 None => break,
             }
         }
-        let taken = crate::contracts::order::group_of(&run);
+        let mut taken = crate::contracts::order::group_of(&run);
         if taken == 0 {
             return Ok(0);
         }
 
+        // Which vehicle this run needs, and whether this build has one
+        // (ADR-033 D10). The analysis has said the run *may* overlap; these two
+        // lines are the build's half of §8.2b's distinction, and they are here
+        // and not in `contracts::order` for that reason.
+        let mut vehicle = self.vehicle(&stmts[i..i + taken]);
+        if !self.vehicle_is_here(vehicle) && taken > 2 {
+            // A run of three reads has no completion vehicle - that takes two
+            // paths - but its **first pair** does. Narrowing to the prefix is
+            // sound for `group_of`'s own reason: every pair of the run meets on
+            // nothing, so every prefix does, and the members left behind keep
+            // the places they were written in.
+            let pair = self.vehicle(&stmts[i..i + 2]);
+            if self.vehicle_is_here(pair) {
+                taken = 2;
+                vehicle = pair;
+            }
+        }
+        if !self.vehicle_is_here(vehicle) {
+            return Ok(0);
+        }
+
         out.push(&"    ".repeat(depth));
-        self.overlapped(out, &stmts[i..i + taken], depth, flow)?;
+        match vehicle {
+            Vehicle::Completion => self.overlapped_reads(out, &stmts[i..i + taken], depth, flow)?,
+            Vehicle::UserClosures => self.overlapped(out, &stmts[i..i + taken], depth, flow)?,
+        }
         out.push("\n");
         Ok(taken)
+    }
+
+    /// What would have to carry an overlap of these statements.
+    ///
+    /// The question is `contracts::order`'s, because it is read off the
+    /// statements; which answers this build can act on is the next method's.
+    fn vehicle(&self, group: &[Spanned<Stmt>]) -> Vehicle {
+        crate::contracts::order::vehicle(self.parsed, group, &self.own_contracts, &self.library)
+    }
+
+    /// Whether this build has that vehicle, and nothing about whether it should
+    /// be used.
+    ///
+    /// Two switches and two questions (ADR-033 D10): `task::both` needs
+    /// permission to run two pieces of the program's code at once, and a
+    /// completion pair needs only `std`'s runtime - which is why a pair of
+    /// reads overlaps at `user_parallelism = no` and a pair of closures does
+    /// not.
+    fn vehicle_is_here(&self, vehicle: Vehicle) -> bool {
+        match vehicle {
+            Vehicle::Completion => self.build.overlaps_operations(),
+            Vehicle::UserClosures => self.build.overlaps_user_code(),
+        }
+    }
+
+    /// A **pair of reads**, lowered onto the runtime's completion pair
+    /// (ADR-033 D10).
+    ///
+    /// ```text
+    /// let (a, b) = {
+    ///     let (__nikaia_pair_0, __nikaia_pair_1) = task::read_pair("eins.txt", "zwei.txt");
+    ///     (
+    ///         match task::as_text(__nikaia_pair_0) { Ok(value) => value, Err(error) => … },
+    ///         match task::as_text(__nikaia_pair_1) { Ok(value) => value, Err(error) => … },
+    ///     )
+    /// };
+    /// ```
+    ///
+    /// **There is no closure in it, and that is the decision.** `task::both`
+    /// puts each statement's *own code* on a thread, which is what
+    /// `user_parallelism = no` forbids; here the two operations are `std`'s and
+    /// the waiting is `std`'s, so the pair is legitimate at both settings
+    /// (ADR-037 D2, and ADR-038 §4.2's closed `Op` enum is what keeps it true).
+    /// Measured: −0.25 µs a pair against +59 µs for `task::both`
+    /// (ADR-038 §4.3), which is why it is also what a pair of reads gets at
+    /// `yes`.
+    ///
+    /// **Both handlers run where they were written**, on the one thread the
+    /// program has, after both reads have been collected - so D6 holds by
+    /// construction: the first statement's failure is handled before the
+    /// second's, whichever read finished first. A handler's own effects are
+    /// part of what its statement touches (§8.3), so a handler that reached the
+    /// other statement's file would have been refused before this was called.
+    fn overlapped_reads(
+        &self,
+        out: &mut Out,
+        group: &[Spanned<Stmt>],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let pad = "    ".repeat(depth);
+        let inner = "    ".repeat(depth + 1);
+        let reads: Vec<_> = group
+            .iter()
+            .map(|stmt| {
+                crate::contracts::order::in_flight_read(
+                    self.parsed,
+                    &stmt.node,
+                    &self.own_contracts,
+                    &self.library,
+                )
+                .expect("`order::vehicle` answered `Completion` for these two")
+            })
+            .collect();
+        let [first, second] = reads.as_slice() else {
+            unreachable!("a completion pair is two statements");
+        };
+
+        out.push(&format!(
+            "// ADR-033: these two meet on nothing, so `std` puts both in flight \
+             and neither waits.\n{pad}"
+        ));
+        let pattern = self.overlapped_pattern(group);
+        if let Some(pattern) = &pattern {
+            out.push(&format!("let {pattern} = "));
+        }
+        out.push(&format!(
+            "{{\n{inner}let ({PAIR}0, {PAIR}1) = task::read_pair("
+        ));
+        out.from(&group[0].span, |out| {
+            self.expr(out, first.path, depth + 1, flow)
+        })?;
+        out.push(", ");
+        out.from(&group[1].span, |out| {
+            self.expr(out, second.path, depth + 1, flow)
+        })?;
+        out.push(");\n");
+
+        // The halves, in written order. A pair that binds nothing is two
+        // statements rather than a tuple nobody reads, for the same reason
+        // `task::both`'s pattern is absent there: `let (_, _) = …` says nothing.
+        if pattern.is_some() {
+            out.push(&format!("{inner}("));
+            for (at, read) in reads.iter().enumerate() {
+                out.push(&format!("\n{inner}    "));
+                self.read_half(out, read, at, &group[at].span, depth + 2, flow)?;
+                out.push(",");
+            }
+            out.push(&format!("\n{inner})\n{pad}}}"));
+        } else {
+            for (at, read) in reads.iter().enumerate() {
+                out.push(&format!("{inner}let _ = "));
+                self.read_half(out, read, at, &group[at].span, depth + 1, flow)?;
+                out.push(";\n");
+            }
+            out.push(&format!("{pad}}}"));
+        }
+        out.push(";");
+        Ok(())
+    }
+
+    /// One half of a completion pair: the bytes that came back, finished the
+    /// way the statement would have finished them.
+    ///
+    /// `fs::read` hands back the bytes, `fs::read_to_string` checks them as
+    /// UTF-8 - in `std`'s own function and not in a line written into every
+    /// program, so that the failure a half reports is the one the sequential
+    /// program reported. A `catch` is the same `match` the statement would have
+    /// lowered to, with the read already performed.
+    fn read_half(
+        &self,
+        out: &mut Out,
+        read: &crate::contracts::order::InFlightRead<'_>,
+        at: usize,
+        span: &Span,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let bytes = match read.callee.as_str() {
+            "fs::read_to_string" => format!("task::as_text({PAIR}{at})"),
+            // `fs::read` is the bytes themselves, and `IN_FLIGHT_READS` is a
+            // closed list of two, so there is no third case to guess at.
+            _ => format!("{PAIR}{at}"),
+        };
+        match read.handler {
+            None => out.push(&bytes),
+            Some(handler) => {
+                let pad = "    ".repeat(depth + 1);
+                let close = "    ".repeat(depth);
+                out.push(&format!(
+                    "match {bytes} {{\n{pad}Ok(value) => value,\n{pad}Err(error) => "
+                ));
+                out.from(span, |out| self.block(out, handler, depth + 1, flow, true))?;
+                out.push(&format!(",\n{close}}}"));
+            }
+        }
+        Ok(())
     }
 
     /// A group of statements, lowered to run at the same time and be collected

@@ -345,6 +345,36 @@ pub mod io {
         (first, second)
     }
 
+    /// Two reads the **compiler** put together: both in flight where that is
+    /// free, and in the order they were written where it is not.
+    ///
+    /// [`read_both`] is the function a program asks for and it overlaps
+    /// whatever the mechanism costs. This one is what a statement pair is
+    /// lowered onto ([ADR-033](../../../../docs/specification/adr/adr-033.md)
+    /// D10), and the asymmetry is the decision rather than an oversight:
+    ///
+    /// * on the **completion path** the kernel performs both reads, one
+    ///   `io_uring_enter` collects them, and the pair costs **nothing
+    ///   measurable** - −0.25 µs, which is a saved syscall inside the noise
+    ///   ([ADR-038](../../../../docs/specification/adr/adr-038.md) §4.3);
+    /// * on the **fallback** a pair is a message to a parked worker, and
+    ///   parking and unparking a thread costs ~38 µs however early it was
+    ///   started. That is the fixed per-pair tax ADR-033 §8.2 measured and
+    ///   called a pessimisation, and the compiler cannot know whether the
+    ///   payload will earn it back.
+    ///
+    /// So an overlap the program did not ask for is taken only where it is
+    /// free. Either way the two reads are answered in the order they were
+    /// asked for and the program prints the same bytes - the choice changes
+    /// what a pair *costs* and never what it *means*.
+    pub fn read_pair(a: &Path, b: &Path) -> (Result<Vec<u8>>, Result<Vec<u8>>) {
+        off_the_io_thread();
+        match handle().files() {
+            Files::Completion => read_both(a, b),
+            Files::Blocking => (read(a), read(b)),
+        }
+    }
+
     /// Every path, all of them in flight at once. The one place the mechanism
     /// is chosen.
     fn read_all(paths: &[&Path]) -> Vec<Result<Vec<u8>>> {
@@ -579,6 +609,49 @@ mod tests {
             );
             assert_eq!(read_through(&runtime, &a), b"eins", "{method:?}");
             assert_eq!(read_through(&runtime, &b), b"zwei", "{method:?}");
+            runtime.workers.drain(std::time::Duration::from_secs(5));
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The pair the **compiler** lowers onto answers the same bytes in the same
+    /// order on either mechanism (ADR-033 D10).
+    ///
+    /// What it costs differs - the completion path overlaps and the fallback
+    /// reads in written order - and what it *means* may not, because the
+    /// program that chose it did not ask for an overlap and must not be able to
+    /// tell that it got one.
+    #[test]
+    fn the_compilers_pair_answers_the_same_either_way() {
+        let dir = std::env::temp_dir().join(format!("nikaia-rt-d10-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let (a, b) = (dir.join("eins"), dir.join("zwei"));
+        std::fs::write(&a, "eins").expect("write");
+        std::fs::write(&b, "zwei zwei").expect("write");
+
+        for method in [Method::Auto, Method::Blocking] {
+            let runtime = Runtime::build(
+                UserCode::Sequential,
+                Config {
+                    io_method: method,
+                    io_workers: 2,
+                    ..Config::default()
+                },
+            );
+            // Through the public surface, which is what a lowered program
+            // reaches: the runtime it finds is the process's, and this asserts
+            // the answer rather than which runtime answered.
+            let (first, second) = io::read_pair(&a, &b);
+            assert_eq!(first.expect("the first read"), b"eins", "{method:?}");
+            assert_eq!(second.expect("the second read"), b"zwei zwei", "{method:?}");
+            // …and a missing file fails in its own half, not in the other's.
+            let (missing, there) = io::read_pair(&dir.join("nicht-da"), &a);
+            assert!(missing.is_err(), "{method:?}");
+            assert_eq!(
+                there.expect("the file that is there"),
+                b"eins",
+                "{method:?}"
+            );
             runtime.workers.drain(std::time::Duration::from_secs(5));
         }
         std::fs::remove_dir_all(&dir).ok();

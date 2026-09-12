@@ -11,8 +11,15 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// A project directory: a manifest, and a source with two reads that meet on
-/// nothing and therefore overlap wherever the analysis is allowed to run.
+/// A project directory: a manifest, and a source with two **writes** that meet
+/// on nothing and therefore overlap wherever the analysis is allowed to run.
+///
+/// Writes and not reads, because what is under test here is whether a switch
+/// reaches the emitter - and a pair of *reads* overlaps at both settings of
+/// `user_parallelism` now, on a vehicle that carries no code of the program's
+/// ([ADR-033](../../../docs/specification/adr/adr-033.md) D10). A pair of
+/// writes has only `task::both`, so it is the shape that can still tell the two
+/// settings apart.
 fn project(purpose: &str, manifest: &str) -> PathBuf {
     let dir = common::scratch_dir(purpose);
     std::fs::write(
@@ -24,9 +31,9 @@ fn project(purpose: &str, manifest: &str) -> PathBuf {
         dir.join("main.nika"),
         "use std::fs\n\
          fn main() throws {\n\
-         \x20   let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
-         \x20   let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
-         \x20   println(f\"{a.len()} {b.len()}\")\n\
+         \x20   fs::write(\"eins.txt\", \"a\") catch { }\n\
+         \x20   fs::write(\"zwei.txt\", \"bb\") catch { }\n\
+         \x20   println(\"fertig\")\n\
          }",
     )
     .expect("the source");

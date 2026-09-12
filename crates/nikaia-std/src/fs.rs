@@ -93,7 +93,18 @@ pub fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
 /// it is why the next change of mechanism is a `std` change rather than a
 /// compiler change (ADR-033 §8.4 gave the same reason for `task::both`).
 pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
-    let bytes = read(path)?;
+    text(read(path)?)
+}
+
+/// Bytes as text, or the failure `read_to_string` reports for bytes that are
+/// not.
+///
+/// The half of [`read_to_string`] that is not the read, so that a read
+/// performed somewhere else - one half of a pair the runtime put in flight
+/// ([`crate::task::as_text`]) - is finished by exactly the same check rather
+/// than by a second copy of it. One place, for the reason ADR-033 §8.4 gives
+/// about the vehicle: the next change belongs in `std`.
+pub(crate) fn text(bytes: Vec<u8>) -> Result<String, std::io::Error> {
     // The same check `map` makes, and the same reason: a parser handed bytes
     // that are not text would find that out one view at a time.
     if let Err(at) = validate(&bytes) {
@@ -118,10 +129,15 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> 
 /// It is available at `user_parallelism = no`, and that is not a loophole: the
 /// two reads are `std`'s own operations and nothing the *user* wrote runs
 /// concurrently ([ADR-037](../../../docs/specification/adr/adr-037.md) D2,
-/// [ADR-016](../../../docs/specification/adr/adr-016.md) D3). The emitter does
-/// **not** lower a statement pair onto it - at `no`, `ordering = "effects"`
-/// still degrades to `strict` (ADR-033 §8.2b), and changing that is ADR-033's
-/// decision to make rather than this one's.
+/// [ADR-016](../../../docs/specification/adr/adr-016.md) D3).
+///
+/// **This is the function a program asks for, and it always overlaps** - on
+/// the completion path for nothing, and on the blocking fallback for the
+/// ~38 µs a worker's wake-up costs, which above a quarter megabyte a pair it
+/// earns back (ADR-038 §4.3). What the *compiler* lowers a statement pair onto
+/// is [`crate::task::read_pair`], and it is a different function for exactly
+/// that reason: an overlap nobody asked for may not cost anything
+/// (ADR-033 D10).
 pub fn read_both(
     a: impl AsRef<Path>,
     b: impl AsRef<Path>,
@@ -244,6 +260,39 @@ fn char_boundaries(bytes: &[u8], n: usize) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::{validate, CHUNKED_ABOVE};
+
+    /// Half of a pair finished by `task::as_text` is finished exactly as
+    /// `read_to_string` would have finished it (ADR-033 D10).
+    ///
+    /// The lowering performs the read somewhere else and hands the bytes back,
+    /// so this is the join: same value on the happy path, and the *same
+    /// failure* on the other one. A pair whose halves reported a different
+    /// error from the sequential program would be D1 broken by a vehicle, which
+    /// is the one thing the overlap may never do.
+    #[test]
+    fn a_half_of_a_pair_is_finished_the_way_read_to_string_finishes_it() {
+        let dir = std::env::temp_dir().join(format!("nikaia-as-text-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+
+        let text = dir.join("text");
+        std::fs::write(&text, "Hamburg;12.0\n").expect("write");
+        assert_eq!(
+            crate::task::as_text(super::read(&text)).expect("text"),
+            super::read_to_string(&text).expect("text")
+        );
+
+        // `0xff` is not UTF-8 anywhere, so both routes have to refuse it - and
+        // refuse it with the same words and the same byte offset.
+        let bytes = dir.join("bytes");
+        std::fs::write(&bytes, [b'a', 0xff]).expect("write");
+        let one = crate::task::as_text(super::read(&bytes)).expect_err("not text");
+        let other = super::read_to_string(&bytes).expect_err("not text");
+        assert_eq!(one.kind(), other.kind());
+        assert_eq!(one.to_string(), other.to_string());
+        assert!(one.to_string().contains("byte 1"), "{one}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// A written file reads back byte for byte, and a second write replaces
     /// what the first one left rather than adding to it.

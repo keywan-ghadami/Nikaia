@@ -45,3 +45,26 @@ It measures **both** mechanisms — `io-method = "auto"` and `io-method =
 "blocking"` pinned — because the answer differs between them, and that
 difference is the finding. The numbers, the method and the confound are in
 [`docs/runtime-cost.md`](../../docs/runtime-cost.md).
+
+## …and what the *lowering* costs, which is not the same question
+
+Everything above measures `nikaia_std` from Rust.
+[ADR-033](../../docs/specification/adr/adr-033.md) D10 is a **lowering**: at
+`user_parallelism = no` a pair of `std` file reads is emitted as
+`nikaia_std::task::read_pair`. `lowered.sh` measures that, through the whole
+pipeline and not a reduction of it:
+
+| what | how |
+|---|---|
+| `pair.nika` | two reads in a loop, built **twice from one source** — `ordering = "effects"` against `ordering = "strict"` |
+
+```sh
+benches/overlap/lowered.sh                          # both mechanisms, 200 000 pairs, 9 repeats
+benches/overlap/lowered.sh /tmp/somewhere 20000 3   # …quicker, in a named directory
+```
+
+It greps the emitted Rust and prints which lowering each binary got, because two
+identical binaries would measure a very stable nothing. Both mechanisms again,
+and here the fallback's column is the *decision* rather than the finding: D10
+performs the pair in written order where overlapping is not free, so that column
+should be zero and not +38 µs. The numbers are `docs/runtime-cost.md` §6.

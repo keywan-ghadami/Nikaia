@@ -30,10 +30,11 @@ use std::path::PathBuf;
 use nikaia::emit::{self, Build, Ordering};
 use nikaia::parser::parse_to_ast;
 
-/// Overlapping is only reachable with parallelism asked for: at
-/// `user_parallelism = no` nothing the user wrote may run concurrently, and
-/// the two closures `task::both` takes are code the user wrote (ADR-037 D2).
-/// So these tests are about `yes`, and the one below checks the `no` side.
+/// Most of these are about `user_parallelism = yes`, because that is the
+/// setting with **both** vehicles in it: `task::both`, which puts two pieces of
+/// the program's own code on two threads, and the runtime's completion pair,
+/// which puts two operations in flight and no code anywhere (ADR-033 D10). The
+/// `no` side has the second only, and the tests after the first group check it.
 fn lowered(source: &str, ordering: Ordering) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit::emit_program_ordered(&parsed, Build::parallel(), ordering)
@@ -41,9 +42,14 @@ fn lowered(source: &str, ordering: Ordering) -> String {
         .rust
 }
 
-/// Whether the emitted Rust runs the two calls together.
+/// Whether the emitted Rust runs the two calls together, on either vehicle.
+///
+/// Two names and one question: which vehicle a pair got is ADR-033 D10's
+/// decision and is pinned where it matters, but "did these two overlap at all"
+/// must not change its answer because the vehicle changed.
 fn overlaps(source: &str) -> bool {
-    lowered(source, Ordering::Effects).contains("task::both")
+    let rust = lowered(source, Ordering::Effects);
+    rust.contains("task::both") || rust.contains("task::read_pair")
 }
 
 const TWO_READS: &str = "use std::fs\n\
@@ -63,16 +69,15 @@ fn two_reads_of_different_files_overlap() {
     );
 }
 
-/// At `user_parallelism = no` there is nothing to overlap with.
+/// At `user_parallelism = no` **no closure is ever spawned** - and that, not
+/// "nothing overlaps", is the promise.
 ///
 /// Part I 1.2 promises that nothing **you** wrote ever runs concurrently at
-/// `no`, and Part III 15.3 promises a `wasm32-unknown` build with no OS-level
-/// mutexes or atomics - a target where `rayon::join` does not even link.
-/// `--ordering effects` is a question about the program; whether a vehicle
-/// exists to answer it with is a question about the build, and `no` answers
-/// that one no. So this degrades exactly as `par_fold` degrades to a
-/// sequential `fold` (ADR-009), rather than quietly contradicting the switch
-/// in the same file that emits `Parallelism::Off`.
+/// `no`, and Part III 15.3 promises a `wasm32-unknown` build where
+/// `rayon::join` does not even link. `task::both` puts two pieces of the
+/// program's own code on two threads, so it is out at `no` whatever the
+/// analysis says. This pins that over the pair that *does* overlap there, so it
+/// cannot pass because nothing was lowered at all.
 #[test]
 fn no_user_parallelism_never_spawns_a_thread() {
     let parsed = parse_to_ast(TWO_READS).expect("the source parses");
@@ -81,18 +86,70 @@ fn no_user_parallelism_never_spawns_a_thread() {
         .rust;
     assert!(
         !sequential.contains("task::both"),
-        "`user_parallelism = no` overlapped under `--ordering effects`:\n{sequential}"
+        "`user_parallelism = no` put two closures on two threads:\n{sequential}"
+    );
+    assert!(
+        !sequential.contains("||"),
+        "`user_parallelism = no` emitted a closure for something else to run:\n{sequential}"
     );
 
-    // …and it is the sequential program, not merely a different one.
+    // And a pair that has no vehicle at `no` is the sequential program, exactly
+    // as it was - `par_fold` degrading to a sequential `fold` (ADR-009). Two
+    // writes and nothing else: the runtime has a pair vehicle for two reads and
+    // not for two writes, so this is the pair with only `task::both` to carry it.
+    const ONLY_WRITES: &str = "use std::fs\n\
+         fn main() throws {\n\
+             fs::write(\"eins.txt\", \"a\") catch { }\n\
+             fs::write(\"zwei.txt\", \"bb\") catch { }\n\
+             println(\"fertig\")\n\
+         }";
+    let writes = parse_to_ast(ONLY_WRITES).expect("the source parses");
+    let at_no = emit::emit_program_ordered(&writes, Build::default(), Ordering::Effects)
+        .expect("the source lowers")
+        .rust;
+    let strict = emit::emit_program_ordered(&writes, Build::default(), Ordering::Strict)
+        .expect("the source lowers")
+        .rust;
+    assert_eq!(at_no, strict, "the two orderings differ at `no`");
+
+    // The guard has to be the switch and not the analysis: `yes` overlaps the
+    // same program, or this test would pass for the wrong reason.
+    assert!(overlaps(ONLY_WRITES));
+}
+
+/// A pair of reads overlaps at `user_parallelism = no`, on the runtime's
+/// completion pair (ADR-033 D10).
+///
+/// §8.2b degraded `effects` to `strict` at `no` on a premise that has stopped
+/// holding: overlapping meant two user closures on two threads, and at `no`
+/// nothing the user wrote may run concurrently. Two reads handed to the runtime
+/// are two operations in flight with **no thread carrying user code** - the
+/// kernel performs both and `std` does the waiting (ADR-038 D3) - so §8.2b's
+/// category distinction is intact and its conclusion is not.
+///
+/// Measured at −0.25 µs a pair against +59 µs for `task::both`
+/// (ADR-038 §4.3), which is why this is what a pair of reads gets at `yes` too.
+#[test]
+fn a_pair_of_reads_overlaps_at_no_on_the_completion_path() {
+    let parsed = parse_to_ast(TWO_READS).expect("the source parses");
+    let at_no = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Effects)
+        .expect("the source lowers")
+        .rust;
+    assert!(
+        at_no.contains("task::read_pair("),
+        "a pair of reads must overlap at `no`:\n{at_no}"
+    );
+    // …and it is not `strict`, which is what §8.2b made it.
     let strict = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Strict)
         .expect("the source lowers")
         .rust;
-    assert_eq!(sequential, strict, "the two orderings differ at `no`");
+    assert_ne!(at_no, strict, "`no` still degrades `effects` to `strict`");
 
-    // The guard has to be the switch and not the analysis: `yes` still
-    // overlaps the same program, or this test would pass for the wrong reason.
-    assert!(overlaps(TWO_READS));
+    // The same vehicle at `yes`: it is the cheaper one, and nothing about it
+    // needs the permission.
+    let at_yes = lowered(TWO_READS, Ordering::Effects);
+    assert!(at_yes.contains("task::read_pair("), "{at_yes}");
+    assert!(!at_yes.contains("task::both"), "{at_yes}");
 }
 
 /// A `catch` handler's own effects are part of what the statement touches.
@@ -328,6 +385,27 @@ fn three_statements_overlap_as_one_group() {
     assert_eq!(rust.matches("fs::read_to_string").count(), 3, "{rust}");
 }
 
+/// A run of three reads at `no` overlaps its **first pair** and leaves the
+/// third where it was written (ADR-033 D10).
+///
+/// The runtime's pair vehicle takes two paths, so a run of three has none - and
+/// its first pair does. Narrowing to the prefix is sound for the reason
+/// `group_of` answers a prefix at all: every pair of the run meets on nothing,
+/// so every prefix does, and the statement left behind keeps its place.
+#[test]
+fn a_longer_run_narrows_to_a_pair_at_no() {
+    let parsed = parse_to_ast(THREE_READS).expect("the source parses");
+    let at_no = emit::emit_program_ordered(&parsed, Build::default(), Ordering::Effects)
+        .expect("the source lowers")
+        .rust;
+    assert_eq!(at_no.matches("task::read_pair(").count(), 1, "{at_no}");
+    assert!(at_no.contains("let (a, b) = {"), "{at_no}");
+    // The third read is a statement of its own, after the pair.
+    let pair_ends = at_no.find("};").expect("the pair closes");
+    let third = at_no.find("let c = ").expect("the third read");
+    assert!(third > pair_ends, "{at_no}");
+}
+
 /// … and the emitted Rust compiles and prints what the sequential one printed.
 #[test]
 fn the_overlapped_group_compiles_and_runs() {
@@ -377,11 +455,13 @@ fn a_group_is_checked_pairwise_and_not_by_its_neighbours() {
              println(f\"{a.len()} {b.len()}\")\n\
          }";
 
+    // Two reads, so the group is carried by the runtime's completion pair
+    // (ADR-033 D10) - which is the vehicle and not the rule under test here.
     let rust = lowered(READ_READ_WRITE, Ordering::Effects);
-    assert_eq!(rust.matches("task::both").count(), 1, "{rust}");
-    assert!(rust.contains("let (a, b) = task::both("), "{rust}");
+    assert_eq!(rust.matches("task::read_pair(").count(), 1, "{rust}");
+    assert!(rust.contains("let (a, b) = {"), "{rust}");
     // The write is not in the group, so it is a statement of its own after it.
-    let group_ends = rust.find(");").expect("the group closes");
+    let group_ends = rust.find("};").expect("the group closes");
     let write_at = rust.find("fs::write").expect("the write is emitted");
     assert!(write_at > group_ends, "{rust}");
 }
@@ -732,7 +812,7 @@ fn a_resource_this_compiler_cannot_name_reaches_everything() {
          }";
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = nikaia::contracts::Ledger::infer(&parsed);
-    let why = nikaia::contracts::order::report(&parsed, &own, &library);
+    let why = nikaia::contracts::order::report(&parsed, &own, &library, &|_| None);
 
     assert!(why.contains("does not know about"), "{why}");
     assert!(why.contains("endpoint"), "{why}");
@@ -1052,13 +1132,15 @@ fn the_corpus_lowers_under_both_orderings() {
 
 /// The report answers "may these two overlap", which is a question about the
 /// program alone - whether a vehicle then exists to overlap them with is a
-/// question about the build, and the CLI says so separately (ADR-033 §8.2b).
-/// So no build setting reaches this.
+/// question about the build, and the build answers it through the function the
+/// report is handed (ADR-033 §8.2b, and D10 for why it is per pair). No build
+/// setting reaches `contracts::order`, so these hand it a build that has every
+/// vehicle, which is the one that asks about the program alone.
 fn report(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     let library = nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger");
     let own = nikaia::contracts::Ledger::infer(&parsed);
-    nikaia::contracts::order::report(&parsed, &own, &library)
+    nikaia::contracts::order::report(&parsed, &own, &library, &|_| None)
 }
 
 /// The refusal that the language decided **not** to give a keyword names its
