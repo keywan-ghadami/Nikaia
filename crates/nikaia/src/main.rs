@@ -217,26 +217,31 @@ fn lower_to_rust(
     if args.overlaps {
         // The report answers "may these two overlap", which is a question
         // about the program. Whether anything then *does* overlap is a
-        // question about the build, and two settings answer it no on their
-        // own - so say which, rather than letting the report read as a
-        // promise the emitter is not keeping.
-        if !settings.build.overlaps_user_code() {
-            println!(
-                "note: `--user-parallelism {}` on `--target {}` runs user code on one thread, \
-                 so nothing below overlaps in this build.",
-                settings.user_parallelism,
-                settings.build.target.triple()
-            );
-        } else if settings.ordering != emit::Ordering::Effects {
+        // question about the build - and since ADR-033 D10 the answer differs
+        // from pair to pair, because the two vehicles are gated by different
+        // switches. So the build's half travels *into* the report, one answer
+        // per pair, rather than standing at the top as a sentence that is true
+        // of some lines and false of others.
+        if settings.ordering != emit::Ordering::Effects {
             println!(
                 "note: `ordering = {}` keeps the written order, so nothing below overlaps in this build.",
                 settings.ordering_word
+            );
+        } else if !settings.build.overlaps_user_code() {
+            println!(
+                "note: `--user-parallelism {}` keeps every piece of your own code on one thread. \
+                 A pair `std` can put in flight itself still overlaps (ADR-033 D10); a pair that \
+                 would need two threads of your own is marked `would` below.",
+                settings.user_parallelism
             );
         }
         let parsed = parser::parse_to_ast(source)?;
         let library = Ledger::parse(STD).context("std's shipped ledger")?;
         let own = Ledger::infer(&parsed);
-        print!("{}", contracts::order::report(&parsed, &own, &library));
+        print!(
+            "{}",
+            contracts::order::report(&parsed, &own, &library, &overlaps_here(settings))
+        );
     }
 
     if args.trust {
@@ -274,6 +279,48 @@ fn lower_to_rust(
     );
 
     Ok(())
+}
+
+/// What this build answers about each vehicle an overlap could need
+/// (ADR-033 D10), for `--overlaps` to print beside the pair that needs it.
+///
+/// `None` is "this build has that vehicle". A reason names the switch that
+/// decided it, because a report that said only "these two did not run together"
+/// is the trap D9's refusals exist to keep open to a question.
+///
+/// The two vehicles answer to **different switches**, which is the whole of what
+/// D10 changed here: a completion pair needs only `std`'s runtime, and
+/// `task::both` needs permission to run two pieces of the program's own code at
+/// once.
+fn overlaps_here(settings: &Settings) -> impl Fn(contracts::order::Vehicle) -> Option<String> + '_ {
+    use contracts::order::Vehicle;
+
+    move |vehicle| {
+        if settings.ordering != emit::Ordering::Effects {
+            return Some(format!(
+                "`ordering = {}` keeps the written order",
+                settings.ordering_word
+            ));
+        }
+        match vehicle {
+            Vehicle::Completion if settings.build.overlaps_operations() => None,
+            Vehicle::Completion => Some(format!(
+                "`--target {}` has no runtime to put two operations in flight",
+                settings.target
+            )),
+            Vehicle::UserClosures if settings.build.overlaps_user_code() => None,
+            Vehicle::UserClosures if !settings.build.target.has_threads() => Some(format!(
+                "running them together puts two pieces of your own code on two threads, and \
+                 `--target {}` has none",
+                settings.target
+            )),
+            Vehicle::UserClosures => Some(format!(
+                "running them together puts two pieces of your own code on two threads, which \
+                 `--user-parallelism {}` forbids",
+                settings.user_parallelism
+            )),
+        }
+    }
 }
 
 /// `nikaia build` and `nikaia run` (Part III 13.2).

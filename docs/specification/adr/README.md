@@ -102,7 +102,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [026](adr-026.md) | Compile-time I/O — what a build may read, and what may run while it reads | **Open** | no |
-| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | three increments on `task::both` — a run of any length, `seq` (D7's keyword, still provisional), the resources `file`/`stdin`/`stdout`/`stderr`/`args` — plus `--overlaps` and D8's manifest key; not a method call, not a non-literal argument, no socket or lock until something asks |
+| [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | four increments — a run of any length on `task::both`, `seq` (D7's keyword, still provisional), the resources `file`/`stdin`/`stdout`/`stderr`/`args`, and **D10's completion pair**: two file reads overlap at `user_parallelism = no` too, because the kernel carries them and no thread carries user code; plus `--overlaps`, which now answers per pair, and D8's manifest key; not a method call, not a non-literal argument, not two writes in flight, no socket or lock until something asks |
 | [034](adr-034.md) | A handler that can `return` makes the next statement conditional, so it may not be started early | Accepted | yes |
 
 ### The runtime
@@ -152,6 +152,7 @@ header:
 | [023](adr-023.md) D7 | [036](adr-036.md) | `{error:full}` as a format spec; `f"{error.full()}"` needs no new syntax |
 | [032](adr-032.md) D5 | [035](adr-035.md) | a brace deciding a literal's type — the `f` decides it now |
 | [033](adr-033.md) D5 | [034](adr-034.md) D2 (amends) | "started early" widened from *a branch* to *anything the program might not have performed* |
+| [033](adr-033.md) §8.2b | [033](adr-033.md) D10 (narrows) | `effects` degrading to `strict` at `user_parallelism = no` — the category distinction stands, the degradation belongs to `task::both`: two reads the kernel performs carry no user code ([038](adr-038.md) D3) |
 | [027](adr-027.md) §7 | [029](adr-029.md) | effect polymorphism — a higher-order function's `sync` now depends on its lambda |
 | [028](adr-028.md) D6 | [029](adr-029.md) | a higher-order method carrying no `sync` at all |
 | [029](adr-029.md) §4 | [031](adr-031.md) | a signature naming its receiver's type arguments |

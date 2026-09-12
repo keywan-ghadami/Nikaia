@@ -177,6 +177,57 @@ fn one_binary_runs_on_both_mechanisms_and_prints_the_same_thing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **ADR-033 D10, end to end.** The overlapped pair at
+/// `user_parallelism = no` prints what the sequential program printed and
+/// writes the same file - on whichever mechanism this machine has.
+///
+/// The claim D10 rests on is that putting two reads in flight changes what a
+/// pair *costs* and never what it *means*, and the only way to know is to run
+/// both programs. `READS_AND_WRITES` is the right shape for it: the two reads
+/// are a pair, and everything after them depends on both, so a difference would
+/// show in the output and in `drei.txt` rather than only in a timing.
+#[test]
+fn the_overlapped_pair_prints_what_the_sequential_program_printed() {
+    let effects = common::scratch_dir("runtime-overlap-effects");
+    let overlapped = lower(&effects, READS_AND_WRITES, &[]);
+    assert!(
+        overlapped.contains("task::read_pair("),
+        "the pair must overlap at `user_parallelism = no`:\n{overlapped}"
+    );
+    assert!(
+        !overlapped.contains("task::both"),
+        "…and not on a thread carrying the program's own code:\n{overlapped}"
+    );
+
+    let strict = common::scratch_dir("runtime-overlap-strict");
+    let sequential = lower(&strict, READS_AND_WRITES, &["--ordering", "strict"]);
+    assert!(
+        !sequential.contains("task::read_pair("),
+        "`--ordering strict` is still the escape:\n{sequential}"
+    );
+
+    let overlapped = build(&effects, READS_AND_WRITES, &[]);
+    let sequential = build(&strict, READS_AND_WRITES, &["--ordering", "strict"]);
+    for config in [
+        None,
+        Some("io-method = \"blocking\"\nio-workers = 2\n"),
+        Some("io-method = \"blocking\"\nio-workers = 1\n"),
+    ] {
+        let at = effects.join("run");
+        let (one, _) = run(&overlapped, &at, config);
+        let (other, _) = run(&sequential, &strict.join("run"), config);
+        assert_eq!(one, other, "the overlapped program printed something else");
+        assert_eq!(
+            std::fs::read_to_string(at.join("drei.txt")).expect("the written file"),
+            std::fs::read_to_string(strict.join("run").join("drei.txt")).expect("the written file"),
+            "…or wrote a different file"
+        );
+    }
+
+    std::fs::remove_dir_all(&effects).ok();
+    std::fs::remove_dir_all(&strict).ok();
+}
+
 /// D4, on the emitted Rust: `fn main` starts the runtime, the program's own
 /// `main` is called from inside it, and the drain happens after.
 #[test]

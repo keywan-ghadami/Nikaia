@@ -1,0 +1,28 @@
+// The program ADR-033 D10 is measured on, end to end.
+//
+// Two reads that meet on nothing, in a loop, and nothing else in the body that
+// could account for a difference: the assignment after them performs no
+// operation, so the pair is the pair and the loop is the repeat count.
+//
+// Built twice by `lowered.sh` - once at `ordering = "effects"`, where the two
+// reads lower onto `nikaia_std::task::read_pair`, and once at
+// `ordering = "strict"`, where they are two statements one after the other. The
+// difference between the two binaries is the whole of what the lowering costs
+// or saves, because everything else about them is the same program.
+//
+// `user_parallelism = no` in both, which is the point: before D10 this program
+// had no overlap to measure there at all.
+use std::cli
+use std::fs
+
+fn main() throws {
+    let runden = cli::args().nth(1) ?? "200000"
+    let n: i32 = runden.parse() catch { 200000 }
+    let mut gesamt = 0
+    for _runde in 0..n {
+        let a = fs::read_to_string("eins.txt") catch { "".to_string() }
+        let b = fs::read_to_string("zwei.txt") catch { "".to_string() }
+        gesamt = gesamt + a.len() + b.len()
+    }
+    println(f"{gesamt}")
+}

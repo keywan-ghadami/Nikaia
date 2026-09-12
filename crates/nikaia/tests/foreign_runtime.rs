@@ -75,7 +75,10 @@ fn a_call_into_a_foreign_crate_orders_against_everything() {
 
     let library = Ledger::parse(STD).expect("std ships a ledger");
     let own = Ledger::infer(&parsed);
-    let report = order::report(&parsed, &own, &library);
+    // A build with every vehicle in it, because the claim under test is about
+    // the program: which switch gates which vehicle is ADR-033 D10's business
+    // and not this record's.
+    let report = order::report(&parsed, &own, &library, &|_| None);
 
     // The control: two reads of two files meet on nothing and run together.
     // Without it, "everything is in order" would also be true of a build that
@@ -105,26 +108,35 @@ fn a_call_into_a_foreign_crate_orders_against_everything() {
         "the probe is supposed to put a foreign call in four pairs:\n{report}"
     );
 
-    // And the emitter agrees with the report: exactly the control overlaps.
-    let rust = emit::emit_program_ordered(&parsed, Build::parallel(), Ordering::Effects)
-        .expect("it lowers")
-        .rust;
-    assert_eq!(
-        rust.matches("task::both").count(),
-        1,
-        "one overlap in the emitted Rust, and it is the control's:\n{rust}"
-    );
-    let control = rust
-        .split_once("fn control()")
-        .expect("the control function is emitted")
-        .1;
-    let control = control
-        .split_once("\nfn ")
-        .map_or(control, |(body, _)| body);
-    assert!(
-        control.contains("task::both"),
-        "the one overlap is inside `control`:\n{rust}"
-    );
+    // And the emitter agrees with the report: exactly the control overlaps. The
+    // control is two reads, so the vehicle is the runtime's completion pair and
+    // not `task::both` (ADR-033 D10) - which also means this program overlaps at
+    // `user_parallelism = no`, where it did not before.
+    for build in [Build::parallel(), Build::default()] {
+        let rust = emit::emit_program_ordered(&parsed, build, Ordering::Effects)
+            .expect("it lowers")
+            .rust;
+        assert_eq!(
+            rust.matches("task::read_pair(").count(),
+            1,
+            "one overlap in the emitted Rust, and it is the control's ({build:?}):\n{rust}"
+        );
+        assert!(
+            !rust.contains("task::both"),
+            "two reads need no thread of the program's ({build:?}):\n{rust}"
+        );
+        let control = rust
+            .split_once("fn control()")
+            .expect("the control function is emitted")
+            .1;
+        let control = control
+            .split_once("\nfn ")
+            .map_or(control, |(body, _)| body);
+        assert!(
+            control.contains("task::read_pair("),
+            "the one overlap is inside `control` ({build:?}):\n{rust}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
