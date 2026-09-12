@@ -1,4 +1,11 @@
+# Stable is what a clone of this repository builds with (ADR-001 D5).
+#
+# Nothing in the workspace needs a nightly except the optional Bridge-IR
+# backend: no `-Z` flag is passed in any build, and `rustc_private` is reachable
+# only through `nikaia`'s `rustc-backend` feature. The nightly that feature does
+# need is named in exactly one place, `bridge-toolchain/rust-toolchain.toml`,
+# and `scripts/bridge-toolchain.sh` is how you build on it.
 [toolchain]
-channel = "nightly-2026-01-01"
+channel = "stable"
 # rustfmt/clippy are needed by scripts/pre-commit.sh and CI.
-components = ["rustc-dev", "llvm-tools-preview", "rustfmt", "clippy"]
+components = ["rustfmt", "clippy"]

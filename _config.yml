@@ -47,6 +47,7 @@ exclude:
   - Cargo.toml
   - Cargo.lock
   - rust-toolchain.toml
+  - bridge-toolchain/
   - check_rustc.rs
   - hello_world.rs
   - hello_world

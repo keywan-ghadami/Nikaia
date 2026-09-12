@@ -1,8 +1,11 @@
 # What the pinned nightly is for, and what it costs
 
 **Date:** September 12, 2026
-**Status:** measured; the decisions it produced are [ADR-001](specification/adr/adr-001.md) D1's
-and [ADR-005](specification/adr/adr-005.md) D2's corrected evidence paragraphs
+**Status:** measured; the decisions it produced are
+[ADR-001](specification/adr/adr-001.md) **D5** (stable is the toolchain; the pin
+is the bridge backend's alone) and [ADR-005](specification/adr/adr-005.md) **D9**
+(`-Zpolonius=next` refused; Group B.2 goes to the frontend's desugaring), on top
+of the corrected evidence paragraphs in D1 and D2 that this file was written for
 **Related:** [ADR-001](specification/adr/adr-001.md) D1 (the pin), [ADR-003](specification/adr/adr-003.md) D1
 (`rustc_private` confined to one crate), [ADR-004](specification/adr/adr-004.md) (the bridge backend
 that uses it), [ADR-005](specification/adr/adr-005.md) D2 (the Polonius case), [ADR-021](specification/adr/adr-021.md) D9
@@ -343,6 +346,18 @@ and nothing was changed to imply an answer: the default is still `bridge` in bot
 ---
 
 ## 6. What this changes in the records, and what it does not
+
+> **Written before the decision, and kept as written.** This section recorded
+> what the *measurements* changed, which was the evidence in two records and not
+> the records themselves. The owner then decided on top of them, and the two
+> bullets below are superseded by that decision rather than by any further
+> measurement: **[ADR-001](specification/adr/adr-001.md) D5** makes stable the
+> toolchain a clone builds with and leaves the pin to the bridge backend alone
+> (named now in `bridge-toolchain/rust-toolchain.toml`), and
+> **[ADR-005](specification/adr/adr-005.md) D9** refuses `-Zpolonius=next` and
+> gives Group B.2 to the entry-style desugaring D2 named as its own fallback.
+> Nothing in §1–§5 is revised: every number below and above is the number those
+> decisions were made on.
 
 * [ADR-001](specification/adr/adr-001.md) D1 stands — one exact nightly per release, and
   `rust-toolchain.toml` as the single source of truth. What is corrected in it is the

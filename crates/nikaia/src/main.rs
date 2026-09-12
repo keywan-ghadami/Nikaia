@@ -493,10 +493,10 @@ fn run_bridge_backend(_input: &std::path::Path, _source: &str) -> Result<()> {
          backend; ADR-001 D1 is the toolchain it needs).\n\
          This build was made without the `rustc-backend` feature, so it links \
          no `rustc_private` and needs no nightly toolchain.\n\
-         To get it: install the nightly named in `rust-toolchain.toml` with its \
-         `rustc-dev` component (`rustup toolchain install <channel> --component \
-         rustc-dev`, about 0.8 GB more on disk) and rebuild with default \
-         features.\n\
+         To get it: install the nightly named in \
+         `bridge-toolchain/rust-toolchain.toml` with its `rustc-dev` component \
+         (`scripts/bridge-toolchain.sh` does that, about 0.8 GB more on disk) \
+         and rebuild with default features on it.\n\
          Available here: interpreter, rust."
     )
 }

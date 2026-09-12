@@ -6,17 +6,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The compiler, on the toolchain a clone of this repository builds with.
+  #
+  # This is the leg that must be green for the project to be healthy (ADR-001
+  # D5). Nothing in the workspace needs a nightly except the optional Bridge-IR
+  # backend, so everything here runs on `rust-toolchain.toml`'s stable: the
+  # `rust` backend, the interpreter, projects, the ledger, the whole test suite.
   bootstrap_compiler:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Version pinning per ADR-001: `rust-toolchain.toml` is the single source
-      # of truth (nightly + rustc-dev, needed to link the compiler internals).
-      # `rustup show` installs exactly that toolchain and its components, so the
-      # channel is never duplicated here and cannot drift.
-      - name: Install Rust toolchain
+      # Version pinning per ADR-001 D1 and D5: `rust-toolchain.toml` is the
+      # single source of truth for this leg's channel and components, and
+      # `rustup show` installs exactly what it names, so nothing is duplicated
+      # here and nothing can drift.
+      - name: Install the toolchain the repository names
         run: rustup show
 
       - name: Cache cargo registry and build
@@ -26,8 +32,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-stable-
 
       - name: Verify Environment
         run: |
@@ -44,11 +50,20 @@ jobs:
       - name: Check ADR citations resolve
         run: python3 scripts/check-adr-refs.py
 
-      - name: Build
-        run: cargo build --workspace --release
+      # `--no-default-features` drops the one feature that links
+      # `rustc_private`. What is left has to be a whole compiler, and
+      # `--backend bridge` has to fail by name rather than fall through to
+      # another backend (ADR-021 D9) - both are claims, so both are tested.
+      - name: Build the compiler
+        run: cargo build -p nikaia --no-default-features --release
+
+      - name: No clippy warnings
+        run: >
+          cargo clippy -p nikaia --no-default-features
+          --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --release
+        run: cargo test -p nikaia --no-default-features --release
 
       # The driver needs an input file, so run it on the samples rather than
       # bare `cargo run`, which only prints clap's usage error and exits 2.
@@ -60,24 +75,26 @@ jobs:
             echo "::endgroup::"
           done
 
-  # The compiler without its Bridge-IR backend, on a stable toolchain.
+  # The Bridge-IR backend, on the nightly it is the only reason for.
   #
   # `rustc-backend` is the only thing in the workspace that links
-  # `rustc_private`, so it is the only thing that needs ADR-001 D1's pinned
-  # nightly. Turning it off has to keep producing a whole compiler - the `rust`
-  # backend, the interpreter, projects, the ledger - and `--backend bridge` has
-  # to fail by name rather than fall through (ADR-021 D9). Both are claims, so
-  # both are tested; `docs/nightly-cost.md` is what they were measured against.
-  stable_without_the_bridge:
+  # `rustc_private`, and `rustc_private` moves on every nightly (ADR-003 §1), so
+  # a backend that is not built is a backend that rots. This leg is what keeps
+  # it from rotting: the whole workspace, `rustc-executor` included, on the one
+  # exact nightly `bridge-toolchain/rust-toolchain.toml` names.
+  #
+  # `scripts/bridge-toolchain.sh` installs that channel with its components and
+  # runs the command on it. The channel is written in one file and read by one
+  # script, so this workflow never spells a nightly and cannot drift from it
+  # (ADR-001 D1's rule, D5's location).
+  bridge_backend:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Deliberately *not* `rustup show`: reading `rust-toolchain.toml` is what
-      # this leg exists to avoid. No nightly, and no `rustc-dev`.
-      - name: Install a stable toolchain
-        run: rustup toolchain install stable --profile minimal --component clippy
+      - name: Install the bridge backend's pinned nightly
+        run: scripts/bridge-toolchain.sh
 
       - name: Cache cargo registry and build
         uses: actions/cache@v4
@@ -86,16 +103,26 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-stable-
+          key: >-
+            ${{ runner.os }}-cargo-bridge-${{ hashFiles('**/Cargo.lock',
+            'bridge-toolchain/rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-bridge-
 
-      - name: Build the compiler without the bridge
-        run: rustup run stable cargo build -p nikaia --no-default-features --release
+      - name: Verify Environment
+        run: scripts/bridge-toolchain.sh rustc --version
+
+      - name: Check formatting
+        run: scripts/bridge-toolchain.sh cargo fmt --all --check
+
+      - name: Check ADR citations resolve
+        run: python3 scripts/check-adr-refs.py
+
+      - name: Build the workspace, bridge backend included
+        run: scripts/bridge-toolchain.sh cargo build --workspace --release
 
       - name: No clippy warnings either
         run: >
-          rustup run stable cargo clippy -p nikaia --no-default-features
-          --all-targets -- -D warnings
+          scripts/bridge-toolchain.sh cargo clippy --all-targets -- -D warnings
 
       - name: Test
-        run: rustup run stable cargo test -p nikaia --no-default-features --release
+        run: scripts/bridge-toolchain.sh cargo test --workspace --release
