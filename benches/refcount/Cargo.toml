@@ -1,0 +1,10 @@
+# What an atomic reference count costs, against a plain one.
+#
+# No dependency on purpose: `Rc`, `Arc`, `RefCell` and `Mutex` are what
+# ADR-037 D3 and Part II 12.2 name, they are all in `std`, and anything else
+# here would be measuring a crate the emitter does not write.
+[package]
+name = "refcount-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false

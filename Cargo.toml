@@ -5,6 +5,7 @@ members = [
     "crates/nikaia",
     "crates/nikaia-std",
     "benches/overlap",
+    "benches/refcount",
 ]
 
 [workspace.dependencies]

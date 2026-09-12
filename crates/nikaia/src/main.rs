@@ -114,6 +114,18 @@ pub struct Cli {
     #[arg(long)]
     pub overlaps: bool,
 
+    /// Print which `Rc` and which `Arc` a per-value choice would pick, and why
+    /// ([ADR-037](../../../docs/specification/adr/adr-037.md) D3's open
+    /// question).
+    ///
+    /// **An experiment and not a build mode.** `Shared` is unbuilt, D3's choice
+    /// is per build, and nothing this prints reaches the emitter - it exists so
+    /// the open question can be asked of a real program instead of argued
+    /// about. `docs/rc-or-arc.md` is what it belongs to. Like `--trust` and
+    /// `--overlaps`, it explains rather than changes.
+    #[arg(long)]
+    pub sharing: bool,
+
     /// Print where this program's bytes came from and which hash its maps got
     /// (ADR-010 D7).
     ///
@@ -256,6 +268,18 @@ fn lower_to_rust(
             "{}",
             contracts::order::report(&parsed, &own, &library, &overlaps_here(settings))
         );
+    }
+
+    if args.sharing {
+        // No switch reaches the analysis, so none is printed beside it: the
+        // question "must this count be atomic" is about the program, and
+        // ADR-037 D3's per-build expansion is what this report is an
+        // experiment *against*. What the build would actually emit today is
+        // `Rc` at `no` and `Arc` at `yes`, for every `Shared` alike.
+        let parsed = parser::parse_to_ast(source)?;
+        let library = Ledger::parse(STD).context("std's shipped ledger")?;
+        let own = Ledger::infer(&parsed);
+        print!("{}", contracts::sharing::report(&parsed, &own, &library));
     }
 
     if args.trust {

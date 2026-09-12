@@ -85,6 +85,9 @@ is normative and nothing may depend on it to know what a program means.
 * [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
   runtime that is already running, and the finding that only the completion
   path gets ADR-033 §8.5's zero.
+* [`rc-or-arc.md`](rc-or-arc.md) — what an atomic reference count costs, whether
+  `Rc` and `Arc` differ in anything a program can observe, and the prototype that
+  asks ADR-037 D3's open question of a value instead of a build.
 * [`technical_notes.md`](technical_notes.md) — the compiler-internals findings
   from the path that was withdrawn; kept as the notebook page it is.
 * [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) — what the nightly
