@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<!--
+  The site's one layout.
+
+  It is `jekyll-theme-primer`'s own `_layouts/default.html` with three things
+  added and nothing taken away: the theme attribute the reader's choice is
+  written to, the stylesheet and script that make that choice mean something,
+  and the control that offers it. Overriding the layout is what puts the
+  picker in the page rather than injecting it from script, so a reader who
+  has JavaScript switched off still gets the theme their system asks for.
+-->
+<html lang="{{ site.lang | default: "en-US" }}">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Both, so the browser paints its own furniture — scrollbars, form
+         controls, the canvas behind the page — to match whichever the reader
+         ends up with. `assets/css/nikaia.css` narrows it per theme. -->
+    <meta name="color-scheme" content="light dark">
+
+{% seo %}
+    <link rel="stylesheet" href="{{ "/assets/css/style.css?v=" | append: site.github.build_revision | relative_url }}">
+    <link rel="stylesheet" href="{{ "/assets/css/nikaia.css?v=" | append: site.github.build_revision | relative_url }}">
+
+    <!--
+      Inline and before the stylesheets are applied, because this is the one
+      thing that cannot wait for a file to load: a reader who chose dark and
+      whose system says light would otherwise see a white page flash first.
+      Everything else the picker does is in `assets/js/theme.js`.
+    -->
+    <script>
+      (function () {
+        try {
+          var choice = window.localStorage.getItem("nikaia-theme");
+          if (choice === "light" || choice === "dark" || choice === "sepia") {
+            document.documentElement.setAttribute("data-theme", choice);
+          }
+        } catch (e) {
+          /* Storage can be denied outright. The system theme still applies. */
+        }
+      })();
+    </script>
+
+    {% include head-custom.html %}
+  </head>
+  <body>
+    <!--
+      `hidden` until `theme.js` takes it over: without script the buttons
+      could not do anything, and a control that does nothing is worse than no
+      control. The theme itself still follows `prefers-color-scheme`.
+    -->
+    <div class="theme-picker" role="group" aria-label="Colour theme" hidden>
+      <button type="button" data-theme-choice="system">System</button>
+      <button type="button" data-theme-choice="light">Light</button>
+      <button type="button" data-theme-choice="dark">Dark</button>
+      <button type="button" data-theme-choice="sepia">Sepia</button>
+    </div>
+
+    <div class="container-lg px-3 my-5 markdown-body">
+      {% if site.title and site.title != page.title %}
+      <h1><a href="{{ "/" | absolute_url }}">{{ site.title }}</a></h1>
+      {% endif %}
+
+      {{ content }}
+
+      {% if site.github.private != true and site.github.license %}
+      <div class="footer border-top border-gray-light mt-5 pt-3 text-right text-gray">
+        This site is open source. {% github_edit_link "Improve this page" %}.
+      </div>
+      {% endif %}
+    </div>
+    <script src="{{ "/assets/js/theme.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/anchor-js/4.1.0/anchor.min.js" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg=" crossorigin="anonymous"></script>
+    <script>anchors.add();</script>
+  </body>
+</html>

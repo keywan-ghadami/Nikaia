@@ -1,0 +1,13 @@
+{
+  "name": "nikaia-site-highlight",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Highlights the built GitHub Pages site from editors/vscode/syntaxes/nikaia.tmLanguage.json.",
+  "type": "module",
+  "scripts": {
+    "highlight": "node highlight.mjs ../../_site"
+  },
+  "dependencies": {
+    "shiki": "^1.29.2"
+  }
+}

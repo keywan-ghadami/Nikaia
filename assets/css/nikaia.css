@@ -1,0 +1,306 @@
+/*
+ * The four themes, and the control that picks between them.
+ *
+ * `jekyll-theme-primer` writes its colours as literals — `#24292e` on `body`,
+ * `#f6f8fa` behind a code block, `#0366d6` on a link — so a second theme
+ * cannot be a variable swap in the theme's own stylesheet. What it can be is a
+ * second stylesheet that names those same places once each and reads their
+ * colour from a custom property. That is this file: the block below is the
+ * whole palette, four times over, and everything after it is the list of
+ * places a palette reaches.
+ *
+ * Load order matters and is not the only thing holding this up: every rule
+ * here is written under `:root[data-theme=…]` or a `@media` guard, so it
+ * outranks the theme's own selector rather than merely following it.
+ *
+ * No attribute on <html> means "whatever the system asks for", which is the
+ * state a reader who has never touched the picker is in, and the state the
+ * picker returns to when they choose System. A stored choice is written to
+ * `data-theme` before the first paint, in the layout.
+ */
+
+:root {
+  color-scheme: light;
+
+  --nk-bg: #ffffff;
+  --nk-fg: #24292e;
+  --nk-fg-muted: #6a737d;
+  --nk-link: #0366d6;
+  --nk-border: #e1e4e8;
+  --nk-border-strong: #dfe2e5;
+  --nk-surface: #f6f8fa;
+  --nk-code-bg: #f6f8fa;
+  --nk-code-inline-bg: rgba(27, 31, 35, 0.05);
+  --nk-row: #ffffff;
+  --nk-row-alt: #f6f8fa;
+}
+
+/*
+ * Dark is GitHub's own dark palette rather than an inversion of the light one,
+ * because the code blocks below are coloured by `github-dark` and the page has
+ * to agree with them.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --nk-bg: #0d1117;
+    --nk-fg: #c9d1d9;
+    --nk-fg-muted: #8b949e;
+    --nk-link: #58a6ff;
+    --nk-border: #30363d;
+    --nk-border-strong: #30363d;
+    --nk-surface: #161b22;
+    --nk-code-bg: #161b22;
+    --nk-code-inline-bg: rgba(110, 118, 129, 0.4);
+    --nk-row: #0d1117;
+    --nk-row-alt: #161b22;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --nk-bg: #0d1117;
+  --nk-fg: #c9d1d9;
+  --nk-fg-muted: #8b949e;
+  --nk-link: #58a6ff;
+  --nk-border: #30363d;
+  --nk-border-strong: #30363d;
+  --nk-surface: #161b22;
+  --nk-code-bg: #161b22;
+  --nk-code-inline-bg: rgba(110, 118, 129, 0.4);
+  --nk-row: #0d1117;
+  --nk-row-alt: #161b22;
+}
+
+/* Named so that a system set to dark can still be overridden back. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --nk-bg: #ffffff;
+  --nk-fg: #24292e;
+  --nk-fg-muted: #6a737d;
+  --nk-link: #0366d6;
+  --nk-border: #e1e4e8;
+  --nk-border-strong: #dfe2e5;
+  --nk-surface: #f6f8fa;
+  --nk-code-bg: #f6f8fa;
+  --nk-code-inline-bg: rgba(27, 31, 35, 0.05);
+  --nk-row: #ffffff;
+  --nk-row-alt: #f6f8fa;
+}
+
+/*
+ * Sepia is here because of what this site is: three specification parts and
+ * forty decision records, read end to end rather than searched. It is a light
+ * theme — the code keeps its light colours — with the white taken out of it.
+ */
+:root[data-theme="sepia"] {
+  color-scheme: light;
+
+  --nk-bg: #f4ecd8;
+  --nk-fg: #3b3228;
+  --nk-fg-muted: #6f6353;
+  --nk-link: #2f5d8c;
+  --nk-border: #ded0b4;
+  --nk-border-strong: #d5c5a3;
+  --nk-surface: #ece1c6;
+  --nk-code-bg: #ece1c6;
+  --nk-code-inline-bg: rgba(59, 50, 40, 0.09);
+  --nk-row: #f4ecd8;
+  --nk-row-alt: #ece1c6;
+}
+
+/* ---------------------------------------------------------------- the page */
+
+body {
+  background-color: var(--nk-bg);
+  color: var(--nk-fg);
+}
+
+.markdown-body {
+  color: var(--nk-fg);
+}
+
+.markdown-body a {
+  color: var(--nk-link);
+}
+
+.markdown-body h1,
+.markdown-body h2 {
+  border-bottom-color: var(--nk-border);
+}
+
+.markdown-body h6 {
+  color: var(--nk-fg-muted);
+}
+
+.markdown-body hr {
+  background-color: var(--nk-border);
+}
+
+.markdown-body blockquote {
+  color: var(--nk-fg-muted);
+  border-left-color: var(--nk-border-strong);
+}
+
+.markdown-body kbd {
+  color: var(--nk-fg);
+  background-color: var(--nk-surface);
+  border-color: var(--nk-border);
+  border-bottom-color: var(--nk-border-strong);
+  box-shadow: inset 0 -1px 0 var(--nk-border-strong);
+}
+
+.markdown-body table th,
+.markdown-body table td {
+  border-color: var(--nk-border-strong);
+}
+
+.markdown-body table tr {
+  background-color: var(--nk-row);
+  border-top-color: var(--nk-border);
+}
+
+.markdown-body table tr:nth-child(2n) {
+  background-color: var(--nk-row-alt);
+}
+
+/* Inline `code`. The block form is the Shiki `<pre>` further down. */
+.markdown-body code,
+.markdown-body tt {
+  background-color: var(--nk-code-inline-bg);
+}
+
+/*
+ * The theme paints white behind every image, which is right for a diagram
+ * with a transparent background and wrong for the logo on a dark page. Only
+ * the ones that need it keep it, and none in this repository do.
+ */
+.markdown-body img {
+  background-color: transparent;
+}
+
+/*
+ * Primer's utility classes carry `!important`, so the footer needs it back to
+ * be reachable at all.
+ */
+.footer,
+.markdown-body .text-gray {
+  color: var(--nk-fg-muted) !important;
+}
+
+.markdown-body .border-gray-light {
+  border-color: var(--nk-border) !important;
+}
+
+/* ----------------------------------------------------------------- the code */
+
+/*
+ * Every fenced block on this site is re-highlighted after Jekyll has run, by
+ * `scripts/site-highlight/highlight.mjs`, from the same TextMate grammar the
+ * editors use. Shiki writes both of each token's colours onto the token as
+ * custom properties and sets no `color` at all, so switching themes is a
+ * matter of saying which of the two to read. That is the only reason this
+ * works without `!important`: an inline `color` outranks every selector in
+ * this file, and a custom property does not.
+ *
+ * Light is the base, so Sepia — which has no token colours of its own —
+ * inherits it by not matching either dark rule. The background is taken off
+ * the block and given back from the palette, which is what lets Sepia have a
+ * code background of its own at all.
+ */
+.markdown-body .shiki {
+  background-color: var(--nk-code-bg);
+  padding: 16px;
+  overflow: auto;
+  font-size: 85%;
+  line-height: 1.45;
+  border-radius: 3px;
+}
+
+.markdown-body .shiki code {
+  background-color: transparent;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+  white-space: pre;
+}
+
+.markdown-body .shiki .line {
+  display: block;
+  min-height: 1em;
+}
+
+.markdown-body .shiki,
+.markdown-body .shiki span {
+  color: var(--shiki-light);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .markdown-body .shiki,
+  :root:not([data-theme]) .markdown-body .shiki span {
+    color: var(--shiki-dark);
+  }
+}
+
+:root[data-theme="dark"] .markdown-body .shiki,
+:root[data-theme="dark"] .markdown-body .shiki span {
+  color: var(--shiki-dark);
+}
+
+/* -------------------------------------------------------------- the control */
+
+.theme-picker {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--nk-border);
+  border-radius: 6px;
+  background-color: var(--nk-surface);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.theme-picker button {
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nk-fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.theme-picker button:hover {
+  color: var(--nk-fg);
+}
+
+.theme-picker button[aria-pressed="true"] {
+  background-color: var(--nk-bg);
+  color: var(--nk-fg);
+  font-weight: 600;
+}
+
+.theme-picker button:focus-visible {
+  outline: 2px solid var(--nk-link);
+  outline-offset: -1px;
+}
+
+/*
+ * Narrow enough and the control would sit on top of the first heading, so it
+ * stops being fixed and becomes the first thing on the page instead.
+ */
+@media (max-width: 543px) {
+  .theme-picker {
+    position: static;
+    margin: 8px 8px 0;
+    justify-content: center;
+  }
+}

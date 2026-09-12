@@ -25,6 +25,25 @@ baseurl: /Nikaia
 
 theme: jekyll-theme-primer
 
+# Every page on this site is a Markdown file with no front matter, and a page
+# that names no layout is published as a bare fragment: no `<head>`, no
+# stylesheet, no viewport. The theme above was built and served all along and
+# nothing ever linked to it. This is what names it. `_layouts/default.html`
+# overrides the theme's own layout of that name and adds the theme picker.
+#
+# The second entry takes the layout back off `assets/`, where the theme's
+# `style.scss` also carries front matter and would otherwise be published
+# wrapped in a page.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+  - scope:
+      path: "assets"
+    values:
+      layout: null
+
 plugins:
   - jekyll-sitemap
 
@@ -56,6 +75,9 @@ exclude:
   - .github/
   # patches and findings handed to dependencies, not written for readers here
   - docs/upstream/
+  # the logo's source image: 2816x1536 and 5 MB, kept in the repository and
+  # not published. `nikaia-logo.jpg` is what the README shows.
+  - 1768075880760.jpg
 
 # Publish the rendered page, not a second copy of the Markdown beside it.
 optional_front_matter:
