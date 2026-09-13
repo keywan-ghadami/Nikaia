@@ -584,15 +584,39 @@ The rule reaches exactly as far as the Rust signature is true. A Rust API that d
 
 **Mapping Types**
 * Rust `i32` -> Nikaia `i32`
-* Rust `String` -> Nikaia `String`
+* Rust `i64`, `u8` -> Nikaia `i64`, `u8` — the rest of the numeric surface (Part I, 2.2)
+* Rust `String` -> Nikaia `String`, and Rust `&str` -> Nikaia `&str`, which is a
+  **view** and not a lifetime (Part II, 10.6)
 * Rust `Option<T>` -> Nikaia `T?` (Nullable)
+* Rust `Vec<T>` -> Nikaia `Vec[T]`, and `HashMap<K, V>` -> `HashMap[K, V]`
+* Rust `Rc<T>` **or** `Arc<T>` -> Nikaia `Shared[T]`. **One Nikaia type, two Rust
+  ones**, and which it becomes is the compiler's to decide from what the value
+  crosses ([ADR-045](adr/adr-045.md) §3): a `Shared[T]` that reaches a foreign
+  call is an `Arc<T>`, because a call whose body this compiler cannot see is a
+  call that may put what it is given on a thread of its own. That is the entry
+  this table was missing, and it is the one [ADR-045](adr/adr-045.md) §3's whole
+  argument turns on.
 
 **Thread Safety (Send/Sync)**
-Nikaia can detect thread safety in Rust code. The compiler reads the metadata of the Rust Crate.
+Nikaia decides whether a value may cross into foreign code from the **Nikaia type
+of the argument**, not from the Rust crate.
 
-* If a Rust type implements the `Send` trait (safe to move between threads), Nikaia allows using it in `spawn` tasks.
-* If a Rust type is `!Send` (e.g., `Rc<T>`), and you try to use it where your code runs in parallel, the Nikaia compiler produces an error:
-    > "Error: Cannot move Rust type 'Rc<i32>' to another thread. It is not Thread-Safe."
+* A type this compiler knows may cross is allowed in a `spawn` task and in a
+  foreign call.
+* A type it knows may not — a `Shared[T]` that is an `Rc<T>` on this side — is
+  refused as `NK2502` (C.5), and the diagnostic names the Nikaia type, because
+  that is the one the program wrote.
+
+> **Status:** **no crate metadata is read**, and this section used to say it was.
+> A foreign call is one no ledger describes ([ADR-024](adr/adr-024.md)), and the
+> verdict is taken on the argument's Nikaia type — so there is no reading of a
+> Rust crate's `Send` implementations, and there is no message about an
+> `Rc<i32>` in Rust's words. What is built is `NK2502` on the crossing this
+> compiler can decide about, at **both** settings of `user_parallelism`
+> ([ADR-038](adr/adr-038.md) D7), and C.5's third answer — *undecided* — for
+> everything else. Reading the metadata would be a different and larger
+> mechanism; nothing in this repository needs it yet, and the sentence claiming
+> it is gone rather than left standing.
 
 ```nika
 // Usage of a Rust crate
@@ -612,7 +636,21 @@ fn process() {
 A single-threaded build possesses a natural affinity for WebAssembly. Since WASM (in its basic form) shares a linear memory model and runs in single-threaded host environments, `user_parallelism = no` is the perfect match.
 
 **Zero Overhead**
-Compiling with `nikaia build --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
+Compiling with `nikaia build --target=wasm32-unknown` produces compact binaries:
+the runtime a `no` build starts is the I/O worker and nothing else
+([ADR-038](adr/adr-038.md) D4), and no OS-level mutex is generated.
+
+> **Status:** the mutex half is true and the **atomic** half is not, and this
+> section used to claim both. A `Shared[T]`'s owner count is atomic at *both*
+> settings of `user_parallelism` ([ADR-037](adr/adr-037.md) D6): the switch bounds
+> what your code runs at once, and the count is touched by the runtime as well —
+> so making it depend on the switch would make a program's own data race with the
+> machinery under it. And [ADR-045](adr/adr-045.md) §3 measures a foreign call
+> forcing the atomic count whatever the setting, for the same reason C.5's rule
+> has: a call whose body this compiler cannot see may put what it is given on a
+> thread of its own. **Measured, not argued**: `benches/refcount` is what settled
+> the cost, and it is small enough that one count per program is not the place to
+> win it back.
 
 **JavaScript Interoperability (`dsl js`)**
 Instead of trying to map the entire DOM to Nikaia structs, Nikaia embeds raw JavaScript using the `dsl` keyword (Part II, 10.5).

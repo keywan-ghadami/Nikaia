@@ -1,5 +1,14 @@
 # What `std`'s build graph cost, and how it was measured
 
+**Date:** September 12, 2026 — a laboratory record, and a snapshot of that day.
+
+> **Read as a snapshot.** Where this page reasons about what follows from
+> `user_parallelism`, it predates [ADR-037](specification/adr/adr-037.md) D6: the
+> owner count of a `Shared[T]` is atomic at **both** settings now, because the
+> runtime touches it as well as your code, so a count keyed on the switch would
+> race with the machinery under it. Any sentence here that has `no` avoiding an
+> atomic is that sentence and not a claim about the compiler today.
+
 Laboratory notes for [ADR-002](specification/adr/adr-002.md) D4. Nothing here is
 normative; the decision and the numbers that settled it are in the record, and
 this is the method, the machine, and the two things that turned out differently

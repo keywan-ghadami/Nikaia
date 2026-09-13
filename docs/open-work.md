@@ -275,45 +275,20 @@ So this waits on a decision and not on an afternoon.
 
 ## 3. Upkeep
 
-### 3.1. Part III 15.2 promises crate metadata the compiler does not read
+**Empty**, which it has not been before, so what was here is worth naming: Part
+III 15.2 claimed the compiler *"reads the metadata of the Rust Crate"* and quoted
+an error about an `Rc<i32>` that nothing produces; the same section's type mapping
+stopped at three rows and had no entry for the type
+[ADR-045](specification/adr/adr-045.md) §3's whole argument turns on; Part III 15.3
+said a single-threaded build generates no atomic operations, which
+[ADR-037](specification/adr/adr-037.md) D6 made false; and five notes pages read as
+current while writing lambdas in the form
+[ADR-049](specification/adr/adr-049.md) withdrew or reasoning from what
+`user_parallelism` used to imply. Each is in the CHANGELOG.
 
-[ADR-045](specification/adr/adr-045.md) §5, found and deliberately not fixed
-there. The *"Thread Safety (Send/Sync)"* block says *"The compiler reads the
-metadata of the Rust Crate"*, that a `Send` Rust type is allowed in a `spawn`
-task, and quotes an error about `Rc<i32>`. **No crate metadata is read**: a foreign
-call is one no ledger describes, and the verdict is taken on the argument's Nikaia
-type. The section's `Status` note covers the lock rule and not this claim, so the
-claim stands unmarked.
-
-### 3.2. …and the same section's type mapping has no shared entry
-
-It maps `i32`, `String` and `Option<T>` and stops, so nothing written down says
-which Rust type a `Shared[T]` is at a boundary — which is the type
-[ADR-045](specification/adr/adr-045.md) §3's whole argument turns on.
-
-### 3.3. Part III 15.3 says a single-threaded build generates no atomic operations
-
-*"the compiler does not generate OS-level mutexes or atomic operations in this
-mode"* has been false since [ADR-037](specification/adr/adr-037.md) D6 made the
-owner count atomic at both settings, and ADR-045 §3's measurement shows a foreign
-call forcing the atomic count whatever the setting.
-
-### 3.4. Two notes pages carry claims a later decision displaced
-
-* [`foreign-runtime.md`](foreign-runtime.md) and [`std-sysroot.md`](std-sysroot.md)
-  predate [ADR-037](specification/adr/adr-037.md) D6 in the places where they talk
-  about what follows `user_parallelism`.
-* [`from-for-throws-and-touches.md`](from-for-throws-and-touches.md),
-  [`mutex-floor.md`](mutex-floor.md) and
-  [`rc-or-arc.md`](rc-or-arc.md) write their lambdas in the form
-  [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, which
-  no longer compiles. The analysis each records is unaffected; the samples are not
-  copyable.
-
-A notes page is a laboratory record and is allowed to be a snapshot — what it is
-not allowed to do is read as current. A dated header on each is enough.
-
----
+A stale **Status** note is a defect in its own right
+([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
+so this section being empty is a state to try to keep rather than a milestone.
 
 ## 4. Where the other lists are
 
