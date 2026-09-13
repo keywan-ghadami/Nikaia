@@ -201,9 +201,21 @@ fn run_root() -> &'static Path {
 /// leaves dozens, and they were found 891 deep and 2.1 GB heavy, with the
 /// filesystem full.
 ///
-/// Six hours rather than "this run's are the only ones that matter": a
-/// directory from an hour ago is what somebody is in the middle of reading, and
-/// a concurrent second run of the suite has its own root but no claim on ours.
+/// **A root whose run has ended is collected at once, and the clock is only the
+/// fallback.** Thirteen tests across four files create a scratch directory and
+/// never remove it - `ordering`'s are 14 MB each, because they hold a compiled
+/// binary - so "every test cleans up after itself" is a rule this suite has
+/// already broken four times and will break again. What is reliable is that a
+/// root belongs to a process, and a process either exists or does not: 578 roots
+/// and 4.2 GB had built up inside one session before this asked.
+///
+/// So a root goes when **its process is gone**. That is exact rather than
+/// cautious: a concurrent run's root is protected because its process is alive,
+/// not because an hour has not passed. The clock stays for the one case liveness
+/// cannot answer - a root whose process id has been handed to somebody else
+/// since - and six hours rather than minutes because being wrong in that
+/// direction deletes a running build's files.
+///
 /// Once per process, and before the root exists rather than on every
 /// [`scratch_dir`] call, because a `readdir` is not free and the answer cannot
 /// change usefully within one run.
@@ -219,17 +231,38 @@ fn sweep_stale_scratch_dirs(within: &Path) {
     };
     let cutoff = std::time::Duration::from_secs(6 * 60 * 60);
     for entry in entries.flatten() {
+        let name = entry.file_name();
         let stale = entry
             .metadata()
             .and_then(|meta| meta.modified())
             .and_then(|at| at.elapsed().map_err(std::io::Error::other))
             .is_ok_and(|age| age > cutoff);
-        if stale {
+        if stale || run_has_ended(&name.to_string_lossy()) {
             // Best effort: another run may be removing the same directory, and
             // losing that race is not this run's problem.
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
+}
+
+/// Whether the run that made a root named `<pid>-<stamp>` is over.
+///
+/// **Every uncertainty answers "still running"**, which is the direction that
+/// keeps a live build's files: a name this does not recognise, a system with no
+/// `/proc` to ask, and this run's own root all come back `false`. The cost of
+/// being wrong here is deleting files a test is using; the cost of being wrong
+/// the other way is a directory that waits six hours.
+fn run_has_ended(root: &str) -> bool {
+    if !Path::new("/proc").is_dir() {
+        return false;
+    }
+    let Some(pid) = root.split('-').next().and_then(|p| p.parse::<u32>().ok()) else {
+        return false;
+    };
+    if pid == std::process::id() {
+        return false;
+    }
+    !Path::new(&format!("/proc/{pid}")).exists()
 }
 
 /// Compile emitted Rust. `args` are rustc's, after the edition and the externs

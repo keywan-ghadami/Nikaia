@@ -420,3 +420,38 @@ fn report(source: &str) -> String {
     let _ = std::fs::remove_dir_all(&dir);
     printed
 }
+
+/// A function that returns a shared value wraps on a line of its own, and the
+/// `return` then hands on what is already shared.
+///
+/// Part I 6.2's rule is that sharing starts on a line where the type was written;
+/// a signature line is not one. This is not a dead end and the message says why:
+/// wrap inside on a line of its own, or return a plain value and let the caller
+/// write the type. Both are ordinary, and this runs the first.
+#[test]
+fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
+    let (printed, rust) = run(
+        "shared-returned",
+        "struct Connection {\n    \
+             host: String\n\
+         }\n\
+         \n\
+         fn connect(host: String) -> Shared[Connection] {\n    \
+             let c: Shared[Connection] = Connection { host: host }\n    \
+             return c\n\
+         }\n\
+         \n\
+         fn main() {\n    \
+             let db = connect(\"localhost\".to_string())\n    \
+             println(f\"connected to {db.host}\")\n\
+         }\n",
+        &[],
+    );
+    assert_eq!(printed.trim(), "connected to localhost");
+    // The annotated `let` is the one constructor, and the `return` adds nothing.
+    assert_eq!(
+        rust.matches("Rc::new").count() + rust.matches("Arc::new").count(),
+        1,
+        "the `return` must not wrap a second time:\n{rust}"
+    );
+}

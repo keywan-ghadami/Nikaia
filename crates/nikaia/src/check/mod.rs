@@ -2024,6 +2024,21 @@ fn becomes_shared(found: &Ty, want: &Ty) -> bool {
 
 /// Part III C.2: every diagnostic names a concrete way out.
 fn convert(found: &Ty, want: &Ty) -> String {
+    // **A shared value is wanted and a plain one is here**, and the place this
+    // comes up is a `return` into a `-> Shared[T]` signature. Sharing may only
+    // begin on a line that writes the type (Part I 6.2), and a signature line is
+    // not that line - so the generic "make it a `Shared[T]`" below would name a
+    // destination without a road, which is what made this look like a dead end.
+    // It is not: there are two roads and this says both.
+    if becomes_shared(found, want) {
+        return format!(
+            "sharing starts on a line that writes the type: either give it a \
+             `let x: {} = …` here and return that, or return the plain `{}` and \
+             let the caller write the type (Part I, 6.2)",
+            want.text(),
+            found.text()
+        );
+    }
     let (found, want) = (found.text(), want.text());
     match (found.as_str(), want.as_str()) {
         ("&str", "String") => "write `.to_string()` to make a `String` of it".to_string(),

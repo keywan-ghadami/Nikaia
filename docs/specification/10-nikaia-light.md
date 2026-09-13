@@ -875,8 +875,11 @@ The language asks for sharing to be visible in the source because it changes whe
 the value is cleaned up — and here it is, in the line where it starts.
 `Shared::new(…)` would write the same thing twice.
 
-**Only where the shared type stands in the same line** may a plain value become a
-shared one: an annotated `let`, or a field whose declared type says so. Not at a
+> **Sharing always starts on a line where you wrote the type yourself** — an
+> assignment with a type annotation, or a field with a declared type. Everywhere
+> else you receive what is already shared.
+
+That sentence is the whole rule, and the two places it names are the only two. Not at a
 call site merely because a signature wants one. A call in which the word does not
 appear would otherwise move the cleanup point silently, and at such a place there
 would be no saying whether the value was handed on or duplicated — it would be
@@ -888,6 +891,26 @@ error[NK1115]: `serve` takes a shared value, and `db` is not one
   help: write the sharing where it starts:
         let db: Shared[Connection] = postgres::connect("…")
 ```
+
+**A function that returns a shared value is the same rule, not an exception to
+it.** A signature line is not a line you wrote the type on, so the `return` is
+not where sharing may begin — which leaves two ways, and both are ordinary:
+
+```nika
+// Wrap inside, on a line of its own. The `return` then hands on a value that
+// is already shared, which is a plain return.
+fn connect(url: String) -> Shared[Connection] {
+    let c: Shared[Connection] = Connection(url: url)
+    return c
+}
+
+// Or - usually better - return a plain value and let the caller decide.
+fn connect(url: String) -> Connection { … }
+let db: Shared[Connection] = connect(url)
+```
+
+The second imposes sharing on nobody who does not want it. The first costs one
+line, and that line is where a reader sees the sharing begin.
 
 **This is the handle and nothing else.** Ordinary data — a string, a number, a
 struct of those — is still **moved** where it is handed on (8.3). An automatic
