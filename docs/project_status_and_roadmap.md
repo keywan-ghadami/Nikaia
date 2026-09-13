@@ -153,6 +153,11 @@ checked and cannot run until the sequence is done, and a check with no program t
 be tested against is the state that rots fastest: nothing fails when it drifts,
 because nothing exercises it.
 
+That record's §6 has five steps, and the first two are built: a single-threaded
+executor, and `async fn` with `.await` written off the ledger's `sync` column.
+**Step 3 is next** — `std`'s own pausing entries, the largest single diff of the
+five and the one with no decisions in it.
+
 **The unchecked boxes above are not that list**, and the difference is worth
 keeping: a box is a piece of *scope* — generics, an LSP, compile-time I/O — that
 no record has yet turned into work. An entry in the other list has a record behind

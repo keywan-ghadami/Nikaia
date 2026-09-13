@@ -300,7 +300,8 @@ fn an_effect_annotation_on_a_lambda_is_refused_where_the_annotation_is() {
 /// `spawn` is a reserved word now, so neither reading exists: there is no
 /// variable and no function of that name to be, and the refusal is this
 /// compiler's, at the `fn`, saying the rule wants a parenthesis. What `spawn`
-/// *means* is still unbuilt (`docs/open-work.md` §2.1) - this is only about who
+/// *means* is still unbuilt (`docs/open-work.md`, the `spawn` entry) - this is
+/// only about who
 /// says so.
 #[test]
 fn spawn_with_a_named_lambda_is_refused_rather_than_read_as_something_else() {

@@ -331,7 +331,7 @@ exists in `std`'s Rust and the emitter does not reach it for this.
 
 **So `overlap` is not a small piece of work, and it is not unblocked.** Branches
 that are arbitrary expressions need the general concurrent path — the same runtime
-binding [`open-work.md`](open-work.md) §2.1 says `spawn` is waiting on. What could
+binding [`open-work.md`](open-work.md)'s `spawn` entry says it is waiting on. What could
 be built ahead of it is more special cases, which is how the automatic half got
 narrow in the first place.
 
@@ -559,6 +559,7 @@ depends on nothing — with one member crate per package. A library that uses a
 library works; a program that reaches past what it declared is refused by Rust's
 own resolution, reported against the line that wrote it; and the overflow checks
 name each crate of this language on the program's side. One thing the answer
-claimed is not built and is written down in [`open-work.md`](open-work.md) §2.5:
+claimed is not built and is written down in [`open-work.md`](open-work.md), under *a package reached under
+two names is two types to the checker*:
 Cargo unifies a package reached under two different keys, and the ledger in front
 of it still names a type by the key it was reached through.

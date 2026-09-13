@@ -12,7 +12,8 @@ measured against), §8.5 (the prediction this settles) and D10 (the lowering §6
 [ADR-033](specification/adr/adr-033.md) §8.5 wrote down a prediction and said in the same
 sentence that there was nothing to time: *"the sidecar thread is already running; two overlapped
 reads are two messages, not two thread starts… **This is a prediction, not a measurement** —
-there is no event loop, no sidecar and no async lowering yet."* Two of those three now exist.
+there is no event loop, no sidecar and no async lowering yet."* All three now exist - the
+async lowering last, in [ADR-055](specification/adr/adr-055.md) §6.
 This is the measurement, its method, its machine, its spread, and the two things it found that
 were not predicted.
 

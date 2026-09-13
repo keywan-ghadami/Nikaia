@@ -125,6 +125,11 @@ So, in order, and each says below why it sits where it does:
    cannot run until it is done, which is the first principle above in its
    sharpest form — and until this session it looked like one step rather than
    five, because a pause was a thread that blocked and nothing said so.
+
+   **Steps 1 and 2 are built**: the single-threaded executor, and `async fn`
+   with `.await` off the ledger. What is next is **step 3**, `std`'s own pausing
+   entries — the largest single diff of the five and the one with no decisions
+   in it.
 2. **`SharedMut[T]` and `Locked[T]` as types the backend can build.** The other
    half of the same story: a program that spawns needs something it may share, and
    today writing one is checked and then fails to emit. Independent of the
@@ -171,16 +176,59 @@ language was specified with from [ADR-005](specification/adr/adr-005.md) on —
 whether it can pause, and that property *is* `async fn` or plain `fn`. So this
 entry is now **step 4 of that record's §6**, not the first thing to do:
 
-1. the executor in `rt`;
-2. `async`/`.await` in the emitter, off the ledger's `sync` column;
+1. the executor in `rt` — **built**, the single-threaded half;
+2. `async`/`.await` in the emitter, off the ledger's `sync` column — **built**;
 3. `std`'s own pausing entries;
 4. `spawn` and `TaskHandle`, with `NK2101`;
 5. [ADR-050](specification/adr/adr-050.md) D2's `overlap`.
 
-Steps 1–3 land close together: until `std` is async a program that calls a pausing
-entry does not compile.
+**Step 3 is what is next**, and the reason steps 1–3 were said to land close
+together turned out not to bind: step 2 asks the *emitter* what pauses, and it
+asks about this program's own functions only. A pausing `std` entry still blocks
+its thread and is still called without an `.await`, so no program is refused for
+calling one and the corpus compiles between the steps.
 
-### 2.2. `SharedMut[T]` and `Locked[T]` are not types the backend can build
+### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
+
+Both are [ADR-055](specification/adr/adr-055.md) §6's remainder, and both are
+limits of this compiler rather than of the language — so they are here and not in
+§1, where a defect is the compiler being *wrong*.
+
+**A lambda whose body calls something that can pause is refused at the build.**
+Rust has no stable `async` closure, so the lowering has nothing to write. The
+refusal is by the lowering and not by the checker on purpose: refusing it in the
+type checker would refuse a correct program (Part III, C.4).
+
+*Evidence:* `examples/fortunes.nika:120` — `.route("/fortunes") fn { fortunes(db) }`,
+a route handler that queries a database. It type-checks clean and no build reaches
+it, because the server it binds to does not exist yet (§2.7 below). So today
+nothing in the repository meets the refusal, and the first program that does will
+be the one that binds a handler.
+
+*What it needs:* step 3 and step 4. Once `std`'s own signatures say which
+parameters take something that may pause, a lambda handed to one of those can be
+written as a closure that **returns** a future — `|| async move { … }`, which is
+stable Rust and is how a handler is taken in practice. It is a signature question
+in `std.contracts`, not a new mechanism.
+
+**A recursive pausing *method* is not boxed.** §6 step 2 boxes a call that closes
+a cycle of pausing functions, and it resolves a callee's name the way the emitter
+resolves anything — which is not at all for a method, because `stats.add(5)` names
+`add` and only the type checker knows what it goes to ([ADR-028](specification/adr/adr-028.md)).
+So a cycle through a method reaches `rustc` as *"recursion in an async fn requires
+boxing"*, about the generated file.
+
+*Evidence: none.* No program in the repository has one — `examples/json.nika`'s
+recursion is through free functions, which is the case that is built. It is
+written down because it is the same edge one step further in, not because
+something failed.
+
+*What it needs:* the checker already hands the emitter *whether* a method call
+pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
+keyed the same way, saying whether it also closes a cycle, is the same shape
+again — the checker has the resolved call graph that `contracts::sync` builds.
+
+### 2.3. `SharedMut[T]` and `Locked[T]` are not types the backend can build
 
 [ADR-039](specification/adr/adr-039.md) §4. The verdicts about them are built —
 the crossing destination ([ADR-045](specification/adr/adr-045.md)), the four doors
@@ -193,7 +241,7 @@ annotation is checked and then fails to emit. Also waiting inside this:
   already accounts for;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.3. The automatic reordering, `seq` and the `ordering` switch are still here
+### 2.4. The automatic reordering, `seq` and the `ordering` switch are still here
 
 [ADR-050](specification/adr/adr-050.md) D1 and D7 withdraw all three, and its §5 says
 **not yet**: the removal is step three, after the runtime binding and `overlap`.
@@ -204,13 +252,13 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.4. Part II 12.8's supervision syntax
+### 2.5. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.5. A package reached under two names is two types to the checker
+### 2.6. A package reached under two names is two types to the checker
 
 [ADR-053](specification/adr/adr-053.md) is built: a package is its own crate, a
 library may depend on a library, and a program cannot reach past what it declared.
@@ -230,7 +278,7 @@ type's identity in the ledger to be the package's **canonical path** — which i
 what `packages_of` already computes and what D2 means by identity — rather than
 the word a consumer happened to write.
 
-### 2.6. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.7. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the

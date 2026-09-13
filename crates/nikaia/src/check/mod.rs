@@ -140,6 +140,21 @@ pub struct Checked {
     /// fail-quietly this module's other answers keep: the set never claims a
     /// call fails that does not.
     pub fallible_methods: BTreeSet<(usize, String)>,
+    /// The method calls that **pause**, keyed the same way and narrowed the same
+    /// way ([ADR-055](../../docs/specification/adr/adr-055.md) D2).
+    ///
+    /// `throws` becomes a `?` and *can pause* becomes an `.await`, both read off
+    /// the callee's contract - and for a method the emitter cannot read it,
+    /// because `stats.add(5)` names `add` and only a type checker knows what it
+    /// goes to (ADR-028). So this is the one-column-over twin of
+    /// `fallible_methods`, and it keeps that set's fail-quietly: a name that in
+    /// one statement is both a pausing call and a call that is not is in neither
+    /// set.
+    ///
+    /// **This program's own functions only.** A `std` entry still blocks its
+    /// thread until ADR-055 §6 step 3, so awaiting one would be awaiting a value
+    /// rather than a future.
+    pub pausing_methods: BTreeSet<(usize, String)>,
     /// The statements where a **plain value stands in a nullable slot** and the
     /// emitter therefore writes the `Some(…)`, by the byte the statement starts
     /// at (Part I 2.3).
@@ -279,6 +294,8 @@ pub fn check_program(
         current: None,
         modules: modules.clone(),
         fallible_methods: BTreeSet::new(),
+        pausing_methods: BTreeSet::new(),
+        settled_methods: BTreeSet::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
         checked: Checked::default(),
@@ -301,6 +318,13 @@ pub fn check_program(
     checker.checked.fallible_methods = checker
         .fallible_methods
         .difference(&checker.opaque_methods)
+        .cloned()
+        .collect();
+    // The same subtraction one column over: an `.await` on something that is not
+    // a future is the same kind of message about the same file nobody wrote.
+    checker.checked.pausing_methods = checker
+        .pausing_methods
+        .difference(&checker.settled_methods)
         .cloned()
         .collect();
     // The same subtraction, for the same reason: a checked conversion written on
@@ -341,6 +365,8 @@ pub struct Propagation {
     pub loops: BTreeSet<usize>,
     /// [`Checked::fallible_methods`].
     pub methods: BTreeSet<(usize, String)>,
+    /// [`Checked::pausing_methods`].
+    pub pausing_methods: BTreeSet<(usize, String)>,
     /// [`Checked::shared_sites`].
     ///
     /// Not about a failure travelling, and here anyway: it is the same
@@ -384,6 +410,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
     Propagation {
         loops: checked.fallible_loops,
         methods: checked.fallible_methods,
+        pausing_methods: checked.pausing_methods,
         shared: checked.shared_sites,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
@@ -447,6 +474,11 @@ struct Checker<'a> {
     /// a name that is both in one statement is in neither.
     fallible_methods: BTreeSet<(usize, String)>,
     opaque_methods: BTreeSet<(usize, String)>,
+    /// The same pair of sets for [`Checked::pausing_methods`]: the calls whose
+    /// callee pauses, and the ones where it does not or could not be
+    /// established. The difference is the answer.
+    pausing_methods: BTreeSet<(usize, String)>,
+    settled_methods: BTreeSet<(usize, String)>,
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
@@ -1417,6 +1449,7 @@ impl<'a> Checker<'a> {
                     });
                     self.reached_method(None);
                     self.method_propagates(*method, false, span);
+                    self.method_pauses(*method, false, span);
                     return Ty::Unknown;
                 };
                 let key = format!("{name}::{}", self.parsed.text(*method));
@@ -1427,6 +1460,7 @@ impl<'a> Checker<'a> {
                         self.expr(a, span);
                     });
                     self.reached_method(None);
+                    self.method_pauses(*method, false, span);
                     self.method_propagates(*method, false, span);
                     return Ty::Unknown;
                 };
@@ -1436,6 +1470,12 @@ impl<'a> Checker<'a> {
                 // around it declares `throws` - where it does not, `NK2605`
                 // below refuses the program and nothing is emitted at all.
                 self.method_propagates(*method, !contract.throws.is_empty(), span);
+                // ADR-055 D2, the method half. **This program's own only**: a
+                // `std` entry still blocks its thread until §6 step 3, so the
+                // key has to be one `own` records and not one `method` found in
+                // the library.
+                let mine = self.own.functions.contains_key(&key);
+                self.method_pauses(*method, mine && !contract.sync.is_sync(), span);
                 // A method call is a written call, so the rule reaches it too
                 // (`NK2605`) - and here the receiver's type was known and a
                 // ledger described the method, which is the only case this
@@ -2310,6 +2350,22 @@ impl<'a> Checker<'a> {
             self.fallible_methods.insert(key);
         } else {
             self.opaque_methods.insert(key);
+        }
+    }
+
+    /// The same, for the `.await` ([`Checked::pausing_methods`]).
+    ///
+    /// Separate from `method_propagates` because the two answers are separate:
+    /// a call can fail without pausing and pause without failing, and the two
+    /// sets are narrowed independently. Both are recorded at every method call,
+    /// including the ones nothing could be established about - `false` there is
+    /// "there is no answer", and it lands in the set that *removes* the pair.
+    fn method_pauses(&mut self, method: Ident, pauses: bool, span: &Span) {
+        let key = (span.start, self.parsed.text(method).to_string());
+        if pauses {
+            self.pausing_methods.insert(key);
+        } else {
+            self.settled_methods.insert(key);
         }
     }
 

@@ -135,7 +135,7 @@ against the day it was written.
    *expected `(`; found unexpected token `fn`*, this compiler's refusal at the
    `fn` rather than `rustc`'s about the generated file. Both readings above are
    gone and the decision left here is untouched — what `spawn` **means** is
-   still `open-work.md` §2.1, and the parser's `spawn "(" expr ")"` rule is still
+   still `open-work.md`'s `spawn` entry, and the parser's `spawn "(" expr ")"` rule is still
    what it was.
 
    **The spelling is settled; the rest of this entry is not.** `spawn fn { … }`

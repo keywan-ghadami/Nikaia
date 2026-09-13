@@ -730,7 +730,25 @@ struct Emitter<'p> {
     build: Build,
     /// Structs that hold a view into the input, and so need the input lifetime
     /// wherever they are named.
+    ///
+    /// Read through [`Emitter::borrows`] and not directly: this half is what
+    /// *this file* declares, and a package is several files (Part I, 9.1).
     borrowing: HashSet<Symbol>,
+    /// The other half: the types the **package's** ledger records a `tethered`
+    /// field for (`contracts::TypeContract`).
+    ///
+    /// `examples/inventory` is why. `Entry` is declared in `stock.nika` and
+    /// named in `page.nika`, and each file is emitted from its own `Parsed`
+    /// (`emit_module_body_ordered`) - so the syntactic set above is empty in the
+    /// file that writes `Vec[Entry]`, and the lifetime went unwritten there.
+    /// Rust's elision covered it in a plain `fn` and stops covering it in an
+    /// `async fn` (E0726), which is how a latent defect became a message about
+    /// the generated file (Part III, C.1).
+    ///
+    /// The ledger is the right place to read it from because a package has
+    /// exactly one (Part III, 13.5) and its keys for the package's own types are
+    /// unqualified - the same name the source writes.
+    tethered: std::collections::BTreeSet<String>,
     /// The view parameters written as views of the *input* buffer rather than of
     /// whatever the caller lends for the call, by the byte their method starts
     /// at (`views::carried`).
@@ -757,6 +775,14 @@ struct Emitter<'p> {
     /// is, so only the type checker can say what it calls (ADR-028). Nothing
     /// here resolves a receiver.
     fallible_methods: std::collections::BTreeSet<(usize, String)>,
+    /// The method calls that **pause**, by the byte their statement starts at
+    /// and the name written (`check::Checked::pausing_methods`).
+    ///
+    /// The same arrangement, one ledger column over: `throws` becomes a `?` and
+    /// *can pause* becomes an `.await`. The emitter cannot ask this one itself
+    /// for a method, because only a type checker knows what `stats.add(5)` goes
+    /// to (ADR-028).
+    pausing_methods: std::collections::BTreeSet<(usize, String)>,
     /// The conversions that **narrow**, by the byte their statement starts at
     /// and the type converted to
     /// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4).
@@ -806,6 +832,15 @@ struct Emitter<'p> {
     /// parameter, by statement, callee as written, and position
     /// (`check::Checked::nullable_args`).
     nullable_args: std::collections::BTreeSet<(usize, String, usize)>,
+    /// ADR-055 D6: what each pausing function can reach, over the pausing ones
+    /// ([`pausing_reach`]).
+    ///
+    /// A recursive `async fn` is an infinitely sized future, so a call that
+    /// closes a cycle has to put one behind a pointer - and *which* calls those
+    /// are is this map's question: a call from `f` to `g` closes one exactly
+    /// where `g` reaches `f` again. Read through
+    /// [`Emitter::closes_a_pausing_cycle`].
+    pausing_reach: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
@@ -1007,6 +1042,25 @@ struct Flow<'a> {
     /// method says the method's own name (ADR-023 D6), and a ledger key says
     /// `Type::method`.
     function: &'a str,
+    /// What is being emitted sits inside a **lambda's body**
+    /// ([ADR-055](../../../docs/specification/adr/adr-055.md) §6).
+    ///
+    /// A lambda is a closure in the language below, and Rust has no stable
+    /// `async` closure - so a call that pauses cannot be written inside one, and
+    /// the lowering says so in Nikaia's words rather than handing `rustc` a file
+    /// nobody wrote (Part III, C.1).
+    ///
+    /// **It is here and not in the checker on purpose.** A lambda that reads a
+    /// file is a correct Nikaia program - `examples/fortunes.nika`'s route
+    /// handler is one - and refusing a correct program is the one thing the
+    /// compiler may never do (Part III, C.4). So the type check accepts it and
+    /// the *lowering* is what cannot write it, which is a limit of this compiler
+    /// and is where a program that is only checked never meets it.
+    ///
+    /// It reaches inward the way `sequential` and `caught` do: a call written in
+    /// a block inside the lambda is still written inside the lambda. A function
+    /// body starts a `Flow` of its own, which is the boundary it does not cross.
+    in_lambda: bool,
 }
 
 impl Flow<'_> {
@@ -1017,6 +1071,7 @@ impl Flow<'_> {
         caught: false,
         statement: usize::MAX,
         function: "",
+        in_lambda: false,
     };
 
     /// The same surroundings, with reordering switched off for what is inside a
@@ -1146,10 +1201,14 @@ impl<'p> Emitter<'p> {
         let shared =
             crate::contracts::sharing::analyse_program(parsed, &own_contracts, &library).counts;
 
+        // ADR-055 D6, before `own_contracts` is moved into place.
+        let reach = pausing_reach(parsed, &own_contracts);
+
         Self {
             parsed,
             build,
             borrowing: borrowing_structs(parsed),
+            tethered: tethered_types(&own_contracts),
             carries_input: crate::views::carried(parsed),
             grammars,
             structs,
@@ -1161,6 +1220,7 @@ impl<'p> Emitter<'p> {
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             fallible_loops: propagation.loops,
             fallible_methods: propagation.methods,
+            pausing_methods: propagation.pausing_methods,
             narrowing_casts: propagation.narrowing,
             shared,
             shared_sites: propagation.shared,
@@ -1168,6 +1228,7 @@ impl<'p> Emitter<'p> {
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
             nullable_args: propagation.nullable_in_args,
+            pausing_reach: reach,
             own_contracts,
             library,
             ordering,
@@ -1355,7 +1416,20 @@ impl<'p> Emitter<'p> {
         out.push(&format!(
             "    let nikaia_runtime = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code});\n"
         ));
-        out.push(&format!("    let outcome = {PROGRAM_MAIN}();\n"));
+        // **ADR-055 D3: `main` is what the executor drives.** Where the
+        // program's own entry can pause it is an `async fn` (D1), so the one
+        // place a future is driven from the outside is here - `block_on` is the
+        // boundary between a program that can pause and an operating system
+        // that cannot.
+        //
+        // A `main` the ledger says is `sync` is a plain call, and writing
+        // `block_on` around it would be driving something that is not a future.
+        match self.pauses(MAIN) {
+            true => out.push(&format!(
+                "    let outcome = nikaia_std::rt::exec::block_on({PROGRAM_MAIN}());\n"
+            )),
+            false => out.push(&format!("    let outcome = {PROGRAM_MAIN}();\n")),
+        }
         out.push("    nikaia_runtime.finish();\n");
         out.push("    outcome\n");
         out.push("}\n");
@@ -1473,7 +1547,7 @@ impl<'p> Emitter<'p> {
             } => {
                 // A type that holds a view carries the input lifetime, and the
                 // impl has to declare the lifetime its methods are written with.
-                let borrows = self.borrowing.contains(&target.name);
+                let borrows = self.borrows(target.name);
                 let params = if borrows {
                     format!("<{INPUT_LIFETIME}>")
                 } else {
@@ -1744,8 +1818,12 @@ impl<'p> Emitter<'p> {
             name.clone()
         };
 
+        // ADR-055 D1: a function that can pause is an `async fn`, and one the
+        // ledger's `sync` column says cannot is a plain `fn`. The property is
+        // ADR-027 D1's, already inferred; this reads it.
+        let pausing = if self.pauses(&key) { "async " } else { "" };
         out.push(&format!(
-            "{vis}fn {emitted}{}({}){ret} ",
+            "{vis}{pausing}fn {emitted}{}({}){ret} ",
             dsl.unwrap_or_default(),
             params.join(", ")
         ));
@@ -1777,6 +1855,9 @@ impl<'p> Emitter<'p> {
             caught: false,
             statement: usize::MAX,
             function: key,
+            // A function body was not written inside whatever lambda the call
+            // to it sits in: this is the one boundary the flag does not cross.
+            in_lambda: false,
         };
 
         // A function body's last statement is the *function's* value, which is
@@ -2393,7 +2474,7 @@ impl<'p> Emitter<'p> {
             .map(|g| self.ty_counted(g, lifetimes, count))
             .collect();
         // A struct that holds a view carries the input lifetime with it.
-        if self.borrowing.contains(&ty.name) {
+        if self.borrows(ty.name) {
             params.insert(0, lifetimes.params.to_string());
         }
         if !params.is_empty() {
@@ -3287,6 +3368,16 @@ impl<'p> Emitter<'p> {
                 // not. The call must not be the guarded half of a `catch`,
                 // which wants the `Result`. And the callee must be one the
                 // checker established can fail.
+                // ADR-055 D2, the method half, and **before the `?`** for the
+                // reason `call` gives: the future is what can fail, so it has
+                // to be driven before there is a `Result` to propagate.
+                if self.method_pauses(flow, *method) {
+                    if flow.in_lambda {
+                        return Err(pausing_in_a_lambda(self.text(*method)));
+                    }
+                    out.push(".await");
+                }
+
                 if flow.throws && !flow.caught && self.method_can_fail(flow, *method) {
                     out.push("?");
                 }
@@ -3478,8 +3569,16 @@ impl<'p> Emitter<'p> {
                     params.iter().map(|p| self.text(*p).to_string()).collect();
                 out.push(&format!("|{}| ", params.join(", ")));
                 // A lambda's `return` leaves the lambda, not the function
-                // around it, so it never carries the enclosing `Ok`.
-                self.block(out, body, depth, Flow::PLAIN, Tail::Return)?;
+                // around it, so it never carries the enclosing `Ok`. The
+                // statement is kept, because the checker's answers about the
+                // calls in here are keyed by it, and `in_lambda` is what makes
+                // a pausing one refusable (ADR-055 §6).
+                let inside = Flow {
+                    in_lambda: true,
+                    statement: flow.statement,
+                    ..Flow::PLAIN
+                };
+                self.block(out, body, depth, inside, Tail::Return)?;
             }
             Expr::Unary { op, expr } => {
                 out.push(unary_op(*op));
@@ -3575,7 +3674,35 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // ADR-055 D6: a recursive `async fn` is an infinitely sized future, and
+        // Rust says so rather than guessing - so a call that closes a cycle
+        // through pausing functions puts the future behind a pointer.
+        // `pausing_reach` is computed once per unit (see that function for why
+        // it over-approximates), and the emitter only looks names up in it: it
+        // still resolves nothing (ADR-011 D2).
+        let pausing = self.pausing_key(func);
+        if let Some(key) = pausing.as_deref().filter(|_| flow.in_lambda) {
+            return Err(pausing_in_a_lambda(key));
+        }
+        let boxed = pausing
+            .as_deref()
+            .is_some_and(|key| self.closes_a_pausing_cycle(flow.function, key));
+        if boxed {
+            out.push("Box::pin(");
+        }
+
         self.called(out, func, args, config, depth, flow)?;
+
+        if boxed {
+            out.push(")");
+        }
+
+        // **ADR-055 D2: the `.await` goes before the `?`**, and the order is not
+        // a choice: the future is what can fail, so it has to be driven before
+        // there is a `Result` to propagate. `f().await?` and never `f()?.await`.
+        if pausing.is_some() {
+            out.push(".await");
+        }
 
         // ADR-023 D8: `throws` propagates on its own, so a call to something
         // that can fail is where the failure leaves - and in the language below
@@ -3725,6 +3852,87 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// Whether a call from `caller` to `callee` closes a cycle of pausing
+    /// functions, and so needs its future behind a pointer (ADR-055 D6).
+    ///
+    /// **The question is about the call and not about the callee.** A recursive
+    /// `countdown` boxes the call it makes to itself; the call `main` makes to it
+    /// holds that future exactly once and is finite, so it pays no allocation.
+    /// Asking it the other way - boxing every call to anything recursive - was
+    /// the first version, and it charged every caller for its callee's shape.
+    ///
+    /// `A -> A` beside `B -> B` where `B` also calls `A` is what makes "both are
+    /// in a cycle" the wrong test: nothing about `B -> A` is recursive. So the
+    /// test is that the callee can reach the caller again, which is what closing
+    /// a cycle *is*.
+    fn closes_a_pausing_cycle(&self, caller: &str, callee: &str) -> bool {
+        self.pausing_reach
+            .get(callee)
+            .is_some_and(|seen| seen.contains(caller))
+    }
+
+    /// Whether a type named here holds a view, and so carries the input lifetime
+    /// wherever it is written (Part II, 10.6).
+    ///
+    /// Two sources and one answer: the file's own declarations, and the
+    /// package's ledger for the types another file declares
+    /// ([`Emitter::tethered`]).
+    fn borrows(&self, name: Symbol) -> bool {
+        self.borrowing.contains(&name) || self.tethered.contains(self.text(name))
+    }
+
+    /// Whether a function of **this program** can pause, and is therefore an
+    /// `async fn` ([ADR-055](../../../docs/specification/adr/adr-055.md) D1).
+    ///
+    /// **The answer is the ledger's `sync` column and nothing computed here.**
+    /// [ADR-027](../../../docs/specification/adr/adr-027.md) D1 infers it per
+    /// function over the call graph, and its conservatism is already the safe
+    /// direction (D2): an unresolved call costs a function its claim, which here
+    /// makes it `async` - and an `async fn` that never awaits finishes on its
+    /// first poll, while a plain `fn` that needed to pause does not compile.
+    fn pauses(&self, key: &str) -> bool {
+        self.own_contracts
+            .functions
+            .get(key)
+            .is_some_and(|contract| !contract.sync.is_sync())
+    }
+
+    /// Whether a call to this callee carries an `.await` (ADR-055 D2).
+    ///
+    /// The same resolution [`Emitter::can_fail`] does, one ledger column over:
+    /// `throws` becomes a `?` and *can pause* becomes an `.await`, both read off
+    /// the callee's contract and neither resolving a name
+    /// ([ADR-011](../../../docs/specification/adr/adr-011.md) D2).
+    ///
+    /// **This program's own functions only, and that is what makes the step
+    /// compilable on its own.** A `std` entry still blocks its thread until
+    /// ADR-055 §6 step 3, so awaiting one would be awaiting a value rather than
+    /// a future. The library is deliberately not consulted here.
+    /// The ledger key a call resolves to, when that key pauses - `None` when the
+    /// call takes no `.await` at all.
+    ///
+    /// D6's boxing needs to know *which* function is being called and not just
+    /// that it pauses, so the answer is the name rather than a yes.
+    fn pausing_key(&self, func: &Expr) -> Option<String> {
+        let name = match func {
+            Expr::Variable(name) => self.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| self.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => return None,
+        };
+        let name = self.parsed.unaliased(&name);
+        if self.pauses(&name) {
+            return Some(name);
+        }
+        // Kap 4.2's anonymous constructor: `Stats(temp)` is a call to the `new`
+        // the `impl` provides, so that is the contract to read.
+        let constructor = format!("{name}::new");
+        self.pauses(&constructor).then_some(constructor)
+    }
+
     /// Whether the contracts say a call by name can fail (Kap 7.1).
     ///
     /// The same resolution `options_of` uses, and for the same reason: the
@@ -3781,6 +3989,17 @@ impl<'p> Emitter<'p> {
     /// was rather than guessing at it.
     fn method_can_fail(&self, flow: Flow<'_>, method: Symbol) -> bool {
         self.fallible_methods
+            .contains(&(flow.statement, self.text(method).to_string()))
+    }
+
+    /// Whether the checker said this method call pauses (ADR-055 D2).
+    ///
+    /// [`Emitter::method_can_fail`]'s twin, and a lookup for the same reason:
+    /// the answer was computed once by the one type checker this compiler has,
+    /// and `false` here is the emitter leaving the call as it was rather than
+    /// guessing at it.
+    fn method_pauses(&self, flow: Flow<'_>, method: Symbol) -> bool {
+        self.pausing_methods
             .contains(&(flow.statement, self.text(method).to_string()))
     }
 
@@ -4343,6 +4562,43 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
     })
 }
 
+/// **A lambda whose body pauses, which this lowering cannot write.**
+///
+/// Rust has no stable `async` closure, so there is no shape for a lambda that
+/// gives the thread up - and a plain closure holding an `.await` is a `rustc`
+/// error about a file nobody wrote (Part III, C.1). This is that error in
+/// Nikaia's words, at the one place that has the fact: the emitter.
+///
+/// **A limit of this compiler and not of the language.** Nikaia is implicitly
+/// async ([ADR-055](../../../docs/specification/adr/adr-055.md) D1), so
+/// `examples/fortunes.nika`'s route handler - a lambda that queries a database -
+/// is a correct program. It still type-checks, and it is only a *build* that
+/// meets this. What closes it is §6 step 3 and step 4, where `std`'s own
+/// signatures say which parameters take something that may pause, and a lambda
+/// handed to one of those can be written as a closure that returns a future.
+fn pausing_in_a_lambda(callee: &str) -> anyhow::Error {
+    refused!(
+        "this lambda calls `{callee}`, which can pause - and a lambda that pauses is \
+         not something this compiler can build yet (ADR-055 §6). Call `{callee}` \
+         outside the lambda and hand it the value, or give it a `sync` body"
+    )
+}
+
+/// The types a ledger records a view-holding field for.
+///
+/// The package-wide half of [`Emitter::borrows`]. `tethered` is non-empty for
+/// exactly the structs [`borrowing_structs`] finds in the file that declares
+/// them (`Ledger::infer_checked` computes it from that set), so this carries the
+/// same fact across a file boundary rather than recomputing a different one.
+fn tethered_types(contracts: &crate::contracts::Ledger) -> std::collections::BTreeSet<String> {
+    contracts
+        .types
+        .iter()
+        .filter(|(_, contract)| !contract.tethered.is_empty())
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 /// Which structs hold a view into the parser's input.
 ///
 /// Part II, 10.6: a view is a slice of the input, so a struct holding one is
@@ -4445,6 +4701,132 @@ fn truncating(method: &str) -> Option<&'static str> {
 }
 
 /// Walk every expression in a block, including the ones inside statements.
+/// The functions of this program that can pause **and take part in a cycle**
+/// ([ADR-055](../../../docs/specification/adr/adr-055.md) D6's first sharp
+/// edge).
+///
+/// A recursive `async fn` has an infinitely sized future, and `rustc` says so:
+/// *"recursion in an async fn requires boxing"*. `examples/json.nika` has two of
+/// them - `show` and `longest` both walk a tree - so this is not a case to meet
+/// later, it is the corpus on day one.
+///
+/// **The graph is syntactic, and over-approximating is the safe direction.** A
+/// free call names its callee outright; a method call does not name its receiver's
+/// type, so an edge is drawn to *every* pausing method of that name. Boxing a
+/// call that did not need it costs one allocation and nothing else, while missing
+/// one is a program that does not compile - so where the two readings differ this
+/// takes the wider.
+///
+/// **The cycle test is reachability from a function to itself**, computed to a
+/// fixpoint. `n` is the number of functions in one program, and the obvious
+/// algorithm is the one whose correctness a reader can check.
+fn pausing_reach(
+    parsed: &Parsed,
+    contracts: &crate::contracts::Ledger,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let pausing: BTreeSet<&str> = contracts
+        .functions
+        .iter()
+        .filter(|(_, contract)| !contract.sync.is_sync())
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if pausing.is_empty() {
+        return BTreeMap::new();
+    }
+
+    // A bare method name to every pausing key that ends in it, which is the
+    // over-approximation above.
+    let mut by_last: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for key in &pausing {
+        let last = key.rsplit("::").next().unwrap_or(key);
+        by_last.entry(last).or_default().push(key);
+    }
+
+    let edges_of = |body: &Block| -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let mut note = |name: &str| {
+            let name = parsed.unaliased(name);
+            if pausing.contains(name.as_str()) {
+                out.insert(name);
+            } else if let Some(keys) = by_last.get(name.as_str()) {
+                out.extend(keys.iter().map(|k| k.to_string()));
+            }
+        };
+        visit_block(body, &mut |expr| match expr {
+            Expr::Call { func, .. } => match func.as_ref() {
+                Expr::Variable(name) => note(parsed.text(*name)),
+                Expr::Path(segments) => {
+                    let joined: Vec<&str> = segments.iter().map(|s| parsed.text(*s)).collect();
+                    note(&joined.join("::"));
+                }
+                _ => {}
+            },
+            Expr::MethodCall { method, .. } => note(parsed.text(*method)),
+            _ => {}
+        });
+        out
+    };
+
+    let mut graph: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for item in &parsed.program.items {
+        match &item.node {
+            Item::Fn {
+                name: Some(name),
+                body,
+                ..
+            } => {
+                graph.insert(parsed.text(*name).to_string(), edges_of(body));
+            }
+            Item::Impl {
+                target, methods, ..
+            } => {
+                let target = parsed.text(target.name).to_string();
+                for method in methods {
+                    if let Item::Fn { name, body, .. } = &method.node {
+                        let own = match name {
+                            Some(name) => parsed.text(*name).to_string(),
+                            None => "new".to_string(),
+                        };
+                        graph.insert(format!("{target}::{own}"), edges_of(body));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Reachability to a fixpoint, then "reaches itself".
+    let mut reaches: BTreeMap<String, BTreeSet<String>> = graph.clone();
+    loop {
+        let mut changed = false;
+        for key in graph.keys() {
+            let grown: BTreeSet<String> = reaches[key]
+                .iter()
+                .filter_map(|next| reaches.get(next))
+                .flatten()
+                .cloned()
+                .collect();
+            let entry = reaches.get_mut(key).expect("every key was inserted");
+            let before = entry.len();
+            entry.extend(grown);
+            changed |= entry.len() != before;
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Only what pauses, because only a pausing call is a future at all - and a
+    // caller that cannot pause holds no future to be infinitely sized.
+    reaches.retain(|key, _| pausing.contains(key.as_str()));
+    for seen in reaches.values_mut() {
+        seen.retain(|key| pausing.contains(key.as_str()));
+    }
+    reaches
+}
+
 fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
     for stmt in &block.stmts {
         match &stmt.node {
