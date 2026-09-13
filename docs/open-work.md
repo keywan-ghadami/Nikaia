@@ -295,6 +295,20 @@ exists so the sentences are not left standing while it is written.
 
 ---
 
+### 3.6. Part I 2.2 names three numeric types and the surface hands out more
+
+[`open-decisions.md`](open-decisions.md) §2 answers what the list is: `len` and
+its three siblings hand back an `i64`, the machine-width type leaves the writable
+surface with its two `truncating_` entries, and **`u8` is named** — `fs::read`
+already hands back a `Vec[u8]`, and `std.contracts` says outright that *"the
+compiler accepts `u32` and the rest, but the specification does not offer them"*.
+
+So 2.2 grows by one type and the compiler loses two: `check`'s `NUMERIC` list
+carries `usize` and `isize`, and neither is in the answered surface. Until the
+record exists, the page promises three types while a program can hold five.
+
+---
+
 ## 4. Where the other lists are
 
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) — the phases,

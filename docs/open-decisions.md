@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-Six entries. Two are answered and kept here until their records exist;
+Six entries. Three are answered and kept here until their records exist;
 the rest are questions that work cannot settle. Each one says what is blocked, what the
 options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
@@ -111,44 +111,83 @@ to that repair.
 
 ---
 
-## 2. Which numeric types does the language offer, and what does `len()` hand back?
+## 2. The numeric surface, and what `len()` hands back — **answered**
 
-**Blocked by it:** a specification gap that a program can already fall into, and
-the only place a machine-dependent type reaches user code.
+The heading asked which numeric types the language offers; the body only argued
+about `len`. Both halves are answered here, because answering the second alone
+leaves the first standing.
 
-What is true today, measured:
+### A length is an `i64`
 
-* Part I 2.2 offers `i32`, `i64`, `f64` — and `usize` is writable anyway:
-  `let n: usize = t.len()` is accepted.
-* `let m: i64 = t.len()` is refused, `NK1103`, with the help *"write `as i64` —
-  Nikaia converts where you say so, never quietly"*.
-* Since [ADR-043](specification/adr/adr-043.md) D4 that `as i64` is a **checked**
-  conversion, because a count is as wide as the machine is. So the commonest line
-  a beginner writes now carries a conversion that can abort.
+`len` and its three siblings hand back an `i64`. The machine-width type leaves
+the surface a program can write, and `usize::truncating_i32` and
+`usize::truncating_i64` go with it — nothing narrows out of a type no program can
+hold.
 
-Three answers:
+**The scope is four signatures**, not a neighbourhood: `Vec::len`, `String::len`,
+`str::len` and `HashMap::len` are every entry in `std.contracts` that returns one.
+On the compiler side the writable surface is one list — `check`'s `NUMERIC`, which
+carries `usize` and `isize` — and `contracts::send`'s plain-type list, which only
+answers whether such a type may cross and is unaffected.
 
-* **(a) A count is an `i64`.** `len` and its neighbours hand back `i64`, `usize`
-  leaves the language surface, and the machine-width rule stays in the compiler as
-  a backstop that no program reaches.
-* **(b) `usize` becomes a written type.** Part I 2.2 names it, explains that its
-  width is the machine's, and it gets its own `truncating_` names.
-* **(c) Leave it.** Unlisted in the specification, writable in practice.
+**Why this way round, and what the two conversions really cost.** They are not
+symmetric, and the entry treated them as if they were.
 
-**I would take (a).** A count is a number, the language offers two integer types,
-and a length should be one of them rather than a third type the specification does
-not name. It removes a machine-dependent type from every program's surface, and it
-removes a conversion from the line `for i in 0..list.len()` is written in.
+*Out of a length* — `t.len() as i64` — cannot fail. A `usize` exceeds an `i64`
+only above 9,223,372,036,854,775,807 elements; at one byte each that is eight
+exabytes of memory. Every one of those conversions is ceremony with nothing behind
+it, written by the user, in every loop and sum and comparison that meets a length.
 
-**What it costs, and this is the part worth seeing before deciding:** Rust indexes
-with a `usize`, so an `i64` index has to be converted back at every `v[i]` — and
-that conversion can fail, for a negative number. That is an abort the program did
-not write. It is the honest abort for the case (a negative index is an index out of
-bounds, which Part III A.2 already aborts on), but it means (a) buys readability at
-the front door and pays for it at the index. (b) pays in the opposite place: every
-program that touches a length carries a type the specification has to teach. (c)
-keeps a gap that a user finds before the specification mentions it, which is the
-one option I would not take.
+*Into an index* — `v[i]` where `i` is an `i64` — can fail, for a negative number,
+which `pos - 1` at `pos == 0` produces. But a negative index **is** an access out
+of bounds, and Part III A.2 already aborts on those. It is not a new failure mode;
+it is the same one, reached a step earlier. And the conversion is emitted rather
+than written: the user writes no conversion at all, in either direction.
+
+So the trade is a great deal of visible ceremony that cannot fail, against one
+invisible abort that already exists.
+
+**One requirement comes with it.** The emitted conversion at an index must report
+as an access out of bounds, not as a failed conversion. Otherwise a user gets a
+diagnostic about a conversion they never wrote, for a mistake they understand as a
+bad index.
+
+**The field agrees, with one dissenter.** Go, Java, C# and Swift all hand back a
+signed integer for a length and index with it — Swift explicitly, on the ground
+that unsigned arithmetic causes more bugs than it prevents. Rust is the outlier,
+and the conversions its `usize` demands are among the most commonly named
+papercuts in it.
+
+### The numeric surface is stated, and `u8` is named
+
+Part I 2.2 offers `i32`, `i64` and `f64`. More than three are reachable:
+`fs::read` hands back a `Vec[u8]`, `std.contracts` says in as many words that *"the
+compiler accepts `u32` and the rest, but the specification does not offer them"*,
+and `usize` was writable until the paragraph above.
+
+**`u8` is named in 2.2**, with the same conversion and arithmetic names every other
+numeric type now has. Not the rest of the unsigned family: an entry exists because
+a program asked for it ([ADR-028](specification/adr/adr-028.md) D5), and a program
+that reads a file asks for a byte. `u32`, `u64` and `isize` stay out until
+something does.
+
+**Why not signed bytes instead.** Java has no unsigned type and pays for it in
+every byte-handling program, where a masking dance undoes the sign at each step.
+Go, Rust, C# and Swift all carry a byte type. The choice here is not whether a
+program meets one — reading a file already hands it one — but whether the
+specification admits it.
+
+**What it costs:** four numeric types where the front page promised three, and a
+beginner meets an unsigned one the first time they read a file. What it buys is
+that the list of types is the list of types.
+
+### Checked before deciding
+
+* `x as i64` where `x` is already an `i64` lowers without complaint, so the
+  four redundant conversions in `examples/1brc.nika` do not have to change with
+  this — they become unnecessary rather than wrong.
+* The machine-width type reaches user code through the one `NUMERIC` list named
+  above and nowhere else in `check`.
 
 ---
 
