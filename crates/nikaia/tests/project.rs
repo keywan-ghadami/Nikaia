@@ -903,7 +903,7 @@ fn the_rules_that_come_with_a_path_dependency() {
 }
 
 /// **A field a package does not publish cannot be reached or written from
-/// outside it** (`docs/open-work.md` §2.7b, Part I 9.2).
+/// outside it** (Part I 9.2, [ADR-047](../../../docs/specification/adr/adr-047.md) D2).
 ///
 /// The hole this closes had the shortest fuse in the list: the ledger recorded no
 /// per-field `pub`, so a type whose fields were private could be **built by

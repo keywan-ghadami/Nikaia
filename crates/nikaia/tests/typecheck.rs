@@ -1095,6 +1095,140 @@ fn a_literal_that_fits_is_not_mentioned() {
     }
 }
 
+// --- a sum of constants that cannot fit (ADR-043 §3) ------------------------
+
+/// **The gap [ADR-043](../../../docs/specification/adr/adr-043.md) §3 named, closing.**
+/// `let b = a + 1` where `a` is a constant `i32` at its ceiling was refused by
+/// `rustc` with *"attempt to compute `i32::MAX + 1_i32`, which would overflow"* -
+/// about the generated file, which is the Part III C.1 class.
+///
+/// What makes the bare `let` answerable is that an operand's **declaration**
+/// pins the type: a literal alone still has none, which is the case below that
+/// must stay accepted.
+#[test]
+fn a_sum_of_constants_that_cannot_fit_is_refused_here() {
+    for (source, comes_to) in [
+        // The record's own example: the type comes from `a`, not from the `let`.
+        (
+            "fn main() { let a: i32 = 2147483647\nlet b = a + 1 }",
+            "2147483648",
+        ),
+        // A product, and through two bindings.
+        (
+            "fn main() { let a: i32 = 2000000000\nlet b = a\nlet c = b * 2 }",
+            "4000000000",
+        ),
+        // Negation past the floor, which has no matching positive (ADR-043 D3).
+        (
+            "fn main() { let a: i32 = 2147483647\nlet b = -a - 2 }",
+            "-2147483649",
+        ),
+        // An annotation rather than an operand pins it, and the sum is folded
+        // all the same.
+        ("fn main() { let x: i32 = 2147483000 + 1000 }", "2147484000"),
+        // And an `i64` has a ceiling too: the fold is in an `i128` so that the
+        // number it reports is the one the program wrote rather than a wrapped
+        // one.
+        (
+            "fn main() { let a: i64 = 9223372036854775807\nlet b = a + 1 }",
+            "9223372036854775808",
+        ),
+    ] {
+        let found = findings(source);
+        let it = found
+            .iter()
+            .find(|f| f.code == "NK1116")
+            .unwrap_or_else(|| panic!("no NK1116 for {source}: {found:#?}"));
+        assert!(
+            it.message.contains(comes_to),
+            "the message says what it comes to, because that is the part the \
+             reader cannot see: {it:#?}"
+        );
+    }
+}
+
+/// **And the polarity holds** (Part III, C.4): everything this checker cannot
+/// evaluate is accepted.
+///
+/// All but one of these `rustc` accepts as well, so this compiler and the one
+/// below agree. **The exception is the unpinned literal**, and it is the
+/// `open-work.md` §1.5 case rather than a new one: `rustc` refuses
+/// `3000000000 + 1` because it *has* inference and defaults the literal to an
+/// `i32`, and this checker has none - so refusing here would also refuse the
+/// program that passes the sum to an `i64`, which is the one thing it may never
+/// do. The residue stays one entry rather than becoming two.
+#[test]
+fn a_sum_this_checker_cannot_evaluate_is_not_refused() {
+    for source in [
+        // The pinned type is wide enough.
+        "fn main() { let a: i64 = 2147483647\nlet b = a + 1 }",
+        // Nothing pins a type at all: `3000000000 + 1` is an `i64` wherever a
+        // use asks for one (Part I 2.4) - the §1.5 residue.
+        "fn main() { let b = 3000000000 + 1 }",
+        // A `mut` local may have been given another value before the name is
+        // read again, and this checker does not follow assignments.
+        "fn main() { let mut c: i32 = 2147483647\nc = 1\nlet d = c + 1 }",
+        // A cast is not folded, and this is the way a program says it meant the
+        // wider type.
+        "fn main() { let e: i32 = 2147483647\nlet g = e as i64 + 1 }",
+        // A parameter is not a constant.
+        "fn add(n: i32) -> i32 { return n + 1 }",
+        // Neither is a `for` binding.
+        "fn main() { for i in 0..3 { let h = i + 1 } }",
+    ] {
+        let found = findings(source);
+        assert!(
+            !found.iter().any(|f| f.code == "NK1116"),
+            "{source} must not be refused: {found:#?}"
+        );
+    }
+}
+
+// --- a division by a constant zero (`NK1118`) -------------------------------
+
+/// ADR-043 D5.5. The same mechanism found the same class one operator over:
+/// `rustc`'s `unconditional_panic`, saying *"attempt to divide `1_i32` by
+/// zero"* about the generated file.
+#[test]
+fn a_division_by_a_constant_zero_is_refused_here() {
+    for (source, says) in [
+        ("fn main() { let q = 10 / 0 }", "divides by zero"),
+        (
+            "fn main() { let r = 10 % 0 }",
+            "takes the remainder by zero",
+        ),
+        // Through a binding, which is the shape a program actually reaches it by.
+        (
+            "fn main() { let n: i32 = 0\nlet q = 1 / n }",
+            "divides by zero",
+        ),
+    ] {
+        let found = findings(source);
+        let it = found
+            .iter()
+            .find(|f| f.code == "NK1118")
+            .unwrap_or_else(|| panic!("no NK1118 for {source}: {found:#?}"));
+        assert!(it.message.contains(says), "{it:#?}");
+    }
+}
+
+/// A divisor this checker cannot prove is zero says nothing: that division
+/// aborts at run time, naming the Nikaia line (ADR-044).
+#[test]
+fn a_divisor_that_is_not_a_proven_zero_is_not_mentioned() {
+    for source in [
+        "fn main() { let n: i32 = 2\nlet q = 10 / n }",
+        "fn half(n: i32) -> i32 { return n / 2 }",
+        "fn by(n: i32, d: i32) -> i32 { return n / d }",
+    ] {
+        let found = findings(source);
+        assert!(
+            !found.iter().any(|f| f.code == "NK1118"),
+            "{source} must not be refused: {found:#?}"
+        );
+    }
+}
+
 // --- a word this language does not know (`NK1117`) ---------------------------
 
 /// **A statement that is one undeclared name is refused here**, not by `rustc`.

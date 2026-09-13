@@ -29,9 +29,9 @@ it to know what a program means.
 What was here and is gone: a module that could not hand out types, a bare word
 that became a different program, a refusal that carried a backtrace, a Rust
 warning about the generated file, a `Shared` slot decided twice, the explain modes
-missing from a project build, and a cache that filled the disk. Each is in the
-CHANGELOG with what it was and what fixed it; a fixed entry kept here only makes
-the list longer to read.
+missing from a project build, a cache that filled the disk, and a sum of constants
+that could not fit. Each is in the CHANGELOG with what it was and what fixed it; a
+fixed entry kept here only makes the list longer to read.
 
 ### 1.1. A `dsl` block missing its `} eod` is reported as an undeclared name
 
@@ -145,6 +145,14 @@ literal — or a decision that an un-annotated literal is an `i32` full stop, wh
 would make the second program above a refusal and is not what the page says
 today.
 
+**The constant fold does not reach it, and that is worth stating** now that the
+fold exists ([ADR-043](specification/adr/adr-043.md) §4, which closed the *sum*
+of constants this list used to carry). The fold answers *what a constant
+expression comes to*; this entry is about *what type it has*, and those are
+different questions. So `let b = 3000000000 + 1` is the same one entry as `let big
+= 3000000000`: the fold evaluates both and neither has a type to be measured
+against, because a literal pins nothing. Only inference closes it.
+
 *Fixed on the way past:* the note `rustc` attaches to it — *"consider using the
 type `u32` instead"* — is dropped. It was kept once, checked, because it
 compiles; [ADR-048](specification/adr/adr-048.md) D2 is what changed, since the
@@ -241,25 +249,18 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.4. A sum of constants that cannot fit is still `rustc`'s refusal
-
-[ADR-043](specification/adr/adr-043.md) §3 and §4. `NK1116` refuses an out-of-range
-**literal** where a type stands beside it; `let b = a + 1` where both are constants
-is still refused by rustc, with *"this arithmetic operation will overflow"* about
-the generated file. The same Part III C.1 class as §1.2 and §1.4 above.
-
-### 2.5. Part I 2.3's nullable types are a parse error
+### 2.4. Part I 2.3's nullable types are a parse error
 
 A trailing `?` on a type does not parse and `null` is read as an ordinary name, so
 neither line of that section's own example is accepted. `??` (Part I 3.5) is built.
 
-### 2.6. Part II 12.8's supervision syntax
+### 2.5. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. A package's own package dependencies are not resolved
+### 2.6. A package's own package dependencies are not resolved
 
 [ADR-047](specification/adr/adr-047.md) D2 is built one level deep: a program
 depends on a package by path, and a package that declares Nikaia dependencies **of

@@ -254,12 +254,25 @@ literals that cannot fit, so neither waits for the program to run
 > The `wrapping_` and `saturating_` names are built for `i32` and `i64` — the two
 > integer types named above — and `crates/nikaia/tests/overflow.rs` runs them
 > beside the same arithmetic with `*`, which aborts. `saturating_shl` and
-> `saturating_shr` do not exist, here or in the language below. The out-of-range literal is
+> `saturating_shr` do not exist, here or in the language below. The out-of-range constant is
 > refused here now, as `NK1116`, wherever a type stands beside it: an annotated
 > `let`, a `return` against a declared result, or an argument whose parameter says
 > what it takes. It prevented no abort — one never happened — and what it takes
 > back is the message, which was the backend's, in Rust's words, about a file
 > nobody wrote.
+>
+> **A sum reaches further than a literal.** `let b = a + 1`, where `a` is a
+> constant an annotation declared an `i32`, is folded and refused with no
+> annotation on the `let` line at all: the operand's declaration is what gives the
+> arithmetic a type. `+ - * / %` and a negation fold, through any number of
+> immutable `let`s, in a wider number than either type so that the message can
+> name what the expression comes to. Everything else stops the fold and is
+> accepted — a `mut` local, a parameter, a `for` binding, a cast — and an
+> expression that does not fold is never refused.
+>
+> And a division whose divisor is a constant zero is `NK1118`
+> ([ADR-043](adr/adr-043.md) D5.5). Every other division by zero stays where
+> Part III A.2 puts it: unrecoverable, at run time, naming this line.
 >
 > The narrowing check is built too, and `crates/nikaia/tests/overflow.rs`
 > compiles the conversions with `-O` and **no** check flag — a conversion carries
@@ -269,8 +282,11 @@ literals that cannot fit, so neither waits for the program to run
 > `big.truncating_i32()` is the same `as` it always was. The `truncating_` names
 > exist for the three sources above and for `i32` and `i64` as destinations.
 >
-> **Not built:** a sum of constants that cannot fit, which is still refused the
-> other way (Part III, C.1).
+> **Not built:** a literal that nothing at all constrains — `let big =
+> 3000000000` on its own, and `let b = 3000000000 + 1`. That is still refused the
+> other way (Part III, C.1), and it stays that way on purpose: the same line is a
+> correct program where a later use asks for an `i64` (2.4), and this compiler has
+> no inference to tell the two apart.
 
 ### 2.3. Nullable Types (Null Safety)
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
