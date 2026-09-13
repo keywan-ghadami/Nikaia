@@ -25,6 +25,7 @@ pub mod hash;
 pub mod html;
 pub mod io;
 pub mod list;
+pub mod num;
 pub mod rt;
 pub mod task;
 

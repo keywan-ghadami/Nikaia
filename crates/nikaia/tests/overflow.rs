@@ -20,6 +20,13 @@
 //! Without the third the setting could be correct and unapplied; without the
 //! second the third would not say why it passed. The first is what holds if
 //! somebody ever reaches for a checked helper per operation, which D6 refuses.
+//!
+//! **And the conversions, which are a second mechanism** (D4). `as` truncates by
+//! definition, so there is no check in the project file to switch on and the
+//! answer is in the emitted code instead. The tests for those compile with `-O`
+//! and **no** check flag at all - the shipping build, as far as this mechanism is
+//! concerned - which is the whole claim: a conversion that does not fit aborts
+//! there too.
 
 mod common;
 
@@ -307,6 +314,183 @@ fn the_same_arithmetic_with_an_operator_aborts() {
     assert!(
         said.contains("attempt to multiply with overflow"),
         "`*` must abort where `wrapping_mul` wraps:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `f64` that is no `i32`, `-O` and no check flag - and it aborts (D4).
+///
+/// **This is the conversion half of `a_built_program_that_overflows_aborts`, and
+/// it needs no Cargo.** The arithmetic check is a setting, so nothing below the
+/// full build proves it is applied; a conversion is emitted code, so the shipping
+/// build is reproduced here by compiling the way a release build does - `-O`,
+/// with `overflow-checks` left alone - and the abort has to come anyway.
+const DOES_NOT_FIT: &str = "\
+fn shrink(big: i64) -> i32 {
+    return big as i32
+}
+
+fn main() {
+    println(f\"{shrink(5000000000)}\")
+}
+";
+
+/// Out of a floating-point number, where `try_from` does not exist and `std`
+/// carries the test instead (D4, `nikaia_std::num`).
+const NO_INTEGER: &str = "\
+fn floored(x: f64) -> i32 {
+    return x as i32
+}
+
+fn main() {
+    println(f\"{floored(1e20)}\")
+}
+";
+
+/// Compile in the shipping build and run. Hands back what the program said on
+/// standard error.
+fn run_optimized(dir: &Path, source: &str) -> (bool, String) {
+    let rust = lower(dir, source);
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-O",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let ran = Command::new(&binary).output().expect("run the program");
+    (
+        ran.status.success(),
+        String::from_utf8_lossy(&ran.stderr).to_string(),
+    )
+}
+
+/// **A narrowing conversion aborts, in the shipping build** (ADR-043 D4).
+#[test]
+fn a_number_that_does_not_fit_the_smaller_type_aborts() {
+    let dir = common::scratch_dir("narrowing-integer");
+    let (clean, said) = run_optimized(&dir, DOES_NOT_FIT);
+    assert!(!clean, "`5000000000 as i32` must not come through");
+    assert!(
+        said.contains("the value does not fit in an `i32`"),
+        "it failed, but not of the conversion:\n{said}"
+    );
+    // The abort must name the generated Nikaia line and not a file in `std`:
+    // ADR-044's table has nothing to translate otherwise. `#[track_caller]` is
+    // what makes this true for the float half below.
+    assert!(
+        !said.contains("num.rs"),
+        "the abort must not point into `std`:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **And out of a floating-point number**, which `as` answered three different
+/// ways in silence: it stopped at the limit in both directions and turned "not a
+/// number" into zero. `1e20 as i32` was `2147483647`.
+#[test]
+fn a_float_that_is_no_integer_aborts() {
+    let dir = common::scratch_dir("narrowing-float");
+    let (clean, said) = run_optimized(&dir, NO_INTEGER);
+    assert!(!clean, "`1e20 as i32` must not come through as 2147483647");
+    assert!(
+        said.contains("the value does not fit in an `i32`"),
+        "it failed, but not of the conversion:\n{said}"
+    );
+    assert!(
+        !said.contains("num.rs"),
+        "`#[track_caller]` must put the Nikaia line here, not `std`:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **Truncation by name, and the two conversions that stay silent** (D7).
+///
+/// Three truncating sources - the larger integer, a floating-point number, and
+/// the machine-width type `len` hands back - beside the two conversions D7
+/// deliberately leaves alone: widening, which always fits, and an integer to an
+/// `f64`, which loses digits at large values and is a written limit rather than a
+/// check. None of the five may abort.
+///
+/// Run rather than read, because what is under test is five numbers. And read as
+/// well, in one assertion: the name lowers to `as` and to nothing else, which is
+/// what makes it the operation it claims to be rather than a helper with a
+/// friendly name.
+#[test]
+fn truncating_says_by_name_what_a_conversion_no_longer_does_quietly() {
+    let dir = common::scratch_dir("narrowing-named");
+    let rust = lower(
+        &dir,
+        "fn shrink(big: i64) -> i32 {\n    \
+             return big.truncating_i32()\n\
+         }\n\
+         \n\
+         fn floored(x: f64) -> i32 {\n    \
+             return x.truncating_i32()\n\
+         }\n\
+         \n\
+         fn counted(text: &str) -> i32 {\n    \
+             return text.len().truncating_i32()\n\
+         }\n\
+         \n\
+         fn widened(small: i32) -> i64 {\n    \
+             return small as i64\n\
+         }\n\
+         \n\
+         fn imprecise(n: i64) -> f64 {\n    \
+             return n as f64\n\
+         }\n\
+         \n\
+         fn main() {\n    \
+             println(f\"{shrink(5000000000)} {floored(1e20)} {counted(\\\"hello\\\")} {widened(7)} {imprecise(9007199254740993)}\")\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("(big as i32)") && !rust.contains("truncating"),
+        "the name is Rust's `as` and nothing else (ADR-043 D7):\n{rust}"
+    );
+    assert!(
+        !rust.contains("try_from") && !rust.contains("nikaia_std::num"),
+        "nothing here is checked - that is what the name asked for:\n{rust}"
+    );
+
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-O",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let ran = Command::new(&binary).output().expect("run the program");
+    assert!(
+        ran.status.success(),
+        "none of these may abort, and this one did:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "705032704 2147483647 5 7 9007199254740992",
+        "truncated, clamped by the same truncation, counted, widened, and the \
+         one digit an `f64` cannot keep"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

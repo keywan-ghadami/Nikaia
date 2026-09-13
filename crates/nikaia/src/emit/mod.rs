@@ -616,6 +616,15 @@ struct Emitter<'p> {
     /// is, so only the type checker can say what it calls (ADR-028). Nothing
     /// here resolves a receiver.
     fallible_methods: std::collections::BTreeSet<(usize, String)>,
+    /// The conversions that **narrow**, by the byte their statement starts at
+    /// and the type converted to
+    /// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4).
+    ///
+    /// Handed over for the reason the two above are: `as i32` narrows or widens
+    /// depending on what it is *given*, and nothing here knows that (ADR-028).
+    /// The emitter writes the checked conversion and never decides which one it
+    /// is.
+    narrowing_casts: std::collections::BTreeMap<(usize, String), crate::check::Narrowing>,
     /// Which reference count each `Shared` value got, by the slot key
     /// `function::value` ([ADR-037](../../../docs/specification/adr/adr-037.md)
     /// D7).
@@ -987,6 +996,7 @@ impl<'p> Emitter<'p> {
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             fallible_loops: propagation.loops,
             fallible_methods: propagation.methods,
+            narrowing_casts: propagation.narrowing,
             shared,
             shared_sites: propagation.shared,
             own_contracts,
@@ -2937,6 +2947,23 @@ impl<'p> Emitter<'p> {
                 args,
                 config,
             } => {
+                // **`x.truncating_i32()` is Rust's `as`** (ADR-043 D7): the
+                // operation the name says. It is a name and not the operator
+                // because keeping the low digits is said rather than assumed,
+                // exactly as wrapping is (D2) - and since D4 made `as i32`
+                // checked, this is the only way left to ask for truncation.
+                //
+                // In parentheses, because `as` sits between the unary operators
+                // and the binary ones in Rust's precedence while a method call
+                // sits above all of them: `-x.truncating_i32()` means
+                // `-(x as i32)` and `x.truncating_i32().abs()` needs the
+                // conversion to happen first.
+                if let Some(into) = truncating(self.text(*method)) {
+                    out.push("(");
+                    self.expr(out, receiver, depth, flow)?;
+                    out.push(&format!(" as {into})"));
+                    return Ok(());
+                }
                 self.postfix_base(out, receiver, depth, flow)?;
                 out.push(&format!(".{}", self.text(*method)));
                 // Nikaia's `collect` builds a List; Rust's needs to be told
@@ -2999,8 +3026,37 @@ impl<'p> Emitter<'p> {
                 out.push("]");
             }
             Expr::Cast { expr, ty } => {
-                self.nested(out, expr, u8::MAX, depth, flow)?;
-                out.push(&format!(" as {}", self.ty(ty, Lifetimes::ELIDED)));
+                let into = self.ty(ty, Lifetimes::ELIDED);
+                match self.narrows(flow.statement, &into) {
+                    // **A narrowing conversion is checked, and an unchecked one
+                    // aborts** (ADR-043 D4). Rust's `as` truncates by definition
+                    // and no setting changes that, so this is the one place in
+                    // the arithmetic decision where the emitted code differs from
+                    // what was written - and it differs into what a Rust
+                    // programmer would have written here anyway.
+                    Some(crate::check::Narrowing::Integer) => {
+                        // `unwrap_or_else` and not `expect`: `expect` appends
+                        // the error's `Debug`, which is `TryFromIntError(())` -
+                        // Rust internals in a sentence a Nikaia user reads, and
+                        // the same leak the diagnostics filter exists to stop.
+                        out.push(&format!("{into}::try_from("));
+                        self.expr(out, expr, depth, flow)?;
+                        out.push(&format!(
+                            ").unwrap_or_else(|_| panic!(\"the value does not fit in an `{into}`\"))"
+                        ));
+                    }
+                    // `i32::try_from(f64)` does not exist, so the range and
+                    // "not a number" are tested by a `std` helper instead.
+                    Some(crate::check::Narrowing::FromFloat) => {
+                        out.push(&format!("nikaia_std::num::to_{into}("));
+                        self.expr(out, expr, depth, flow)?;
+                        out.push(")");
+                    }
+                    None => {
+                        self.nested(out, expr, u8::MAX, depth, flow)?;
+                        out.push(&format!(" as {into}"));
+                    }
+                }
             }
             Expr::StructLit { name, fields } => {
                 let owner = self.text(*name);
@@ -3323,6 +3379,19 @@ impl<'p> Emitter<'p> {
             .or_else(|| self.own_contracts.functions.get(&format!("{name}::new")))
             .or_else(|| self.library.lookup(&name).map(|(_, c)| c))
             .is_some_and(|contract| !contract.throws.is_empty())
+    }
+
+    /// Whether the checker said this conversion narrows, and which kind it is.
+    ///
+    /// A lookup, not an analysis: `as i32` narrows or widens by what it is given,
+    /// and nothing here knows that (ADR-028). `None` where the checker had no
+    /// answer - a type it does not recognise, or two conversions to the same type
+    /// in one statement where one of them widens - which leaves the conversion
+    /// exactly as it was rather than guessing at it.
+    fn narrows(&self, statement: usize, into: &str) -> Option<crate::check::Narrowing> {
+        self.narrowing_casts
+            .get(&(statement, into.to_string()))
+            .copied()
     }
 
     /// Whether the checker said this method call can fail (Kap 7.1).
@@ -3860,6 +3929,25 @@ fn rust_string(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// The type a `truncating_` method converts to, if the name is one
+/// ([ADR-043](../../../docs/specification/adr/adr-043.md) D7).
+///
+/// The target is **in the name** rather than inferred, for the reason the
+/// `wrapping_` names have their own entry per type: there is one method per
+/// destination, and the ledger has to be able to write its signature down.
+///
+/// The list is closed and matches the ledger's entries. A name this does not
+/// recognise is an ordinary method call, so a program that writes
+/// `truncating_u8` is refused by the type checker for the method not existing
+/// rather than quietly emitting a conversion nobody described.
+fn truncating(method: &str) -> Option<&'static str> {
+    match method.strip_prefix("truncating_")? {
+        "i32" => Some("i32"),
+        "i64" => Some("i64"),
+        _ => None,
+    }
 }
 
 /// Kap 5.2: the implicit arguments are `a`, `b`, `c`, and a lambda takes as

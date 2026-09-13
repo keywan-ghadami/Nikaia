@@ -446,6 +446,53 @@ sync = true
 touches = []
 signature = "(i64) -> i64"
 
+# **Truncation has a name**, and the name carries the destination
+# ([ADR-043](../../docs/specification/adr/adr-043.md) D7). Since D4 a conversion
+# that may not fit aborts, so this is the only way left to say "keep the low
+# digits" - said rather than assumed, exactly as `wrapping_` is said.
+#
+# One entry per destination, because that is what a signature can be written for:
+# `truncating_i32` hands back an `i32` whatever it was given, and a single name
+# with a type that follows the call site is not something the ledger can say.
+#
+# The sources are the three a Nikaia program can have a narrowing conversion out
+# of: the larger integer, a floating-point number, and the machine-width type
+# `len` hands back. There is no `truncating_usize` or `truncating_f64` - nothing
+# narrows *to* either in a program written in the types Part I 2.2 offers.
+#
+# `touches = []` and `sync = true` for the reason the arithmetic entries give: a
+# pure computation that reaches no resource.
+
+[fn."i64::truncating_i32"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> i32"
+
+[fn."f64::truncating_i32"]
+pub = true
+sync = true
+touches = []
+signature = "(f64) -> i32"
+
+[fn."f64::truncating_i64"]
+pub = true
+sync = true
+touches = []
+signature = "(f64) -> i64"
+
+[fn."usize::truncating_i32"]
+pub = true
+sync = true
+touches = []
+signature = "(usize) -> i32"
+
+[fn."usize::truncating_i64"]
+pub = true
+sync = true
+touches = []
+signature = "(usize) -> i64"
+
 [fn."HashMap::entry"]
 pub = true
 sync = true

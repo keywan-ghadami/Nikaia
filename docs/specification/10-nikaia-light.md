@@ -185,6 +185,32 @@ Otherwise the question would be answered at the front door and let in at the
 back: whoever wants the digits thrown away says so, the same way wrapping is said
 ([ADR-043](adr/adr-043.md) D4).
 
+**And where a program means to keep only the low digits, it says so by name**, as
+it does for wrapping. The name carries the type it converts to, because that is
+what it hands back:
+
+```nika
+let small = big.truncating_i32()                  // keep the low digits, on purpose
+let floored = measurement.truncating_i32()        // a float, toward zero, clamped
+let n = text.len().truncating_i32()               // a count that may not fit
+```
+
+`truncating_i32` and `truncating_i64`, out of the larger integer, out of an `f64`,
+and out of the type a count has ([ADR-043](adr/adr-043.md) D7).
+
+Three conversions are easy to miss here too:
+
+* **An `f64` to an integer** was silent three ways: `1e20 as i32` gave the largest
+  `i32`, `-1e20 as i32` the smallest, and a value that is not a number gave `0`.
+  All three abort now.
+* **A count** — what `len` hands back — is as wide as the machine is, so what fits
+  on a large machine does not on a small one. It is checked for that reason: the
+  alternative is a program whose behaviour depends on where it was built.
+* **An integer to an `f64`** is the one that is **not** checked. Digits go at large
+  values without anything overflowing — `9007199254740993` through an `f64` comes
+  back `9007199254740992` — and there is no sensible place to stop, so this is a
+  limit written down here rather than an abort.
+
 **A literal that does not fit its type is a compile error, not an abort.**
 `let x: i32 = 3000000000` is decidable where it is written, and so is a sum of
 literals that cannot fit, so neither waits for the program to run
@@ -205,8 +231,15 @@ literals that cannot fit, so neither waits for the program to run
 > back is the message, which was the backend's, in Rust's words, about a file
 > nobody wrote.
 >
-> **Not built:** the narrowing check, so `5000000000 as i32` still prints
-> `705032704`; and a sum of constants that cannot fit, which is still refused the
+> The narrowing check is built too, and `crates/nikaia/tests/overflow.rs`
+> compiles the conversions with `-O` and **no** check flag — a conversion carries
+> its own answer rather than taking one from the build, because `as` in the
+> language below truncates by definition and has no setting to turn on. So
+> `5000000000 as i32` aborts where it used to print `705032704`, and
+> `big.truncating_i32()` is the same `as` it always was. The `truncating_` names
+> exist for the three sources above and for `i32` and `i64` as destinations.
+>
+> **Not built:** a sum of constants that cannot fit, which is still refused the
 > other way (Part III, C.1).
 
 ### 2.3. Nullable Types (Null Safety)

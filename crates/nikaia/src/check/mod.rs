@@ -130,6 +130,21 @@ pub struct Checked {
     /// fail-quietly this module's other answers keep: the set never claims a
     /// call fails that does not.
     pub fallible_methods: BTreeSet<(usize, String)>,
+    /// The **narrowing conversions**, as the byte the statement they stand in
+    /// starts at and the type converted to (ADR-043 D4).
+    ///
+    /// The fourth answer this module gives the emitter, and for the reason the
+    /// other three have: `as i32` narrows or widens depending on what it is
+    /// *given*, and the emitter has no types (ADR-028). The emitter writes the
+    /// checked conversion.
+    ///
+    /// Narrow in the same way `fallible_methods` is narrow, and by the same
+    /// limit: an `Expr` carries no span, so a pair is recorded only where
+    /// **every** conversion to that type in that statement narrows. A
+    /// `big as i32` beside a `small as i32` is left out entirely rather than
+    /// resolved by position - a checked conversion on a widening one would be a
+    /// `rustc` error about a file nobody wrote.
+    pub narrowing_casts: BTreeMap<(usize, String), Narrowing>,
     /// The places where a declared `Shared[T]` makes the **first handle** out
     /// of a plain value (Part I 6.2), by the byte the statement starts at and
     /// the name the sharing is written against.
@@ -201,6 +216,7 @@ pub fn check_program(
         modules: modules.clone(),
         fallible_methods: BTreeSet::new(),
         opaque_methods: BTreeSet::new(),
+        widening_casts: BTreeSet::new(),
         checked: Checked::default(),
     };
     checker.collect_types();
@@ -223,7 +239,29 @@ pub fn check_program(
         .difference(&checker.opaque_methods)
         .cloned()
         .collect();
+    // The same subtraction, for the same reason: a checked conversion written on
+    // a widening one does not compile.
+    checker
+        .checked
+        .narrowing_casts
+        .retain(|at, _| !checker.widening_casts.contains(at));
     checker.checked
+}
+
+/// Which kind of checked conversion a narrowing one needs
+/// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4).
+///
+/// Two kinds because Rust gives one of them and not the other, which is measured
+/// in that record: `i32::try_from` exists for an integer, and
+/// `i32::try_from(f64)` does not - so a conversion out of a floating-point number
+/// needs its own test for the range and for "not a number".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Narrowing {
+    /// An integer that may not fit the smaller one: `i64` to `i32`.
+    Integer,
+    /// A floating-point number to an integer, silent three ways in Rust - it
+    /// stops at the limit in both directions and turns "not a number" into zero.
+    FromFloat,
 }
 
 /// Everything the emitter needs that only a type checker can answer: the loops
@@ -246,6 +284,8 @@ pub struct Propagation {
     /// emitter - and it comes out of the same pass, so carrying it here costs
     /// nothing and a second entry point would cost a whole type check.
     pub shared: BTreeSet<(usize, String)>,
+    /// [`Checked::narrowing_casts`].
+    pub narrowing: BTreeMap<(usize, String), Narrowing>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -273,6 +313,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         loops: checked.fallible_loops,
         methods: checked.fallible_methods,
         shared: checked.shared_sites,
+        narrowing: checked.narrowing_casts,
     }
 }
 
@@ -318,6 +359,9 @@ struct Checker<'a> {
     /// a name that is both in one statement is in neither.
     fallible_methods: BTreeSet<(usize, String)>,
     opaque_methods: BTreeSet<(usize, String)>,
+    /// The conversions that do **not** narrow, so a statement holding one of
+    /// those beside a narrowing one to the same type is left alone entirely.
+    widening_casts: BTreeSet<(usize, String)>,
     checked: Checked,
 }
 
@@ -520,6 +564,54 @@ impl<'a> Checker<'a> {
         self.expected = outer;
         self.throwing = outer_throwing;
         self.current = outer_current;
+    }
+
+    /// Whether a conversion narrows, recorded for the emitter (ADR-043 D4).
+    ///
+    /// **Only among the numeric types this compiler knows the range of**, for the
+    /// reason `literal_fits` gives: a claim about a type neither the
+    /// specification nor the ledger describes would be a claim about a surface
+    /// that is not there. Anything this does not recognise is recorded as
+    /// widening, which leaves the conversion exactly as it is today.
+    ///
+    /// The list is the other way round - which conversions **always** fit - and
+    /// that is the fail-closed direction (ADR-010 D1): a pair nobody thought
+    /// about is checked at run time rather than truncated in silence. Two
+    /// machine-width types are in it because `len` hands one back (D7's second
+    /// neighbour): what fits on a large machine does not on a small one, so
+    /// nothing about them is claimed to fit and they are checked at both ends.
+    ///
+    /// An integer to `f64` is the one entry that loses something and is still
+    /// called fitting (D7): digits go at large values without anything
+    /// overflowing, there is no sensible point to stop at, and every language
+    /// does it this way. That is a written limit and not a check.
+    fn record_cast(&mut self, from: &Ty, into: &Ty, span: &Span) {
+        let (Ty::Named { name: from, .. }, Ty::Named { name: into, .. }) = (from, into) else {
+            return;
+        };
+        let (from, into_name) = (from.as_str(), into.as_str());
+        const NUMERIC: [&str; 5] = ["i32", "i64", "f64", "usize", "isize"];
+        let always_fits =
+            from == into_name || into_name == "f64" || (from, into_name) == ("i32", "i64");
+        let checked = NUMERIC.contains(&from) && NUMERIC.contains(&into_name) && !always_fits;
+
+        let at = (span.start, into.clone());
+        match (from, checked) {
+            (_, false) => {
+                self.widening_casts.insert(at);
+            }
+            // Out of a floating-point number: silent three ways - it stops at the
+            // limit in both directions and turns "not a number" into zero - and
+            // `try_from` does not exist for it, so `std` carries the test.
+            ("f64", true) => {
+                self.checked
+                    .narrowing_casts
+                    .insert(at, Narrowing::FromFloat);
+            }
+            (_, true) => {
+                self.checked.narrowing_casts.insert(at, Narrowing::Integer);
+            }
+        }
     }
 
     /// Part I 2.2: a literal that does not fit the type it is given is a compile
@@ -988,8 +1080,10 @@ impl<'a> Checker<'a> {
             }
 
             Expr::Cast { expr, ty } => {
-                self.expr(expr, span);
-                Ty::from_ast(self.parsed, ty)
+                let from = self.expr(expr, span);
+                let into = Ty::from_ast(self.parsed, ty);
+                self.record_cast(&from, &into, span);
+                into
             }
 
             Expr::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| self.expr(p, span)).collect()),
