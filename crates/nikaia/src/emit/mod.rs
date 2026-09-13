@@ -773,6 +773,10 @@ struct Emitter<'p> {
     /// telling `let db: Shared[C] = connect(…)` from `let b: Shared[C] = db`
     /// means knowing what the value on the right is, and nothing here has types.
     shared_sites: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 2.3: the statements where a plain value stands in a nullable slot
+    /// and the `Some(…)` is this emitter's to write
+    /// (`check::Checked::nullable_sites`).
+    nullable_sites: std::collections::BTreeSet<usize>,
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
@@ -1131,6 +1135,7 @@ impl<'p> Emitter<'p> {
             narrowing_casts: propagation.narrowing,
             shared,
             shared_sites: propagation.shared,
+            nullable_sites: propagation.nullable,
             own_contracts,
             library,
             ordering,
@@ -2018,6 +2023,7 @@ impl<'p> Emitter<'p> {
                                 generics: Vec::new(),
                                 is_view: false,
                                 is_tuple: false,
+                                is_nullable: false,
                             },
                             Lifetimes::NAMED,
                         );
@@ -2310,6 +2316,19 @@ impl<'p> Emitter<'p> {
                 .map(|g| self.ty_counted(g, lifetimes, count))
                 .collect();
             return format!("({})", parts.join(", "));
+        }
+
+        // Part I 2.3: `T?` is an `Option<T>`, which is the mapping Part III 15.2
+        // writes the other way round. The `?` is peeled and the rest of this
+        // function renders the type it is nullable *of* - so `&str?` is an
+        // `Option<&'a str>` and the view still picks up its lifetime, which it
+        // would not if the wrapper were applied by name.
+        if ty.is_nullable {
+            let inner = Type {
+                is_nullable: false,
+                ..ty.clone()
+            };
+            return format!("Option<{}>", self.ty_counted(&inner, lifetimes, count));
         }
 
         // A view is a borrow of the parser's input, and that is where the
@@ -2926,23 +2945,41 @@ impl<'p> Emitter<'p> {
                     .shared_sites
                     .contains(&(span.start, bound.to_string()))
                     .then(|| crate::contracts::sharing::rust_name(count));
+                // Part I 2.3: a plain value standing in a nullable slot. The
+                // checker says where, because whether the value beside the `=`
+                // is *already* nullable is a question about types and this
+                // emitter has none (ADR-028).
+                let wrap = self.nullable_sites.contains(&span.start);
                 out.push(&format!("let {mutable}{bound}{annotation} = "));
                 if let Some(path) = handle {
                     out.push(&format!("{path}::new("));
                 }
+                if wrap {
+                    out.push("Some(");
+                }
                 self.expr(out, value, depth, flow)?;
+                if wrap {
+                    out.push(")");
+                }
                 if handle.is_some() {
                     out.push(")");
                 }
                 out.push(";");
             }
             Stmt::Assign { target, op, value } => {
+                let wrap = self.nullable_sites.contains(&span.start);
                 self.expr(out, target, depth, flow)?;
                 match op {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
                     None => out.push(" = "),
                 }
+                if wrap {
+                    out.push("Some(");
+                }
                 self.expr(out, value, depth, flow)?;
+                if wrap {
+                    out.push(")");
+                }
                 out.push(";");
             }
             // Kap 3.3. Name for name (ADR-011 D2): the language below spells
@@ -3002,7 +3039,7 @@ impl<'p> Emitter<'p> {
             // the function past that expression. It falls through to the arm
             // below and stays a `return`.
             Stmt::Return(Some(value)) if tail == Tail::Return => {
-                self.expr(out, value, depth, flow)?;
+                self.nullable(out, value, span, depth, flow)?;
             }
             Stmt::Return(value) => {
                 // Kap 7.1: a `throws` function returns a `Result`, so what the
@@ -3010,12 +3047,12 @@ impl<'p> Emitter<'p> {
                 match (value, flow.throws) {
                     (Some(value), true) => {
                         out.push("return Ok(");
-                        self.expr(out, value, depth, flow)?;
+                        self.nullable(out, value, span, depth, flow)?;
                         out.push(");");
                     }
                     (Some(value), false) => {
                         out.push("return ");
-                        self.expr(out, value, depth, flow)?;
+                        self.nullable(out, value, span, depth, flow)?;
                         out.push(";");
                     }
                     (None, true) => out.push("return Ok(());"),
@@ -3054,6 +3091,31 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// An expression, with Part I 2.3's `Some(…)` around it where the checker
+    /// says a plain value stands in a nullable slot.
+    ///
+    /// A `return` needs this and a `let` writes it inline, because a `let` has
+    /// the shared-value constructor to nest inside as well and the order of the
+    /// two parentheses is that statement's business.
+    fn nullable(
+        &self,
+        out: &mut Out,
+        value: &Expr,
+        span: &Span,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let wrap = self.nullable_sites.contains(&span.start);
+        if wrap {
+            out.push("Some(");
+        }
+        self.expr(out, value, depth, flow)?;
+        if wrap {
+            out.push(")");
+        }
+        Ok(())
+    }
+
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
             Expr::LitInt(v) => out.push(&v.to_string()),
@@ -3070,6 +3132,12 @@ impl<'p> Emitter<'p> {
                 self.expr(out, end, depth, flow)?;
             }
             Expr::LitBool(b) => out.push(&b.to_string()),
+            // Part I 2.3. `None` and nothing around it: `null` has no type of
+            // its own, so the type beside it is what says what it is the
+            // absence of - and a `None` the language below cannot type is a
+            // program `rustc` asks an annotation for, which is the honest
+            // answer rather than one this compiler invented.
+            Expr::LitNull => out.push("None"),
             Expr::Variable(name) => out.push(self.text(*name)),
             // ADR-017: the template is compiled where it is written. What comes
             // out is the string building a hand-written renderer would do, with

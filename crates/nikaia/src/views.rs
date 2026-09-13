@@ -863,6 +863,8 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
         | Expr::LitStr(_)
         | Expr::LitInterpolated(_)
         | Expr::LitChar(_)
-        | Expr::LitBool(_) => {}
+        | Expr::LitBool(_)
+        // `null` holds nothing, so it borrows nothing.
+        | Expr::LitNull => {}
     }
 }

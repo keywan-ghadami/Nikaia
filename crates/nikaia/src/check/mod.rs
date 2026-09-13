@@ -130,6 +130,22 @@ pub struct Checked {
     /// fail-quietly this module's other answers keep: the set never claims a
     /// call fails that does not.
     pub fallible_methods: BTreeSet<(usize, String)>,
+    /// The statements where a **plain value stands in a nullable slot** and the
+    /// emitter therefore writes the `Some(…)`, by the byte the statement starts
+    /// at (Part I 2.3).
+    ///
+    /// `let mut m: &str? = null` then `m = "World"`: the second line hands a
+    /// `&str` to an `Option<&str>`, and the language below needs the
+    /// constructor written. The same arrangement as `shared_sites` and for the
+    /// same reason - the emitter has no types (ADR-028), and whether the value
+    /// beside the `=` is *already* nullable is the whole question.
+    ///
+    /// **Only where this checker is sure of both sides.** A value whose type is
+    /// `Unknown` is left out, because wrapping a value that is already an
+    /// `Option<T>` would make an `Option<Option<T>>` - so the set never claims
+    /// a wrap that is not needed, which is the fail-closed direction
+    /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1).
+    pub nullable_sites: BTreeSet<usize>,
     /// The **narrowing conversions**, as the byte the statement they stand in
     /// starts at and the type converted to (ADR-043 D4).
     ///
@@ -286,6 +302,8 @@ pub struct Propagation {
     pub shared: BTreeSet<(usize, String)>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
+    /// [`Checked::nullable_sites`].
+    pub nullable: BTreeSet<usize>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -314,6 +332,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         methods: checked.fallible_methods,
         shared: checked.shared_sites,
         narrowing: checked.narrowing_casts,
+        nullable: checked.nullable_sites,
     }
 }
 
@@ -694,6 +713,43 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// Part I 2.3: record where the emitter has to write the `Some(…)`.
+    ///
+    /// A type is non-nullable unless it says otherwise, so a plain `T` standing
+    /// where a `T?` is wanted is the one widening this language has - `let mut
+    /// m: &str? = null` and then `m = "World"`. `Ty::fits` allows it; the
+    /// language below needs the constructor written, and this is where the
+    /// emitter is told.
+    ///
+    /// **The value has to be known not to be nullable already**, because
+    /// wrapping one that is would make an `Option<Option<T>>`. Two ways it can
+    /// be known, and a type is only the first:
+    ///
+    /// * its type says so — anything this checker worked out that is not a
+    ///   `T?`; or
+    /// * **it is a literal**, which no literal ever is. That second one is not
+    ///   a convenience: a number has no type of its own on purpose (Part I 2.4,
+    ///   so that `add(3)` is right wherever the parameter is numeric), so
+    ///   `return 42` against a declared `i64?` answers `Unknown` and the type
+    ///   alone would leave the commonest case in the section unwrapped.
+    ///
+    /// Everything else is left alone rather than guessed at, so the set never
+    /// claims a wrap that is not needed (ADR-010 D1). `null` is excluded by the
+    /// first rule, being a `T?` itself.
+    fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
+        let Ty::Nullable(_) = want else {
+            return;
+        };
+        if matches!(found, Ty::Nullable(_)) {
+            return;
+        }
+        let known = !found.is_unknown() || is_literal(value);
+        if !known {
+            return;
+        }
+        self.checked.nullable_sites.insert(span.start);
+    }
+
     /// Part I 2.2: a constant that does not fit the type it is given is a
     /// compile error rather than something the program finds out about at run
     /// time.
@@ -955,6 +1011,7 @@ impl<'a> Checker<'a> {
                         // a mistake - it is the one line that makes one, and the
                         // emitter is told where to write it.
                         self.constant_fits(value, Some(&want), span);
+                        self.wraps_into_nullable(&found, &want, value, span);
                         match becomes_shared(&found, &want) {
                             true => {
                                 self.checked.shared_sites.insert((span.start, name.clone()));
@@ -997,6 +1054,7 @@ impl<'a> Checker<'a> {
                 // Only a plain assignment: `n += 1` is whatever the operator
                 // makes of the two, and Stage 0 does not model operators.
                 if op.is_none() {
+                    self.wraps_into_nullable(&found, &into, value, span);
                     self.expect(&found, &into, span.clone(), "assign", |found, want| {
                         format!("this is `{found}`, and what it is assigned to is `{want}`")
                     });
@@ -1043,6 +1101,9 @@ impl<'a> Checker<'a> {
                     if let Some(value) = value {
                         self.constant_fits(value, Some(&expected), span);
                     }
+                    if let Some(value) = value {
+                        self.wraps_into_nullable(&found, &expected, value, span);
+                    }
                     self.expect(&found, &expected, span.clone(), "returns", |found, want| {
                         format!("this returns `{found}`, and the function declares `{want}`")
                     });
@@ -1088,6 +1149,14 @@ impl<'a> Checker<'a> {
             }
             Expr::LitChar(_) => Ty::named("char"),
             Expr::LitBool(_) => Ty::named("bool"),
+            // **A nullable of it-does-not-say.** `null` names the absence of a
+            // value without naming what value, so the inside is `Unknown` and
+            // anything nullable fits it - which is what makes `let mut m: &str?
+            // = null` right and what keeps `let m = null` from being refused
+            // here: `let mut m = null` then `m = "hi"` is a correct program
+            // (Part III, C.4), and it is `rustc` that asks for an annotation
+            // where nothing ever says.
+            Expr::LitNull => Ty::Nullable(Box::new(Ty::Unknown)),
 
             Expr::Variable(name) => {
                 let name = self.parsed.text(*name);
@@ -2577,6 +2646,24 @@ fn integer_named(ty: &Ty) -> Option<String> {
         return None;
     }
     matches!(name.as_str(), "i32" | "i64").then(|| name.clone())
+}
+
+/// Whether an expression is a literal — a value written in the source rather
+/// than computed.
+///
+/// **What it is for:** a literal is never a `T?`, whatever this checker did or
+/// did not work out about its type. `null` is deliberately absent, because it
+/// *is* one.
+fn is_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::LitInt(_)
+            | Expr::LitFloat(_)
+            | Expr::LitStr(_)
+            | Expr::LitInterpolated(_)
+            | Expr::LitChar(_)
+            | Expr::LitBool(_)
+    )
 }
 
 fn is_number(name: &str) -> bool {

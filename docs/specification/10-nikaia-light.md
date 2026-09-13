@@ -338,9 +338,30 @@ A literal is a **view** of text the program was compiled with, not a `String` �
 an allocation happens only where you wrote that you wanted one, and [ADR-024](adr/adr-024.md) D5.
 `.to_string()` is how you say you want one.
 
-> **Status:** not built. A trailing `?` on a type is a parse error, and `null` is
-> read as an ordinary name rather than as a value — so neither line of the
-> example above is accepted as written, while `??` (3.5) is.
+> **Status:** built ([ADR-052](adr/adr-052.md)). `T?` lowers to the language
+> below's `Option<T>` — the mapping Part III 15.2 writes the other way round —
+> and `null` is a reserved word (2.1) that lowers to `None`. The `?` comes last,
+> after the type's arguments, so `Vec[i64]?` is a nullable list and `Vec[i64?]`
+> is a list of nullables.
+>
+> **The second line of the example is the one that needed deciding.** A plain
+> `String` standing where a `String?` is wanted is the one widening this language
+> has, and the constructor is the **compiler's** to write: there is no `Some` in
+> Nikaia and must not be, or the type's whole purpose becomes paperwork. It is
+> written at an annotated `let`, an assignment and a `return`. An argument is not
+> covered yet — `takes(42)` where the parameter is an `i64?` — because an
+> argument inside a call is not a position this compiler can name
+> (`docs/open-work.md`).
+>
+> `let m = null` with nothing beside it is **not** refused here, and that is on
+> purpose: `let mut m = null` and then `m = "hi"` is a correct program, and this
+> compiler has no inference to tell it from the one where nothing ever says. So
+> the backend asks for the annotation, which is the honest answer.
+>
+> `(A, B)?` is deliberately absent — this section does not write it.
+>
+> Part I 3.5's `??` was already built and now has a type to be used on; `?.` is
+> not (3.5).
 
 ### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
@@ -560,8 +581,14 @@ let name = repo.find_user(id)?.full_name
 let display_name = name ?? "Guest"
 ```
 
-> **Status:** `??` is built. `?.` is not: there is no safe-navigation operator in
-> the parser, and a `?` after an expression is a parse error.
+> **Status:** `??` is built, and 2.3's `T?` is what it operates on
+> ([ADR-052](adr/adr-052.md)): `a ?? b` lowers to `a.unwrap_or_else(|| b.into())`.
+>
+> `?.` is not built. The lowering is not the difficulty — `x.map(|v| v.field)` —
+> it is that a field which is **itself** nullable needs `and_then` instead, or
+> `a?.b?.c` comes out holding a nullable of a nullable. Which of the two is right
+> is a question about the field's declared type, so it goes through the checker
+> the way 2.3's `Some(…)` does ([ADR-052](adr/adr-052.md) §4).
 
 ---
 

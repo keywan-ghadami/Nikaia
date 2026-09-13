@@ -3,7 +3,7 @@ Parse error:
 expected `}`; found unexpected token `temp` at line 3, column 5
    3 |     temp: i32
            ^^^^
-note: also possible here: `,`, `//`, `::`
+note: also possible here: `,`, `//`, `::`, `?`
 in struct_item
 in item
 in item 1
@@ -14,7 +14,7 @@ Parse error:
 expected `)`; found unexpected token `b` at line 1, column 13
    1 | fn f(a: i32 b: i32) {
                    ^
-note: also possible here: `,`, `//`, `::`, `;`
+note: also possible here: `,`, `//`, `::`, `;`, `?`
 in fn_params
 in fn_item
 in item
@@ -26,7 +26,7 @@ Parse error:
 unexpected end of input, expected `}` at line 3, column 1
    3 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `[`, `as`, `catch`, `f"`, `fn`, `for`, `if`, `match`, `seq`, `throw`, `while`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `[`, `as`, `catch`, `f"`, `fn`, `for`, `if`, `match`, `null`, `seq`, `throw`, `while`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -38,7 +38,7 @@ Parse error:
 expected expression; found unexpected token `[` at line 2, column 14
    2 |     let xs = [1, 2
                     ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `seq`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `seq`, `{`, digits, identifier
 in expr
 in let_stmt
 in stmt
@@ -65,7 +65,7 @@ Parse error:
 expected expression; found unexpected token `}` at line 4, column 1
    4 | }
        ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `seq`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `seq`, `{`, digits, identifier
 in expr
 in let_stmt
 in stmt
@@ -81,7 +81,7 @@ Parse error:
 expected expression; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `seq`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `null`, `seq`, `{`, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -151,7 +151,7 @@ Parse error:
 expected expression; found unexpected token `)` at line 2, column 18
    2 |     let z = f(1, )
                         ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `seq`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `seq`, `{`, digits, identifier
 in expr
 in call_args_tail
 in item 1
@@ -404,7 +404,7 @@ Parse error:
 unexpected end of input, expected `}` at line 4, column 1
    4 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `[`, `as`, `catch`, `f"`, `fn`, `for`, `if`, `match`, `seq`, `throw`, `while`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `??`, `[`, `as`, `catch`, `f"`, `fn`, `for`, `if`, `match`, `null`, `seq`, `throw`, `while`, `{`, `||`, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -416,7 +416,7 @@ Parse error:
 expected expression; found unexpected token `“` at line 2, column 13
    2 |     let x = “hi”
                    ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `seq`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `seq`, `{`, digits, identifier
 in expr
 in let_stmt
 in stmt

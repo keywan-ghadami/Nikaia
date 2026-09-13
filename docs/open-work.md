@@ -172,6 +172,49 @@ is a different line. A caret on the wrong line is worse than no message, so this
 waits on the span rather than being approximated. **Small and mechanical**: one
 field on each of two AST nodes, set where the parser already has `_span`.
 
+### 1.6. A function that hands back a view emits Rust with no lifetime
+
+```nika
+fn name() -> &str { "Ada" }
+```
+
+lowers to `fn name() -> &str { "Ada" }`, and `rustc` refuses it: *"missing
+lifetime specifier — this function's return type contains a borrowed value, but
+there is no value for it to be borrowed from"*, about the generated file. The
+Part III C.1 class.
+
+**Why it happens.** A view's lifetime comes from the parser's input
+([ADR-008](specification/adr/adr-008.md)), and the emitter elides it where a
+reference among the arguments can carry it. A function with **no** reference
+argument has nothing to elide from, and `"Ada"` is a `&'static str` that the
+signature does not say so about.
+
+*Found* while building [ADR-052](specification/adr/adr-052.md), because `&str?`
+made the same signature one step longer and the error easier to read; it is not
+about nullability and reproduces without it. *What it needs:* a decision about
+where a returned view's lifetime comes from when no argument provides one -
+`'static` is right for a literal and wrong for anything else, so this is not a
+one-line default.
+
+### 1.7. A `rustc` **warning** about the generated file reaches the user
+
+Part I 2.3's own example, written as the page writes it, prints
+
+```text
+warning: value assigned to `maybe_string` is never read
+   = help: maybe it is overwritten before being read?
+```
+
+The observation is true of the program, and the message is Rust's about a file
+nobody wrote. `--explain` ([ADR-012](specification/adr/adr-012.md)) translates an
+**error** back to the `.nika` line; a warning goes past it untouched.
+
+*Not a matter of silencing it:* the warning says something the writer of the
+Nikaia program should hear. What it needs is the translation path warnings do not
+take yet - and a decision about which of `rustc`'s warnings are about the user's
+program (this one) and which are about the shape this compiler emitted (the
+class `is_rust_internal` already drops).
+
 ---
 
 ## 2. Decided and unbuilt
@@ -233,10 +276,31 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.4. Part I 2.3's nullable types are a parse error
+### 2.4. Part I 3.5's `?.`, and the nullable wrap at an argument
 
-A trailing `?` on a type does not parse and `null` is read as an ordinary name, so
-neither line of that section's own example is accepted. `??` (Part I 3.5) is built.
+[ADR-052](specification/adr/adr-052.md) §4. The type is built — `T?`, `null`, and
+the `Some(…)` at an annotated `let`, an assignment and a `return`. Two pieces are
+left, and each has its own reason for being left.
+
+**`?.` needs the checker and not the emitter.** The lowering is not the
+difficulty: `x?.full_name` is `x.map(|v| v.full_name)`. It is that a field which
+is **itself** nullable needs `and_then` instead, or `a?.b?.c` comes out holding a
+nullable of a nullable — and which of the two is right is a question about the
+field's declared type. So it goes the way D4's wrap does: the checker decides and
+the emitter writes. The key can be `(statement, field name)`, which is the shape
+`fallible_methods` already uses and documents.
+
+*What is measurable now:* `let name = repo.find_user(id)?.full_name` is a parse
+error at the `?`. The position is free — the parser never builds `Expr::Try`,
+because failure propagation is implicit
+([ADR-025](specification/adr/adr-025.md)) — so there is nothing to disambiguate
+against.
+
+**The wrap at an argument** — `takes(42)` where the parameter is an `i64?` — is
+not a position this compiler can name: expressions carry no spans, and the three
+places that *are* covered are each named by the statement they stand in. So this
+waits on the same thing §1.5 does, one field on an AST node, or on a different
+key.
 
 ### 2.5. Part II 12.8's supervision syntax
 

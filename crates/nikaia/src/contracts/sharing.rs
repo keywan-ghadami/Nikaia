@@ -1000,6 +1000,7 @@ impl<'a> Analysis<'a> {
             | Expr::LitInterpolated(_)
             | Expr::LitChar(_)
             | Expr::LitBool(_)
+            | Expr::LitNull
             | Expr::StructLit { .. } => true,
             Expr::Call { func, .. } => self.hands_back_a_plain_value(self.path_of(func).as_deref()),
             Expr::MethodCall { method, .. } => {

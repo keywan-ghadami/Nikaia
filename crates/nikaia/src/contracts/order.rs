@@ -508,6 +508,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         Expr::LitInt(_)
         | Expr::LitFloat(_)
         | Expr::LitBool(_)
+        | Expr::LitNull
         | Expr::LitChar(_)
         | Expr::LitStr(_) => {}
 
@@ -1194,6 +1195,7 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
         Expr::LitInt(_)
         | Expr::LitFloat(_)
         | Expr::LitBool(_)
+        | Expr::LitNull
         | Expr::LitChar(_)
         | Expr::LitStr(_) => {}
     }

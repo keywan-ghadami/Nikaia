@@ -223,6 +223,14 @@ pub enum Expr {
     /// lowering is a transcription and nothing has to decode it twice.
     LitChar(String),
     LitBool(bool),
+    /// Part I 2.3: `null`, the absence of a value. It lowers to `None`.
+    ///
+    /// **It has no type of its own**, exactly as an integer literal does not:
+    /// what it stands for is whatever the type beside it says, so `let mut m:
+    /// &str? = null` is an `Option<&str>` and `let m = null` on its own is a
+    /// program `rustc` will ask for an annotation about - which is right,
+    /// because nothing here can say what it is the absence of.
+    LitNull,
     Variable(Ident),
 
     // Kap 3.1: Blöcke sind Expressions
@@ -390,6 +398,10 @@ pub struct Type {
     /// (`holds_view`, `names_borrowing`) reach them without knowing about
     /// tuples at all.
     pub is_tuple: bool,
+    /// Part I 2.3: a trailing `?`. A type is non-nullable unless it says
+    /// otherwise, and `&str?` is a nullable view - so this is a flag beside
+    /// `is_view` rather than a wrapper, because the two are independent.
+    pub is_nullable: bool,
 }
 
 /// One variant of an enum (Kap 4.4).

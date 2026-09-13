@@ -132,10 +132,10 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 29] = [
+pub const RESERVED_WORDS: [&str; 30] = [
     "as", "catch", "dsl", "else", "enum", "false", "fn", "for", "from", "grammar", "if", "impl",
-    "in", "let", "match", "mut", "overlap", "pub", "return", "self", "seq", "spawn", "struct",
-    "sync", "throw", "throws", "true", "use", "while",
+    "in", "let", "match", "mut", "null", "overlap", "pub", "return", "self", "seq", "spawn",
+    "struct", "sync", "throw", "throws", "true", "use", "while",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -664,26 +664,38 @@ grammar! {
             view:amp?
             name:type_name
             generics:generic_type_args?
+            nullable:question?
             -> {
                 Type {
                     name,
                     generics: generics.unwrap_or_default(),
                     is_view: view.is_some(),
                     is_tuple: false,
+                    is_nullable: nullable.is_some(),
                 }
             }
           // `(A, B)`. The parts go where a named type's arguments go, so
           // everything that walks a type's arguments walks a tuple's parts.
+          //
+          // **No `?` here**, and that is Part I 2.3's own scope: `(A, B)?` is
+          // not in the specification, and a form the emitter would have to
+          // invent a lowering for is worse unwritten than written wrong.
           | "(" parts:type_refs ")" -> {
                 Type {
                     name: _state.intern("tuple"),
                     generics: parts,
                     is_view: false,
                     is_tuple: true,
+                    is_nullable: false,
                 }
             }
 
         rule amp -> () = "&" -> { () }
+
+        // Part I 2.3: the trailing `?` that makes a type nullable. It comes
+        // last, after the arguments, so `Vec[i64]?` is a nullable list and not
+        // a list of nullables - which is `Vec[i64?]`.
+        rule question -> () = "?" -> { () }
 
         // USING [ ] SYNTAX directly for testing
         rule generic_type_args -> Vec<Type> =
@@ -1319,6 +1331,7 @@ grammar! {
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
+          | n:null_lit -> { n }
           // Before `path_expr`: a PEG keeps the first alternative that matches,
           // and `f"…"` starts with what `NAME` reads as the variable `f`.
           | s:f_str_lit -> { s }
@@ -1548,6 +1561,7 @@ grammar! {
         rule KW_LET = "let" not(ident)
         rule KW_MATCH = "match" not(ident)
         rule KW_MUT = "mut" not(ident)
+        rule KW_NULL = "null" not(ident)
         rule KW_OVERLAP = "overlap" not(ident)
         rule KW_PAR_FOLD = "par_fold" not(ident)
         rule KW_PUB = "pub" not(ident)
@@ -1618,6 +1632,7 @@ grammar! {
         rule RESERVED_B -> u8 =
             KW_MATCH -> { 0 }
           | KW_MUT -> { 0 }
+          | KW_NULL -> { 0 }
           | KW_OVERLAP -> { 0 }
           | KW_PUB -> { 0 }
           | KW_RETURN -> { 0 }
@@ -1766,6 +1781,13 @@ grammar! {
         rule bool_lit -> Expr =
             KW_TRUE -> { Expr::LitBool(true) }
           | KW_FALSE -> { Expr::LitBool(false) }
+
+        // Part I 2.3. Beside `bool_lit` because it is the same kind of thing: a
+        // word the grammar knows, which is why it is a reserved word
+        // ([ADR-051](../../../../docs/specification/adr/adr-051.md) D1) - read
+        // as a name it would be `NK1117`, and read as a name that *is* declared
+        // it would be a different program.
+        rule null_lit -> Expr = KW_NULL -> { Expr::LitNull }
 
         // Kap 2.5. `f` before the quote is what makes a string *code* - without
         // it the braces are braces (ADR-035). UPPERCASE, so the `f` and the

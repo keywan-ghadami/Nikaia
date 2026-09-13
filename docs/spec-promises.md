@@ -53,9 +53,9 @@ the Result column; every other row is the original run.
 | `assert(cond)` | — | parses as a call to a function named `assert` |
 | `extern "C" { … }` | III 15.1 | parse error: *expected end of input; found `extern`* |
 | `unsafe { … }` | III 15.1, 16.3 | parses as `unsafe; { puts("hi") }` — **re-run**, and refused now: `NK1117` on the name |
-| `null` | I 2.3, 3.5 | parses as an ordinary name: `let x = null;` |
-| `String?`, `&str?` | I 2.3 | parse error: *expected `)`* / *expected `=`*; *found `?`* |
-| `a?.b` | I 3.5 | parse error: *expected `}`; found `?`* |
+| `null` | I 2.3, 3.5 | **built** ([ADR-052](specification/adr/adr-052.md)): a reserved word, lowering to `None` |
+| `String?`, `&str?` | I 2.3 | **built**: `Option<String>`, `Option<&str>` — and the `Some(…)` where a plain value stands in a nullable slot is the compiler's to write |
+| `a?.b` | I 3.5 | parse error: *expected `}`; found `?`* — **re-run, unchanged.** The `?` position is free (the parser never builds `Expr::Try`); what is missing is the `map`-or-`and_then` decision, which is a question about the field's type (`open-work.md` §2.4) |
 | `a ?? 1` | I 3.5 | **built**: `a.unwrap_or_else(\|\| 1.into())` |
 | `use a::{b, c}` | II 10.5 | **re-run**, and a sentence now: *"names are not brought in; a package is reached through its name. Write `use http`, and `http::Request` where you need it — and `use http as h` if the prefix is long"*, with the caret on the brace ([ADR-046](specification/adr/adr-046.md) D2) |
 | `use std::fs`, `use utils` | I 9.1 | **built** |

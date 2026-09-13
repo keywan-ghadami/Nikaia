@@ -206,6 +206,13 @@ out well — ``expected `{` `` at the `=` — and it also answers the *"open
 question"* that row carried: an assignment is not an expression, so `if a = b`
 is refused rather than read as a condition.
 
+**Two words joined the token lists** and no headline changed:
+[ADR-052](specification/adr/adr-052.md) added `null` where an expression may
+start and `?` where a type may continue. The rows are regenerated with them
+because the file is the compiler's output and not a claim of its own; that they
+are the *only* change is what says the record added a type and moved no
+diagnostic.
+
 **Twenty-two of the twenty-four failing rows say what a reader needs** — the
 twenty-one that always failed, plus D2. B3 and C4 are the two that do not, and
 they are new arrivals rather than regressions: they were silent before.
