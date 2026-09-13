@@ -181,24 +181,26 @@ pub enum Fallback {
     /// made - it came out of a call, an index, a field of a type whose `fields`
     /// are unrecorded, or some other expression nothing here accounts for.
     UnseenOrigin,
-    /// The value is held by a field of a type **another file declares**, and
-    /// that file's own run of this analysis decides the field's count.
+    /// The slot belongs to **another file of this package**, whose own run of
+    /// this analysis decides its count.
     ///
     /// This analysis runs once per file (`analyse_program` takes one `Parsed`),
-    /// so neither run sees the whole of such a field: the declaring file sees the
-    /// field and not this value, and this file sees the value and not what the
-    /// field was decided to be. Measured, before this row existed - `Pool` in
-    /// `pool.nika`, the value in `main.nika`:
+    /// so neither run sees the whole of such a slot: the declaring file sees the
+    /// slot and not this value, this one the value and not what the slot was
+    /// decided to be. Measured, before this row existed - a public **field**
+    /// declared in `pool.nika` and filled in `main.nika`:
     ///
     /// ```text
-    /// pub db: std::sync::Arc<Conn>,          // decided in pool.nika
-    /// let c: std::rc::Rc<pool::Conn> = …     // decided in main.nika
+    /// pub db: std::sync::Arc<Conn>,      // decided in pool.nika
+    /// let c: std::rc::Rc<Conn> = …       // decided in main.nika
     /// ```
     ///
-    /// which `rustc` then refused, about a generated file (Part III, C.1). The
+    /// and, in exactly the same way, a public **parameter**: `hold(c)` where
+    /// `hold` is declared in another file expects an `Arc` and is handed an `Rc`.
+    /// `rustc` refused both, about a file nobody wrote (Part III, C.1). The
     /// answer is the polarity this analysis already runs on: where it cannot
     /// prove that nothing crosses, it does not lower.
-    ForeignField,
+    ForeignFile,
 }
 
 impl Fallback {
@@ -210,7 +212,7 @@ impl Fallback {
         Fallback::UnseenMethod,
         Fallback::UncoveredArgument,
         Fallback::UnseenOrigin,
-        Fallback::ForeignField,
+        Fallback::ForeignFile,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -221,7 +223,7 @@ impl Fallback {
             Fallback::UnseenMethod => "a method nothing describes",
             Fallback::UncoveredArgument => "an argument position no contract covers",
             Fallback::UnseenOrigin => "an origin this analysis cannot see",
-            Fallback::ForeignField => "a field another file declares",
+            Fallback::ForeignFile => "a slot another file owns",
         }
     }
 
@@ -246,9 +248,9 @@ impl Fallback {
                 "write down the call the value came out of, so this analysis can follow it to \
                  the allocation"
             }
-            Fallback::ForeignField => {
-                "nothing here - the file that declares the field decides its count, and this \
-                 run reads only one of the two"
+            Fallback::ForeignFile => {
+                "nothing here - the file that declares the field or the function decides its \
+                 count, and this run reads only one of the two"
             }
         }
     }
@@ -459,7 +461,9 @@ pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
 pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger) -> String {
     let sharing = analyse_program(parsed, own, library);
     if sharing.decisions.is_empty() {
-        return "no `Shared` value in this program, so there is nothing to choose.\n".to_string();
+        // "here" and not "in this program": a report is about one file, and a
+        // package of several files is several of them (`project::explain`).
+        return "no `Shared` value here, so there is nothing to choose.\n".to_string();
     }
 
     let mut out = String::new();
@@ -543,17 +547,56 @@ fn slot(function: &str, name: &str) -> String {
     format!("{function}::{name}")
 }
 
+/// Everything a file declares that a slot can belong to.
+///
+/// A slot key is `owner::name`, and the owner is a struct (`<field>` slots), a
+/// function, or a `Type::method`. Which of them this file declares is what says
+/// whether this run of the analysis can see the whole of that slot.
+fn declared_here(parsed: &Parsed) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for item in &parsed.program.items {
+        match &item.node {
+            Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                names.insert(parsed.text(*name).to_string());
+            }
+            Item::Fn {
+                name: Some(name), ..
+            } => {
+                names.insert(parsed.text(*name).to_string());
+            }
+            Item::Impl {
+                target, methods, ..
+            } => {
+                let target = parsed.text(target.name).to_string();
+                for method in methods {
+                    if let Item::Fn { name, .. } = &method.node {
+                        let own = match name {
+                            Some(name) => parsed.text(*name).to_string(),
+                            None => "new".to_string(),
+                        };
+                        names.insert(format!("{target}::{own}"));
+                    }
+                }
+                names.insert(target);
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 /// Handles joined into allocation classes, with a reason recorded against the
 /// ones that cross.
 struct Analysis<'a> {
     parsed: &'a Parsed,
     own: &'a Ledger,
     library: &'a Ledger,
-    /// The structs **this file** declares, by the name it declares them under.
+    /// Everything **this file** declares that a slot can belong to: its structs,
+    /// its functions, and its methods under `Type::method`.
     ///
-    /// What it is for is the other side of it: a field slot whose struct is not
-    /// in here belongs to a type another file declares, and this run cannot see
-    /// what that file decided about it ([`Fallback::ForeignField`]).
+    /// What it is for is the other side of it: a slot whose owner is not in here
+    /// belongs to another file, and this run cannot see what that file decided
+    /// about it ([`Fallback::ForeignFile`]).
     declared_here: BTreeSet<String>,
     /// Every `Shared` handle: its slot key, and what was written about it.
     handles: BTreeMap<String, Handle>,
@@ -587,15 +630,7 @@ impl<'a> Analysis<'a> {
             parsed,
             own,
             library,
-            declared_here: parsed
-                .program
-                .items
-                .iter()
-                .filter_map(|item| match &item.node {
-                    Item::Struct { name, .. } => Some(parsed.text(*name).to_string()),
-                    _ => None,
-                })
-                .collect(),
+            declared_here: declared_here(parsed),
             handles: BTreeMap::new(),
             index: BTreeMap::new(),
             parent: Vec::new(),
@@ -604,43 +639,72 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    /// **A field of a type another file declares keeps the atomic floor**
-    /// ([`Fallback::ForeignField`]).
+    /// **A slot another file owns keeps the atomic floor**
+    /// ([`Fallback::ForeignFile`]).
     ///
-    /// One place rather than one per site, because a field slot is created
-    /// wherever a struct is built, a field is read and a field is assigned - and
-    /// a rule that has to be remembered at three sites is one that will be
-    /// forgotten at the fourth. Here every slot that exists is asked once, after
-    /// the walk and before the classes are read off, so a slot no future site
-    /// thought about is covered by having been created at all.
+    /// This analysis runs once per **file**, and a package of several files is
+    /// several runs of it. A slot whose owner another file declares is therefore
+    /// one neither run sees the whole of: the declaring file sees the slot and
+    /// not this value, this one the value and not what the slot was decided to
+    /// be. Measured, both halves in one generated file - a public field:
     ///
-    /// The declaring file forces such a field itself where it is public
-    /// ([`Fallback::PublicField`]), so for the shape this is about the two runs
-    /// now agree by both refusing to lower. Where the declaring file does *not*
-    /// force it - a private type, a private field - this file cannot name the
-    /// type either, so nothing is paid for the caution.
-    fn foreign_fields_hold_the_floor(&mut self) {
-        let prefix = format!("{FIELDS}::");
-        let foreign: Vec<String> = self
-            .handles
+    /// ```text
+    /// pub db: std::sync::Arc<Conn>,      // decided where `Pool` is declared
+    /// let c: std::rc::Rc<Conn> = …       // decided here
+    /// ```
+    ///
+    /// and, in exactly the same way, a **public parameter**: `hold(c)` where
+    /// `hold` is declared in another file expects an `Arc` and is handed an `Rc`.
+    /// `rustc` refused both, about a file nobody wrote (Part III, C.1).
+    ///
+    /// One place rather than one per site, because a slot is created wherever a
+    /// struct is built, a field is read or assigned, a call is made and a result
+    /// is bound - and a rule that has to be remembered at five sites is one that
+    /// will be forgotten at the sixth. Here every slot that exists is asked once,
+    /// after the walk and before the classes are read off, so a slot no future
+    /// site thought about is covered by having been created at all.
+    ///
+    /// The declaring file forces the same slot itself wherever it is published -
+    /// a public field, a public signature - so for the shapes this is about the
+    /// two runs agree by both refusing to lower. Where it does not, this file
+    /// cannot name the owner either, so the caution costs nothing.
+    fn foreign_slots_hold_the_floor(&mut self) {
+        // Over the **union-find** and not over `handles`: a slot another file owns
+        // has no handle in this run - nothing here declared it - and joining to
+        // it is the only trace of it there is. `main::c` joined to `hold::c` was
+        // exactly that case, and reading `handles` missed it.
+        let foreign: Vec<(String, String)> = self
+            .index
             .keys()
-            .filter(|key| key.starts_with(&prefix))
-            .filter(|key| {
-                let slot = &key[prefix.len()..];
-                let owner = slot.rsplit_once('.').map_or(slot, |(owner, _)| owner);
-                !self.declared_here.contains(owner)
+            .filter_map(|key| {
+                let (owner, slot) = match key.strip_prefix(&format!("{FIELDS}::")) {
+                    // `<field>::Pool.db` - the owner is the struct.
+                    Some(field) => (
+                        field.rsplit_once('.').map_or(field, |(owner, _)| owner),
+                        field,
+                    ),
+                    // `hold::c`, `Counter::record::hits` - the owner is
+                    // everything before the last `::`.
+                    None => match key.rsplit_once("::") {
+                        Some((owner, _)) => (owner, key.as_str()),
+                        None => return None,
+                    },
+                };
+                match self.declared_here.contains(owner) {
+                    true => None,
+                    false => Some((key.clone(), slot.to_string())),
+                }
             })
-            .cloned()
             .collect();
-        for key in foreign {
-            let slot = key[prefix.len()..].to_string();
+
+        for (key, slot) in foreign {
             self.forced.push((
                 key,
                 format!(
-                    "`{slot}` is a field of a type another file declares, and that file's own \
-                     pass decides its count - this one reads only one of the two"
+                    "`{slot}` belongs to another file of this package, and that file's own pass \
+                     decides its count - this one reads only one of the two"
                 ),
-                Some(Fallback::ForeignField),
+                Some(Fallback::ForeignFile),
             ));
         }
     }
@@ -1181,6 +1245,18 @@ impl<'a> Analysis<'a> {
                     self.expr(function, &value, scope);
                 }
             }
+            // **A hole is Nikaia source and is walked like any other**
+            // (ADR-032 D3, which the type checker already follows). Measured:
+            // `println(f"{hold(c)}")` handed a handle to a function this analysis
+            // never saw, so the value kept the plain count while the callee's
+            // parameter was decided atomic in the file declaring it - and the two
+            // met in one generated file as `Rc` against `Arc`. Any analysis that
+            // stops at a literal is one a hole can be hidden in.
+            Expr::LitInterpolated(_) => {
+                for hole in crate::emit::literal_expressions(self.parsed, expr) {
+                    self.expr(function, &hole, scope);
+                }
+            }
             Expr::Closure { body, .. } => self.block(function, body, scope),
             Expr::Block(block) | Expr::Seq(block) => self.block(function, block, scope),
             Expr::If {
@@ -1376,7 +1452,7 @@ impl<'a> Analysis<'a> {
 
     /// One pass over the seeds, then one answer per handle - and the summary.
     fn decide(mut self) -> Sharing {
-        self.foreign_fields_hold_the_floor();
+        self.foreign_slots_hold_the_floor();
         let mut atomic: BTreeMap<usize, (String, Option<Fallback>)> = BTreeMap::new();
         for (key, why, fallback) in std::mem::take(&mut self.forced) {
             let id = self.id(&key);

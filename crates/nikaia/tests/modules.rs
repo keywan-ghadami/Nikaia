@@ -502,3 +502,51 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
     assert_eq!(run(&entry, Build::default()).trim(), "1");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// **A `Shared` handed to a function another file declares keeps the atomic
+/// count** — the parameter twin of the test above.
+///
+/// Found by a test written for something else, and it is the same defect one slot
+/// over: the declaring file forces its public parameter to the atomic count, this
+/// file decides the value on its own, and the two meet in one generated file as
+/// `expected Arc<Conn>, found Rc<Conn>`. The floor is therefore about **any slot
+/// another file owns**, not about fields.
+///
+/// The call is written inside a hole on purpose. `println(f"{hold(c)}")` is how
+/// somebody would actually write this, and the sharing analysis did not walk into
+/// a literal at all — so the handle was handed to a function it never saw, and
+/// nothing forced anything. A hole is Nikaia source (ADR-032 D3), and any
+/// analysis that stops at a literal is one a hole can be hidden in.
+#[test]
+fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
+    let (dir, entry) = project(
+        "foreign-parameter",
+        &[
+            (
+                "pool.nika",
+                "pub struct Conn { pub id: i64 }\n\
+                 \n\
+                 pub fn hold(c: Shared[Conn]) -> i64 {\n\
+                 \x20   return c.id\n\
+                 }\n",
+            ),
+            (
+                "main.nika",
+                "fn main() {\n\
+                 \x20   let c: Shared[Conn] = Conn(id: 1)\n\
+                 \x20   println(f\"{hold(c)}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+
+    let program = Program::read(&entry).expect("the program reads");
+    let lowered = program.emit(Build::default()).expect("it lowers");
+    assert!(
+        !lowered.rust.contains("std::rc::Rc"),
+        "both sides of the call are the same count, and it is the atomic one:\n{}",
+        lowered.rust
+    );
+    assert_eq!(run(&entry, Build::default()).trim(), "1");
+    let _ = std::fs::remove_dir_all(dir);
+}

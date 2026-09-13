@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed (the explain modes reach a project, and two more shared counts stopped diverging)
+
+- **`--sharing`, `--overlaps` and `--trust` work on `nikaia build` and `nikaia run`** (`docs/open-work.md` §1.7). They were on the single-file path only — `nikaia build --sharing` answered `unexpected argument` — which is exactly where the asking is not done: `--sharing` exists because there is no way to *request* the cheaper reference count, every fallback is enumerated instead, and *"that is only fair if the fallbacks can be asked about. This is the asking."* A person with a real program builds it with `nikaia build`. They report over every file of the package, against the package's own ledger rather than each file's, and one function serves both paths so the two cannot disagree.
+- **A `Shared` handed to a public parameter of a function another file declares kept two counts**, exactly as a field did — found by a test written for the flags above. The floor is therefore about **any slot another file owns**, not about fields, and it is read off the union-find rather than off the recorded handles: a slot another file owns has no handle in this run, and joining to it is the only trace of it there is. `Fallback::ForeignField` is `Fallback::ForeignFile`.
+- **And the sharing analysis did not walk into an interpolated string.** `println(f"{hold(c)}")` handed a handle to a function the analysis never saw, so nothing joined and nothing forced. A hole is Nikaia source ([ADR-032](docs/specification/adr/adr-032.md) D3) and the type checker has walked holes since that record; any analysis that stops at a literal is one a hole can be hidden in.
+
 ### Changed (a package is a directory, and its files are one namespace)
 
 - **[ADR-047](docs/specification/adr/adr-047.md) D1 is built.** Every `.nika` beside the entry takes part, whether or not anything names it, and they share one namespace: no `use` between them, no prefix on the names they share. The emitted Rust is **one crate root** with every file's items in it — no `mod`, no `use super::*`, nothing to resolve, because one namespace here is one namespace in the language below. The entry goes first, being the file that may declare `main`, and the rest in file-name order, so the output is a function of the tree rather than of a directory listing (Part III 13.5).

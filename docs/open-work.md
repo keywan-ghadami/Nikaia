@@ -119,42 +119,52 @@ correctly when tried again.
 lifetime defect in generated code is the class Part III C.1 is about, and
 `docs/stored-views.md` is where the surrounding analysis is written down.
 
-### 1.6. A `Shared` field's count is decided per file — **fixed, fail-closed**
+### 1.6. A `Shared` slot's count is decided per file — **fixed, fail-closed**
 
 Confirmed exactly as predicted the moment §1.1 stopped hiding it: `Arc` in the
 field and `Rc` in the value, in one generated file, refused by `rustc`.
 
 The fix is the polarity this analysis already runs on, not a new answer: **where
-it cannot prove that nothing crosses, it does not lower.** A field slot whose
-struct this file does not declare keeps the atomic floor as
-`Fallback::ForeignField` — a seventh row in the enumeration `--sharing` prints,
-because a fallback that is not named is one nobody can ask about. Forced in **one
-place**, after the walk and before the classes are read off, rather than at each
-of the three sites that create a field slot.
+it cannot prove that nothing crosses, it does not lower.** A slot whose owner
+another file declares keeps the atomic floor as `Fallback::ForeignFile` — a
+seventh row in the enumeration `--sharing` prints, because a fallback that is not
+named is one nobody can ask about. Forced in **one place**, after the walk and
+before the classes are read off, rather than at each of the sites that create a
+slot.
 
-**The package decision does not retire this.** The analysis runs once per *file*,
-and a package of several files is still several runs of it, so the floor is
-exactly as necessary inside a package as it was between two modules.
+**It is about any slot and not about fields**, which the first version got wrong
+and a test written for something else found: a `Shared` handed to a **public
+parameter** of a function another file declares diverged in exactly the same way.
+The floor is read off the union-find rather than off the recorded handles, because
+a slot another file owns has no handle in this run — joining to it is the only
+trace of it there is.
 
-*What is still open:* where a field's count is **agreed** rather than
+**And a third hole came with it.** The sharing analysis did not walk into an
+interpolated string, so `println(f"{hold(c)}")` handed a handle to a function it
+never saw. A hole is Nikaia source ([ADR-032](specification/adr/adr-032.md) D3),
+the type checker has walked holes since that record, and any analysis that stops
+at a literal is one a hole can be hidden in.
+
+**The package decision does not retire any of this.** The analysis runs once per
+*file*, and a package of several files is still several runs of it.
+
+*What is still open:* where a slot's count is **agreed** rather than
 independently refused. Running the analysis over a whole package at once would let
 the floor be lifted where everything is visible; across a package boundary it never
 can be, and that wants something written down.
 
-### 1.7. The explain modes cannot be reached from a project build
+### 1.7. The explain modes cannot be reached from a project build — **fixed**
 
-`--sharing`, `--overlaps` and `--trust` exist on the single-file path only.
-`nikaia build --sharing` answers `unexpected argument`.
+`--sharing`, `--overlaps` and `--trust` are accepted on `build` and `run` now, and
+report over **every file** of the package — against the package's own ledger and
+not each file's, because `sync`, the touch sets and the sharing classes are
+whole-program facts and a report built from one file's inferences would answer a
+different question from the one the build answers.
 
-`--sharing`'s own help says why it exists: there is no way to *ask* for the
-cheaper count, every fallback is enumerated instead, and *"that is only fair if
-the fallbacks can be asked about. This is the asking, and it is what a person
-reads when they want the 9 ns back."* A person with a real program builds it with
-`nikaia build`, so the asking is unavailable exactly where it would be done.
-
-*What it needs:* the three flags on `build`, reporting over the project's files
-rather than over one. Nothing about the analyses changes; they already run in that
-path.
+One function serves both paths (`project::explain`): a report that said one thing
+under `--input` and another under `build` would be worse than one that only
+existed in one place. Finding this is also what turned up §1.6's two further
+holes.
 
 ### 1.8. The project tests' cache accumulates and fills the disk
 

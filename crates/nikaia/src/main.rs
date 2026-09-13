@@ -7,7 +7,6 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use nikaia::contracts::{self, Ledger, STD};
 use nikaia::emit;
 use nikaia::manifest::Manifest;
 use nikaia::project::{self, Project, Settings};
@@ -111,7 +110,7 @@ pub struct Cli {
     /// refusals are the compiler's own. That is only fair if the refusals can
     /// be asked about, and this is the asking. Like `--trust`, it explains a
     /// decision rather than changing one.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub overlaps: bool,
 
     /// Print which reference count each `Shared` value gets, and why
@@ -125,7 +124,7 @@ pub struct Cli {
     /// asked about. This is the asking, and it is what a person reads when they
     /// want the 9 ns back. Like `--trust` and `--overlaps`, it explains a
     /// decision rather than changing one.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub sharing: bool,
 
     /// Print where this program's bytes came from and which hash its maps got
@@ -133,7 +132,7 @@ pub struct Cli {
     ///
     /// The choice is visible, never a mystery: this names every source the
     /// program reads and what each one contributed.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub trust: bool,
 }
 
@@ -230,72 +229,29 @@ fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &st
 /// Unchanged by the project build, deliberately. A one-off transformation of a
 /// file that belongs to no project is a real thing to want (ADR-021 D11), and
 /// it is what every test that drives the emitter uses.
-fn lower_to_rust(
-    input: &std::path::Path,
-    args: &Cli,
-    settings: &Settings,
-    source: &str,
-) -> Result<()> {
+fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Result<()> {
     let output_path = args
         .output
         .clone()
         .unwrap_or_else(|| input.with_extension("rs"));
 
-    // `--trust` and `--overlaps` are explanations, so they are answered before
-    // the cache is consulted: a build that reuses a cached lowering still
-    // answers the question, and the answer cannot differ from the one that
-    // lowering was built with.
-    if args.overlaps {
-        // The report answers "may these two overlap", which is a question
-        // about the program. Whether anything then *does* overlap is a
-        // question about the build - and since ADR-033 D10 the answer differs
-        // from pair to pair, because the two vehicles are gated by different
-        // switches. So the build's half travels *into* the report, one answer
-        // per pair, rather than standing at the top as a sentence that is true
-        // of some lines and false of others.
-        if settings.ordering != emit::Ordering::Effects {
-            println!(
-                "note: `ordering = {}` keeps the written order, so nothing below overlaps in this build.",
-                settings.ordering_word
-            );
-        } else if !settings.build.overlaps_user_code() {
-            println!(
-                "note: `--user-parallelism {}` keeps every piece of your own code on one thread. \
-                 A pair `std` can put in flight itself still overlaps (ADR-033 D10); a pair that \
-                 would need two threads of your own is marked `would` below.",
-                settings.user_parallelism
-            );
-        }
-        let parsed = parser::parse_to_ast(source)?;
-        let library = Ledger::parse(STD).context("std's shipped ledger")?;
-        let own = Ledger::infer(&parsed);
-        print!(
-            "{}",
-            contracts::order::report(&parsed, &own, &library, &overlaps_here(settings))
-        );
-    }
-
-    if args.sharing {
-        // No switch reaches the analysis, so none is printed beside it - and
-        // since ADR-037 D6 that is not a caveat but the point: the count is
-        // atomic at both settings, so "must this one be atomic" is a question
-        // about the program and has one answer per build. Unlike `--overlaps`,
-        // which has to say which setting made its report hypothetical, this
-        // report says the same thing whatever the switches are.
-        let parsed = parser::parse_to_ast(source)?;
-        let library = Ledger::parse(STD).context("std's shipped ledger")?;
-        let own = Ledger::infer(&parsed);
-        print!("{}", contracts::sharing::report(&parsed, &own, &library));
-    }
-
-    if args.trust {
-        let parsed = parser::parse_to_ast(source)?;
-        let library = Ledger::parse(STD).context("std's shipped ledger")?;
-        print!(
-            "{}",
-            contracts::trust::render(&contracts::trust::analyse(&parsed, &library))
-        );
-    }
+    // `--trust`, `--overlaps` and `--sharing` are explanations, so they are
+    // answered before the cache is consulted: a build that reuses a cached
+    // lowering still answers the question, and the answer cannot differ from the
+    // one that lowering was built with.
+    //
+    // Through `project::explain`, which is the same function `nikaia build` uses
+    // (`docs/open-work.md` §1.7): a report that said one thing here and another
+    // there would be worse than one that only existed in one place.
+    project::explain(
+        &nikaia::modules::Program::read_one(input)?,
+        settings,
+        project::Explain {
+            overlaps: args.overlaps,
+            sharing: args.sharing,
+            trust: args.trust,
+        },
+    )?;
 
     let lowered = project::lower(input, settings, args.no_cache)?;
     std::fs::write(&output_path, &lowered.rust)?;
@@ -323,48 +279,6 @@ fn lower_to_rust(
     );
 
     Ok(())
-}
-
-/// What this build answers about each vehicle an overlap could need
-/// (ADR-033 D10), for `--overlaps` to print beside the pair that needs it.
-///
-/// `None` is "this build has that vehicle". A reason names the switch that
-/// decided it, because a report that said only "these two did not run together"
-/// is the trap D9's refusals exist to keep open to a question.
-///
-/// The two vehicles answer to **different switches**, which is the whole of what
-/// D10 changed here: a completion pair needs only `std`'s runtime, and
-/// `task::both` needs permission to run two pieces of the program's own code at
-/// once.
-fn overlaps_here(settings: &Settings) -> impl Fn(contracts::order::Vehicle) -> Option<String> + '_ {
-    use contracts::order::Vehicle;
-
-    move |vehicle| {
-        if settings.ordering != emit::Ordering::Effects {
-            return Some(format!(
-                "`ordering = {}` keeps the written order",
-                settings.ordering_word
-            ));
-        }
-        match vehicle {
-            Vehicle::Completion if settings.build.overlaps_operations() => None,
-            Vehicle::Completion => Some(format!(
-                "`--target {}` has no runtime to put two operations in flight",
-                settings.target
-            )),
-            Vehicle::UserClosures if settings.build.overlaps_user_code() => None,
-            Vehicle::UserClosures if !settings.build.target.has_threads() => Some(format!(
-                "running them together puts two pieces of your own code on two threads, and \
-                 `--target {}` has none",
-                settings.target
-            )),
-            Vehicle::UserClosures => Some(format!(
-                "running them together puts two pieces of your own code on two threads, which \
-                 `--user-parallelism {}` forbids",
-                settings.user_parallelism
-            )),
-        }
-    }
 }
 
 /// `nikaia lower-std` (ADR-002 D4): `std`'s `.nika` half to the `.rs` beside it.
@@ -405,7 +319,17 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         args.user_parallelism.as_deref(),
         args.ordering.as_deref(),
     )?;
-    project.drive(subcommand, &program_args, args.no_cache, args.locked)
+    project.drive(
+        subcommand,
+        &program_args,
+        args.no_cache,
+        args.locked,
+        project::Explain {
+            overlaps: args.overlaps,
+            sharing: args.sharing,
+            trust: args.trust,
+        },
+    )
 }
 
 /// What the manifest still accepts and the compiler no longer reads.
@@ -456,7 +380,7 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
             interpreter.run(&parsed);
             Ok(())
         }
-        "rust" => lower_to_rust(input, args, &settings, &source),
+        "rust" => lower_to_rust(input, args, &settings),
         // ADR-002 named these and nothing ever matched them, so they ran as
         // whatever the default was without saying so. Accepting a flag and
         // quietly doing something else is worse than either implementing or

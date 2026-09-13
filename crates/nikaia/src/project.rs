@@ -522,6 +522,153 @@ pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
     out
 }
 
+/// Which of the three explanations a run was asked for
+/// ([ADR-033](../../docs/specification/adr/adr-033.md) D9,
+/// [ADR-037](../../docs/specification/adr/adr-037.md) D8,
+/// [ADR-010](../../docs/specification/adr/adr-010.md) D7).
+///
+/// They exist because these analyses **cannot be asked for** - there is no way to
+/// request the cheaper reference count, the overlap or the faster hash; every
+/// fallback is enumerated instead. `--sharing`'s own help says why that is only
+/// fair if the fallbacks can be asked about, *"and this is the asking"*.
+///
+/// So they have to reach a real program, and a person with a real program builds
+/// it with `nikaia build`. They were on the single-file path only, which is
+/// exactly where the asking is not done.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Explain {
+    pub overlaps: bool,
+    pub sharing: bool,
+    pub trust: bool,
+}
+
+impl Explain {
+    pub fn asked(&self) -> bool {
+        self.overlaps || self.sharing || self.trust
+    }
+}
+
+/// Print the explanations a run asked for, over every file of the package.
+///
+/// **Against the package's own ledger and not each file's**, which is the
+/// difference from the single-file path doing this three times: `sync`, the touch
+/// sets and the sharing classes are whole-program facts (ADR-027, ADR-033), and a
+/// report built from one file's inferences would answer a different question from
+/// the one the build answers.
+///
+/// The file name is printed where there is more than one, because a slot key
+/// (`zaehle::counts`) does not say which file it is in - one namespace or not.
+pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -> Result<()> {
+    if !want.asked() {
+        return Ok(());
+    }
+    let library = Ledger::parse(STD).context("std's shipped ledger")?;
+    let several = program.units.len() > 1;
+
+    if want.overlaps {
+        overlaps_preamble(settings);
+    }
+    for unit in &program.units {
+        if several {
+            println!("--- {}", unit.path.display());
+        }
+        if want.overlaps {
+            print!(
+                "{}",
+                crate::contracts::order::report(
+                    &unit.parsed,
+                    &program.contracts,
+                    &library,
+                    &overlaps_here(settings)
+                )
+            );
+        }
+        if want.sharing {
+            print!(
+                "{}",
+                crate::contracts::sharing::report(&unit.parsed, &program.contracts, &library)
+            );
+        }
+        if want.trust {
+            print!(
+                "{}",
+                crate::contracts::trust::render(&crate::contracts::trust::analyse(
+                    &unit.parsed,
+                    &library
+                ))
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The note `--overlaps` prints once, before the pairs.
+///
+/// The report answers "may these two overlap", which is a question about the
+/// program. Whether anything then *does* overlap is a question about the build -
+/// and since ADR-033 D10 the answer differs from pair to pair, because the two
+/// vehicles are gated by different switches. So the build's half travels *into*
+/// the report, one answer per pair, and only what is true of the whole run stands
+/// here.
+pub fn overlaps_preamble(settings: &Settings) {
+    if settings.ordering != Ordering::Effects {
+        println!(
+            "note: `ordering = {}` keeps the written order, so nothing below overlaps in this build.",
+            settings.ordering_word
+        );
+    } else if !settings.build.overlaps_user_code() {
+        println!(
+            "note: `--user-parallelism {}` keeps every piece of your own code on one thread. \
+             A pair `std` can put in flight itself still overlaps (ADR-033 D10); a pair that \
+             would need two threads of your own is marked `would` below.",
+            settings.user_parallelism
+        );
+    }
+}
+
+/// Why a pair that may overlap does not, in **this** build (ADR-033 D10).
+///
+/// `None` is "this build has that vehicle". A reason names the switch that
+/// decided it, because a report that said only "these two did not run together"
+/// is the trap D9's refusals exist to keep open to a question.
+///
+/// The two vehicles answer to **different switches**, which is the whole of what
+/// D10 changed here: a completion pair needs only `std`'s runtime, and
+/// `task::both` needs permission to run two pieces of the program's own code at
+/// once.
+pub fn overlaps_here(
+    settings: &Settings,
+) -> impl Fn(crate::contracts::order::Vehicle) -> Option<String> + '_ {
+    use crate::contracts::order::Vehicle;
+
+    move |vehicle| {
+        if settings.ordering != Ordering::Effects {
+            return Some(format!(
+                "`ordering = {}` keeps the written order",
+                settings.ordering_word
+            ));
+        }
+        match vehicle {
+            Vehicle::Completion if settings.build.overlaps_operations() => None,
+            Vehicle::Completion => Some(format!(
+                "`--target {}` has no runtime to put two operations in flight",
+                settings.target
+            )),
+            Vehicle::UserClosures if settings.build.overlaps_user_code() => None,
+            Vehicle::UserClosures if !settings.build.target.has_threads() => Some(format!(
+                "running them together puts two pieces of your own code on two threads, and \
+                 `--target {}` has none",
+                settings.target
+            )),
+            Vehicle::UserClosures => Some(format!(
+                "running them together puts two pieces of your own code on two threads, which \
+                 `--user-parallelism {}` forbids",
+                settings.user_parallelism
+            )),
+        }
+    }
+}
+
 /// A project: its root, its manifest, and the switches this build resolved.
 #[derive(Debug)]
 pub struct Project {
@@ -696,6 +843,7 @@ impl Project {
         program_args: &[String],
         no_cache: bool,
         locked: bool,
+        want: Explain,
     ) -> Result<i32> {
         let entry = self.entry();
         if !entry.is_file() {
@@ -703,6 +851,16 @@ impl Project {
                 "{} is not there. A project's entry point is `{ENTRY}` (Part III 13.1).",
                 entry.display()
             );
+        }
+
+        // Before the build, because an explanation is about the program and a
+        // build that reuses a cached lowering still answers the question. The
+        // package is read a second time here rather than threaded out of
+        // `lower`: reading it is parsing, and paying for it only when somebody
+        // asked is cheaper than reshaping the build for a flag nobody usually
+        // passes.
+        if want.asked() {
+            explain(&modules::Program::read(&entry)?, &self.settings, want)?;
         }
 
         let lowered = lower(&entry, &self.settings, no_cache)?;

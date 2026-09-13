@@ -731,7 +731,7 @@ fn every_fallback_is_enumerated_with_a_remedy() {
     // The two that want nothing, because the answer belongs to code this run
     // does not read: callers that do not exist yet, and the file that declares
     // the field.
-    for fallback in [Fallback::PublicSignature, Fallback::ForeignField] {
+    for fallback in [Fallback::PublicSignature, Fallback::ForeignFile] {
         assert!(
             fallback.remedy().contains("nothing here"),
             "{}",

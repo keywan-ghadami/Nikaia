@@ -586,3 +586,63 @@ fn compiled_stds(cache: &Path) -> BTreeMap<PathBuf, Option<std::time::SystemTime
     walk(cache, &mut found);
     found
 }
+
+/// **The explain modes reach a project build** (`docs/open-work.md` §1.7).
+///
+/// `--sharing`'s own help says why they exist: there is no way to *ask* for the
+/// cheaper reference count, every fallback is enumerated instead, and *"that is
+/// only fair if the fallbacks can be asked about. This is the asking."* They were
+/// on the single-file path only — `nikaia build --sharing` answered `unexpected
+/// argument` — so the asking was unavailable exactly where a person with a real
+/// program would do it.
+///
+/// Over **every file** of the package, and against the package's own ledger
+/// rather than each file's: `sync`, the touch sets and the sharing classes are
+/// whole-program facts, so a report built from one file's inferences would answer
+/// a different question from the one the build answers.
+#[test]
+fn the_explain_modes_reach_a_project_build() {
+    let dir = a_project(
+        "project-explain",
+        "[package]\nname = \"explained\"\nversion = \"0.1.0\"\n",
+        "fn main() {\n    \
+             let c: Shared[Conn] = Conn(id: 1)\n    \
+             println(f\"{hold(c)}\")\n\
+         }\n",
+    );
+    std::fs::write(
+        dir.join("src/pool.nika"),
+        "pub struct Conn { pub id: i64 }\n\
+         \n\
+         pub fn hold(c: Shared[Conn]) -> i64 {\n    \
+             return c.id\n\
+         }\n",
+    )
+    .expect("the second file");
+
+    let ran = nikaia(&["build", "--sharing"], &dir);
+    let out = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        out.contains("`c` (Shared[Conn])"),
+        "the value is named: {}",
+        said(&ran)
+    );
+    // Both files are reported, each under its own name - a slot key does not say
+    // which file it is in.
+    assert!(
+        out.contains("main.nika") && out.contains("pool.nika"),
+        "{out}"
+    );
+
+    // And the other two are accepted on `build` as well.
+    for flag in ["--trust", "--overlaps"] {
+        let ran = nikaia(&["build", flag], &dir);
+        assert!(
+            ran.status.success(),
+            "`nikaia build {flag}`:\n{}",
+            said(&ran)
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
