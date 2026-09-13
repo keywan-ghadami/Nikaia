@@ -180,6 +180,7 @@ its citations and its index row every time the other merged first.
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
 | 051 | A response body may be bytes the program never read, and `std` decides how they travel | [#45](https://github.com/keywan-ghadami/Nikaia/pull/45) |
+| 053 | One Rust crate per Nikaia package, so a package can depend on a package | this session |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
