@@ -903,12 +903,45 @@ machine's CPU for a 4 KiB page.
 entering the process. Its `Content-Type` follows the extension, and its length — and any failure
 to open it — are settled before the status line, because after the headers are written there is
 no status code left to send (D6). Whether that becomes `sendfile(2)`, a mapping, or an ordinary
-read is `std`'s to choose at run time and not the program's to name (D3): the mechanism that
-avoids the copy is the slower one below roughly a megabyte, and it is unavailable under TLS and
-under HTTP/2 (D5).
+read is `std`'s to choose at run time and not the program's to name (D3), and it is unavailable
+under TLS and under HTTP/2 (D5).
+
+**When the request names the file, the path is `Untrusted` and the compiler says so.** A
+download route is the other program, and it is not the one above with a variable in it:
+
+```nika
+.route("/download") fn(request) {
+    // A request chose these bytes (ADR-010 D2), so they may not reach a path
+    // unchecked. `fs::within` resolves the join and answers `none` where the
+    // result would leave the root — and its answer is trusted where its
+    // argument was not.
+    let path = fs::within("/srv/files", request.query("file") ?? "")
+
+    if path.is_none() {
+        http::Response(status: 404, body: "no such file")
+    } else {
+        http::File(path??)
+    }
+}
+```
+
+Handing `request.query("file")` to `http::File`, `fs::map`, `fs::read` or `fs::write` directly is
+a **compile error** and not a runtime check ([ADR-058](adr/adr-058.md) D7): a `../../etc/shadow`
+that arrives as a 200 is not a failure a status code fixes afterwards. The provenance is
+[ADR-010](adr/adr-010.md) D1's lattice, so the taint survives the `join` that is exactly how a
+traversal bug is written, and `trusted: true` at the source is the other way to clear it — for
+the program that knows something the compiler does not, recorded in `nikaia.contracts` with its
+site.
+
+What `std` keeps between requests is bounded, dropped when the file's identity or modification
+time moves, and sized by the operator rather than the program ([ADR-058](adr/adr-058.md) D8). A
+page that must be held for certain is mapped by the program itself, outside the handler, which is
+the first example above.
 
 > **Status:** `std::http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes`
-> row nor `http::File` exists. `fs::map` and `Bytes` do.
+> row nor `http::File` exists, and neither does `fs::within` or D7's refusal — the provenance
+> analysis it would rest on does (`std::collections`, below, and `nikaia --trust`). `fs::map` and
+> `Bytes` exist.
 
 The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
 and `query(name)` yield `&str`, so a parameter used inside the request's scope costs nothing and

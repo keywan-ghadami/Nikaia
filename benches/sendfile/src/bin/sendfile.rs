@@ -2,8 +2,14 @@
 //!
 //! The question is [ADR-058](../../../../docs/specification/adr/adr-058.md)'s:
 //! can a file reach a socket without the program reading it, and is that worth
-//! a decision. Five vehicles serve the same file over one kept-open connection
-//! the same number of times, with a thread draining the far end:
+//! a decision. There are **two families of answer**, because there are two
+//! programs: one whose page is known when the server starts, and one whose file
+//! the *request* names - a download route, a file server, an upload served
+//! back. What may be done once outside the handler is the whole difference, and
+//! the vehicles that win are not the same.
+//!
+//! **Named at startup.** Five vehicles serve the same file over one kept-open
+//! connection the same number of times, with a thread draining the far end:
 //!
 //! | vehicle | what it does |
 //! | :--- | :--- |
@@ -12,6 +18,18 @@
 //! | `mapped` | `mmap` once at startup, write the mapping per request |
 //! | `sendfile` | `sendfile(2)`: the program never has the bytes |
 //! | `splice` | `io_uring` `Splice`, file to pipe to socket, the two linked |
+//!
+//! **Named by the request.** The same transfer where the path is not known
+//! until the request arrives, so every vehicle pays the open. The files are
+//! cycled rather than repeated, because a server whose route names a file does
+//! not serve one file:
+//!
+//! | vehicle | what it does per request |
+//! | :--- | :--- |
+//! | `read_named` | open, read, write, close |
+//! | `mapped_named` | open, `mmap`, write, `munmap`, close |
+//! | `sendfile_named` | open, `fstat`, `sendfile`, close |
+//! | `mapped_kept` | a lookup in a table of mappings made once - the hot set a real file server keeps |
 //!
 //! **The column that answers is `machine`, not `thread`.** The sending thread
 //! is not the whole cost: the reader drains the far end, and `io_uring`
@@ -30,7 +48,20 @@ use std::time::Instant;
 #[cfg(target_os = "linux")]
 use io_uring::{opcode, types, IoUring};
 
-const VEHICLES: &[&str] = &["read_each", "cached", "mapped", "sendfile", "splice"];
+/// Named at startup: what may be done once, is.
+const AT_STARTUP: &[&str] = &["read_each", "cached", "mapped", "sendfile", "splice"];
+
+/// Named by the request: only the vehicle in the last row may keep anything.
+const BY_REQUEST: &[&str] = &[
+    "read_named",
+    "mapped_named",
+    "sendfile_named",
+    "mapped_kept",
+];
+
+/// How many files a request may name. One would let the kernel keep everything
+/// hot for a single inode and measure the wrong program.
+const NAMED_FILES: usize = 64;
 
 /// Every jiffy the machine spent not idle, from `/proc/stat`.
 fn machine_busy_seconds() -> f64 {
@@ -209,7 +240,97 @@ fn splice(_: &Path, _: &mut TcpStream, _: usize, _: usize) {
     eprintln!("splice: `io_uring` is Linux's, and this is not Linux");
 }
 
-fn once(name: &str, path: &Path, size: usize, times: usize) -> (f64, f64, f64) {
+/// Named by the request: open, read, write, close - every request.
+fn read_named(paths: &[std::path::PathBuf], socket: &mut TcpStream, times: usize) {
+    for turn in 0..times {
+        let page = std::fs::read(&paths[turn % paths.len()]).expect("read");
+        socket.write_all(&page).expect("write");
+    }
+}
+
+/// Named by the request: the mapping cannot be made once, so it is made and
+/// unmade per request - and that is a page-table edit, not a pointer.
+fn mapped_named(paths: &[std::path::PathBuf], socket: &mut TcpStream, times: usize, size: usize) {
+    for turn in 0..times {
+        let file = File::open(&paths[turn % paths.len()]).expect("open");
+        let pages = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        assert!(pages != libc::MAP_FAILED, "mmap");
+        let page = unsafe { std::slice::from_raw_parts(pages as *const u8, size) };
+        socket.write_all(page).expect("write");
+        unsafe { libc::munmap(pages, size) };
+    }
+}
+
+/// Named by the request, and the bytes still never enter the process. The
+/// `fstat` is not decoration: `Content-Length` has to be known before the
+/// status line ([ADR-058](../../../../docs/specification/adr/adr-058.md) D6).
+fn sendfile_named(paths: &[std::path::PathBuf], socket: &mut TcpStream, times: usize) {
+    for turn in 0..times {
+        let file = File::open(&paths[turn % paths.len()]).expect("open");
+        let length = file.metadata().expect("fstat").len() as usize;
+        let mut offset: libc::off_t = 0;
+        while (offset as usize) < length {
+            let sent = unsafe {
+                libc::sendfile(
+                    socket.as_raw_fd(),
+                    file.as_raw_fd(),
+                    &mut offset,
+                    length - offset as usize,
+                )
+            };
+            assert!(sent >= 0, "sendfile: {}", std::io::Error::last_os_error());
+        }
+    }
+}
+
+/// The hot set: a file server that keeps what it has already mapped. The
+/// request still names the file, but the mapping is only made once.
+fn mapped_kept(paths: &[std::path::PathBuf], socket: &mut TcpStream, times: usize, size: usize) {
+    let kept: Vec<*const u8> = paths
+        .iter()
+        .map(|path| {
+            let file = File::open(path).expect("open");
+            let pages = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    size,
+                    libc::PROT_READ,
+                    libc::MAP_PRIVATE,
+                    file.as_raw_fd(),
+                    0,
+                )
+            };
+            assert!(pages != libc::MAP_FAILED, "mmap");
+            pages as *const u8
+        })
+        .collect();
+
+    for turn in 0..times {
+        let page = unsafe { std::slice::from_raw_parts(kept[turn % kept.len()], size) };
+        socket.write_all(page).expect("write");
+    }
+
+    for pages in kept {
+        unsafe { libc::munmap(pages as *mut libc::c_void, size) };
+    }
+}
+
+fn once(
+    name: &str,
+    path: &Path,
+    named: &[std::path::PathBuf],
+    size: usize,
+    times: usize,
+) -> (f64, f64, f64) {
     let total = (size * times) as u64;
     let (mut socket, reader) = connected(total);
 
@@ -222,6 +343,10 @@ fn once(name: &str, path: &Path, size: usize, times: usize) -> (f64, f64, f64) {
         "mapped" => mapped(path, &mut socket, times, size),
         "sendfile" => sendfile(path, &mut socket, times, size),
         "splice" => splice(path, &mut socket, times, size),
+        "read_named" => read_named(named, &mut socket, times),
+        "mapped_named" => mapped_named(named, &mut socket, times, size),
+        "sendfile_named" => sendfile_named(named, &mut socket, times),
+        "mapped_kept" => mapped_kept(named, &mut socket, times, size),
         other => panic!("no vehicle named {other}"),
     }
     let wall = clock.elapsed();
@@ -238,10 +363,18 @@ fn once(name: &str, path: &Path, size: usize, times: usize) -> (f64, f64, f64) {
     (per(wall.as_secs_f64()), per(busy), per(thread))
 }
 
-fn run(name: &str, path: &Path, size: usize, times: usize, repeats: usize) {
+#[allow(clippy::too_many_arguments)]
+fn run(
+    name: &str,
+    path: &Path,
+    named: &[std::path::PathBuf],
+    size: usize,
+    times: usize,
+    repeats: usize,
+) {
     let (mut walls, mut machine, mut thread) = (Vec::new(), Vec::new(), Vec::new());
     for _ in 0..repeats {
-        let (wall, busy, own) = once(name, path, size, times);
+        let (wall, busy, own) = once(name, path, named, size, times);
         walls.push(wall);
         machine.push(busy);
         thread.push(own);
@@ -251,7 +384,7 @@ fn run(name: &str, path: &Path, size: usize, times: usize, repeats: usize) {
     }
     let middle = repeats / 2;
     println!(
-        "{name:>10} {:>9.1} {:>11.1} {:>10.1}      {:.1}-{:.1}",
+        "{name:>15} {:>9.1} {:>11.1} {:>10.1}      {:.1}-{:.1}",
         walls[middle],
         machine[middle],
         thread[middle],
@@ -277,18 +410,39 @@ fn main() {
         let path = directory.join(format!("page-{size}.html"));
         let body: Vec<u8> = (0..size).map(|i| b'a' + (i % 26) as u8).collect();
         std::fs::write(&path, &body).expect("the page");
+
+        // A request that names a file does not name the same one every time,
+        // and one inode would let the kernel keep state the real program does
+        // not get to keep.
+        let named: Vec<std::path::PathBuf> = (0..NAMED_FILES)
+            .map(|n| {
+                let one = directory.join(format!("named-{size}-{n}.html"));
+                std::fs::write(&one, &body).expect("a named page");
+                one
+            })
+            .collect();
+
         let times = if size >= 1024 * 1024 { 2_000 } else { 20_000 };
 
-        println!("{} KiB, {times} sends over one connection", size / 1024);
-        println!(
-            "{:>10} {:>9} {:>11} {:>10}      wall spread",
-            "vehicle", "µs/op", "µs machine", "µs thread"
-        );
-        for vehicle in VEHICLES {
-            run(vehicle, &path, size, times, repeats);
+        for (family, vehicles) in [
+            ("named at startup", AT_STARTUP),
+            ("named by the request", BY_REQUEST),
+        ] {
+            println!(
+                "{} KiB, {times} sends over one connection - {family}",
+                size / 1024
+            );
+            println!(
+                "{:>15} {:>9} {:>11} {:>10}      wall spread",
+                "vehicle", "µs/op", "µs machine", "µs thread"
+            );
+            for vehicle in vehicles {
+                run(vehicle, &path, &named, size, times, repeats);
+            }
+            println!();
         }
-        println!();
     }
+
     println!("loadavg after: {}", loadavg());
 }
 

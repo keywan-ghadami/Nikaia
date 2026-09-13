@@ -8,18 +8,34 @@ settled), [ADR-018](specification/adr/adr-018.md) D2 (what a handler may
 return), [ADR-038](specification/adr/adr-038.md) D3 (the I/O split), Part III
 17.1 (`fs::map`)
 **Produced by:** [`benches/sendfile/`](../benches/sendfile) —
-`./benches/sendfile/sendfile.sh 7`
+`./benches/sendfile/sendfile.sh 7`, twice; §2 is the first run and §2.1 carries
+the second where the two disagree
 
 The README used to show an HTTP server that read `index.html` on every request,
 and the criticism it drew was that reading a file in order to hand it on is
 expensive. That is two claims, and only the first survives measurement.
 
-**The conclusion, first.** Reading the file per request is the expensive part
-and it is worth **2.2×** the machine's CPU at 4 KiB. Sending it *without*
-reading it — `sendfile(2)`, the thing the criticism was pointing at — is worth
-nothing at that size and **loses 19 %** to simply mapping the file once; it wins
-only at a megabyte, where it takes 610 µs of machine CPU against a mapping's
-760. And `io_uring`'s `Splice`, which looks like the natural home for this on a
+**There are two programs here, not one**, and that is the first thing the bench
+found. A server whose page is known when it starts may do everything once,
+outside the handler. A server whose file the *request* names — a download route,
+a file server, an upload served back — may do nothing once, and the vehicles
+that win are not the same ones. §3 is the first program, §3.1 the second.
+
+**The conclusion, first.** For a page known at startup, reading the file per
+request is the expensive part and it is worth **2.2×** the machine's CPU at
+4 KiB; `sendfile(2)`, the thing the criticism was pointing at, is worth nothing
+at that size and wins only at a megabyte.
+
+For a file the request names, the answer is a different one and sharper. What
+decides is **not the mechanism but whether anything may be kept**: a table of
+mappings made once is 13.5 µs at 4 KiB where the best vehicle that keeps nothing
+is 28.0. And the obvious reading of "map it, don't read it" is a **trap** in this
+program — `mmap` and `munmap` per request cost **76.0 µs**, two and a half times
+what plainly reading the file costs, because a mapping is a page-table edit and
+not a pointer. Among vehicles that may keep nothing, `sendfile` is the best or
+tied at every size.
+
+And `io_uring`'s `Splice`, which looks like the natural home for this on a
 runtime that already runs files on a ring, is the worst vehicle at every size
 while *appearing* to be the best by a factor of twenty on the wrong instrument.
 
@@ -31,9 +47,11 @@ while *appearing* to be the best by a factor of twenty on the wrong instrument.
 average 0.31 before the block and 1.30 after, printed by the binary rather than
 assumed away. `io_uring` is available on this kernel.
 
-Five vehicles serve the same file over **one kept-open TCP connection on
+The vehicles serve the same file over **one kept-open TCP connection on
 loopback**, the same number of times, with a thread draining the far end so that
-a send blocks only when the kernel's buffers are genuinely full:
+a send blocks only when the kernel's buffers are genuinely full.
+
+**Named at startup** — the path is a constant, so what may be done once is:
 
 | vehicle | what it does |
 | :--- | :--- |
@@ -42,6 +60,19 @@ a send blocks only when the kernel's buffers are genuinely full:
 | `mapped` | `mmap` once at startup, write the mapping per request. What `fs::map` already gives |
 | `sendfile` | `sendfile(2)`, the descriptor opened once. The program never has the bytes |
 | `splice` | `io_uring` `Splice`, file → pipe → socket, the two hops submitted as one linked pair |
+
+**Named by the request** — the path is not known until the request arrives, so
+every vehicle pays the open, and only the last may keep anything. The requests
+cycle over **64 files** rather than repeating one, because a route that names a
+file does not name the same file, and one inode would let the kernel keep state
+the real program does not get to keep:
+
+| vehicle | what it does per request |
+| :--- | :--- |
+| `read_named` | open, read, write, close |
+| `mapped_named` | open, `mmap`, write, `munmap`, close |
+| `sendfile_named` | open, `fstat` (the length has to be known before the status line), `sendfile`, close |
+| `mapped_kept` | a lookup in a table of mappings made once — the hot set a real file server keeps |
 
 20 000 sends at 4 KiB and 64 KiB, 2 000 at 1 MiB; seven repeats, the median
 printed and the wall spread beside it. The far end counts the bytes it received
@@ -63,74 +94,95 @@ the disagreement is itself a finding:
 
 ## 2. The numbers
 
-Median of seven, µs per request.
+Median of seven, µs per request. First run.
 
-### 4 KiB — the size a static page usually is
+### Named at startup
 
-| vehicle | wall | **machine** | thread |
+| | 4 KiB | 64 KiB | 1 MiB |
 | :--- | ---: | ---: | ---: |
-| `read_each` | 24.3 | **31.5** | 24.4 |
-| `cached` | 9.8 | **14.5** | 9.8 |
-| `mapped` | 9.7 | **15.5** | 9.8 |
-| `sendfile` | 13.0 | **18.5** | 13.0 |
-| `splice` | 71.3 | **78.0** | 21.5 |
+| `read_each` | 39.5 | 65.0 | 860 |
+| `cached` | 22.5 | 51.5 | 760 |
+| `mapped` | **19.0** | **45.5** | 780 |
+| `sendfile` | 18.0 | 50.0 | **650** |
+| `splice` | 73.5 | 88.0 | 1010 |
 
-### 64 KiB
+### Named by the request
 
-| vehicle | wall | **machine** | thread |
+| | 4 KiB | 64 KiB | 1 MiB |
 | :--- | ---: | ---: | ---: |
-| `read_each` | 49.8 | **67.5** | 49.3 |
-| `cached` | 37.1 | **53.0** | 36.9 |
-| `mapped` | 29.9 | **40.0** | 29.9 |
-| `sendfile` | 38.8 | **49.0** | 38.6 |
-| `splice` | 77.6 | **89.0** | 21.7 |
+| `read_named` | 30.5 | 65.5 | 925 |
+| `mapped_named` | 76.0 | 124.0 | 715 |
+| `sendfile_named` | **28.0** | **49.5** | 800 |
+| `mapped_kept` | **13.5** | **46.0** | **635** |
 
-### 1 MiB
+### 2.1 The second run, and which rows moved
 
-| vehicle | wall | **machine** | thread |
-| :--- | ---: | ---: | ---: |
-| `read_each` | 645.2 | **895.0** | 635.1 |
-| `cached` | 567.0 | **770.0** | 553.2 |
-| `mapped` | 557.8 | **760.0** | 545.7 |
-| `sendfile` | 436.7 | **610.0** | 433.2 |
-| `splice` | 700.8 | **955.0** | 26.1 |
+The whole block was run twice. Every ordering above reproduced except the
+megabyte row of the second family, where three of the four vehicles are within
+each other's spread and `mapped_named` moved from 715 to 940:
 
----
+| named by the request, 1 MiB | run 1 | run 2 |
+| :--- | ---: | ---: |
+| `read_named` | 925 | 805 |
+| `mapped_named` | 715 | 940 |
+| `sendfile_named` | 800 | 845 |
+| `mapped_kept` | **635** | **720** |
 
-## 3. What they say
+So **no claim below rests on the megabyte row of the second family** beyond
+`mapped_kept` winning it, which both runs agree on. What reproduced exactly is
+everything at 4 KiB and 64 KiB, and it is where the findings are.
 
-**The criticism was right about the read.** 31.5 µs against 15.5 at 4 KiB: more
+## 3. What they say — a page known at startup
+
+**The criticism was right about the read.** 39.5 µs against 19.0 at 4 KiB: more
 than half of what answering a small request cost was opening the file, copying
 it into the process and validating it as UTF-8 — work that produces the same
-bytes every time. At 64 KiB it is 67.5 against 40.0 and at a megabyte 895
-against 760: the read's share shrinks as the payload grows, which is what a
+bytes every time. At 64 KiB it is 65.0 against 45.5 and at a megabyte 860
+against 780: the read's share shrinks as the payload grows, which is what a
 fixed per-request cost has to do.
 
 **And wrong about what to do instead.** `sendfile` removes the copy that
-`mapped` still pays, and at 4 KiB that is worth **−4 µs**: 18.5 against 15.5, a
-19 % *loss*. There is no copy worth a syscall's bookkeeping at four kilobytes.
-The crossover is somewhere between 64 KiB (49.0 against 40.0, still losing) and
-a megabyte (610 against 760, winning by 20 %) — which is why
+`mapped` still pays, and at 4 KiB that is worth nothing: 18.0 against 19.0,
+inside the spread. At 64 KiB it *loses* — 50.0 against 45.5. It wins at a
+megabyte, 650 against 780, by 17 %. There is no copy worth a syscall's
+bookkeeping at four kilobytes, which is why
 [ADR-058](specification/adr/adr-058.md) D3 puts the choice inside `std` with a
-size the operator can pin, and not in the language where a program's author
-would have to guess it.
+size an operator can pin, and not in the language where a program's author would
+have to guess it.
 
-**`mapped` is `cached` without the heap.** The two are within noise at 4 KiB and
-a megabyte, and the mapping is 25 % better at 64 KiB. Neither number is the
-reason to prefer it: the mapping does not hold a second copy of a file the page
-cache already has, and that is a memory property this bench does not measure and
-a server with a thousand pages would feel.
+**`mapped` is `cached` without the heap**, and slightly ahead of it at every
+size. Neither number is the reason to prefer it: the mapping does not hold a
+second copy of a file the page cache already has, and that is a memory property
+this bench does not measure and a server with a thousand pages would feel.
 
-**`splice` is the trap.** Its *thread* column is 21.5, 21.7 and 26.1 µs — flat,
-tiny, and independent of the payload, which is exactly what a zero-copy
-mechanism is supposed to look like. Its *machine* column is 78, 89 and 955 µs:
-the worst of the five everywhere. The work did not vanish, it moved to
-`io_uring`'s kernel workers, where the submitting thread's accounting cannot see
-it. Both hops were submitted as one linked pair and the pipe was widened to a
-megabyte first, so the number is not a strawman: a pipe between the file and the
-socket is a second transfer and batching does not remove it.
+## 3.1 What they say — a file the request names
 
----
+This is the program the first family cannot speak for, and three things separate
+them.
+
+**Keeping the mapping is worth more than any mechanism.** `mapped_kept` — a
+table of mappings made once, looked up by path — is **13.5 µs** at 4 KiB where
+the best vehicle that keeps nothing is 28.0, and it wins at every size in both
+runs. A file server's real answer is a cache, and the interesting decision is
+therefore not `sendfile` versus `read`: it is what `std` may keep, how it is
+bounded, and when it is invalidated.
+
+**Mapping per request is the trap, and it is the obvious reading of §3.** "Map
+it, don't read it" is right when the mapping is made once and **wrong by 2.5×**
+when it is not: `mapped_named` costs 76.0 µs at 4 KiB against `read_named`'s
+30.5, and 124.0 against 65.5 at 64 KiB. A mapping is a page-table edit, an
+address-space reservation and — on unmapping — an invalidation the other cores
+have to hear about; none of that is amortised by four kilobytes of payload. An
+implementation of `http::File` that mapped per request would be the slowest
+option at the sizes servers send most, while looking like the zero-copy one.
+
+**Among vehicles that may keep nothing, `sendfile` is the answer.** 28.0 against
+`read_named`'s 30.5 at 4 KiB and 49.5 against 65.5 at 64 KiB, in both runs — and
+it is the only one of the three whose cost does not include a copy into the
+process, so it is the one that does not scale its memory with the number of
+requests in flight. That is what an unbounded set of files — a download route
+over user uploads, where a cache would be a liability rather than a hot set —
+actually needs.
 
 ## 4. What this does not measure, and one confound
 
@@ -155,6 +207,14 @@ but `read_each` would pay it *per request* only in the sense that the cache
 would have to keep it, which is the same page cache the other four are using.
 The honest statement is that this measures the warm case, which is the case a
 web server serving a static page is in.
+
+**The cache this bench keeps is perfect and a real one is not.** `mapped_kept`
+maps all 64 files up front, never evicts and never checks whether the file
+changed underneath it. A `std` that keeps mappings owes an eviction policy and
+an answer to "the file was replaced" — both are correctness work this number
+does not price, and
+[ADR-058](specification/adr/adr-058.md) D8 is where they are decided rather than
+assumed.
 
 **And the absolutes travel badly.** This is a shared 4-vCPU VM; `docs/runtime-cost.md`
 §6 records the same binary's numbers moving 1.4–1.9× between days on this
