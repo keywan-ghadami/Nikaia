@@ -1240,7 +1240,7 @@ impl<'a> Checker<'a> {
         }
 
         for ((name, want), found) in wanted.iter().zip(found) {
-            if found.fits(want) {
+            if self.fits_through_deref(found, want) {
                 continue;
             }
             self.checked.findings.push(Finding {
@@ -1262,6 +1262,44 @@ impl<'a> Checker<'a> {
 
     // --- the one shape every check has --------------------------------------
 
+    /// Whether `found` fits `want` once a transparent container is seen through.
+    ///
+    /// A type whose ledger records a `deref` is one a caller is not meant to
+    /// notice: Part III says of `fs::Mapped` that "a parser cannot tell the
+    /// difference", and the entry spells it — `fs::Mapped::deref` is
+    /// `(&Mapped) -> &str`. Nothing consulted that entry, so a function taking a
+    /// text view refused a mapped file, which is the opposite of what the
+    /// specification promises about it.
+    ///
+    /// **Only as a rescue, never as a rule of its own.** It is asked after a
+    /// direct comparison has already failed, so seeing through a container can
+    /// make a refusal into an acceptance and can never turn an acceptance into a
+    /// refusal. One step only: a container inside a container is two questions,
+    /// and nothing in the language has asked the second yet
+    /// ([ADR-028](../../../docs/specification/adr/adr-028.md) D5).
+    fn fits_through_deref(&self, found: &Ty, want: &Ty) -> bool {
+        if found.fits(want) {
+            return true;
+        }
+        let Ty::Named { name, .. } = found else {
+            return false;
+        };
+        let Some((_, contract)) = self.method(&format!("{name}::deref")) else {
+            return false;
+        };
+        // The receiver's own arguments bind the signature's variables, exactly
+        // as they do for any other method (ADR-031), so `(&Shared[$T]) -> &$T`
+        // answers with what *this* `Shared` holds rather than with a variable.
+        let Some(signature) = contract.signature.as_ref() else {
+            return false;
+        };
+        let Some(result) = signature.result.as_ref() else {
+            return false;
+        };
+        let bound = bindings(contract, found);
+        ty::substitute(result, &bound).fits(want)
+    }
+
     /// Report only when both sides are known and they disagree.
     fn expect(
         &mut self,
@@ -1271,7 +1309,7 @@ impl<'a> Checker<'a> {
         what: &str,
         message: impl FnOnce(&str, &str) -> String,
     ) {
-        if found.fits(want) {
+        if self.fits_through_deref(found, want) {
             return;
         }
         let code = match what {
@@ -1832,15 +1870,22 @@ fn element_of(over: &Ty, bindings: usize) -> Ty {
 /// there.
 fn view_of(inner: &Ty) -> Ty {
     match inner {
-        Ty::Named { name, args, view } if args.is_empty() => {
-            if *view {
-                inner.clone()
-            } else if name == "String" {
-                Ty::view("str")
-            } else {
-                Ty::view(name.clone())
-            }
-        }
+        // A view of a view is the view: `&&str` is not a type this language has.
+        Ty::Named { view: true, .. } => inner.clone(),
+        // `&String` is the one rewrite, because a text view is spelled `&str`
+        // and `&String` is not a type a signature may ask for (6.5).
+        Ty::Named { name, args, .. } if args.is_empty() && name == "String" => Ty::view("str"),
+        // **Arguments are kept.** `&Vec[i64]` is a view of a `Vec[i64]`, and
+        // answering `Unknown` here left every view of a generic type
+        // *unchecked* - so a mismatch was reported by `rustc`, about the
+        // generated file, which is the one thing Part III C.1 forbids.
+        Ty::Named { name, args, .. } => Ty::Named {
+            name: name.clone(),
+            args: args.clone(),
+            view: true,
+        },
+        // A tuple of views is not a view of a tuple, and nothing writes down
+        // what a view of a lambda would be.
         _ => Ty::Unknown,
     }
 }

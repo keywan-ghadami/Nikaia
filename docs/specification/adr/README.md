@@ -84,6 +84,7 @@ and a decision is not an implementation.
 | [019](adr-019.md) | Standard input is a stream, read like everything else | Accepted | yes (`std::io`) |
 | [022](adr-022.md) | One lambda form. `fn:` is removed | Accepted | yes |
 | [041](adr-041.md) | Naming a lambda's arguments is the normal form; the automatic `a`, `b`, `c` are experimental and warned about where one is actually used | Accepted | **yes** — `NK1114` from the one function that also writes the parameter list, the specification's examples and six sites in four `examples/` programs |
+| [042](adr-042.md) | A view keeps the type it is a view of, arguments and all, and a container whose ledger records a `deref` is seen through once — as a rescue after a comparison has already failed | Accepted | **yes** — `view_of` and `fits_through_deref` in `check`, exercised by `fs::Mapped`; a `&Vec[i64]` mismatch is this compiler's `NK1102` where it used to be rustc's |
 | [030](adr-030.md) | A program is more than one file, and that is name resolution | Accepted | yes |
 | [035](adr-035.md) | `f"…"` interpolates and `"…"` is text — the mark belongs on the construct | Accepted | yes |
 

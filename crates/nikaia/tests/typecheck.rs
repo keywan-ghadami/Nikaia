@@ -880,3 +880,71 @@ fn the_warning_explains_the_trap_rather_than_resolving_it() {
         "{notes}"
     );
 }
+
+// --- a view of a generic type, and of a transparent one (Part I 6.5) ---------
+
+/// **A view of a generic type keeps its type.** It used to answer nothing, which
+/// left every `&Vec[…]`, `&HashMap[…]` and `&Shared[…]` unchecked - so a
+/// mismatch was reported by `rustc`, about the generated file, which is the one
+/// thing Part III C.1 forbids.
+#[test]
+fn a_view_of_a_generic_type_is_checked_by_this_compiler() {
+    let (code, message) = one("fn count(text: &str) -> i64 { return 1 }\n\
+         fn probe(xs: Vec[i64]) -> i64 { return count(&xs) }");
+    assert_eq!(code, "NK1102");
+    assert!(message.contains("&Vec[i64]"), "{message}");
+}
+
+/// And the matching case is accepted, so the rule above is a rule and not a
+/// blanket refusal.
+#[test]
+fn a_view_of_a_generic_type_fits_the_same_view() {
+    assert!(
+        findings(
+            "fn total(xs: &Vec[i64]) -> i64 { return 1 }\n\
+             fn probe(xs: Vec[i64]) -> i64 { return total(&xs) }"
+        )
+        .is_empty(),
+        "a view of the declared type must fit"
+    );
+}
+
+/// **A transparent container is seen through.** Part III says of `fs::Mapped`
+/// that "a parser cannot tell the difference", and `std`'s ledger spells it:
+/// `fs::Mapped::deref` is `(&Mapped) -> &str`. Nothing consulted that entry, so
+/// a function taking a text view refused a mapped file.
+#[test]
+fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
+    assert!(
+        findings(
+            "fn count(text: &str) -> i64 { return 1 }\n\
+             fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(&m) }"
+        )
+        .is_empty(),
+        "a mapped file must fit a text view"
+    );
+}
+
+/// Seeing through one is a **rescue** and never a rule of its own: a container
+/// whose `deref` gives something else is still refused, with this compiler's own
+/// words.
+#[test]
+fn a_transparent_container_does_not_fit_just_anything() {
+    let (code, message) = one("fn count(n: &i64) -> i64 { return 1 }\n\
+         fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(&m) }");
+    assert_eq!(code, "NK1102");
+    assert!(message.contains("&Mapped"), "{message}");
+}
+
+/// A view of a view is the view. `&&str` is not a type this language has.
+#[test]
+fn a_view_of_a_view_is_the_view() {
+    assert!(
+        findings(
+            "fn count(text: &str) -> i64 { return 1 }\n\
+             fn probe(text: &str) -> i64 { return count(&text) }"
+        )
+        .is_empty(),
+        "a view of a view must still fit"
+    );
+}

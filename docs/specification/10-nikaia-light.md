@@ -768,15 +768,68 @@ You write `Shared[T]` yourself — it is not inferred, because sharing changes *
 * **`Locked[T]`**: for individually locked fields inside a shared structure — one lock per field rather than one lock around the whole of it. It is the same lock as the one inside `SharedMut[T]`, opened by the same four doors.
 
 **How the second owner comes about.** You do not write the step that produces
-one. Where a handle on a `Shared[T]` or a `SharedMut[T]` is handed on — passed to
-a function, or used by a task (Part II, 11.2) — the handle is **duplicated**, and
-each handle is
+one. Where a handle on a `Shared[T]` or a `SharedMut[T]` is handed on **by
+value** — passed to a function that keeps it, or used by a task (Part II, 11.2) —
+the handle is **duplicated**, and each handle is
 cleaned up at the end of its own block (6.1). There is no method to call, because
 there would be nothing for it to do: a duplicated handle copies none of the data
 and produces no second value — one value, one more owner — so there is nothing to
 name ([ADR-040](adr/adr-040.md) D1). Both are shared values, so the rule is the
 same for both — though a `SharedMut[T]` has nowhere to be handed *to* across a
 thread, because it may not cross one (Part II, 11.2).
+
+**Lending the inner value out duplicates nothing.** `&` on a shared value is a
+view of the value *inside* it, so a function that only uses the value takes an
+ordinary view and never mentions sharing:
+
+```nika
+fn serve(db: &Connection) { … }
+
+let db: Shared[Connection] = postgres::connect("…")
+serve(&db)          // a view; no handle is made, and the count is untouched
+```
+
+Whether the value is shared is the caller's decision, and `serve` has no business
+knowing. A signature names the shared type only where the function **keeps** the
+value past the call — puts it in a structure, gives it to a task, hangs it on
+something that outlives the call — because only then does it need a handle of its
+own ([ADR-042](adr/adr-042.md) D1, D2).
+
+**With `SharedMut[T]` you get in by opening it, and then it is an ordinary view
+again.** There is no `&` straight through a lock: the caller opens it with one of
+the four doors of 6.3 and passes the borrowed value in, and the called function
+sees a plain value and must obey the rule for a lock that is open — it may not
+pause, and it may not touch a lock of its own (Part II, 12.2).
+
+```nika
+let db: SharedMut[Connection] = postgres::connect("…")
+db.access fn(open) { serve(open) }    // `serve` must be `sync` and lock-free
+```
+
+**How the first handle is made: by writing the type.** There is no constructor
+and no method.
+
+```nika
+let db: Shared[Connection] = postgres::connect("…")
+```
+
+The language asks for sharing to be visible in the source because it changes when
+the value is cleaned up — and here it is, in the line where it starts.
+`Shared::new(…)` would write the same thing twice.
+
+**Only where the shared type stands in the same line** may a plain value become a
+shared one: an annotated `let`, or a field whose declared type says so. Not at a
+call site merely because a signature wants one. A call in which the word does not
+appear would otherwise move the cleanup point silently, and at such a place there
+would be no saying whether the value was handed on or duplicated — it would be
+both at once. So this is refused, and the message points at the line where the
+sharing belongs:
+
+```text
+error[NK1115]: `serve` takes a shared value, and `db` is not one
+  help: write the sharing where it starts:
+        let db: Shared[Connection] = postgres::connect("…")
+```
 
 **This is the handle and nothing else.** Ordinary data — a string, a number, a
 struct of those — is still **moved** where it is handed on (8.3). An automatic
@@ -797,11 +850,17 @@ of an extra handle stays something you can look up
 
 > **Status:** not built. None of the three is a type the compiler knows: writing
 > `Shared[T]`, `SharedMut[T]` or `Locked[T]` names a type that does not exist,
-> and the backend has no lowering for any of them. The duplication above is
-> therefore unbuilt too: there is no handle to duplicate, `--sharing` names no
-> duplication site, and there is no way to make the first handle — `Shared` has no
-> constructor, which is a question [ADR-040](adr/adr-040.md) §3 leaves open
-> ([ADR-040](adr/adr-040.md) §4). What *is* built is the
+> and the backend has no lowering for any of them. So everything above about them
+> is unbuilt one step further back: there is no handle to duplicate, `--sharing`
+> names no duplication site, the annotated `let` that makes the first handle
+> produces nothing, and `NK1115` is catalogued and never raised
+> ([ADR-040](adr/adr-040.md) §4, Part III C.3).
+>
+> **The borrowing half is built, and not for these types.** `&` keeping the type
+> it is a view of, and a container whose ledger records a `deref` being seen
+> through, are both in the compiler and exercised by `fs::Mapped`
+> ([ADR-042](adr/adr-042.md) §4) — so `serve(&db)` will work the day `Shared[T]`
+> has an entry, with nothing further to decide. What *is* built is the
 > reasoning above them — which owner count a `Shared` position gets is inferred,
 > and `--sharing` prints it ([ADR-037](adr/adr-037.md) D7,
 > [ADR-039](adr/adr-039.md) §4).
