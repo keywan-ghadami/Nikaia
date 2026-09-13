@@ -166,21 +166,18 @@ fn main() throws {
     // One row per path, as a tuple: the name and the two numbers. Sorting the
     // rows rather than the names is what lets the key be a number without
     // looking anything up.
-    let mut rows = names.map fn {
-        // Not `c`: inside a lambda with implicit arguments, `a`, `b` and `c`
-        // are the arguments (Part I, 5.2), and a local of that name would be
-        // read as one more of them.
-        let counts = &report.paths[a]
-        (a, counts.hits, counts.bytes)
+    let mut rows = names.map fn(path) {
+        let counts = &report.paths[path]
+        (path, counts.hits, counts.bytes)
     }
 
     // Two passes, because `sort` is stable (Part I, 4.5): the names are in
     // order already, so sorting by hits leaves paths with the same count in
     // name order underneath. That is a compound order without a comparator.
-    rows.sort_by_key fn { -a.1 }
+    rows.sort_by_key fn(row) { -row.1 }
 
     let body = rows
-        .map fn { f"{a.0} {a.1} {a.2}" }
+        .map fn(row) { f"{row.0} {row.1} {row.2}" }
         .join("\n")
 
     println(f"{body}")

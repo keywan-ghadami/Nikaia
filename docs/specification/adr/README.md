@@ -83,6 +83,7 @@ and a decision is not an implementation.
 | [018](adr-018.md) | The HTTP handler sees the request, because a lambda already could | Accepted | no |
 | [019](adr-019.md) | Standard input is a stream, read like everything else | Accepted | yes (`std::io`) |
 | [022](adr-022.md) | One lambda form. `fn:` is removed | Accepted | yes |
+| [041](adr-041.md) | Naming a lambda's arguments is the normal form; the automatic `a`, `b`, `c` are experimental and warned about where one is actually used | Accepted | **yes** — `NK1114` from the one function that also writes the parameter list, the specification's examples and six sites in four `examples/` programs |
 | [030](adr-030.md) | A program is more than one file, and that is name resolution | Accepted | yes |
 | [035](adr-035.md) | `f"…"` interpolates and `"…"` is text — the mark belongs on the construct | Accepted | yes |
 
@@ -135,6 +136,7 @@ the superseding record's own header:
 
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
+| [022](adr-022.md) D1 | [041](adr-041.md) D1 (amends) | which of the two spellings is recommended — one form with two spellings is unchanged, and both still parse everywhere; the named one is what the specification teaches |
 | [005](adr-005.md) §3 | [040](adr-040.md) D1 (narrows) | the ban on a clone the user did not write — it reaches a clone of **data** and no longer a **handle** on a shared value, which copies no data and produces no second value |
 | [021](adr-021.md) D5 | [039](adr-039.md) D8 (amends) | the cache-key enumeration: the re-entrancy switch is a fourth dimension, because a build with the check and one without lower the same source to different Rust |
 | [005](adr-005.md) D6 | [039](adr-039.md) D2 (narrows) | the runtime reentrancy check as the backstop for re-entering one lock through a chain of `sync` calls — that case is refused at compile time now, and the check becomes self-control of the new rule |

@@ -594,8 +594,14 @@ fn init {
 A lambda is written `fn { … }`, and 5.3 is the whole of it. There is no second, shorter form for
 single-line bodies.
 
-Naming the arguments — `fn(user) { … }`, 5.3 Option B — is that one form spelled out rather than a
+Naming the arguments — `fn(user) { … }`, 5.3 Option A — is that one form spelled out rather than a
 second one: the body is a block either way, and both spellings go in all the same places.
+
+**Naming them is the normal way to write one.** Leaving the arguments to be named
+automatically still compiles and is still the same form, but it is carried as
+experimental and the compiler warns where one of the automatic names is actually
+used (5.3, `NK1114`). The reason is that the automatic rule cannot be changed
+while every lambda depends on it: [ADR-041](adr/adr-041.md).
 
 The short form `fn: expression` is **not** part of the language. It saved four characters and its
 body ran to the end of the expression, so a `.method()` chained after it landed *inside* the
@@ -605,38 +611,48 @@ specification and readers will have it in their fingers. Full reasoning:
 [ADR-022](adr/adr-022.md).
 
 ### 5.3. Lambdas (`fn { ... }`)
-When logic requires multiple steps, use a Block Lambda. You can choose between implicit arguments (for speed) or explicit arguments (for clarity).
+When logic requires multiple steps, use a Block Lambda. Name its arguments; the
+automatic names are still accepted and are being phased out.
 
-**Option A: Implicit Arguments (The Default)**
-Use this for short blocks where context is obvious.
-* **Syntax:** `fn { ... }`
-* **Args:** `a` (1st), `b` (2nd), `c` (3rd)
-* **The three names belong to the lambda.** A body that binds one of them —
-  `let c = …` — is asking for a third argument rather than shadowing anything,
-  because how many arguments the lambda takes is read off which of the names
-  its body mentions. Where a local wants one of those names, use **Option B**
-  and name the arguments.
+**Option A: Named Arguments — the normal form**
+* **Syntax:** `fn(name) { ... }`, and `fn(first, second) { ... }` for more than one
+* **Args:** as many as the list says, and the list is the only thing that says so
 
 ```nika
-let complex = users.map fn {
-    let bonus = calculate_bonus(a)
+let complex = users.map fn(user) {
+    let bonus = calculate_bonus(user)
     // Implicit return of the last line
-    a.score + bonus
+    user.score + bonus
 }
 ```
 
-**Option B: Explicit Arguments**
-Use this when you need specific names (e.g., nested closures) or types.
-* **Syntax:** `fn(name) { ... }`
-* **Note:** This disables the implicit `a` and `b`.
+**Option B: Automatic Names — experimental, and warned about**
+* **Syntax:** `fn { ... }`
+* **Args:** `a` (1st), `b` (2nd), `c` (3rd)
+* **How many arguments it takes is read off the body**, not written anywhere: the
+  lambda takes as many of the three names as its body *mentions*.
+* **So the three names belong to the lambda and a body must not bind them.** A
+  body that writes `let c = …` is asking for a third argument rather than
+  shadowing anything. That is the trap Option A removes, and it is why naming
+  them is the normal form.
+* **Using one is a warning** — `NK1114`, which names the mechanical rewrite: the
+  same letters in a parameter list. The program still compiles. A `fn { … }` that
+  reaches for none of the three is not warned about, because the form is not
+  being withdrawn; the automatic *naming* is
+  ([ADR-041](adr/adr-041.md) D2).
+
+```nika
+// Accepted, and warned about: `a` is the argument.
+let ids = users.map fn { a.id }
+```
 
 **Trailing Syntax**
 A lambda that is the last argument may go *outside* the parentheses, and where there are no other
 arguments the parentheses go away with it:
 
 ```nika
-let ids = users.map fn { a.id }
-let sum = numbers.reduce(0) fn { a + b }
+let ids = users.map fn(user) { user.id }
+let sum = numbers.reduce(0) fn(acc, n) { acc + n }
 ```
 
 A block ends at its `}`, so a chain continues after it and means what it reads as:
@@ -648,7 +664,7 @@ Server::new()
 ```
 
 ```nika
-// Explicit naming for better readability
+// The count comes from the list, so a local may be called anything
 users.map fn(user) {
     if user.is_guest() {
         return "Guest"
@@ -657,15 +673,18 @@ users.map fn(user) {
 }
 ```
 
-> **Status:** built, in both spellings and in both positions. A trailing lambda
-> may name its arguments or leave them implicit, and it may follow a method
-> call with or without other arguments, a plain call, or a path:
-> `users.map fn { a.id }`, `users.map fn(user) { … }`,
-> `numbers.reduce(0) fn { a + b }`, `access_all(a, b) fn(x, y) { … }` (Part II,
-> 12.3), `task::scope fn(s) { … }` (Part II, 12.7), and the chain above. **Not
-> built:** an effect marker on a lambda. A parameter list is followed by the
-> body and by nothing else, so `fn(info) sync { … }` (7.2) ends the lambda at
-> the `sync` and the line is read as three expressions rather than one.
+> **Status:** built, in both spellings and in both positions, and the warning on
+> Option B is built too. A trailing lambda may name its arguments or leave them
+> automatic, and it may follow a method call with or without other arguments, a
+> plain call, or a path: `users.map fn(user) { … }`, `users.map fn { a.id }`
+> (with `NK1114`), `numbers.reduce(0) fn(acc, n) { … }`,
+> `access_all(a, b) fn(x, y) { … }` (Part II, 12.3), `task::scope fn(s) { … }`
+> (Part II, 12.7), and the chain above. `NK1114` fires once per lambda that
+> reaches for one of the three names, positioned at the statement around it,
+> because an expression carries no span of its own. **Not built:** an effect
+> marker on a lambda. A parameter list is followed by the body and by nothing
+> else, so `fn(info) sync { … }` (7.2) ends the lambda at the `sync` and the line
+> is read as three expressions rather than one.
 
 ### 5.4. Contextual Capture (The Lifecycle Rule)
 Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at either `user_parallelism`.

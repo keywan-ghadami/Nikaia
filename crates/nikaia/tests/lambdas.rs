@@ -241,3 +241,26 @@ fn spawn_with_a_named_lambda_is_read_as_a_call() {
     let rust = lowered("fn main() { spawn fn(x) { x } }");
     assert!(rust.contains("spawn(|x| { x })"), "{rust}");
 }
+
+/// **With named arguments the count comes from the list.** That is the trap the
+/// named form removes, and it is worth a test of its own rather than being
+/// implied by the warning that asks for it.
+///
+/// A lambda with implicit arguments takes as many as its body *mentions*, so a
+/// local called `a` inside one becomes a second argument and the closure's arity
+/// stops matching its call. With the arguments written down, a local of that
+/// name is a local: one parameter, whatever the body calls its variables.
+#[test]
+fn a_named_lambda_takes_its_arguments_from_the_list_and_not_from_its_body() {
+    let named =
+        lowered("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn(x) { let a = 1\n x + a } }");
+    assert!(named.contains("|x|"), "{named}");
+    assert!(!named.contains("|x, a|"), "{named}");
+
+    // The same body without the parameter list: `a` is read as an argument, so
+    // the closure takes one that was meant to be a local. This is what the
+    // warning in `tests/typecheck.rs` asks the author to get out of.
+    let implicit =
+        lowered("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { let a = 1\n a } }");
+    assert!(implicit.contains("|a|"), "{implicit}");
+}

@@ -457,18 +457,18 @@ closes only where something really can pause.
 
 **A library function that runs your lambda does what your lambda does.** `xs.map`,
 `xs.filter`, `xs.sort_by_key` and the rest cannot commit to one answer — the
-same `map` cannot pause over `fn { a + 1 }` and can over a lambda that reads a
+same `map` cannot pause over `fn(n) { n + 1 }` and can over a lambda that reads a
 file — so their contracts say *the lambda decides* ([ADR-029](adr/adr-029.md)).
 That is why this is fine:
 
 ```nika
-counter.access fn { a + xs.sort_by_key fn { b } }   // pure lambda, pure call
+counter.access fn(n) { n + xs.sort_by_key fn(x) { x } }  // pure lambda, pure call
 ```
 
 and this is still refused:
 
 ```nika
-counter.access fn { xs.map fn { fs::read("log") } } // the lambda does I/O
+counter.access fn(n) { xs.map fn(x) { fs::read("log") } } // the lambda does I/O
 ```
 
 You never write anything for this. It matters because without it *no* iterator
@@ -671,8 +671,8 @@ let pixels = [/* 1 million pixels */]
 // Methods chained with trailing lambdas. A block ends at its `}`, so the chain
 // continues after it and means what it reads as (ADR-022).
 let bright_pixels = pixels.par_iter()
-    .map fn { a.brightness * 1.5 }
-    .filter fn { a > 0.5 }
+    .map fn(pixel) { pixel.brightness * 1.5 }
+    .filter fn(value) { value > 0.5 }
     .collect()
 ```
 

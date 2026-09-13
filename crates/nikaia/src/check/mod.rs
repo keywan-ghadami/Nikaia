@@ -809,7 +809,14 @@ impl<'a> Checker<'a> {
                 Ty::named(name)
             }
 
-            Expr::Closure { params, body, .. } => {
+            Expr::Closure {
+                params,
+                implicit,
+                body,
+            } => {
+                if *implicit {
+                    self.warn_automatic_names(body, span);
+                }
                 let frame = params
                     .iter()
                     .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown))
@@ -1016,6 +1023,51 @@ impl<'a> Checker<'a> {
             );
             return;
         }
+    }
+
+    /// Part I 5.3: a lambda that reaches for `a`, `b` or `c` is warned about, and
+    /// still compiles.
+    ///
+    /// **Only where one is actually reached for.** `fn { total + 1 }` names none
+    /// of the three, generates no parameter, and gets no warning - the form is
+    /// not deprecated, the automatic *naming* is. So the question asked here is
+    /// exactly the one the emitter asks to write the parameter list, from the
+    /// same function, or a warning could fire where no parameter is generated.
+    ///
+    /// The span is the enclosing statement's, because an expression carries
+    /// none. A statement with two such lambdas is warned about once per lambda
+    /// at the same place, which is noisier than it is wrong.
+    fn warn_automatic_names(&mut self, body: &Block, span: &Span) {
+        let used = crate::emit::implicit_params(self.parsed, body);
+        if used.is_empty() {
+            return;
+        }
+        let named = used.join(", ");
+        let plural = match used.len() {
+            1 => "name",
+            _ => "names",
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Warning,
+            span: span.clone(),
+            code: "NK1114",
+            message: format!("this lambda reaches for the automatic argument {plural} `{named}`"),
+            notes: vec![
+                "the automatic names are experimental: how many arguments the lambda takes \
+                 is read off which of them the body mentions, so a local of the same name \
+                 becomes an argument (Part I, 5.3)"
+                    .to_string(),
+            ],
+            // The same letters, deliberately: this is the mechanical rewrite
+            // that compiles and means exactly the same thing, and it is the
+            // step that matters - after it the count is written down instead of
+            // read off the body, and renaming to something that says what the
+            // argument is becomes an ordinary edit.
+            help: Some(format!(
+                "write the arguments down: `fn({named}) {{ … }}` - same body, and the \
+                 count no longer comes from which names it mentions"
+            )),
+        });
     }
 
     fn warn_migration(&mut self, span: &Span, message: String, help: String) {

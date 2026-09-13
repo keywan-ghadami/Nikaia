@@ -249,11 +249,11 @@ fn main() throws {
     names.sort()
 
     let body = names
-        .map fn {
-            let s = &totals.stations[a]
+        .map fn(name) {
+            let s = &totals.stations[name]
             // 1BRC prints one decimal; a hole may say how it is written, after
             // the colon, as a format string does anywhere else.
-            f"{a}={s.min as f64 / 10.0:.1}/{s.mean():.1}/{s.max as f64 / 10.0:.1}"
+            f"{name}={s.min as f64 / 10.0:.1}/{s.mean():.1}/{s.max as f64 / 10.0:.1}"
         }
         .join(", ")
 

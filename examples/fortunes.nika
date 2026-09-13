@@ -97,7 +97,7 @@ fn fortunes(db: Shared[postgres::Connection]) -> String throws {
 
     // `sort_by` is @immediate (Part I, 5.4), so the comparison borrows `rows`
     // rather than moving it - no clone needed.
-    rows.sort_by fn { a.message.cmp(b.message) }
+    rows.sort_by fn(left, right) { left.message.cmp(right.message) }
 
     return render(rows)
 }

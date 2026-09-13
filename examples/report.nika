@@ -109,7 +109,7 @@ fn main() throws {
 
     // Largest first, and stable underneath - the file's own order decides
     // between two items with the same count (Part I, 4.5).
-    entries.sort_by_key fn { -a.count }
+    entries.sort_by_key fn(entry) { -entry.count }
 
     let mut total = 0
     for e in &entries { total += e.count }
