@@ -166,6 +166,10 @@ user-parallelism = "no"
 #   "strict"            - the written order, always. The analysis is not applied.
 # Not an aid to be removed later: it is the escape for a project that does not
 # want this, and the way to rule the analysis out when chasing a bug in the field.
+# **On its way out with the analysis it switches** (ADR-050 D1, D7): statements will
+# run in the order they are written and a program will ask for overlap with
+# `overlap { … }`, which leaves nothing for this key to decide. It goes after
+# `overlap` is built, not before (ADR-050 §5).
 ordering = "effects"
 
 # Does the compiled program still notice a lock taken while a lock is held

@@ -131,7 +131,7 @@ today, because no program can be written that it would reject. The same refusal
 added after programs exist breaks them. That asymmetry belongs to the work, not to
 the order somebody happens to pick.
 
-### 2.1. `spawn` has no runtime binding — and four records wait on it
+### 2.1. `spawn` has no runtime binding — and five records wait on it
 
 `Expr::Spawn` refuses in the emitter: *"`spawn` needs the runtime integration; not
 emitted yet"*. What is checked but cannot run:
@@ -142,9 +142,13 @@ emitted yet"*. What is checked but cannot run:
   so there is still no `NK2101` to exempt;
 * [ADR-045](specification/adr/adr-045.md) D2 — a lock may go into a task, which is
   now checked and cannot yet be run;
-* Part II 12.2's counter, the program `user_parallelism = yes` exists to serve.
+* Part II 12.2's counter, the program `user_parallelism = yes` exists to serve;
+* [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }` — the one way a
+  program asks for overlap, now that the automatic half is on its way out. Its §5
+  gives the order and this is step one of it.
 
-This is the largest single unblocking in the file.
+This is the largest single unblocking in the file, and it grew by one this
+session.
 
 ### 2.2. `SharedMut[T]` and `Locked[T]` are not types the backend can build
 
@@ -158,6 +162,17 @@ annotation is checked and then fails to emit. Also waiting inside this:
 * the **re-entrancy check as a build switch** (ADR-039 D8), which the cache key
   already accounts for;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
+
+### 2.3. The automatic reordering, `seq` and the `ordering` switch are still here
+
+[ADR-050](specification/adr/adr-050.md) D1 and D7 withdraw all three, and its §5 says
+**not yet**: the removal is step three, after the runtime binding and `overlap`.
+Removing them before there is a way to *ask* for overlap would leave the language
+with neither, which is worse than either end state.
+
+So this entry is not work to pick up — it is the thing that must not be picked up
+early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
+should find out from the list that its `seq` and its switch are on their way out.
 
 ### 2.4. A sum of constants that cannot fit is still `rustc`'s refusal
 

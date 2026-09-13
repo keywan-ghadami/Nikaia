@@ -68,6 +68,17 @@ program whose author does not want this, and for ruling out a bug in the
 analysis in the field. A semantic default that cannot be switched off is a
 decision imposed rather than offered ([ADR-033](adr/adr-033.md) D8).
 
+> **Status: this switch is on its way out.**
+> [ADR-050](adr/adr-050.md) D1 and D7 withdraw the reordering, so there is
+> nothing for `ordering` to switch: statements run in the order they are written,
+> and a program that wants overlap writes `overlap { … }` (8.1.2). **Two escapes
+> were an admission** — that the analysis can be incomplete, and that the
+> correction is by hand — and a feature that changes what a program means, resting
+> on that, is the shape of a defect source rather than of a guarantee.
+>
+> It goes **after** `overlap` is built, not before (ADR-050 §5), and the count of
+> switches in this section returns to the two above.
+
 #### the re-entrancy check — should a broken rule be noticed?
 Taking a lock while a lock is held is refused when you compile (Part II, 12.3).
 This switch decides whether a program *also* carries the run-time check
@@ -1475,9 +1486,18 @@ Within one task the order is exactly the order you wrote: `let a = fs::read("x")
 
 ### 8.1.1. Order Is Kept Where It Can Be Seen
 
-> **Status.** This section is specified ahead of the compiler, because it changes what a program
-> *means* and a decision of that kind belongs here before it belongs in the implementation
-> ([ADR-033](adr/adr-033.md), still marked provisional). Built today: a **run of adjacent
+> **Status — this section is on its way out.**
+> [ADR-050](adr/adr-050.md) D1 and D7 withdraw the reordering, `seq { … }` and
+> the `ordering` switch: **statements run in the order they are written**, and a
+> program that wants overlap writes `overlap { … }` and has it checked (8.1.2).
+> Three packages were coherent and this was the worst of them — unpredictable
+> wins, and no recourse where they do not arrive.
+>
+> **Nothing is removed yet, and that is deliberate**: the removal is step three of
+> ADR-050 §5's order, after the runtime binding and `overlap` itself, because taking the
+> automatic half away before there is a way to *ask* would leave the language with
+> neither. Until then this section describes what the compiler does, and the
+> paragraph below is what it does. Built today: a **run of adjacent
 > statements of any length** whose calls reach different resources overlaps — a `let` or a bare
 > expression statement, and a value built out of literals and calls rather than being one call;
 > `seq { … }`; the resources a file, standard output, standard error and the program's arguments;
@@ -1534,7 +1554,10 @@ Inside the block the statements run in the order you wrote them, whatever their 
 
 That is the trade the rule is built on: the common path is the fast and safe one and costs nothing to write, and the exception costs a line and is visible where it matters.
 
-**There is no way to say "run these together anyway", and that is deliberate.** The one refusal where you might want to — a `catch` that leaves the function, which makes everything after it conditional — has a clearer form already:
+**There will be a way to say "run these together anyway", and 8.1.2 is it**
+([ADR-050](adr/adr-050.md) D2). Until this section's automatic half goes, the one
+refusal where you might want it — a `catch` that leaves the function, which makes
+everything after it conditional — has a clearer form already:
 
 ```nika
 // Kept in order: if the first fails, the second would never have run.
@@ -1551,6 +1574,51 @@ if k.ist_unbekannt() { return Seite::leer() }
 **When you want to know why two things did not run together, ask:** `nikaia --input x.nika --overlaps` prints every adjacent pair, which of them run together, and for the rest the reason and — where there is one — what to write instead. A pair marked `would` is one your program allows and this build has no way to run: the line names the switch, because "they did not run together" without a reason is exactly what this flag exists to prevent. It changes nothing about the program; it explains a decision, the way `--trust` does for where a program's bytes came from.
 
 The whole thing can be turned off for a project with `ordering = "strict"` in `nikaia.toml` (Part III, 13.3), which restores the written order everywhere.
+
+### 8.1.2. Asking for Overlap: `overlap { … }`
+
+**Each statement in the block is a branch.** The block starts every branch, waits
+for all of them, and its value is the tuple of their results **in written order**
+([ADR-050](adr/adr-050.md) D2).
+
+```nika
+let (user, rights, prefs) = overlap {
+    db::load_user(id)
+    db::load_rights(id)
+    cache::load_prefs(id)
+}
+```
+
+**It is not a task.** The block ends before the function continues, so nothing
+outlives it: nothing is moved, borrowing works as it does anywhere else, and the
+crossing rules a `spawn` meets (Part II, 12.4) have nothing to do here. That is
+what makes it lighter than two `spawn`s.
+
+**The branches must meet on nothing, and the compiler checks it.** This is 8.1.1's
+analysis used the other way round: not *"may I reorder these?"* but *"you said
+these overlap; is that true?"* A branch pair that meets on a resource is refused,
+and the message names the resource.
+
+**A branch that fails makes the block fail**, and if two fail the first **in
+written order** wins, so the result is reproducible — written order is the only
+order the source has. Per-branch handling is `catch` inside the branch.
+
+**A branch is an expression.** Several steps in one branch are a block expression
+inside it; where two branches would both be multi-line blocks doing the same shape
+of work, write a function and call it twice.
+
+**Same meaning at both settings of `user_parallelism`, different duration.** At
+`no` a branch that computes still overlaps with another branch's *waiting*,
+because the waiting is not your code. Computation beside I/O overlaps at every
+setting; only computation beside computation needs `yes`. That is 1.2's rule — you
+choose `how`, never `what`.
+
+> **Status:** not built. `overlap` does not parse, and what it needs is the
+> general concurrent path that `spawn` is waiting on
+> ([ADR-050](adr/adr-050.md) §5): the runtime binding first, then this, then
+> the removal of 8.1.1's automatic half, `seq { … }` and the `ordering` switch.
+> Building more special cases ahead of the runtime is how the automatic half got
+> narrow in the first place, so it is not the way in.
 
 ### 8.2. Spawning Tasks
 To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the

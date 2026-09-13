@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added (statement order and `overlap { … }` reach the specification)
+
+- **[ADR-050](docs/specification/adr/adr-050.md) reaches the specification.** The record itself was written in a parallel session; what this adds is the pages a reader meets. **Statements run in the order they are written**, and `overlap { … }` is how a program asks for less: each statement in the block is a branch, the block waits for all of them, and its value is the tuple of their results in written order.
+- **`overlap` is not a task**: the block ends before the function continues, so nothing outlives it, borrowing works, and the crossing check has nothing to do — which is what makes it lighter than two `spawn`s and earns it a form of its own. **The branches must meet on nothing and the compiler checks it**, which is ADR-033's analysis used the other way round: not *"may I reorder these?"* but *"you said these overlap; is that true?"*
+- **The automatic reordering goes, and `seq` and the `ordering` switch with it** (D1, D7). Two escapes were an admission — that the analysis can be incomplete, and that the correction is by hand — and a feature that changes what a program means, resting on that, is the shape of a defect source rather than of a guarantee.
+- **Nothing of it is built, and the order is written down** (§5): the runtime binding, then `overlap` on it, then the removals — because taking the automatic half away before there is a way to *ask* would leave the language with neither. Part I 1.2, 8.1.1 and Part III 13.3 all say so where a reader meets them, and `docs/open-work.md` §2.3 exists to say this is the thing not to pick up early.
+- ADR-033's status line now reads **displaced** rather than provisional, and `spawn`'s runtime binding is what **five** records wait on.
+
 ### Fixed (every abort names the Nikaia line)
 
 - **[ADR-044](docs/specification/adr/adr-044.md) is built** (`docs/open-work.md` §2.3). [ADR-012](docs/specification/adr/adr-012.md) decides that a diagnostic names the `.nika` file the user wrote, and the compiler kept that promise everywhere it *reported* something — an abort at run time was the one path where it could not, because there is no compiler left to translate anything. An overflow, a conversion that does not fit, an index out of bounds and a written `panic()` now all read `src/main.nika:2: the program stopped: attempt to multiply with overflow`.
