@@ -1034,7 +1034,28 @@ impl Project {
         let (mut code, messages) = cargo.messages("build", &[])?;
         self.report(&messages)?;
         if code == 0 && subcommand == "run" {
-            code = cargo.run("run", &[], program_args)?;
+            // **The built program is run directly, and that is Part III C.1
+            // rather than a shortcut.** `cargo run` is a second invocation that
+            // cannot use the JSON channel - the program's own output is on that
+            // stdout - so Cargo renders its **cached** diagnostics to stderr
+            // while it checks freshness, and a program with a warning saw it
+            // twice: once in this language's words from `report` above, and
+            // once as `rustc` about `target/nikaia/gen/….rs`. Measured on
+            // Part I 2.3's own example.
+            //
+            // **The path is read and not computed.** Cargo decides where a
+            // binary lands from the target directory, the profile and
+            // `CARGO_TARGET_DIR`, and replicating those rules here would be a
+            // second place that has to agree with Cargo forever. The build
+            // above already captured the answer: a `compiler-artifact` line
+            // whose `executable` is not null.
+            //
+            // Where there is no such line the old path is taken, so this can
+            // only remove a duplicate and never lose a run.
+            code = match executable_in(&messages) {
+                Some(binary) => run_directly(&binary, program_args)?,
+                None => cargo.run("run", &[], program_args)?,
+            };
         }
 
         // Cargo has resolved by now, and only now: the versions do not exist
@@ -1173,6 +1194,42 @@ impl Project {
 /// than written down twice: a program that linked a different `winnow` from the
 /// one `winnow-grammar` was built against is a type error at every `Stream`
 /// bound, so the two must not be able to drift apart.
+/// The program Cargo built, as its own build said where it was.
+///
+/// **Read rather than computed.** Cargo decides where a binary lands from the
+/// target directory, the profile and `CARGO_TARGET_DIR`; a second place that
+/// worked those rules out would have to keep agreeing with Cargo forever. A
+/// `--message-format=json` build says it outright, on the `compiler-artifact`
+/// line whose `executable` is not null - and this compiler already captures that
+/// output to read the diagnostics.
+///
+/// `None` where nothing says, which is not an error: the caller falls back to
+/// `cargo run` and the build behaves as it did before.
+fn executable_in(messages: &str) -> Option<std::path::PathBuf> {
+    messages
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| value["reason"] == "compiler-artifact")
+        .filter_map(|value| value["executable"].as_str().map(std::path::PathBuf::from))
+        .next_back()
+}
+
+/// Run it, with the program's own arguments and every stream its own.
+///
+/// Nothing is captured and nothing is translated: what a running program writes
+/// is the program's, and the last thing a compiler should do is stand between
+/// the two.
+fn run_directly(binary: &std::path::Path, args: &[String]) -> Result<i32> {
+    let status = std::process::Command::new(binary)
+        .args(args)
+        .status()
+        .with_context(|| format!("running {}", binary.display()))?;
+    // A program killed by a signal has no exit code. `1` is what a shell would
+    // report for one, and the alternative - claiming success - is the one answer
+    // that must not be given.
+    Ok(status.code().unwrap_or(1))
+}
+
 fn runtime_dependencies(rust: &str) -> Result<BTreeMap<String, toml::Value>> {
     let mut out = BTreeMap::new();
 

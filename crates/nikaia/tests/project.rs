@@ -1201,3 +1201,57 @@ fn a_package_may_be_given_another_name() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A warning reaches the user once, and in this language's words.**
+///
+/// `nikaia run` used to print one twice: the translated one, and then `rustc`'s
+/// own spanned against `target/nikaia/gen/….rs`. The cause was the second Cargo
+/// invocation — a `run` cannot use `--message-format=json`, because the
+/// program's own output is on that stdout, so Cargo rendered its **cached**
+/// diagnostics to stderr while checking freshness and nothing intercepted them.
+///
+/// The build now runs the binary itself, at the path its own JSON named. Part III
+/// C.1 is what this is about: a message about the generated Rust is not a message
+/// the user gets.
+#[test]
+fn a_warning_reaches_the_user_once_and_in_nikaia_terms() {
+    let dir = a_project(
+        "project-warning-once",
+        "[package]\nname = \"noisy\"\nversion = \"0.1.0\"\n",
+        // `unused_assignments`: the value `null` is written and never read,
+        // which is exactly Part I 2.3's own example.
+        "fn main() {\n    \
+         let mut maybe: String? = null\n    \
+         maybe = \"World\".to_string()\n    \
+         let shown = maybe ?? \"x\".to_string()\n    \
+         println(f\"{shown}\")\n\
+         }\n",
+    );
+
+    let run = nikaia(&["run"], &dir);
+    assert!(run.status.success(), "{}", said(&run));
+    assert!(
+        String::from_utf8_lossy(&run.stdout).contains("World"),
+        "the program still runs: {}",
+        said(&run)
+    );
+
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    let warnings = stderr.matches("is never read").count();
+    assert_eq!(
+        warnings,
+        1,
+        "the warning is said once, not once translated and once raw: {}",
+        said(&run)
+    );
+    assert!(
+        stderr.contains("main.nika:"),
+        "and against the `.nika` line: {}",
+        said(&run)
+    );
+    assert!(
+        !stderr.contains("target/nikaia/gen"),
+        "nothing may point at the generated Rust (Part III C.1): {}",
+        said(&run)
+    );
+}

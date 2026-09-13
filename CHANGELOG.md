@@ -2,12 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed (a warning the backend said twice)
+
+- **[ADR-012](docs/specification/adr/adr-012.md) D8: a project build runs the binary itself.** `nikaia run` printed a warning twice — once translated against the `.nika` line, and once as `rustc` about `target/nikaia/gen/….rs`, which is what [Part III C.1](docs/specification/30-nikaia-tooling.md) forbids. The cause was the second Cargo invocation: a `run` cannot use the JSON channel, because the program's own output is on that stdout, so Cargo rendered its **cached** diagnostics to stderr while checking freshness and nothing intercepted them.
+- **The path is read and not computed.** Cargo decides where a binary lands from the target directory, the profile and `CARGO_TARGET_DIR`; a second place working those rules out would have to keep agreeing with Cargo forever. The build's own JSON says it outright, on the `compiler-artifact` line whose `executable` is not null — output this compiler already captures in order to read the diagnostics. Where no line says, `cargo run` is still what happens, so the change can only remove a duplicate and never lose a run.
+- Measured on the way: the program's arguments still reach it, an abort still exits 101 with the Nikaia line named ([ADR-044](docs/specification/adr/adr-044.md)), and a program killed by a signal reports `1` rather than success.
+
 ### Corrected (a defect entry that named the wrong cause)
 
 - **`docs/open-work.md` §1.5 said warnings are not translated. They are.** Re-measured: `nikaia build` on Part I 2.3's own example prints *"warning: src/main.nika:2:5: value assigned to `maybe` is never read"* with the caret on the right statement — the translation path handles a warning exactly as it handles an error, and `is_about_the_program` already drops one that maps to no `.nika` line.
 - **What actually reproduces is on `nikaia run`**, which prints the warning **twice**: the translated one, and then `rustc`'s own spanned against `target/nikaia/gen/….rs`. A `run` cannot use `--message-format=json` — the program's own output is on that stdout — so Cargo renders its *cached* diagnostics to stderr while checking freshness, and nothing intercepts them.
 - **`--quiet` was tried and reverted.** It removes Cargo's progress lines and not the diagnostic replay, so it changes what a reader sees without fixing anything; shipping it under a fix that did not work would have been worse than leaving the defect named.
-- The entry now says what it needs: taking Cargo out of the run step rather than translating anything new.
+- The entry said what it needed — taking Cargo out of the run step rather than translating anything new — and that is the entry above, done in the same session. Both halves are here because the wrong diagnosis is worth knowing about: the fix is small and was hidden behind a cause that was not there.
 
 ### Fixed (a result that borrows from nothing)
 

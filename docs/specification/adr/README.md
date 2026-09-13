@@ -65,7 +65,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [012](adr-012.md) | Errors are reported in the `.nika` file the user wrote, never in generated Rust | Accepted | yes |
+| [012](adr-012.md) | Errors are reported in the `.nika` file the user wrote, never in generated Rust. D8: a project build runs the binary itself, so Cargo never gets a second chance to replay a cached diagnostic against the generated file | Accepted | yes |
 | [015](adr-015.md) | The backend's diagnostics are built lazily, because building them eagerly dominated the flagship | Accepted | yes |
 | [044](adr-044.md) | One location table beside the program, and the panic hook looks the site up — so every abort names the Nikaia line, not the generated one | Accepted | **no** — the emitter keeps no line table and the panic hook is itself unbuilt |
 

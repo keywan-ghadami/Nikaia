@@ -33,7 +33,8 @@ missing from a project build, a cache that filled the disk, a sum of constants
 that could not fit, **a keyword that could be a name** - which took the `dsl`
 block's diagnostic, three silent misreadings, and every position that can
 declare one with it ([ADR-051](specification/adr/adr-051.md)) - and a result that
-borrowed from nothing and named no lifetime for it.
+borrowed from nothing and named no lifetime for it, and a warning the backend
+said twice.
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
@@ -154,44 +155,6 @@ type `u32` instead"* — is dropped. It was kept once, checked, because it
 compiles; [ADR-048](specification/adr/adr-048.md) D2 is what changed, since the
 numeric surface is the one Part I 2.2 names and `u32` is deliberately not on it. A
 remedy that works is kept; one that leads out of the language is not.
-
----
-
-### 1.5. `nikaia run` prints a warning twice, the second time untranslated
-
-**Re-measured, and the first reading of this was wrong.** The entry used to say
-that warnings go untranslated; they do not. `nikaia build` on Part I 2.3's own
-example prints exactly what it should:
-
-```text
-warning: src/main.nika:2:5: value assigned to `maybe` is never read
-   2 |     let mut maybe: String? = null
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-```
-
-The translation path handles a warning the same way it handles an error, and
-`is_about_the_program` already drops one that maps to no `.nika` line.
-
-**What reproduces is on `nikaia run` alone**, and it prints the warning *twice*:
-the translated one above, and then `rustc`'s own, spanned against
-`target/nikaia/gen/….rs`. The cause is the second Cargo invocation. A `run`
-cannot use `--message-format=json` - the program's own output is on that stdout
-([`orchestrator::project`](../crates/orchestrator/src/project.rs) says why) - so
-Cargo renders its **cached** diagnostics to stderr as it checks freshness, and
-nothing intercepts them.
-
-*Measured and rejected:* `--quiet` on the run. It removes Cargo's progress lines
-and **not** the diagnostic replay, so it changes what a reader sees without
-fixing anything; tried and reverted rather than shipped under a fix that did not
-work.
-
-*What it needs:* not translating a warning, which already happens, but taking
-Cargo out of the run step - running the built binary directly, so nothing is
-there to replay. The build's captured JSON is where the path would come from, and
-its `compiler-artifact` lines carry an `executable` field; in the generated
-project's layout the binary is under the **rlib cache's** target directory rather
-than the project's, so finding it is the part that needs doing rather than
-guessing.
 
 ---
 
