@@ -485,15 +485,41 @@ impl Ledger {
     /// analysis, Kap 5.1's options and ADR-025's fallible loops all resolve a
     /// call by asking a ledger for `a::b`. None of them learns a new trick to
     /// work across files; the file they ask simply has more in it.
+    /// **The types inside an entry are qualified too, and not only the keys.**
+    /// A module's own signature says `-> Conn`, because that is how the file
+    /// declaring it writes the name, while its type is keyed `pool::Conn`. A
+    /// caller who annotated `pool::Conn` and called `pool::make()` was then told
+    /// the two were different types, and the help line asked for what was already
+    /// written. They are one type with two spellings, and this is the only place
+    /// that knows both the module and what it declares.
     pub fn absorb(&mut self, module: Option<&str>, other: Ledger) {
-        for (name, contract) in other.functions {
+        let declared: std::collections::BTreeSet<String> = other.types.keys().cloned().collect();
+        let qualify = |ty: &ty::Ty| match module {
+            Some(module) => ty::qualify(ty, module, &declared),
+            None => ty.clone(),
+        };
+        for (name, mut contract) in other.functions {
+            if let Some(signature) = contract.signature.as_mut() {
+                for (_, ty) in signature.params.iter_mut() {
+                    *ty = qualify(ty);
+                }
+                for option in signature.config.iter_mut() {
+                    option.ty = qualify(&option.ty);
+                }
+                if let Some(result) = signature.result.as_mut() {
+                    *result = qualify(result);
+                }
+            }
             let key = match module {
                 Some(module) => format!("{module}::{name}"),
                 None => name,
             };
             self.functions.insert(key, contract);
         }
-        for (name, contract) in other.types {
+        for (name, mut contract) in other.types {
+            for (_, ty) in contract.fields.iter_mut() {
+                *ty = qualify(ty);
+            }
             let key = match module {
                 Some(module) => format!("{module}::{name}"),
                 None => name,

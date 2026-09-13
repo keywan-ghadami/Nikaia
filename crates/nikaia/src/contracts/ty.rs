@@ -467,6 +467,42 @@ pub fn bind(pattern: &Ty, actual: &Ty, out: &mut std::collections::BTreeMap<Stri
 /// safety argument for [`Ty::Var`] and the reason this does not contradict
 /// ADR-024 D4: a variable never survives into a comparison, so the checker is
 /// never in a position to report that `i32` is not `$V`.
+/// Every named type in `ty` that `declared` lists, written with `module::` in
+/// front of it.
+///
+/// **A type's name in the ledger is the name a caller writes** (ADR-011 D2, the
+/// same rule that makes `fs::map` the key rather than `map`). A module's own
+/// signature says `-> Conn`, because that is how the file that declares it writes
+/// it, and the ledger keys the type `pool::Conn` - so a caller annotating
+/// `pool::Conn` and calling `pool::make()` was told the two were different types.
+/// They are one type with two spellings, and this is where the spelling is made
+/// one: at the moment a unit is absorbed into the program's ledger, which is the
+/// only place that knows both the module and what it declares.
+///
+/// `declared` is the unit's **own** type names, so a name from somewhere else is
+/// left alone: a `-> Row` whose `Row` this module did not declare is not this
+/// module's `Row`.
+pub fn qualify(ty: &Ty, module: &str, declared: &std::collections::BTreeSet<String>) -> Ty {
+    match ty {
+        Ty::Named { name, args, view } => Ty::Named {
+            name: match declared.contains(name) {
+                true => format!("{module}::{name}"),
+                false => name.clone(),
+            },
+            args: args.iter().map(|a| qualify(a, module, declared)).collect(),
+            view: *view,
+        },
+        Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| qualify(p, module, declared)).collect()),
+        Ty::Fn { params } => Ty::Fn {
+            params: params
+                .iter()
+                .map(|p| qualify(p, module, declared))
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
 pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty {
     match ty {
         Ty::Var { name, view } => match bound.get(name) {

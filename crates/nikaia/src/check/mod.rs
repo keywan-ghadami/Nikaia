@@ -2149,6 +2149,16 @@ impl<'a> Checker<'a> {
         if let Some(fields) = self.structs.get(name) {
             return Some(fields.clone()).filter(|f: &Vec<_>| !f.is_empty());
         }
+        // A type of **another file of this program**, by the qualified name a
+        // caller writes: `pool::Conn`. By the exact key and never by suffix,
+        // which is the difference from the library below - two modules may each
+        // declare a `Conn`, and a suffix match would answer with whichever came
+        // first. `std` has no such ambiguity and a value's type does not carry
+        // the module a library writes in front of it, which is why that one is
+        // matched the other way (ADR-011 D2).
+        if let Some(contract) = self.own.types.get(name) {
+            return Some(contract.fields.clone()).filter(|f: &Vec<_>| !f.is_empty());
+        }
         let suffix = format!("::{name}");
         self.library
             .types

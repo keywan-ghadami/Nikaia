@@ -371,3 +371,155 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// **A type another file declares can be named and built** (`docs/open-work.md`
+/// §1.1).
+///
+/// Three things were broken and only the first of them worked. The qualified
+/// *call* was fine; the qualified **type name** resolved to a different type from
+/// the one the call handed back, so `NK1103`'s help asked for what was already
+/// written; and a qualified **struct literal** was a parse error, because
+/// `pool::Conn(id: 1)` was read as a call.
+///
+/// A module could therefore hand out behaviour and not data, which is most of the
+/// reason to split a program.
+#[test]
+fn a_type_another_file_declares_can_be_named_and_built() {
+    let (dir, entry) = project(
+        "foreign-type",
+        &[
+            (
+                "pool.nika",
+                "pub struct Conn { pub id: i64 }\n\
+                 \n\
+                 pub fn make() -> Conn {\n\
+                 \x20   return Conn(id: 7)\n\
+                 }\n\
+                 \n\
+                 pub fn label(c: Conn) -> i64 {\n\
+                 \x20   return c.id\n\
+                 }\n",
+            ),
+            (
+                "main.nika",
+                "use pool\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   let made: pool::Conn = pool::make()\n\
+                 \x20   let built = pool::Conn(id: 35)\n\
+                 \x20   println(f\"{pool::label(made)} {pool::label(built)}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+    assert_eq!(run(&entry, Build::default()).trim(), "7 35");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// …and the checker still says no where it should, by the qualified name.
+///
+/// The half that decides whether the repair is worth anything: making two
+/// spellings one type must not make every type one type. Three shapes, and each
+/// was answered by `rustc` about a generated file before the fields of a foreign
+/// struct could be read at all.
+#[test]
+fn a_foreign_type_is_still_checked() {
+    for (line, code, says) in [
+        ("let c: i64 = pool::make()", "NK1103", "pool::Conn"),
+        ("let c = pool::Conn(nmae: 1)", "NK1107", "nmae"),
+        (
+            "let c = pool::Conn(id: \"seven\")",
+            "NK1106",
+            "pool::Conn.id",
+        ),
+    ] {
+        let (dir, entry) = project(
+            "foreign-type-refused",
+            &[
+                (
+                    "pool.nika",
+                    "pub struct Conn { pub id: i64 }\n\
+                     \n\
+                     pub fn make() -> Conn {\n\
+                     \x20   return Conn(id: 7)\n\
+                     }\n",
+                ),
+                (
+                    "main.nika",
+                    &format!("use pool\n\nfn main() {{\n    {line}\n}}\n"),
+                ),
+            ],
+        );
+        let program = Program::read(&entry).expect("the program reads");
+        let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
+        let modules = program.module_names();
+        let found: Vec<_> = program
+            .units
+            .iter()
+            .flat_map(|unit| {
+                nikaia::check::check_program(&unit.parsed, &program.contracts, &library, &modules)
+                    .findings
+            })
+            .collect();
+        assert_eq!(found.len(), 1, "{line}: {found:#?}");
+        assert_eq!(found[0].code, code, "{line}");
+        assert!(
+            found[0].message.contains(says),
+            "{line}: {}",
+            found[0].message
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// **A `Shared` in a field another file declares keeps the atomic count**
+/// (`docs/open-work.md` §1.6).
+///
+/// This analysis runs once per file, so neither run sees the whole of such a
+/// field: `pool.nika` sees the field and not this value, `main.nika` sees the
+/// value and not what the field was decided to be. Measured before the fix, and
+/// the two answers were in one generated file:
+///
+/// ```text
+/// pub db: std::sync::Arc<Conn>,          // decided in pool.nika
+/// let c: std::rc::Rc<pool::Conn> = …     // decided in main.nika
+/// ```
+///
+/// which `rustc` refused, about a file nobody wrote. It was inert until the
+/// repair above, because the build stopped at the name resolution first - which
+/// is why the two belonged in one piece of work.
+#[test]
+fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
+    let (dir, entry) = project(
+        "foreign-field",
+        &[
+            (
+                "pool.nika",
+                "pub struct Conn { pub id: i64 }\n\
+                 \n\
+                 pub struct Pool { pub db: Shared[Conn] }\n",
+            ),
+            (
+                "main.nika",
+                "use pool\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   let c: Shared[pool::Conn] = pool::Conn(id: 1)\n\
+                 \x20   let p = pool::Pool(db: c)\n\
+                 \x20   println(f\"{p.db.id}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+
+    let program = Program::read(&entry).expect("the program reads");
+    let lowered = program.emit(Build::default()).expect("it lowers");
+    assert!(
+        !lowered.rust.contains("std::rc::Rc"),
+        "both sides of the field are the same count, and it is the atomic one:\n{}",
+        lowered.rust
+    );
+    // And it runs, which is the only proof the two agreed.
+    assert_eq!(run(&entry, Build::default()).trim(), "1");
+    let _ = std::fs::remove_dir_all(dir);
+}

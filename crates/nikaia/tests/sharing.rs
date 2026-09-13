@@ -723,17 +723,21 @@ fn a_sharing_line_that_says_nothing_meaningful_is_refused() {
 /// remedy is a row D8 has not answered.
 #[test]
 fn every_fallback_is_enumerated_with_a_remedy() {
-    assert_eq!(Fallback::ALL.len(), 6, "{:?}", Fallback::ALL);
+    assert_eq!(Fallback::ALL.len(), 7, "{:?}", Fallback::ALL);
     for fallback in Fallback::ALL {
         assert!(!fallback.as_str().is_empty(), "{fallback:?}");
         assert!(!fallback.remedy().is_empty(), "{fallback:?}");
     }
-    // The one that wants nothing, because the answer is somebody else's.
-    assert!(
-        Fallback::PublicSignature.remedy().contains("nothing here"),
-        "{}",
-        Fallback::PublicSignature.remedy()
-    );
+    // The two that want nothing, because the answer belongs to code this run
+    // does not read: callers that do not exist yet, and the file that declares
+    // the field.
+    for fallback in [Fallback::PublicSignature, Fallback::ForeignField] {
+        assert!(
+            fallback.remedy().contains("nothing here"),
+            "{}",
+            fallback.remedy()
+        );
+    }
 
     let (parsed, own, library) = ledgers(
         "pub fn zaehle(counts: Shared[Vec[i64]]) -> i64 { counts.len() }\n\

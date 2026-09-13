@@ -181,6 +181,24 @@ pub enum Fallback {
     /// made - it came out of a call, an index, a field of a type whose `fields`
     /// are unrecorded, or some other expression nothing here accounts for.
     UnseenOrigin,
+    /// The value is held by a field of a type **another file declares**, and
+    /// that file's own run of this analysis decides the field's count.
+    ///
+    /// This analysis runs once per file (`analyse_program` takes one `Parsed`),
+    /// so neither run sees the whole of such a field: the declaring file sees the
+    /// field and not this value, and this file sees the value and not what the
+    /// field was decided to be. Measured, before this row existed - `Pool` in
+    /// `pool.nika`, the value in `main.nika`:
+    ///
+    /// ```text
+    /// pub db: std::sync::Arc<Conn>,          // decided in pool.nika
+    /// let c: std::rc::Rc<pool::Conn> = …     // decided in main.nika
+    /// ```
+    ///
+    /// which `rustc` then refused, about a generated file (Part III, C.1). The
+    /// answer is the polarity this analysis already runs on: where it cannot
+    /// prove that nothing crosses, it does not lower.
+    ForeignField,
 }
 
 impl Fallback {
@@ -192,6 +210,7 @@ impl Fallback {
         Fallback::UnseenMethod,
         Fallback::UncoveredArgument,
         Fallback::UnseenOrigin,
+        Fallback::ForeignField,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -202,12 +221,13 @@ impl Fallback {
             Fallback::UnseenMethod => "a method nothing describes",
             Fallback::UncoveredArgument => "an argument position no contract covers",
             Fallback::UnseenOrigin => "an origin this analysis cannot see",
+            Fallback::ForeignField => "a field another file declares",
         }
     }
 
     /// What a person would do about it, which is ADR-037 D8's whole answer: for
-    /// five of the six, write the contract; for the sixth, nothing, because the
-    /// answer belongs to callers who do not exist yet.
+    /// five of the seven, write the contract; for the other two, nothing, because
+    /// the answer belongs to code this run does not read.
     pub fn remedy(self) -> &'static str {
         match self {
             Fallback::PublicSignature => {
@@ -225,6 +245,10 @@ impl Fallback {
             Fallback::UnseenOrigin => {
                 "write down the call the value came out of, so this analysis can follow it to \
                  the allocation"
+            }
+            Fallback::ForeignField => {
+                "nothing here - the file that declares the field decides its count, and this \
+                 run reads only one of the two"
             }
         }
     }
@@ -525,6 +549,12 @@ struct Analysis<'a> {
     parsed: &'a Parsed,
     own: &'a Ledger,
     library: &'a Ledger,
+    /// The structs **this file** declares, by the name it declares them under.
+    ///
+    /// What it is for is the other side of it: a field slot whose struct is not
+    /// in here belongs to a type another file declares, and this run cannot see
+    /// what that file decided about it ([`Fallback::ForeignField`]).
+    declared_here: BTreeSet<String>,
     /// Every `Shared` handle: its slot key, and what was written about it.
     handles: BTreeMap<String, Handle>,
     /// Union-find over slot keys, by index into `parent`.
@@ -557,11 +587,61 @@ impl<'a> Analysis<'a> {
             parsed,
             own,
             library,
+            declared_here: parsed
+                .program
+                .items
+                .iter()
+                .filter_map(|item| match &item.node {
+                    Item::Struct { name, .. } => Some(parsed.text(*name).to_string()),
+                    _ => None,
+                })
+                .collect(),
             handles: BTreeMap::new(),
             index: BTreeMap::new(),
             parent: Vec::new(),
             forced: Vec::new(),
             duplicated: Vec::new(),
+        }
+    }
+
+    /// **A field of a type another file declares keeps the atomic floor**
+    /// ([`Fallback::ForeignField`]).
+    ///
+    /// One place rather than one per site, because a field slot is created
+    /// wherever a struct is built, a field is read and a field is assigned - and
+    /// a rule that has to be remembered at three sites is one that will be
+    /// forgotten at the fourth. Here every slot that exists is asked once, after
+    /// the walk and before the classes are read off, so a slot no future site
+    /// thought about is covered by having been created at all.
+    ///
+    /// The declaring file forces such a field itself where it is public
+    /// ([`Fallback::PublicField`]), so for the shape this is about the two runs
+    /// now agree by both refusing to lower. Where the declaring file does *not*
+    /// force it - a private type, a private field - this file cannot name the
+    /// type either, so nothing is paid for the caution.
+    fn foreign_fields_hold_the_floor(&mut self) {
+        let prefix = format!("{FIELDS}::");
+        let foreign: Vec<String> = self
+            .handles
+            .keys()
+            .filter(|key| key.starts_with(&prefix))
+            .filter(|key| {
+                let slot = &key[prefix.len()..];
+                let owner = slot.rsplit_once('.').map_or(slot, |(owner, _)| owner);
+                !self.declared_here.contains(owner)
+            })
+            .cloned()
+            .collect();
+        for key in foreign {
+            let slot = key[prefix.len()..].to_string();
+            self.forced.push((
+                key,
+                format!(
+                    "`{slot}` is a field of a type another file declares, and that file's own \
+                     pass decides its count - this one reads only one of the two"
+                ),
+                Some(Fallback::ForeignField),
+            ));
         }
     }
 
@@ -1296,6 +1376,7 @@ impl<'a> Analysis<'a> {
 
     /// One pass over the seeds, then one answer per handle - and the summary.
     fn decide(mut self) -> Sharing {
+        self.foreign_fields_hold_the_floor();
         let mut atomic: BTreeMap<usize, (String, Option<Fallback>)> = BTreeMap::new();
         for (key, why, fallback) in std::mem::take(&mut self.forced) {
             let id = self.id(&key);

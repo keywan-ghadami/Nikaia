@@ -1177,8 +1177,14 @@ grammar! {
         // `Stats(first)` calls its anonymous constructor. The named form is
         // told apart by requiring the first field to carry a value - otherwise
         // `Stats(x)` would read as a struct with one shorthand field.
+        // `type_name` and not `NAME`: a struct declared in another module is
+        // built by its qualified name, `pool::Conn(id: 1)`, exactly as its type
+        // is written in an annotation. The whole path is interned as one name -
+        // which is what the name *is* to a compiler that lowers name for name
+        // (ADR-011 D2) - so `pool::Conn` reaches the checker and the emitter as
+        // it was written.
         rule ctor_lit -> Expr =
-            name:NAME "(" head:named_field_init
+            name:type_name "(" head:named_field_init
             tail:field_init_tail* ","? ")"
             -> {
                 let mut fields = vec![head];
@@ -1464,7 +1470,7 @@ grammar! {
             KW_SEQ b:block -> { Expr::Seq(b) }
 
         rule struct_lit -> Expr =
-            name:NAME "{" fields:field_inits "}" -> {
+            name:type_name "{" fields:field_inits "}" -> {
                 Expr::StructLit { name, fields }
             }
 

@@ -26,76 +26,38 @@ it to know what a program means.
 
 ## 1. Defects
 
-### 1.1. A module can hand out functions, but not types
+### 1.1. A module can hand out functions, but not types — **fixed for what remains of it**
 
-Two files, `src/pool.nika` and `src/main.nika`:
+Three findings, and the first of them always worked: the qualified **call**,
+`pool::make()`. The other two are fixed.
 
-```nika
-// pool.nika
-pub struct Conn { pub id: i64 }
-pub fn make() -> Conn { return Conn(id: 7) }
-```
+**The qualified type name resolved to a different type.** `pool::Conn` and the
+`Conn` that `pool::make()` hands back were two types, so `NK1103`'s help asked for
+what was already written and could not be followed. The cause was one spelling
+short: the ledger keys a type `pool::Conn` and a module's own signature says
+`-> Conn`, because that is how the file declaring it writes the name. `absorb` now
+qualifies the types **inside** an entry as well as the key — it is the only place
+that knows both the module and what it declares — so the two spellings are one
+name before anything compares them.
 
-**The qualified call works.** This builds and prints `7`:
+**And a struct from another file could not be built.** `pool::Conn(id: 1)` was a
+parse error, because the literal's name was `NAME` where the type's was
+`type_name`. Both are `type_name` now, and `fields_of` reads a foreign struct's
+fields from the program's own ledger by the **exact** key — never by suffix, which
+is how the library is matched: two modules may each declare a `Conn`, and a suffix
+match would answer with whichever came first.
 
-```nika
-use pool
-fn main() {
-    let c = pool::make()
-    println(f"{c.id}")
-}
-```
+So a wrong field name, a wrong field type and a wrong annotation are all refused
+by their qualified names now, in this language's words.
 
-**The qualified type name does not resolve to the same type.** Measured:
-
-```
-error[NK1103]: this is `Conn`, and the `let` says `pool::Conn`
-     help: make it a `pool::Conn`, or change what is declared to `Conn`
-```
-
-for `let c: pool::Conn = pool::make()`. `pool::Conn` is treated as a different
-type from the one `pool::make()` hands back, so the help line asks for exactly
-what is already written — it cannot be followed.
-
-**And a struct from another module cannot be built.** Not even the parser takes
-it:
-
-```
-Parse error: expected one of: `)`, `,`; found unexpected token `:`
-   4 |     let c = pool::Conn(id: 1)
-                                ^
-```
-
-`pool::Conn(...)` is read as a call rather than as a struct literal. Unqualified
-`Conn(id: 1)` does not find the name, which Part I 9.1 is right about: a module is
-reached through its name.
-
-**Together:** a module can export behaviour and not data. Whoever wants to split a
-program can move functions and not structures — which is most of the reason to
-split one.
-
-*What it needs:* name resolution has to strip a module prefix before comparing
-two types (ADR-011 D2's name-for-name rule, applied to a type rather than to a
-function), and the struct-literal form has to tolerate a qualified name. The
-second is parser work; the first is one place in `check`. See
-[`open-decisions.md`](open-decisions.md) §1, now answered: `use pool` makes a
-module reachable and nothing more, `use pool as p` is added, and every form that
-brings a name in — a glob, a braced list, a single name — is refused. The scope of
-this repair is therefore the two pieces above plus the alias: no import form is
-being built, and the answer changed nothing else about what is needed here.
-
-**And [`open-decisions.md`](open-decisions.md) §6 removes half of this entry.**
-A package is a directory whose files share one namespace, so two files of one
-package have no boundary between them to name across. What survives here is the
-cross-*package* case — which is the one the entry was always about, and is
-unchanged by that answer.
-
-And the parser half is not the whole of it: once a qualified struct literal
-parses, **visibility decides whether it is allowed**. A struct whose fields are
-private to the file that declares it may not be built from another one, and the
-refusal should name the module's own functions rather than only saying no. Part I
-9.2 makes private fields the ordinary case, which is the encapsulation this change
-must not spend on its way to making types usable.
+**What is left of this entry is the cross-*package* case.** The answer to
+[`open-decisions.md`](open-decisions.md) §6 makes a package a directory whose
+files share one namespace, so the file boundary this entry is about stops
+existing — and the same repair is what a package boundary will need, one level
+up. Two things are also not built, and neither is affected by that: **visibility**
+(a struct whose fields are private to its declaring file can still be built from
+another, because the ledger records no per-field `pub`), and the **alias**
+`use pool as p`.
 
 ### 1.2. A bare word that is no construct becomes a different program — **fixed**
 
@@ -171,51 +133,30 @@ correctly when tried again.
 lifetime defect in generated code is the class Part III C.1 is about, and
 `docs/stored-views.md` is where the surrounding analysis is written down.
 
-### 1.6. A `Shared` field's count is decided per file, and §1.1 is hiding it
+### 1.6. A `Shared` field's count is decided per file — **fixed, fail-closed**
 
-Which reference count a value gets is an optimisation over an atomic floor, and
-it may only ever lower where it *proves* nothing crosses a thread
-([ADR-037](specification/adr/adr-037.md) D7). A public field of a public type is
-one of the enumerated fallbacks, so within a file the field forces the atomic
-count and the value flowing into it is pulled along with it. Measured, one file:
+Confirmed exactly as predicted, the moment §1.1 stopped hiding it: `Arc` in the
+field and `Rc` in the value, in one generated file, refused by `rustc`.
 
-```nika
-pub struct Pool { pub db: Shared[Conn] }
-let c: Shared[Conn] = Conn(id: 1)
-let p = Pool(db: c)
-```
+The fix is the polarity this analysis already runs on, not a new answer: **where
+it cannot prove that nothing crosses, it does not lower.** A field slot whose
+struct this file does not declare is such a case, and it keeps the atomic floor as
+`Fallback::ForeignField` — a seventh row in the enumeration `--sharing` prints,
+because a fallback that is not named is one nobody can ask about.
 
-```rust
-pub db: std::sync::Arc<Conn>,
-let c: std::sync::Arc<Conn> = std::sync::Arc::new(Conn { id: 1 });
-```
+It is forced in **one place**, after the walk and before the classes are read off,
+rather than at each of the three sites that create a field slot: a rule that has
+to be remembered at three sites is one that will be forgotten at the fourth.
 
-Both atomic. Correct — the constraint propagates from the field to the value.
+The declaring file forces the same field itself where it is public
+(`Fallback::PublicField`), so the two runs now agree by both refusing to lower.
+Where the declaring file does *not* force it — a private type, a private field —
+the other file cannot name the type either, so the caution costs nothing.
 
-**Split over two files, the two answers diverge.** `Pool` in `pool.nika`, the
-value in `main.nika`, and the generated Rust carries both:
-
-```rust
-pub struct Pool {
-    pub db: std::sync::Arc<Conn>,      // decided in pool.nika
-}
-    let c: std::rc::Rc<Conn> = ...      // decided in main.nika
-```
-
-The second run never sees the field, so nothing forces it and it lowers. A field's
-emitted type is derived from the values this run watched, and there is no ledger
-column in which the two runs could agree — `FnContract::sharing` covers parameters
-and `<result>`, and a field has no slot.
-
-**This entry's point is the sequencing.** The build stops at §1.1's name
-resolution long before `rustc` sees either type, so the divergence is inert today.
-**Fixing §1.1 uncovers it**, and what a user would then get is a type mismatch
-reported about a generated file — the class Part III C.1 forbids. The two belong
-in one piece of work, not one after the other.
-
-*What it needs:* a decision on where a field's count is agreed, and until then
-the polarity this analysis already states — where it cannot prove, it does not
-lower. A field whose count no run can see in full is such a case.
+*What is still open:* where a field's count is **agreed** rather than
+independently refused. That wants either a ledger column or an analysis that runs
+over the whole program at once — and the package decision points at the second,
+since the files of a package will be one namespace anyway.
 
 ### 1.7. The explain modes cannot be reached from a project build
 

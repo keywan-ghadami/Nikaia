@@ -80,7 +80,7 @@ fn a_refused_program_says_what_is_wrong_and_no_more() {
 #[test]
 fn a_program_that_does_not_parse_says_where_and_no_more() {
     let dir = common::scratch_dir("refusal-parse");
-    let ran = refuse(&dir, "fn main() {\n    let c = pool::Conn(id: 1)\n}\n");
+    let ran = refuse(&dir, "fn main() {\n    let x =\n}\n");
     assert!(!ran.status.success(), "this program must be refused");
     let said = String::from_utf8_lossy(&ran.stderr);
 
