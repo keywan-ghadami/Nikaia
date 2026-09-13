@@ -49,6 +49,7 @@ and a decision is not an implementation.
 | [006](adr-006.md) | `Cleanup` — teardown that performs I/O, inserted by the compiler on every exit path | Accepted | no |
 | [008](adr-008.md) | Tethered slices in user structs: the tether-state lattice, and one handle per container rather than per token | Accepted | views |
 | [039](adr-039.md) | The lock: two representations stay and the difference becomes unobservable — taking a lock inside a lock is refused, a second derived property says whether a function touches one, the shared mutable type is `SharedMut[T]`, and it has four doors instead of one | Accepted | **no** — neither `SharedMut` nor `Locked` is a type the compiler knows; what exists is the machinery D3 and D6 build on ([027](adr-027.md)'s fixpoint, [005](adr-005.md) §5's structural walk) |
+| [045](adr-045.md) | The crossing verdict takes the **destination**: into a task of our own a lock may cross at both settings, into undescribed foreign code it may not — conservative at `yes` and deliberately so | Accepted | **no** — the two call sites still ask one destination-blind verdict, and `SharedMut[T]` is not a type the compiler knows |
 | [040](adr-040.md) | A handle on a shared value is duplicated, never moved, and each handle dies at the end of its own block — so there is no operation to name and no second meaning for `.clone()` | Accepted | **partly** — built for a handle handed to a function, including that a borrow duplicates nothing, with `--sharing` naming each site; the task half waits on `spawn` lowering, so there is still no `NK2101` to exempt |
 
 ### Grammar, DSLs, parsing
@@ -139,6 +140,8 @@ the superseding record's own header:
 
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
+| [039](adr-039.md) §3 | [045](adr-045.md) D1 (answers) | the open half — a lock could not reach a task, so Part II 12.2's counter was unwritable. The verdict takes the destination; §3's other way out, the `Mutex` floor, is not taken |
+| [037](adr-037.md) D6 | [045](adr-045.md) D3 (narrows) | its coda that after D6 "no type answers `may not`" — the lock answers it at a foreign call, so `NK2501` and `NK2502` stop sharing one verdict |
 | [022](adr-022.md) D1 | [041](adr-041.md) D1 (amends) | which of the two spellings is recommended — one form with two spellings is unchanged, and both still parse everywhere; the named one is what the specification teaches |
 | [005](adr-005.md) §3 | [040](adr-040.md) D1 (narrows) | the ban on a clone the user did not write — it reaches a clone of **data** and no longer a **handle** on a shared value, which copies no data and produces no second value |
 | [021](adr-021.md) D5 | [039](adr-039.md) D8 (amends) | the cache-key enumeration: the re-entrancy switch is a fourth dimension, because a build with the check and one without lower the same source to different Rust |
