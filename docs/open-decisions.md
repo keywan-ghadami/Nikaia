@@ -1,10 +1,10 @@
 # Open decisions — the questions that need the owner
 
-Six entries. **Five are answered and one is dropped**, and every answer has its
+Seven entries. **Six are answered and one is dropped**, and every answer has its
 record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
 [ADR-049](specification/adr/adr-049.md) and
-[ADR-050](specification/adr/adr-050.md). §2 and §3 are built, §6's language
+[ADR-050](specification/adr/adr-050.md) — §7's is owed. §2 and §3 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
 them. **Nothing here is open.** The shape below is kept for whatever arrives
 next: each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
@@ -421,3 +421,47 @@ setting stays usable at the other — has until now protected a situation nothin
 could construct. A path dependency is the smallest change that makes it testable,
 and the first Nikaia library is the first real test of something that has so far
 only been argued.
+
+---
+
+## 7. Are this language's keywords reserved words? — **answered: yes**
+
+**The answer.** Nikaia has a list of reserved words, and a name may not be one of
+them. The list is what the grammar treats as a keyword **at the Nikaia level** —
+not the vocabulary of the grammar sublanguage (`rule`, `boundary`, `fold`), which
+is reserved inside a grammar block and nowhere else.
+
+**What the state was, and it was not a decision.** `rule NAME = not(digit) n:ident`
+— a name is any identifier that does not start with a digit, and nothing is
+excluded. There is no reserved-word list in the parser at all. So the keywords were
+not *chosen* to be contextual; the question had never been put.
+
+**Why reserved rather than contextual.** The reason languages make a keyword
+contextual is backwards compatibility: a new reserved word breaks programs that
+used it as a name, so it is introduced in a position where it cannot be mistaken.
+`var`, `async`, `await` and `nameof` are contextual in C# for exactly that reason,
+and Go, which never had to add one, reserves all of them. **Nikaia has no programs
+outside this repository**, so the reason does not apply, and the choice is free
+today in a way it will never be again.
+
+**Why this rather than a cut in the parser.** `open-work.md` §1.1 offered both: a
+cut, so that once `dsl NAME {` matches the parser may not back out of the rule, or
+reserving the word. A cut repairs **one diagnostic for one construct**. The
+reserved list repairs **the class** — the `dsl` block, the silent miscompilation
+below, and every keyword anybody adds later, without a new cut each time.
+
+*(The grammar machinery does have a cut, written `=>`, for user-written grammars.
+Whether the compiler's own grammar can reach it was not established, and does not
+change the order: a local repair against a categorical one.)*
+
+**What it costs.** A program may not name a variable `fn`, `spawn`, `seq`,
+`overlap`, `dsl`. That is what every reserved word costs in every language, and it
+is the price of a word meaning one thing wherever it appears. The list has to be
+written down in Part I rather than left implicit in the grammar, so that a reader
+can see it.
+
+**What it fixes beyond §1.1.** The entry restored as a defect below: `assert c`
+lowers to `let c = true as sert;` with no diagnostic at all — the word swallowed
+into a cast, `sert` taken for a type name. A program that means something other
+than what is written is the worst class this project names, and it has no fix short
+of this one.

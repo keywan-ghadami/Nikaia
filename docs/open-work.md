@@ -51,11 +51,14 @@ Two answers, and both are bigger than the entry looks:
 * **A cut.** Once `dsl NAME {` is matched, forbid backtracking out of the rule.
   The grammar library offers `not`, `peek`, `until`, `recover` and `fail`, and no
   cut, so this is a change to that library.
-* **Reserve the word.** `dsl` is a keyword (Part II, 10.5) and `NAME` matches it
-  anyway, which is what gives the bad reading its alternative. Reserving it is one
-  word in the grammar and a decision about whether this language's keywords are
-  reserved words — today they are contextual, and some of them (`rule`,
-  `boundary`, `fold`) are words a program may well want.
+* **Reserve the word** — and this is the answer, taken in
+  [`open-decisions.md`](open-decisions.md) §7. `dsl` is a keyword (Part II, 10.5)
+  and `NAME` matches it anyway, which is what gives the bad reading its
+  alternative. The objection recorded here was that `rule`, `boundary` and `fold`
+  are words a program may want; they are keywords of the **grammar sublanguage**,
+  reserved inside a grammar block and nowhere else, so they are not at issue. A
+  cut repairs this one diagnostic; the reserved list repairs the class, §1.6
+  included.
 
 Where a `dsl` block opens and nothing else parses, the message is already good:
 the parser names `} eod` among what it expected.
@@ -147,6 +150,35 @@ type `u32` instead"* — is dropped. It was kept once, checked, because it
 compiles; [ADR-048](specification/adr/adr-048.md) D2 is what changed, since the
 numeric surface is the one Part I 2.2 names and `u32` is deliberately not on it. A
 remedy that works is kept; one that leads out of the language is not.
+
+---
+
+### 1.6. A keyword that is no construct is read as something else, silently
+
+Measured this session, and **recorded before and lost in a rewrite of this file**.
+
+```nika
+fn main() {
+    let c = true
+    assert c
+}
+```
+
+lowers, with no diagnostic of any kind, to
+
+```rust
+let c = true as sert;
+```
+
+`assert` is swallowed into an `as` cast and `sert` is taken for a type name. The
+program means something other than what is written, which is the worst class this
+file names — worse than a refusal in the backend's words, because nothing is
+reported at all.
+
+*Root cause:* `rule NAME = not(digit) n:ident` admits any identifier, and there is
+no reserved-word list in the parser. *What it needs:*
+[`open-decisions.md`](open-decisions.md) §7, which answers that — this entry is
+what that answer is for, and it is not fixable one word at a time.
 
 ---
 
