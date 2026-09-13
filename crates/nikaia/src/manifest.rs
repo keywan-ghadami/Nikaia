@@ -46,19 +46,30 @@ pub struct Manifest {
     root: Option<PathBuf>,
 }
 
-/// One entry of `[dependencies]`, and which of the two shapes Part III 13.3
-/// shows it is.
+/// One entry of `[dependencies]`, and which of the three shapes it is.
 ///
 /// The distinction is the whole of the translation: a native Rust crate is
-/// passed to Cargo exactly as written (ADR-002 D1), and a Nikaia package is
-/// something nothing has decided yet.
+/// passed to Cargo exactly as written (ADR-002 D1), a Nikaia package **by path**
+/// is read as part of this program
+/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2), and a Nikaia
+/// package named any other way is something nothing has decided yet.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dependency {
     /// `regex = { type = "rust", version = "1.5" }` - the value with `type`
     /// removed, which is what Cargo is handed.
     Rust(toml::Value),
-    /// `http-server = "1.2"`. Carried rather than resolved: see
-    /// [`Manifest::dependencies`].
+    /// `http = { path = "../http" }` - a Nikaia package, where it is.
+    ///
+    /// **The key is the name** a `use` writes, and the path says only where it
+    /// comes from (ADR-047 D2 rule 1): two libraries that both want to be `http`
+    /// are the consumer's to name apart, which is the authority
+    /// [ADR-046](../../../docs/specification/adr/adr-046.md) D3 gives them anyway.
+    /// Relative to the manifest's own directory, because that is the only
+    /// interpretation that survives the project being checked out somewhere else.
+    Path(PathBuf),
+    /// `http-server = "1.2"`. Carried rather than resolved: a registry, a version
+    /// grammar and a distribution format are the three things ADR-002 D1 §5
+    /// refuses to guess at, and ADR-047 D2 keeps refusing.
     Nikaia(toml::Value),
 }
 
@@ -123,6 +134,17 @@ impl Manifest {
             .map_err(|e| refused!("{e:#}"))?;
         manifest.root = path.parent().map(Path::to_path_buf);
         Ok(manifest)
+    }
+
+    /// Whether this manifest says anything about how to build.
+    ///
+    /// What it is for is a **dependency's** `[build]`, which is ignored:
+    /// a package is built with the settings of the program that uses it
+    /// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2 rule 4), and
+    /// anything else would put two answers to the parallelism question in one
+    /// build. Ignored **and said**, which is why there is a question to ask.
+    pub fn has_build_section(&self) -> bool {
+        !self.build.is_empty() || !self.codegen.is_empty()
     }
 
     /// `[package]`, `[dependencies]`, `[build]` and the `[build.<target>]`
@@ -285,9 +307,17 @@ fn dependencies(document: &toml::Value) -> Result<BTreeMap<String, Dependency>> 
                      (the only one spelled out is `rust`, for a crate from crates.io)"
                 ));
             }
-            None => {
-                out.insert(name, Dependency::Nikaia(value));
-            }
+            // A Nikaia package, and `path` is the one way of naming one that
+            // resolves (ADR-047 D2). Anything else is carried to the place that
+            // refuses it, with the reason.
+            None => match value.get("path").and_then(toml::Value::as_str) {
+                Some(path) => {
+                    out.insert(name, Dependency::Path(PathBuf::from(path)));
+                }
+                None => {
+                    out.insert(name, Dependency::Nikaia(value));
+                }
+            },
         }
     }
     Ok(out)

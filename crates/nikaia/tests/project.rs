@@ -411,6 +411,12 @@ fn the_manifest_becomes_a_cargo_manifest() {
 /// anywhere decides what resolving it would mean. Refused with the reason,
 /// rather than silently handed to Cargo - which would look for it on crates.io
 /// and fail somewhere that explains nothing.
+///
+/// **A version, specifically.** A path dependency is decided and built
+/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2); what a version
+/// would need is a registry, a version grammar and a distribution format, which
+/// are the three things [ADR-002](../../../docs/specification/adr/adr-002.md)
+/// D1 §5 refuses to guess at. So the message names the form that works.
 #[test]
 fn a_nikaia_package_is_refused_and_says_why() {
     let dir = a_project(
@@ -426,10 +432,14 @@ fn a_nikaia_package_is_refused_and_says_why() {
         .expect_err("a Nikaia package has nowhere to come from");
     let text = format!("{error:#}");
     assert!(text.contains("http-server"), "{text}");
-    assert!(text.contains("not decided"), "{text}");
+    // A **version** is what is not decided: no registry, no version grammar, no
+    // distribution format (ADR-002 D1 §5). A path is decided and built
+    // (ADR-047 D2), so the message names both ways that work.
+    assert!(text.contains("a version is not how one is found"), "{text}");
+    assert!(text.contains("path = \"../http-server\""), "{text}");
     assert!(
-        text.contains("type = \\\"rust\\\"") || text.contains("type = \"rust\""),
-        "and it says what does work today: {text}"
+        text.contains("type = \"rust\""),
+        "and the crates.io form too: {text}"
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -643,6 +653,251 @@ fn the_explain_modes_reach_a_project_build() {
             said(&ran)
         );
     }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A project and a package it depends on by path.
+fn a_program_and_a_package(purpose: &str, dependency: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = common::scratch_dir(purpose);
+    std::fs::create_dir_all(dir.join("app/src")).expect("the program");
+    std::fs::create_dir_all(dir.join(format!("{dependency}/src"))).expect("the package");
+    std::fs::write(
+        dir.join("app/nikaia.toml"),
+        format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\n{dependency} = {{ path = \"../{dependency}\" }}\n"
+        ),
+    )
+    .expect("the program's manifest");
+    std::fs::write(
+        dir.join(format!("{dependency}/nikaia.toml")),
+        format!("[package]\nname = \"{dependency}\"\nversion = \"0.1.0\"\n"),
+    )
+    .expect("the package's manifest");
+    for (file, contents) in files {
+        std::fs::write(dir.join(file), contents).expect("a source");
+    }
+    dir
+}
+
+/// **A Nikaia package is depended on by path, and its public surface is what a
+/// program may write** ([ADR-047](../../../docs/specification/adr/adr-047.md)
+/// D2).
+///
+/// The first thing in this repository that is two packages. Three claims in one
+/// program, because each is a different piece of machinery: a **function** of the
+/// package resolves and runs, a **type** it declares can be named and built, and
+/// a name it declares in *another of its own files* is visible to it — one
+/// namespace per package, one level up from D1.
+#[test]
+fn a_package_is_depended_on_by_path() {
+    let dir = a_program_and_a_package(
+        "package-path",
+        "http",
+        &[
+            (
+                "http/src/main.nika",
+                "pub struct Request { pub path: &str }\n\
+                 \n\
+                 pub fn ok(body: &str) -> String {\n    \
+                     return f\"200 {body}\"\n\
+                 }\n",
+            ),
+            (
+                "http/src/routes.nika",
+                "pub fn route(r: Request) -> String {\n    \
+                     return ok(r.path)\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use http\n\
+                 \n\
+                 fn main() {\n    \
+                     let r = http::Request(path: \"/index\")\n    \
+                     println(http::route(r))\n\
+                 }\n",
+            ),
+        ],
+    );
+
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "200 /index",
+        "{}",
+        said(&ran)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **And `NK1110` fires for the first time**: a name a package does not publish
+/// cannot be reached from outside it (Part I, 9.2).
+///
+/// Until a second package existed this check had nothing that could trigger it —
+/// the files of one package share a namespace, so a qualified name was a name
+/// from a package nobody could depend on ([ADR-047](../../../docs/specification/adr/adr-047.md)
+/// §5). This is the day `pub` starts to mean something a program can observe.
+#[test]
+fn a_name_a_package_does_not_publish_is_refused() {
+    let dir = a_program_and_a_package(
+        "package-privacy",
+        "http",
+        &[
+            (
+                "http/src/main.nika",
+                "fn secret() -> i64 {\n    return 41\n}\n\
+                 \n\
+                 pub fn answer() -> i64 {\n    return secret() + 1\n}\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use http\n\nfn main() {\n    println(f\"{http::secret()}\")\n}\n",
+            ),
+        ],
+    );
+
+    let ran = nikaia(&["build"], &dir.join("app"));
+    assert!(!ran.status.success(), "{}", said(&ran));
+    let out = said(&ran);
+    assert!(out.contains("NK1110"), "{out}");
+    assert!(out.contains("`secret` is private to `http`"), "{out}");
+    assert!(
+        out.contains("private to the package that declares it"),
+        "{out}"
+    );
+
+    // …and what it does publish is reachable, so the rule is a rule and not a
+    // blanket refusal.
+    std::fs::write(
+        dir.join("app/src/main.nika"),
+        "use http\n\nfn main() {\n    println(f\"{http::answer()}\")\n}\n",
+    )
+    .expect("the program");
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "42");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **A Nikaia dependency is part of the program, not a foreign package**
+/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2 rule 5).
+///
+/// [ADR-043](../../../docs/specification/adr/adr-043.md) D6 turns the overflow
+/// check on for the program and off for every foreign package. A dependency
+/// written in this language carries this language's promise, and without the rule
+/// stated it would land on the foreign side by accident — that is where a
+/// dependency mechanically appears — and a library would compute silently wrong
+/// numbers while the program calling it aborted.
+///
+/// So the test is that the **library's** arithmetic aborts.
+#[test]
+fn arithmetic_in_a_package_aborts_like_the_programs_own() {
+    let dir = a_program_and_a_package(
+        "package-overflow",
+        "maths",
+        &[
+            (
+                "maths/src/main.nika",
+                "pub fn grow(n: i32) -> i32 {\n    return n * 2\n}\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use maths\n\nfn main() {\n    println(f\"{maths::grow(2000000000)}\")\n}\n",
+            ),
+        ],
+    );
+
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(
+        !ran.status.success(),
+        "a library's overflow is the program's overflow: {}",
+        said(&ran)
+    );
+    assert!(
+        said(&ran).contains("attempt to multiply with overflow"),
+        "{}",
+        said(&ran)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The three rules of [ADR-047](../../../docs/specification/adr/adr-047.md) D2
+/// that are about the **set** of dependencies rather than any one of them.
+///
+/// Each is a message and not a silence, because each is a thing somebody will do:
+/// name one package twice, depend on a package that depends on packages, or hand
+/// a dependency build settings of its own.
+#[test]
+fn the_rules_that_come_with_a_path_dependency() {
+    let dir = a_program_and_a_package(
+        "package-rules",
+        "http",
+        &[
+            (
+                "http/src/main.nika",
+                "pub fn ok() -> i64 {\n    return 1\n}\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use http\n\nfn main() {\n    println(f\"{http::ok()}\")\n}\n",
+            ),
+        ],
+    );
+    let app = dir.join("app");
+    let manifest = app.join("nikaia.toml");
+    let both = std::fs::read_to_string(&manifest).expect("the manifest");
+
+    // Rule 3: the same path is the same package, so two names for it are not two
+    // packages - they would be two copies of every type it declares.
+    std::fs::write(
+        &manifest,
+        format!("{both}http2 = {{ path = \"../http\" }}\n"),
+    )
+    .expect("two names");
+    let ran = nikaia(&["build"], &app);
+    assert!(!ran.status.success(), "{}", said(&ran));
+    assert!(
+        said(&ran).contains("are the same package"),
+        "{}",
+        said(&ran)
+    );
+    std::fs::write(&manifest, &both).expect("back to one");
+
+    // Rule 2: transitive dependencies are not visible, so one that would need
+    // resolving is refused rather than flattened.
+    std::fs::write(
+        dir.join("http/nikaia.toml"),
+        "[package]\nname = \"http\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\ndeeper = { path = \"../deeper\" }\n",
+    )
+    .expect("a transitive dependency");
+    let ran = nikaia(&["build"], &app);
+    assert!(!ran.status.success(), "{}", said(&ran));
+    assert!(said(&ran).contains("packages of its own"), "{}", said(&ran));
+
+    // Rule 4: a dependency's own `[build]` is ignored, and the compiler says so -
+    // a package is built with the settings of the program that uses it.
+    std::fs::write(
+        dir.join("http/nikaia.toml"),
+        "[package]\nname = \"http\"\nversion = \"0.1.0\"\n\n\
+         [build]\nuser-parallelism = \"yes\"\n",
+    )
+    .expect("its own build section");
+    let ran = nikaia(&["run"], &app);
+    assert!(ran.status.success(), "{}", said(&ran));
+    let out = said(&ran);
+    assert_eq!(
+        out.matches("is ignored").count(),
+        1,
+        "said once, not once per pass: {out}"
+    );
+    assert!(
+        out.contains("settings of the program that uses it"),
+        "{out}"
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -185,37 +185,44 @@ neither line of that section's own example is accepted. `??` (Part I 3.5) is bui
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. A Nikaia package cannot be depended on
+### 2.7. A package's own package dependencies are not resolved
 
-[ADR-047](specification/adr/adr-047.md) D2, and the D1 half of that record is
-built: a package is a directory whose files share one namespace. What is not built
-is the **path dependency** — the manifest key, the five rules that come with it,
-and Part III 13.2's refusal that still stands.
+[ADR-047](specification/adr/adr-047.md) D2 is built one level deep: a program
+depends on a package by path, and a package that declares Nikaia dependencies **of
+its own** is refused rather than resolved.
 
-It is the largest unblocking after §2.1, because three things become observable
-for the first time only when a second package exists:
+What is missing is the **resolution**, not the visibility rule: transitive
+dependencies are not visible either way (D2 rule 2), so the refusal states the
+rule correctly and declines the graph. A second level needs a dependency graph,
+a cycle rule and an order — none of which any program has asked for yet.
 
-* **`pub` starts to mean something a program can see.** Privacy is per package
-  now, so `NK1110` is built and reaches no program at all
-  ([ADR-047](specification/adr/adr-047.md) §5) — it is the one code in Part III
-  C.3's catalogue with a check behind it and nothing that can trigger it.
-* **A struct's fields have no recorded visibility.** The ledger's `fields` carries
-  no per-field `pub`, so a type whose fields are private could be built from
-  another package by name. Harmless while there is no other package; a hole the
-  day there is.
-* **[ADR-045](specification/adr/adr-045.md)'s portability rule becomes testable.**
-  A library built at one `user_parallelism` staying usable at the other is the
-  sentence that decided that record's shape, and nothing can construct the
-  situation today.
+### 2.7b. A struct's fields have no recorded visibility
 
-### 2.8. `use` cannot succeed, so four of [ADR-046](specification/adr/adr-046.md)'s rules are unreachable
+The ledger's `fields` carries no per-field `pub`, so a type whose fields are
+private to its package can be **built by name** from another one. Part I 9.2 says
+it may not, `NK1110` covers the item and not its parts, and the language below
+cannot help: the emitted struct is in the same crate.
 
-D1's qualified form is built. D2's refusals in this language's words
-(`use pool::{…}` is a parse error at the brace instead), D3's `use x as y`, D4's
-"a prefix must be introduced" and D5's "one name per file" all wait on §2.7: every
-`use` that is not `std`'s is refused today for the simpler reason that there is no
-package to name.
+Harmless until this session, because there was no second package. There is one
+now, which makes this the hole with the shortest fuse in the list.
 
+*What it needs:* a ledger column — `fields = ["pub id: i64", "secret: i64"]` —
+and the check at a struct literal and at a field access. The format change is
+backward-compatible if `pub ` is optional on the way in.
+
+### 2.8. `use http as h`, and the braced and glob forms in this language's words
+
+[ADR-046](specification/adr/adr-046.md) §5. D1, D4 and D5 are built now that a
+package can be depended on; two pieces are left.
+
+**D3's alias** — `use http as h` — does not parse. It is the one thing that record
+*adds* rather than refuses, and it is what makes the qualified-only rule
+affordable, so it is the next piece of it to build.
+
+**D2's braced and glob forms** are parse errors at the brace and the star rather
+than the sentence D2 writes. *"Names are not brought in; a package is reached
+through its name"* belongs in the grammar, beside the `fn: …` refusal
+[ADR-022](specification/adr/adr-022.md) already put there.
 
 ---
 

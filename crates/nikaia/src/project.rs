@@ -190,7 +190,109 @@ pub struct Lowered {
 /// The build cache (ADR-021) covers the whole of it: on a hit nothing is
 /// checked, lowered or inferred, because only a build that passed every check
 /// was recorded and the key holds everything those checks depend on (D13).
-pub fn lower(input: &Path, settings: &Settings, no_cache: bool) -> Result<Lowered> {
+/// **The packages a project depends on by path**
+/// ([ADR-047](../../docs/specification/adr/adr-047.md) D2), resolved against
+/// the manifest's own directory.
+///
+/// A free function because two callers need the same answer: the project build,
+/// and the `rustc` wrapper, which is handed a `.nika` path by Cargo and has to
+/// find the manifest above it (`wrapper_main`). Two copies of a resolution rule
+/// is two chances to disagree about what a program is.
+///
+/// Three of D2's five rules are kept here, because they are about the set of
+/// dependencies rather than about any one of them:
+///
+/// * **rule 1**, the manifest key is the name: the map's key is what `use`
+///   writes and the path is only where it comes from, so nothing inside a
+///   package gets to name it;
+/// * **rule 3**, the same path is the same package: two keys resolving to one
+///   directory would be two `mod`s of one package and two types of one name,
+///   so it is refused rather than unified;
+/// * **rule 4**, a dependency's `[build]` is ignored, and the compiler says
+///   so — a package is built with the settings of the program that uses it,
+///   and anything else puts two answers to the parallelism question in one
+///   build.
+///
+/// **rule 2** — transitive dependencies are not visible — is kept twice: a
+/// dependency's `use` lines are checked against nothing
+/// (`modules::collect_with`), and a dependency that declares Nikaia
+/// dependencies of its own is refused here rather than flattened, because
+/// flattening is what makes a library's surface everything it happens to use.
+/// **rule 5** is `cargo_project` above: such a package declares nothing to
+/// Cargo, because it is this program.
+pub fn packages_of(
+    manifest: &Manifest,
+    root: &Path,
+    announce: bool,
+) -> Result<Vec<modules::Dependency>> {
+    let mut out: Vec<modules::Dependency> = Vec::new();
+    let mut seen: BTreeMap<PathBuf, String> = BTreeMap::new();
+
+    for (name, value) in manifest.dependencies() {
+        let Dependency::Path(path) = value else {
+            continue;
+        };
+        let root = root.join(path);
+        let root = root.canonicalize().unwrap_or(root);
+
+        if let Some(first) = seen.get(&root) {
+            refuse!(
+                "`{name}` and `{first}` are the same package: both are {}.\n\
+                 The same path is the same package (ADR-047 D2), so two names for it \
+                 would be two copies of every type it declares - name it once.",
+                root.display()
+            );
+        }
+        seen.insert(root.clone(), name.clone());
+
+        let manifest = Manifest::read(&root.join("nikaia.toml"))?;
+        let transitive: Vec<&String> = manifest
+            .dependencies()
+            .iter()
+            .filter(|(_, value)| !matches!(value, Dependency::Rust(_)))
+            .map(|(name, _)| name)
+            .collect();
+        if !transitive.is_empty() {
+            refuse!(
+                "`{name}` depends on Nikaia packages of its own ({}), and a package's \
+                 own packages are not resolved yet.\n\
+                 Transitive dependencies are not visible either way (ADR-047 D2), so \
+                 what is missing is the resolution and not the visibility - depend on \
+                 them directly for now.",
+                transitive
+                    .iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        // `announce`, because this resolution runs more than once per build - the
+        // driver, and the `rustc` wrapper Cargo calls for the build and again for
+        // a run - and a note a reader meets three times reads as three problems.
+        // The driver is the one that reports (ADR-005 D7's shape: the work happens
+        // where it happens, the saying happens once).
+        if announce && manifest.has_build_section() {
+            eprintln!(
+                "note: `{}`'s own `[build]` is ignored: a package is built with the \
+                 settings of the program that uses it (ADR-047 D2).",
+                name
+            );
+        }
+
+        out.push(modules::Dependency {
+            name: name.clone(),
+            root,
+        });
+    }
+    Ok(out)
+}
+
+pub fn lower(
+    input: &Path,
+    settings: &Settings,
+    no_cache: bool,
+    packages: &[modules::Dependency],
+) -> Result<Lowered> {
     // `Layout` decides where the lock and the store go, and guarantees that
     // outside a `nikaia.toml` project nothing is written into the source tree.
     // It also names the unit relative to its root: an absolute path is D7's
@@ -227,7 +329,7 @@ pub fn lower(input: &Path, settings: &Settings, no_cache: bool) -> Result<Lowere
     // examples is a directory of programs, and compiling one of them must not
     // pull in the other ten (ADR-047 D1, `modules::collect_one`).
     let program = match layout.in_project {
-        true => modules::Program::read(input)?,
+        true => modules::Program::read_with(input, packages)?,
         false => modules::Program::read_one(input)?,
     };
     let key_source = program.sources().join("\n// --- unit ---\n");
@@ -752,6 +854,11 @@ impl Project {
         self.root.join("nikaia.contracts")
     }
 
+    /// The packages this project depends on by path - see [`packages_of`].
+    pub fn packages(&self) -> Result<Vec<modules::Dependency>> {
+        packages_of(&self.manifest, &self.root, true)
+    }
+
     /// `nikaia.toml` translated (ADR-002 D1).
     ///
     /// `rust` is the program as this build lowered it, and it decides which of
@@ -780,11 +887,25 @@ impl Project {
                 // space and a distribution format are all undecided, and
                 // guessing at one here would be inventing the answer in the
                 // place it is hardest to review.
+                // **A Nikaia dependency is part of the program, not a foreign
+                // package** (ADR-047 D2 rule 5), so it declares nothing to Cargo:
+                // its files are read into the same crate, and ADR-043's overflow
+                // checks reach it because it *is* the program. Without that it
+                // would land on the foreign side by accident - which is where a
+                // dependency mechanically appears - and a library would compute
+                // silently wrong numbers while its caller aborted.
+                Dependency::Path(_) => {}
+                // A registry, a name space and a distribution format are all
+                // undecided, and guessing at one here would be inventing the
+                // answer in the place it is hardest to review
+                // ([ADR-002](../../docs/specification/adr/adr-002.md) D1 §5).
                 Dependency::Nikaia(_) => refuse!(
-                    "`{dependency}` is a Nikaia package, and how a Nikaia package is \
-                     resolved is not decided yet: no ADR names a registry, a version \
-                     grammar or a distribution format for one.\n\
-                     A crate from crates.io works today - write it as \
+                    "`{dependency}` is a Nikaia package named by a version, and a version \
+                     is not how one is found: no ADR names a registry, a version grammar \
+                     or a distribution format.\n\
+                     A Nikaia package is depended on **by path** today - write it as \
+                     `{dependency} = {{ path = \"../{dependency}\" }}` (ADR-047 D2) - and a \
+                     crate from crates.io as \
                      `{dependency} = {{ type = \"rust\", version = \"…\" }}` \
                      (Part III 13.3, ADR-002 D1)."
                 ),
@@ -863,7 +984,11 @@ impl Project {
             explain(&modules::Program::read(&entry)?, &self.settings, want)?;
         }
 
-        let lowered = lower(&entry, &self.settings, no_cache)?;
+        // The packages this project depends on, resolved before anything is read:
+        // a dependency that is not there, or two names for one path, is a
+        // statement about the project and should not wait for a lowering.
+        let packages = self.packages()?;
+        let lowered = lower(&entry, &self.settings, no_cache, &packages)?;
         write_ledger(&self.ledger_path(), &lowered.ledger, locked)?;
 
         let manifest = self
@@ -1100,7 +1225,24 @@ pub fn wrapper_main() -> Result<i32> {
     trace(&invocation, "lowered");
 
     let settings = Settings::from_env()?;
-    let lowered = lower(&source, &settings, std::env::var_os(NO_CACHE_VAR).is_some())?;
+    // **The packages, found the same way the project build finds them.** Cargo
+    // hands this a `.nika` path, so the manifest is the one above it
+    // (`Manifest::find` walks to the same root the cache does) - and it has to be
+    // read here rather than passed down, because the only channel from the build
+    // into the wrapper is the environment and a dependency list is not a switch.
+    // `packages_of` is the one resolution rule, so the two cannot disagree about
+    // what the program is.
+    let manifest = Manifest::find(&source)?;
+    let packages = match manifest.root() {
+        Some(root) => packages_of(&manifest, root, false)?,
+        None => Vec::new(),
+    };
+    let lowered = lower(
+        &source,
+        &settings,
+        std::env::var_os(NO_CACHE_VAR).is_some(),
+        &packages,
+    )?;
 
     let name = invocation.crate_name.clone().unwrap_or_else(|| {
         source

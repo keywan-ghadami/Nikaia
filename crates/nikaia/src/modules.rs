@@ -24,7 +24,7 @@
 // package (ADR-046 D1), and depending on one is not built (ADR-047 §5), so a
 // `use` that is not `std`'s is refused with what to do instead.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -59,6 +59,19 @@ impl Unit {
     }
 }
 
+/// A package this program depends on: the name a `use` writes, and where it is
+/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+///
+/// The name is the **manifest key** and nothing inside the package, which is D2
+/// rule 1: a package does not name itself, so two libraries that both want to be
+/// `http` are the consumer's to name apart.
+#[derive(Debug, Clone)]
+pub struct Dependency {
+    pub name: String,
+    /// The package's own directory - the one its `src/` is in.
+    pub root: PathBuf,
+}
+
 /// Every file of the package the entry belongs to, entry first.
 ///
 /// **The directory decides, not the `use` lines** (ADR-047 D1). Every `.nika`
@@ -71,7 +84,51 @@ impl Unit {
 /// the source tree alone (Part III 13.5's determinism), and a directory listing
 /// is not sorted anywhere.
 pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
-    let entry = entry.to_path_buf();
+    collect_with(entry, &[])
+}
+
+/// The same, with the packages this program depends on
+/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+///
+/// A dependency's files come **after** the program's own, in the order the
+/// manifest sorted its names, so the emitted file stays a function of the source
+/// tree (Part III 13.5). Each is read from the package's `src/`, because a
+/// dependency is a project and that is where a project keeps its files
+/// (Part III, 13.1).
+pub fn collect_with(entry: &Path, dependencies: &[Dependency]) -> Result<Vec<Unit>> {
+    let names: BTreeSet<String> = dependencies.iter().map(|d| d.name.clone()).collect();
+    let mut units = package_at(entry, None, &names)?;
+
+    for dependency in dependencies {
+        let src = dependency.root.join(SRC);
+        if !src.is_dir() {
+            return Err(crate::diagnostics::refuse(format!(
+                "`{}` is depended on by path, and {} is not there.\n\
+                 A package is a directory with a `{SRC}/` in it (Part III, 13.1).",
+                dependency.name,
+                src.display()
+            )));
+        }
+        // **Its own `use` lines are checked against nothing.** D2 rule 2:
+        // transitive dependencies are not visible, so a package that names one is
+        // refused rather than silently handed ours - otherwise a library's surface
+        // is everything it happens to use.
+        units.extend(package_at(
+            &src.join(ENTRY),
+            Some(&dependency.name),
+            &BTreeSet::new(),
+        )?);
+    }
+    Ok(units)
+}
+
+/// One package: the directory an entry sits in, checked as a namespace of its
+/// own.
+fn package_at(
+    entry: &Path,
+    package: Option<&str>,
+    reachable: &BTreeSet<String>,
+) -> Result<Vec<Unit>> {
     let base = entry
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -83,17 +140,27 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|e| e == "nika"))
-        .filter(|path| *path != entry)
+        .filter(|path| path != entry)
         .collect();
     beside.sort();
 
-    let mut units = vec![read_unit(&entry)?];
+    // A library needs no `main.nika`: what a package offers is its public
+    // surface, and an entry point is what a *program* has.
+    let mut units = match entry.is_file() {
+        true => vec![read_unit(entry, package, reachable)?],
+        false => Vec::new(),
+    };
     for path in beside {
-        units.push(read_unit(&path)?);
+        units.push(read_unit(&path, package, reachable)?);
     }
     one_namespace(&units)?;
     Ok(units)
 }
+
+/// Where a project keeps its sources and what its entry point is called
+/// (Part III, 13.1).
+const SRC: &str = "src";
+const ENTRY: &str = "main.nika";
 
 /// The entry and nothing beside it - a `.nika` file compiled on its own.
 ///
@@ -102,19 +169,19 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
 /// ten. A package is a directory **of a project**, which is what a `nikaia.toml`
 /// declares.
 pub fn collect_one(entry: &Path) -> Result<Vec<Unit>> {
-    Ok(vec![read_unit(entry)?])
+    Ok(vec![read_unit(entry, None, &BTreeSet::new())?])
 }
 
-fn read_unit(path: &Path) -> Result<Unit> {
+fn read_unit(path: &Path, package: Option<&str>, reachable: &BTreeSet<String>) -> Result<Unit> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     // `with_context` and not `anyhow!("{e}")`: formatting the error into a string
     // loses its type, and the type is what says this is a refusal of the program
     // rather than a failure of this compiler (`diagnostics::Refused`).
     let parsed = parser::parse_to_ast(&source).with_context(|| format!("{}", path.display()))?;
-    refuse_imports(&parsed, path)?;
+    check_imports(&parsed, path, reachable)?;
     Ok(Unit {
-        package: None,
+        package: package.map(str::to_string),
         path: path.to_path_buf(),
         source,
         parsed,
@@ -167,13 +234,32 @@ fn declared_names(parsed: &Parsed) -> Vec<String> {
         .collect()
 }
 
-/// A `use` that is not `std`'s, refused with what to do instead.
+/// **Every `use` in a file, against the packages it may name**
+/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D2, D4, D5).
 ///
-/// `use` names another **package** (ADR-046 D1), and depending on one is not
-/// built (ADR-047 §5, Part III 13.2). A `use` naming a file beside this one is the
-/// shape that used to work, so the message says the rule that replaced it rather
-/// than only that the name is unknown.
-fn refuse_imports(parsed: &Parsed, at: &Path) -> Result<()> {
+/// `use` makes a package reachable and brings **no name** in, so there are four
+/// things to say no to and one thing to accept. Each message names the way out,
+/// because a rule a reader cannot act on is an obstacle (Part III, C.2):
+///
+/// * a **path** other than `std`'s — `use net::http` — which is either a nested
+///   package (there is no such thing) or an attempt to import a name;
+/// * a name that is a **file beside this one**, the shape that worked before
+///   ADR-047 D1 made a package a directory;
+/// * a name **no dependency declares**, which is D4 read from the other side: a
+///   prefix must be introduced, and this is the introduction that names nothing;
+/// * the **same name twice**, which is D5 — two packages under one name is an
+///   error rather than a rule about which of them wins.
+///
+/// The braced and glob forms (`use pool::{Conn}`, `use pool::*`) are parse errors
+/// at the brace and the star, so D2's sentence about them is not reachable from
+/// here; that is [ADR-046](../../../docs/specification/adr/adr-046.md) §5's
+/// remaining piece and it belongs in the grammar.
+fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Result<()> {
+    let here = at.display();
+    let mut named: Vec<&str> = Vec::new();
+
+    // A path first, and every one of them, because it is the only shape that is
+    // wrong about *itself* rather than about what the project declares.
     for item in &parsed.program.items {
         let Item::Import { path } = &item.node else {
             continue;
@@ -182,23 +268,52 @@ fn refuse_imports(parsed: &Parsed, at: &Path) -> Result<()> {
         if matches!(segments.as_slice(), ["std", ..]) {
             continue;
         }
-        let written = segments.join("::");
+        if segments.len() > 1 {
+            return Err(crate::diagnostics::refuse(format!(
+                "`use {}` in {here}: `use` names one package and brings no name in \
+                 (Part I, 9.1). Write `use {}`, and `{}` where you need it.",
+                segments.join("::"),
+                segments[0],
+                segments.join("::")
+            )));
+        }
+        named.push(segments[0]);
+    }
+
+    // **D5 before D4**, because a name written twice is a fact about this file and
+    // says nothing about whether either of them resolves: checking reachability
+    // first would answer a file with two unknown names by naming one of them.
+    let mut once: BTreeSet<&str> = BTreeSet::new();
+    for name in &named {
+        if !once.insert(name) {
+            return Err(crate::diagnostics::refuse(format!(
+                "`use {name}` in {here}: twice. One name per file (Part I, 9.1) - two \
+                 packages under one name is an error rather than a rule about which of them \
+                 a line means."
+            )));
+        }
+    }
+
+    for name in named {
+        if reachable.contains(name) {
+            continue;
+        }
         let beside = at
             .parent()
-            .map(|dir| dir.join(format!("{}.nika", segments[0])))
+            .map(|dir| dir.join(format!("{name}.nika")))
             .is_some_and(|path| path.is_file());
         return Err(crate::diagnostics::refuse(match beside {
             true => format!(
-                "`use {written}` in {}: the files of a package already see one another \
+                "`use {name}` in {here}: the files of a package already see one another \
                  (Part I, 9.1), so there is nothing to bring in - remove the line and write \
-                 the name directly.",
-                at.display()
+                 the name directly."
             ),
             false => format!(
-                "`use {written}` in {}: `use` names another package (Part I, 9.1), and \
-                 depending on a Nikaia package is not built yet (Part III, 13.2). \
-                 Only `std::…` names something that is there.",
-                at.display()
+                "`use {name}` in {here}: no dependency is called `{name}`.\n\
+                 A package reached by name has to be declared, under that name, in this \
+                 project's `[dependencies]` (Part III, 13.3):\n\
+                 \x20   [dependencies]\n\
+                 \x20   {name} = {{ path = \"../{name}\" }}"
             ),
         }));
     }
@@ -225,6 +340,12 @@ impl Program {
         Self::of(collect(entry)?)
     }
 
+    /// The same, with the packages this program depends on
+    /// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+    pub fn read_with(entry: &Path, dependencies: &[Dependency]) -> Result<Program> {
+        Self::of(collect_with(entry, dependencies)?)
+    }
+
     /// The entry compiled on its own - what `--input` outside a project is
     /// (see [`collect_one`]).
     pub fn read_one(entry: &Path) -> Result<Program> {
@@ -233,12 +354,29 @@ impl Program {
 
     fn of(units: Vec<Unit>) -> Result<Program> {
         let mut contracts = crate::contracts::Ledger::empty();
-        for unit in &units {
-            contracts.absorb(
-                unit.package.as_deref(),
-                crate::contracts::Ledger::infer(&unit.parsed),
-            );
+
+        // **A package at a time, not a file at a time.** `absorb` qualifies the
+        // types *inside* an entry with the package's name, and it can only do
+        // that for the types the ledger it is given declares - so a package whose
+        // `Request` is in one file and whose `route(r: Request)` is in another has
+        // to arrive as one ledger, or the signature keeps the bare name and a
+        // caller writing `http::Request` is told the two are different types.
+        // That was the file-level defect (`open-work.md` §1.1) one level up.
+        //
+        // The units arrive grouped (`collect_with`), so this is a walk and not a
+        // sort - and the order inside a package is the order they were read in,
+        // which Part III 13.5 needs to stay a function of the tree.
+        let mut at = 0;
+        while at < units.len() {
+            let package = units[at].package.clone();
+            let mut own = crate::contracts::Ledger::empty();
+            while at < units.len() && units[at].package == package {
+                own.absorb(None, crate::contracts::Ledger::infer(&units[at].parsed));
+                at += 1;
+            }
+            contracts.absorb(package.as_deref(), own);
         }
+
         Ok(Program { units, contracts })
     }
 
@@ -269,16 +407,25 @@ impl Program {
 
     /// The whole package as one Rust file.
     ///
-    /// **One crate root, and every file's items in it** (ADR-047 D1). One
-    /// namespace in this language is one namespace in the language below, so
-    /// there is no `mod` to write, no `use super::*` to make the siblings
-    /// reachable, and nothing for a reader to resolve. `pub` becomes `pub`,
-    /// which is what publishes a name out of the package - the same move
-    /// ADR-017 D2 made with `html::Render`: put the rule where the language
-    /// below can act on it rather than re-implementing it here.
+    /// **One crate root per package** (ADR-047 D1). One namespace in this
+    /// language is one namespace in the language below, so the program's own
+    /// files need no `mod`, no `use super::*` and nothing for a reader to
+    /// resolve. `pub` becomes `pub`, which is what publishes a name out of the
+    /// package - the same move ADR-017 D2 made with `html::Render`: put the rule
+    /// where the language below can act on it rather than re-implementing it
+    /// here.
     ///
-    /// The entry goes **first**, because it is the file that may declare `main`
-    /// and a reader opens the generated file at the top.
+    /// **A dependency is a `mod` at that root** (D2), named by the manifest key,
+    /// so `http::serve()` in Nikaia is `http::serve()` in Rust and nothing
+    /// resolved it (ADR-011 D2). Each opens with `use super::*` under an
+    /// `#[allow]`, which brings in the preamble the root wrote - the allow is
+    /// because the import is **ours**, and a module that happens to use nothing
+    /// from the preamble would otherwise produce a warning about a line no Nikaia
+    /// source maps to (Part III, C.1).
+    ///
+    /// The program's own files go **first**, the entry first among them, because
+    /// the entry is the file that may declare `main` and a reader opens the
+    /// generated file at the top.
     pub fn emit(&self, build: crate::emit::Build) -> Result<crate::emit::Lowered> {
         self.emit_ordered(build, crate::emit::Ordering::default())
     }
@@ -303,6 +450,7 @@ impl Program {
         rust.push('\n');
 
         let mut map = SourceMap::default();
+        let mut open: Option<&str> = None;
         for (at, unit) in self.units.iter().enumerate() {
             let body = crate::emit::emit_module_body_ordered(
                 ordering,
@@ -314,9 +462,27 @@ impl Program {
                 // may be written from.
                 at == 0,
             )?;
+
+            // The units arrive grouped by package (`collect_with`), so a `mod`
+            // opens where the name changes and closes where it changes again -
+            // and a package of several files is one `mod` rather than one each.
+            if open != unit.package.as_deref() {
+                if open.is_some() {
+                    rust.push_str("}\n\n");
+                }
+                if let Some(package) = unit.package.as_deref() {
+                    rust.push_str(&format!("pub mod {package} {{\n"));
+                    rust.push_str("#[allow(unused_imports)]\nuse super::*;\n");
+                }
+                open = unit.package.as_deref();
+            }
+
             map.extend(body.map.placed(rust.len(), at));
             rust.push_str(&body.rust);
             rust.push('\n');
+        }
+        if open.is_some() {
+            rust.push_str("}\n");
         }
 
         Ok(Lowered { rust, map })

@@ -183,9 +183,17 @@ ordering = "effects"
 reentrancy-check = "on"
 
 [dependencies]
-# A Nikaia package. How one is resolved is not decided: no record names a
-# registry, a name space or a distribution format, so the compiler refuses this
-# with that reason rather than guessing (ADR-002 D1 §5).
+# A Nikaia package, **by path** (ADR-047 D2). The key is the name a `use` writes
+# and the path says only where it comes from, so two libraries that both want to
+# be `http` are yours to name apart. Its files are read into this program: `pub`
+# is what it offers, its own `[build]` is ignored with a note - a package is
+# built with the settings of the program that uses it - and the overflow checks
+# of A.2 reach it, because a Nikaia dependency is part of the program rather
+# than a foreign package.
+http = { path = "../http" }
+# A Nikaia package by **version** is refused, and says so: no record names a
+# registry, a version grammar or a distribution format, so the compiler does not
+# guess (ADR-002 D1 §5, ADR-047 D2).
 http-server = "1.2"
 # Import native Rust Crates. This reaches Cargo with only `type` removed, and
 # Cargo resolves, fetches and links it as it would for any Rust project.
@@ -205,7 +213,11 @@ lto = true          # Link Time Optimization
 ```
 
 > **Status:** `target`, `user-parallelism` and `ordering` are read, and so is the
-> moved `cleanup-deadline`, which compiles with a note saying where it went.
+> moved `cleanup-deadline`, which compiles with a note saying where it went. A
+> `path` dependency is read, one level deep: a package that declares Nikaia
+> dependencies **of its own** is refused rather than resolved, and what is missing
+> there is the resolution and not the visibility rule — transitive dependencies
+> are not visible either way ([ADR-047](adr/adr-047.md) §5).
 > **`reentrancy-check` is specified and not built**: `[build]` does not know the
 > key, so a manifest that writes it today fails the build as a typo would — the
 > rule above, applied to a key the specification has and the compiler has not.

@@ -278,23 +278,43 @@ fn a_use_naming_a_sibling_file_says_to_remove_it() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// …and a `use` naming something that is not there says depending on a package
-/// is not built, rather than looking for a file.
+/// …and a `use` naming something no dependency declares says what to declare
+/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D4 from the other
+/// side: a prefix must be introduced, and this is an introduction that names
+/// nothing).
 #[test]
-fn a_use_naming_another_package_says_it_is_not_built() {
-    for source in [
-        "use helpers\n\nfn main() { }\n",
-        "use net::http\n\nfn main() { }\n",
-    ] {
-        let (dir, entry) = project("foreign-use", &[("main.nika", source)]);
-        let Err(error) = Program::read(&entry) else {
-            panic!("{source}");
-        };
-        let message = format!("{error:#}");
-        assert!(message.contains("another package"), "{message}");
-        assert!(message.contains("13.2"), "{message}");
-        let _ = std::fs::remove_dir_all(dir);
-    }
+fn a_use_naming_no_dependency_says_what_to_declare() {
+    let (dir, entry) = project(
+        "foreign-use",
+        &[("main.nika", "use helpers\n\nfn main() { }\n")],
+    );
+    let Err(error) = Program::read(&entry) else {
+        panic!("nothing is called `helpers`");
+    };
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("no dependency is called `helpers`"),
+        "{message}"
+    );
+    assert!(message.contains("[dependencies]"), "{message}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// **A `use` with a path in it names one package and brings no name in**
+/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D1, D2).
+#[test]
+fn a_use_with_a_path_is_refused_and_std_is_not() {
+    let (dir, entry) = project(
+        "path-use",
+        &[("main.nika", "use net::http\n\nfn main() { }\n")],
+    );
+    let Err(error) = Program::read(&entry) else {
+        panic!("a path names no package");
+    };
+    let message = format!("{error:#}");
+    assert!(message.contains("brings no name in"), "{message}");
+    assert!(message.contains("`use net`"), "{message}");
+    let _ = std::fs::remove_dir_all(dir);
 
     // `use std::fs` names the library and never a package of yours, so a program
     // that only imports `std` is unaffected.
@@ -304,6 +324,24 @@ fn a_use_naming_another_package_says_it_is_not_built() {
     );
     let program = Program::read(&entry).expect("std is not a package of yours");
     assert!(program.is_single_file());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// **One name per file** ([ADR-046](../../../docs/specification/adr/adr-046.md)
+/// D5): two packages under one name is an error rather than a rule about which
+/// of them a line means.
+#[test]
+fn one_name_per_file() {
+    let (dir, entry) = project(
+        "twice",
+        &[("main.nika", "use helpers\nuse helpers\n\nfn main() { }\n")],
+    );
+    let Err(error) = Program::read(&entry) else {
+        panic!("`helpers` is named twice");
+    };
+    let message = format!("{error:#}");
+    assert!(message.contains("twice"), "{message}");
+    assert!(message.contains("One name per file"), "{message}");
     let _ = std::fs::remove_dir_all(dir);
 }
 

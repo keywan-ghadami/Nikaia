@@ -253,7 +253,9 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
         },
     )?;
 
-    let lowered = project::lower(input, settings, args.no_cache)?;
+    // No packages: `--input` is one file outside a project (ADR-047 D1), and a
+    // dependency is declared in a manifest there is none of.
+    let lowered = project::lower(input, settings, args.no_cache, &[])?;
     std::fs::write(&output_path, &lowered.rust)?;
 
     // The ledger goes beside the output, because that is where a build puts

@@ -1725,14 +1725,18 @@ alias or by collision, is an error rather than a rule about which wins (D5).
 `use std::fs` is the one `use` with a path in it, and it names the library rather
 than a package of yours ([ADR-030](adr/adr-030.md) D1).
 
-> **Status:** the package is built and the dependency is not. Every `.nika`
-> beside the entry takes part, they are one namespace, and two files declaring
-> the same name is refused by name. A `use` that names a file beside this one
-> says to remove the line; one that names anything else says that depending on a
-> package is not built (Part III, 13.2) — so `use http` above does not work yet,
-> and there is no way to write the example with two packages in it. The alias,
-> the braced and glob refusals in this language's words, and "a prefix must be
-> introduced" wait on that ([ADR-046](adr/adr-046.md) §5).
+> **Status:** both halves are built, one level deep. Every `.nika` beside the
+> entry takes part and they are one namespace; a package is depended on by
+> **path** — `http = { path = "../http" }` in `[dependencies]` (Part III, 13.3) —
+> and a `use` naming one resolves. Two files declaring the same name is refused by
+> name, a `use` naming a file beside this one says to remove the line, one naming
+> no dependency says where to declare it, and one name twice is refused.
+>
+> **Not built:** `use http as h`, and the braced and glob forms in this language's
+> words — `use http::{…}` and `use http::*` are parse errors at the brace and the
+> star ([ADR-046](adr/adr-046.md) §5). A package's *own* package dependencies are
+> refused rather than resolved, and a version is not how a package is found
+> ([ADR-047](adr/adr-047.md) §5).
 >
 > Outside a project a `.nika` file is compiled **on its own**: a package is a
 > directory of a project, and a directory of loose examples is a directory of
@@ -1771,11 +1775,11 @@ error[NK1110]: `secret` is private to `utils`
      help: write `pub fn secret` in `utils`, or reach it through something that is public
 ```
 
-> **Status:** the boundary is the package, and `NK1110` therefore has no program
-> that reaches it: a qualified name is a name from another package, and depending
-> on one is not built. The check is there for the day one arrives — which is also
-> the day `pub` starts to mean something a program can observe
-> ([ADR-047](adr/adr-047.md) D1, D2).
+> **Status:** built, and `NK1110` reaches a program now that a package can be
+> depended on: *"`secret` is private to `http`"*. What is **not** enforced is a
+> struct's **fields** — the ledger records no per-field `pub`, so a type whose
+> fields are private can still be built by name from another package
+> ([ADR-047](adr/adr-047.md) §5).
 
 ### 9.3. Granular Control
 While `pub` makes an item available generally, strict privacy forces developers to create safe interfaces (Constructors and Methods) rather than exposing raw data.
