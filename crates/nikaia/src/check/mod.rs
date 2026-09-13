@@ -1050,7 +1050,9 @@ impl<'a> Checker<'a> {
             }
 
             Expr::StructLit { name, fields } => {
-                let name = self.parsed.text(*name).to_string();
+                // `unaliased`, the same as a type: `h::Request(path: …)` builds
+                // `http::Request` (ADR-046 D3).
+                let name = self.parsed.unaliased(self.parsed.text(*name));
                 let declared = self.fields_of(&name);
                 for init in fields {
                     let field = self.parsed.text(init.name).to_string();
@@ -1428,11 +1430,16 @@ impl<'a> Checker<'a> {
 
         let name = match func {
             Expr::Variable(name) => self.parsed.text(*name).to_string(),
-            Expr::Path(segments) => segments
-                .iter()
-                .map(|s| self.parsed.text(*s))
-                .collect::<Vec<_>>()
-                .join("::"),
+            // `unaliased`: `h::serve()` is `http::serve()` where the file wrote
+            // `use http as h` (ADR-046 D3), and the ledger knows only the
+            // package's own name.
+            Expr::Path(segments) => self.parsed.unaliased(
+                &segments
+                    .iter()
+                    .map(|s| self.parsed.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            ),
             other => {
                 self.expr(other, span);
                 return Ty::Unknown;

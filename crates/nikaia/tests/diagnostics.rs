@@ -243,10 +243,15 @@ fn a_trait_bound_error_from_cargo_is_placed_in_the_nika_file() {
 /// attribute cannot be written in this language at all, and Rust's tooling is not
 /// the reader's, whose file is `nikaia.toml`.
 ///
-/// The three kept notes were each checked against the compiler rather than
-/// assumed: `let x: u32 = 3000000000` prints `3000000000` and `let _unused = 5`
-/// is accepted, so both remedies work here, and the range sentence is plainly
-/// about the program.
+/// The two kept notes were checked against the compiler rather than assumed:
+/// `let _unused = 5` is accepted, so that remedy works here, and the range
+/// sentence is plainly about the program.
+///
+/// **One of them stopped being kept.** *"consider using the type `u32`"* was
+/// kept on the same ground - it compiles - and
+/// [ADR-048](../../../docs/specification/adr/adr-048.md) D2 took it away: the
+/// numeric surface is the one Part I 2.2 names, and `u32` is deliberately not on
+/// it. A remedy that works is kept; one that leads out of the language is not.
 #[test]
 fn a_note_about_rust_rather_than_the_program_is_dropped() {
     let lowered = lower(GOOD);
@@ -263,12 +268,17 @@ fn a_note_about_rust_rather_than_the_program_is_dropped() {
             false,
         ),
         ("run with `RUST_BACKTRACE=full` for a verbose backtrace", false),
-        // Kept: every one of these is a remedy that works in Nikaia.
+        // Dropped: a remedy in a type the specification does not offer. It was
+        // kept here once, checked - `let x: u32 = 3000000000` compiles - and
+        // ADR-048 D2 is what changed: the numeric surface is the one Part I 2.2
+        // names, and `u32` is deliberately not on it. The answer here is `i64`,
+        // or a use that widens the literal.
+        ("consider using the type `u32` instead", false),
+        // Kept: both of these are remedies that work in Nikaia.
         (
             "the literal `3000000000` does not fit into the type `i32` whose range is `-2147483648..=2147483647`",
             true,
         ),
-        ("consider using the type `u32` instead", true),
         ("if this is intentional, prefix it with an underscore", true),
     ];
 

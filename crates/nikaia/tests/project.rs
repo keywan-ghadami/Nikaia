@@ -1115,3 +1115,89 @@ fn an_abort_with_no_nikaia_line_keeps_rusts_own_report() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **`use http as h` shortens the prefix, once, in one place**
+/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
+///
+/// The one thing that record *adds* rather than refuses, and what makes the
+/// qualified-only rule affordable. It also settles a collision: two libraries
+/// that both want to be `http` are the consumer's to name apart, which is
+/// authority the consumer needs anyway.
+///
+/// **The alias is resolved away rather than emitted.** A Rust `use … as …` would
+/// not do: every file's items are in one crate root (ADR-047 D1), so an alias
+/// there would be the whole program's name for the package rather than this
+/// file's. `Parsed::unaliased` is the one place it happens, on the way to every
+/// name — which is why a call, a type, and a struct literal all work without
+/// three separate rules.
+#[test]
+fn a_package_may_be_given_another_name() {
+    let dir = a_program_and_a_package(
+        "package-alias",
+        "http",
+        &[
+            (
+                "http/src/main.nika",
+                "pub struct Request { pub id: i64 }\n\
+                 \n\
+                 pub fn get(id: i64) -> Request {\n    \
+                     return Request(id: id)\n\
+                 }\n\
+                 \n\
+                 pub fn id_of(r: &Request) -> i64 {\n    \
+                     return r.id\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use http as h\n\
+                 \n\
+                 fn main() {\n    \
+                     let made: h::Request = h::get(7)\n    \
+                     let built = h::Request(id: 35)\n    \
+                     println(f\"{h::id_of(&made)} {built.id}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+    let app = dir.join("app");
+
+    let ran = nikaia(&["run"], &app);
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "7 35");
+
+    // **The refusals reach through it**, and they name the *package* rather than
+    // the alias: the type is `http::Request` whatever this file calls the package,
+    // and it is the package that keeps a name private.
+    std::fs::write(
+        app.join("src/main.nika"),
+        "use http as h\n\nfn main() {\n    let n: i64 = h::get(1)\n}\n",
+    )
+    .expect("the program");
+    let ran = nikaia(&["build"], &app);
+    assert!(!ran.status.success(), "{}", said(&ran));
+    assert!(
+        said(&ran).contains("this is `http::Request`, and the `let` says `i64`"),
+        "{}",
+        said(&ran)
+    );
+
+    // **And one name per file counts the alias** (D5): the alias is the name this
+    // file introduces, so two of them under one name is the collision D3 exists to
+    // let a consumer fix — and therefore the one D5 has to catch.
+    std::fs::write(
+        app.join("src/main.nika"),
+        "use http as h\nuse http as h\n\nfn main() { }\n",
+    )
+    .expect("the program");
+    let ran = nikaia(&["build"], &app);
+    assert!(!ran.status.success(), "{}", said(&ran));
+    let out = said(&ran);
+    assert!(out.contains("`h`") && out.contains("twice"), "{out}");
+    assert!(
+        out.contains("`use … as …` is how one of them gets another name"),
+        "{out}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

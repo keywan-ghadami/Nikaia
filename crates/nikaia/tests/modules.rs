@@ -617,3 +617,51 @@ fn a_program_that_imports_nothing_may_still_use_a_map() {
     assert_eq!(run(&entry, Build::default()).trim(), "1");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// **Names are not brought in, and the two forms that try to get a sentence**
+/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D2).
+///
+/// Both are in every language that has them, so a reader will write one — which
+/// is the same ground [ADR-022](../../../docs/specification/adr/adr-022.md)
+/// stands on for `fn: …`: a form somebody will reach for deserves a sentence
+/// rather than a parse error at the brace.
+///
+/// The arm has to come **first** in the rule, because the plain arm matches
+/// `use http` and leaves the rest to fail as the next item — at the same place,
+/// with nothing to say. And it `peek`s the brace rather than consuming it: a
+/// `fail` reports at the position it runs at, and consuming the brace first puts
+/// that after the implicit whitespace, which had the caret under the line below.
+#[test]
+fn a_use_that_brings_a_name_in_says_to_write_the_prefix() {
+    for (source, says) in [
+        (
+            "use http::{Request}\n\nfn main() { }\n",
+            "names are not brought in",
+        ),
+        (
+            "use http::*\n\nfn main() { }\n",
+            "nothing brings every name in",
+        ),
+    ] {
+        let error = nikaia::parser::parse_to_ast(source)
+            .err()
+            .unwrap_or_else(|| panic!("{source} must be refused"));
+        let message = format!("{error:#}");
+        assert!(message.contains(says), "{message}");
+        assert!(
+            message.contains("`use http`"),
+            "and what to write: {message}"
+        );
+        // The caret is on the brace or the star, not on the line below it.
+        assert!(message.contains("column 11"), "{message}");
+    }
+
+    // …and the three forms that are not this are untouched.
+    for source in [
+        "use http\n\nfn main() { }\n",
+        "use http as h\n\nfn main() { }\n",
+        "use std::fs\n\nfn main() { }\n",
+    ] {
+        nikaia::parser::parse_to_ast(source).unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+    }
+}

@@ -1475,16 +1475,25 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
-            Item::Import { path } => {
+            Item::Import { path, alias } => {
                 // The names come in through `nikaia_std::prelude`, emitted once
                 // in the preamble; the import itself is kept as a comment so the
                 // generated file still says where they were asked for.
+                //
+                // An alias is **resolved away** rather than emitted as a Rust
+                // `use … as …` (ADR-046 D3): it is one file's name for a package
+                // and every file's items are in one crate, so a Rust alias at the
+                // root would be the whole program's. `Parsed::unaliased` is where
+                // the resolving happens, on the way to every name.
                 let path = path
                     .iter()
                     .map(|s| self.text(*s))
                     .collect::<Vec<_>>()
                     .join("::");
-                out.push(&format!("// use {path}\n"));
+                match alias {
+                    Some(alias) => out.push(&format!("// use {path} as {}\n", self.text(*alias))),
+                    None => out.push(&format!("// use {path}\n")),
+                }
                 Ok(())
             }
             other => Err(refused!("cannot emit item yet: {other:?}")),
@@ -2209,11 +2218,18 @@ impl<'p> Emitter<'p> {
                 return format!("{chosen}::default");
             }
         }
-        segments
-            .iter()
-            .map(|s| self.map_name(s))
-            .collect::<Vec<_>>()
-            .join("::")
+        // `unaliased` on the joined path, because an alias is this file's name
+        // for a *package* and the head segment is where one can stand
+        // ([ADR-046](../../../docs/specification/adr/adr-046.md) D3). Resolved
+        // here rather than emitted as a Rust `use … as …`: every file's items are
+        // in one crate root, so a Rust alias there would be the whole program's.
+        self.parsed.unaliased(
+            &segments
+                .iter()
+                .map(|s| self.map_name(s))
+                .collect::<Vec<_>>()
+                .join("::"),
+        )
     }
 
     /// `HashMap` under the name the provenance of this program's input picked
@@ -2246,7 +2262,10 @@ impl<'p> Emitter<'p> {
     fn written_name(&self, name: &str, count: crate::contracts::sharing::Count) -> String {
         match name {
             SHARED => crate::contracts::sharing::rust_name(count).to_string(),
-            _ => self.map_name(name).to_string(),
+            // `unaliased`, for the reason [`Emitter::path`] gives: a type may be
+            // written with this file's own name for the package that declares it
+            // ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
+            _ => self.parsed.unaliased(self.map_name(name)),
         }
     }
 
@@ -3256,7 +3275,9 @@ impl<'p> Emitter<'p> {
                 }
             }
             Expr::StructLit { name, fields } => {
-                let owner = self.text(*name);
+                // `unaliased`, the same as a type: `h::Request(path: …)` builds
+                // `http::Request` (ADR-046 D3).
+                let owner = self.parsed.unaliased(self.text(*name));
                 out.push(&format!("{owner} {{ "));
                 for (i, field) in fields.iter().enumerate() {
                     if i > 0 {

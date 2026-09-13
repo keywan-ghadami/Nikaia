@@ -256,12 +256,15 @@ fn declared_names(parsed: &Parsed) -> Vec<String> {
 /// remaining piece and it belongs in the grammar.
 fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Result<()> {
     let here = at.display();
-    let mut named: Vec<&str> = Vec::new();
+
+    // What each `use` names, and what this file calls it. The two differ exactly
+    // where an alias is written (ADR-046 D3).
+    let mut named: Vec<(&str, &str)> = Vec::new();
 
     // A path first, and every one of them, because it is the only shape that is
     // wrong about *itself* rather than about what the project declares.
     for item in &parsed.program.items {
-        let Item::Import { path } = &item.node else {
+        let Item::Import { path, alias } = &item.node else {
             continue;
         };
         let segments: Vec<&str> = path.iter().map(|s| parsed.text(*s)).collect();
@@ -277,43 +280,48 @@ fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Re
                 segments.join("::")
             )));
         }
-        named.push(segments[0]);
+        let package = segments[0];
+        named.push((package, alias.map_or(package, |a| parsed.text(a))));
     }
 
     // **D5 before D4**, because a name written twice is a fact about this file and
     // says nothing about whether either of them resolves: checking reachability
     // first would answer a file with two unknown names by naming one of them.
+    //
+    // And it counts the name **this file introduces**, which is the alias where
+    // there is one: `use http as h` beside `use https as h` is the collision D3
+    // exists to let a consumer fix, so it has to be the collision D5 catches.
     let mut once: BTreeSet<&str> = BTreeSet::new();
-    for name in &named {
-        if !once.insert(name) {
+    for (_, here_name) in &named {
+        if !once.insert(here_name) {
             return Err(crate::diagnostics::refuse(format!(
-                "`use {name}` in {here}: twice. One name per file (Part I, 9.1) - two \
+                "`{here_name}` in {here}: twice. One name per file (Part I, 9.1) - two \
                  packages under one name is an error rather than a rule about which of them \
-                 a line means."
+                 a line means. `use … as …` is how one of them gets another name."
             )));
         }
     }
 
-    for name in named {
-        if reachable.contains(name) {
+    for (package, _) in named {
+        if reachable.contains(package) {
             continue;
         }
         let beside = at
             .parent()
-            .map(|dir| dir.join(format!("{name}.nika")))
+            .map(|dir| dir.join(format!("{package}.nika")))
             .is_some_and(|path| path.is_file());
         return Err(crate::diagnostics::refuse(match beside {
             true => format!(
-                "`use {name}` in {here}: the files of a package already see one another \
+                "`use {package}` in {here}: the files of a package already see one another \
                  (Part I, 9.1), so there is nothing to bring in - remove the line and write \
                  the name directly."
             ),
             false => format!(
-                "`use {name}` in {here}: no dependency is called `{name}`.\n\
+                "`use {package}` in {here}: no dependency is called `{package}`.\n\
                  A package reached by name has to be declared, under that name, in this \
                  project's `[dependencies]` (Part III, 13.3):\n\
                  \x20   [dependencies]\n\
-                 \x20   {name} = {{ path = \"../{name}\" }}"
+                 \x20   {package} = {{ path = \"../{package}\" }}"
             ),
         }));
     }

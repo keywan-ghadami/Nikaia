@@ -248,7 +248,13 @@ impl Ty {
             );
         }
         Ty::Named {
-            name: parsed.text(ty.name).to_string(),
+            // `unaliased`, because a type may be written with this file's own
+            // name for the package that declares it - `h::Request` where the
+            // file wrote `use http as h`
+            // ([ADR-046](../../../../docs/specification/adr/adr-046.md) D3). One
+            // call here rather than one at every reader of a type, which is why
+            // the map is on `Parsed` and not on a pass of its own.
+            name: parsed.unaliased(parsed.text(ty.name)),
             args: ty
                 .generics
                 .iter()

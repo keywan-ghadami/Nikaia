@@ -296,8 +296,26 @@ Nikaia is **Statically Typed**, meaning the type of every variable is known at c
 
 ```nika
 let name = "Nikaia"  // Compiler knows this is a &str - a view of static text
-let count = 42       // Compiler knows this is an i32
+let count = 42       // an i32, because nothing here asks for anything else
 ```
+
+**A number takes the type its use asks for, and `i32` where nothing asks.** The
+literal is not the thing that decides:
+
+```nika
+let n = 3000000000      // refused on its own: too large for an i32
+let m = 3000000000      // accepted, because the line below asks for an i64
+println(f"{wide(m)}")   // fn wide(n: i64) -> i64
+```
+
+> **Status:** the *rule* is built, and it is the language below that holds it — so
+> the refusal in the first line is `rustc`'s, in Rust's words about a type the
+> program did not write (`docs/open-work.md` §1.5). This compiler's own `NK1116`
+> answers the case where a type **stands beside** the literal — an annotated
+> `let`, a `return` against a declared result, an argument whose parameter says
+> what it takes — and stays silent otherwise, because a literal whose use widens
+> it is a correct program and refusing one of those is the one thing the checker
+> may never do (Part III, C.4).
 
 ### 2.5. Strings, Plain and Interpolated
 There are two string literals, and the difference is one character at the front.
@@ -1800,10 +1818,16 @@ than a package of yours ([ADR-030](adr/adr-030.md) D1).
 > name, a `use` naming a file beside this one says to remove the line, one naming
 > no dependency says where to declare it, and one name twice is refused.
 >
-> **Not built:** `use http as h`, and the braced and glob forms in this language's
-> words — `use http::{…}` and `use http::*` are parse errors at the brace and the
-> star ([ADR-046](adr/adr-046.md) §5). A package's *own* package dependencies are
-> refused rather than resolved, and a version is not how a package is found
+> `use http as h` works too, and a call, a type and a struct literal all reach
+> through it. A diagnostic names the **package** rather than the alias — the type
+> is `http::Request` whatever one file calls the package, and the `use` line that
+> connects the two is at the top of the same file.
+>
+> The braced and glob forms get the sentence above, with the caret on the brace
+> or the star ([ADR-046](adr/adr-046.md) §5).
+>
+> **Not built:** a package's *own* package dependencies are refused rather than
+> resolved, and a version is not how a package is found
 > ([ADR-047](adr/adr-047.md) §5).
 >
 > Outside a project a `.nika` file is compiled **on its own**: a package is a

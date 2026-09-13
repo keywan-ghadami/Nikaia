@@ -123,6 +123,10 @@ pub enum Item {
     // Kap 9.2: use std::http
     Import {
         path: Vec<Ident>,
+        /// `use http as h` - what this file calls the package
+        /// ([ADR-046](../../../docs/specification/adr/adr-046.md) D3). `None`
+        /// where the package's own name is used.
+        alias: Option<Ident>,
     },
 }
 

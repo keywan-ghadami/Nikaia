@@ -260,13 +260,21 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
 /// reader does not edit; their file is `nikaia.toml` and there is no `nikaia add`.
 /// `RUST_BACKTRACE` and `rustc --explain` are the same shape.
 ///
+/// **And a remedy in a type the specification does not offer.**
+/// *"consider using the type `u32` instead"* is what `rustc` says about a literal
+/// too large for an `i32`. It was kept here once, checked, on the ground that
+/// `let x: u32 = 3000000000` compiles - and it does. What changed is
+/// [ADR-048](../../../../docs/specification/adr/adr-048.md) D2: the numeric
+/// surface is the one Part I 2.2 names, and `u32` is deliberately not on it. So
+/// the sentence points at a type a reader should not reach for, when the answer
+/// is `i64` or a use that widens the literal. A remedy that works is kept; one
+/// that leads out of the language is not.
+///
 /// **What is deliberately kept**, because it was checked rather than assumed:
-/// *"consider using the type `u32` instead"* and *"if this is intentional, prefix
-/// it with an underscore"* both describe something that works in Nikaia -
-/// `let x: u32 = 3000000000` prints `3000000000` and `let _unused = 5` is
-/// accepted - so dropping them would cost a reader a remedy they can follow. A
-/// note is suppressed for naming something unreachable, never for sounding
-/// foreign.
+/// *"if this is intentional, prefix it with an underscore"* describes something
+/// that works in Nikaia - `let _unused = 5` is accepted - so dropping it would
+/// cost a reader a remedy they can follow. A note is suppressed for naming
+/// something unreachable, never for sounding foreign.
 fn is_rust_internal(note: &str) -> bool {
     const ATTRIBUTES: [&str; 4] = ["#[deny(", "#[warn(", "#[allow(", "#[forbid("];
     const TOOLING: [&str; 4] = [
@@ -275,8 +283,15 @@ fn is_rust_internal(note: &str) -> bool {
         "RUST_BACKTRACE",
         "rustc --explain",
     ];
+    const NOT_OFFERED: [&str; 3] = [
+        "consider using the type `u32`",
+        "consider using the type `u64`",
+        "consider using the type `usize`",
+    ];
 
-    ATTRIBUTES.iter().any(|a| note.contains(a)) || TOOLING.iter().any(|t| note.contains(t))
+    ATTRIBUTES.iter().any(|a| note.contains(a))
+        || TOOLING.iter().any(|t| note.contains(t))
+        || NOT_OFFERED.iter().any(|t| note.contains(t))
 }
 
 /// **A name this compiler substituted on the way out, put back on the way in.**

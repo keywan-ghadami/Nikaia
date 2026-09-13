@@ -19,12 +19,70 @@ use winnow_grammar::{grammar, InternerContext, ParseContext, ParseInput, Symbol}
 pub struct Parsed {
     pub program: ast::Program,
     pub interner: InternerContext,
+    /// What this file calls a package, to what the package is called
+    /// ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
+    ///
+    /// **Here because every consumer holds a `Parsed` and none of them should
+    /// have to know about aliasing.** An alias is a name local to one file, so
+    /// resolving it is not name resolution in ADR-011 D2's sense - it is reading
+    /// the file's own dictionary, and the dictionary is part of what was parsed.
+    /// The alternative was the same lookup at fourteen call sites in three
+    /// modules, where the fifteenth would have been the one that forgot.
+    aliases: std::collections::BTreeMap<String, String>,
 }
 
 impl Parsed {
     /// Resolve an identifier back to its text.
     pub fn text(&self, sym: Symbol) -> &str {
         self.interner.resolve(sym)
+    }
+
+    /// A qualified name with this file's aliases resolved: `h::Request` is
+    /// `http::Request` where the file wrote `use http as h`.
+    ///
+    /// Only the **head** segment, because only a package is aliased. A name with
+    /// no `::` in it, or one whose head is not an alias, comes back untouched -
+    /// which is every name in a program that writes no alias, so this costs such
+    /// a program one failed lookup.
+    pub fn unaliased(&self, name: &str) -> String {
+        if self.aliases.is_empty() {
+            return name.to_string();
+        }
+        // A view keeps its `&`, which sits in front of the name here.
+        let (amp, bare) = match name.strip_prefix('&') {
+            Some(rest) => ("&", rest),
+            None => ("", name),
+        };
+        match bare.split_once("::") {
+            Some((head, rest)) => match self.aliases.get(head) {
+                Some(package) => format!("{amp}{package}::{rest}"),
+                None => name.to_string(),
+            },
+            None => name.to_string(),
+        }
+    }
+
+    /// The aliases this file declares, read off its `use` items.
+    fn aliases_of(
+        program: &ast::Program,
+        interner: &InternerContext,
+    ) -> std::collections::BTreeMap<String, String> {
+        let mut out = std::collections::BTreeMap::new();
+        for item in &program.items {
+            if let ast::Item::Import {
+                path,
+                alias: Some(alias),
+            } = &item.node
+            {
+                if let [package] = path.as_slice() {
+                    out.insert(
+                        interner.resolve(*alias).to_string(),
+                        interner.resolve(*package).to_string(),
+                    );
+                }
+            }
+        }
+        out
     }
 }
 
@@ -89,7 +147,12 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         )));
     }
 
-    Ok(Parsed { program, interner })
+    let aliases = Parsed::aliases_of(&program, &interner);
+    Ok(Parsed {
+        program,
+        interner,
+        aliases,
+    })
 }
 
 // --- Action-block helpers ---
@@ -380,11 +443,36 @@ grammar! {
 
         // Kap 9.2: use std::fs
         rule use_item -> Item =
-            KW_USE head:NAME tail:path_segment* -> {
+            // **Names are not brought in** (ADR-046 D2), and the two forms that
+            // try to are worth a sentence rather than a parse error at the brace
+            // or the star: both are in every language that has them, so a reader
+            // will write one. First, because the arm below matches `use http` and
+            // leaves the rest to fail as the next item - at the same place, with
+            // nothing to say.
+            KW_USE NAME "::" peek("{") fail("names are not brought in; a package is reached \
+                                      through its name. Write `use http`, and \
+                                      `http::Request` where you need it - and \
+                                      `use http as h` if the prefix is long \
+                                      (Part I, 9.1)") -> {
+                Item::Import { path: Vec::new(), alias: None }
+            }
+          | KW_USE NAME "::" peek("*") fail("a package is reached through its name, and \
+                                      nothing brings every name in. Write `use http`, \
+                                      and `http::Request` where you need it \
+                                      (Part I, 9.1)") -> {
+                Item::Import { path: Vec::new(), alias: None }
+            }
+          | KW_USE head:NAME tail:path_segment* alias:use_alias? -> {
                 let mut path = vec![head];
                 path.extend(tail);
-                Item::Import { path }
+                Item::Import { path, alias }
             }
+
+        // `use http as h` (ADR-046 D3): the one thing that record adds rather
+        // than refuses, and what makes the qualified-only rule affordable. It
+        // shortens the prefix once, in one place, and settles a collision - two
+        // libraries that both want to be `http` are the consumer's to name apart.
+        rule use_alias -> Symbol = KW_AS n:NAME -> { n }
 
         rule path_segment -> Symbol = "::" n:NAME -> { n }
 

@@ -115,6 +115,41 @@ noticing.
 
 ---
 
+### 1.5. An out-of-range literal that nothing constrains is refused in Rust's words
+
+```nika
+let big = 3000000000
+```
+
+is *"literal out of range for `i32`"* — the right line, the backend's words, and a
+type the program never wrote. `NK1116` does not reach it: it answers where a type
+**stands beside** the literal, and here nothing does.
+
+**And it must not simply be widened to this case.** The same line is a *correct*
+program where a use asks for an `i64`:
+
+```nika
+let m = 3000000000
+println(f"{wide(m)}")   // fn wide(n: i64) -> i64
+```
+
+Rust's inference decides, and this checker has none — so refusing at the `let`
+would refuse that program, which is the one thing the checker may never do
+(Part III, C.4). Part I 2.4 now states the rule properly, which it did not.
+
+*What it needs:* enough inference to know that nothing else constrains the
+literal — or a decision that an un-annotated literal is an `i32` full stop, which
+would make the second program above a refusal and is not what the page says
+today.
+
+*Fixed on the way past:* the note `rustc` attaches to it — *"consider using the
+type `u32` instead"* — is dropped. It was kept once, checked, because it
+compiles; [ADR-048](specification/adr/adr-048.md) D2 is what changed, since the
+numeric surface is the one Part I 2.2 names and `u32` is deliberately not on it. A
+remedy that works is kept; one that leads out of the language is not.
+
+---
+
 ## 2. Decided and unbuilt
 
 Two things hold across this whole section, and they are here rather than argued
@@ -199,23 +234,25 @@ depends on a package by path, and a package that declares Nikaia dependencies **
 its own** is refused rather than resolved.
 
 What is missing is the **resolution**, not the visibility rule: transitive
-dependencies are not visible either way (D2 rule 2), so the refusal states the
-rule correctly and declines the graph. A second level needs a dependency graph,
-a cycle rule and an order — none of which any program has asked for yet.
+dependencies are not visible either way (D2 rule 2), so the refusal states the rule
+correctly and declines the graph.
 
-### 2.8. `use http as h`, and the braced and glob forms in this language's words
+**And the graph is a decision, not just work** — which is what looking at it this
+session established. Every package becomes a `mod` at the one crate root, named by
+the manifest key of whoever depends on it. So if A names B as `b` and B names C as
+`c`, the root carries `mod b` and `mod c`, and:
 
-[ADR-046](specification/adr/adr-046.md) §5. D1, D4 and D5 are built now that a
-package can be depended on; two pieces are left.
+* A could write `c::thing()` with no `use c`, and the ledger would answer — which
+  breaks rule 2 silently. Closing that means making
+  [ADR-046](specification/adr/adr-046.md) D4 a check on **qualified names** and
+  not only on `use` lines.
+* If A also depends on a *different* package under the name `c`, two packages want
+  one `mod c`. Refusing it names B's internals to A, which rule 2 says A should
+  not see; not refusing it is two types of one name.
 
-**D3's alias** — `use http as h` — does not parse. It is the one thing that record
-*adds* rather than refuses, and it is what makes the qualified-only rule
-affordable, so it is the next piece of it to build.
-
-**D2's braced and glob forms** are parse errors at the brace and the star rather
-than the sentence D2 writes. *"Names are not brought in; a package is reached
-through its name"* belongs in the grammar, beside the `fn: …` refusal
-[ADR-022](specification/adr/adr-022.md) already put there.
+Either answer needs a naming scheme keyed on package identity rather than on the
+consumer's word — which is the registry-shaped question ADR-002 D1 §5 declines.
+So this waits on a decision and not on an afternoon.
 
 ---
 

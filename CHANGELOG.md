@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added (`use http as h`, and the two import forms get sentences)
+
+- **[ADR-046](docs/specification/adr/adr-046.md) is built entire.** `use http as h` shortens the prefix, and a call, a type and a struct literal all reach through it — the one thing that record *adds* rather than refuses, and what makes the qualified-only rule affordable.
+- **The alias is resolved away rather than emitted as a Rust `use … as …`.** Every file's items are in one crate root ([ADR-047](docs/specification/adr/adr-047.md) D1), so a Rust alias there would be the **whole program's** name for the package rather than this file's. It happens in one place — `Parsed::unaliased`, on the way to every name — because the alternative was the same lookup at fourteen call sites in three modules, where the fifteenth would have been the one that forgot. It lives on `Parsed` because an alias is a name local to one file: resolving it is not name resolution in [ADR-011](docs/specification/adr/adr-011.md) D2's sense, it is reading the file's own dictionary, and the dictionary is part of what was parsed.
+- **A diagnostic names the package, not the alias.** *"`http::Request.method` is private to `http`"* where the file wrote `h::Request`: the type's name is the package's whatever one file calls it, and the `use` line connecting the two is at the top of the same file.
+- **"One name per file" counts the alias**, which is what makes D3 and D5 one rule rather than two: `use http as h` beside `use https as h` is exactly the collision the alias exists to let a consumer fix.
+- **And `use http::{Request}` and `use http::*` get sentences instead of a parse error at the brace** — both are in every language that has them, so a reader will write one. Two things that needed: the arm comes **first** in the rule, because the plain arm matches `use http` and leaves the rest to fail as the next item at the same place with nothing to say; and it `peek`s the brace rather than consuming it, since a `fail` reports where it runs and consuming first put the caret under the line below.
+
+### Fixed (a remedy in a type the specification does not offer)
+
+- **`rustc`'s *"consider using the type `u32` instead"* is dropped from a relayed message.** It was kept once, checked, on the ground that `let x: u32 = 3000000000` compiles — and it does. What changed is [ADR-048](docs/specification/adr/adr-048.md) D2: the numeric surface is the one Part I 2.2 names, and `u32` is deliberately not on it. A remedy that works is kept; one that leads out of the language is not.
+- **Part I 2.4 now states the rule it had wrong.** It said `let count = 42 // Compiler knows this is an i32`; the type a number takes is the one its **use** asks for, and `i32` only where nothing asks — so `let n = 3000000000` is refused on its own and accepted where the next line passes it to an `i64`. Both programs are in the page now.
+- The remaining defect is recorded rather than papered over (`docs/open-work.md` §1.5): the refusal in the first case is `rustc`'s, and widening `NK1116` to reach it would refuse the second — which is the one thing the checker may never do.
+
 ### Added (statement order and `overlap { … }` reach the specification)
 
 - **[ADR-050](docs/specification/adr/adr-050.md) reaches the specification.** The record itself was written in a parallel session; what this adds is the pages a reader meets. **Statements run in the order they are written**, and `overlap { … }` is how a program asks for less: each statement in the block is a branch, the block waits for all of them, and its value is the tuple of their results in written order.
