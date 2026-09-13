@@ -925,11 +925,14 @@ fn the_rules_that_come_with_a_path_dependency() {
     .expect("reaching past http");
     let ran = nikaia(&["build"], &app);
     assert!(!ran.status.success(), "{}", said(&ran));
+    let out = said(&ran);
+    // The words are `rustc`'s and change between its versions; what this test is
+    // about is that the refusal names `deeper` and sits on the line of the
+    // program that wrote it.
     assert!(
-        said(&ran).contains("unresolved module or unlinked crate `deeper`"),
+        out.contains("`deeper`") && out.contains("main.nika:4:5"),
         "a transitive package is not a dependency of this crate, so naming it \
-         does not resolve: {}",
-        said(&ran)
+         does not resolve: {out}"
     );
     std::fs::write(app.join("src/main.nika"), &program).expect("back to the program");
     std::fs::write(

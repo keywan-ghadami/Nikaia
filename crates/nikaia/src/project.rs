@@ -1506,7 +1506,12 @@ pub fn wrapper_main() -> Result<i32> {
         Some(dir) => PathBuf::from(dir),
         None => std::env::temp_dir().join("nikaia-gen"),
     };
-    let generated = gen_dir.join(format!("{name}.rs"));
+    // **One directory per crate**, and that is not tidiness. Every generated
+    // crate root used to sit beside every other, so `rustc` refusing a name from
+    // a package this crate does not depend on offered to fix it with
+    // `mod deeper` - a file it had found next door, and advice that means
+    // nothing here. A crate root with no siblings cannot be offered any.
+    let generated = gen_dir.join(&name).join(format!("{name}.rs"));
     write_if_changed(&generated, &lowered.rust)?;
 
     invocation.replace_source(&generated);
