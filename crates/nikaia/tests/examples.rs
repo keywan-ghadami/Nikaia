@@ -569,10 +569,16 @@ fn a_missing_operand_is_reported_as_an_expression() {
 fn build(file: &str, how: Build) -> (PathBuf, PathBuf) {
     let source_path = repo_root().join("examples").join(file);
 
-    // Part I 9.1: an example may be more than one file. `Program::read` on a
-    // file that imports nothing is that file, so this is one path for both.
-    let program = nikaia::modules::Program::read(&source_path)
-        .unwrap_or_else(|e| panic!("{file} does not read:\n{e:#}"));
+    // **A package is a directory** (ADR-047 D1), so an example in a directory of
+    // its own is a package and a loose one is not. `examples/` itself is a
+    // directory of *programs*: eleven files each declaring `main`, filed
+    // together, which is exactly what the `--input` path outside a project makes
+    // of them.
+    let program = match file.contains('/') {
+        true => nikaia::modules::Program::read(&source_path),
+        false => nikaia::modules::Program::read_one(&source_path),
+    }
+    .unwrap_or_else(|e| panic!("{file} does not read:\n{e:#}"));
     let lowered = program
         .emit(how)
         .unwrap_or_else(|e| panic!("{file} does not lower:\n{e:#}"));

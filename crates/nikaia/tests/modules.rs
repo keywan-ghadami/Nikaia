@@ -1,9 +1,14 @@
-//! A program of several files (Part I, 9.1).
+//! A package of several files (Part I, 9.1).
 //!
 //! Every test here builds a real directory of `.nika` files and drives the
 //! compiler over it, because what is being tested is *resolution* - which files
 //! take part, what they may see of each other, and what one ledger over all of
 //! them says. None of that can be checked on a string.
+//!
+//! **A package is a directory** ([ADR-047](../../../docs/specification/adr/adr-047.md)
+//! D1): the files in it share one namespace and need no `use` between them. What
+//! used to be here - `use utils`, `utils::double(21)`, a private item refused
+//! across a file boundary - was the file = module model that decision replaced.
 
 mod common;
 
@@ -27,7 +32,8 @@ fn project(name: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf) {
     (dir.clone(), dir.join("main.nika"))
 }
 
-/// Lower, compile and run - the only proof that the modules really resolved.
+/// Lower, compile and run - the only proof that the files really became one
+/// program.
 fn run(entry: &Path, build: Build) -> String {
     let program = Program::read(entry).expect("the program reads");
     let lowered = program.emit(build).expect("the program lowers");
@@ -48,18 +54,17 @@ fn run(entry: &Path, build: Build) -> String {
     );
     assert!(
         compiled.status.success(),
-        "the program did not compile:\n{}\n--- emitted ---\n{}",
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{}",
         String::from_utf8_lossy(&compiled.stderr),
         lowered.rust
     );
-
-    let run = Command::new(&binary).output().expect("run it");
+    let ran = Command::new(&binary).output().expect("run it");
     assert!(
-        run.status.success(),
-        "it failed: {}",
-        String::from_utf8_lossy(&run.stderr)
+        ran.status.success(),
+        "the program failed:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
     );
-    String::from_utf8_lossy(&run.stdout).into_owned()
+    String::from_utf8_lossy(&ran.stdout).to_string()
 }
 
 const UTILS: &str = "\
@@ -76,191 +81,172 @@ pub fn answer() -> i32 {
 }
 ";
 
-/// Two files, one program - and it runs.
+/// Two files, one package - and it runs, with no `use` between them.
 #[test]
-fn a_program_of_two_files_compiles_and_runs() {
+fn two_files_of_a_package_are_one_program() {
     let (dir, entry) = project(
         "two-files",
         &[
             ("utils.nika", UTILS),
             (
                 "main.nika",
-                "use utils\n\
-                 \n\
-                 fn main() {\n\
-                 \x20   println(f\"{utils::double(21)} {utils::answer()}\")\n\
+                "fn main() {\n\
+                 \x20   println(f\"{double(21)} {answer()}\")\n\
                  }\n",
             ),
         ],
     );
 
-    for build in [Build::default(), Build::default()] {
-        assert_eq!(run(&entry, build).trim(), "42 42", "under {build:?}");
-    }
+    assert_eq!(run(&entry, Build::default()).trim(), "42 42");
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Part I 9.2, in Nikaia's words: `NK1110` before `rustc` gets a chance.
+/// **Every `.nika` beside the entry takes part, whether or not anything names
+/// it** (ADR-047 D1).
 ///
-/// The language below enforces it too - the test below this one proves that -
-/// but a reader should not meet the rule as a message about a file they did not
-/// write (Part III, C.1).
+/// The directory decides and the `use` lines do not, which is what makes moving
+/// a declaration from one file to another housekeeping rather than a change to
+/// the package's surface. Without this the file below would simply not be read.
 #[test]
-fn reaching_a_private_item_across_files_is_reported() {
+fn a_file_nothing_names_is_still_part_of_the_package() {
     let (dir, entry) = project(
-        "private-call",
+        "unnamed-file",
+        &[
+            ("extra.nika", "pub fn seven() -> i64 {\n    return 7\n}\n"),
+            (
+                "main.nika",
+                "fn main() {\n\x20   println(f\"{seven()}\")\n}\n",
+            ),
+        ],
+    );
+    assert_eq!(run(&entry, Build::default()).trim(), "7");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// **A name that is not `pub` is still visible inside its package** — which is
+/// the half of Part I 9.2 that moved.
+///
+/// It used to be `NK1110` across a file boundary. The boundary is the package
+/// now, so a sibling file reaching `secret()` is ordinary code, and the check has
+/// nothing to say about it.
+#[test]
+fn a_private_name_is_visible_across_the_files_of_its_package() {
+    let (dir, entry) = project(
+        "package-privacy",
         &[
             ("utils.nika", UTILS),
             (
                 "main.nika",
-                "use utils
-
-fn main() { let n = utils::secret() }
-",
+                "fn main() {\n\x20   println(f\"{secret()}\")\n}\n",
             ),
         ],
     );
 
     let program = Program::read(&entry).expect("the program reads");
     let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger");
-    let modules = program.module_names();
-    let entry_unit = &program.units[0];
-    let findings =
-        nikaia::check::check_program(&entry_unit.parsed, &program.contracts, &library, &modules)
-            .findings;
+    let packages = program.package_names();
+    for unit in &program.units {
+        let findings =
+            nikaia::check::check_program(&unit.parsed, &program.contracts, &library, &packages)
+                .findings;
+        assert!(findings.is_empty(), "{:#?}", findings);
+    }
 
-    assert_eq!(findings.len(), 1, "{:#?}", findings);
-    assert_eq!(findings[0].code, "NK1110");
-    assert_eq!(findings[0].message, "`secret` is private to `utils.nika`");
-
-    // …and `utils.nika` itself calls `secret()` unqualified, which is not a
-    // call across a boundary and must not be reported.
-    let utils = &program.units[1];
-    assert!(
-        nikaia::check::check_program(&utils.parsed, &program.contracts, &library, &modules)
-            .findings
-            .is_empty(),
-        "a file was reported for calling its own private function"
-    );
-
+    assert_eq!(run(&entry, Build::default()).trim(), "41");
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Part I 9.2: a private item is private, and the language below enforces it
-/// as well - `pub` becomes `pub`, so a `mod` keeps what it was not given.
+/// **Two files of one package may not declare the same name** (ADR-047 D1).
+///
+/// One namespace, so this is an error rather than a rule about which of the two a
+/// line means - and it is refused here, because `rustc` would report a duplicate
+/// definition against a file nobody wrote (Part III, C.1).
 #[test]
-fn a_private_item_cannot_be_reached_from_another_file() {
+fn two_files_may_not_declare_the_same_name() {
     let (dir, entry) = project(
-        "privacy",
+        "collision",
         &[
-            ("utils.nika", UTILS),
-            (
-                "main.nika",
-                "use utils\n\
-                 \n\
-                 fn main() {\n\
-                 \x20   println(f\"{utils::secret()}\")\n\
-                 }\n",
-            ),
+            ("a.nika", "pub struct Row { pub id: i64 }\n"),
+            ("main.nika", "struct Row { id: i64 }\n\nfn main() { }\n"),
         ],
     );
-
-    let program = Program::read(&entry).expect("the program reads");
-    let lowered = program.emit(Build::default()).expect("it lowers");
+    let Err(error) = Program::read(&entry) else {
+        panic!("two `Row`s in one namespace");
+    };
+    let message = format!("{error:#}");
+    assert!(message.contains("`Row` is declared twice"), "{message}");
     assert!(
-        lowered.rust.contains("fn secret()") && !lowered.rust.contains("pub fn secret()"),
-        "a private function was emitted public:\n{}",
-        lowered.rust
+        message.contains("a.nika") && message.contains("main.nika"),
+        "{message}"
     );
-
-    let rust = dir.join("program.rs");
-    std::fs::write(&rust, &lowered.rust).expect("write the Rust");
-    let compiled = common::compile(&rust, &["--crate-type", "bin", "-o", "/dev/null"]);
-    assert!(
-        !compiled.status.success(),
-        "reaching a private item across files compiled:\n{}",
-        lowered.rust
-    );
-
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// One ledger for the project (Part III, 13.5), keys qualified the way a caller
-/// writes them - which is the shape `std.contracts` has always had.
+/// One ledger for the package (Part III, 13.5), and **one namespace in it**.
+///
+/// The keys used to be `utils::double`, because a file was a unit of naming. It
+/// is not one any more (ADR-047 D1), so a name belongs to the package and the
+/// ledger says so - which is also what a consumer of this package will read,
+/// under the package's own name rather than under the file it happens to sit in.
 #[test]
-fn the_ledger_is_one_file_with_every_module_in_it() {
+fn the_ledger_is_one_file_with_one_namespace_in_it() {
     let (dir, entry) = project(
         "ledger",
-        &[
-            ("utils.nika", UTILS),
-            ("main.nika", "use utils\n\nfn main() { }\n"),
-        ],
+        &[("utils.nika", UTILS), ("main.nika", "fn main() { }\n")],
     );
 
     let program = Program::read(&entry).expect("the program reads");
     let rendered = program.contracts.render();
 
-    assert!(rendered.contains("[fn.\"utils::double\"]"), "{rendered}");
-    assert!(rendered.contains("[fn.\"utils::answer\"]"), "{rendered}");
-    assert!(rendered.contains("[fn.\"utils::secret\"]"), "{rendered}");
-    // The entry's own items keep their bare names, because that is what a call
-    // to them writes - the entry is the crate root.
-    assert!(rendered.contains("[fn.\"main\"]"), "{rendered}");
+    for key in ["double", "answer", "secret", "main"] {
+        assert!(rendered.contains(&format!("[fn.\"{key}\"]")), "{rendered}");
+    }
+    assert!(
+        !rendered.contains("utils::"),
+        "no file is a prefix:\n{rendered}"
+    );
 
-    // …and it reads back, which is what `--locked` rests on.
+    // …and it reads back, which is what `--locked` rests on. `pub` still says
+    // what leaves the *package*, which is the boundary that is left.
     let read = Ledger::parse(&rendered).expect("its own output parses");
-    assert!(read.functions["utils::double"].public);
-    assert!(!read.functions["utils::secret"].public);
+    assert!(read.functions["double"].public);
+    assert!(!read.functions["secret"].public);
 
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// The determinism of 13.5 is about the tree, not about a file: the same
-/// sources produce the same ledger however many times they are read.
+/// The determinism of 13.5 is about the tree, not about a file: the same sources
+/// produce the same ledger however many times they are read, and the order is the
+/// directory sorted rather than the order anything was discovered in.
 #[test]
 fn the_ledger_of_a_program_is_deterministic() {
     let (dir, entry) = project(
         "deterministic",
         &[
+            ("z.nika", "pub fn two() -> i32 { return 2 }\n"),
             ("a.nika", "pub fn one() -> i32 { return 1 }\n"),
-            ("b.nika", "pub fn two() -> i32 { return 2 }\n"),
-            (
-                "main.nika",
-                "use b\nuse a\n\nfn main() { println(f\"{a::one()}{b::two()}\") }\n",
-            ),
+            ("main.nika", "fn main() { println(f\"{one()}{two()}\") }\n"),
         ],
     );
 
     let first = Program::read(&entry).expect("reads").contracts.render();
     let second = Program::read(&entry).expect("reads").contracts.render();
     assert_eq!(first, second);
-    // Imported in the order `b`, `a`; emitted and recorded in name order, so
-    // the file does not depend on which `use` came first.
-    assert!(
-        first.find("[fn.\"a::one\"]") < first.find("[fn.\"b::two\"]"),
-        "{first}"
-    );
+    assert_eq!(run(&entry, Build::default()).trim(), "12");
 
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Two files that import each other are two `mod` blocks in one crate, which
-/// the language below allows - so nothing here has to break the cycle, only
-/// stop walking it.
+/// Two files that reach into each other are one namespace, so there is no cycle
+/// to break - only two files.
 #[test]
-fn two_modules_may_import_each_other() {
+fn two_files_may_reach_into_each_other() {
     let (dir, entry) = project(
         "cycle",
         &[
-            ("a.nika", "use b\n\npub fn one() -> i32 { return 1 }\n"),
-            (
-                "b.nika",
-                "use a\n\npub fn two() -> i32 { return a::one() + 1 }\n",
-            ),
-            (
-                "main.nika",
-                "use a\nuse b\n\nfn main() { println(f\"{b::two()}\") }\n",
-            ),
+            ("a.nika", "pub fn one() -> i32 { return 1 }\n"),
+            ("b.nika", "pub fn two() -> i32 { return one() + 1 }\n"),
+            ("main.nika", "fn main() { println(f\"{two()}\") }\n"),
         ],
     );
 
@@ -268,45 +254,55 @@ fn two_modules_may_import_each_other() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// A `use` that names no file says which file it wanted.
+/// **A `use` that names a file beside this one says the rule that replaced it**
+/// (ADR-047 D1).
+///
+/// The shape that used to work is the one most likely to be written, so the
+/// message is about the package rather than about a name it could not find.
 #[test]
-fn an_import_with_no_file_says_which_file_it_wanted() {
+fn a_use_naming_a_sibling_file_says_to_remove_it() {
     let (dir, entry) = project(
-        "missing",
-        &[("main.nika", "use helpers\n\nfn main() { }\n")],
+        "sibling-use",
+        &[
+            ("utils.nika", UTILS),
+            ("main.nika", "use utils\n\nfn main() { }\n"),
+        ],
     );
 
     let Err(error) = Program::read(&entry) else {
-        panic!("there is no helpers.nika");
+        panic!("`use utils` names a file of this package");
     };
     let message = format!("{error:#}");
-    assert!(message.contains("helpers.nika"), "{message}");
-    assert!(message.contains("Part I, 9.1"), "{message}");
-
+    assert!(message.contains("already see one another"), "{message}");
+    assert!(message.contains("remove the line"), "{message}");
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// A module of this program is one name. `std::…` has a path and names the
-/// library; anything else with a path is refused rather than guessed at.
+/// …and a `use` naming something that is not there says depending on a package
+/// is not built, rather than looking for a file.
 #[test]
-fn a_nested_module_path_is_refused_and_std_is_not() {
-    let (dir, entry) = project(
-        "nested",
-        &[("main.nika", "use net::http\n\nfn main() { }\n")],
-    );
-    let Err(error) = Program::read(&entry) else {
-        panic!("nested paths are not resolved");
-    };
-    assert!(format!("{error:#}").contains("one name"), "{error:#}");
-    let _ = std::fs::remove_dir_all(dir);
+fn a_use_naming_another_package_says_it_is_not_built() {
+    for source in [
+        "use helpers\n\nfn main() { }\n",
+        "use net::http\n\nfn main() { }\n",
+    ] {
+        let (dir, entry) = project("foreign-use", &[("main.nika", source)]);
+        let Err(error) = Program::read(&entry) else {
+            panic!("{source}");
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("another package"), "{message}");
+        assert!(message.contains("13.2"), "{message}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
-    // `use std::fs` is the library and never a file, so a program that only
-    // imports `std` is still one unit.
+    // `use std::fs` names the library and never a package of yours, so a program
+    // that only imports `std` is unaffected.
     let (dir, entry) = project(
         "std-only",
         &[("main.nika", "use std::fs\nuse std::cli\n\nfn main() { }\n")],
     );
-    let program = Program::read(&entry).expect("std is not a file");
+    let program = Program::read(&entry).expect("std is not a package of yours");
     assert!(program.is_single_file());
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -314,16 +310,14 @@ fn a_nested_module_path_is_refused_and_std_is_not() {
 /// **No Rust warning about the generated file reaches the user** (Part III, C.1).
 ///
 /// Measured before this: every multi-file build printed
-/// `warning: …/gen:7: unused import: `super::*` (no Nikaia source maps to this)`,
+/// `warning: …/gen:7: unused import: `super::*` (no Nikaia source maps to this)`
 /// and told the reader to remove a `use` item this compiler had written itself.
-/// Two halves, and the test needs both because either alone would pass one of the
-/// assertions below: the emitted import carries `#[allow(unused_imports)]`, so the
-/// warning is not produced; and a warning that maps to no Nikaia line is not
-/// reported, so a machine-written construct nobody thought of yet cannot do the
-/// same thing again.
 ///
-/// The program is the shape that produced it - a module that uses nothing from the
-/// preamble the crate root wrote.
+/// The import is gone entirely now - one namespace needs no `mod` and nothing to
+/// bring the siblings in (ADR-047 D1) - so this asserts the emitted shape as well
+/// as the silence. The second half is the one that keeps holding when the next
+/// machine-written construct arrives: a **warning** that maps to no Nikaia line is
+/// not reported at all.
 #[test]
 fn a_warning_about_the_generated_file_does_not_reach_the_user() {
     let (dir, entry) = project(
@@ -332,7 +326,7 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
             ("plain.nika", "pub fn seven() -> i64 {\n    return 7\n}\n"),
             (
                 "main.nika",
-                "use plain\n\nfn main() {\n\x20   println(f\"{plain::seven()}\")\n}\n",
+                "fn main() {\n\x20   println(f\"{seven()}\")\n}\n",
             ),
         ],
     );
@@ -340,10 +334,8 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
     let program = Program::read(&entry).expect("the program reads");
     let lowered = program.emit(Build::default()).expect("it lowers");
     assert!(
-        lowered
-            .rust
-            .contains("#[allow(unused_imports)]\nuse super::*;"),
-        "the import is ours, so it carries its own allow:\n{}",
+        !lowered.rust.contains("use super::*") && !lowered.rust.contains("pub mod "),
+        "one namespace is one crate root:\n{}",
         lowered.rust
     );
 
@@ -372,17 +364,17 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// **A type another file declares can be named and built** (`docs/open-work.md`
-/// §1.1).
+/// **A type another file declares can be named and built**
+/// (`docs/open-work.md` §1.1).
 ///
-/// Three things were broken and only the first of them worked. The qualified
-/// *call* was fine; the qualified **type name** resolved to a different type from
-/// the one the call handed back, so `NK1103`'s help asked for what was already
-/// written; and a qualified **struct literal** was a parse error, because
-/// `pool::Conn(id: 1)` was read as a call.
+/// Three things were broken and only the first worked: the *call* was fine, the
+/// **type name** resolved to a different type from the one the call handed back,
+/// and a struct literal of a type from another file was a parse error. A file
+/// could hand out behaviour and not data.
 ///
-/// A module could therefore hand out behaviour and not data, which is most of the
-/// reason to split a program.
+/// The package decision (ADR-047 D1) removed the prefix from this case rather
+/// than the problem: one namespace, so the names below are bare. What the repair
+/// is still for is the cross-*package* boundary, where the prefix comes back.
 #[test]
 fn a_type_another_file_declares_can_be_named_and_built() {
     let (dir, entry) = project(
@@ -402,12 +394,10 @@ fn a_type_another_file_declares_can_be_named_and_built() {
             ),
             (
                 "main.nika",
-                "use pool\n\
-                 \n\
-                 fn main() {\n\
-                 \x20   let made: pool::Conn = pool::make()\n\
-                 \x20   let built = pool::Conn(id: 35)\n\
-                 \x20   println(f\"{pool::label(made)} {pool::label(built)}\")\n\
+                "fn main() {\n\
+                 \x20   let made: Conn = make()\n\
+                 \x20   let built = Conn(id: 35)\n\
+                 \x20   println(f\"{label(made)} {label(built)}\")\n\
                  }\n",
             ),
         ],
@@ -416,22 +406,15 @@ fn a_type_another_file_declares_can_be_named_and_built() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// …and the checker still says no where it should, by the qualified name.
-///
-/// The half that decides whether the repair is worth anything: making two
-/// spellings one type must not make every type one type. Three shapes, and each
-/// was answered by `rustc` about a generated file before the fields of a foreign
-/// struct could be read at all.
+/// …and the checker still says no where it should. Three shapes, each answered
+/// by `rustc` about a generated file before a foreign struct's fields could be
+/// read at all.
 #[test]
 fn a_foreign_type_is_still_checked() {
     for (line, code, says) in [
-        ("let c: i64 = pool::make()", "NK1103", "pool::Conn"),
-        ("let c = pool::Conn(nmae: 1)", "NK1107", "nmae"),
-        (
-            "let c = pool::Conn(id: \"seven\")",
-            "NK1106",
-            "pool::Conn.id",
-        ),
+        ("let c: i64 = make()", "NK1103", "Conn"),
+        ("let c = Conn(nmae: 1)", "NK1107", "nmae"),
+        ("let c = Conn(id: \"seven\")", "NK1106", "Conn.id"),
     ] {
         let (dir, entry) = project(
             "foreign-type-refused",
@@ -444,20 +427,17 @@ fn a_foreign_type_is_still_checked() {
                      \x20   return Conn(id: 7)\n\
                      }\n",
                 ),
-                (
-                    "main.nika",
-                    &format!("use pool\n\nfn main() {{\n    {line}\n}}\n"),
-                ),
+                ("main.nika", &format!("fn main() {{\n    {line}\n}}\n")),
             ],
         );
         let program = Program::read(&entry).expect("the program reads");
         let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
-        let modules = program.module_names();
+        let packages = program.package_names();
         let found: Vec<_> = program
             .units
             .iter()
             .flat_map(|unit| {
-                nikaia::check::check_program(&unit.parsed, &program.contracts, &library, &modules)
+                nikaia::check::check_program(&unit.parsed, &program.contracts, &library, &packages)
                     .findings
             })
             .collect();
@@ -475,19 +455,20 @@ fn a_foreign_type_is_still_checked() {
 /// **A `Shared` in a field another file declares keeps the atomic count**
 /// (`docs/open-work.md` §1.6).
 ///
-/// This analysis runs once per file, so neither run sees the whole of such a
-/// field: `pool.nika` sees the field and not this value, `main.nika` sees the
-/// value and not what the field was decided to be. Measured before the fix, and
-/// the two answers were in one generated file:
+/// The sharing analysis runs once per **file**, and a package of several files is
+/// still several runs of it - so neither run sees the whole of such a field: the
+/// file declaring it sees the field and not this value, this one the value and not
+/// what the field was decided to be. Measured before the fix, both in one
+/// generated file:
 ///
 /// ```text
-/// pub db: std::sync::Arc<Conn>,          // decided in pool.nika
-/// let c: std::rc::Rc<pool::Conn> = …     // decided in main.nika
+/// pub db: std::sync::Arc<Conn>,      // decided in pool.nika
+/// let c: std::rc::Rc<Conn> = …       // decided in main.nika
 /// ```
 ///
-/// which `rustc` refused, about a file nobody wrote. It was inert until the
-/// repair above, because the build stopped at the name resolution first - which
-/// is why the two belonged in one piece of work.
+/// which `rustc` refused, about a file nobody wrote. The answer is the polarity
+/// this analysis already runs on: where it cannot prove that nothing crosses, it
+/// does not lower.
 #[test]
 fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
     let (dir, entry) = project(
@@ -501,11 +482,9 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
             ),
             (
                 "main.nika",
-                "use pool\n\
-                 \n\
-                 fn main() {\n\
-                 \x20   let c: Shared[pool::Conn] = pool::Conn(id: 1)\n\
-                 \x20   let p = pool::Pool(db: c)\n\
+                "fn main() {\n\
+                 \x20   let c: Shared[Conn] = Conn(id: 1)\n\
+                 \x20   let p = Pool(db: c)\n\
                  \x20   println(f\"{p.db.id}\")\n\
                  }\n",
             ),

@@ -1,54 +1,75 @@
 // crates/nikaia/src/modules.rs
 //
-// A program is more than one file (Part I, 9.1: every file is a module).
+// A program is more than one file, and **a package is a directory**
+// (Part I, 9.1; ADR-047 D1).
+//
+// The files of a package see one another with no `use` at all: they share one
+// namespace, so a name declared in any of them can be written in any other. What
+// the package offers outward is whatever says `pub`, in whichever file it is
+// declared - which is what keeps a library's internal file layout from being its
+// public surface.
 //
 // What this does is **resolution**, and resolution is the one thing ADR-011 D2
 // said Stage 0 does not do: the lowering is name for name, and nothing looks a
-// module up. That stays true of the *emitter* - what changes is that the
-// compiler now knows which files take part, and hands the emitter each of them
-// in turn.
+// name up. That stays true of the *emitter* - what changes is that the compiler
+// knows which files take part, and hands the emitter each of them in turn.
 //
-// The shape it produces is the one the language below already has: every module
-// becomes a `mod` at the crate root, `pub` becomes `pub`, and `utils::helper()`
-// is `utils::helper()`. Privacy is then enforced by `rustc` for the same reason
-// escaping is (ADR-017 D2) - the rule is put where the language below can act
-// on it, rather than re-implemented here.
+// The shape it produces is the plainest one the language below has: **one crate
+// root**, with every file's items in it. No `mod`, no `use super::*`, nothing to
+// resolve - because one namespace in this language is one namespace in that one.
+// Two files declaring the same name is refused here rather than left to `rustc`,
+// which would report it about a file nobody wrote (Part III, C.1).
+//
+// **Which files** is the directory and not the `use` lines. A `use` names another
+// package (ADR-046 D1), and depending on one is not built (ADR-047 §5), so a
+// `use` that is not `std`'s is refused with what to do instead.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::ast::Item;
 use crate::parser::{self, Parsed};
 
-/// One file of a program.
+/// One file of a package.
 pub struct Unit {
-    /// The module's name, which is its file stem - and `None` for the entry,
-    /// whose items live at the crate root because `main` has to.
-    pub module: Option<String>,
+    /// The package this file belongs to, as a **consumer** would write it -
+    /// and `None` for every file of the program being built, whose names are
+    /// the program's own.
+    ///
+    /// It is not the file stem any more. A file is not a unit of naming
+    /// (ADR-047 D1), so nothing about a name says which file it came from; the
+    /// field stays because a package that arrives by path will fill it in
+    /// (ADR-047 D2), and that is the same qualification one level up.
+    pub package: Option<String>,
     pub path: PathBuf,
     pub source: String,
     pub parsed: Parsed,
 }
 
 impl Unit {
-    /// How a caller in another module writes a name from this one: `utils::f`,
-    /// or plain `f` at the root.
+    /// How a consumer writes a name from this file: `http::serve` for another
+    /// package, and plain `serve` inside the program's own.
     pub fn qualify(&self, name: &str) -> String {
-        match &self.module {
-            Some(module) => format!("{module}::{name}"),
+        match &self.package {
+            Some(package) => format!("{package}::{name}"),
             None => name.to_string(),
         }
     }
 }
 
-/// Every file a program is made of, entry first.
+/// Every file of the package the entry belongs to, entry first.
 ///
-/// Depth-first from the entry, and each module is parsed once however many
-/// files import it. Two modules that import each other are fine: they become
-/// two `mod` blocks in one crate, which the language below allows, so nothing
-/// here has to break the cycle - only stop walking it.
+/// **The directory decides, not the `use` lines** (ADR-047 D1). Every `.nika`
+/// beside the entry takes part, whether or not anything names it - which is what
+/// makes moving a declaration from one file to another housekeeping rather than a
+/// change to the package's surface.
+///
+/// Entry first because the entry is where `fn main` may be written, and the rest
+/// sorted by file name: the order files are emitted in has to be a function of
+/// the source tree alone (Part III 13.5's determinism), and a directory listing
+/// is not sorted anywhere.
 pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
     let entry = entry.to_path_buf();
     let base = entry
@@ -57,89 +78,131 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let source = std::fs::read_to_string(&entry)
-        .with_context(|| format!("cannot read {}", entry.display()))?;
-    // `with_context` and not `anyhow!("{e}")`: formatting the error into a string
-    // loses its type, and the type is what says this is a refusal of the program
-    // rather than a failure of this compiler (`diagnostics::Refused`).
-    let parsed = parser::parse_to_ast(&source).with_context(|| format!("{}", entry.display()))?;
+    let mut beside: Vec<PathBuf> = std::fs::read_dir(&base)
+        .with_context(|| format!("cannot read {}", base.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "nika"))
+        .filter(|path| *path != entry)
+        .collect();
+    beside.sort();
 
-    let mut pending: Vec<String> = imports_of(&parsed, &entry)?;
-    let mut units = vec![Unit {
-        module: None,
-        path: entry,
-        source,
-        parsed,
-    }];
-
-    // A `BTreeMap` rather than a set plus a vector: the order modules are
-    // emitted in has to be a function of the source alone (13.5's determinism
-    // guarantee), and "sorted by name" is that where "the order imports were
-    // discovered in" is only nearly that.
-    let mut found: BTreeMap<String, Unit> = BTreeMap::new();
-
-    while let Some(module) = pending.pop() {
-        if found.contains_key(&module) {
-            continue;
-        }
-        let path = base.join(format!("{module}.nika"));
-        if !path.is_file() {
-            return Err(anyhow!(
-                "`use {module}` names no file: {} is not there.\n\
-                 A module is a file (Part I, 9.1), looked for beside the program's \
-                 entry - so `use {module}` wants `{module}.nika` in {}.",
-                path.display(),
-                base.display()
-            ));
-        }
-        let source = std::fs::read_to_string(&path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
-        let parsed =
-            parser::parse_to_ast(&source).with_context(|| format!("{}", path.display()))?;
-        pending.extend(imports_of(&parsed, &path)?);
-        found.insert(
-            module.clone(),
-            Unit {
-                module: Some(module),
-                path,
-                source,
-                parsed,
-            },
-        );
+    let mut units = vec![read_unit(&entry)?];
+    for path in beside {
+        units.push(read_unit(&path)?);
     }
-
-    units.extend(found.into_values());
+    one_namespace(&units)?;
     Ok(units)
 }
 
-/// The modules a file imports - which is every `use` that is not `std`'s.
+/// The entry and nothing beside it - a `.nika` file compiled on its own.
 ///
-/// `use std::fs` names the library and never a file. Anything else names a
-/// module of this program, and Stage 0 takes **one segment**: a `mod` at the
-/// crate root is what the emitter writes, and a nested path would be a nested
-/// `mod` with a resolution rule of its own. Refused rather than guessed at.
-fn imports_of(parsed: &Parsed, at: &Path) -> Result<Vec<String>> {
-    let mut modules = Vec::new();
+/// `--input` outside a project is not a package: a directory of loose examples is
+/// a directory of programs, and compiling one of them must not pull in the other
+/// ten. A package is a directory **of a project**, which is what a `nikaia.toml`
+/// declares.
+pub fn collect_one(entry: &Path) -> Result<Vec<Unit>> {
+    Ok(vec![read_unit(entry)?])
+}
+
+fn read_unit(path: &Path) -> Result<Unit> {
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    // `with_context` and not `anyhow!("{e}")`: formatting the error into a string
+    // loses its type, and the type is what says this is a refusal of the program
+    // rather than a failure of this compiler (`diagnostics::Refused`).
+    let parsed = parser::parse_to_ast(&source).with_context(|| format!("{}", path.display()))?;
+    refuse_imports(&parsed, path)?;
+    Ok(Unit {
+        package: None,
+        path: path.to_path_buf(),
+        source,
+        parsed,
+    })
+}
+
+/// **Two files of one package may not declare the same name** (ADR-047 D1).
+///
+/// One namespace, so two `Row`s in it is an error rather than a rule about which
+/// of them a line means. Refused here and not left to `rustc`: it would report a
+/// duplicate definition against the generated file, which is exactly what
+/// Part III C.1 forbids - and it would name a line the user never wrote.
+fn one_namespace(units: &[Unit]) -> Result<()> {
+    let mut seen: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for unit in units {
+        for name in declared_names(&unit.parsed) {
+            if let Some(first) = seen.get(&name) {
+                return Err(crate::diagnostics::refuse(format!(
+                    "`{name}` is declared twice in this package: in {} and in {}.\n\
+                     The files of a package share one namespace (Part I, 9.1), so a name \
+                     belongs to the package rather than to the file it is written in - \
+                     rename one of the two, or keep the declaration in one place and let the \
+                     other file use it.",
+                    first.display(),
+                    unit.path.display()
+                )));
+            }
+            seen.insert(name, unit.path.clone());
+        }
+    }
+    Ok(())
+}
+
+/// The names a file declares: what `one_namespace` counts.
+///
+/// A method is not among them - it belongs to its type and two types may each
+/// have a `len`. An `impl` block declares nothing of its own.
+fn declared_names(parsed: &Parsed) -> Vec<String> {
+    parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            Item::Fn { name, .. } => name.map(|name| parsed.text(name).to_string()),
+            Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                Some(parsed.text(*name).to_string())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A `use` that is not `std`'s, refused with what to do instead.
+///
+/// `use` names another **package** (ADR-046 D1), and depending on one is not
+/// built (ADR-047 §5, Part III 13.2). A `use` naming a file beside this one is the
+/// shape that used to work, so the message says the rule that replaced it rather
+/// than only that the name is unknown.
+fn refuse_imports(parsed: &Parsed, at: &Path) -> Result<()> {
     for item in &parsed.program.items {
         let Item::Import { path } = &item.node else {
             continue;
         };
         let segments: Vec<&str> = path.iter().map(|s| parsed.text(*s)).collect();
-        match segments.as_slice() {
-            ["std", ..] => {}
-            [one] => modules.push((*one).to_string()),
-            many => {
-                return Err(anyhow!(
-                    "`use {}` in {}: a module of this program is one name (Part I, 9.1), \
-                     because a module is a file beside the entry. Only `std::…` has a path, \
-                     and it names the library rather than a file.",
-                    many.join("::"),
-                    at.display()
-                ))
-            }
+        if matches!(segments.as_slice(), ["std", ..]) {
+            continue;
         }
+        let written = segments.join("::");
+        let beside = at
+            .parent()
+            .map(|dir| dir.join(format!("{}.nika", segments[0])))
+            .is_some_and(|path| path.is_file());
+        return Err(crate::diagnostics::refuse(match beside {
+            true => format!(
+                "`use {written}` in {}: the files of a package already see one another \
+                 (Part I, 9.1), so there is nothing to bring in - remove the line and write \
+                 the name directly.",
+                at.display()
+            ),
+            false => format!(
+                "`use {written}` in {}: `use` names another package (Part I, 9.1), and \
+                 depending on a Nikaia package is not built yet (Part III, 13.2). \
+                 Only `std::…` names something that is there.",
+                at.display()
+            ),
+        }));
     }
-    Ok(modules)
+    Ok(())
 }
 
 /// A whole program: one ledger, one Rust file, one source map.
@@ -159,22 +222,37 @@ impl Program {
     /// 13.5 makes the ledger a pure function of the source tree, which is a
     /// promise about the tree and not about each file in it.
     pub fn read(entry: &Path) -> Result<Program> {
-        let units = collect(entry)?;
+        Self::of(collect(entry)?)
+    }
+
+    /// The entry compiled on its own - what `--input` outside a project is
+    /// (see [`collect_one`]).
+    pub fn read_one(entry: &Path) -> Result<Program> {
+        Self::of(collect_one(entry)?)
+    }
+
+    fn of(units: Vec<Unit>) -> Result<Program> {
         let mut contracts = crate::contracts::Ledger::empty();
         for unit in &units {
             contracts.absorb(
-                unit.module.as_deref(),
+                unit.package.as_deref(),
                 crate::contracts::Ledger::infer(&unit.parsed),
             );
         }
         Ok(Program { units, contracts })
     }
 
-    /// What this program is made of, by name - which is what says a
-    /// `module::item` call crosses a file boundary and a `Type::method` one
-    /// does not.
-    pub fn module_names(&self) -> std::collections::BTreeSet<String> {
-        self.units.iter().filter_map(|u| u.module.clone()).collect()
+    /// The **packages** this program reaches, by the name a `use` writes.
+    ///
+    /// What it is for is telling a `package::item` call from a `Type::method`
+    /// one. Empty for a program of its own files, which is every program today:
+    /// the files of a package share one namespace, so nothing in it is qualified
+    /// (ADR-047 D1), and depending on another package is not built (D2).
+    pub fn package_names(&self) -> std::collections::BTreeSet<String> {
+        self.units
+            .iter()
+            .filter_map(|u| u.package.clone())
+            .collect()
     }
 
     /// Whether this is one file, in which case nothing about the build changes.
@@ -189,19 +267,18 @@ impl Program {
         self.units.iter().map(|u| u.source.as_str()).collect()
     }
 
-    /// The whole program as one Rust file.
+    /// The whole package as one Rust file.
     ///
-    /// Every module is a `mod` at the crate root and the entry's items are the
-    /// root itself, because `main` has to be there. Each `mod` opens with
-    /// `use super::*;`, which is one line doing two jobs: it brings in the
-    /// preamble the crate root wrote, and it brings in the **sibling modules**,
-    /// because a `mod b` at the root is a name at the root. So `utils::helper()`
-    /// in Nikaia is `utils::helper()` in Rust and nothing resolved it
-    /// (ADR-011 D2).
+    /// **One crate root, and every file's items in it** (ADR-047 D1). One
+    /// namespace in this language is one namespace in the language below, so
+    /// there is no `mod` to write, no `use super::*` to make the siblings
+    /// reachable, and nothing for a reader to resolve. `pub` becomes `pub`,
+    /// which is what publishes a name out of the package - the same move
+    /// ADR-017 D2 made with `html::Render`: put the rule where the language
+    /// below can act on it rather than re-implementing it here.
     ///
-    /// `pub` becomes `pub`, so Part I 9.2's privacy is enforced by the language
-    /// below rather than re-implemented here - the same move ADR-017 D2 made
-    /// with `html::Render`.
+    /// The entry goes **first**, because it is the file that may declare `main`
+    /// and a reader opens the generated file at the top.
     pub fn emit(&self, build: crate::emit::Build) -> Result<crate::emit::Lowered> {
         self.emit_ordered(build, crate::emit::Ordering::default())
     }
@@ -226,9 +303,6 @@ impl Program {
         rust.push('\n');
 
         let mut map = SourceMap::default();
-
-        // The modules first, then the root: an item at the root may name a
-        // module, and a reader should meet the parts before the whole.
         for (at, unit) in self.units.iter().enumerate() {
             let body = crate::emit::emit_module_body_ordered(
                 ordering,
@@ -236,43 +310,14 @@ impl Program {
                 build,
                 trust.provenance,
                 &self.contracts,
-                false,
+                // The entry is the only file ADR-038 D4's generated `fn main`
+                // may be written from.
+                at == 0,
             )?;
-            match &unit.module {
-                Some(module) => {
-                    rust.push_str(&format!("pub mod {module} {{\n"));
-                    // `#[allow(unused_imports)]` because this import is **ours**
-                    // and not the user's: a module that happens to use nothing
-                    // from the preamble would otherwise produce a warning about a
-                    // line no Nikaia source maps to, and the user would be told
-                    // to remove a `use` item they never wrote (Part III, C.1).
-                    // The import cannot simply be left out where it looks
-                    // unused - it also brings in the sibling modules, which is
-                    // how `utils::helper()` resolves at all.
-                    rust.push_str("#[allow(unused_imports)]\nuse super::*;\n");
-                    map.extend(body.map.placed(rust.len(), at));
-                    rust.push_str(&body.rust);
-                    rust.push_str("}\n\n");
-                }
-                None => {
-                    // Held back to the end, below.
-                    let _ = body;
-                }
-            }
+            map.extend(body.map.placed(rust.len(), at));
+            rust.push_str(&body.rust);
+            rust.push('\n');
         }
-
-        let entry = crate::emit::emit_module_body_ordered(
-            ordering,
-            &self.units[0].parsed,
-            build,
-            trust.provenance,
-            &self.contracts,
-            // The crate root, and the only place ADR-038 D4's generated
-            // `fn main` may be written.
-            true,
-        )?;
-        map.extend(entry.map.placed(rust.len(), 0));
-        rust.push_str(&entry.rust);
 
         Ok(Lowered { rust, map })
     }

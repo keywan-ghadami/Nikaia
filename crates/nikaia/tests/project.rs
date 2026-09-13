@@ -115,16 +115,16 @@ fn a_project_builds_runs_and_notices_an_edit() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// A program is however many files its entry reaches (Part I 9.1), and all of
-/// them have to reach Cargo's dependency info - not just the one Cargo was told
-/// about. Editing a *module* is the case that separates "the sources go back in"
-/// from "the entry does".
+/// A program is every file of its package (Part I 9.1), and all of them have to
+/// reach Cargo's dependency info - not just the one Cargo was told about.
+/// Editing a file that is **not** the entry is the case that separates "the
+/// sources go back in" from "the entry does".
 #[test]
-fn editing_a_module_rather_than_the_entry_reaches_the_binary() {
+fn editing_a_second_file_rather_than_the_entry_reaches_the_binary() {
     let dir = a_project(
         "project-modules",
         "[package]\nname = \"multi\"\nversion = \"0.1.0\"\n",
-        "use utils\n\nfn main() {\n    println(utils::doubled(21))\n}\n",
+        "fn main() {\n    println(doubled(21))\n}\n",
     );
     std::fs::write(
         dir.join("src/utils.nika"),
@@ -140,14 +140,14 @@ fn editing_a_module_rather_than_the_entry_reaches_the_binary() {
         dir.join("src/utils.nika"),
         "pub fn doubled(n: i32) -> i32 {\n    return n * 3\n}\n",
     )
-    .expect("edit the module");
+    .expect("edit the second file");
 
     let again = nikaia(&["run"], &dir);
     assert!(again.status.success(), "{}", said(&again));
     assert_eq!(
         String::from_utf8_lossy(&again.stdout).trim(),
         "63",
-        "a module Cargo was never told about still invalidates the build: {}",
+        "a file Cargo was never told about still invalidates the build: {}",
         said(&again)
     );
 

@@ -1717,14 +1717,18 @@ alias or by collision, is an error rather than a rule about which wins (D5).
 `use std::fs` is the one `use` with a path in it, and it names the library rather
 than a package of yours ([ADR-030](adr/adr-030.md) D1).
 
-> **Status:** the compiler still treats **a file** as the unit. `use utils` names
-> the file `utils.nika` beside the entry, privacy is per file (9.2), and the files
-> of a directory do not see one another. A qualified name from another file does
-> resolve to one type, and `pool::Conn(id: 1)` builds a struct another file
-> declares — which is the half of the machinery a package boundary needs, built
-> one level down ([ADR-047](adr/adr-047.md) §5). The alias, the three refusals and
-> the introduction rule are not built, and neither is depending on a package at
-> all (Part III, 13.2).
+> **Status:** the package is built and the dependency is not. Every `.nika`
+> beside the entry takes part, they are one namespace, and two files declaring
+> the same name is refused by name. A `use` that names a file beside this one
+> says to remove the line; one that names anything else says that depending on a
+> package is not built (Part III, 13.2) — so `use http` above does not work yet,
+> and there is no way to write the example with two packages in it. The alias,
+> the braced and glob refusals in this language's words, and "a prefix must be
+> introduced" wait on that ([ADR-046](adr/adr-046.md) §5).
+>
+> Outside a project a `.nika` file is compiled **on its own**: a package is a
+> directory of a project, and a directory of loose examples is a directory of
+> programs.
 
 ### 9.2. Visibility Rules (Privacy)
 Nikaia enforces strict encapsulation to prevent tight coupling between parts of your code.
@@ -1759,9 +1763,11 @@ error[NK1110]: `secret` is private to `utils`
      help: write `pub fn secret` in `utils`, or reach it through something that is public
 ```
 
-> **Status:** the boundary the compiler enforces is the **file**, not the package
-> ([ADR-047](adr/adr-047.md) §5). `NK1110` is built and says *"private to
-> `utils.nika`"* — the same rule, one level down.
+> **Status:** the boundary is the package, and `NK1110` therefore has no program
+> that reaches it: a qualified name is a name from another package, and depending
+> on one is not built. The check is there for the day one arrives — which is also
+> the day `pub` starts to mean something a program can observe
+> ([ADR-047](adr/adr-047.md) D1, D2).
 
 ### 9.3. Granular Control
 While `pub` makes an item available generally, strict privacy forces developers to create safe interfaces (Constructors and Methods) rather than exposing raw data.

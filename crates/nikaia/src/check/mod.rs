@@ -1808,16 +1808,23 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// Part I 9.2: an item is private to its file unless it says `pub`.
+    /// Part I 9.2: an item is private to its **package** unless it says `pub`.
     ///
-    /// The language below enforces this too - `pub` becomes `pub` and a `mod`
-    /// keeps what it was not given - but a reader should not meet the rule as a
-    /// `rustc` message about a file they did not write, which is what
-    /// Part III C.1 calls a bug in this compiler.
+    /// The language below enforces this too - `pub` becomes `pub` - but a reader
+    /// should not meet the rule as a `rustc` message about a file they did not
+    /// write, which is what Part III C.1 calls a bug in this compiler.
     ///
-    /// Only a call written `module::item` can be from another file: a call
-    /// inside `utils.nika` writes `secret()`, unqualified. So this needs no
-    /// notion of "which file am I in" - the spelling says it.
+    /// Only a call written `package::item` can leave the package: a call inside
+    /// it writes `secret()`, unqualified. So this needs no notion of "which
+    /// package am I in" - the spelling says it.
+    ///
+    /// **No program reaches this today**, and that is [ADR-047](../../../../docs/specification/adr/adr-047.md)
+    /// D1 rather than an oversight. The boundary used to be the file, and it is
+    /// the package now: the files of one package share a namespace, so a
+    /// qualified name is a name from *another* package - and depending on one is
+    /// not built (D2). The check stays because the boundary it is about is the
+    /// one that is left, and it is the day a package arrives that a private name
+    /// needs refusing.
     fn reachable(&mut self, name: &str, contract: &FnContract, span: &Span) {
         let Some((module, item)) = name.split_once("::") else {
             return;
@@ -1829,10 +1836,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1110",
-            message: format!("`{item}` is private to `{module}.nika`"),
-            notes: vec!["an item is private to the file that declares it unless it says `pub` (Part I, 9.2)".to_string()],
+            message: format!("`{item}` is private to `{module}`"),
+            notes: vec!["an item is private to the package that declares it unless it says `pub` (Part I, 9.2)".to_string()],
             help: Some(format!(
-                "write `pub fn {item}` in `{module}.nika`, or reach it through something that is public"
+                "write `pub fn {item}` in `{module}`, or reach it through something that is public"
             )),
         });
     }

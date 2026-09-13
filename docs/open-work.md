@@ -26,38 +26,24 @@ it to know what a program means.
 
 ## 1. Defects
 
-### 1.1. A module can hand out functions, but not types — **fixed for what remains of it**
+### 1.1. A module can hand out functions, but not types — **fixed, and half of it dissolved**
 
-Three findings, and the first of them always worked: the qualified **call**,
-`pool::make()`. The other two are fixed.
+Three findings, and the first always worked: the qualified **call**. The other two
+are fixed — the qualified type name now resolves to the type the call hands back
+(`Ledger::absorb` qualifies the types *inside* an entry, not only its key), and a
+struct from another file can be built, its fields read from the program's own
+ledger by the exact key.
 
-**The qualified type name resolved to a different type.** `pool::Conn` and the
-`Conn` that `pool::make()` hands back were two types, so `NK1103`'s help asked for
-what was already written and could not be followed. The cause was one spelling
-short: the ledger keys a type `pool::Conn` and a module's own signature says
-`-> Conn`, because that is how the file declaring it writes the name. `absorb` now
-qualifies the types **inside** an entry as well as the key — it is the only place
-that knows both the module and what it declares — so the two spellings are one
-name before anything compares them.
+**And then the boundary moved.** A package is a directory whose files share one
+namespace ([ADR-047](specification/adr/adr-047.md) D1), so naming a type across a
+*file* boundary is not a thing that happens any more: the names are bare. What the
+repair is for is the cross-**package** boundary, where the prefix comes back — and
+it is built and waiting there.
 
-**And a struct from another file could not be built.** `pool::Conn(id: 1)` was a
-parse error, because the literal's name was `NAME` where the type's was
-`type_name`. Both are `type_name` now, and `fields_of` reads a foreign struct's
-fields from the program's own ledger by the **exact** key — never by suffix, which
-is how the library is matched: two modules may each declare a `Conn`, and a suffix
-match would answer with whichever came first.
-
-So a wrong field name, a wrong field type and a wrong annotation are all refused
-by their qualified names now, in this language's words.
-
-**What is left of this entry is the cross-*package* case.** The answer to
-[`open-decisions.md`](open-decisions.md) §6 makes a package a directory whose
-files share one namespace, so the file boundary this entry is about stops
-existing — and the same repair is what a package boundary will need, one level
-up. Two things are also not built, and neither is affected by that: **visibility**
-(a struct whose fields are private to its declaring file can still be built from
-another, because the ledger records no per-field `pub`), and the **alias**
-`use pool as p`.
+*Still open, and neither is affected by the boundary:* **visibility** — a struct
+whose fields are not `pub` can be built from outside, because the ledger records no
+per-field `pub`, and it will matter the day a package can be depended on; and the
+**alias** `use x as y`, which waits on the same thing.
 
 ### 1.2. A bare word that is no construct becomes a different program — **fixed**
 
@@ -135,28 +121,25 @@ lifetime defect in generated code is the class Part III C.1 is about, and
 
 ### 1.6. A `Shared` field's count is decided per file — **fixed, fail-closed**
 
-Confirmed exactly as predicted, the moment §1.1 stopped hiding it: `Arc` in the
+Confirmed exactly as predicted the moment §1.1 stopped hiding it: `Arc` in the
 field and `Rc` in the value, in one generated file, refused by `rustc`.
 
 The fix is the polarity this analysis already runs on, not a new answer: **where
 it cannot prove that nothing crosses, it does not lower.** A field slot whose
-struct this file does not declare is such a case, and it keeps the atomic floor as
+struct this file does not declare keeps the atomic floor as
 `Fallback::ForeignField` — a seventh row in the enumeration `--sharing` prints,
-because a fallback that is not named is one nobody can ask about.
+because a fallback that is not named is one nobody can ask about. Forced in **one
+place**, after the walk and before the classes are read off, rather than at each
+of the three sites that create a field slot.
 
-It is forced in **one place**, after the walk and before the classes are read off,
-rather than at each of the three sites that create a field slot: a rule that has
-to be remembered at three sites is one that will be forgotten at the fourth.
-
-The declaring file forces the same field itself where it is public
-(`Fallback::PublicField`), so the two runs now agree by both refusing to lower.
-Where the declaring file does *not* force it — a private type, a private field —
-the other file cannot name the type either, so the caution costs nothing.
+**The package decision does not retire this.** The analysis runs once per *file*,
+and a package of several files is still several runs of it, so the floor is
+exactly as necessary inside a package as it was between two modules.
 
 *What is still open:* where a field's count is **agreed** rather than
-independently refused. That wants either a ledger column or an analysis that runs
-over the whole program at once — and the package decision points at the second,
-since the files of a package will be one namespace anyway.
+independently refused. Running the analysis over a whole package at once would let
+the floor be lifted where everything is visible; across a package boundary it never
+can be, and that wants something written down.
 
 ### 1.7. The explain modes cannot be reached from a project build
 

@@ -218,10 +218,18 @@ pub fn lower(input: &Path, settings: &Settings, no_cache: bool) -> Result<Lowere
         }
     };
 
-    // Part I 9.1: every file is a module, so a build is however many files the
-    // entry reaches - and the cache cannot be asked about a program until the
+    // Part I 9.1: a package is a directory, so a build is every `.nika` beside
+    // the entry - and the cache cannot be asked about a program until the
     // program is known.
-    let program = modules::Program::read(input)?;
+    //
+    // **Outside a project it is the one file.** A package is a directory *of a
+    // project*, which is what a `nikaia.toml` declares; a directory of loose
+    // examples is a directory of programs, and compiling one of them must not
+    // pull in the other ten (ADR-047 D1, `modules::collect_one`).
+    let program = match layout.in_project {
+        true => modules::Program::read(input)?,
+        false => modules::Program::read_one(input)?,
+    };
     let key_source = program.sources().join("\n// --- unit ---\n");
     let sources: Vec<PathBuf> = program.units.iter().map(|unit| unit.path.clone()).collect();
 
@@ -242,7 +250,7 @@ pub fn lower(input: &Path, settings: &Settings, no_cache: bool) -> Result<Lowere
             // Every unit is checked against the *program's* contracts, not its
             // own: `utils::double` is a name `main.nika` may write, and the
             // type checker resolves it in the one place any name is resolved.
-            let modules = program.module_names();
+            let modules = program.package_names();
             for unit in &program.units {
                 check(
                     &unit.parsed,
