@@ -14,6 +14,7 @@ We have successfully implemented a "Vertical Slice" of the compiler that can com
 *   ✅ **Input provenance (ADR-010) chooses the hasher**: `std`'s ledger says which of its calls are sources and who chose their bytes (ADR-020), `contracts::trust` joins them over a program, and a map keyed by the input gets the hash that answer picks - fast and fixed-seed where the operator chose the bytes, keyed and randomly seeded where someone else did. Callgrind on 200 000 rows, the same tree built twice with byte-identical output: **120.0 M instructions hardened against 89.1 M chosen, 26 %** - the largest single item on the flagship, and it was 22 % when it was predicted. `nikaia --trust` prints the choice and what decided it (D7). What Stage 0's analysis is: one buffer, because ADR-008 gives a compilation unit one input lifetime, so the join over a program's sources *is* the per-buffer analysis for the one buffer this representation can express.
 *   ✅ **1BRC below hand-written Rust (ADR-015)**: with the backend's lazy diagnostics the generated parser costs 659 instructions per row, against 688 for the same aggregation hand-tuned in Rust and 840 written naively. Sequentially 0.52 s on 8M rows, 0.14 s on 4 cores, identical output.
 *   ✅ **`fs::map`'s UTF-8 check is chunked (ADR-016)**: validated one piece per core at character boundaries, reporting the earliest failing byte, so a rejected file names the same offset however many cores looked at it. 63.7 ms → 16.5 ms on the check; removing it entirely would buy 10 ms more and cost the `&str` guarantee every view rests on.
+*   ✅ **The emitted Rust is `async`, and a task interleaves ([ADR-055](specification/adr/adr-055.md))**: a function the ledger's `sync` column says can pause is an `async fn`, a call to one carries an `.await`, and our own executor drives the program's `main`. A file read is a slot on the kernel's completion queue or an I/O worker's reply, so it **suspends** rather than blocking its thread - and the executor is the only place a program parks. `spawn fn { … }` hands back a `TaskHandle` and `.join()` is a suspension point, so two tasks reading two files are both in flight before either finishes, on one thread: Part II 11.2's *"interleaved on the same thread"*, which was unbuildable while a pause was a thread that blocks. Nothing in a `.nika` file says `async`, `await` or `sync` for this - `sync` is **inferred** per function over the call graph (ADR-027 D1), and 22 of the corpus's functions have it against 17 that can pause.
 *   ✅ **Grammar Lowering (Stage 0 transpiler, ADR-011)**: `--backend rust` lowers `grammar` items onto `winnow-grammar`'s `grammar!`: rules, patterns, the commit point, bounded repetition, `@frame` -> `#[frame]`, `fold`/`par_fold`, and `dsl … from …` onto the generated piece driver with the `Parallelism` `user_parallelism` asks for. Checked by compiling and running the emitter's own output (`crates/nikaia/tests/grammar_lowering.rs`).
     *   *Scope*: syntactic. The lowering adapts nothing: an `impl` method used as a fold's step or merge is emitted as written (ADR-011 D2, §4). The type checker (ADR-024) reports what the ledger writes down; a shape mismatch inside a generated parser is not among it, and is still `rustc`'s to find.
 
@@ -21,20 +22,31 @@ We have successfully implemented a "Vertical Slice" of the compiler that can com
 
 ## Remaining Work to Finalize Nikaia
 
-### Phase 0: The Execution Model (ADR-033, decided and unbuilt)
+### Phase 0: The Execution Model (ADR-033 and ADR-055 — the first largely built, the second built at the default setting)
 
 *   [~] **Order is kept where it can be seen** ([ADR-033](specification/adr/adr-033.md), Part I 8.1.1): every operation is known by **what it touches**, and two operations touching disjoint resources have no order between them. Decided, **provisional and unmeasured**, switchable off with `ordering = "strict"`.
     *   *Why it is here and not in Phase 4*: it changes what a program **means**, not how fast it runs. Everything below is built on an execution model, so this is the one decision that is cheaper to make before the parts than after them.
     *   *Why it is safe to adopt incrementally*: an unknown touch set means "touches everything", so a program built against libraries that describe nothing behaves exactly as it does today. Programs get faster as `std.contracts` grows - the same shape as ADR-028 and ADR-031, where writing a contract down is what let a caller earn `sync`.
     *   *The first increment, to argue about before any code*: two unconditional `fs::read` calls with disjoint literal paths, lowered to a concurrent join. It needs `touches` for two `std` functions, a dependency check between two statements, and one emitter change. If that cannot be made to work cleanly, the rest does not deserve attempting.
-    *   *Built*: two increments, end to end. Two adjacent statements whose calls reach different files lower to `nikaia_std::task::both`; `touches` is a ledger column; `--ordering strict` turns it off; `tests/ordering.rs` compiles and runs the result and holds every reason a pair must *not* overlap.
+    *   *Built*: two increments, end to end. Two adjacent statements whose calls reach different files lower to the pool's vehicle in `nikaia_std::task`; `touches` is a ledger column; `--ordering strict` turns it off; `tests/ordering.rs` compiles and runs the result and holds every reason a pair must *not* overlap.
+        *   *The vehicle has two arms since [ADR-055](specification/adr/adr-055.md) §6 step 3*, and D10's question is unchanged: `task::both` is `rayon::join`, which takes **closures**, so a group whose halves can pause gets `task::interleave`, which takes futures. Every accountable operation `std` has can now pause, so `both` is what a pair that cannot gets - two `cli::args()` reads, for one.
     *   *Built, the second increment* (ADR-033 §8.3 item 1): the shapes. A **bare expression statement** is an operation (`println(x)`, `fs::write(p, d)`), and a value built out of **literals and calls** at any depth reaches the union of what its calls reach. Re-measured: the same 127 pairs in `examples/`, still zero overlaps, but the 101 refusals of the form "not a `let` of a single call" are gone - and D4's fail-closed polarity, the row that says the *ledger* is thin, doubled from 14 pairs to 28. The remaining shapes are a method call (30 pairs, needs the type checker) and a statement that performs nothing (29).
     *   *Corrected by building it* ([ADR-034](specification/adr/adr-034.md)): a `catch` handler that can `return` makes the next statement conditional, which D5 had not named. And `ordering` had to become a build-cache dimension, or `--ordering strict` would be served the overlapped artifact.
     *   *Decided against* (D9): no `allow_parallel`, no `try_join`. The first would name what the compiler already does; the second serves one refusal that has a clearer spelling already. What is owed instead is built: `--overlaps` prints every adjacent pair, which run together, and for the rest the reason and the way out.
     *   *Built, the third increment* (ADR-033 §6): `seq`, a run of any length rather than a pair, and a touch vocabulary past `file`/`stdout` - with two fail-open holes closed, a resource kind nobody knew being disjoint from every kind there was, and `stdout`/`stderr` being one destination under `2>&1`.
-    *   *Built, the fourth increment* ([ADR-033](specification/adr/adr-033.md) D10): a pair of `std` file reads overlaps at **`user_parallelism = no`** too, on `nikaia_std::task::read_pair` - two operations the kernel performs, with no thread carrying anything the user wrote (ADR-038 D3). ADR-033 §8.2b's degradation belongs to `task::both`, not to `ordering`; `--overlaps` answers per pair; and a pair of reads gets the same vehicle at `yes`, measured at −0.87 µs a pair against +112 µs (`docs/runtime-cost.md` §6). Where the machine has no `io_uring` the pair runs in written order, because an overlap nobody asked for may not cost the fallback's ~38 µs.
+    *   *Built, the fourth increment* ([ADR-033](specification/adr/adr-033.md) D10): a pair of `std` file reads overlaps at **`user_parallelism = no`** too, on `nikaia_std::task::read_pair` - two operations the kernel performs, with no thread carrying anything the user wrote (ADR-038 D3). ADR-033 §8.2b's degradation belongs to the pool's vehicle, not to `ordering`; `--overlaps` answers per pair; and a pair of reads gets the same vehicle at `yes`, measured at −0.87 µs a pair against +112 µs (`docs/runtime-cost.md` §6). Where the machine has no `io_uring` the pair runs in written order, because an overlap nobody asked for may not cost the fallback's ~38 µs.
     *   *Open*: a method call (its contract depends on the receiver's type, so this wants the type checker), arguments that are not literals (what may cross a thread is undecided), `touches` inferred from a Nikaia body, two *writes* in flight and an n-ary completion run - and `task::scope`/`select`, which the runtime side builds on.
     *   *The debt*: measure how much unconditional, independent I/O real programs actually contain, once there is an application big enough to carry the measurement. If the answer is "almost none", the decision was wrong and `strict` becomes the default.
+
+*   [~] **A pause is a suspension point, not a blocked thread** ([ADR-055](specification/adr/adr-055.md), Part II 11.2, Part I 8.2): the lowering becomes implicitly async, with our own executor under it. **Steps 1–4 of that record's §6 are built at `user_parallelism = no`, which is the default**; what is left needs a *thread*.
+    *   *Why it is here beside ADR-033*: it is the same layer, and it is the deeper half. ADR-033 decides what order two operations have; this decides what a program **does while it waits**, which is what makes a task mean anything at all.
+    *   *Why it was not on this list before*: nobody had asked the question it answers. `spawn` was filed as a missing runtime binding for three phases; the thing actually missing was a decision — *what does a task mean at `no`?* Part II 11.2 says "interleaved on the same thread", two synchronous Rust closures cannot interleave, and the emitted Rust contained the word `async` zero times. The sentence was unbuildable, and each reading a synchronous lowering allowed broke something already promised ([`open-decisions.md`](open-decisions.md) §9).
+    *   *Why the answer was cheap to adopt*: the language was specified this way from [ADR-005](specification/adr/adr-005.md) on, and [ADR-027](specification/adr/adr-027.md) already inferred, per function, whether it can pause — in the **safe** direction, so an unresolved call makes a function `async` and an `async fn` that never awaits finishes on its first poll. The input existed; only the lowering did not.
+    *   *Built*: the executor (`rt::exec` — a task queue, a `Waker` written out by hand, `block_on`, a `Slot` a task's value leaves through); `async fn` and `.await` off the ledger, with a recursive pausing call boxed where it closes a cycle; `std`'s pausing entries suspending for real on the ring or an I/O worker; and `spawn`, `TaskHandle`, `.join()`, `NK2101` and `NK2103`.
+    *   *Corrected by building it*: three sentences in the specification were not true. `spawn` took `( expr )`, which Part I 8.2 called a bug in the parser; a task nobody joined did not run, which Part I 8.2's own example needs; and Part II 11.2 offered `.await` as a Nikaia spelling while Part I 8.1 says the word appears nowhere. And one soundness bug: a finished file operation nobody had polled yet was released as free, so a read came back with a **write's** bytes (`ordering.rs` printed `ccc leer` for `zwei vier`).
+    *   *What the record said and building it disproved*: step 3 was written as *"the largest single diff and the one with no decisions in it"*. It had two — an overlapped pair whose halves pause needs a vehicle that takes **futures**, because `rayon::join` takes closures and Rust has no stable `async` closure (`task::interleave`); and `cli::args` was marked as able to pause when reading argv is memory.
+    *   *Open*: the **`yes` executor**, which is where a spawned future has to be `Send` (§2 D6) — `rayon`'s pool is a work-stealing pool for closures, not an executor for futures, so it is a second executor over the same worker count rather than a use of that one. And step 5, [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }`. Standard input is `async` and does not suspend yet; a lambda whose body pauses is refused; a recursive pausing *method* is not boxed — all three in [`open-work.md`](open-work.md) with their evidence.
+    *   *The debt*: nothing here is measured against the blocking lowering it replaced. `docs/runtime-cost.md`'s numbers are about the **mechanism** and were taken before the waiting moved into the executor, so what an `.await` costs a program that does no overlapping is unmeasured.
 
 ### Phase 1: Language Completeness (Frontend)
 
@@ -146,20 +158,21 @@ one list, and it is not here** — [`open-work.md`](open-work.md) §2 holds ever
 decided-and-unbuilt item in the order to take them, beside the two principles that
 set that order.
 
-The head of it is the emitted Rust becoming `async` and an executor to run it
-([ADR-055](specification/adr/adr-055.md)) — with `spawn` and everything that waits
-on it as steps of that, rather than the first thing to do. Five records are
-checked and cannot run until the sequence is done, and a check with no program to
-be tested against is the state that rots fastest: nothing fails when it drifts,
-because nothing exercises it.
+Its head **was** the emitted Rust becoming `async` and an executor to run it
+([ADR-055](specification/adr/adr-055.md)), with `spawn` and everything waiting on
+it as steps of that. Five records were checked and could not run until it was
+done — and a check with no program to be tested against is the state that rots
+fastest, because nothing fails when it drifts.
 
-That record's §6 has five steps, and **four of them are built at
-`user_parallelism = no`, which is the default**: a single-threaded executor,
-`async fn` with `.await` written off the ledger's `sync` column, `std`'s own
-pausing entries — a file operation suspends now rather than blocking its thread —
-and `spawn` itself, with `TaskHandle`, `.join()` and `NK2101`. What is left is
-the **thread**: the `yes` executor, where a spawned future has to be `Send`, and
-`overlap { … }`.
+**Four of that record's five steps are built at `user_parallelism = no`, which is
+the default**: the executor, `async fn` with `.await` written off the ledger's
+`sync` column, `std`'s own pausing entries — a file operation suspends now rather
+than blocking its thread — and `spawn` itself, with `TaskHandle`, `.join()` and
+`NK2101`. So it is no longer the item the others wait on: what is left of it
+needs a **thread** (the `yes` executor, where a spawned future has to be `Send`)
+or is `overlap { … }`, and the rest of the list can be taken in its own order.
+[`open-work.md`](open-work.md) is where that order lives, and it is the file to
+read rather than this paragraph.
 
 **The unchecked boxes above are not that list**, and the difference is worth
 keeping: a box is a piece of *scope* — generics, an LSP, compile-time I/O — that

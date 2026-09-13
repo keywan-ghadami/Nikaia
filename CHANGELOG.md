@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed (the roadmap and the open-decisions page catch up with the execution model)
+
+- **The roadmap's phases carried no item for the async lowering at all.** Phase 0 is *"The Execution Model"* and named only [ADR-033](docs/specification/adr/adr-033.md); a reader would not have learnt from it that a Nikaia program is now `async`, has an executor, suspends at a file read, or can `spawn`. Phase 0 now has both records, with what each has built, what building it corrected, what the record claimed and building it disproved, and what is open — and the ✅ status list has the line it was missing.
+- **The "what is next" paragraph said this was the head of the list**, which it is not any more: four of the five steps are built at the default setting, so what is left of it needs a *thread* or is `overlap`, and the rest of `open-work.md`'s order can be taken as it stands.
+- **`open-decisions.md` was missing the decision this session actually asked for.** The question *"what does a task mean at `user_parallelism = no`?"* is exactly what that page is for — it blocked the largest item in `open-work.md`, it could not be answered from the code, and the answer changed what the compiler emits. It is §9 now, with why it had to be asked, the three readings a synchronous lowering allowed and what each broke, and what the answer cost. §5's heading said `overlap` waits on the runtime binding `spawn` waits on; the binding is built, so it says what `overlap` can lean on instead.
+- **Four status notes that had gone stale**: Part I 5.4's *"the capture it decides is not reported yet"* (`NK2101` is raised now), Part I 8.1.1's `overlap` note and Part III 13.3's `user_parallelism` note (both said `spawn` is not built), and `docs/spec-promises.md`'s diagnostic lists — those last are left as they were, with a note saying so, because that page's whole value is being readable against the day it was written.
+- `task::both` is named as *the pool's vehicle* where the roadmap and [ADR-033](docs/specification/adr/adr-033.md) describe it, because it is one of two now: D10's question is unchanged and the answer has a second arm.
+
 ### Added (`spawn` lowers, and a task interleaves on the one thread)
 
 - **[ADR-055](docs/specification/adr/adr-055.md) §6 step 4** — the thing the whole record was written for. `spawn fn { … }` becomes a future the executor owns, `.join()` is an `.await` read off the ledger like any other pausing call, and both mean the same thing at either setting of `user_parallelism`, which is what Part II 11.2 calls the uniform API. Two tasks reading two files are both in flight before either finishes, on one thread — that section's own sentence, now about a program somebody writes rather than about `std`'s own futures.

@@ -1,11 +1,14 @@
 # Open decisions — the questions that need the owner
 
-Eight entries. **Seven are answered and one is dropped**, and every answer has its
+Nine entries. **Eight are answered and one is dropped**, and every answer has its
 record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
-[ADR-049](specification/adr/adr-049.md), [ADR-050](specification/adr/adr-050.md)
-and [ADR-051](specification/adr/adr-051.md). §2, §3 and §7 are built, §6's language
-half is, and each entry says what is left. They stay here until the owner drops
+[ADR-049](specification/adr/adr-049.md), [ADR-050](specification/adr/adr-050.md),
+[ADR-051](specification/adr/adr-051.md), [ADR-053](specification/adr/adr-053.md)
+and [ADR-055](specification/adr/adr-055.md).
+Built: the entries on the numeric surface, the withdrawn `a`/`b`/`c`, reserved
+words, how a package names its dependencies, and — at the default setting — what
+a task means. §6's language half is built too, and each entry says what is left. They stay here until the owner drops
 them. **Nothing here is open.** Each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
@@ -239,7 +242,7 @@ they apply to every entry rather than to one week's choice.
 
 ---
 
-## 5. Statement order, and how a program asks for overlap — **answered** ([ADR-050](specification/adr/adr-050.md); not built — it needs the runtime binding `spawn` waits on)
+## 5. Statement order, and how a program asks for overlap — **answered** ([ADR-050](specification/adr/adr-050.md); `overlap` is not built, and what it was waiting on now is)
 
 The entry asked when `ordering` gets measured and whether it stays on. Both halves
 are answered, and the first is answered by dropping it.
@@ -338,6 +341,23 @@ narrow in the first place.
 *Order that follows from this:* the runtime binding, then `overlap` on it, then the
 removal of the automatic half, `seq` and the switch — removing them before there is
 a way to ask would leave the language with neither.
+
+**The runtime binding is built** ([ADR-055](specification/adr/adr-055.md) §6
+steps 1–4, at `user_parallelism = no`), so the first item of that order is done
+and `overlap` is the next one. Two things it can now lean on that did not exist
+when the paragraphs above were written:
+
+* **A vehicle that takes futures.** `task::interleave` polls two futures on one
+  thread, whichever suspends giving the thread to the other — which is what
+  [ADR-050](specification/adr/adr-050.md) D6's *"a branch is started up to its
+  first suspension point"* means, and that sentence was about a suspension point
+  the emitted program did not have. The emitter chooses it per group already,
+  because every accountable `std` operation can pause.
+* **`spawn` as the general path**, for a branch that is more than a pair.
+
+What is still special-cased is the *automatic* half, exactly as this section
+describes it — and that is the half ADR-050 D1 withdraws, so the work is
+`overlap` and then the removal, not a widening of what is there.
 
 ---
 
@@ -563,3 +583,48 @@ claimed is not built and is written down in [`open-work.md`](open-work.md), unde
 two names is two types to the checker*:
 Cargo unifies a package reached under two different keys, and the ledger in front
 of it still names a type by the key it was reached through.
+
+---
+
+## 9. What does a task **mean** at `user_parallelism = no`? — **answered: build coroutines** ([ADR-055](specification/adr/adr-055.md); steps 1–4 built)
+
+**The question, and why it had to be asked.** `spawn` was the largest single
+unblocking in [`open-work.md`](open-work.md) and could not be built, and the
+reason turned out not to be machinery. Part II 11.2 says a task at
+`user_parallelism = no` is *"interleaved on the same thread"*; Part I 1.2 says a
+build switch changes *how* a program runs and never *what* it computes. The
+emitted Rust contained the word `async` **zero** times, so a pause was a thread
+that blocks — and two synchronous Rust closures cannot interleave on one thread,
+because there is no point at which either yields. The sentence was unbuildable,
+and each of the three readings a synchronous lowering allows breaks something
+already promised:
+
+* **run the body at the `spawn`** — a legal *schedule* of `yes`, but it deadlocks
+  at `no` where `yes` runs, and it makes 11.2 false;
+* **run it at the `.join()`** — silently drops a task nobody joins, and Part I
+  8.2's own example keeps no handle;
+* **refuse `spawn` at `no`** — makes a library un-compilable where it is
+  consumed, which is the thing [ADR-005](specification/adr/adr-005.md) §1 Group B
+  exists to prevent.
+
+**The answer: coroutines.** The lowering becomes implicitly async — which is the
+*deferred half of the original design* rather than a new direction:
+[ADR-005](specification/adr/adr-005.md) reasons about *"an I/O suspension point,
+which implicit async inherits free from `async fn`'s"*,
+[ADR-006](specification/adr/adr-006.md) exists because *"any function may pause
+at I/O"*, and [ADR-027](specification/adr/adr-027.md) already infers per function
+whether it can pause. The language has been specified this way since Stage 0
+began; only the lowering never was.
+
+**What it cost, which is what made it worth asking about.** Every signature that
+can pause changes shape, so the generated Rust stops reading as a transcription
+in that one respect — which puts [ADR-004](specification/adr/adr-004.md) D2 under
+more pressure than any other lowering. The record's §2 D6 writes that down rather
+than leaving it to be discovered, along with async Rust's three sharp edges;
+`examples/json.nika` produced the first of them (recursion) on the day the
+lowering landed.
+
+**Built:** the executor, `async fn` off the ledger's `sync` column, `std`'s own
+pausing entries, and `spawn` with `TaskHandle`, `.join()` and `NK2101` — all at
+`no`, which is the default. What is left is the *thread*: the `yes` executor,
+where a spawned future has to be `Send`, and §5's `overlap`.

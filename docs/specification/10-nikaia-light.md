@@ -994,7 +994,10 @@ wrapper of your own.
 > parse error, so `@detached` on one has nowhere to appear. The
 > immediate/detached rule itself is `std`'s, held by a check over `std`'s ledger
 > entries rather than by anything in a source file ([ADR-029](adr/adr-029.md)
-> D4); the capture it decides (`NK2101`, 8.3) is not reported yet.
+> D4). The capture it decides **is** reported now, for the one detached context
+> the language has a keyword for: `NK2101` at a `spawn` (8.3,
+> [ADR-055](adr/adr-055.md) §6 step 4). What is not writable is the annotation
+> on a parameter of your own.
 
 ---
 
@@ -1742,12 +1745,16 @@ because the waiting is not your code. Computation beside I/O overlaps at every
 setting; only computation beside computation needs `yes`. That is 1.2's rule — you
 choose `how`, never `what`.
 
-> **Status:** not built. `overlap` does not parse, and what it needs is the
-> general concurrent path that `spawn` is waiting on
-> ([ADR-050](adr/adr-050.md) §5): the runtime binding first, then this, then
-> the removal of 8.1.1's automatic half, `seq { … }` and the `ordering` switch.
-> Building more special cases ahead of the runtime is how the automatic half got
-> narrow in the first place, so it is not the way in.
+> **Status:** not built — `overlap` does not parse. **What it was waiting on
+> is.** [ADR-050](adr/adr-050.md) §5 ordered the runtime binding first, then
+> this, then the removal of 8.1.1's automatic half, `seq { … }` and the
+> `ordering` switch; the binding is built ([ADR-055](adr/adr-055.md) §6 steps
+> 1–4), so this is the next item of that order rather than a blocked one. Two
+> pieces it can lean on now: a vehicle that takes **futures** rather than
+> closures, which is what D6's *"a branch is started up to its first suspension
+> point"* needs and what the emitter already chooses for a pausing pair; and
+> `spawn` itself, for a branch that is more than a pair. Building more special
+> cases is still not the way in — that is how the automatic half got narrow.
 
 ### 8.2. Spawning Tasks
 To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the

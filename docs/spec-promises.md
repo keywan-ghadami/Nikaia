@@ -103,6 +103,14 @@ Codes the compiler emits: `NK1101`–`NK1113`, `NK2202`, `NK2501`, `NK2502`,
 `NK2605`, `NK2701`. Codes Part III C.3 catalogues and nothing raises: `NK2101`,
 `NK2102`, `NK2201`, `NK2301`, `NK2401`, `NK2601`, `NK2602`, `NK2603`, `NK2604`.
 
+> **The two lists above are this page's own reading on the day it was written**,
+> and they have moved since; Part III C.3's status note is the current one.
+> `NK2101` has crossed over — `spawn` lowers, so there is a task to hand data
+> to ([ADR-055](specification/adr/adr-055.md) §6 step 4) — and so have several
+> `NK11xx`. The lists are left as they were, for the reason the whole page is:
+> a page that quietly updates its findings cannot be read against the day it
+> was written.
+
 `NK2605` was added after this page was written, for the shape
 [`from-for-throws-and-touches.md`](from-for-throws-and-touches.md) §6 found: a
 written call that can fail, in a function that declares nothing.
