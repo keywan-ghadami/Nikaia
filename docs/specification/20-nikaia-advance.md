@@ -360,7 +360,14 @@ Since code is implicitly async, "calling a function" usually means "running it n
 #### The @detached Contract
 The `spawn` function is defined with the `@detached` attribute. This triggers **Implicit Move Semantics**.
 * **Why?** This guarantees thread safety where code runs in parallel, and prevents logic races or "Use-After-Free" where it does not. The parent scope cannot access the captured data while the detached task owns it.
-* **Copying:** If you need to keep data in the parent thread, you must explicitly call `.clone()` before spawning.
+* **Copying, for ordinary data:** If you need to keep **data** — a string, a number, a struct or collection of those — in the parent thread, you must explicitly call `.clone()` before spawning, and the copy is what the task takes (Part I, 8.3).
+* **Nothing to copy, for a handle:** A handle on a `Shared[T]` is the other case. It is **duplicated** where it is handed to the task, so the name in the parent thread keeps working and there is nothing to call — for a handle there is no method, because copying a handle copies none of the data (Part I, 6.2, [ADR-040](adr/adr-040.md) D1).
+
+> **Status:** both bullets are written ahead of the compiler. `spawn` does not
+> lower yet and the capture it decides is not reported (Part I, 8.3), and the
+> duplication waits on something further back — `Shared[T]` is not a type the
+> compiler knows (Part I, 6.2), so there is no handle to duplicate
+> ([ADR-040](adr/adr-040.md) §4).
 
 #### What a task may take with it
 A task runs on a thread of its own, so **everything it uses has to be able to cross a thread**. The compiler checks that structurally, with no syntax to write and no annotation to forget ([ADR-005](adr/adr-005.md) §1 Group B): a type built out of plain data, and a struct or collection of those, may cross. So does a value that counts its owners: `Shared[T]`'s count is atomic at every setting ([ADR-037](adr/adr-037.md) D6), so it is answered by what it holds rather than by the count. What may not cross is a **lock** — its implementation follows `user_parallelism` (12.2) and this verdict may not consult the switch, so it takes the worse of the two settings — and therefore neither does a `SharedMut[T]`, which holds one. A struct with one such field is no better than the field.

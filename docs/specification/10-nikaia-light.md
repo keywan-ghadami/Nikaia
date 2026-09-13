@@ -746,9 +746,38 @@ You write `Shared[T]` yourself — it is not inferred, because sharing changes *
 * **`SharedMut[T]`**: for a value several parts own at once and any of them may change. The lock that keeps the changes apart is part of the type — there is no second wrapper to write around it — and the changing is done through the four doors of 6.3. This is the common case, which is why it has the short name ([ADR-039](adr/adr-039.md) D9).
 * **`Locked[T]`**: for individually locked fields inside a shared structure — one lock per field rather than one lock around the whole of it. It is the same lock as the one inside `SharedMut[T]`, opened by the same four doors.
 
+**How the second owner comes about.** You do not write the step that produces
+one. Where a handle on a `Shared[T]` is handed on — passed to a function, or used
+by a task (Part II, 11.2) — the handle is **duplicated**, and each handle is
+cleaned up at the end of its own block (6.1). There is no method to call, because
+there would be nothing for it to do: a duplicated handle copies none of the data
+and produces no second value — one value, one more owner — so there is nothing to
+name ([ADR-040](adr/adr-040.md) D1).
+
+**This is the handle and nothing else.** Ordinary data — a string, a number, a
+struct of those — is still **moved** where it is handed on (8.3). An automatic
+duplication there would copy the whole of the data, which is a different thing at
+a different cost, so for data the `.clone()` stays something you write yourself
+([ADR-040](adr/adr-040.md) D1).
+
+**Each handle lives to the end of its own block whether you use it again or
+not.** The duplication is not conditional on a later use
+([ADR-040](adr/adr-040.md) D2), so the value is cleaned up where *your* handle
+ends, which may be later than the task that holds the other one. That is the
+block rule of 6.1 applied unchanged rather than a special case to learn: whoever
+wants the cleanup earlier ends the block earlier ([ADR-040](adr/adr-040.md) D3).
+Where a handle is duplicated is not something your source shows, so `--sharing`
+names each duplication site beside the count it printed for that value — the cost
+of an extra handle stays something you can look up
+([ADR-040](adr/adr-040.md) D5).
+
 > **Status:** not built. None of the three is a type the compiler knows: writing
 > `Shared[T]`, `SharedMut[T]` or `Locked[T]` names a type that does not exist,
-> and the backend has no lowering for any of them. What *is* built is the
+> and the backend has no lowering for any of them. The duplication above is
+> therefore unbuilt too: there is no handle to duplicate, `--sharing` names no
+> duplication site, and there is no way to make the first handle — `Shared` has no
+> constructor, which is a question [ADR-040](adr/adr-040.md) §3 leaves open
+> ([ADR-040](adr/adr-040.md) §4). What *is* built is the
 > reasoning above them — which owner count a `Shared` position gets is inferred,
 > and `--sharing` prints it ([ADR-037](adr/adr-037.md) D7,
 > [ADR-039](adr/adr-039.md) §4).
@@ -1324,6 +1353,14 @@ spawn fn { println(message) }
 // println(message)
 ```
 
+**Two cases, and the type of the value decides which.** What the rule above is
+about is **ordinary data** — a string, a number, a struct or collection of those —
+and for data a move stays a move. A handle on a `Shared[T]` is the other case:
+the handle is **duplicated** rather than moved (6.2), so the name outside the task
+keeps working and there is nothing for you to write
+([ADR-040](adr/adr-040.md) D1). `message` here is a string, so everything in the
+rest of this section is the **data** case.
+
 If you still need the value afterwards, clone it **before** the task is built and
 give the task the copy. A `.clone()` written *inside* the body does not help: the
 body runs after `message` has already moved into the task, so it would clone the
@@ -1336,7 +1373,8 @@ spawn fn { println(copy) }   // the copy is what moves into the task
 println(message)             // OK: `message` never left
 ```
 
-The compiler error for this situation explains exactly that:
+The compiler error for this situation — data moved into a task and used again
+afterwards — explains exactly that:
 
 ```text
 error[NK2101]: this background task takes ownership of `message`
@@ -1354,12 +1392,20 @@ error[NK2101]: this background task takes ownership of `message`
         spawn fn { println(copy) }
 ```
 
-> **Status:** not built. `spawn` does not lower yet — the runtime integration it
-> needs is the next step (Part II, 11.2) — and `NK2101` is catalogued but never
-> raised (Part III, Appendix C.3). The move rule is therefore written ahead of
-> both. The form above is the one spelling of a `spawn`, the trailing lambda of
-> 5.3; the parser still insists on parentheses around the body instead, which is
-> a bug in the parser and not a second form.
+**`NK2101` belongs to the data case only.** For a handle on a `Shared[T]` there is
+nothing to refuse: using the value again after the task is built is the very thing
+the duplication of 6.2 serves, so there is no error and no `.clone()` to write
+([ADR-040](adr/adr-040.md) D5).
+
+> **Status:** not built, in either case. `spawn` does not lower yet — the runtime
+> integration it needs is the next step (Part II, 11.2) — and `NK2101` is
+> catalogued but never raised (Part III, Appendix C.3). The move rule is
+> therefore written ahead of both. The duplication is unbuilt for a reason
+> further back: `Shared[T]` is not a type the compiler knows (6.2), so there is
+> no handle to duplicate, and no raised `NK2101` for the exemption above to apply
+> to ([ADR-040](adr/adr-040.md) §4). The form above is the one spelling of a
+> `spawn`, the trailing lambda of 5.3; the parser still insists on parentheses
+> around the body instead, which is a bug in the parser and not a second form.
 
 ### 8.4. The Runtime Sidecar Model
 While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.
