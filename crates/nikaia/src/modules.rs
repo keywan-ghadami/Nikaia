@@ -59,7 +59,11 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
 
     let source = std::fs::read_to_string(&entry)
         .with_context(|| format!("cannot read {}", entry.display()))?;
-    let parsed = parser::parse_to_ast(&source).map_err(|e| anyhow!("{}: {e}", entry.display()))?;
+    // `with_context` and not `anyhow!("{e}")`: formatting the error into a string
+    // loses its type, and the type is what says this is a refusal of the program
+    // rather than a failure of this compiler (`diagnostics::Refused`).
+    let parsed =
+        parser::parse_to_ast(&source).with_context(|| format!("{}", entry.display()))?;
 
     let mut pending: Vec<String> = imports_of(&parsed, &entry)?;
     let mut units = vec![Unit {
@@ -92,7 +96,7 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
         let source = std::fs::read_to_string(&path)
             .with_context(|| format!("cannot read {}", path.display()))?;
         let parsed =
-            parser::parse_to_ast(&source).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+            parser::parse_to_ast(&source).with_context(|| format!("{}", path.display()))?;
         pending.extend(imports_of(&parsed, &path)?);
         found.insert(
             module.clone(),
@@ -238,7 +242,15 @@ impl Program {
             match &unit.module {
                 Some(module) => {
                     rust.push_str(&format!("pub mod {module} {{\n"));
-                    rust.push_str("use super::*;\n");
+                    // `#[allow(unused_imports)]` because this import is **ours**
+                    // and not the user's: a module that happens to use nothing
+                    // from the preamble would otherwise produce a warning about a
+                    // line no Nikaia source maps to, and the user would be told
+                    // to remove a `use` item they never wrote (Part III, C.1).
+                    // The import cannot simply be left out where it looks
+                    // unused - it also brings in the sibling modules, which is
+                    // how `utils::helper()` resolves at all.
+                    rust.push_str("#[allow(unused_imports)]\nuse super::*;\n");
                     map.extend(body.map.placed(rust.len(), at));
                     rust.push_str(&body.rust);
                     rust.push_str("}\n\n");

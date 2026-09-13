@@ -310,3 +310,59 @@ fn a_nested_module_path_is_refused_and_std_is_not() {
     assert!(program.is_single_file());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// **No Rust warning about the generated file reaches the user** (Part III, C.1).
+///
+/// Measured before this: every multi-file build printed
+/// `warning: …/gen:7: unused import: `super::*` (no Nikaia source maps to this)`,
+/// and told the reader to remove a `use` item this compiler had written itself.
+/// Two halves, and the test needs both because either alone would pass one of the
+/// assertions below: the emitted import carries `#[allow(unused_imports)]`, so the
+/// warning is not produced; and a warning that maps to no Nikaia line is not
+/// reported, so a machine-written construct nobody thought of yet cannot do the
+/// same thing again.
+///
+/// The program is the shape that produced it - a module that uses nothing from the
+/// preamble the crate root wrote.
+#[test]
+fn a_warning_about_the_generated_file_does_not_reach_the_user() {
+    let (dir, entry) = project(
+        "silent-preamble",
+        &[
+            ("plain.nika", "pub fn seven() -> i64 {\n    return 7\n}\n"),
+            (
+                "main.nika",
+                "use plain\n\nfn main() {\n\x20   println(f\"{plain::seven()}\")\n}\n",
+            ),
+        ],
+    );
+
+    let program = Program::read(&entry).expect("the program reads");
+    let lowered = program.emit(Build::default()).expect("it lowers");
+    assert!(
+        lowered.rust.contains("#[allow(unused_imports)]\nuse super::*;"),
+        "the import is ours, so it carries its own allow:\n{}",
+        lowered.rust
+    );
+
+    // And the whole way through the CLI, which is where the user was told to
+    // remove it.
+    let ran = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["--input", entry.to_str().expect("utf-8 path")])
+        .args(["--output", dir.join("program.rs").to_str().expect("utf-8 path")])
+        .args(["--no-cache"])
+        .env("NIKAIA_CACHE_DIR", dir.join("cache"))
+        .output()
+        .expect("the nikaia binary runs");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ran.stdout),
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert!(ran.status.success(), "{said}");
+    assert!(
+        !said.contains("unused import") && !said.contains("no Nikaia source maps to this"),
+        "a warning about the generated file reached the user:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

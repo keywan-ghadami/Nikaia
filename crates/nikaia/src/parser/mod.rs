@@ -76,15 +76,17 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // drive with `.parse_next()`.
     let program = CompilerGrammar::parse_program()
         .parse_next(&mut stream)
-        .map_err(|e| anyhow::anyhow!("Parse error:\n{}", e.render(input)))?;
+        // A refusal and not a failure of this compiler: the program is what is
+        // wrong, so it leaves without a backtrace (`diagnostics::Refused`).
+        .map_err(|e| crate::diagnostics::refuse(format!("Parse error:\n{}", e.render(input))))?;
 
     // The generated entry point already refuses leftover input; this is a
     // backstop so a partial parse can never be reported as a success.
     if !stream.input.is_empty() {
-        return Err(anyhow::anyhow!(
+        return Err(crate::diagnostics::refuse(format!(
             "Parse error: unexpected trailing input at byte {}",
             input.len() - stream.input.len()
-        ));
+        )));
     }
 
     Ok(Parsed { program, interner })

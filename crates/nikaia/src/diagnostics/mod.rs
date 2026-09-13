@@ -23,6 +23,77 @@ use serde_json::Value;
 use crate::ast::Span;
 use crate::emit::SourceMap;
 
+/// A statement about the **user's program**, as opposed to a failure of this
+/// compiler.
+///
+/// The two used to leave by the same door, and the door was Rust's: a type error
+/// in somebody's `.nika` file ended as an `anyhow::Error` out of `main`, so after
+/// the diagnostics had said their piece the terminal also got
+///
+/// ```text
+/// Error: 1 type error
+///
+/// Stack backtrace:
+///    0: anyhow::error::<impl anyhow::Error>::msg
+///    1: nikaia::project::check
+/// ```
+///
+/// - ten frames of this compiler's own functions, where `RUST_BACKTRACE` is set,
+/// which is a normal thing for a developer to have set. Part III C.1's rule is
+/// about messages from the backend, and this is the same promise from the other
+/// side: nothing about how this compiler is built reaches somebody who only wrote
+/// a program.
+///
+/// **An error that is not one of these keeps the backtrace**, deliberately. A
+/// compiler that cannot read a file or cannot run `rustc` has a failure of its
+/// own, and the frames are then the most useful thing on the screen.
+#[derive(Debug)]
+pub struct Refused(pub String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Whether an error - or anything it was wrapped in - is a statement about the
+/// program rather than about this compiler.
+///
+/// The whole chain, because the path a file was read from is added as context
+/// around a refusal and the refusal is then no longer the outermost error.
+pub fn is_a_refusal(error: &anyhow::Error) -> bool {
+    error.chain().any(|link| link.is::<Refused>())
+}
+
+/// Make a refusal, as an `anyhow::Error` so it travels the paths every other
+/// error already travels.
+pub fn refuse(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(Refused(message.into()))
+}
+
+/// Whether a backend diagnostic is about something somebody wrote.
+///
+/// **A warning that maps to no Nikaia line does not reach the user.** Part III
+/// C.1's rule is that a message about the generated Rust is not a message the user
+/// gets, and a warning with no `.nika` line behind it is exactly that: it is about
+/// a decision the emitter made. The measured case was every multi-file build
+/// printing `unused import: super::*` - a `use` item this compiler writes itself -
+/// with a note saying *"no Nikaia source maps to this"* beside it. Recognising it
+/// and printing it anyway is the worst of the three possible behaviours.
+///
+/// **An error is kept even with nowhere to put it**, and that is not an
+/// inconsistency. A warning suppressed costs nothing: the build goes on and the
+/// user was never able to act on it. An error suppressed leaves a build that failed
+/// with no reason given anywhere, which is worse than a message pointing at a
+/// generated line. Such an error is a defect in this compiler - the lowering
+/// produced Rust that does not compile - and it is reported so that the defect is
+/// visible rather than silent.
+pub fn is_about_the_program(diagnostic: &Diagnostic) -> bool {
+    diagnostic.location.is_some() || diagnostic.level != "warning"
+}
+
 /// One message, placed in the `.nika` file where that was possible.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {

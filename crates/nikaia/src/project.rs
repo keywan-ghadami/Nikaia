@@ -394,7 +394,10 @@ pub fn check(
             if violations.len() == 1 { "" } else { "s" }
         ));
     }
-    bail!("{}", refused.join(", "))
+    // A refusal and not a failure of this compiler, so it leaves without a
+    // backtrace: the diagnostics above have already said everything, and this is
+    // the tally (`diagnostics::Refused`).
+    Err(diagnostics::refuse(refused.join(", ")))
 }
 
 /// The `NK25xx` codes whose crossing this build does not perform, reported as a
@@ -797,7 +800,10 @@ impl Project {
             .collect();
         let generated = self.gen_dir().display().to_string();
 
-        for diagnostic in diagnostics::translate_units(messages, &lowered.map, &sources) {
+        for diagnostic in diagnostics::translate_units(messages, &lowered.map, &sources)
+            .into_iter()
+            .filter(diagnostics::is_about_the_program)
+        {
             let at = diagnostic.location.as_ref().map_or(0, |l| l.unit);
             eprint!(
                 "{}",

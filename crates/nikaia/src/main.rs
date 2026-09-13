@@ -209,7 +209,7 @@ fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &st
     let diagnostics = diagnostics::translate(&rustc_json, &lowered.map, source);
     let errors = diagnostics.iter().filter(|d| d.level == "error").count();
 
-    for diagnostic in &diagnostics {
+    for diagnostic in diagnostics.iter().filter(|d| diagnostics::is_about_the_program(d)) {
         print!(
             "{}",
             diagnostics::render(diagnostic, &path, source, &generated)
@@ -471,7 +471,31 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
     }
 }
 
-pub fn main() -> Result<()> {
+/// **A refusal leaves quietly; a failure of this compiler keeps its backtrace.**
+///
+/// `main` used to be `-> Result<()>`, so Rust's own reporting printed
+/// `Error: {:?}` for everything - and anyhow's `Debug` carries the backtrace where
+/// `RUST_BACKTRACE` is set. For a program that does not compile that is this
+/// compiler's internals on a user's screen after the diagnostics had already said
+/// what was wrong (`diagnostics::Refused`). For a compiler that cannot read a file
+/// the frames are the most useful thing there is, so those are untouched.
+pub fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) if diagnostics::is_a_refusal(&error) => {
+            // `{:#}` is the chain without the backtrace, so a refusal that was
+            // wrapped in the path it came from still names the file.
+            eprintln!("{error:#}");
+            std::process::ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<()> {
     // Cargo owns the wrapper's argument list, so this cannot be a flag or a
     // subcommand: the marker in the environment is the only channel available,
     // and it is read before `clap` sees an argument list it would not
