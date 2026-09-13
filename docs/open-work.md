@@ -369,7 +369,7 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.8. There is no HTTP server, and three records now wait on it
+### 2.9. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal
@@ -398,8 +398,15 @@ unchecked — needs no socket. `contracts::trust` exists and `nikaia --trust` pr
 what it found ([ADR-010](specification/adr/adr-010.md) D7); what is missing is the
 consumer, a diagnostic where an untrusted value reaches a path parameter, and
 `fs::within(root, name)` beside it. Testable against `fs::map` today, and every
-program that later writes `http::File` inherits it. It is
-[`open-decisions.md`](open-decisions.md) §4's fourth candidate for that reason.
+program that later writes `http::File` inherits it.
+
+**It is also the only entry in this section that closes a security hole rather
+than an ergonomic one**, which is worth saying where a reader chooses what to
+pick up. [ADR-010](specification/adr/adr-010.md) D8 built a taint lattice and
+argued for building it generally rather than as a hasher special case; its
+second consumer is the test of whether that generalised, and it costs no new
+analysis. Everything else here is a feature nobody can use yet — this one is
+absent from every program written before it lands.
 
 Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
 bench that decided it (`benches/sendfile/`) and the write-up
