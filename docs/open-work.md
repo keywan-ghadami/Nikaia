@@ -91,89 +91,67 @@ refusal should name the module's own functions rather than only saying no. Part 
 9.2 makes private fields the ordinary case, which is the encapsulation this change
 must not spend on its way to making types usable.
 
-### 1.2. A bare word that is no construct becomes a different program
+### 1.2. A bare word that is no construct becomes a different program — **fixed**
 
-The worst class in this file, because nothing is refused. Source:
+Two causes, and both are closed.
 
-```nika
-fn main() {
-    let c = true
-    assert c
-    unsafe { println("x") }
-}
+**A word keyword matched the beginning of a longer word**, because the grammar is
+scannerless and nothing said where a word ends. Measured:
+
+```text
+true asfoo      ->  `true as foo`
+returnx         ->  `return x`
+forx in 0..3    ->  `for x in 0..3`
+assert c        ->  `let c = true as sert; c;`
 ```
 
-lowers, with no diagnostic, to:
+`forx` is the worst of them: a **valid program with a different meaning**, because
+it binds `x` where the source says `forx`. Every word keyword now carries a
+boundary (`parser::KW_*`), which is one rule per keyword because the generator has
+no parameters — and UPPERCASE, which is not style: a lowercase rule is syntactic,
+so the implicit whitespace would be inserted between the word and its boundary and
+`as i32` would be refused for having a space in it.
 
-```rust
-let c = true as sert;
-c;
-unsafe;
-{ println!("x") }
-```
+**And a statement that is one undeclared name was accepted**, so what was left of
+the class reached `rustc` about a file nobody wrote. It is `NK1117` now, in this
+language's words. Four things count as declaring a name — a local or parameter in
+scope, a function either ledger describes, a type declared here, and a module of
+this program — and anything the compiler cannot see is a name it does not refuse,
+because refusing a correct program is the one thing it may never do (Part III,
+C.4).
 
-`assert` is swallowed into an `as` cast that takes `sert` for a type name;
-`unsafe` becomes a statement of its own and its block an unrelated one. And a
-number with a separator:
+One thing that had to be fixed to make the refusal safe: a `fn { … }` declares no
+parameter list, so the checker walked its body with `a` in scope nowhere. It now
+binds the automatic names from `emit::implicit_params` — the same answer the
+emitter writes the parameter list from, so the two cannot disagree.
 
-```nika
-let n = 1_000
-```
+### 1.3. A type error exits through `anyhow`, and carries a backtrace — **fixed**
 
-becomes
+`Error: 1 type error` used to follow a clean diagnostic, and with
+`RUST_BACKTRACE=1` in the environment — a normal thing for a developer to have set
+— ten frames of `nikaia::project::check` and below came with it.
+`diagnostics::Refused` marks a statement about the *program*; `main` prints one
+without the `Error:` envelope and without the trace, and the tally stays. A parse
+error travels the same path, which needed one more fix: `modules.rs` formatted the
+error into a string to prefix the file name, losing the type that says it is a
+refusal.
 
-```rust
-let n = 1;
-_000;
-```
+**A failure of this compiler keeps its trace**, deliberately, and a test asserts
+that half too — otherwise the change would be indistinguishable from one that
+swallowed everything.
 
-Part I 2.2 is deliberate about the last one — *"`1_000`, `0xFF` and `1i64` are
-each not a number but a number beside a name"* — so the **reading** is as
-specified. What is not specified is that the program is then accepted: a bare
-name that nothing declares should be refused here, by this compiler. Today it
-reaches `rustc`, which rejects it about a file nobody wrote (Part III C.1).
+### 1.4. A Rust warning about the generated file reaches the user — **fixed**
 
-*What it needs:* an expression statement that is a name nothing declares is a
-refusal, with a `NK1xxx` code. That single rule covers all three shapes above and
-every other bare word.
+Both halves, because either alone leaves the hole. The emitted `use super::*`
+carries `#[allow(unused_imports)]`, so the warning is not produced; and a
+**warning** that maps to no Nikaia line is not reported at all, so the next
+machine-written construct cannot do the same thing again. The import cannot simply
+be left out where it looks unused — it also brings in the sibling modules, which
+is how `utils::helper()` resolves.
 
-### 1.3. A type error exits through `anyhow`, and carries a backtrace where one is asked for
-
-After a clean diagnostic, the user gets one more line:
-
-```
-error[NK1103]: this is `Conn`, and the `let` says `pool::Conn`
-     help: make it a `pool::Conn`, or change what is declared to `Conn`
-Error: 1 type error
-```
-
-`Error: 1 type error` is the compiler's error type reaching the terminal after the
-diagnostics have already said it, and with `RUST_BACKTRACE=1` in the environment —
-which is a normal thing for a developer to have set — it brings a stack trace of
-this compiler's own functions (`nikaia::project::check`, `nikaia::main`, and eight
-frames below). Measured: without the variable it is the one redundant line, with
-it the trace as well.
-
-*What it needs:* a refused check exits with a status and no second message.
-Nothing about the compiler's internals belongs on that path.
-
-### 1.4. A Rust warning about the generated file reaches the user
-
-Every multi-file build prints:
-
-```
-warning: …/target/nikaia/gen:7: unused import: `super::*` (no Nikaia source maps to this)
-     = remove the whole `use` item
-```
-
-Two defects in one line. The `use super::*` is **the emitter's own**, not the
-user's, so the warning is about a decision the user did not make — and the
-translation says so itself, *"no Nikaia source maps to this"*, and passes it on
-anyway. Part III C.1 forbids exactly this.
-
-*What it needs:* a diagnostic that maps to no Nikaia line is dropped rather than
-printed with a note saying it maps to none — and separately, the emitter should
-not write an import it does not need.
+An **error** with nowhere to put it is still reported. A warning suppressed costs
+nothing; an error suppressed leaves a build that failed with no reason given
+anywhere. Such an error is a defect in this compiler, and it should be visible.
 
 ### 1.5. A struct holding a view, across files — suspicion, no reproduction
 
@@ -247,6 +225,18 @@ reads when they want the 9 ns back."* A person with a real program builds it wit
 *What it needs:* the three flags on `build`, reporting over the project's files
 rather than over one. Nothing about the analyses changes; they already run in that
 path.
+
+### 1.8. The project tests' cache accumulates and fills the disk
+
+`target/nikaia-project-tests/` reached **13 GB** in one session, and
+`~/.cache/nikaia` a further 3.7 GB, with the filesystem full and a build failing
+on "no space left on device". Both are caches a test run creates and nothing
+collects — the same class as the scratch roots `tests/common/mod.rs` now collects
+by process liveness, and the fix is likely the same shape.
+
+*What it needs:* a collection rule for the project tests' cache root. Deleting
+both by hand freed 17 GB and nothing broke, so nothing in a later run depends on
+what an earlier one left.
 
 ---
 

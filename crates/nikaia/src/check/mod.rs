@@ -614,6 +614,69 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A statement that is one name, and nothing declares the name (`NK1117`).
+    ///
+    /// **This exists because a misparse is otherwise a different program.** The
+    /// grammar is scannerless, so a word this language does not know is read as a
+    /// name and a name in statement position is a legal statement. Measured,
+    /// before the keyword boundaries went in (`parser::KW_*`) and after:
+    ///
+    /// ```text
+    /// assert c                 ->  assert;  c;
+    /// unsafe { println("x") }  ->  unsafe;  { println!("x") }
+    /// let n = 1_000            ->  let n = 1;  _000;
+    /// ```
+    ///
+    /// Every one of those reached `rustc`, which refused it about a file nobody
+    /// wrote - the Part III C.1 class. The boundary rules stop the *worse* half,
+    /// where the word was swallowed into a neighbour; this stops the rest, here,
+    /// in this language's words.
+    ///
+    /// **Only a statement that is exactly one name**, which is the narrowest rule
+    /// that covers the class. A name inside a larger expression is refused by the
+    /// type checker if it is refused at all, and a name that is the *value* of a
+    /// block - `fn f() -> i64 { x }` - is this same shape, where an undeclared `x`
+    /// is equally wrong.
+    ///
+    /// **Four things count as declaring it**, and the list is the fail-safe
+    /// direction (ADR-010 D1 applied to a refusal rather than to a permission): a
+    /// local or parameter in scope, a function either ledger describes, a type
+    /// declared here, and a module of this program. Anything this cannot see is a
+    /// name it must not refuse, because refusing a correct program is the one
+    /// thing this checker may never do (Part III, C.4).
+    fn nothing_declares_it(&mut self, expr: &Expr, span: &Span) {
+        let Expr::Variable(name) = expr else {
+            return;
+        };
+        let name = self.parsed.text(*name).to_string();
+        let declared = self.lookup(&name).is_some()
+            || self.resolve(&name).is_some()
+            || self.structs.contains_key(&name)
+            || self.enums.contains_key(&name)
+            || self.own.types.contains_key(&name)
+            || self.modules.contains(&name);
+        if declared {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1117",
+            message: format!("nothing declares `{name}`, and this statement is just that name"),
+            notes: vec![
+                "this language has no word it does not know: one that stands on its own is \
+                 read as a name, and a name has to be declared somewhere (Part I, 9.1)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "if `{name}` is meant to be a value, declare it with `let`; if it is meant to \
+                 be a keyword, this language has no such keyword - and a number is written in \
+                 digits with no separators, so `1_000` is `1` beside the name `_000` \
+                 (Part I, 2.2)"
+            )),
+        });
+    }
+
     /// Part I 2.2: a literal that does not fit the type it is given is a compile
     /// error rather than something the program finds out about at run time.
     ///
@@ -778,7 +841,10 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
 
-            Stmt::Expr(expr) => self.expr(expr, span),
+            Stmt::Expr(expr) => {
+                self.nothing_declares_it(expr, span);
+                self.expr(expr, span)
+            }
         }
     }
 
@@ -1018,10 +1084,24 @@ impl<'a> Checker<'a> {
                 if *implicit {
                     self.warn_automatic_names(body, span);
                 }
-                let frame = params
-                    .iter()
-                    .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown))
-                    .collect();
+                // **The automatic names are bound here too**, and not only where
+                // a signature says how many there are (`lambda` below). A
+                // `fn { … }` declares no parameters, so without this its body
+                // walks with `a` and `b` in scope nowhere - which was harmless
+                // while nothing asked whether a name is declared, and is a false
+                // refusal the moment something does (`nothing_declares_it`).
+                // `emit::implicit_params` is the same answer the emitter writes
+                // the parameter list from, so the two cannot disagree.
+                let frame: Vec<(String, Ty)> = match *implicit {
+                    true => crate::emit::implicit_params(self.parsed, body)
+                        .into_iter()
+                        .map(|name| (name, Ty::Unknown))
+                        .collect(),
+                    false => params
+                        .iter()
+                        .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown))
+                        .collect(),
+                };
                 self.scope.push(frame);
                 self.block(body);
                 self.scope.pop();

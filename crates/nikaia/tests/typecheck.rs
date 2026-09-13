@@ -1113,3 +1113,79 @@ fn a_literal_that_fits_is_not_mentioned() {
         );
     }
 }
+
+// --- a word this language does not know (`NK1117`) ---------------------------
+
+/// **A statement that is one undeclared name is refused here**, not by `rustc`.
+///
+/// The grammar is scannerless, so a word this language has no rule for is read as
+/// a name - and a name in statement position is a legal statement. Measured, each
+/// of these lowered without a word and was then refused by `rustc` about a file
+/// nobody wrote (Part III, C.1):
+///
+/// * `assert c` - a keyword this language does not have;
+/// * `unsafe { … }` - the same, with a block after it;
+/// * `let n = 1_000` - Part I 2.2 is deliberate that this is `1` beside the name
+///   `_000`, and the reading is right; being *accepted* was not.
+#[test]
+fn a_word_this_language_does_not_know_is_refused() {
+    for (source, name) in [
+        ("fn main() {\n    let c = true\n    assert c\n}", "assert"),
+        ("fn main() {\n    unsafe { println(\"x\") }\n}", "unsafe"),
+        (
+            "fn main() {\n    let n = 1_000\n    println(f\"{n}\")\n}",
+            "_000",
+        ),
+    ] {
+        let (code, message) = one(source);
+        assert_eq!(code, "NK1117", "{source}");
+        assert!(message.contains(name), "{message}");
+    }
+}
+
+/// And the names that **are** declared are not refused - the half that decides
+/// whether the rule above is usable.
+///
+/// A block's value is the shape most at risk: `fn f() -> i64 { x }` is a
+/// statement that is one name, and it is how a function hands something back.
+#[test]
+fn a_name_something_declares_is_not_refused() {
+    for source in [
+        // a local, as a block's value
+        "fn f() -> i64 {\n    let x = 7\n    x\n}",
+        // a parameter
+        "fn f(n: i64) -> i64 {\n    n\n}",
+        // a function of this program, named rather than called
+        "fn helper() -> i64 {\n    return 1\n}\n\nfn f() {\n    helper\n}",
+        // a struct declared here
+        "struct Conn { id: i64 }\n\nfn f() {\n    Conn\n}",
+        // `error`, which a `catch` block binds
+        "fn f(p: &str) {\n    fs::read_to_string(p) catch { println(f\"{error}\") }\n}",
+    ] {
+        assert!(
+            findings(source).is_empty(),
+            "{source}\n{:#?}",
+            findings(source)
+        );
+    }
+}
+
+/// An automatic lambda argument is declared too, and this is what proves it.
+///
+/// `fn { a }` declares no parameter list, so the checker used to walk that body
+/// with `a` in scope nowhere - harmless while nothing asked whether a name is
+/// declared, and a false refusal the moment `NK1117` does. The answer comes from
+/// `emit::implicit_params`, the same function the emitter writes the parameter
+/// list from, so the two cannot disagree about it.
+///
+/// The `NK1114` warning about reaching for an automatic name is expected here and
+/// is not an error: the form is carried as experimental (ADR-041 D2).
+#[test]
+fn an_automatic_lambda_argument_is_declared() {
+    let found = findings("fn f(s: &str) {\n    s.map(fn { a })\n}");
+    assert!(
+        found.iter().all(|f| f.severity == Severity::Warning),
+        "only the `NK1114` warning, and no refusal: {found:#?}"
+    );
+    assert!(found.iter().all(|f| f.code == "NK1114"), "{found:#?}");
+}

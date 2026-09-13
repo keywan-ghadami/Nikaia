@@ -22,7 +22,10 @@ fn refuse(dir: &Path, source: &str) -> Output {
     std::fs::write(&input, source).expect("the source");
     Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .args(["--input", input.to_str().expect("utf-8 path")])
-        .args(["--output", dir.join("main.rs").to_str().expect("utf-8 path")])
+        .args([
+            "--output",
+            dir.join("main.rs").to_str().expect("utf-8 path"),
+        ])
         .args(["--no-cache"])
         .env("NIKAIA_CACHE_DIR", dir.join("cache"))
         .env("RUST_BACKTRACE", "1")
@@ -39,10 +42,7 @@ fn says_nothing_of_the_compiler(said: &str) {
         "__libc_start_main",
         "core::panicking",
     ] {
-        assert!(
-            !said.contains(leak),
-            "`{leak}` reached the user:\n{said}"
-        );
+        assert!(!said.contains(leak), "`{leak}` reached the user:\n{said}");
     }
 }
 

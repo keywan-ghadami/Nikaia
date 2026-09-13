@@ -38,11 +38,11 @@ use crate::emit::SourceMap;
 ///    1: nikaia::project::check
 /// ```
 ///
-/// - ten frames of this compiler's own functions, where `RUST_BACKTRACE` is set,
-/// which is a normal thing for a developer to have set. Part III C.1's rule is
-/// about messages from the backend, and this is the same promise from the other
-/// side: nothing about how this compiler is built reaches somebody who only wrote
-/// a program.
+/// Ten frames of this compiler's own functions, reached whenever
+/// `RUST_BACKTRACE` is set, which is a normal thing for a developer to have set.
+/// Part III C.1's rule is about messages from the backend, and this is the same
+/// promise from the other side: nothing about how this compiler is built reaches
+/// somebody who only wrote a program.
 ///
 /// **An error that is not one of these keeps the backtrace**, deliberately. A
 /// compiler that cannot read a file or cannot run `rustc` has a failure of its

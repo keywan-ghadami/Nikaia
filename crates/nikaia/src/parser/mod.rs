@@ -226,7 +226,7 @@ grammar! {
         // first and the `for` is what tells the two apart, so the grammar reads
         // a name and only then finds out which form it was in.
         rule impl_item -> Item =
-            "impl" first:type_ref rest:impl_for_target?
+            KW_IMPL first:type_ref rest:impl_for_target?
             "{" methods:impl_method* "}"
             -> {
                 let (trait_name, target) = match rest {
@@ -236,12 +236,12 @@ grammar! {
                 Item::Impl { trait_name, target, methods }
             }
 
-        rule impl_for_target -> Type = "for" t:type_ref -> { t }
+        rule impl_for_target -> Type = KW_FOR t:type_ref -> { t }
 
         rule impl_method -> Spanned<Item> @= f:fn_item -> { Spanned::new(f, _span) }
 
-        rule kw_sync -> () = "sync" -> { () }
-        rule kw_pub -> () = "pub" -> { () }
+        rule kw_sync -> () = KW_SYNC -> { () }
+        rule kw_pub -> () = KW_PUB -> { () }
 
         // `sync` and `throws` are accepted on either side of the return type,
         // and both sides are used: Part II writes `fn add(…) sync`, Part III
@@ -251,7 +251,7 @@ grammar! {
         // error-handling chapter uses did not parse.
         rule fn_item -> Item =
             vis:kw_pub?
-            "fn"
+            KW_FN
             name:NAME?
             generics:generic_list?
             params:fn_params
@@ -287,7 +287,7 @@ grammar! {
         // may stand on either side of the return type - and `sync` is an
         // ordinary identifier to `type_ref`.
         rule kw_throws -> () =
-            "throws" not(kw_sync) type_refs fail(
+            KW_THROWS not(kw_sync) type_refs fail(
                 "`throws` names no error type (ADR-023 D1): write `throws` on its own. \
                  *Which* errors can leave a function follows from its body and from \
                  everything the body reaches, so it is derived rather than written: \
@@ -297,7 +297,7 @@ grammar! {
                  from a resource's cleanup would make you name a type you never \
                  mentioned (ADR-006 D4)."
             ) -> { () }
-          | "throws" -> { () }
+          | KW_THROWS -> { () }
 
         // Kap 4.2: `&mut self`, `&self`, `self` - the subject, when there is one.
         rule fn_params -> FnParams =
@@ -372,15 +372,15 @@ grammar! {
           | i:int_lit -> { i }
 
         rule receiver -> Receiver =
-            "&" "mut" "self" -> {
+            "&" KW_MUT KW_SELF -> {
                 Receiver { is_ref: true, is_mut: true }
             }
-          | "&" "self" -> { Receiver { is_ref: true, is_mut: false } }
-          | "self" -> { Receiver { is_ref: false, is_mut: false } }
+          | "&" KW_SELF -> { Receiver { is_ref: true, is_mut: false } }
+          | KW_SELF -> { Receiver { is_ref: false, is_mut: false } }
 
         // Kap 9.2: use std::fs
         rule use_item -> Item =
-            "use" head:NAME tail:path_segment* -> {
+            KW_USE head:NAME tail:path_segment* -> {
                 let mut path = vec![head];
                 path.extend(tail);
                 Item::Import { path }
@@ -395,7 +395,7 @@ grammar! {
         rule struct_item -> Item =
             borrowed:at_borrowed?
             vis:kw_pub?
-            "struct"
+            KW_STRUCT
             name:NAME
             generics:generic_list?
             "{"
@@ -417,7 +417,7 @@ grammar! {
         // name, a name with positional types, a name with named fields.
         rule enum_item -> Item =
             vis:kw_pub?
-            "enum" name:NAME
+            KW_ENUM name:NAME
             "{" variants:enum_variants "}"
             -> {
                 Item::Enum { name, variants, is_public: vis.is_some() }
@@ -563,14 +563,14 @@ grammar! {
         // --- Part II, Kapitel 10: Grammatiken ---
 
         rule grammar_item -> Item =
-            "grammar" name:NAME
+            KW_GRAMMAR name:NAME
             "{" rules:grammar_rule* "}"
             -> { Item::Grammar(GrammarDef { name, rules }) }
 
         rule grammar_rule -> GrammarRule @=
             frame:frame_attr?
             vis:kw_pub?
-            "rule"
+            KW_RULE
             name:NAME
             ret:return_type_arrow?
             label:rule_label?
@@ -616,10 +616,10 @@ grammar! {
         rule frame_arg_tail -> FrameAttr = "," a:frame_arg -> { a }
 
         rule frame_arg -> FrameAttr =
-            "boundary" ":" b:STRING -> {
+            KW_BOUNDARY ":" b:STRING -> {
                 FrameAttr { boundary: Some(b), unchecked: false }
             }
-          | "unchecked" -> {
+          | KW_UNCHECKED -> {
                 FrameAttr { boundary: None, unchecked: true }
             }
 
@@ -759,7 +759,7 @@ grammar! {
         // for it is how the user says a different chunk count is the same
         // answer to them.
         rule g_fold -> Spanned<Pattern> @=
-            "par_fold" "("
+            KW_PAR_FOLD "("
             r:NAME ","
             init:expr ","
             step:expr ","
@@ -773,7 +773,7 @@ grammar! {
                     merge: Some(merge),
                 })), _span)
             }
-          | "fold" "("
+          | KW_FOLD "("
             r:NAME ","
             init:expr ","
             step:expr ")"
@@ -805,7 +805,7 @@ grammar! {
           | e:expr_stmt -> { Spanned::new(e, _span) }
 
         rule return_stmt -> Stmt =
-            "return" value:expr? ";"? -> {
+            KW_RETURN value:expr? ";"? -> {
                 Stmt::Return(value)
             }
 
@@ -813,14 +813,14 @@ grammar! {
         // program could propagate what `std` produced and never produce one of
         // its own (ADR-023 D2).
         rule throw_stmt -> Stmt =
-            "throw" value:expr ";"? -> {
+            KW_THROW value:expr ";"? -> {
                 Stmt::Expr(Expr::Throw(Box::new(value)))
             }
 
-        rule kw_mut -> () = "mut" -> { () }
+        rule kw_mut -> () = KW_MUT -> { () }
 
         rule let_stmt -> Stmt =
-            "let"
+            KW_LET
             mutable:kw_mut?
             name:NAME
             ty:type_annotation?
@@ -847,13 +847,13 @@ grammar! {
         // exactly what happened before this rule existed: three statements, no
         // error, and `rustc` complaining about a file nobody wrote.
         rule while_stmt -> Stmt =
-            "while" cond:head_expr body:block ";"?
+            KW_WHILE cond:head_expr body:block ";"?
             -> {
                 Stmt::While { cond, body }
             }
 
         rule for_stmt -> Stmt =
-            "for" bindings:for_bindings "in"
+            KW_FOR bindings:for_bindings KW_IN
             iter:head_expr body:block ";"?
             -> {
                 Stmt::For { bindings, iter, body }
@@ -901,7 +901,7 @@ grammar! {
             }
 
         rule catch_tail -> Block =
-            "catch" b:block -> { b }
+            KW_CATCH b:block -> { b }
 
         // Kap 3.5: `value ?? fallback`.
         rule coalesce_expr -> Expr =
@@ -920,7 +920,7 @@ grammar! {
 
         // Kap 5.2/5.3: a lambda, with its arguments named or implicit.
         rule closure_expr -> Expr =
-            "fn" "(" params:closure_params? ")" body:block
+            KW_FN "(" params:closure_params? ")" body:block
             -> {
                 Expr::Closure {
                     params: params.unwrap_or_default(),
@@ -928,7 +928,7 @@ grammar! {
                     body,
                 }
             }
-          | "fn" body:block -> {
+          | KW_FN body:block -> {
                 Expr::Closure { params: Vec::new(), implicit: true, body }
             }
 
@@ -1011,7 +1011,7 @@ grammar! {
                 })
             }
 
-        rule cast_tail -> Type = "as" ty:type_ref -> { ty }
+        rule cast_tail -> Type = KW_AS ty:type_ref -> { ty }
 
         rule mul_op -> BinaryOp =
             "*" -> { BinaryOp::Mul }
@@ -1090,21 +1090,21 @@ grammar! {
         // last and still wins at a `fn:`, because neither arm above it can
         // match a colon.
         rule trailing_lambda -> Expr =
-            "fn" "(" params:closure_params? ")" body:block -> {
+            KW_FN "(" params:closure_params? ")" body:block -> {
                 Expr::Closure {
                     params: params.unwrap_or_default(),
                     implicit: false,
                     body,
                 }
             }
-          | "fn" body:block -> {
+          | KW_FN body:block -> {
                 Expr::Closure { params: Vec::new(), implicit: true, body }
             }
             // ADR-022: `fn: expr` was removed, and a form that was in the
             // specification deserves a sentence rather than a parse error at
             // the colon. `fail` beats the alternatives at this position, so
             // this is what a reader gets.
-          | "fn" ":" fail("the `fn: …` form was removed (ADR-022): write `fn { … }`. \
+          | KW_FN ":" fail("the `fn: …` form was removed (ADR-022): write `fn { … }`. \
                            Its body ran to the end of the expression, so a `.method()` \
                            after it landed *inside* the lambda - silently") -> {
                 Expr::Closure {
@@ -1284,7 +1284,7 @@ grammar! {
 
         // Part I, 8.2: spawn takes a block lambda - `spawn({ ... })`.
         rule spawn_expr -> Expr =
-            "spawn" "(" body:expr ")" -> {
+            KW_SPAWN "(" body:expr ")" -> {
                 Expr::Spawn { body: Box::new(body), is_move: false }
             }
 
@@ -1295,7 +1295,7 @@ grammar! {
         // before the marker, taken verbatim; what it *means* is the target
         // grammar's business and is decided when it is lowered.
         rule dsl_block_expr -> Expr =
-            "dsl" name:NAME "{" body:until("} eod") "} eod" -> {
+            KW_DSL name:NAME "{" body:until("} eod") "} eod" -> {
                 Expr::Dsl { target: name, context: None, content: body.to_string() }
             }
 
@@ -1304,7 +1304,7 @@ grammar! {
             // The binding is `source`, not `input`: the generated parser's own
             // closure takes a parameter called `input`, and a binding of that
             // name shadows it for the rest of the action.
-            "dsl" name:NAME "from" source:head_expr -> {
+            KW_DSL name:NAME KW_FROM source:head_expr -> {
                 Expr::DslFrom { grammar: name, input: Box::new(source) }
             }
 
@@ -1312,7 +1312,7 @@ grammar! {
         // one: `match value {` would otherwise read `value { … }` as a struct
         // literal and take the arms for fields.
         rule match_expr -> Expr =
-            "match" value:head_expr "{" arms:match_arm+ "}" -> {
+            KW_MATCH value:head_expr "{" arms:match_arm+ "}" -> {
                 Expr::Match { value: Box::new(value), arms }
             }
 
@@ -1336,6 +1336,69 @@ grammar! {
                 MatchPattern::Named { path, bindings }
             }
           | path:pattern_path -> { MatchPattern::Path(path) }
+
+        // --- Keywords ---
+        //
+        // **A word keyword must not match the beginning of a longer word.** This
+        // grammar is scannerless (ADR-001 D2): there is no lexer deciding where a
+        // word ends, so a bare `"as"` matched the first two characters of
+        // `assert` and left `sert` behind as a type name. Measured, and all of it
+        // silent:
+        //
+        //     true asfoo     ->  `true as foo`
+        //     returnx        ->  `return x`
+        //     assert c       ->  `let c = true as sert; c;`
+        //     forx in 0..3   ->  `for x in 0..3`
+        //
+        // The last one is the shape that matters most: it is a **valid program
+        // with a different meaning**, because it binds `x` where the source says
+        // `forx`. The others end as `rustc` errors about a name nobody wrote,
+        // which is the Part III C.1 class. Either way the source said one thing
+        // and the compiler read another.
+        //
+        // `not(ident)` is the boundary, and it is the whole fix: it consumes
+        // nothing and demands that what follows the word cannot continue it. One
+        // rule per keyword because the generator has no parameters - and
+        // UPPERCASE, which is not a style choice: a lowercase rule is syntactic,
+        // so the generator would insert the implicit whitespace *between* the
+        // word and the boundary, and `as i32` would then be refused for having a
+        // space in it.
+        //
+        // A digit and an underscore continue a word too (`as2`, `as_of`), and the
+        // backend's `ident` accepts both, so they are covered by the same line.
+        rule KW_AS = "as" not(ident)
+        rule KW_BOUNDARY = "boundary" not(ident)
+        rule KW_CATCH = "catch" not(ident)
+        rule KW_DSL = "dsl" not(ident)
+        rule KW_ELSE = "else" not(ident)
+        rule KW_ENUM = "enum" not(ident)
+        rule KW_FALSE = "false" not(ident)
+        rule KW_FN = "fn" not(ident)
+        rule KW_FOLD = "fold" not(ident)
+        rule KW_FOR = "for" not(ident)
+        rule KW_FROM = "from" not(ident)
+        rule KW_GRAMMAR = "grammar" not(ident)
+        rule KW_IF = "if" not(ident)
+        rule KW_IMPL = "impl" not(ident)
+        rule KW_IN = "in" not(ident)
+        rule KW_LET = "let" not(ident)
+        rule KW_MATCH = "match" not(ident)
+        rule KW_MUT = "mut" not(ident)
+        rule KW_PAR_FOLD = "par_fold" not(ident)
+        rule KW_PUB = "pub" not(ident)
+        rule KW_RETURN = "return" not(ident)
+        rule KW_RULE = "rule" not(ident)
+        rule KW_SELF = "self" not(ident)
+        rule KW_SEQ = "seq" not(ident)
+        rule KW_SPAWN = "spawn" not(ident)
+        rule KW_STRUCT = "struct" not(ident)
+        rule KW_SYNC = "sync" not(ident)
+        rule KW_THROW = "throw" not(ident)
+        rule KW_THROWS = "throws" not(ident)
+        rule KW_TRUE = "true" not(ident)
+        rule KW_UNCHECKED = "unchecked" not(ident)
+        rule KW_USE = "use" not(ident)
+        rule KW_WHILE = "while" not(ident)
 
         // The compiler's identifier.
         //
@@ -1372,7 +1435,7 @@ grammar! {
             }
 
         rule if_expr -> Expr =
-            "if" cond:head_expr then_branch:block otherwise:else_branch?
+            KW_IF cond:head_expr then_branch:block otherwise:else_branch?
             -> {
                 Expr::If {
                     cond: Box::new(cond),
@@ -1382,7 +1445,7 @@ grammar! {
             }
 
         rule else_branch -> Block =
-            "else" b:block -> { b }
+            KW_ELSE b:block -> { b }
 
         // Blocks are expressions (Part I, 3.1).
         rule block_expr -> Expr =
@@ -1398,7 +1461,7 @@ grammar! {
         // later; changing it is this rule, the AST variant's doc, and the two
         // spec sections that name it.
         rule seq_expr -> Expr =
-            "seq" b:block -> { Expr::Seq(b) }
+            KW_SEQ b:block -> { Expr::Seq(b) }
 
         rule struct_lit -> Expr =
             name:NAME "{" fields:field_inits "}" -> {
@@ -1465,8 +1528,8 @@ grammar! {
             }
 
         rule bool_lit -> Expr =
-            "true" -> { Expr::LitBool(true) }
-          | "false" -> { Expr::LitBool(false) }
+            KW_TRUE -> { Expr::LitBool(true) }
+          | KW_FALSE -> { Expr::LitBool(false) }
 
         // Kap 2.5. `f` before the quote is what makes a string *code* - without
         // it the braces are braces (ADR-035). UPPERCASE, so the `f` and the

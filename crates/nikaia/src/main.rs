@@ -209,7 +209,10 @@ fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &st
     let diagnostics = diagnostics::translate(&rustc_json, &lowered.map, source);
     let errors = diagnostics.iter().filter(|d| d.level == "error").count();
 
-    for diagnostic in diagnostics.iter().filter(|d| diagnostics::is_about_the_program(d)) {
+    for diagnostic in diagnostics
+        .iter()
+        .filter(|d| diagnostics::is_about_the_program(d))
+    {
         print!(
             "{}",
             diagnostics::render(diagnostic, &path, source, &generated)

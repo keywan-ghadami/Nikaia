@@ -62,8 +62,7 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
     // `with_context` and not `anyhow!("{e}")`: formatting the error into a string
     // loses its type, and the type is what says this is a refusal of the program
     // rather than a failure of this compiler (`diagnostics::Refused`).
-    let parsed =
-        parser::parse_to_ast(&source).with_context(|| format!("{}", entry.display()))?;
+    let parsed = parser::parse_to_ast(&source).with_context(|| format!("{}", entry.display()))?;
 
     let mut pending: Vec<String> = imports_of(&parsed, &entry)?;
     let mut units = vec![Unit {

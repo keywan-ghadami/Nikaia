@@ -340,7 +340,9 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
     let program = Program::read(&entry).expect("the program reads");
     let lowered = program.emit(Build::default()).expect("it lowers");
     assert!(
-        lowered.rust.contains("#[allow(unused_imports)]\nuse super::*;"),
+        lowered
+            .rust
+            .contains("#[allow(unused_imports)]\nuse super::*;"),
         "the import is ours, so it carries its own allow:\n{}",
         lowered.rust
     );
@@ -349,7 +351,10 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
     // remove it.
     let ran = Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .args(["--input", entry.to_str().expect("utf-8 path")])
-        .args(["--output", dir.join("program.rs").to_str().expect("utf-8 path")])
+        .args([
+            "--output",
+            dir.join("program.rs").to_str().expect("utf-8 path"),
+        ])
         .args(["--no-cache"])
         .env("NIKAIA_CACHE_DIR", dir.join("cache"))
         .output()

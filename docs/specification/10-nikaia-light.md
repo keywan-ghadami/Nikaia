@@ -143,7 +143,11 @@ Nikaia provides basic types to represent simple values.
 
 **A number is written in digits, and the exponent above is the only other thing
 in one.** There are no digit separators, no radix prefixes and no type suffixes,
-so `1_000`, `0xFF` and `1i64` are each not a number but a number beside a name.
+so `1_000`, `0xFF` and `1i64` are each not a number but a number beside a name —
+and the name beside it is refused, as `NK1117`, because nothing declares it
+(Part III, C.3). This language has **no word it does not know**: one that stands
+on its own is read as a name, so `assert c` and `unsafe { … }` are refused the
+same way rather than being read as constructs that are not there.
 
 **An integer that does not fit aborts, at every build.** An `i32` holds what an
 `i32` holds; an arithmetic result that does not is an inconsistent program state,
