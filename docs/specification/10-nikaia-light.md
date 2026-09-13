@@ -195,8 +195,11 @@ literals that cannot fit, so neither waits for the program to run
 > is not this compiler's to be right about
 > ([ADR-043](adr/adr-043.md) D6), and
 > `crates/nikaia/tests/overflow.rs` compiles an overflowing program and runs it.
-> **Not built:** the `wrapping_` and `saturating_` names, which have no entry in
-> `std` yet, and the narrowing check — `5000000000 as i32` prints `705032704`
+> The `wrapping_` and `saturating_` names are built for `i32` and `i64` — the two
+> integer types named above — and `crates/nikaia/tests/overflow.rs` runs them
+> beside the same arithmetic with `*`, which aborts. `saturating_shl` and
+> `saturating_shr` do not exist, here or in the language below. **Not built:** the
+> narrowing check — `5000000000 as i32` prints `705032704`
 > today. The out-of-range literal *is* refused where it is written, but by
 > `rustc` and in Rust's words, down to a Rust lint name and the advice to use
 > `u32`; a sum of constants is refused the same way. Catching it here is what

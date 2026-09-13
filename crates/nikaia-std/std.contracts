@@ -257,6 +257,195 @@ pub = true
 sync = true
 signature = "(f64) -> f64"
 
+# ## Arithmetic that does not abort (ADR-043 D2, D3)
+#
+# An overflow aborts, always (D1). These are how a program says it means
+# something else, and they are named rather than spelled with a sign: both are
+# rare, both are meant to be visible in the line that does them, and a sign for
+# one would have to be written with `&`, which is borrowing here.
+#
+# **For `i32` and `i64` and no other integer type.** Part I 2.2 names those two,
+# and ADR-028 D5's rule is that an entry exists because a program asked for it:
+# the compiler accepts `u32` and the rest, but the specification does not offer
+# them, so entries for them would be speculation about a surface that is not
+# promised. The day Part I 2.2 grows, these grow with it.
+#
+# **No `saturating_shl` or `saturating_shr`**, because Rust has neither - D3 says
+# "the same with `saturating_` wherever Rust has them" and this is where that
+# clause bites.
+#
+# `touches = []` on each: a pure computation reaches no resource and binds its
+# result, so two of them in a row may be reordered, which is what the header's
+# note above asks the claim to mean.
+
+[fn."i32::wrapping_add"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::wrapping_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::wrapping_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::wrapping_div"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::wrapping_neg"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> i32"
+
+[fn."i32::wrapping_abs"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> i32"
+
+[fn."i32::wrapping_shl"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, places: ?) -> i32"
+
+[fn."i32::wrapping_shr"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, places: ?) -> i32"
+
+[fn."i32::saturating_add"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::saturating_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::saturating_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::saturating_div"]
+pub = true
+sync = true
+touches = []
+signature = "(i32, i32) -> i32"
+
+[fn."i32::saturating_neg"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> i32"
+
+[fn."i32::saturating_abs"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> i32"
+
+[fn."i64::wrapping_add"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::wrapping_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::wrapping_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::wrapping_div"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::wrapping_neg"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> i64"
+
+[fn."i64::wrapping_abs"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> i64"
+
+[fn."i64::wrapping_shl"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, places: ?) -> i64"
+
+[fn."i64::wrapping_shr"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, places: ?) -> i64"
+
+[fn."i64::saturating_add"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::saturating_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::saturating_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::saturating_div"]
+pub = true
+sync = true
+touches = []
+signature = "(i64, i64) -> i64"
+
+[fn."i64::saturating_neg"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> i64"
+
+[fn."i64::saturating_abs"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> i64"
+
 [fn."HashMap::entry"]
 pub = true
 sync = true

@@ -211,3 +211,102 @@ fn a_built_program_that_overflows_aborts() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **Wrapping and saturating arithmetic, run.**
+///
+/// ADR-043 D2 and D3. These exist because D1 aborts: a hash function wraps on
+/// purpose and has to be able to say so. Run rather than read, because what is
+/// under test is a number and not a spelling - and the pair with the plain `*`
+/// below is the whole point, since the same arithmetic two ways must give two
+/// answers.
+#[test]
+fn wrapping_and_saturating_say_what_the_operator_would_refuse() {
+    let dir = common::scratch_dir("overflow-named");
+    let rust = lower(
+        &dir,
+        "fn hash(seed: i32, c: i32) -> i32 {\n    \
+             return seed.wrapping_mul(31).wrapping_add(c)\n\
+         }\n\
+         \n\
+         fn clamp(level: i32, rise: i32) -> i32 {\n    \
+             return level.saturating_add(rise)\n\
+         }\n\
+         \n\
+         fn shifted(n: i64) -> i64 {\n    \
+             return n.wrapping_shl(2)\n\
+         }\n\
+         \n\
+         fn main() {\n    \
+             println(f\"{hash(2147483647, 7)} {clamp(2147483647, 5)} {shifted(3)}\")\n\
+         }\n",
+    );
+
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-C",
+            "overflow-checks=on",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let ran = Command::new(&binary).output().expect("run the program");
+    assert!(
+        ran.status.success(),
+        "none of these may abort, and this one did:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "2147483624 2147483647 12",
+        "wrapped, saturated, shifted"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// And the same multiplication with `*` aborts, which is what makes the names
+/// above worth having rather than decoration.
+#[test]
+fn the_same_arithmetic_with_an_operator_aborts() {
+    let dir = common::scratch_dir("overflow-contrast");
+    lower(
+        &dir,
+        "fn hash(seed: i32, c: i32) -> i32 {\n    \
+             return seed * 31 + c\n\
+         }\n\
+         \n\
+         fn main() {\n    \
+             println(f\"{hash(2147483647, 7)}\")\n\
+         }\n",
+    );
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-C",
+            "overflow-checks=on",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(compiled.status.success());
+
+    let ran = Command::new(&binary).output().expect("run the program");
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        said.contains("attempt to multiply with overflow"),
+        "`*` must abort where `wrapping_mul` wraps:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
