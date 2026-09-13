@@ -168,9 +168,25 @@ the superseding record's own header:
 | [028](adr-028.md) D6 | [029](adr-029.md) | a higher-order method carrying no `sync` at all |
 | [029](adr-029.md) §4 | [031](adr-031.md) | a signature naming its receiver's type arguments |
 
+## Reserved numbers
+
+A number is **taken when it is claimed here**, not when the record lands. Four
+collisions in one afternoon are the reason this section exists: two branches
+each took what `ls` said was free, and the later one had to renumber its record,
+its citations and its index row every time the other merged first.
+
+| ADR | Claimed for | Where |
+| :--- | :--- | :--- |
+| 051 | A response body may be bytes the program never read, and `std` decides how they travel | [#45](https://github.com/keywan-ghadami/Nikaia/pull/45) |
+
+A row here is a claim and nothing else: it says the number is spoken for, not
+what the decision is. Delete the row in the same commit that adds the record.
+A claim whose branch is abandoned is deleted by whoever notices.
+
 ## Writing a new one
 
-Take the next free number. Head it with the block every record from
+Take the next free number — free means neither a file above nor a row under
+**Reserved numbers**, and the first thing to do with it is to claim it there. Head it with the block every record from
 [007](adr-007.md) on uses, in this order:
 
 ```markdown
