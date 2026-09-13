@@ -5,8 +5,8 @@ record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md)
 and [ADR-049](specification/adr/adr-049.md) — §5's is owed. §2 and §3 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
-them. What remains open is **§5** — a question work cannot settle. Each one says what is blocked, what the
-options are, **what I would do**, and what either direction costs — because a
+them. **Nothing here is open.** The shape below is kept for whatever arrives
+next: each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
 
