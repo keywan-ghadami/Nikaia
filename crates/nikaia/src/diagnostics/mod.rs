@@ -67,6 +67,30 @@ pub fn is_a_refusal(error: &anyhow::Error) -> bool {
     error.chain().any(|link| link.is::<Refused>())
 }
 
+/// A refusal, written the way `anyhow!` is written - and [`refuse!`], written the
+/// way `bail!` is.
+///
+/// Macros, and named to mirror that pair exactly, so that a call site changes by
+/// one word: `anyhow!(…)` becomes `refused!(…)` and `bail!(…)` becomes
+/// `refuse!(…)`, arguments and all. What makes that worth two macros is that
+/// **the choice between them is the whole decision** - is this a statement about
+/// the program, or a failure of this compiler? - and a reader should be able to
+/// see which was made at a glance, rather than by unpicking a `format!`.
+#[macro_export]
+macro_rules! refused {
+    ($($arg:tt)*) => {
+        $crate::diagnostics::refuse(format!($($arg)*))
+    };
+}
+
+/// `bail!`, for a statement about the program. See [`refused!`].
+#[macro_export]
+macro_rules! refuse {
+    ($($arg:tt)*) => {
+        return Err($crate::diagnostics::refuse(format!($($arg)*)))
+    };
+}
+
 /// Make a refusal, as an `anyhow::Error` so it travels the paths every other
 /// error already travels.
 pub fn refuse(message: impl Into<String>) -> anyhow::Error {

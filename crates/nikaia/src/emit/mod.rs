@@ -34,6 +34,7 @@ use crate::ast::{
 };
 use crate::contracts::order::Vehicle;
 use crate::parser::{parse_expression, Parsed};
+use crate::refused;
 
 /// The names a completion pair binds for the two answers, before either
 /// handler runs (ADR-033 D10).
@@ -92,7 +93,7 @@ impl Ordering {
         match name {
             "effects" => Ok(Ordering::Effects),
             "strict" => Ok(Ordering::Strict),
-            other => Err(anyhow!(
+            other => Err(refused!(
                 "unknown ordering `{other}` (expected effects or strict)"
             )),
         }
@@ -176,7 +177,7 @@ impl Target {
         match name {
             "x86_64-linux" => Ok(Target::X86_64Linux),
             "wasm32-unknown" => Ok(Target::Wasm32Unknown),
-            other => Err(anyhow!(
+            other => Err(refused!(
                 "unknown target `{other}` (expected x86_64-linux or wasm32-unknown)"
             )),
         }
@@ -232,11 +233,11 @@ impl UserParallelism {
             "yes" => Ok(UserParallelism::Yes),
             // A number is the plausible mistake, and it has a reason rather
             // than a typo behind it. Say which.
-            other if other.parse::<u32>().is_ok() => Err(anyhow!(
+            other if other.parse::<u32>().is_ok() => Err(refused!(
                 "`user-parallelism` is yes or no, not a count: how many threads \
                  serve a `yes` is the runtime's to decide, not the program's"
             )),
-            other => Err(anyhow!(
+            other => Err(refused!(
                 "unknown user-parallelism `{other}` (expected yes or no)"
             )),
         }
@@ -1326,7 +1327,7 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("// use {path}\n"));
                 Ok(())
             }
-            other => Err(anyhow!("cannot emit item yet: {other:?}")),
+            other => Err(refused!("cannot emit item yet: {other:?}")),
         }
     }
 
@@ -1485,7 +1486,7 @@ impl<'p> Emitter<'p> {
             // names them the only way D5 gives it to name them.
             Some(ty) if self.text(ty.name) == SELF_DSL => {
                 if dsl.is_none() {
-                    return Err(anyhow!(
+                    return Err(refused!(
                         "`Self::dsl` names the parameters of a `...args: Self::dsl`, \
                          and this function declares none"
                     ));
@@ -1936,7 +1937,7 @@ impl<'p> Emitter<'p> {
         // needs to know nothing about the foreign syntax (ADR-011 D2).
         if crate::dsl::is_deferred(name, content) {
             if let Some(context) = context {
-                return Err(anyhow!(
+                return Err(refused!(
                     "`dsl {name} {{ … }}` with deferred parameters takes no context, \
                      and `{}` was given one",
                     self.text(*context)
@@ -1947,7 +1948,7 @@ impl<'p> Emitter<'p> {
         }
 
         if name != "html" {
-            return Err(anyhow!(
+            return Err(refused!(
                 "`dsl {name} {{ … }}` has no hole, so nothing here says what it \
                  means. A statement with `:name` holes is a deferred-parameter DSL \
                  and lowers (ADR-007 D5); one without them is the target grammar's \
@@ -1956,7 +1957,7 @@ impl<'p> Emitter<'p> {
             ));
         }
         if let Some(context) = context {
-            return Err(anyhow!(
+            return Err(refused!(
                 "`dsl html` takes no context, and `{}` was given one",
                 self.text(*context)
             ));
@@ -1978,7 +1979,7 @@ impl<'p> Emitter<'p> {
             for (expr, at) in &illegal {
                 message.push_str(&format!("  {}\n", template::illegal_message(expr, *at)));
             }
-            return Err(anyhow!(message));
+            return Err(crate::diagnostics::refuse(message));
         }
 
         let pad = "    ".repeat(depth + 1);
@@ -2022,7 +2023,7 @@ impl<'p> Emitter<'p> {
                     // Parsed as Nikaia and emitted as Nikaia: a hole holds an
                     // expression of this language, not a foreign one.
                     let parsed = parse_expression(&self.parsed.interner, expr)
-                        .map_err(|e| anyhow!("in the template hole `{{{expr}}}`: {e}"))?;
+                        .map_err(|e| refused!("in the template hole `{{{expr}}}`: {e}"))?;
                     out.push(&format!(
                         "{pad}__html.push_str(&::nikaia_std::html::Render::render(&"
                     ));
@@ -3228,14 +3229,14 @@ impl<'p> Emitter<'p> {
             }
             Expr::Spawn { .. } => {
                 // Part II, 11.2. The runtime binding is the next roadmap line.
-                return Err(anyhow!(
+                return Err(refused!(
                     "`spawn` needs the runtime integration; not emitted yet"
                 ));
             }
             Expr::DslFrom { grammar, input } => {
                 self.dsl_from(out, *grammar, input, depth, flow, Propagate::Yes)?
             }
-            other => return Err(anyhow!("cannot emit expression yet: {other:?}")),
+            other => return Err(refused!("cannot emit expression yet: {other:?}")),
         }
         Ok(())
     }
@@ -3524,7 +3525,7 @@ impl<'p> Emitter<'p> {
 
         for hole in holes {
             let expr = parse_expression(&self.parsed.interner, &hole)
-                .map_err(|e| anyhow!("in the interpolated `{{{hole}}}`: {e}"))?;
+                .map_err(|e| refused!("in the interpolated `{{{hole}}}`: {e}"))?;
             out.push(", ");
             self.expr(out, &expr, depth, flow)?;
         }
@@ -3790,10 +3791,10 @@ impl<'p> Emitter<'p> {
         let def = self
             .grammars
             .get(&grammar)
-            .ok_or_else(|| anyhow!("no grammar named `{name}` in this file"))?;
+            .ok_or_else(|| refused!("no grammar named `{name}` in this file"))?;
 
         let rule = entry_rule(def)
-            .ok_or_else(|| anyhow!("grammar `{name}` has no `pub` rule to enter through"))?;
+            .ok_or_else(|| refused!("grammar `{name}` has no `pub` rule to enter through"))?;
         let rule_name = self.text(rule.name);
 
         let pad = "    ".repeat(depth + 1);
@@ -4327,7 +4328,7 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
             '\\' => {
                 format.push('\\');
                 let Some(escape) = chars.next() else {
-                    return Err(anyhow!("string ends in a `\\`: \"{literal}\""));
+                    return Err(refused!("string ends in a `\\`: \"{literal}\""));
                 };
                 format.push(escape);
                 if escape == 'u' && chars.peek() == Some(&'{') {
@@ -4418,7 +4419,7 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
                     }
                 }
                 if depth != 0 {
-                    return Err(anyhow!("unclosed `{{` in \"{literal}\""));
+                    return Err(refused!("unclosed `{{` in \"{literal}\""));
                 }
 
                 holes.push(hole);
@@ -4428,7 +4429,7 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
                 }
             }
             '}' => {
-                return Err(anyhow!(
+                return Err(refused!(
                     "stray `}}` in \"{literal}\"; write `}}}}` for a brace"
                 ))
             }

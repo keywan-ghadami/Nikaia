@@ -47,13 +47,13 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 
     let expr = CompilerGrammar::parse_expr()
         .parse_next(&mut stream)
-        .map_err(|e| anyhow::anyhow!("{}", e.render(input)))?;
+        .map_err(|e| crate::diagnostics::refuse(e.render(input)))?;
 
     if !stream.input.is_empty() {
-        return Err(anyhow::anyhow!(
+        return Err(crate::diagnostics::refuse(format!(
             "trailing input after expression: `{}`",
             &input[input.len() - stream.input.len()..]
-        ));
+        )));
     }
 
     Ok(expr)

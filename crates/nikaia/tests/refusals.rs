@@ -108,3 +108,94 @@ fn a_failure_of_the_compiler_keeps_its_trace() {
     assert!(said.contains("Error:"), "{said}");
     assert!(said.contains("Stack backtrace"), "{said}");
 }
+
+/// **Every statement about the program leaves without a backtrace, wherever in
+/// the compiler it is made** (`docs/open-work.md` §1.3).
+///
+/// The first fix covered the type checker and the parser, which is where a
+/// refusal usually comes from. It is not the only place: the emitter refuses a
+/// `dsl` naming a grammar that does not exist, the manifest reader refuses an
+/// unknown key, the project driver refuses a missing entry point, and the CLI
+/// refuses a backend nobody has. Every one of those used to arrive with
+/// `Error:` in front of it and ten frames of this compiler behind it.
+///
+/// The four here are four different modules on purpose - `emit`, `manifest`,
+/// `project` and `main` - because what is being tested is that the rule is not
+/// one path's habit.
+#[test]
+fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
+    let dir = common::scratch_dir("refusal-everywhere");
+
+    // The CLI: a backend that does not exist.
+    let source = dir.join("main.nika");
+    std::fs::write(&source, "fn main() { }\n").expect("a source");
+    let said = run(&[
+        "--input",
+        source.to_str().expect("utf-8 path"),
+        "--backend",
+        "bogus",
+    ]);
+    assert_refusal(&said, "unknown backend");
+
+    // The emitter: a `dsl` naming a grammar this compiler does not have.
+    std::fs::write(
+        &source,
+        // `} eod` is what closes a `dsl` block, and it matters here: without it
+        // this is not a `dsl` at all and the *checker* speaks first.
+        "fn main() {\n    let q = dsl postgres {\n        SELECT 1\n    } eod\n}\n",
+    )
+    .expect("a source");
+    let said = run(&[
+        "--input",
+        source.to_str().expect("utf-8 path"),
+        "--output",
+        dir.join("out.rs").to_str().expect("utf-8 path"),
+    ]);
+    assert_refusal(&said, "is not a grammar this compiler has");
+
+    // The project driver: no entry point.
+    let project = common::scratch_dir("refusal-no-entry");
+    std::fs::write(project.join("nikaia.toml"), "[package]\nname = \"x\"\n").expect("a manifest");
+    let said = run(&["build", "--project", project.to_str().expect("utf-8 path")]);
+    assert_refusal(&said, "is not there");
+
+    // The manifest reader: a key nobody has.
+    std::fs::create_dir_all(project.join("src")).expect("src");
+    std::fs::write(project.join("src/main.nika"), "fn main() { }\n").expect("an entry");
+    std::fs::write(
+        project.join("nikaia.toml"),
+        "[package]\nname = \"x\"\n\n[build]\nnonsense = true\n",
+    )
+    .expect("a manifest");
+    let said = run(&["build", "--project", project.to_str().expect("utf-8 path")]);
+    assert_refusal(&said, "unknown key `nonsense`");
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(project);
+}
+
+/// What every refusal above has to look like: the message, and nothing of this
+/// compiler's insides. `RUST_BACKTRACE` is **set**, which is the case the rule is
+/// about - a developer has it set, and it used to turn every refusal into ten
+/// frames of `nikaia::project`.
+fn assert_refusal(said: &str, about: &str) {
+    assert!(said.contains(about), "{said}");
+    assert!(!said.contains("Stack backtrace"), "{said}");
+    assert!(!said.contains("nikaia::"), "{said}");
+    assert!(!said.starts_with("Error:"), "{said}");
+}
+
+fn run(args: &[&str]) -> String {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(args)
+        .arg("--no-cache")
+        .env("RUST_BACKTRACE", "1")
+        .output()
+        .expect("the nikaia binary runs");
+    assert!(!out.status.success(), "this must be refused: {args:?}");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}

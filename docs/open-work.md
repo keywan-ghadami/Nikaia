@@ -79,7 +79,7 @@ parameter list, so the checker walked its body with `a` in scope nowhere. It now
 binds the automatic names from `emit::implicit_params` — the same answer the
 emitter writes the parameter list from, so the two cannot disagree.
 
-### 1.3. A type error exits through `anyhow`, and carries a backtrace — **fixed**
+### 1.3. A refusal exits through `anyhow`, and carries a backtrace — **fixed everywhere**
 
 `Error: 1 type error` used to follow a clean diagnostic, and with
 `RUST_BACKTRACE=1` in the environment — a normal thing for a developer to have set
@@ -93,6 +93,21 @@ refusal.
 **A failure of this compiler keeps its trace**, deliberately, and a test asserts
 that half too — otherwise the change would be indistinguishable from one that
 swallowed everything.
+
+**And then the same class turned up in four more modules**, because the first pass
+covered where a refusal *usually* comes from rather than where one can come from.
+The emitter refusing a `dsl` that names a grammar nobody has, the manifest reader
+refusing an unknown key, the project driver refusing a missing entry point, the CLI
+refusing a backend nobody has: every one arrived with `Error:` in front of it and
+ten frames behind it. Thirty-odd sites, and the choice at each is the whole
+decision — a statement about the program, or a failure of this compiler? Two
+macros now make that choice visible at a glance, named to mirror the pair they
+replace: `refused!` is `anyhow!` and `refuse!` is `bail!`.
+
+Three sites keep their trace on purpose: two emitter invariants ("not a function",
+"not a string literal"), the wrapper being invoked with no `rustc` named, and
+reading the sysroot's own files. Those are this compiler's problems, and the frames
+are then the most useful thing on the screen.
 
 ### 1.4. A Rust warning about the generated file reaches the user — **fixed**
 
@@ -165,6 +180,17 @@ One function serves both paths (`project::explain`): a report that said one thin
 under `--input` and another under `build` would be worse than one that only
 existed in one place. Finding this is also what turned up §1.6's two further
 holes.
+
+### 1.7b. A `dsl` block missing its `} eod` is reported as an undeclared name
+
+`dsl postgres { SELECT 1 }` without the closing `} eod` is not a `dsl` block at
+all, so what is left parses as statements and `NK1117` says *"nothing declares
+`postgres`"*. True, and not what the writer got wrong.
+
+*What it needs:* the refusal to notice that a `dsl` was opened. Small, and it wants
+a decision about how far a diagnostic may look for the cause rather than the
+symptom — the same question `NK1117`'s help answers by listing what a bare word
+could have been.
 
 ### 1.8. The compiled-`std` cache accumulates and fills the disk — **fixed**
 

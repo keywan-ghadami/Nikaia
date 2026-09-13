@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
 use orchestrator::project::{
     record_extra_dependencies, resolved_versions, write_if_changed, Cargo, CargoProject,
@@ -35,7 +35,7 @@ use crate::contracts::{sync, Ledger, STD};
 use crate::emit::{Build, Ordering, Target};
 use crate::manifest::{Dependency, Manifest};
 use crate::sysroot::{Codegen, Sysroot};
-use crate::{check, diagnostics, modules};
+use crate::{check, diagnostics, modules, refuse, refused};
 
 /// The extension a Nikaia source carries, and therefore the argument the
 /// wrapper is looking for in a `rustc` command line.
@@ -465,7 +465,7 @@ pub fn write_ledger(path: &Path, ledger: &str, locked: bool) -> Result<()> {
     })?;
 
     if committed != *ledger {
-        bail!(
+        refuse!(
             "--locked: the contracts changed and {} does not say so.\n\
              What the build inferred and the ledger does not have:\n{}\n\
              Run without --locked to record it, and read the diff.",
@@ -694,7 +694,7 @@ impl Project {
         // itself, which is what "build the project I am standing in" means.
         let layout = Layout::resolve(&start.join("nikaia.toml"));
         if !layout.in_project {
-            bail!(
+            refuse!(
                 "no `nikaia.toml` in {} or any directory above it.\n\
                  A project build needs a manifest (Part III 13.1); a single file \
                  is compiled with `nikaia --input {}`.",
@@ -713,7 +713,7 @@ impl Project {
         }
         let settings = Settings::resolve(&manifest, target, user_parallelism, ordering)?;
         if let Some(missing) = settings.build.target.unbuildable() {
-            bail!(
+            refuse!(
                 "cannot build for `{}` yet: {missing}",
                 settings.build.target.triple()
             );
@@ -760,7 +760,7 @@ impl Project {
     /// second.
     pub fn cargo_project(&self, rust: &str) -> Result<CargoProject> {
         let name = self.manifest.package_name().ok_or_else(|| {
-            anyhow!(
+            refused!(
                 "{}/nikaia.toml has no `[package] name`, and Cargo needs one to \
                  name the binary (Part III 13.3)",
                 self.root.display()
@@ -780,7 +780,7 @@ impl Project {
                 // space and a distribution format are all undecided, and
                 // guessing at one here would be inventing the answer in the
                 // place it is hardest to review.
-                Dependency::Nikaia(_) => bail!(
+                Dependency::Nikaia(_) => refuse!(
                     "`{dependency}` is a Nikaia package, and how a Nikaia package is \
                      resolved is not decided yet: no ADR names a registry, a version \
                      grammar or a distribution format for one.\n\
@@ -847,7 +847,7 @@ impl Project {
     ) -> Result<i32> {
         let entry = self.entry();
         if !entry.is_file() {
-            bail!(
+            refuse!(
                 "{} is not there. A project's entry point is `{ENTRY}` (Part III 13.1).",
                 entry.display()
             );
@@ -1011,7 +1011,7 @@ impl Project {
         let name = self
             .manifest
             .package_name()
-            .ok_or_else(|| anyhow!("the project has no `[package] name`"))?;
+            .ok_or_else(|| refused!("the project has no `[package] name`"))?;
         let resolved = resolved_versions(&self.build_dir().join("Cargo.lock"), name)?;
 
         let mut lock = Lockfile::load(

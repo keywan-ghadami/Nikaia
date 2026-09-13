@@ -20,7 +20,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::refused;
 
 /// Where a `nikaia.toml` was found, and what it said.
 ///
@@ -118,7 +120,7 @@ impl Manifest {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut manifest = Manifest::parse(&text)
             .with_context(|| format!("in {}", path.display()))
-            .map_err(|e| anyhow!("{e:#}"))?;
+            .map_err(|e| refused!("{e:#}"))?;
         manifest.root = path.parent().map(Path::to_path_buf);
         Ok(manifest)
     }
@@ -145,7 +147,7 @@ impl Manifest {
                 continue;
             }
             if !KNOWN.contains(&key.as_str()) {
-                return Err(anyhow!(
+                return Err(refused!(
                     "unknown key `{key}` in `[build]` (expected one of: {})",
                     KNOWN.join(", ")
                 ));
@@ -241,7 +243,7 @@ fn table_of(document: &toml::Value, name: &str) -> BTreeMap<String, toml::Value>
 /// `[build.<target>]`, checked.
 fn codegen(target: &str, table: &toml::Table) -> Result<BTreeMap<String, toml::Value>> {
     if !TARGETS.contains(&target) {
-        return Err(anyhow!(
+        return Err(refused!(
             "`[build.{target}]` names no machine (expected one of: {})",
             TARGETS.join(", ")
         ));
@@ -249,7 +251,7 @@ fn codegen(target: &str, table: &toml::Table) -> Result<BTreeMap<String, toml::V
     let mut out = BTreeMap::new();
     for (key, value) in table {
         if !KNOWN_CODEGEN.contains(&key.as_str()) {
-            return Err(anyhow!(
+            return Err(refused!(
                 "unknown key `{key}` in `[build.{target}]` (expected one of: {})",
                 KNOWN_CODEGEN.join(", ")
             ));
@@ -278,7 +280,7 @@ fn dependencies(document: &toml::Value) -> Result<BTreeMap<String, Dependency>> 
                 out.insert(name, Dependency::Rust(toml::Value::Table(table)));
             }
             Some(other) => {
-                return Err(anyhow!(
+                return Err(refused!(
                     "dependency `{name}` has `type = \"{other}\"`, which names no ecosystem \
                      (the only one spelled out is `rust`, for a crate from crates.io)"
                 ));

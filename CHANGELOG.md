@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed (a refusal carries no backtrace, wherever in the compiler it is made)
+
+- **The first pass covered where a refusal usually comes from, not where one can come from** (`docs/open-work.md` §1.3). Four more modules were still handing the user `Error:` and ten frames of this compiler: the emitter refusing a `dsl` that names a grammar nobody has, the manifest reader refusing an unknown `[build]` key, the project driver refusing a missing `src/main.nika`, and the CLI refusing a backend nobody has.
+- **The choice at each site is the whole decision** — is this a statement about the program, or a failure of this compiler? — so it is now visible at a glance rather than by unpicking a `format!`: `refused!` is written where `anyhow!` was and `refuse!` where `bail!` was, mirroring that pair exactly so a call site changes by one word.
+- **Four sites keep their trace on purpose**: two emitter invariants, the `rustc` wrapper invoked with no compiler named, and reading the sysroot's own files. Those are this compiler's problems, and the frames are then the most useful thing on the screen. A test drives four different modules through the CLI with `RUST_BACKTRACE=1` set — which is the case the rule is about — because what is being tested is that the rule is not one path's habit.
+
 ### Changed (a length is an `i64`, and the numeric surface is the one the page names)
 
 - **[ADR-048](docs/specification/adr/adr-048.md) D1 is built: `xs.len()` hands back an `i64`, and an index takes one.** The two conversions are not symmetric, which is the whole argument. Out of a length cannot fail — a `usize` exceeds an `i64` only above eight exabytes of single-byte elements — and the user wrote it in every loop, sum and comparison that met a length. Into an index can fail, for a negative number, but **a negative index is an access out of bounds**, which Part III A.2 already aborts on: not a new failure mode, the same one a step earlier. So the trade is a great deal of visible ceremony that cannot fail against one invisible abort that already exists — and the user now writes no conversion at all, in either direction.

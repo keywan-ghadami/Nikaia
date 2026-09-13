@@ -26,7 +26,9 @@
 //   all. The Nikaia compiler does not need to know which it is - and, having no
 //   type checker, could not.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+
+use crate::refused;
 
 /// Where in the markup a hole sits, which decides whether it may be there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,7 +161,7 @@ pub fn split(body: &str) -> Result<Vec<Segment>> {
     let mut at = 0;
     let segments = split_until(body, &mut at, &mut scan, None)?;
     if at < body.len() {
-        return Err(anyhow!("`</for>` without a `<for …>` before it"));
+        return Err(refused!("`</for>` without a `<for …>` before it"));
     }
     Ok(segments)
 }
@@ -224,7 +226,7 @@ fn split_until(
             '{' => {
                 let position = scan.position();
                 let Some(close) = rest.find('}') else {
-                    return Err(anyhow!("unclosed `{{` in the template, at byte {at}"));
+                    return Err(refused!("unclosed `{{` in the template, at byte {at}"));
                 };
                 if !text.is_empty() {
                     segments.push(Segment::Text(std::mem::take(&mut text)));
@@ -244,7 +246,7 @@ fn split_until(
     }
 
     if end.is_some() {
-        return Err(anyhow!("a `<for …>` in the template is never closed"));
+        return Err(refused!("a `<for …>` in the template is never closed"));
     }
     if !text.is_empty() {
         segments.push(Segment::Text(text));
@@ -263,18 +265,18 @@ fn loop_header(rest: &str) -> Result<Option<(String, String, usize)>> {
         return Ok(None);
     }
     let Some(close) = rest.find('>') else {
-        return Err(anyhow!("`<for` in the template is never closed with `>`"));
+        return Err(refused!("`<for` in the template is never closed with `>`"));
     };
 
     let header = &rest[4..close];
     let words: Vec<&str> = header.split_whitespace().collect();
     let [binding, "in", collection] = words.as_slice() else {
-        return Err(anyhow!(
+        return Err(refused!(
             "a template loop is written `<for name in :collection>`, not `<for{header}>`"
         ));
     };
     let Some(collection) = collection.strip_prefix(':') else {
-        return Err(anyhow!(
+        return Err(refused!(
             "`{collection}` is captured from the enclosing scope, so it is written \
              `:{collection}` - the colon is where the template's names end and the \
              program's begin (ADR-007 D4)"

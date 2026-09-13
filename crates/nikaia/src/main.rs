@@ -3,7 +3,7 @@
 // The whole compiler builds on stable: nothing here needs an unstable feature,
 // and the Rust this binary emits needs none either (ADR-001 D1).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -11,7 +11,7 @@ use nikaia::emit;
 use nikaia::manifest::Manifest;
 use nikaia::project::{self, Project, Settings};
 use nikaia::sysroot::{self, Sysroot};
-use nikaia::{diagnostics, interpreter, parser};
+use nikaia::{diagnostics, interpreter, parser, refuse};
 
 /// The Nikaia compiler: `nikaia build` for a project, `--input` for one file.
 #[derive(Parser, Debug)]
@@ -361,7 +361,7 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
         args.ordering.as_deref(),
     )?;
     if let Some(missing) = settings.build.target.unbuildable() {
-        bail!(
+        refuse!(
             "cannot build for `{}` yet: {missing}",
             settings.build.target.triple()
         );
@@ -385,13 +385,13 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
         // whatever the default was without saying so. Accepting a flag and
         // quietly doing something else is worse than either implementing or
         // refusing it (ADR-021 D9).
-        backend @ ("cranelift" | "llvm") => bail!(
+        backend @ ("cranelift" | "llvm") => refuse!(
             "backend `{backend}` is not implemented: no build of this compiler has it, \
              and there is nothing to install that would add it (ADR-002 names it; \
              ADR-021 D9 records it as an open item).\n\
              Available here: {AVAILABLE}."
         ),
-        other => bail!(
+        other => refuse!(
             "unknown backend `{other}` (expected interpreter or rust; \
              available here: {AVAILABLE})"
         ),
@@ -440,7 +440,7 @@ fn run() -> Result<()> {
     }
 
     let Some(input) = args.input.clone() else {
-        bail!(
+        refuse!(
             "nothing to build: give `--input <file.nika>` for a single file, or \
              `nikaia build` inside a project (Part III 13.2)"
         );
