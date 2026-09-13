@@ -1651,52 +1651,117 @@ While `user_parallelism = no` keeps your own logic on one thread ("The Happy Pat
 
 ## Chapter 9: Project Organization and Visibility
 
-### 9.1. Modules and Files
-Every file in Nikaia (e.g., `utils.nika`) is implicitly a **Module**.
-
-`use utils` brings one in, and it names the file `utils.nika` beside the
-program's entry:
+### 9.1. Packages and Files
+**A package is a directory.** The files in it see one another with no `use` at
+all: they share one namespace, and a name declared in any of them can be written
+in any other ([ADR-047](adr/adr-047.md) D1).
 
 ```nika
-// file: main.nika
-use utils
+// file: src/parse.nika      (the same package as src/main.nika)
+pub struct Row { pub id: i64 }
 
+fn helper() -> i64 { return 41 }
+```
+
+```nika
+// file: src/main.nika
 fn main() {
-    println(f"{utils::double(21)}")
+    let r = Row(id: helper() + 1)      // no `use`, and no prefix
+    println(f"{r.id}")
 }
 ```
 
-A module of your program is **one name**. `use std::fs` is the one `use` with a
-path in it, and it names the library rather than a file
-([ADR-030](adr/adr-030.md) D1).
+Two files of one package may **not** declare the same name. There is one
+namespace, so two `Row`s in it is an error rather than a rule about which of them
+a line means.
 
-Two files may import each other. Nothing about a module is an order of
-declaration: the compiler reads the files the entry reaches, and what they say
-about each other is the same however it got there.
+**A package reaches another package by its name.** `use http` makes the package
+`http` reachable and does nothing else: every name from it is written with its
+prefix, at every use ([ADR-046](adr/adr-046.md) D1).
+
+```nika
+use http
+use request_handling as rh
+
+fn handle(r: http::Request) -> rh::Response {
+    let body: http::Body = http::read(r)
+    return rh::ok(body)
+}
+```
+
+The prefix falls where a name is **written**, not where a value is used: `r.path`
+and `r.header("host")` carry none, because there is a value in hand and nothing to
+resolve. In a body that works with values the prefix barely appears.
+
+**No name is brought in** — not by a glob, not by a braced list, not one at a time
+([ADR-046](adr/adr-046.md) D2):
+
+```text
+error: names are not brought in; a package is reached through its name
+   1 | use http::{Request, Response}
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = write `use http`, and `http::Request` where you need it
+     = if the prefix is long, `use http as h` shortens it once, in one place
+```
+
+What this buys is that a reader of any line knows where every name in it comes
+from without consulting the top of the file, and that no edit elsewhere changes
+what an already-written line means. What it costs is the prefix, and `use x as y`
+is what shortens one that is long — once, in one place (D3).
+
+Two more rules come with it. **A prefix must be introduced**: `http::Request`
+without `use http` is refused, so a file still lists what it depends on at the top
+(D4). And **one name per file**: two packages that end up under the same name, by
+alias or by collision, is an error rather than a rule about which wins (D5).
+
+`use std::fs` is the one `use` with a path in it, and it names the library rather
+than a package of yours ([ADR-030](adr/adr-030.md) D1).
+
+> **Status:** the compiler still treats **a file** as the unit. `use utils` names
+> the file `utils.nika` beside the entry, privacy is per file (9.2), and the files
+> of a directory do not see one another. A qualified name from another file does
+> resolve to one type, and `pool::Conn(id: 1)` builds a struct another file
+> declares — which is the half of the machinery a package boundary needs, built
+> one level down ([ADR-047](adr/adr-047.md) §5). The alias, the three refusals and
+> the introduction rule are not built, and neither is depending on a package at
+> all (Part III, 13.2).
 
 ### 9.2. Visibility Rules (Privacy)
 Nikaia enforces strict encapsulation to prevent tight coupling between parts of your code.
 
-1.  **Private by Default:**
-    * Functions, Structs, Enums, and Constants are only visible inside the file they are defined in. (A `const` declaration has no syntax yet — Part II, 10.2.)
-    * Struct Fields are only visible inside the file where the struct is defined.
+1.  **Private to its package, by default:**
+    * Functions, Structs, Enums and Constants are visible inside the **package**
+      that declares them — every file of that directory — and nowhere else. (A
+      `const` declaration has no syntax yet — Part II, 10.2.)
+    * Struct fields are the same: visible throughout the package that declares
+      the struct.
 
 2.  **The `pub` Keyword:**
-    * To allow other modules to use an item, prefix it with `pub`.
-    * To allow other modules to access a specific field of a struct, prefix the field with `pub`.
+    * To let **another package** use an item, prefix it with `pub`.
+    * To let another package reach a specific field of a struct, prefix the field
+      with `pub`.
     * A **public type may keep its fields private**, and 9.3 is about why that
       is the ordinary case rather than an inconvenience.
 
-Reaching a private item from another file is `NK1110`, and says which file
+The boundary is the package and not the file on purpose
+([ADR-047](adr/adr-047.md) D1): a library's internal file layout is then not its
+public surface, so moving a declaration from one file to another is housekeeping
+and breaks no consumer.
+
+Reaching a private item from another package is `NK1110`, and says which package
 keeps it:
 
 ```text
-error[NK1110]: `secret` is private to `utils.nika`
+error[NK1110]: `secret` is private to `utils`
    4 |     let n = utils::secret()
            ^
-     = an item is private to the file that declares it unless it says `pub` (Part I, 9.2)
-     help: write `pub fn secret` in `utils.nika`, or reach it through something that is public
+     = an item is private to the package that declares it unless it says `pub` (Part I, 9.2)
+     help: write `pub fn secret` in `utils`, or reach it through something that is public
 ```
+
+> **Status:** the boundary the compiler enforces is the **file**, not the package
+> ([ADR-047](adr/adr-047.md) §5). `NK1110` is built and says *"private to
+> `utils.nika`"* — the same rule, one level down.
 
 ### 9.3. Granular Control
 While `pub` makes an item available generally, strict privacy forces developers to create safe interfaces (Constructors and Methods) rather than exposing raw data.

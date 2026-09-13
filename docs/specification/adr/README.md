@@ -88,6 +88,8 @@ and a decision is not an implementation.
 | [041](adr-041.md) | Naming a lambda's arguments is the normal form; the automatic `a`, `b`, `c` are experimental and warned about where one is actually used | Accepted | **yes** — `NK1114` from the one function that also writes the parameter list, the specification's examples and six sites in four `examples/` programs |
 | [042](adr-042.md) | A view keeps the type it is a view of, arguments and all, and a container whose ledger records a `deref` is seen through once — as a rescue after a comparison has already failed | Accepted | **yes** — `view_of` and `fits_through_deref` in `check`, exercised by `fs::Mapped` and now by `Shared[T]`; a `&Vec[i64]` mismatch is this compiler's `NK1102` where it used to be rustc's |
 | [030](adr-030.md) | A program is more than one file, and that is name resolution | Accepted | yes |
+| [046](adr-046.md) | `use` makes a unit of code reachable and brings **no name** in — no glob, no braced list, no single name; `use x as y` shortens the prefix, a prefix must be introduced, and one name per file | Accepted | **partly** — the qualified form resolves and a qualified struct literal is checked; the alias, the three refusals and the introduction rule wait on [047](adr-047.md) D1, which changes what `use` names |
+| [047](adr-047.md) | A **package is a directory**: its files share one namespace and need no `use` between them, privacy is per package, and a library is depended on by **path** — with five rules so the rest is not decided by accident | Accepted | **no** — a file is still a module, privacy is still per file, and a Nikaia package cannot be depended on at all |
 | [035](adr-035.md) | `f"…"` interpolates and `"…"` is text — the mark belongs on the construct | Accepted | yes |
 
 ### The contract ledger and the type checker
@@ -140,6 +142,8 @@ the superseding record's own header:
 
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
+| [046](adr-046.md) D1 | [047](adr-047.md) D1 (narrows) | which unit `use` names — a package rather than a file. Every rule in 046 stands and ranges over packages instead; the file boundary it was written against stops existing |
+| [030](adr-030.md) | [047](adr-047.md) D1 (narrows) | a file is a module and `use` names one — the files of a directory are one namespace now, and `use` names the directory |
 | [039](adr-039.md) §3 | [045](adr-045.md) D1 (answers) | the open half — a lock could not reach a task, so Part II 12.2's counter was unwritable. The verdict takes the destination; §3's other way out, the `Mutex` floor, is not taken |
 | [037](adr-037.md) D6 | [045](adr-045.md) D3 (narrows) | its coda that after D6 "no type answers `may not`" — the lock answers it at a foreign call, so `NK2501` and `NK2502` stop sharing one verdict |
 | [022](adr-022.md) D1 | [041](adr-041.md) D1 (amends) | which of the two spellings is recommended — one form with two spellings is unchanged, and both still parse everywhere; the named one is what the specification teaches |
