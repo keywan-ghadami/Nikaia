@@ -18,6 +18,7 @@
 //! and `crates/nikaia/tests/sysroot.rs` fails if what is committed has drifted
 //! from what the compiler produces.
 
+pub mod abort;
 pub mod cli;
 pub mod error;
 pub mod fs;

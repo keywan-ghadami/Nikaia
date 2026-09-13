@@ -67,7 +67,7 @@ and a decision is not an implementation.
 | :--- | :--- | :--- | :--- |
 | [012](adr-012.md) | Errors are reported in the `.nika` file the user wrote, never in generated Rust | Accepted | yes |
 | [015](adr-015.md) | The backend's diagnostics are built lazily, because building them eagerly dominated the flagship | Accepted | yes |
-| [044](adr-044.md) | One location table beside the program, and the panic hook looks the site up — so every abort names the Nikaia line, not the generated one | Accepted | **no** — the emitter keeps no line table and the panic hook is itself unbuilt |
+| [044](adr-044.md) | One location table beside the program, and the panic hook looks the site up — so every abort names the Nikaia line, not the generated one | Accepted | **yes** — a sorted `const` of every mapped line appended to the program, the hook installed by the generated `fn main` before the runtime starts, an unknown location handed to Rust's own hook, and `#[track_caller]` on `std`'s abort helpers so an index names the caller's line |
 
 ### Trust and provenance
 

@@ -159,14 +159,6 @@ annotation is checked and then fails to emit. Also waiting inside this:
   already accounts for;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.3. Every abort should name the Nikaia line
-
-[ADR-044](specification/adr/adr-044.md). One location table beside the program and
-a lookup in the panic hook. Nothing is built: the emitter keeps no line table and
-the panic hook is itself unbuilt. Every abort this project added — the overflow,
-the two conversions — names the generated file today, which is the reason that
-record exists.
-
 ### 2.4. A sum of constants that cannot fit is still `rustc`'s refusal
 
 [ADR-043](specification/adr/adr-043.md) §3 and §4. `NK1116` refuses an out-of-range

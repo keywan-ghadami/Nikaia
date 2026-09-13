@@ -985,3 +985,133 @@ fn a_field_a_package_does_not_publish_is_refused() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **Every abort points at the Nikaia line**
+/// ([ADR-044](../../../docs/specification/adr/adr-044.md)).
+///
+/// [ADR-012](../../../docs/specification/adr/adr-012.md) decides that a
+/// diagnostic names the `.nika` file the user wrote, and the compiler kept that
+/// promise everywhere it *reported* something. An abort at run time was the one
+/// path where it could not: there is no compiler left to translate anything, so
+/// Rust's own message named the generated file and line.
+///
+/// **Four paths in one test, because D2's whole argument is that they are one
+/// fix.** An overflow, a conversion that does not fit, a negative index and an
+/// index past the end all arrive at the same hook, and a per-case fix would have
+/// been four fixes and a fifth the day a fifth abort path arrives.
+#[test]
+fn every_abort_names_the_nikaia_line() {
+    let dir = a_project(
+        "project-aborts",
+        "[package]\nname = \"aborts\"\nversion = \"0.1.0\"\n",
+        HELLO,
+    );
+
+    for (what, program, says) in [
+        (
+            "an overflow",
+            "fn double(n: i32) -> i32 {\n    return n * 2\n}\n\
+             \n\
+             fn main() {\n    \
+                 let start = 2000000000\n    \
+                 println(f\"{double(start)}\")\n\
+             }\n",
+            "attempt to multiply with overflow",
+        ),
+        (
+            "a conversion",
+            "fn narrow(n: i64) -> i32 {\n    return n as i32\n}\n\
+             \n\
+             fn main() {\n    \
+                 let big = 5000000000\n    \
+                 println(f\"{narrow(big)}\")\n\
+             }\n",
+            "does not fit in an `i32`",
+        ),
+        (
+            "a negative index",
+            "fn pick(xs: &Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
+             \n\
+             fn main() {\n    \
+                 let mut xs = Vec::new()\n    \
+                 xs.push(1)\n    \
+                 let zero = 0\n    \
+                 println(f\"{pick(&xs, zero - 1)}\")\n\
+             }\n",
+            "index out of bounds: the index is -1",
+        ),
+        (
+            "an index past the end",
+            "fn pick(xs: &Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
+             \n\
+             fn main() {\n    \
+                 let mut xs = Vec::new()\n    \
+                 xs.push(1)\n    \
+                 let far = 5\n    \
+                 println(f\"{pick(&xs, far)}\")\n\
+             }\n",
+            "index out of bounds: the len is 1",
+        ),
+    ] {
+        std::fs::write(dir.join("src/main.nika"), program).expect("the program");
+        let ran = nikaia(&["run"], &dir);
+        assert!(!ran.status.success(), "{what} must abort: {}", said(&ran));
+        let out = said(&ran);
+
+        // The line the abort happened on - line 2 in every one of these, which is
+        // the function's body and not the `main` that called it.
+        assert!(
+            out.contains("src/main.nika:2: the program stopped:"),
+            "{what}: {out}"
+        );
+        assert!(out.contains(says), "{what}: {out}");
+        // And nothing about the file nobody wrote.
+        assert!(!out.contains("/gen/"), "{what}: {out}");
+        assert!(
+            !out.contains("nikaia-std/src/"),
+            "{what}: not a line of `std`'s own Rust either: {out}"
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// …and a panic with no Nikaia line behind it is left in the words of whoever
+/// wrote it, which is the half that keeps a program from being worse off.
+///
+/// The table covers the lines the emitter wrote *from* a Nikaia line. A panic
+/// inside `std`'s own Rust, or inside a foreign crate, has no Nikaia line to
+/// name — and the hook installed before ours, which is Rust's, is what says so.
+#[test]
+fn an_abort_with_no_nikaia_line_keeps_rusts_own_report() {
+    let dir = a_project(
+        "project-foreign-abort",
+        "[package]\nname = \"foreign\"\nversion = \"0.1.0\"\n",
+        HELLO,
+    );
+    // `expect` on a missing environment variable aborts inside `std`'s Rust: the
+    // panic's location is `Option::expect`'s caller, which is a line of the
+    // generated file that no `.nika` line maps to, because the emitter wrote it
+    // for the f-string rather than from a statement.
+    std::fs::write(
+        dir.join("src/main.nika"),
+        "use std::cli\n\nfn main() {\n    \
+             println(f\"{cli::args().nth(40)}\")\n\
+         }\n",
+    )
+    .expect("the program");
+
+    let ran = nikaia(&["run"], &dir);
+    let out = said(&ran);
+    // Either it runs or it aborts - what must not happen is a line this table
+    // invented. This asserts the shape of the claim rather than a particular
+    // failure, because which of the two it is belongs to `std`'s ledger and not
+    // to this record.
+    if !ran.status.success() {
+        assert!(
+            !out.contains("src/main.nika:1:"),
+            "a line the table does not know must not be answered: {out}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

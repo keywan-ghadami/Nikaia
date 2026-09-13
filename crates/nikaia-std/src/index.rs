@@ -28,8 +28,16 @@ pub trait At {
 }
 
 /// The one message, so a negative index reads the same however it arrived.
+///
+/// `#[track_caller]` all the way out to [`at`], so the location the panic hook is
+/// handed is the **caller's** - the line of the generated file that wrote the
+/// index - and not a line of this file. Without it,
+/// [ADR-044](../../../docs/specification/adr/adr-044.md) D1's table has nothing
+/// to look up and the reader is told about `nikaia_std/src/index.rs`, which is
+/// the Part III C.1 defect one crate over.
 #[cold]
 #[inline(never)]
+#[track_caller]
 fn out_of_bounds(index: i64) -> ! {
     panic!("index out of bounds: the index is {index}")
 }
@@ -39,6 +47,7 @@ macro_rules! signed {
         $(
             impl At for $t {
                 type Out = usize;
+                #[track_caller]
                 fn at(self) -> usize {
                     match usize::try_from(self) {
                         Ok(index) => index,
@@ -49,6 +58,7 @@ macro_rules! signed {
 
             impl At for std::ops::Range<$t> {
                 type Out = std::ops::Range<usize>;
+                #[track_caller]
                 fn at(self) -> std::ops::Range<usize> {
                     std::ops::Range { start: self.start.at(), end: self.end.at() }
                 }
@@ -56,6 +66,7 @@ macro_rules! signed {
 
             impl At for std::ops::RangeInclusive<$t> {
                 type Out = std::ops::RangeInclusive<usize>;
+                #[track_caller]
                 fn at(self) -> std::ops::RangeInclusive<usize> {
                     let (start, end) = self.into_inner();
                     start.at()..=end.at()
@@ -100,6 +111,10 @@ impl<'a, T: ?Sized> At for &'a T {
 }
 
 /// The emitted spelling: `xs[nikaia_std::index::at(i)]`.
+///
+/// `#[track_caller]`, so a negative index is reported at the line that wrote it -
+/// see [`out_of_bounds`].
+#[track_caller]
 pub fn at<I: At>(index: I) -> I::Out {
     index.at()
 }

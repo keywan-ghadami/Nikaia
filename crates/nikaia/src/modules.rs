@@ -485,6 +485,22 @@ impl Program {
             rust.push_str("}\n");
         }
 
+        // **Last, because it names lines** (ADR-044 D1). Only where the program
+        // has an entry point: the table is read by the hook `fn main` installs,
+        // and a package with no `main` is a library whose consumer has one.
+        if self.units[0].parsed.program.items.iter().any(|item| {
+            matches!(&item.node, crate::ast::Item::Fn { name: Some(name), .. }
+                if self.units[0].parsed.text(*name) == "main")
+        }) {
+            let paths: Vec<String> = self
+                .units
+                .iter()
+                .map(|unit| unit.path.display().to_string())
+                .collect();
+            let sources: Vec<&str> = self.units.iter().map(|u| u.source.as_str()).collect();
+            rust.push_str(&crate::emit::abort_table(&rust, &map, &paths, &sources));
+        }
+
         Ok(Lowered { rust, map })
     }
 }

@@ -323,6 +323,92 @@ pub struct Lowered {
     pub map: SourceMap,
 }
 
+/// **[ADR-044](../../../docs/specification/adr/adr-044.md) D1's table, as a Rust
+/// item to append to a program.**
+///
+/// One row per line of the generated file that came from a `.nika` line: the
+/// generated line, the file, and the line there. Sorted by the generated line,
+/// because the lookup at run time is a binary search and sorting once here costs
+/// the program nothing.
+///
+/// **Every mapped line, and not the ones that "can abort".** Which constructs
+/// abort is a list that would have to be kept correct as the emitter grows, and
+/// getting it wrong means an abort with no Nikaia line - the defect this closes.
+/// The source map already knows which lines came from somewhere, so the table is
+/// that knowledge kept rather than a second judgement about it. What it costs is
+/// a row per line in the binary, which the record accepts: *"paid by every
+/// program and needed by the ones that fail, which is the same trade a panic
+/// message itself already makes."*
+///
+/// **Appended, never prepended.** A table written above the program would move
+/// every line it names, and correcting for its own height is a circle. Rust does
+/// not care where an item sits.
+///
+/// `paths` are the program's files, indexed the way the map indexes them.
+pub fn abort_table(rust: &str, map: &SourceMap, paths: &[String], sources: &[&str]) -> String {
+    // Where each line of the generated file starts, so an offset becomes a line
+    // in one binary search rather than by counting newlines per entry.
+    let mut starts = vec![0usize];
+    starts.extend(
+        rust.char_indices()
+            .filter(|(_, c)| *c == '\n')
+            .map(|(i, _)| i + 1),
+    );
+    let line_of = |offset: usize| match starts.binary_search(&offset) {
+        Ok(i) => i + 1,
+        Err(i) => i,
+    };
+
+    // The `.nika` line of a span, per file.
+    let nika: Vec<Vec<usize>> = sources
+        .iter()
+        .map(|source| {
+            let mut starts = vec![0usize];
+            starts.extend(
+                source
+                    .char_indices()
+                    .filter(|(_, c)| *c == '\n')
+                    .map(|(i, _)| i + 1),
+            );
+            starts
+        })
+        .collect();
+
+    // **The outermost entry wins**, which is the opposite of what a lookup
+    // wants. `SourceMap::locate` answers with the innermost span covering an
+    // offset, and that is right for a diagnostic about a byte; a whole generated
+    // *line* is better named by the statement it came from than by the
+    // sub-expression that happens to start it. A `BTreeMap` keyed by the
+    // generated line and filled in map order gives that: the emitter records a
+    // node before anything it encloses, so the first entry for a line is the
+    // outermost one.
+    let mut rows: std::collections::BTreeMap<usize, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for entry in map.rows() {
+        let generated = line_of(entry.0);
+        let Some(starts) = nika.get(entry.2) else {
+            continue;
+        };
+        let line = match starts.binary_search(&entry.1) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        };
+        rows.entry(generated).or_insert((entry.2, line));
+    }
+
+    let mut out = String::new();
+    out.push_str("\n// ADR-044 D1: the generated line, and the `.nika` line it came from.\n");
+    out.push_str(&format!(
+        "const {ABORT_TABLE}: &[nikaia_std::abort::Site] = &[\n"
+    ));
+    for (generated, (unit, line)) in rows {
+        let path = paths.get(unit).map(String::as_str).unwrap_or("<unknown>");
+        out.push_str(&format!("    ({generated}, {path:?}, {line}),\n"));
+    }
+    out.push_str("];\n");
+    out
+}
+
 /// Emitted byte range -> the `.nika` span that produced it.
 ///
 /// This is the whole answer to "the error points at a line nobody wrote": the
@@ -382,6 +468,16 @@ impl SourceMap {
     /// Take everything `other` holds, which is already placed.
     pub fn extend(&mut self, other: SourceMap) {
         self.entries.extend(other.entries);
+    }
+
+    /// Every entry as `(generated start, source start, unit)`, in the order the
+    /// emitter recorded them - which is outermost first for any one place.
+    ///
+    /// For [`abort_table`], which needs all of them rather than a lookup.
+    pub fn rows(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+        self.entries
+            .iter()
+            .map(|e| (e.generated.start, e.source.start, e.unit))
     }
 }
 
@@ -767,6 +863,11 @@ const SHARED_FIELDS: &str = "<field>";
 /// are unchanged (ADR-012).
 const PROGRAM_MAIN: &str = "__nikaia_main";
 
+/// The generated name of [ADR-044](../../../docs/specification/adr/adr-044.md)
+/// D1's table. `__nikaia_` for the same reason `__nikaia_main` is: a name a
+/// program could also have chosen would be a name this compiler took from it.
+const ABORT_TABLE: &str = "__NIKAIA_SITES";
+
 /// What the **last** statement of a block is, which is two questions and not
 /// one.
 ///
@@ -1109,6 +1210,23 @@ impl<'p> Emitter<'p> {
             out.push("\n");
         }
         self.entry_point(&mut out);
+        if self.user_main().is_some() {
+            // **An empty table, and the reason it is empty.** `fn main` installs
+            // the hook that reads it (ADR-044 D2), so the name has to be defined
+            // or the program does not compile - and a table needs the *file* each
+            // line came from, which this path does not know: it is handed one
+            // `Parsed` and no path. The path a user takes goes through
+            // `modules::Program`, which knows every file and appends the real
+            // table (`abort_table`); this one is `emit_program`, which the tests
+            // and `lower-std` use.
+            //
+            // Empty is the fallback rather than a lie: a location the table does
+            // not know is handed to the hook installed before ours, which is
+            // Rust's own, so such a program is exactly as well off as it was.
+            out.push(&format!(
+                "\n// ADR-044 D1: no table - this program was emitted without its file name.\n                 const {ABORT_TABLE}: &[nikaia_std::abort::Site] = &[];\n"
+            ));
+        }
 
         Ok(Lowered {
             rust: out.buf,
@@ -1188,6 +1306,15 @@ impl<'p> Emitter<'p> {
             out.push("\n");
         }
         out.push(&format!("fn main(){ret} {{\n"));
+        // **Before anything else** (ADR-044 D2): the hook has to be in place
+        // before a line that can abort runs, and the first of those is inside
+        // the runtime's own start. The table is defined at the end of this file
+        // (`abort_table`), which Rust allows and which is what keeps the line
+        // numbers in it true - a table written above the program would move
+        // every line it names.
+        out.push(&format!(
+            "    nikaia_std::abort::report_in_nikaia_terms({ABORT_TABLE});\n"
+        ));
         out.push(&format!(
             "    let nikaia_runtime = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code});\n"
         ));

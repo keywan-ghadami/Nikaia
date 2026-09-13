@@ -1137,6 +1137,21 @@ The `target` decides this independently where the machine leaves no choice: on
 
 On **every** panic path — including the abort and the WASM trap — the application's **Panic Hook** runs first (Part I, 7.2): one global, `sync` handler receiving message, location, and stack trace, intended for crash dumps and reports. This rides on the backend's panic machinery, which invokes the hook before aborting even under `panic = abort`. See [ADR-006](adr/adr-006.md), D6.
 
+**And the abort names the `.nika` line.** Every program carries a table of
+generated line to Nikaia file and line, and the hook looks the site up before it
+prints anything — so an overflow, a conversion that does not fit, an index out of
+bounds and a written `panic()` all read
+`src/main.nika:2: the program stopped: attempt to multiply with overflow`, rather
+than naming a file nobody wrote ([ADR-044](adr/adr-044.md)). A location the table
+does not know — a panic inside `std`'s own Rust, or a foreign crate's — is left in
+the words of whoever wrote it.
+
+> **Status:** built. The table is every line the emitter wrote from a `.nika`
+> line, appended to the program and sorted; the hook is installed by the
+> generated `fn main` before the runtime starts. A **user** hook is still
+> unbuilt — `NK2604` is catalogued and not raised (C.3), so nothing yet competes
+> for the one global handler.
+
 # Appendix B: Compiler Internals & Annotations
 
 To enforce the "Contextual Capture" rules (Chapter 5.4) without hard-coding specific function names into the compiler, Nikaia uses internal attributes. They belong to the Standard Library.

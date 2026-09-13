@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed (every abort names the Nikaia line)
+
+- **[ADR-044](docs/specification/adr/adr-044.md) is built** (`docs/open-work.md` §2.3). [ADR-012](docs/specification/adr/adr-012.md) decides that a diagnostic names the `.nika` file the user wrote, and the compiler kept that promise everywhere it *reported* something — an abort at run time was the one path where it could not, because there is no compiler left to translate anything. An overflow, a conversion that does not fit, an index out of bounds and a written `panic()` now all read `src/main.nika:2: the program stopped: attempt to multiply with overflow`.
+- **One table and one hook**, which is D2's whole argument: four abort paths are one fix, and a per-case fix would have been four fixes and a fifth the day a fifth path arrives. The table is a sorted `const` of `(generated line, .nika file, .nika line)`, appended to the program — **appended**, because a table written above it would move every line it names, and correcting for its own height is a circle.
+- **Every mapped line, not the ones that "can abort".** Which constructs abort is a list that would have to be kept correct as the emitter grows, and getting it wrong means an abort with no line — the defect this closes. The source map already knows which lines came from somewhere. Where two spans cover one line the **outermost** wins: a byte is best named by its innermost span, a whole line by the statement it came from.
+- **A location the table does not know is handed to the hook installed before ours**, which is Rust's own, so a program is never worse off than it was — that half has its own test.
+- **`#[track_caller]` on `std`'s abort helpers.** `nikaia_std::index::at` and the conversion checks panic *for* the program, so without it the location the hook is handed is a line of `std`'s own Rust — the same Part III C.1 defect one crate over.
+
 ### Added (`pub` on a field means something, across a package boundary)
 
 - **The ledger records a field's visibility** — `fields = ["pub id: i64", "method: i64"]` — and reaching or writing a field a package does not publish is `NK1110`. This was the hole with the shortest fuse the moment a second package existed (`docs/open-work.md` §2.7b): a type whose fields were private could be **built by name** from another package with nothing saying no.
