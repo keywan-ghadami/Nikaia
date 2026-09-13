@@ -1100,7 +1100,7 @@ Errors arising from external circumstances (File not found, Network timeout).
 * **Handling:** Enforced by the compiler via `catch{}` blocks or propagation.
 
 ### A.2. Unrecoverable Errors (`panic`)
-Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, explicit `panic()`). Three build switches exist (13.3) and a panic depends on **two** of them — `user_parallelism` and `target` — on different grounds:
+Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, **Arithmetic Overflow**, explicit `panic()`). An overflow is in this list at **every** build, which is what keeps Part I 1.2's rule — you choose *how*, never *what* — true of arithmetic as well; where a program means to wrap or to stop at the limit it says so by name (Part I, 2.2) ([ADR-043](adr/adr-043.md) D1). Three build switches exist (13.3) and a panic depends on **two** of them — `user_parallelism` and `target` — on different grounds:
 
 | `user_parallelism` | Panic Behavior | Consequence |
 | :--- | :--- | :--- |

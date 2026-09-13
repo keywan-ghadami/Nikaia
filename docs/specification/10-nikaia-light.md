@@ -145,6 +145,64 @@ Nikaia provides basic types to represent simple values.
 in one.** There are no digit separators, no radix prefixes and no type suffixes,
 so `1_000`, `0xFF` and `1i64` are each not a number but a number beside a name.
 
+**An integer that does not fit aborts, at every build.** An `i32` holds what an
+`i32` holds; an arithmetic result that does not is an inconsistent program state,
+like an index past the end of a list or a division by zero (Part III, A.2), and
+the program stops rather than carrying a number nobody computed. It is the same
+at both settings of `user_parallelism` and in every build, so the same program
+computes the same thing wherever it is built — which is 1.2's rule, applied to
+arithmetic ([ADR-043](adr/adr-043.md) D1).
+
+Three of these are easy to miss, because the code looks harmless:
+
+* `-x` and `x.abs()` on the **smallest** value of a signed type, because there is
+  no matching positive one;
+* the smallest value divided by `-1`, for the same reason;
+* shifting by more places than the type is wide.
+
+**Where a program means to wrap or to stop at the limit, it says so by name.**
+
+```nika
+let h = h.wrapping_mul(31).wrapping_add(c)        // a hash, wrapping on purpose
+let volume = level.saturating_add(increase)       // stops at the maximum
+let n = a + b                                     // aborts if it does not fit
+```
+
+`wrapping_add`, `wrapping_sub`, `wrapping_mul`, `wrapping_div`, `wrapping_neg`,
+`wrapping_abs`, `wrapping_shl`, `wrapping_shr`, and the same names with
+`saturating_`. There is no operator for either: both are rare, both are meant to
+be visible in the line that does them, and a sign for one would have to be spelt
+with `&`, which is borrowing here ([ADR-043](adr/adr-043.md) D2, D3).
+
+**A conversion is written `as`, and one that may not fit aborts too.**
+
+```nika
+let average = (total as f64) / (count as f64)     // widening, always fits
+let small = big as i32                            // aborts if `big` does not fit
+```
+
+Otherwise the question would be answered at the front door and let in at the
+back: whoever wants the digits thrown away says so, the same way wrapping is said
+([ADR-043](adr/adr-043.md) D4).
+
+**A literal that does not fit its type is a compile error, not an abort.**
+`let x: i32 = 3000000000` is decidable where it is written, and so is a sum of
+literals that cannot fit, so neither waits for the program to run
+([ADR-043](adr/adr-043.md) D5).
+
+> **Status:** the abort is built — the generated project carries the check for
+> your program and turns it off for every Rust dependency, whose own arithmetic
+> is not this compiler's to be right about
+> ([ADR-043](adr/adr-043.md) D6), and
+> `crates/nikaia/tests/overflow.rs` compiles an overflowing program and runs it.
+> **Not built:** the `wrapping_` and `saturating_` names, which have no entry in
+> `std` yet, and the narrowing check — `5000000000 as i32` prints `705032704`
+> today. The out-of-range literal *is* refused where it is written, but by
+> `rustc` and in Rust's words, down to a Rust lint name and the advice to use
+> `u32`; a sum of constants is refused the same way. Catching it here is what
+> makes the message this language's rather than the generated file's
+> (Part III, C.1).
+
 ### 2.3. Nullable Types (Null Safety)
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
 

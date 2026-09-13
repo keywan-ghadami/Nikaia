@@ -51,12 +51,6 @@ pub struct Profile {
     pub panic: Option<String>,
 }
 
-impl Profile {
-    fn is_empty(&self) -> bool {
-        self.opt_level.is_none() && self.lto.is_none() && self.panic.is_none()
-    }
-}
-
 /// A `Cargo.toml` to be written, and the one binary it builds.
 #[derive(Debug, Clone)]
 pub struct CargoProject {
@@ -102,18 +96,35 @@ impl CargoProject {
             out.push_str(&format!("{} = {value}\n", key(name)));
         }
 
-        if !self.profile.is_empty() {
-            out.push_str(&format!("\n[profile.{}]\n", self.profile_name));
-            if let Some(opt) = &self.profile.opt_level {
-                out.push_str(&format!("opt-level = {opt}\n"));
-            }
-            if let Some(lto) = &self.profile.lto {
-                out.push_str(&format!("lto = {lto}\n"));
-            }
-            if let Some(panic) = &self.profile.panic {
-                out.push_str(&format!("panic = {}\n", string(panic)));
-            }
+        // **The overflow check is not in `Profile`, and that is the point.**
+        // `Profile` holds what the build switches and the codegen table decide;
+        // an overflow aborting is what the language *means*
+        // (ADR-043 D1), so it is written unconditionally and there is no key
+        // that turns it off. Which is also why the emitted code says `a + b`
+        // rather than calling a checked helper per operation (D6): the
+        // arithmetic is the same either way, and a reader comparing the two
+        // languages should find `+` where they wrote `+`.
+        out.push_str(&format!("\n[profile.{}]\n", self.profile_name));
+        out.push_str("overflow-checks = true\n");
+        if let Some(opt) = &self.profile.opt_level {
+            out.push_str(&format!("opt-level = {opt}\n"));
         }
+        if let Some(lto) = &self.profile.lto {
+            out.push_str(&format!("lto = {lto}\n"));
+        }
+        if let Some(panic) = &self.profile.panic {
+            out.push_str(&format!("panic = {}\n", string(panic)));
+        }
+
+        // **And off for every dependency**, which is not a loophole but the
+        // other half of the same rule (ADR-043 D6). A hash function in a Rust
+        // crate wraps on purpose; with the check on it would abort, and it is
+        // not our code to be right or wrong about. The rule reaches the program
+        // this compiler emits and stops at the crate boundary.
+        out.push_str(&format!(
+            "\n[profile.{}.package.\"*\"]\noverflow-checks = false\n",
+            self.profile_name
+        ));
 
         // The generated package is its own workspace. Without this, a project
         // that happens to sit under someone else's `Cargo.toml` would be read
@@ -542,6 +553,19 @@ mod tests {
         assert_eq!(parsed["profile"]["dev"]["opt-level"].as_integer(), Some(3));
         assert_eq!(parsed["profile"]["dev"]["lto"].as_bool(), Some(true));
         assert_eq!(parsed["profile"]["dev"]["panic"].as_str(), Some("unwind"));
+
+        // ADR-043 D6: on for the program and off for every dependency, and
+        // neither of them is a key anybody may set. Asserted here as well as
+        // end to end in `crates/nikaia/tests/overflow.rs`, because this is
+        // where the text is written and that is where it is felt.
+        assert_eq!(
+            parsed["profile"]["dev"]["overflow-checks"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            parsed["profile"]["dev"]["package"]["*"]["overflow-checks"].as_bool(),
+            Some(false)
+        );
         assert!(
             parsed.get("workspace").is_some(),
             "the generated package owns its own workspace:\n{text}"
