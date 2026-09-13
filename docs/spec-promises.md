@@ -127,6 +127,16 @@ against the day it was written.
    closer to the truth, and still an error. Whether `spawn` is a keyword form
    that becomes a task or a `std` function that takes a lambda is the decision
    left here; nothing in the parser's `spawn` rule changed.
+
+   **The spelling is settled; the rest of this entry is not.** `spawn fn { … }`
+   is the one form, in all three Parts — the parenthesised `spawn({ … })` that
+   Part III Appendix C.5's `NK2501` example wrote is the thirteenth site this
+   page did not count, and it is now `spawn fn { … }` like the other twelve.
+   That closes the *disagreement between two normative documents* and nothing
+   else: `spawn` is a call whose last argument is a lambda, which is the trailing
+   lambda Part I 5.3 already has, and the parser's `spawn "(" expr ")"` rule is
+   still what it was. So the compiler-against-specification half of this entry
+   stands exactly as written above.
 2. ~~**`throws` with a type.**~~ **Settled, and fixed.** Part I 7.1 states that
    `throws` names no types and the parser agrees; the four sites that
    contradicted it — Part I 6.4 once in code, twice in prose and once inside

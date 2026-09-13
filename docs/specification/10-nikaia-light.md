@@ -1324,12 +1324,16 @@ spawn fn { println(message) }
 // println(message)
 ```
 
-If you still need the value afterwards, clone it first:
+If you still need the value afterwards, clone it **before** the task is built and
+give the task the copy. A `.clone()` written *inside* the body does not help: the
+body runs after `message` has already moved into the task, so it would clone the
+task's own copy and leave nothing behind for the parent.
 
 ```nika
 let message = "Hello"
-spawn fn { println(message.clone()) }
-println(message)   // OK: the task owns a copy
+let copy = message.clone()   // made here, while `message` is still ours
+spawn fn { println(copy) }   // the copy is what moves into the task
+println(message)             // OK: `message` never left
 ```
 
 The compiler error for this situation explains exactly that:
@@ -1345,9 +1349,17 @@ error[NK2101]: this background task takes ownership of `message`
    |
   note: a task started with `spawn` may outlive this function,
         so it cannot merely borrow your variables — it takes them with it
-  help: keep using `message` here by giving the task its own copy:
-        spawn fn { println(message.clone()) }
+  help: clone before the task is built, and give the task the copy:
+        let copy = message.clone()
+        spawn fn { println(copy) }
 ```
+
+> **Status:** not built. `spawn` does not lower yet — the runtime integration it
+> needs is the next step (Part II, 11.2) — and `NK2101` is catalogued but never
+> raised (Part III, Appendix C.3). The move rule is therefore written ahead of
+> both. The form above is the one spelling of a `spawn`, the trailing lambda of
+> 5.3; the parser still insists on parentheses around the body instead, which is
+> a bug in the parser and not a second form.
 
 ### 8.4. The Runtime Sidecar Model
 While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.

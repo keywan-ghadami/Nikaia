@@ -99,6 +99,11 @@ is normative and nothing may depend on it to know what a program means.
   `Locked` would cost against Part II 12.2's no-pausing rule: why blocking is
   not pausing in this language, the one ledger line the answer turns on, and
   the 11 ns an uncontended acquisition costs where it can never be contended.
+* [`automatic-clone.md`](automatic-clone.md) — why having the compiler insert the
+  `.clone()` a detached task makes necessary is not a convenience: it adds an
+  owner and so moves a cleanup point, which is the observable change ADR-037 D3
+  refused to infer and ADR-005 §3 already rejected outright, so the proposal has
+  to answer those records rather than appeal to typing saved.
 * [`technical_notes.md`](technical_notes.md) — the compiler-internals findings
   from the path that was withdrawn; kept as the notebook page it is.
 * [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) — what the nightly

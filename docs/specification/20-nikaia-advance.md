@@ -717,8 +717,9 @@ error[NK2102]: tasks inside `task::scope` must be `sync` where they run in paral
         1. keep it in the scope, but make the work pure:
            mark the function `sync` (and do the I/O before the scope)
         2. run it as a background task instead — it will take ownership
-           of its variables (clone what you still need):
-           let handle = spawn fn { fetch_url(url.clone()) }
+           of its variables, so clone what you still need first:
+           let target = url.clone()
+           let handle = spawn fn { fetch_url(target) }
            let result = handle.await
 ```
 

@@ -1255,7 +1255,7 @@ A task runs somewhere else, so everything it uses goes with it:
 ```text
 error[NK2501]: `counts` may not cross into a task, and this task uses it
   --> app.nika:7:5
-   7 |     spawn({ total(counts) })
+   7 |     spawn fn { total(counts) }
            ^
      = a task runs on a thread of its own, so everything it uses has to be able to cross one (Part II, 11.2)
      = `Held[i64]` is one the records say may not be on a thread other than the one that built it, at either setting of `user_parallelism` (Part III, C.5)
