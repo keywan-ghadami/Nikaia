@@ -229,14 +229,21 @@ inspector, and a theme that wants to, can tell them apart.
 
 These are the ones worth arguing about, because both sides wrote something.
 
-1. **`spawn`.** The specification writes `spawn fn { … }` in five places
-   (Part I 5.4, 8.2, 8.3, Part II 11.2, and the `NK2101` diagnostic's own
-   `help:` text). The parser is
-   `rule spawn_expr = "spawn" "(" body:expr ")"` — parentheses required. And
-   `spawn fn { … }` does not fail: `spawn` falls through to `path_expr` as a
-   variable and `fn { … }` is read as a second statement, so the program parses
-   and means something else. The grammar colours both, and `keyword.control.spawn`
-   does not depend on what follows.
+1. **`spawn`.** The specification writes `spawn fn { … }` in fourteen places
+   across the three Parts, and that spelling is now the decided one: `spawn` is a
+   call whose last argument is a lambda, like the lock's doors, so the
+   parenthesised form is out ([ADR-039](../docs/specification/adr/adr-039.md) is
+   where the lock's doors are; the `spawn` spelling is Part I 8.3 and Part II
+   11.2). The parser still disagrees:
+   `rule spawn_expr = "spawn" "(" body:expr ")"` — parentheses required.
+   What `spawn fn { … }` does has changed, and in the right direction: since a
+   trailing lambda reaches a path, it is **one** expression — a call to a
+   function named `spawn` — where it used to be two statements naming a
+   variable. So `rustc` says *cannot find function* rather than *cannot find
+   value*, and the program is an error instead of quietly meaning something
+   else. What is left is making `spawn` the `std` entry the source already
+   reads it as. The grammar colours both forms, and
+   `keyword.control.spawn` does not depend on what follows.
 
 2. **`throws` with a type.** Part I 7.1 is explicit that *"`throws` names no
    types"*, and the parser agrees: `rule kw_throws = "throws"`. But Part I 6.4
