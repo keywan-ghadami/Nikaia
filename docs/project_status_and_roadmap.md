@@ -146,10 +146,12 @@ one list, and it is not here** — [`open-work.md`](open-work.md) §2 holds ever
 decided-and-unbuilt item in the order to take them, beside the two principles that
 set that order.
 
-The head of it is the runtime binding `spawn` needs. Five records are checked and
-cannot run until it exists, and a check with no program to be tested against is
-the state that rots fastest: nothing fails when it drifts, because nothing
-exercises it.
+The head of it is the emitted Rust becoming `async` and an executor to run it
+([ADR-055](specification/adr/adr-055.md)) — with `spawn` and everything that waits
+on it as steps of that, rather than the first thing to do. Five records are
+checked and cannot run until the sequence is done, and a check with no program to
+be tested against is the state that rots fastest: nothing fails when it drifts,
+because nothing exercises it.
 
 **The unchecked boxes above are not that list**, and the difference is worth
 keeping: a box is a piece of *scope* — generics, an LSP, compile-time I/O — that

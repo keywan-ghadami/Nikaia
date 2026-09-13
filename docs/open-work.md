@@ -138,16 +138,22 @@ long after both worked. Two lists of one thing is one list and one liability.
 
 So, in order, and each says below why it sits where it does:
 
-1. **The runtime binding `spawn` needs.** Five records are checked and cannot run
-   until it exists, which is the first principle above in its sharpest form. It is
-   also what the two entries after it wait on.
+1. **The emitted Rust becomes `async`, and an executor to run it**
+   ([ADR-055](specification/adr/adr-055.md)). Everything about tasks is inside
+   this one item and in the order that record's §6 gives: the executor, then
+   `async`/`.await` off the ledger's `sync` column, then `std`'s own pausing
+   entries, then `spawn`, then `overlap { … }`. Five records are checked and
+   cannot run until it is done, which is the first principle above in its
+   sharpest form — and until this session it looked like one step rather than
+   five, because a pause was a thread that blocked and nothing said so.
 2. **`SharedMut[T]` and `Locked[T]` as types the backend can build.** The other
    half of the same story: a program that spawns needs something it may share, and
-   today writing one is checked and then fails to emit.
-3. **`overlap { … }`, and then the automatic reordering out.** In that order and
-   not the other — removing the automatic half first would leave the language with
-   no way to ask for overlap at all. The removal is the second principle's case:
-   free today, breaking once programs exist.
+   today writing one is checked and then fails to emit. Independent of the
+   sequence above, so it can be built beside it.
+3. **The automatic reordering, `seq` and the `ordering` switch out.** After
+   `overlap` and not before — removing the automatic half first would leave the
+   language with no way to ask for overlap at all. The removal is the second
+   principle's case: free today, breaking once programs exist.
 4. **The diamond in the checker.** Small, self-contained, waits on nothing. It is
    the only entry here that one afternoon closes.
 5. **A server to bind to, and the `postgres` block.** Its own project rather than a
