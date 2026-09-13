@@ -179,8 +179,30 @@ emitted yet"*. What is checked but cannot run:
   program asks for overlap, now that the automatic half is on its way out. Its §5
   gives the order and this is step one of it.
 
-This is the largest single unblocking in the file, and it grew by one this
-session.
+This is the largest single unblocking in the file.
+
+**And it has a record in front of it now** —
+[ADR-055](specification/adr/adr-055.md), which is what the runtime binding turned
+out to need. The question `spawn` could not be built without is what a task
+*means* at `user_parallelism = no`: Part II 11.2 says *"interleaved on the same
+thread"*, and two synchronous Rust closures cannot interleave, because neither
+yields. The emitted Rust contained the word `async` **zero** times and a pause was
+a thread that blocks.
+
+The answer is that the lowering becomes implicitly async, which is what the
+language was specified with from [ADR-005](specification/adr/adr-005.md) on —
+[ADR-027](specification/adr/adr-027.md)'s `sync` already says, per function,
+whether it can pause, and that property *is* `async fn` or plain `fn`. So this
+entry is now **step 4 of that record's §6**, not the first thing to do:
+
+1. the executor in `rt`;
+2. `async`/`.await` in the emitter, off the ledger's `sync` column;
+3. `std`'s own pausing entries;
+4. `spawn` and `TaskHandle`, with `NK2101`;
+5. [ADR-050](specification/adr/adr-050.md) D2's `overlap`.
+
+Steps 1–3 land close together: until `std` is async a program that calls a pausing
+entry does not compile.
 
 ### 2.2. `SharedMut[T]` and `Locked[T]` are not types the backend can build
 
