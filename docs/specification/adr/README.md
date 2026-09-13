@@ -49,6 +49,7 @@ and a decision is not an implementation.
 | [006](adr-006.md) | `Cleanup` — teardown that performs I/O, inserted by the compiler on every exit path | Accepted | no |
 | [008](adr-008.md) | Tethered slices in user structs: the tether-state lattice, and one handle per container rather than per token | Accepted | views |
 | [039](adr-039.md) | The lock: two representations stay and the difference becomes unobservable — taking a lock inside a lock is refused, a second derived property says whether a function touches one, the shared mutable type is `SharedMut[T]`, and it has four doors instead of one | Accepted | **no** — neither `SharedMut` nor `Locked` is a type the compiler knows; what exists is the machinery D3 and D6 build on ([027](adr-027.md)'s fixpoint, [005](adr-005.md) §5's structural walk) |
+| [040](adr-040.md) | A handle on a shared value is duplicated, never moved, and each handle dies at the end of its own block — so there is no operation to name and no second meaning for `.clone()` | Accepted | **no** — `Shared[T]` is not a type the compiler knows, so there is no handle to duplicate, no `NK2101` check to exempt and no duplication site for `--sharing` to list |
 
 ### Grammar, DSLs, parsing
 
@@ -134,6 +135,7 @@ the superseding record's own header:
 
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
+| [005](adr-005.md) §3 | [040](adr-040.md) D1 (narrows) | the ban on a clone the user did not write — it reaches a clone of **data** and no longer a **handle** on a shared value, which copies no data and produces no second value |
 | [021](adr-021.md) D5 | [039](adr-039.md) D8 (amends) | the cache-key enumeration: the re-entrancy switch is a fourth dimension, because a build with the check and one without lower the same source to different Rust |
 | [005](adr-005.md) D6 | [039](adr-039.md) D2 (narrows) | the runtime reentrancy check as the backstop for re-entering one lock through a chain of `sync` calls — that case is refused at compile time now, and the check becomes self-control of the new rule |
 | [002](adr-002.md) D3 | [021](adr-021.md) D9 | Cranelift for "sub-second iterations" — never measured; measured, it buys 25 s against 26 s |
