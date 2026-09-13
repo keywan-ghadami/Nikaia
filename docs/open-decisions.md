@@ -18,62 +18,96 @@ written down in [`specification/adr/`](specification/adr).
 ## 1. What `use pool` does — **answered**
 
 **The answer.** `use pool` makes a module reachable and does nothing else. Every
-name from it is written with its prefix, at every use:
+name from it is written with its prefix, at every use. `use pool as p` shortens
+that prefix. Nothing is brought in — not by a glob, not by a braced list, not one
+name at a time.
 
 ```nika
 use pool
+use request_handling as rh
 
-fn handle(c: pool::Conn) -> i64 {
-    let d: pool::Conn = pool::make()
-    return c.id + d.id
+fn handle(c: pool::Conn) -> rh::Response {        // in a type
+    let d: pool::Conn = pool::make()              // in a type and in a call
+    let e = pool::Conn(id: 1)                     // in a struct literal
+    let s: Shared[pool::Conn] = pool::make()      // nested, like any other type
+    return rh::ok(d.id + e.id)
 }
 ```
 
-Four forms, and the answer for each:
+**The prefix falls where a name is written, not where a value is used.** `d.id`
+and `d.respond(200)` carry none: there is a value in hand, and nothing to resolve.
+In a body that works with values the prefix barely appears, which is what makes the
+answer bearable without an import form.
 
-* **`use pool`** — takes the module's file name. Kept, and it is the whole of it.
-* **`use pool as p`** — an alias, so `p::Conn` reads at every use site. **Added.**
-  It is what makes the decision bearable for a module called
-  `request_handling`, and the property that matters survives it: a prefix still
-  stands at every use, declared once and visibly at the top.
-* **`use pool::*`** — everything the module makes public, without naming it.
-  **Refused, and not left open.** A name added to `pool` later changes what an
-  unchanged line in another file means, which is the one thing a reader cannot
-  defend against.
-* **`use pool::{Conn, Pool}`**, with `as` on a single name — **not decided, and
-  deliberately not refused.** See below.
+**A module of the program is one name.** No path, no directories — `use a::b` is
+not a form for a file of your own. The one `use` with a path in it is `std`'s,
+which names the library rather than a file (ADR-030 D1), and that is unchanged.
 
-**Why the selected form stays open rather than being settled with the rest.** The
-argument against importing is about the **blanket** form and does not reach the
-selected one: a braced list says by name what comes in, a name added to the module
-later changes nothing, and two lists that name the same thing are a compile error
-rather than a silent change of meaning. It is a real candidate, and the reason not
-to take it today is a different one — **direction**. Adding it later breaks no
-program, because everything written with a prefix stays valid. Removing it later
-breaks every program that used it. Between a choice that can be reversed and one
-that cannot, and with no evidence yet from a program of any size, the reversible
-one is taken first.
+**Refused, with the way out in the diagnostic:**
 
-**What this does not answer, and it is the larger question.** There is no
-**re-export**: no way for a module to offer a name that another module declares.
-Today that is invisible, because a program is one package and its author knows
-their own file layout. It stops being invisible the day a library is published:
-without it, a library's *internal file layout is its public surface*, and moving a
-declaration from one file to another — housekeeping — breaks every consumer. That
-belongs with §6 and is recorded there.
+```
+error: names are not brought in; a module is reached through its name
+   1 | use pool::{Conn, Pool}
+       ^^^^^^^^^^^^^^^^^^^^^^
+     = write `use pool`, and `pool::Conn` where you need it
+     = if the prefix is long, `use pool as p` shortens it once, in one place
+```
 
-**What it costs, stated rather than implied.** Every use of a foreign name is
-longer by a prefix, and the prefix lands in the places this language already asks
-for a type: a signature, and the annotated `let` that is the only place sharing
-begins — `let db: Shared[pool::Connection] = …`. What is bought is that a reader
-of any line knows where every name in it comes from without consulting the top of
-the file, and that no edit elsewhere can change what a line already written means.
+**Two rules that come with it.** A prefix must be introduced: `pool::Conn` without
+`use pool` is refused, so that a file still lists what it depends on at the top.
+And one name per file: two modules that end up under the same name — by alias or
+by collision with another module — is an error rather than a rule about which
+wins.
 
-**And it does not block the repair.** [`open-work.md`](open-work.md) §1.1 needs the
-same two pieces under either answer — a qualified type name that resolves to the
-same type, and a struct literal that tolerates a prefix. Only the import form
-depended on this, and it is not being built. The repair can proceed; the alias is
-the one addition this answer brings with it.
+### Why the selected form is refused rather than left open
+
+Both shapes are proven, and the evidence says so plainly.
+
+* **The blanket form is regretted everywhere it exists.** Rust lints it, Python's
+  style guide forbids it, Elm discourages it for libraries. That is the clearest
+  signal in the whole space, and it settles `use pool::*` on its own.
+* **The selected form is everywhere and regretted nowhere.** Java, Python, Rust,
+  Haskell, Elm and OCaml all have it and none has withdrawn it. It is not a
+  mistake, and refusing it is not a claim that it is one.
+* **Qualified-only is sustained.** Go has had no import selection for fifteen
+  years, with no serious movement to add it.
+* **And one community that had both converged away from the convenient form.**
+  Haskell's practice moved toward explicit lists and qualified names, for the
+  reason this decision is about: knowing where a name came from.
+
+So general experience does not decide it — both work. What decides it is a rule
+this language has already applied to itself: **one form, not two spellings of it.**
+[ADR-041](specification/adr/adr-041.md) withdrew the automatic lambda argument
+names on exactly that ground. A selected import creates the same situation for
+every name in the language — the same type spelled `pool::Conn` here and `Conn`
+there, both correct. Having just paid to remove one such pair, the language should
+not introduce another across its whole surface.
+
+**And the refusal is not irreversible, which is why it can be firm.** Adding a
+selected form later breaks no program: everything written with a prefix stays
+valid. If a program of real size shows the prefix to be a genuine cost rather than
+a predicted one, the form can be added then, with evidence instead of a guess. What
+is not deferred is the decision — a question left open is one that every file
+written in the meantime has to live with unanswered.
+
+### What this does not answer
+
+**Re-export.** There is no way for a module to offer a name that another module
+declares, and this decision does not create one. It is recorded in §6, where
+libraries are, because that is where its cost lands.
+
+### What it costs, and what it does not block
+
+Every use of a foreign name is longer by a prefix, and the prefix lands where this
+language already asks for a type — a signature, and the annotated `let` that is
+the only place sharing begins. What is bought is that a reader of any line knows
+where every name in it comes from without consulting the top of the file, and that
+no edit elsewhere changes what an already-written line means.
+
+[`open-work.md`](open-work.md) §1.1 was never blocked by this. Both answers needed
+the same two pieces — a qualified type name that resolves to the same type, and a
+struct literal that tolerates a prefix. The alias is the one thing this answer adds
+to that repair.
 
 ---
 
