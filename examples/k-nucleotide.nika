@@ -99,7 +99,7 @@ impl Tally {
 // pointers and lengths rather than a million small strings. That is the same
 // claim `1brc.nika` makes about station names (Part II, 10.6), on a buffer the
 // program owns rather than one it mapped.
-fn count(seq: &str, k: usize) -> HashMap[&str, Tally] {
+fn count(seq: &str, k: i64) -> HashMap[&str, Tally] {
     let mut counts: HashMap[&str, Tally] = HashMap::new()
 
     if seq.len() < k {
@@ -122,7 +122,7 @@ fn count(seq: &str, k: usize) -> HashMap[&str, Tally] {
 // Two stable sorts state the compound order the benchmark asks for, which is
 // what Part I 4.5 says they are for: by fragment ascending, then by count
 // descending, and the second keeps the order of the first among equals.
-fn report_frequencies(seq: &str, k: usize) {
+fn report_frequencies(seq: &str, k: i64) {
     let counts = count(seq, k)
 
     let mut rows = Vec::new()

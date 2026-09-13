@@ -576,10 +576,15 @@ impl<'a> Checker<'a> {
     ///
     /// The list is the other way round - which conversions **always** fit - and
     /// that is the fail-closed direction (ADR-010 D1): a pair nobody thought
-    /// about is checked at run time rather than truncated in silence. Two
-    /// machine-width types are in it because `len` hands one back (D7's second
-    /// neighbour): what fits on a large machine does not on a small one, so
-    /// nothing about them is claimed to fit and they are checked at both ends.
+    /// about is checked at run time rather than truncated in silence.
+    ///
+    /// **The machine-width types are not in it, and no longer need to be**
+    /// ([ADR-048](../../../../docs/specification/adr/adr-048.md) D1). They were,
+    /// because `len` handed one back and what fits on a large machine does not on
+    /// a small one. A length is an `i64` now and `usize` has left the surface a
+    /// program can write, so a conversion out of one is a conversion out of a type
+    /// nobody can hold - and this list is the writable surface, which is the
+    /// reason the entry was there and the reason it is not.
     ///
     /// An integer to `f64` is the one entry that loses something and is still
     /// called fitting (D7): digits go at large values without anything
@@ -590,7 +595,7 @@ impl<'a> Checker<'a> {
             return;
         };
         let (from, into_name) = (from.as_str(), into.as_str());
-        const NUMERIC: [&str; 5] = ["i32", "i64", "f64", "usize", "isize"];
+        const NUMERIC: [&str; 4] = ["i32", "i64", "f64", "u8"];
         let always_fits =
             from == into_name || into_name == "f64" || (from, into_name) == ("i32", "i64");
         let checked = NUMERIC.contains(&from) && NUMERIC.contains(&into_name) && !always_fits;

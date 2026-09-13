@@ -2953,17 +2953,31 @@ impl<'p> Emitter<'p> {
                 // exactly as wrapping is (D2) - and since D4 made `as i32`
                 // checked, this is the only way left to ask for truncation.
                 //
-                // In parentheses, because `as` sits between the unary operators
-                // and the binary ones in Rust's precedence while a method call
-                // sits above all of them: `-x.truncating_i32()` means
-                // `-(x as i32)` and `x.truncating_i32().abs()` needs the
-                // conversion to happen first.
+                // Bare, and parenthesised by whoever needs it: `as` sits between
+                // the unary operators and the binary ones in Rust's precedence
+                // while a method call sits above all of them, so
+                // `-x.truncating_i32()` and `x.truncating_i32().abs()` both need
+                // the conversion to happen first. [`Emitter::emits_as_cast`] is
+                // where that is decided, for the same reason a written `as`
+                // decides it there - **a parenthesis nobody needs is a warning
+                // about the generated file** (`let n = (big as i32);` is
+                // "unnecessary parentheses around assigned value"), and Part III
+                // C.1 says a reader must not meet one.
                 if let Some(into) = truncating(self.text(*method)) {
-                    out.push("(");
-                    self.expr(out, receiver, depth, flow)?;
-                    out.push(&format!(" as {into})"));
+                    self.nested(out, receiver, u8::MAX, depth, flow)?;
+                    out.push(&format!(" as {into}"));
                     return Ok(());
                 }
+                // **`len` hands back an `i64`** (ADR-048 D1), and Rust's hands
+                // back a `usize`. Parenthesised where it has to be and nowhere
+                // else, exactly as the conversion above is.
+                //
+                // A name and not a rule, because what it encodes is a fact about
+                // *Rust's* library rather than about this language: four entries
+                // in `std.contracts` return a length, `len` is what all four are
+                // called, and `the_four_lengths_are_i64` in `tests/contracts.rs`
+                // is what keeps the two from drifting apart.
+                let length = is_length(self.text(*method), args);
                 self.postfix_base(out, receiver, depth, flow)?;
                 out.push(&format!(".{}", self.text(*method)));
                 // Nikaia's `collect` builds a List; Rust's needs to be told
@@ -2988,6 +3002,9 @@ impl<'p> Emitter<'p> {
                 // checker established can fail.
                 if flow.throws && !flow.caught && self.method_can_fail(flow, *method) {
                     out.push("?");
+                }
+                if length {
+                    out.push(" as i64");
                 }
             }
             Expr::Match { value, arms } => {
@@ -3020,10 +3037,39 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(".{}", self.text(*name)));
             }
             Expr::Index { base, index } => {
+                // **A length is an `i64`, so an index is one too**
+                // ([ADR-048](../../../docs/specification/adr/adr-048.md) D1), and
+                // Rust indexes a sequence by `usize`. The conversion is emitted
+                // and never written, in both directions - which is the whole of
+                // what D1 buys.
+                //
+                // Around **every** index but one, because this emitter does not
+                // know types (ADR-011 D2) and a map is indexed too:
+                // `counts[path]` takes a `&str`. `nikaia_std::index::at` chooses
+                // on the type of what is in the brackets and is the identity for
+                // anything that is not a number, so a rule applied everywhere
+                // cannot be applied to the wrong index.
+                //
+                // **The one exception is an index written only in literals.**
+                // `xs[0]` and `&text[1..3]` need no conversion - Rust's own
+                // inference gives a literal the `usize` the sequence wants - and
+                // they cannot *take* one: `at(0)` has nothing to infer `I` from,
+                // since every integer type answers with the same `usize`, and
+                // `cannot infer type` about a generated file is exactly what
+                // Part III C.1 forbids.
                 self.postfix_base(out, base, depth, flow)?;
-                out.push("[");
-                self.expr(out, index, depth, flow)?;
-                out.push("]");
+                match only_literals(index) {
+                    true => {
+                        out.push("[");
+                        self.expr(out, index, depth, flow)?;
+                        out.push("]");
+                    }
+                    false => {
+                        out.push("[nikaia_std::index::at(");
+                        self.expr(out, index, depth, flow)?;
+                        out.push(")]");
+                    }
+                }
             }
             Expr::Cast { expr, ty } => {
                 let into = self.ty(ty, Lifetimes::ELIDED);
@@ -3530,22 +3576,22 @@ impl<'p> Emitter<'p> {
     /// how the tree was written - and without them the emitted Rust means
     /// something else and often still compiles.
     fn postfix_base(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
-        let parenthesise = matches!(
-            expr,
-            Expr::Binary { .. }
-                | Expr::Unary { .. }
-                | Expr::Cast { .. }
-                | Expr::Range { .. }
-                | Expr::If { .. }
-                | Expr::Match { .. }
-                | Expr::Block(_)
-                | Expr::Seq(_)
-                | Expr::Closure { .. }
-                | Expr::TryCatch { .. }
-                | Expr::Dsl { .. }
-                | Expr::DslFrom { .. }
-                | Expr::Asm { .. }
-        );
+        let parenthesise = self.emits_as_cast(expr)
+            || matches!(
+                expr,
+                Expr::Binary { .. }
+                    | Expr::Unary { .. }
+                    | Expr::Range { .. }
+                    | Expr::If { .. }
+                    | Expr::Match { .. }
+                    | Expr::Block(_)
+                    | Expr::Seq(_)
+                    | Expr::Closure { .. }
+                    | Expr::TryCatch { .. }
+                    | Expr::Dsl { .. }
+                    | Expr::DslFrom { .. }
+                    | Expr::Asm { .. }
+            );
 
         if parenthesise {
             out.push("(");
@@ -3555,6 +3601,31 @@ impl<'p> Emitter<'p> {
             out.push(")");
         }
         Ok(())
+    }
+
+    /// **Whether this comes out as a Rust `as` conversion**, whatever it was
+    /// written as.
+    ///
+    /// Three things do: a written `as` (ADR-043 D4), `x.truncating_i32()`, which
+    /// *is* Rust's `as` (D7), and `xs.len()`, whose `usize` becomes the `i64` the
+    /// ledger promises ([ADR-048](../../../../docs/specification/adr/adr-048.md)
+    /// D1). What they have in common is where they sit in Rust's precedence -
+    /// below the unary operators, above the binary ones - which is not where a
+    /// method call sits, so the two places that decide parentheses have to ask
+    /// about the emitted shape rather than the written one.
+    ///
+    /// Asked in one place because the alternative is parenthesising always, and a
+    /// parenthesis nobody needs is a Rust warning about a file nobody wrote
+    /// (Part III, C.1).
+    fn emits_as_cast(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Cast { .. } => true,
+            Expr::MethodCall { method, args, .. } => {
+                let name = self.text(*method);
+                truncating(name).is_some() || is_length(name, args)
+            }
+            _ => false,
+        }
     }
 
     /// An operand of an operator, parenthesised only where it binds looser
@@ -3569,8 +3640,22 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         let parenthesise = match expr {
             Expr::Binary { op, .. } => precedence(*op) < needs,
-            Expr::Cast { .. } => needs == u8::MAX,
-            _ => false,
+            // **An operand that comes out as a conversion**, in the two
+            // positions where Rust reads it wrongly without parentheses.
+            //
+            // Beside a **unary** operator, because `as` binds looser: `-x as i64`
+            // is `(-x) as i64`. And as the **left of a comparison**, where it is
+            // not a precedence question at all - `x as i64 < k` is read as
+            // `i64<k>`, the start of a generic argument list, and the program
+            // does not parse. Both would otherwise be a `rustc` message about a
+            // file nobody wrote (Part III, C.1).
+            //
+            // Nowhere else, and that is the same rule: `x as i64 + 1` needs no
+            // parentheses and a parenthesis nobody needs is the other half of
+            // C.1 - `unused_parens` is a warning about the generated file.
+            _ => {
+                self.emits_as_cast(expr) && (needs == u8::MAX || needs == precedence(BinaryOp::Lt))
+            }
         };
 
         if parenthesise {
@@ -3798,6 +3883,31 @@ fn unary_op(op: UnaryOp) -> &'static str {
 }
 
 /// Rust's binding strength, which Nikaia shares.
+/// Whether an index is written **only in literals**, and therefore needs no
+/// conversion and can take none.
+///
+/// `xs[0]`, `xs[-1]`, `&text[1..3]`, `xs[2 * 3]`: Rust's own inference gives each
+/// of these the `usize` a sequence wants. And `nikaia_std::index::at` cannot help
+/// here even where it would be harmless, because there is nothing to infer its
+/// argument type *from* - every integer type answers with the same `usize`, so the
+/// call is ambiguous and `cannot infer type` about a generated file is what
+/// Part III C.1 forbids.
+fn only_literals(index: &Expr) -> bool {
+    match index {
+        Expr::LitInt(_) => true,
+        Expr::Unary { expr, .. } => only_literals(expr),
+        Expr::Binary { lhs, rhs, .. } => only_literals(lhs) && only_literals(rhs),
+        Expr::Range { start, end, .. } => only_literals(start) && only_literals(end),
+        _ => false,
+    }
+}
+
+/// `xs.len()` - the four `std` entries that hand back a length, by the name all
+/// four of them have ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+fn is_length(method: &str, args: &[Expr]) -> bool {
+    method == "len" && args.is_empty()
+}
+
 fn precedence(op: BinaryOp) -> u8 {
     match op {
         BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 10,

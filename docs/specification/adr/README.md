@@ -91,6 +91,7 @@ and a decision is not an implementation.
 | [046](adr-046.md) | `use` makes a unit of code reachable and brings **no name** in — no glob, no braced list, no single name; `use x as y` shortens the prefix, a prefix must be introduced, and one name per file | Accepted | **partly** — the qualified form resolves and a qualified struct literal is checked. The rest waits on a `use` that can succeed at all: [047](adr-047.md) D1 made `use` name a package and D2 of that record is unbuilt, so every `use` but `std`'s is refused for that reason first |
 | [047](adr-047.md) | A **package is a directory**: its files share one namespace and need no `use` between them, privacy is per package, and a library is depended on by **path** — with five rules so the rest is not decided by accident | Accepted | **D1 yes** — every `.nika` beside the entry is one namespace, one crate root, duplicate names refused by name, privacy per package (so `NK1110` now fires on nothing), and `--input` outside a project is the one file. **D2 no** — a Nikaia package cannot be depended on at all |
 | [035](adr-035.md) | `f"…"` interpolates and `"…"` is text — the mark belongs on the construct | Accepted | yes |
+| [048](adr-048.md) | A **length is an `i64`** and so is an index, both conversions emitted rather than written; the machine-width type leaves the writable surface and `u8` is named on it | Accepted | **yes** — four `i64` lengths in `std.contracts`, `NUMERIC` is the four writable types, `xs.len() as i64` and `nikaia_std::index::at` emitted, a negative index reporting as an access out of bounds, and the parentheses around a conversion decided in one place |
 
 ### The contract ledger and the type checker
 
@@ -143,6 +144,7 @@ the superseding record's own header:
 | Displaced or amended | By | What moved |
 | :--- | :--- | :--- |
 | [046](adr-046.md) D1 | [047](adr-047.md) D1 (narrows) | which unit `use` names — a package rather than a file. Every rule in 046 stands and ranges over packages instead; the file boundary it was written against stops existing |
+| [043](adr-043.md) D7 | [048](adr-048.md) D1 (narrows) | the sources a `truncating_` entry has — the machine-width type leaves the writable surface, so its two entries go and the larger integer and the float remain |
 | [030](adr-030.md) | [047](adr-047.md) D1 (narrows) | a file is a module and `use` names one — the files of a directory are one namespace now, and `use` names the directory |
 | [039](adr-039.md) §3 | [045](adr-045.md) D1 (answers) | the open half — a lock could not reach a task, so Part II 12.2's counter was unwritable. The verdict takes the destination; §3's other way out, the `Mutex` floor, is not taken |
 | [037](adr-037.md) D6 | [045](adr-045.md) D3 (narrows) | its coda that after D6 "no type answers `may not`" — the lock answers it at a foreign call, so `NK2501` and `NK2502` stop sharing one verdict |

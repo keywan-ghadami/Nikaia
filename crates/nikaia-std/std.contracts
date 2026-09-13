@@ -455,10 +455,12 @@ signature = "(i64) -> i64"
 # `truncating_i32` hands back an `i32` whatever it was given, and a single name
 # with a type that follows the call site is not something the ledger can say.
 #
-# The sources are the three a Nikaia program can have a narrowing conversion out
-# of: the larger integer, a floating-point number, and the machine-width type
-# `len` hands back. There is no `truncating_usize` or `truncating_f64` - nothing
-# narrows *to* either in a program written in the types Part I 2.2 offers.
+# The sources are the two a Nikaia program can have a narrowing conversion out
+# of: the larger integer and a floating-point number. There is no
+# `truncating_f64` - nothing narrows *to* one in a program written in the types
+# Part I 2.2 offers - and there is no `truncating_usize` either, since ADR-048 D1:
+# a length is an `i64`, the machine-width type left the surface a program can
+# write, and nothing narrows out of a type nobody can hold.
 #
 # `touches = []` and `sync = true` for the reason the arithmetic entries give: a
 # pure computation that reaches no resource.
@@ -480,18 +482,6 @@ pub = true
 sync = true
 touches = []
 signature = "(f64) -> i64"
-
-[fn."usize::truncating_i32"]
-pub = true
-sync = true
-touches = []
-signature = "(usize) -> i32"
-
-[fn."usize::truncating_i64"]
-pub = true
-sync = true
-touches = []
-signature = "(usize) -> i64"
 
 [fn."HashMap::entry"]
 pub = true
@@ -515,7 +505,7 @@ signature = "(&HashMap[?, ?]) -> ?"
 [fn."HashMap::len"]
 pub = true
 sync = true
-signature = "(&HashMap[?, ?]) -> usize"
+signature = "(&HashMap[?, ?]) -> i64"
 
 [fn."HashMap::new"]
 pub = true
@@ -590,7 +580,7 @@ signature = "(&String) -> ?"
 [fn."String::len"]
 pub = true
 sync = true
-signature = "(&String) -> usize"
+signature = "(&String) -> i64"
 
 [fn."String::push_str"]
 pub = true
@@ -605,7 +595,7 @@ signature = "(&Vec[?]) -> bool"
 [fn."Vec::len"]
 pub = true
 sync = true
-signature = "(&Vec[?]) -> usize"
+signature = "(&Vec[?]) -> i64"
 
 [fn."Vec::new"]
 pub = true
@@ -637,7 +627,7 @@ signature = "(&str) -> ?"
 [fn."str::len"]
 pub = true
 sync = true
-signature = "(&str) -> usize"
+signature = "(&str) -> i64"
 
 [fn."str::repeat"]
 pub = true

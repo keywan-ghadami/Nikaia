@@ -455,9 +455,15 @@ fn truncating_says_by_name_what_a_conversion_no_longer_does_quietly() {
          }\n",
     );
     assert!(
-        rust.contains("(big as i32)") && !rust.contains("truncating"),
+        rust.contains("big as i32") && !rust.contains("truncating"),
         "the name is Rust's `as` and nothing else (ADR-043 D7):\n{rust}"
     );
+    // Bare where nothing needs it, parenthesised where something does: a length
+    // is an `i64` (ADR-048 D1) and narrowing it is a second conversion, so
+    // `text.len().truncating_i32()` is two of them and the inner one has to
+    // happen first. A parenthesis nobody needs is a warning about a file nobody
+    // wrote (Part III, C.1), which is why this is not simply always.
+    assert!(rust.contains("(text.len() as i64) as i32"), "{rust}");
     assert!(
         !rust.contains("try_from") && !rust.contains("nikaia_std::num"),
         "nothing here is checked - that is what the name asked for:\n{rust}"
@@ -493,4 +499,102 @@ fn truncating_says_by_name_what_a_conversion_no_longer_does_quietly() {
          one digit an `f64` cannot keep"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **A length is an `i64` and an index takes one, and neither conversion is
+/// written** ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+///
+/// The program below is the shape D1 is about: a loop over a length, an index by
+/// the loop variable, a length in arithmetic and a length in a comparison. Before
+/// this, every one of those lines carried an `as i64` the user wrote and that
+/// could not fail.
+#[test]
+fn a_length_is_an_i64_and_the_conversions_are_emitted() {
+    let dir = common::scratch_dir("length-i64");
+    let rust = lower(
+        &dir,
+        "fn main() {\n    \
+             let mut xs = Vec::new()\n    \
+             xs.push(10)\n    \
+             xs.push(20)\n    \
+             xs.push(30)\n    \
+             let mut sum = 0\n    \
+             for i in 0..xs.len() {\n        \
+                 sum = sum + xs[i]\n    \
+             }\n    \
+             let last = xs[xs.len() - 1]\n    \
+             let short = xs.len() < 2\n    \
+             println(f\"{sum} {last} {short} {xs.len()}\")\n\
+         }\n",
+    );
+
+    // Nothing the user wrote, and both directions emitted.
+    assert!(rust.contains("0..xs.len() as i64"), "{rust}");
+    assert!(rust.contains("nikaia_std::index::at(i)"), "{rust}");
+    // The left of a comparison is parenthesised, or Rust reads `i64<2>`.
+    assert!(rust.contains("(xs.len() as i64) < 2"), "{rust}");
+
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "{}\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run it");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "60 30 false 3");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// …and a **negative** index reports as an access out of bounds, which is D1's
+/// one requirement: it is one (Part III, A.2), and a diagnostic about a failed
+/// conversion would be about something the user never wrote.
+#[test]
+fn a_negative_index_aborts_as_an_access_out_of_bounds() {
+    let dir = common::scratch_dir("negative-index");
+    let _ = lower(
+        &dir,
+        "fn main() {\n    \
+             let mut xs = Vec::new()\n    \
+             xs.push(1)\n    \
+             let pos = 0\n    \
+             println(f\"{xs[pos - 1]}\")\n\
+         }\n",
+    );
+
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run it");
+    assert!(!ran.status.success(), "a negative index aborts");
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        said.contains("index out of bounds") && said.contains("-1"),
+        "the message is about the index, not about a conversion: {said}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
 }

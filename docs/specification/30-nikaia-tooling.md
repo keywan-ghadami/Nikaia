@@ -958,11 +958,11 @@ pub fn open(path: Path; write: bool = false, append: bool = false,
 
 ```nika
 impl File {
-    pub fn read(&mut self, into: &mut [u8]) -> usize throws
-    pub fn write(&mut self, data: &[u8]) -> usize throws
+    pub fn read(&mut self, into: &mut [u8]) -> i64 throws
+    pub fn write(&mut self, data: &[u8]) -> i64 throws
     pub fn flush(&mut self) throws
-    pub fn seek(&mut self, to: Seek) -> u64 throws   // Seek::Start(n) | Current(n) | End(n)
-    pub fn len(&self) -> u64 throws
+    pub fn seek(&mut self, to: Seek) -> i64 throws   // Seek::Start(n) | Current(n) | End(n)
+    pub fn len(&self) -> i64 throws
     pub fn close(self) throws                        // explicit opt-in; otherwise Cleanup does it
 }
 ```

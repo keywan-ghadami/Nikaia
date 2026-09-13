@@ -23,6 +23,7 @@ pub mod error;
 pub mod fs;
 pub mod hash;
 pub mod html;
+pub mod index;
 pub mod io;
 pub mod list;
 pub mod num;

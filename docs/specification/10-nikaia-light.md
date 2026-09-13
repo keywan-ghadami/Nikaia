@@ -123,7 +123,13 @@ Nikaia provides basic types to represent simple values.
 
 * **Integers:** Whole numbers without fractions.
     * `i32`: A standard integer (32-bit). Used for most numbers.
-    * `i64`: A large integer (64-bit). Used for very large numbers.
+    * `i64`: A large integer (64-bit). Used for very large numbers, and what a
+      **length** is: `xs.len()` hands back an `i64`, and an index is one
+      ([ADR-048](adr/adr-048.md) D1).
+    * `u8`: One byte. What reading a file hands back a list of
+      (`fs::read` → `Vec[u8]`), which is why it is named here — a type a program
+      meets has to be a type the specification offers. It has the same
+      conversion and arithmetic names as the others.
 * **Floats:** Numbers with decimal points.
     * `f64`: Double precision floating-point number. A literal may carry an
       **exponent** — `1.5e-4`, `2e3`, `9.54791938424326609e-04` — which is how a
@@ -148,6 +154,15 @@ and the name beside it is refused, as `NK1117`, because nothing declares it
 (Part III, C.3). This language has **no word it does not know**: one that stands
 on its own is read as a name, so `assert c` and `unsafe { … }` are refused the
 same way rather than being read as constructs that are not there.
+
+**These four are the integer types a program writes.** The compiler accepts more
+— `u32`, `u64` and the machine-width `usize` among them — and the specification
+does not offer them: an entry exists because a program asked for it, and none has
+([ADR-028](adr/adr-028.md) D5). A **length** used to be the one place a program
+met the machine-width type, and since [ADR-048](adr/adr-048.md) D1 it does not:
+`for i in 0..xs.len()` gives an `i64`, `xs[i]` takes one, and neither conversion
+is written — the compiler emits both. A negative index reports as an access out
+of bounds, because that is what it is (Part III, A.2).
 
 **An integer that does not fit aborts, at every build.** An `i32` holds what an
 `i32` holds; an arithmetic result that does not is an inconsistent program state,
@@ -1189,7 +1204,7 @@ impl Summary {
 }
 ```
 
-Handing a view back out of the buffer it came from is **not** this rule: `fn count(seq: &str, k: usize) -> HashMap[&str, Tally]` returns views of `seq`, and the result points into `seq` and nothing else. Why a parameter is not given a buffer of its own to name is [ADR-005](adr/adr-005.md) D1 — the language has no syntax for one — and what a struct carries instead is [ADR-008](adr/adr-008.md) D1.
+Handing a view back out of the buffer it came from is **not** this rule: `fn count(seq: &str, k: i64) -> HashMap[&str, Tally]` returns views of `seq`, and the result points into `seq` and nothing else. Why a parameter is not given a buffer of its own to name is [ADR-005](adr/adr-005.md) D1 — the language has no syntax for one — and what a struct carries instead is [ADR-008](adr/adr-008.md) D1.
 
 Where the thing it is stored into **already carries a buffer**, there is nothing to refuse: a method of a struct that holds a view has that struct's buffer in hand, so storing the parameter into one of its fields is accepted and the parameter is a view of *that* buffer. `fn note(&mut self, name: &str)` on a `Summary` holding `label: &str` compiles, and `name` is a view of the same buffer `label` points into — which narrows what a caller may pass and is why it is the signature rather than the body that changes.
 

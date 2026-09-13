@@ -81,7 +81,7 @@ fn what_cannot_be_resolved_is_not_inferred_sync() {
 #[test]
 fn a_method_call_is_resolved_through_the_receiver() {
     let l = ledger(
-        "fn counted(s: String) -> usize { return s.len() }\n\
+        "fn counted(s: String) -> i64 { return s.len() }\n\
          fn shouty(s: String) -> String { return s.to_uppercase() }",
     );
 
@@ -402,7 +402,7 @@ fn a_detached_lambda_may_not_use_from() {
 fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
     let source = "use std::io\n\
                   fn pure(a: i32) -> i32 { return a + 1 }\n\
-                  fn counted(s: String) -> usize { return s.len() }\n\
+                  fn counted(s: String) -> i64 { return s.len() }\n\
                   fn reads() -> String throws { return io::read_to_string() }\n\
                   pub struct S { n: i64 }\n\
                   impl S {\n\
@@ -769,7 +769,7 @@ fn a_lambda_is_part_of_the_function_that_writes_it() {
 /// promise catches nothing at all.
 #[test]
 fn a_call_that_cannot_be_resolved_is_not_a_violation() {
-    let found = violations("fn f(s: String) -> usize sync { return s.len() }");
+    let found = violations("fn f(s: String) -> i64 sync { return s.len() }");
     assert!(found.is_empty(), "{found:?}");
 }
 
@@ -936,4 +936,45 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].caller, "greet");
     assert_eq!(found[0].callee, "io::read_to_string");
+}
+
+/// **The four lengths are `i64`, and `len` is what all four are called**
+/// ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+///
+/// The emitter converts a call it recognises **by name** — `xs.len()` becomes
+/// `xs.len() as i64`, because Rust's hands back a `usize` and this compiler has no
+/// other way to know that. A name is not a rule, so this is what keeps the two
+/// from drifting: a fifth entry that returns a length under some other name would
+/// have a signature promising an `i64` and emit a `usize`, and nothing else would
+/// notice.
+#[test]
+fn the_four_lengths_are_i64_and_are_all_called_len() {
+    let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
+
+    let lengths: Vec<&String> = library
+        .functions
+        .iter()
+        .filter(|(key, _)| key.ends_with("::len"))
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(
+        lengths,
+        vec!["HashMap::len", "String::len", "Vec::len", "str::len"],
+        "the four D1 names"
+    );
+    for key in &lengths {
+        let result = library.functions[*key]
+            .signature
+            .as_ref()
+            .and_then(|s| s.result.as_ref())
+            .map(|ty| ty.text());
+        assert_eq!(result.as_deref(), Some("i64"), "{key}");
+    }
+
+    // And the machine-width type is nowhere in the ledger at all: it left the
+    // writable surface, so nothing narrows out of it either.
+    assert!(
+        !nikaia::contracts::STD.contains("usize::truncating"),
+        "`usize` left the surface a program can write (D1)"
+    );
 }

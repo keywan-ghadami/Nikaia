@@ -391,12 +391,14 @@ fn a_caught_method_call_keeps_its_result() {
 fn a_method_that_cannot_fail_takes_no_question_mark() {
     let rust = emit(
         r#"
-        fn size(text: String) -> usize throws {
+        fn size(text: String) -> i64 throws {
             return text.len()
         }
         "#,
     );
-    assert!(rust.contains("Ok(text.len())"), "{rust}");
+    // `as i64` and no `?`: a length is an `i64` (ADR-048 D1) and the conversion
+    // is the emitter's, which is a different thing from a failure being added.
+    assert!(rust.contains("Ok(text.len() as i64)"), "{rust}");
 }
 
 /// `throws` names no type, and saying so is the parser's job (ADR-023 D1).

@@ -51,7 +51,12 @@ fn a_range_binds_looser_than_its_arithmetic() {
 #[test]
 fn a_range_may_end_in_a_call() {
     let emitted = emit("fn f(xs: Vec[i32]) { for i in 0..xs.len() { } }");
-    assert!(emitted.contains("for i in 0..xs.len() {"), "{emitted}");
+    // `as i64` because a length is one (ADR-048 D1), and no parentheses: `as`
+    // binds tighter than `..` in Rust, so the range still ends at the length.
+    assert!(
+        emitted.contains("for i in 0..xs.len() as i64 {"),
+        "{emitted}"
+    );
 }
 
 /// A group is not a node - the parser drops it, because that is how the tree

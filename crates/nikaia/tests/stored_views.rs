@@ -332,7 +332,7 @@ fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
             fn record(&mut self, name: &str, temp: i32) sync {
                 self.stations.insert(name, temp)
             }
-            fn count(&self) -> usize sync { return self.stations.len() }
+            fn count(&self) -> i64 sync { return self.stations.len() }
         }
         fn main() {
             let mut s = Summary::new()
@@ -378,7 +378,7 @@ fn a_view_that_reaches_the_field_through_a_local_is_lowered_too() {
                 let key = name
                 self.stations.insert(key, 1)
             }
-            fn count(&self) -> usize sync { return self.stations.len() }
+            fn count(&self) -> i64 sync { return self.stations.len() }
         }
         fn main() {
             let mut s = Summary::new()

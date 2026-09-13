@@ -1,7 +1,10 @@
 # Open decisions — the questions that need the owner
 
-Six entries. Three are answered and kept here until their records exist;
-the rest are questions that work cannot settle. Each one says what is blocked, what the
+Six entries. Three are answered, and their records now exist —
+[ADR-046](specification/adr/adr-046.md), [ADR-047](specification/adr/adr-047.md)
+and [ADR-048](specification/adr/adr-048.md); §2 and §6's language half are built,
+and each entry says what is left. They stay here until the owner drops them. The
+rest are questions that work cannot settle. Each one says what is blocked, what the
 options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
@@ -15,7 +18,7 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. What `use pool` does — **answered**
+## 1. What `use pool` does — **answered** ([ADR-046](specification/adr/adr-046.md); the qualified form is built, the rest waits on a package that can be depended on)
 
 **The answer.** `use pool` makes a module reachable and does nothing else. Every
 name from it is written with its prefix, at every use. `use pool as p` shortens
@@ -111,7 +114,7 @@ to that repair.
 
 ---
 
-## 2. The numeric surface, and what `len()` hands back — **answered**
+## 2. The numeric surface, and what `len()` hands back — **answered and built** ([ADR-048](specification/adr/adr-048.md))
 
 The heading asked which numeric types the language offers; the body only argued
 about `len`. Both halves are answered here, because answering the second alone
@@ -268,7 +271,7 @@ three.
 
 ---
 
-## 6. How a Nikaia library is offered, and what consumes one — **answered**
+## 6. How a Nikaia library is offered, and what consumes one — **answered** ([ADR-047](specification/adr/adr-047.md); the package half is built, the path dependency is not)
 
 Two questions were hiding in one, and only the first of them shapes what a program
 means.

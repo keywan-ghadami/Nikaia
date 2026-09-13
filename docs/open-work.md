@@ -242,13 +242,17 @@ neither line of that section's own example is accepted. `??` (Part I 3.5) is bui
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. `isize` is checked and has no `truncating_` name
+### 2.7. `isize` is checked and has no `truncating_` name — **gone with the surface**
 
-[ADR-043](specification/adr/adr-043.md) §4 records this on purpose: nothing in the
-ledger hands back an `isize`, so no program can reach a conversion out of one, and
-it is in the checked list anyway rather than left to truncate. The day something
-produces one, the name comes with it. **No work until then** — the entry exists so
-the asymmetry is not read as an oversight.
+[ADR-043](specification/adr/adr-043.md) §4 recorded the asymmetry on purpose:
+nothing handed back an `isize`, so no program could reach a conversion out of one,
+and it was in the checked list anyway rather than left to truncate.
+
+[ADR-048](specification/adr/adr-048.md) D1 removed the question instead of
+answering it. `check`'s `NUMERIC` list is the **writable** surface, and the
+machine-width types were in it because `len` handed one back; a length is an `i64`
+now, so they are not in it and there is no asymmetry left to explain. `usize`'s two
+`truncating_` entries went with them.
 
 ---
 
