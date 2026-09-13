@@ -1759,10 +1759,18 @@ impl<'a> Checker<'a> {
 
     // --- crossing a thread (ADR-005 §1 Group B, `NK25xx`) -------------------
     //
-    // Two places a value the *program* wrote reaches another thread, and the
-    // verdict is the same in both: a value may cross a thread only if it may
-    // cross any thread (ADR-038 D7). `contracts::send` owns the walk and the
-    // reason; these two own the span and the sentence.
+    // Two places a value the *program* wrote reaches another thread, and **the
+    // verdict is no longer the same in both** (ADR-045 D1): each asks
+    // `contracts::send` about its own destination, and the lock is the type the
+    // two answers differ on. Everything else answers alike wherever it is going,
+    // so the split costs one argument and changes nothing else.
+    //
+    // The rule the destination does **not** displace is ADR-038 D7's: a value may
+    // cross a thread only if it may cross any thread. What ADR-045 separates is
+    // *which* thread is being talked about - one of ours, or one a library we
+    // cannot read may start - and each answer is the same at both settings of
+    // `user_parallelism`, which is all Group B ever asked. `contracts::send` owns
+    // the walk and the reason; these two own the span and the sentence.
     //
     // Both report on `MayNot` and say nothing on `Undecided`, which is
     // `contracts::send`'s module header: refusing what this compiler cannot
@@ -1790,7 +1798,7 @@ impl<'a> Checker<'a> {
             let Some(ty) = self.lookup(&name) else {
                 continue;
             };
-            let crossing = send::crossing(&ty, self.own, self.library);
+            let crossing = send::crossing(&ty, self.own, self.library, send::Destination::Ours);
             if crossing.refused().is_none() {
                 continue;
             }
@@ -1846,7 +1854,7 @@ impl<'a> Checker<'a> {
             .map(|(arg, (_, ty))| (format!("`{}`", self.parsed.text(arg.name)), ty));
 
         for (what, ty) in positional.chain(named).collect::<Vec<_>>() {
-            let crossing = send::crossing(ty, self.own, self.library);
+            let crossing = send::crossing(ty, self.own, self.library, send::Destination::Foreign);
             if crossing.refused().is_none() {
                 continue;
             }

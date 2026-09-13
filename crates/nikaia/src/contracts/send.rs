@@ -2,20 +2,36 @@
 //
 // Whether a value may cross a thread (ADR-005 §1 Group B, `NK25xx`).
 //
-// One question, asked of a **type** and not of a place:
+// One question, asked of a **type and a destination** (ADR-045 D1):
 //
-//     may a value of this type be on a thread other than the one that built it?
+//     may a value of this type go to *this* destination?
 //
-// ADR-038 D7 states it as "a value may only cross into a foreign thread if it
-// may cross any thread", and the reason it is a property of the type rather than
-// of the crossing is ADR-005 Group B: the answer has to be **the same at both
-// settings of `user_parallelism`**, so that a library written at one setting
-// cannot turn out to be un-compilable where it is used. A check that consulted
-// the switch would answer `yes` for a type whose expansion is safe at one
-// setting and not at the other, and `no` for the same type at the other - which
-// is exactly the asymmetry Group B, `NK25xx` and ADR-037 §3 were all written to
-// prevent. So **no switch reaches this file, and none may** - the same sentence
-// `order.rs` opens with, for the same reason.
+// ADR-038 D7 states the first half as "a value may only cross into a foreign
+// thread if it may cross any thread", and the reason the answer is a property of
+// the type rather than of the particular crossing is ADR-005 Group B: it has to
+// be **the same at both settings of `user_parallelism`**, so that a library
+// written at one setting cannot turn out to be un-compilable where it is used. A
+// check that consulted the switch would answer `yes` for a type whose expansion
+// is safe at one setting and not at the other, and `no` for the same type at the
+// other - which is exactly the asymmetry Group B, `NK25xx` and ADR-037 §3 were
+// all written to prevent. So **no switch reaches this file, and none may** - the
+// same sentence `order.rs` opens with, for the same reason.
+//
+// ## Why the destination is not the switch coming back in
+//
+// [`Destination`] has two values and **each gets an answer that is the same at
+// both settings**, which is the whole of what Group B asks - its own note says
+// "'At every setting' is a claim about the verdict, not about the severity". The
+// justification may differ per setting; the answer may not. Before ADR-045 the
+// lock had to take the worse of the two settings and answer `MayNot`
+// everywhere, which made Part II 12.2's counter - the program
+// `user_parallelism = yes` exists to serve - impossible to write: at `yes` a real
+// operating-system lock stands in the emitted program, under which that counter
+// is entirely safe, and it was refused on account of an implementation that does
+// not occur in it.
+//
+// So the destination is the axis the verdict was missing, and not a reading of
+// the switch. Nothing below asks what `user_parallelism` is.
 //
 // ## What ADR-037 D6 changed here, and what it did not
 //
@@ -71,6 +87,16 @@
 // asks the same question as the value. The day a name belongs in one column and
 // not the other, this needs a second column; stating that here is cheaper than
 // discovering it.
+//
+// **[`LOCKS`] is that day, and the column it needed turned out to be the
+// destination** (ADR-045 §4 predicted this file would want two columns here). A
+// lock at `user_parallelism = no` may be moved to another thread and may not be
+// looked at from one, so on the move/look axis it does belong in one column and
+// not the other. It never has to be asked that way, because both destinations
+// answer before the distinction matters: into our own code the lock may go
+// whichever of the two it is doing, and into code nothing describes it may do
+// neither. So the two columns stay one, and the table splits by destination
+// instead.
 
 use std::collections::BTreeSet;
 
@@ -107,6 +133,46 @@ const CONTAINERS: &[&str] = &[
     "BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Result", "Shared", "Vec",
 ];
 
+/// A lock: the one family whose answer depends on where the value is going
+/// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D2, D3).
+///
+/// Both names, because Part II 12.2 has two spellings of the same thing and the
+/// question is about the lock in either: `SharedMut[T]` is a count around a lock
+/// and `Locked[T]` is the lock. The count plays no part here - it is the robust
+/// kind at both settings since [ADR-037](../../../../docs/specification/adr/adr-037.md)
+/// D6 - so the two answer alike.
+///
+/// Into our own code a lock is answered **by what it holds**, like a container:
+/// a lock does not make its contents crossable, and Group B's transitivity is
+/// the whole rule. Into code nothing describes it is refused.
+///
+/// **Specified ahead of the compiler**, like everything else about these two
+/// types: neither is a type the backend can lower
+/// ([ADR-039](../../../../docs/specification/adr/adr-039.md) §4), so a program
+/// that writes one as an annotation reaches this verdict and then fails to emit.
+/// The verdict is still the thing worth having early - it is what a library's
+/// signature is written against.
+const LOCKS: &[&str] = &["Locked", "SharedMut"];
+
+/// Where a value is going. The second half of the question this file answers
+/// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Destination {
+    /// Our own code on a thread of our own: the body of a `spawn`ed task
+    /// (Part II, 11.2), and the closure statement overlapping builds
+    /// ([ADR-033](../../../../docs/specification/adr/adr-033.md)).
+    ///
+    /// One answer, two reasons, which is what makes it switch-independent
+    /// (D2): at `user_parallelism = yes` a real operating-system lock is
+    /// underneath and several threads are what it is for; at `no` the task is
+    /// interleaved on the same thread, so nothing crosses at all.
+    Ours,
+    /// Code nothing written down describes, which may do anything with what it
+    /// is given - including putting it on a thread of its own
+    /// ([ADR-038](../../../../docs/specification/adr/adr-038.md) D7).
+    Foreign,
+}
+
 /// How far into a type this walks before giving up. A struct that holds itself
 /// through a container is a shape the ledger can hold, and this must terminate
 /// on one.
@@ -119,19 +185,19 @@ pub enum Crossing {
     May,
     /// A part of it may not, and the records say which.
     ///
-    /// **No type answers this today, and that is a consequence of
-    /// [ADR-037](../../../../docs/specification/adr/adr-037.md) D6 rather than an
-    /// oversight.** `Shared` was the one type the records made non-crossable,
-    /// and D6 made it crossable by giving it one representation. The arm stays
-    /// because the reason it existed has not gone away - a type whose expansion
-    /// still moves with `user_parallelism` has to take the worse setting - and
-    /// `Locked` is the candidate D3's second half is about. Nothing here decides
-    /// that.
+    /// **Its one producer is a lock at a foreign destination**
+    /// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D3). `Shared`
+    /// used to be the producer and stopped being one when
+    /// [ADR-037](../../../../docs/specification/adr/adr-037.md) D6 gave it one
+    /// representation at both settings; the arm then stood empty, and the lock is
+    /// the occupant ADR-037 D6's own coda named as the candidate.
     ///
-    /// So `NK2501` and `NK2502` are built, reachable, and fire on no program
-    /// this language can write. The walk below still has to be able to produce
-    /// this, which is why the arm is exercised directly in the tests rather than
-    /// through a source.
+    /// So `NK2502` fires on a program this language can write and `NK2501` no
+    /// longer does: the two codes stopped sharing one verdict the day the
+    /// destination entered it. [`Crossing::note`] and [`Crossing::way_out`] are
+    /// written for that one producer, and the day there is a second the arm has to
+    /// carry **which** - a refusal whose sentence is about a lock would be wrong
+    /// about anything else.
     MayNot {
         /// The part the answer is about - the whole type where the type itself
         /// is the problem, and the field's type where a field is.
@@ -165,30 +231,41 @@ impl Crossing {
     /// One concrete way out, as Part III C.2 requires of every diagnostic.
     /// `None` where there is nothing to get out of.
     ///
-    /// One sentence, because a refusal has one honest remedy: a value that may
-    /// not cross stays where it was built. It used to have a second - "write
-    /// `Vec[i64]` instead of `Shared[Vec[i64]]` and give each thread its own" -
-    /// which went with [`Crossing::MayNot`]'s only producer (ADR-037 D6).
+    /// The remedy is the one ADR-045 D3 names, and it is not "don't do that": the
+    /// caller opens the lock and hands the **value inside it** over, so the called
+    /// code sees an ordinary number or connection and no lock at all. That is the
+    /// shape already settled for an ordinary function
+    /// ([ADR-042](../../../../docs/specification/adr/adr-042.md) D1, D2,
+    /// Part I 6.2), so nothing new has to be learned to follow it.
     pub fn way_out(&self) -> Option<String> {
         self.refused()?;
-        Some("keep the value on the thread that built it".to_string())
+        Some(
+            "open the lock where you are and hand over the value inside it - the called code \
+             then sees an ordinary value and no lock"
+                .to_string(),
+        )
     }
 
     /// One line saying why a value of this type may not cross, for a
     /// diagnostic's note. `None` where it may.
     ///
     /// Part III C.2: no Rust vocabulary, and the sentence has to mean something
-    /// to a reader who has never heard of a reference count either. Which is why
-    /// the `MayNot` line no longer names one: the count was `Shared`'s reason and
-    /// `Shared` is not this answer any more, so the sentence says what the walk
-    /// actually knows - the records name this part, and they name it at both
-    /// settings.
+    /// to a reader who has never heard of a reference count either.
+    ///
+    /// **The `MayNot` sentence says that the answer was chosen**, because ADR-045
+    /// D3 asks it to: at `user_parallelism = yes` the crossing would in fact be
+    /// safe, and the cautious answer is taken anyway so that a library written at
+    /// one setting stays usable at the other. Anyone who trips over this in two
+    /// years should be able to see from the message that it was a decision and
+    /// not an oversight.
     pub fn note(&self) -> Option<String> {
         match self {
             Crossing::May => None,
             Crossing::MayNot { part, at } => Some(format!(
-                "`{part}`{} is one the records say may not be on a thread other than the one \
-                 that built it, at either setting of `user_parallelism` (Part III, C.5)",
+                "`{part}`{} holds a lock, and a lock may not go into code nothing written down \
+                 describes - at either setting of `user_parallelism`, and deliberately so: where \
+                 the setting makes it safe the answer is kept anyway, so that a library written \
+                 at one setting stays usable at the other (Part III, C.5)",
                 match at {
                     Some(at) => format!(", {at},"),
                     None => String::new(),
@@ -216,21 +293,27 @@ pub fn names_used(parsed: &Parsed, body: &Expr) -> BTreeSet<String> {
     out
 }
 
-/// Whether a value of `ty` may cross a thread.
+/// Whether a value of `ty` may go to `into`.
 ///
 /// `own` is the program's ledger and `library` is `std`'s: between them they
 /// hold the fields of every type that is written down (ADR-024), which is what
 /// makes this **structural and transitive** as Group B requires - a struct with
-/// one `Shared` field is no more crossable than the `Shared` itself.
-pub fn crossing(ty: &Ty, own: &Ledger, library: &Ledger) -> Crossing {
+/// one lock field is no more crossable than the lock itself.
+///
+/// `into` is the destination (ADR-045 D1) and reaches exactly one row of the
+/// table, [`LOCKS`]. Every other answer is the same wherever the value is going,
+/// which is why the parameter is threaded through the walk rather than asked
+/// before it: a lock four fields deep is still a lock.
+pub fn crossing(ty: &Ty, own: &Ledger, library: &Ledger, into: Destination) -> Crossing {
     let mut seen = BTreeSet::new();
-    walk(ty, own, library, &mut seen, DEPTH)
+    walk(ty, own, library, into, &mut seen, DEPTH)
 }
 
 fn walk(
     ty: &Ty,
     own: &Ledger,
     library: &Ledger,
+    into: Destination,
     seen: &mut BTreeSet<String>,
     depth: usize,
 ) -> Crossing {
@@ -250,7 +333,11 @@ fn walk(
         Ty::Fn { .. } => Crossing::Undecided { part: ty.text() },
         // `()` holds nothing, so there is nothing to be wrong about; a pair is
         // its parts.
-        Ty::Tuple(parts) => join(parts.iter().map(|p| walk(p, own, library, seen, depth - 1))),
+        Ty::Tuple(parts) => join(
+            parts
+                .iter()
+                .map(|p| walk(p, own, library, into, seen, depth - 1)),
+        ),
         Ty::Named { name, args, .. } => {
             if PLAIN.contains(&name.as_str()) {
                 // A plain type with arguments is not the plain type: `String[T]`
@@ -266,7 +353,30 @@ fn walk(
                 if args.is_empty() {
                     return Crossing::Undecided { part: ty.text() };
                 }
-                return join(args.iter().map(|a| walk(a, own, library, seen, depth - 1)));
+                return join(
+                    args.iter()
+                        .map(|a| walk(a, own, library, into, seen, depth - 1)),
+                );
+            }
+            // **The one row the destination reaches** (ADR-045 D2, D3). Into our
+            // own code a lock is a container: it may go where what it holds may
+            // go, and it makes nothing crossable that was not. Into code nothing
+            // describes it may not go at all - the conservative answer, taken at
+            // both settings on purpose, and the sentence in `note` says so.
+            if LOCKS.contains(&name.as_str()) {
+                return match (into, args.is_empty()) {
+                    (Destination::Foreign, _) => Crossing::MayNot {
+                        part: ty.text(),
+                        at: None,
+                    },
+                    // A lock with no arguments said nothing about what it holds,
+                    // exactly as a bare container does.
+                    (Destination::Ours, true) => Crossing::Undecided { part: ty.text() },
+                    (Destination::Ours, false) => join(
+                        args.iter()
+                            .map(|a| walk(a, own, library, into, seen, depth - 1)),
+                    ),
+                };
             }
             let Some(contract) = described(name, own, library) else {
                 return Crossing::Undecided { part: ty.text() };
@@ -290,7 +400,7 @@ fn walk(
                         return Crossing::May;
                     }
                     let answer = join(fields.iter().map(|(field, ty)| {
-                        name_the_field(field, walk(ty, own, library, seen, depth - 1))
+                        name_the_field(field, walk(ty, own, library, into, seen, depth - 1))
                     }));
                     seen.remove(name);
                     answer
@@ -369,9 +479,18 @@ mod tests {
         )
     }
 
+    /// Asked about our own code, which is the destination most of these are
+    /// about: a `spawn`ed task, and the closure overlapping builds.
     fn of(text: &str) -> Crossing {
         let (own, library) = ledgers();
-        crossing(&Ty::parse(text), &own, &library)
+        crossing(&Ty::parse(text), &own, &library, Destination::Ours)
+    }
+
+    /// …and the same type asked about code nothing describes. The pair is what
+    /// ADR-045 D1 added, so most tests here come in twos now.
+    fn foreign(text: &str) -> Crossing {
+        let (own, library) = ledgers();
+        crossing(&Ty::parse(text), &own, &library, Destination::Foreign)
     }
 
     /// Plain data crosses, and so does a container of it - at any depth.
@@ -406,47 +525,111 @@ mod tests {
 
         // …and it is answered by what it holds in the other direction too: a
         // `Shared` of something nothing describes is undecided, not permitted.
-        // Part II 12.2's counter is this case, and `Locked` is what decides it -
-        // which ADR-037 D3's second half leaves open and D6 does not touch.
-        assert!(matches!(
-            of("Shared[Locked[i32]]"),
-            Crossing::Undecided { .. }
-        ));
-        assert!(matches!(
-            of("HashMap[String, Shared[Locked[i64]]]"),
-            Crossing::Undecided { .. }
-        ));
+        assert!(matches!(of("Shared[Mapped]"), Crossing::Undecided { .. }));
         // A bare `Shared` said nothing about what it holds, and what it holds is
         // the whole question.
         assert!(matches!(of("Shared"), Crossing::Undecided { .. }));
     }
 
-    /// No type this walk can be asked about answers `MayNot`, and the arm is
-    /// still whole.
+    /// **Part II 12.2's counter, which could not be written until ADR-045 D1.**
     ///
-    /// Two assertions, because the pair is the honest state of the check after
-    /// ADR-037 D6: there is no program that reaches `NK2501` or `NK2502`, and
-    /// the sentences those two would print are not allowed to rot while there is
-    /// not. A type whose expansion still moves with `user_parallelism` is what
-    /// would fill it, and that is D3's second half.
+    /// `Shared[Locked[i32]]` handed to a task of our own is the program
+    /// `user_parallelism = yes` exists to serve, and the verdict refused it: a
+    /// lock had to take the worse of the two settings, so it answered `may not`
+    /// everywhere. D2 answers `may` here, with two reasons that are each sound at
+    /// their own setting and one answer that is the same at both - which is all
+    /// Group B ever asked for.
     #[test]
-    fn no_type_answers_may_not_today_and_the_arm_is_still_whole() {
-        let (own, library) = ledgers();
-        for (name, contract) in own.types.iter().chain(library.types.iter()) {
-            let answer = crossing(&Ty::named(name), &own, &library);
-            assert!(answer.refused().is_none(), "`{name}`: {answer:?}");
-            let _ = contract;
-        }
+    fn a_lock_goes_into_a_task_of_our_own() {
         for text in [
-            "Shared[String]",
+            "Locked[i32]",
+            "SharedMut[i32]",
             "Shared[Locked[i32]]",
-            "Vec[Shared[i64]]",
-            "Mapped",
-            "?",
+            "HashMap[String, Shared[Locked[i64]]]",
+            "Vec[SharedMut[String]]",
         ] {
-            assert!(of(text).refused().is_none(), "{text}");
+            assert_eq!(of(text), Crossing::May, "{text}");
         }
 
+        // A lock makes nothing crossable that was not: it is answered by what it
+        // holds, like any other container, which is Group B's transitivity and
+        // not an exception to it.
+        assert!(matches!(of("Locked[Mapped]"), Crossing::Undecided { .. }));
+        // And a bare lock said nothing about what it holds.
+        assert!(matches!(of("Locked"), Crossing::Undecided { .. }));
+        assert!(matches!(of("SharedMut"), Crossing::Undecided { .. }));
+    }
+
+    /// **And it does not go into code nothing describes** - ADR-045 D3, which is
+    /// deliberately the worse answer.
+    ///
+    /// Strictly this would be safe at `user_parallelism = yes`, where a real
+    /// operating-system lock stands in the emitted program and a foreign thread
+    /// may touch one. The cautious answer is taken at both settings anyway,
+    /// because the alternative is a library written at one setting that does not
+    /// compile at the other - §3 of that record measures it: a `SharedMut[T]` at a
+    /// foreign call is a count around an operating-system lock at `yes` and around
+    /// a plain one at `no`, and a Rust library has one signature.
+    #[test]
+    fn a_lock_does_not_go_into_code_nothing_describes() {
+        for text in [
+            "Locked[i32]",
+            "SharedMut[i32]",
+            "Shared[Locked[i32]]",
+            "HashMap[String, Shared[Locked[i64]]]",
+        ] {
+            let answer = foreign(text);
+            assert!(answer.refused().is_some(), "{text}: {answer:?}");
+        }
+
+        // The part named is the lock and not the container around it, because the
+        // lock is what the answer is about.
+        assert_eq!(
+            foreign("Shared[Locked[i32]]").refused(),
+            Some(("Locked[i32]", None))
+        );
+
+        // Everything that is not a lock answers the same at both destinations:
+        // the destination reaches one row of the table and no other.
+        for text in ["i64", "Shared[String]", "Vec[Shared[i64]]", "Mapped", "?"] {
+            assert_eq!(of(text), foreign(text), "{text}");
+        }
+    }
+
+    /// **Nothing written down answers `MayNot` except a lock**, at either
+    /// destination.
+    ///
+    /// The guard the refusing arm has always had, now that it has an occupant: a
+    /// name quietly acquiring a refusal is the failure this catches, because a
+    /// refusal is the one answer that can reject a correct program. Every type
+    /// either ledger describes is asked, at both destinations.
+    #[test]
+    fn only_a_lock_is_refused_at_either_destination() {
+        let (own, library) = ledgers();
+        for into in [Destination::Ours, Destination::Foreign] {
+            for name in own.types.keys().chain(library.types.keys()) {
+                let answer = crossing(&Ty::named(name), &own, &library, into);
+                assert!(
+                    answer.refused().is_none(),
+                    "`{name}` into {into:?}: {answer:?}"
+                );
+            }
+        }
+        for text in ["Shared[String]", "Vec[Shared[i64]]", "Mapped", "?"] {
+            assert!(of(text).refused().is_none(), "{text}");
+            assert!(foreign(text).refused().is_none(), "{text}");
+        }
+    }
+
+    /// The sentences a refusal prints, which Part III C.2 requires of every
+    /// diagnostic and which no test would otherwise read.
+    ///
+    /// Asked of the value rather than through the walk, because the field half of
+    /// the message has no source that produces it yet: a struct field's type is
+    /// where `at` comes from, and the shape is checked in `a_struct_is_its_fields`
+    /// below.
+    #[test]
+    fn a_refusal_says_what_it_is_and_what_to_do_instead() {
         let refused = Crossing::MayNot {
             part: "Locked[i32]".to_string(),
             at: Some("which its field `hits` holds".to_string()),
@@ -459,20 +642,30 @@ mod tests {
         assert!(note.contains("`Locked[i32]`"), "{note}");
         assert!(note.contains("field `hits`"), "{note}");
         assert!(note.contains("either setting"), "{note}");
+        // ADR-045 D3: the message has to show that the answer was chosen.
+        assert!(note.contains("deliberately"), "{note}");
         // Part III C.2: no Rust vocabulary in a diagnostic, ever.
         for word in ["Rc", "Arc", "Send", "E0277", "lifetime", "borrow"] {
             assert!(!note.contains(word), "`{word}` in: {note}");
         }
-        assert_eq!(
-            refused.way_out().as_deref(),
-            Some("keep the value on the thread that built it")
-        );
+        // The way out is D3's: open the lock, hand the inner value over. Not
+        // "don't do that".
+        let way_out = refused.way_out().expect("a refusal has a way out");
+        assert!(way_out.contains("open the lock"), "{way_out}");
+        assert!(way_out.contains("inside it"), "{way_out}");
     }
 
     /// A type nothing describes is undecided, and undecided is not `May`.
     #[test]
     fn an_undescribed_type_is_undecided_and_not_permission() {
-        for text in ["?", "Mapped", "Locked[i64]", "fn(&Stats)", "$V", "Vec[?]"] {
+        for text in [
+            "?",
+            "Mapped",
+            "Locked[Mapped]",
+            "fn(&Stats)",
+            "$V",
+            "Vec[?]",
+        ] {
             let answer = of(text);
             assert!(
                 matches!(answer, Crossing::Undecided { .. }),
@@ -485,9 +678,11 @@ mod tests {
     /// A struct is its fields, through the ledger - which is what makes the
     /// rule structural as Group B requires.
     ///
-    /// The field that decides is an **undecided** one since ADR-037 D6, because
-    /// no type is refused any more. The walk is the same walk: what changed is
-    /// which of the two non-`May` answers it finds at the bottom of it.
+    /// Both non-`May` answers are exercised through the walk: a field nothing
+    /// describes is undecided, and a field holding a lock is **refused at a
+    /// foreign destination and permitted into a task** - which is ADR-045 D1
+    /// reaching four fields deep, and the case that makes the destination a
+    /// parameter of the walk rather than a question asked before it.
     #[test]
     fn a_struct_is_its_fields() {
         let (mut own, library) = ledgers();
@@ -508,6 +703,13 @@ mod tests {
                 ..TypeContract::default()
             },
         );
+        own.types.insert(
+            "Opaque".to_string(),
+            TypeContract {
+                fields: vec![("held".to_string(), Ty::named("Mapped"))],
+                ..TypeContract::default()
+            },
+        );
         // And a struct of structs, which is the transitive case.
         own.types.insert(
             "Report".to_string(),
@@ -518,10 +720,12 @@ mod tests {
         );
 
         assert_eq!(
-            crossing(&Ty::named("Reading"), &own, &library),
+            crossing(&Ty::named("Reading"), &own, &library, Destination::Ours),
             Crossing::May
         );
-        let undecided = crossing(&Ty::named("Counter"), &own, &library);
+
+        // A field nothing describes: undecided, which is not permission.
+        let undecided = crossing(&Ty::named("Opaque"), &own, &library, Destination::Ours);
         assert!(
             matches!(undecided, Crossing::Undecided { .. }),
             "{undecided:?}"
@@ -530,13 +734,25 @@ mod tests {
             undecided
                 .note()
                 .expect("a non-`May` answer has a note")
-                .contains("Locked[i64]"),
+                .contains("Mapped"),
             "the note names the part nothing describes: {undecided:?}"
         );
-        assert!(matches!(
-            crossing(&Ty::named("Report"), &own, &library),
-            Crossing::Undecided { .. }
-        ));
+
+        // A field holding a lock: the answer depends on where the struct is
+        // going, and the message names the field it came from.
+        for ty in ["Counter", "Report"] {
+            assert_eq!(
+                crossing(&Ty::named(ty), &own, &library, Destination::Ours),
+                Crossing::May,
+                "{ty} into a task of our own"
+            );
+            let refused = crossing(&Ty::named(ty), &own, &library, Destination::Foreign);
+            assert_eq!(
+                refused.refused(),
+                Some(("Locked[i64]", Some("which its field `hits` holds"))),
+                "{ty} into code nothing describes"
+            );
+        }
     }
 
     /// A type that holds itself terminates, and is answered by its other
@@ -554,7 +770,10 @@ mod tests {
                 ..TypeContract::default()
             },
         );
-        assert_eq!(crossing(&Ty::named("Node"), &own, &library), Crossing::May);
+        assert_eq!(
+            crossing(&Ty::named("Node"), &own, &library, Destination::Ours),
+            Crossing::May
+        );
 
         own.types.insert(
             "Ring".to_string(),
@@ -566,10 +785,17 @@ mod tests {
                 ..TypeContract::default()
             },
         );
-        assert!(matches!(
-            crossing(&Ty::named("Ring"), &own, &library),
-            Crossing::Undecided { .. }
-        ));
+        // The cycle terminates at both destinations, and the lock is still found
+        // through it: a walk that gave up on the cycle would lose the refusal.
+        assert_eq!(
+            crossing(&Ty::named("Ring"), &own, &library, Destination::Ours),
+            Crossing::May
+        );
+        assert!(
+            crossing(&Ty::named("Ring"), &own, &library, Destination::Foreign)
+                .refused()
+                .is_some()
+        );
     }
 
     /// A refusal beats an admission of ignorance, because a reader can act on

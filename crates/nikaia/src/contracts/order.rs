@@ -350,7 +350,17 @@ fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Ac
         // cannot: `Accounted::NonLiteralArgument` means the closure captures
         // nothing at all. This is the check that has to be asked about each
         // captured name on the day that limit is lifted.
-        let crossing = super::send::crossing(&signature.result_or_unit(), own, library);
+        // `Destination::Ours` (ADR-045 D1): the closure overlapping builds is
+        // this compiler's own, on this compiler's own thread, so it is the same
+        // destination a `spawn`ed task is - not a library we cannot read. A lock
+        // may therefore be handed back out of an overlapped statement, which is
+        // D2's answer and not a relaxation of it.
+        let crossing = super::send::crossing(
+            &signature.result_or_unit(),
+            own,
+            library,
+            super::send::Destination::Ours,
+        );
         if !crossing.may() {
             return Accounted::MayNotCross {
                 callee: key,

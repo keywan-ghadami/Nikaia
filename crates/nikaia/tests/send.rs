@@ -205,32 +205,83 @@ fn a_struct_that_holds_a_shared_crosses_into_a_task() {
     assert!(clean.is_empty(), "{clean:#?}");
 }
 
-/// …and a `Shared` of something nothing describes is **undecided**, which is not
-/// permission and is also not a refusal.
+/// **Part II 12.2's counter goes into a task** - ADR-045 D2, and the program that
+/// could not be written before it.
 ///
-/// Part II 12.2's counter is this program. `Locked` is what decides it - its
-/// representation is what ADR-037 D3's second half is about, and D6 does not
-/// touch it - so nothing here is refused and nothing here is waved through:
-/// `rustc` type-checks the emitted crate and ADR-005 D7's translation reports
-/// its answer against this `.nika` line.
+/// This is what `user_parallelism = yes` exists to serve, and the verdict refused
+/// it: a lock's implementation follows the switch, the verdict may not consult the
+/// switch, so it took the worse of the two settings and answered "may not"
+/// everywhere. At `yes` a real operating-system lock stands in the emitted
+/// program, under which this counter is entirely safe, and it was refused on
+/// account of an implementation that does not occur in it.
+///
+/// D1 asks the verdict about a destination, so there are two answers now and each
+/// is the same at both settings - which is all Group B ever asked for.
 #[test]
-fn a_shared_of_something_undescribed_is_not_refused_and_not_permitted() {
+fn a_lock_goes_into_a_task_of_our_own() {
     let clean = crossings(
         "fn zaehle(counter: Shared[Locked[i32]]) {\n\
              spawn({ println(f\"{counter}\") })\n\
          }",
     );
-    assert!(clean.is_empty(), "not refused: {clean:#?}");
+    assert!(
+        clean.is_empty(),
+        "12.2's counter must be writable: {clean:#?}"
+    );
 
     let parsed =
         parse_to_ast("fn zaehle(counter: Shared[Locked[i32]]) { }").expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
-    let answer = send::crossing(&Ty::parse("Shared[Locked[i32]]"), &own, &library);
-    assert!(
-        matches!(answer, Crossing::Undecided { .. }),
-        "and not permitted either: {answer:?}"
+    assert_eq!(
+        send::crossing(
+            &Ty::parse("Shared[Locked[i32]]"),
+            &own,
+            &library,
+            send::Destination::Ours
+        ),
+        Crossing::May,
+        "and permitted rather than merely unrefused"
     );
+}
+
+/// **…and the same value handed to code nothing describes is refused** - ADR-045
+/// D3, which is `NK2502`'s first occupant.
+///
+/// The conservative answer, and the record says so rather than implying a proof:
+/// at `user_parallelism = yes` this would be safe. It is refused at both settings
+/// because a lock's Rust type differs per setting while a Rust library has one
+/// signature, so a library written against one would compile at one setting and
+/// fail at the other - the asymmetry Group B exists to prevent.
+///
+/// The way out is not "don't do that": the caller opens the lock and hands the
+/// value inside it over, which is the shape an ordinary function already has
+/// (ADR-042 D1, Part I 6.2).
+#[test]
+fn a_lock_does_not_go_into_code_nothing_describes() {
+    let found = crossings(
+        "fn ueber(counter: Shared[Locked[i32]]) {\n\
+             fremd::irgendwas(counter)\n\
+         }",
+    );
+    assert_eq!(found.len(), 1, "exactly one refusal: {found:#?}");
+    let finding = &found[0];
+    assert_eq!(finding.code, "NK2502");
+    assert!(finding.message.contains("`counter`"), "{}", finding.message);
+    let notes = finding.notes.join(" ");
+    assert!(notes.contains("`Locked[i32]`"), "{notes}");
+    assert!(notes.contains("deliberately"), "{notes}");
+    let help = finding.help.as_deref().expect("a refusal has a way out");
+    assert!(help.contains("open the lock"), "{help}");
+
+    // And into a task of our own the same value is fine, which is the pair D1
+    // added. Without this half the refusal above would read as the old rule.
+    assert!(crossings(
+        "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+             spawn({ println(f\"{counter}\") })\n\
+         }",
+    )
+    .is_empty());
 }
 
 /// ADR-038 D7's first rule still has no `Shared` to refuse, so the foreign
@@ -365,7 +416,13 @@ fn probe_library() -> Ledger {
          pub = true\n\
          sync = true\n\
          touches = []\n\
-         signature = \"() -> Shared[i64]\"\n",
+         signature = \"() -> Shared[i64]\"\n\
+         \n\
+         [fn.\"probe::opaque\"]\n\
+         pub = true\n\
+         sync = true\n\
+         touches = []\n\
+         signature = \"() -> Mapped\"\n",
     )
     .expect("the probe ledger parses")
 }
@@ -417,8 +474,8 @@ fn a_pair_whose_result_is_a_shared_of_plain_data_overlaps() {
     );
 }
 
-/// … and a pair whose result may not cross a thread, or nothing says may, keeps
-/// the order it was written in, with no diagnostic at all.
+/// … and a pair whose result nothing permits to cross keeps the order it was
+/// written in, with no diagnostic at all.
 ///
 /// This is the crossing the **compiler** chose: overlapping puts each statement
 /// in a closure that runs elsewhere and hands its value back, so the result
@@ -426,10 +483,10 @@ fn a_pair_whose_result_is_a_shared_of_plain_data_overlaps() {
 /// take, so fail-closed here costs speed and never a refusal - which is ADR-033
 /// D4's own polarity, applied to the crossing question.
 #[test]
-fn an_operation_whose_result_may_not_cross_keeps_its_place() {
+fn an_operation_whose_result_nothing_permits_keeps_its_place() {
     let source = "fn main() {\n\
-                      let a = probe::held()\n\
-                      let b = probe::held()\n\
+                      let a = probe::opaque()\n\
+                      let b = probe::opaque()\n\
                       println(f\"{a} {b}\")\n\
                   }";
     let report = report_against_probe(source);
@@ -441,6 +498,32 @@ fn an_operation_whose_result_may_not_cross_keeps_its_place() {
 
     // And it is not a refusal: the program compiles, it simply does not overlap.
     assert!(crossings(source).is_empty(), "{:#?}", crossings(source));
+}
+
+/// **A result that holds a lock overlaps, which is ADR-045 D1 reaching the third
+/// call site.**
+///
+/// `probe::held` hands back a `Shared[Locked[i64]]` and kept its place while the
+/// verdict took the worse of the two settings for a lock. The closure overlapping
+/// builds is this compiler's own, on this compiler's own thread, so it is the
+/// destination D2 is about and not a library we cannot read - and the pairs the
+/// ordering analysis buys are bought here too.
+///
+/// The destination is the only thing that changed: the same signature handed to
+/// foreign code is still refused (`a_lock_does_not_go_into_code_nothing_describes`).
+#[test]
+fn a_result_that_holds_a_lock_overlaps() {
+    let report = report_against_probe(
+        "fn main() {\n\
+             let a = probe::held()\n\
+             let b = probe::held()\n\
+             println(f\"{a} {b}\")\n\
+         }",
+    );
+    assert!(
+        report.contains("together  probe::held / probe::held"),
+        "{report}"
+    );
 }
 
 /// A result nothing is written down about keeps its place too, and the way to
@@ -463,7 +546,12 @@ fn a_library_type_says_it_may_cross_and_the_overlap_stays() {
         "the claim is what keeps `cli::args` overlapping"
     );
     assert_eq!(
-        send::crossing(&Ty::named("Args"), &Ledger::empty(), &library),
+        send::crossing(
+            &Ty::named("Args"),
+            &Ledger::empty(),
+            &library,
+            send::Destination::Ours
+        ),
         Crossing::May
     );
 
@@ -478,7 +566,12 @@ fn a_library_type_says_it_may_cross_and_the_overlap_stays() {
     )
     .expect("the probe ledger parses");
     assert!(matches!(
-        send::crossing(&Ty::named("Args"), &Ledger::empty(), &silent),
+        send::crossing(
+            &Ty::named("Args"),
+            &Ledger::empty(),
+            &silent,
+            send::Destination::Ours
+        ),
         Crossing::Undecided { .. }
     ));
 }
