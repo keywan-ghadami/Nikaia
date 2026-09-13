@@ -439,9 +439,11 @@ one:
 Measured, on the form reduced to one line:
 
 ```
-error: expected expression; found unexpected token `)`
+q.nika: Parse error:
+expected expression; found unexpected token `)` at line 3, column 22
    3 |     return lookup(q??)
-                          ^
+                            ^
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `seq`, `{`, digits, identifier
 ```
 
 This is not a rule specified ahead of the compiler — those carry a **Status**
