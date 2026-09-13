@@ -869,6 +869,7 @@ What a handler returns is what answers the request:
 | :--- | :--- |
 | `String` | 200, `text/plain; charset=utf-8` |
 | `html::Raw` | 200, `text/html; charset=utf-8` |
+| `Bytes` | 200, `application/octet-stream` |
 | `Response` | itself |
 | `T throws` | the value on success; on failure **500 with a generic body**, the error logged |
 
@@ -876,6 +877,38 @@ The last row is a decision: an error's message is written for the operator, and 
 returns one to the client is how internal paths and driver messages end up in a bug report. A
 status code, a header or a body of one's own is a `Response`, built where it is returned —
 `http::Response(status: 400, body: "id is required")`.
+
+**A body need not be bytes the program allocated** ([ADR-058](adr/adr-058.md) D1). `Bytes` is the
+shared buffer of Part I 6.6 and `Mapped` derefs to it, so a page mapped **once, outside the
+handler** is a body that costs a reference count per request rather than a read — the handler
+answering with it duplicates the handle rather than moving it
+([ADR-040](adr/adr-040.md) D1's rule, applied to a buffer):
+
+```nika
+fn main() throws {
+    let page = fs::map("index.html")
+
+    http::Server::new()
+        .route("/") fn { page }
+        .listen(":8080")
+}
+```
+
+Reading the file inside the handler instead is a syscall, an allocation and a UTF-8 validation
+per request, and on the measurement [ADR-058](adr/adr-058.md) §1 quotes it is **twice** the
+machine's CPU for a 4 KiB page.
+
+**And a response may be a file the program never read at all** ([ADR-058](adr/adr-058.md) D2):
+`http::File("index.html")` is a body whose bytes go from the page cache to the socket without
+entering the process. Its `Content-Type` follows the extension, and its length — and any failure
+to open it — are settled before the status line, because after the headers are written there is
+no status code left to send (D6). Whether that becomes `sendfile(2)`, a mapping, or an ordinary
+read is `std`'s to choose at run time and not the program's to name (D3): the mechanism that
+avoids the copy is the slower one below roughly a megabyte, and it is unavailable under TLS and
+under HTTP/2 (D5).
+
+> **Status:** `std::http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes`
+> row nor `http::File` exists. `fs::map` and `Bytes` do.
 
 The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
 and `query(name)` yield `&str`, so a parameter used inside the request's scope costs nothing and

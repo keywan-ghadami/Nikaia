@@ -7,6 +7,7 @@ members = [
     "benches/overlap",
     "benches/refcount",
     "benches/lockfloor",
+    "benches/sendfile",
 ]
 
 [workspace.dependencies]
