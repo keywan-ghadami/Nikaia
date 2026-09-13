@@ -124,7 +124,9 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
                 children
                     .iter()
                     .filter(|c| matches!(c["level"].as_str(), Some("note") | Some("help")))
-                    .filter_map(|c| c["message"].as_str().map(str::to_string))
+                    .filter_map(|c| c["message"].as_str())
+                    .filter(|note| !is_rust_internal(note))
+                    .map(str::to_string)
                     .collect()
             })
             .unwrap_or_default();
@@ -139,6 +141,46 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
     }
 
     out
+}
+
+/// Whether a note from the backend tells the reader about **Rust** rather than
+/// about their program.
+///
+/// [ADR-012](../../../../docs/specification/adr/adr-012.md): a diagnostic is
+/// about the `.nika` file the user wrote. Most of what the backend says survives
+/// translation because it is about the program either way - *"the literal
+/// `3000000000` does not fit into the type `i32` whose range is
+/// `-2147483648..=2147483647`"* is as true here as there. These two classes do
+/// not, and the test for both is the same: **can the reader act on it?**
+///
+/// **A lint attribute cannot be written in this language**, so
+/// ``#[deny(overflowing_literals)]` on by default`` and
+/// ``#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default`` name
+/// a thing a Nikaia program has no way to mention. They are the backend
+/// explaining its own configuration.
+///
+/// **And Rust's tooling is not the reader's tooling.** *"use `cargo add fremd` to
+/// add it to your `Cargo.toml`"* points at a file this compiler generates and the
+/// reader does not edit; their file is `nikaia.toml` and there is no `nikaia add`.
+/// `RUST_BACKTRACE` and `rustc --explain` are the same shape.
+///
+/// **What is deliberately kept**, because it was checked rather than assumed:
+/// *"consider using the type `u32` instead"* and *"if this is intentional, prefix
+/// it with an underscore"* both describe something that works in Nikaia -
+/// `let x: u32 = 3000000000` prints `3000000000` and `let _unused = 5` is
+/// accepted - so dropping them would cost a reader a remedy they can follow. A
+/// note is suppressed for naming something unreachable, never for sounding
+/// foreign.
+fn is_rust_internal(note: &str) -> bool {
+    const ATTRIBUTES: [&str; 4] = ["#[deny(", "#[warn(", "#[allow(", "#[forbid("];
+    const TOOLING: [&str; 4] = [
+        "Cargo.toml",
+        "cargo add",
+        "RUST_BACKTRACE",
+        "rustc --explain",
+    ];
+
+    ATTRIBUTES.iter().any(|a| note.contains(a)) || TOOLING.iter().any(|t| note.contains(t))
 }
 
 /// Render a diagnostic the way a compiler does: the place, the message, the

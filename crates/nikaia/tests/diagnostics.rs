@@ -232,3 +232,72 @@ fn a_trait_bound_error_from_cargo_is_placed_in_the_nika_file() {
          D7 records as the open half: {rendered}"
     );
 }
+
+/// A note that tells the reader about **Rust** rather than about their program
+/// is dropped; one they can act on is kept.
+///
+/// ADR-012: a diagnostic is about the `.nika` file the user wrote. Most of what
+/// the backend says survives translation because it is true in either language -
+/// a literal that does not fit a range does not fit it here either. Two classes
+/// do not, and the test for both is whether the reader can act on it: a lint
+/// attribute cannot be written in this language at all, and Rust's tooling is not
+/// the reader's, whose file is `nikaia.toml`.
+///
+/// The three kept notes were each checked against the compiler rather than
+/// assumed: `let x: u32 = 3000000000` prints `3000000000` and `let _unused = 5`
+/// is accepted, so both remedies work here, and the range sentence is plainly
+/// about the program.
+#[test]
+fn a_note_about_rust_rather_than_the_program_is_dropped() {
+    let lowered = lower(GOOD);
+    let children = [
+        // Dropped: the backend explaining its own configuration.
+        ("`#[deny(overflowing_literals)]` on by default", false),
+        (
+            "`#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default",
+            false,
+        ),
+        // Dropped: tooling the reader does not have.
+        (
+            "if you wanted to use a crate named `fremd`, use `cargo add fremd` to add it to your `Cargo.toml`",
+            false,
+        ),
+        ("run with `RUST_BACKTRACE=full` for a verbose backtrace", false),
+        // Kept: every one of these is a remedy that works in Nikaia.
+        (
+            "the literal `3000000000` does not fit into the type `i32` whose range is `-2147483648..=2147483647`",
+            true,
+        ),
+        ("consider using the type `u32` instead", true),
+        ("if this is intentional, prefix it with an underscore", true),
+    ];
+
+    let notes: String = children
+        .iter()
+        .map(|(text, _)| {
+            format!(
+                r#",{{"level":"note","message":{}}}"#,
+                serde_json::to_string(text).expect("a JSON string")
+            )
+        })
+        .collect::<String>();
+    let json = format!(
+        r#"{{"$message_type":"diagnostic","message":"literal out of range","level":"error","spans":[{{"file_name":"lowered.rs","byte_start":0,"byte_end":4,"line_start":1,"column_start":1,"is_primary":true}}],"children":[{{"level":"note","message":"kept for shape"}}{notes}]}}"#
+    );
+
+    let translated = diagnostics::translate(&json, &lowered.map, GOOD);
+    assert_eq!(translated.len(), 1, "{translated:#?}");
+    let kept = &translated[0].notes;
+
+    for (text, keep) in children {
+        assert_eq!(
+            kept.iter().any(|n| n == text),
+            keep,
+            "{}: {text}",
+            match keep {
+                true => "must be kept",
+                false => "must be dropped",
+            }
+        );
+    }
+}
