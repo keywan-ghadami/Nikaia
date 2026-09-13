@@ -1691,10 +1691,6 @@ impl<'a> Checker<'a> {
         self.library.lookup(name)
     }
 
-    /// A method on a type, by the name `Type::method` the ledger records it
-    /// under. A library writes the module in front of it (`fs::Mapped::deref`)
-    /// and the receiver's type does not carry one, so the suffix is what
-    /// matches - name-for-name resolution, as everywhere else.
     /// Walk a call's arguments, telling a lambda what it will be handed.
     ///
     /// The types come from the callee's signature, so this can only run once
@@ -1781,6 +1777,10 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A method on a type, by the name `Type::method` the ledger records it
+    /// under. A library writes the module in front of it (`fs::Mapped::deref`)
+    /// and the receiver's type does not carry one, so the suffix is what
+    /// matches - name-for-name resolution, as everywhere else.
     fn method(&self, key: &str) -> Option<(String, &'a FnContract)> {
         if let Some(contract) = self.own.functions.get(key) {
             return Some((key.to_string(), contract));
