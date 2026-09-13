@@ -1059,3 +1059,57 @@ fn a_shared_value_does_not_fit_a_view_of_just_anything() {
     assert_eq!(code, "NK1102");
     assert!(message.contains("&Shared[Conn]"), "{message}");
 }
+
+// --- a literal that does not fit its type (Part I 2.2) -----------------------
+
+/// `NK1116` at each of the three places a type stands beside a literal.
+///
+/// ADR-043 D5. This was already refused where it was written - but by `rustc`,
+/// in Rust's words, down to the lint name `overflowing_literals` and the advice
+/// to use a `u32`, about a file nobody wrote. So the point is not to prevent an
+/// abort, which never happened: it is to take the message back (Part III, C.1).
+#[test]
+fn a_literal_too_large_for_its_type_is_refused_by_this_compiler() {
+    for source in [
+        // An annotated `let`.
+        "fn main() { let x: i32 = 3000000000 }",
+        // A `return` against a declared result.
+        "fn gives() -> i32 { return 5000000000 }",
+        // An argument whose parameter says what it takes. Asked after the callee
+        // is resolved, because a free call walks its arguments before it knows
+        // what they are measured against.
+        "fn takes(n: i32) -> i32 { return n }\nfn main() { takes(4000000000) }",
+    ] {
+        let found = findings(source);
+        let it = found
+            .iter()
+            .find(|f| f.code == "NK1116")
+            .unwrap_or_else(|| panic!("no NK1116 for {source}: {found:#?}"));
+        assert!(it.message.contains("does not fit in an `i32`"), "{it:#?}");
+        assert!(
+            it.notes.iter().any(|n| n.contains("-2147483648")),
+            "the range belongs in the note: {it:#?}"
+        );
+        assert!(
+            it.help.as_deref().is_some_and(|h| h.contains("i64")),
+            "every error names a way out (Part III C.2): {it:#?}"
+        );
+    }
+}
+
+/// And a literal that fits is not mentioned, including at the edges.
+#[test]
+fn a_literal_that_fits_is_not_mentioned() {
+    for source in [
+        "fn main() { let x: i32 = 2147483647 }",
+        "fn main() { let x: i64 = 5000000000 }",
+        // No type beside it: a bare literal fits every numeric type, which is
+        // what makes `add(3)` right wherever the parameter is numeric.
+        "fn main() { let x = 3000000000 }",
+    ] {
+        assert!(
+            !findings(source).iter().any(|f| f.code == "NK1116"),
+            "{source} must not be refused"
+        );
+    }
+}

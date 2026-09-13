@@ -198,13 +198,16 @@ literals that cannot fit, so neither waits for the program to run
 > The `wrapping_` and `saturating_` names are built for `i32` and `i64` — the two
 > integer types named above — and `crates/nikaia/tests/overflow.rs` runs them
 > beside the same arithmetic with `*`, which aborts. `saturating_shl` and
-> `saturating_shr` do not exist, here or in the language below. **Not built:** the
-> narrowing check — `5000000000 as i32` prints `705032704`
-> today. The out-of-range literal *is* refused where it is written, but by
-> `rustc` and in Rust's words, down to a Rust lint name and the advice to use
-> `u32`; a sum of constants is refused the same way. Catching it here is what
-> makes the message this language's rather than the generated file's
-> (Part III, C.1).
+> `saturating_shr` do not exist, here or in the language below. The out-of-range literal is
+> refused here now, as `NK1116`, wherever a type stands beside it: an annotated
+> `let`, a `return` against a declared result, or an argument whose parameter says
+> what it takes. It prevented no abort — one never happened — and what it takes
+> back is the message, which was the backend's, in Rust's words, about a file
+> nobody wrote.
+>
+> **Not built:** the narrowing check, so `5000000000 as i32` still prints
+> `705032704`; and a sum of constants that cannot fit, which is still refused the
+> other way (Part III, C.1).
 
 ### 2.3. Nullable Types (Null Safety)
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.

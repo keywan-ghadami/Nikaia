@@ -522,6 +522,61 @@ impl<'a> Checker<'a> {
         self.current = outer_current;
     }
 
+    /// Part I 2.2: a literal that does not fit the type it is given is a compile
+    /// error rather than something the program finds out about at run time.
+    ///
+    /// **`NK1116`, and it exists to take a message back rather than to prevent an
+    /// abort.** This was already refused where it was written - but by `rustc`, in
+    /// Rust's words, down to the lint name `overflowing_literals` and the advice
+    /// to use a `u32`, about a file nobody wrote (Part III, C.1). An out-of-range
+    /// literal never reached run time and never will; what changes is who says so.
+    ///
+    /// A literal has no type of its own on purpose (`Expr::LitInt` answers
+    /// `Unknown`, so `add(3)` is right wherever the parameter is numeric), so this
+    /// is asked only where a type stands beside it: an annotated `let`, a
+    /// `return` against a declared result, and an argument whose parameter says
+    /// what it takes.
+    ///
+    /// **Only a bare literal, and only a signed integer type.** A sum of
+    /// constants is refused by `rustc` too and is not covered here - ADR-043 §3
+    /// names that as the gap this does not close. `u32` and the rest are accepted
+    /// by the compiler and not offered by Part I 2.2, so a range for them would be
+    /// a claim about a surface that is not promised.
+    fn literal_fits(&mut self, value: &Expr, want: &Ty, span: &Span) {
+        let Expr::LitInt(text) = value else {
+            return;
+        };
+        let Ty::Named { name, args, view } = want else {
+            return;
+        };
+        if !args.is_empty() || *view {
+            return;
+        }
+        // **`i32` is the only range this can answer**, and that is a fact about
+        // the AST rather than a choice: `Expr::LitInt` already holds an `i64`, so
+        // a literal that reached here fits an `i64` by construction and one that
+        // did not never got this far. The day a wider integer type exists, the
+        // literal will need its digits kept rather than its value.
+        if name != "i32" {
+            return;
+        }
+        if i32::try_from(*text).is_ok() {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1116",
+            message: format!("`{text}` does not fit in an `i32`"),
+            notes: vec![format!(
+                "an `i32` holds {} to {} (Part I, 2.2)",
+                i32::MIN,
+                i32::MAX
+            )],
+            help: Some("write `i64` where the number needs it".to_string()),
+        });
+    }
+
     // --- statements ---------------------------------------------------------
 
     /// Walk a block and hand back the type of its tail.
@@ -554,6 +609,7 @@ impl<'a> Checker<'a> {
                         // the constructor, so a plain value standing here is not
                         // a mistake - it is the one line that makes one, and the
                         // emitter is told where to write it.
+                        self.literal_fits(value, &want, span);
                         match becomes_shared(&found, &want) {
                             true => {
                                 self.checked.shared_sites.insert((span.start, name.clone()));
@@ -620,6 +676,9 @@ impl<'a> Checker<'a> {
                     None => Ty::Tuple(Vec::new()),
                 };
                 if let Some(expected) = self.expected.clone() {
+                    if let Some(value) = value {
+                        self.literal_fits(value, &expected, span);
+                    }
                     self.expect(&found, &expected, span.clone(), "returns", |found, want| {
                         format!("this returns `{found}`, and the function declares `{want}`")
                     });
@@ -1307,6 +1366,14 @@ impl<'a> Checker<'a> {
         }
 
         for (at, ((name, want), found)) in wanted.iter().zip(found).enumerate() {
+            // A literal that cannot fit the parameter it is given, asked here
+            // rather than where the argument was walked: a free call walks its
+            // arguments before it resolves the callee, so the type to measure
+            // against is not known yet at that point (ADR-029's ordering is what
+            // gives a *method* call the answer earlier).
+            if let Some(given) = given.get(at) {
+                self.literal_fits(given, want, span);
+            }
             if self.fits_through_deref(found, want) {
                 continue;
             }
