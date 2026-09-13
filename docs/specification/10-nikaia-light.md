@@ -1775,11 +1775,12 @@ error[NK1110]: `secret` is private to `utils`
      help: write `pub fn secret` in `utils`, or reach it through something that is public
 ```
 
-> **Status:** built, and `NK1110` reaches a program now that a package can be
-> depended on: *"`secret` is private to `http`"*. What is **not** enforced is a
-> struct's **fields** — the ledger records no per-field `pub`, so a type whose
-> fields are private can still be built by name from another package
-> ([ADR-047](adr/adr-047.md) §5).
+> **Status:** built, for items and for fields, and `NK1110` reaches a program now
+> that a package can be depended on: *"`secret` is private to `http`"*, and
+> *"`http::Request.method` is private to `http`"* both for reading such a field
+> and for giving one a value in a struct literal. The ledger carries a field's
+> `pub` because the language below cannot enforce it — a dependency's items are
+> in the same crate ([ADR-047](adr/adr-047.md) §5).
 
 ### 9.3. Granular Control
 While `pub` makes an item available generally, strict privacy forces developers to create safe interfaces (Constructors and Methods) rather than exposing raw data.

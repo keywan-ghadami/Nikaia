@@ -196,20 +196,6 @@ dependencies are not visible either way (D2 rule 2), so the refusal states the
 rule correctly and declines the graph. A second level needs a dependency graph,
 a cycle rule and an order — none of which any program has asked for yet.
 
-### 2.7b. A struct's fields have no recorded visibility
-
-The ledger's `fields` carries no per-field `pub`, so a type whose fields are
-private to its package can be **built by name** from another one. Part I 9.2 says
-it may not, `NK1110` covers the item and not its parts, and the language below
-cannot help: the emitted struct is in the same crate.
-
-Harmless until this session, because there was no second package. There is one
-now, which makes this the hole with the shortest fuse in the list.
-
-*What it needs:* a ledger column — `fields = ["pub id: i64", "secret: i64"]` —
-and the check at a struct literal and at a field access. The format change is
-backward-compatible if `pub ` is optional on the way in.
-
 ### 2.8. `use http as h`, and the braced and glob forms in this language's words
 
 [ADR-046](specification/adr/adr-046.md) §5. D1, D4 and D5 are built now that a

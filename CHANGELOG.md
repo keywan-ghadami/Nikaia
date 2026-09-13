@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added (`pub` on a field means something, across a package boundary)
+
+- **The ledger records a field's visibility** — `fields = ["pub id: i64", "method: i64"]` — and reaching or writing a field a package does not publish is `NK1110`. This was the hole with the shortest fuse the moment a second package existed (`docs/open-work.md` §2.7b): a type whose fields were private could be **built by name** from another package with nothing saying no.
+- **The language below cannot enforce it**, which is why the check has to be here. For an *item*, `pub` becomes `pub` and `rustc` keeps what it was not given; a field of a dependency is in the **same crate**, so `pub` on it buys nothing there ([ADR-047](docs/specification/adr/adr-047.md) D2 rule 5 is what puts it in the same crate).
+- **Both shapes**: reading `r.method`, and giving `method` a value in a struct literal. The second is the one that was silent. A type may still keep its fields private and offer functions — the test asserts the public field and the accessor both work, because the rule has to be a rule and not a blanket refusal (Part I, 9.3).
+- **`pub ` is optional on the way in**, so a ledger written before the word still parses — as a type with no public fields, which is the fail-closed reading ([ADR-010](docs/specification/adr/adr-010.md) D1) and the one a stale file should get.
+- `TypeContract.fields` is a named `FieldContract` rather than a tuple, because a third thing to know about a field is exactly when a tuple stops carrying its own meaning.
+
 ### Added (a Nikaia package can be depended on, by path)
 
 - **[ADR-047](docs/specification/adr/adr-047.md) D2 is built**: `http = { path = "../http" }` in `[dependencies]` resolves, the package's `src/` is read as a namespace of its own, and its items become a `pub mod http` at the crate root — so `http::serve()` in Nikaia is `http::serve()` in Rust and nothing resolved it ([ADR-011](docs/specification/adr/adr-011.md) D2). The first thing in this repository that is two packages.

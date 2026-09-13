@@ -901,3 +901,87 @@ fn the_rules_that_come_with_a_path_dependency() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A field a package does not publish cannot be reached or written from
+/// outside it** (`docs/open-work.md` §2.7b, Part I 9.2).
+///
+/// The hole this closes had the shortest fuse in the list: the ledger recorded no
+/// per-field `pub`, so a type whose fields were private could be **built by
+/// name** from another package with nothing saying no — and the language below
+/// cannot help here the way it does for an item, because the emitted struct is in
+/// the same crate.
+///
+/// Two shapes, because they are two pieces of machinery: reading a field, and
+/// giving one a value in a struct literal.
+#[test]
+fn a_field_a_package_does_not_publish_is_refused() {
+    let dir = a_program_and_a_package(
+        "package-fields",
+        "http",
+        &[
+            (
+                "http/src/main.nika",
+                "pub struct Request { pub id: i64, method: i64 }\n\
+                 \n\
+                 pub fn get(id: i64) -> Request {\n    \
+                     return Request(id: id, method: 1)\n\
+                 }\n\
+                 \n\
+                 pub fn method_of(r: &Request) -> i64 {\n    \
+                     return r.method\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use http\n\nfn main() {\n    \
+                     let r = http::get(7)\n    \
+                     println(f\"{r.method}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+    let app = dir.join("app");
+
+    let ran = nikaia(&["build"], &app);
+    assert!(!ran.status.success(), "{}", said(&ran));
+    let out = said(&ran);
+    assert!(out.contains("NK1110"), "{out}");
+    assert!(
+        out.contains("`http::Request.method` is private to `http`"),
+        "{out}"
+    );
+
+    // Building it from outside is the same rule, and the one that was silent.
+    std::fs::write(
+        app.join("src/main.nika"),
+        "use http\n\nfn main() {\n    \
+             let r = http::Request(id: 7, method: 2)\n    \
+             println(f\"{r.id}\")\n\
+         }\n",
+    )
+    .expect("the program");
+    let ran = nikaia(&["build"], &app);
+    assert!(!ran.status.success(), "{}", said(&ran));
+    assert!(
+        said(&ran).contains("`http::Request.method` is private"),
+        "{}",
+        said(&ran)
+    );
+
+    // **And the public field, and the method that reaches the private one, are
+    // fine** - the rule is a rule and not a blanket refusal. A type may keep its
+    // fields private and offer functions, which is Part I 9.3's whole point.
+    std::fs::write(
+        app.join("src/main.nika"),
+        "use http\n\nfn main() {\n    \
+             let r = http::get(7)\n    \
+             println(f\"{r.id} {http::method_of(&r)}\")\n\
+         }\n",
+    )
+    .expect("the program");
+    let ran = nikaia(&["run"], &app);
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "7 1");
+
+    std::fs::remove_dir_all(&dir).ok();
+}

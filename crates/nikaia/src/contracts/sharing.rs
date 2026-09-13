@@ -1649,8 +1649,8 @@ fn shared_fields(ty: &str, own: &Ledger, library: &Ledger) -> Vec<String> {
     contract
         .fields
         .iter()
-        .filter(|(_, ty)| holds_shared(ty))
-        .map(|(field, _)| format!("{name}.{field}"))
+        .filter(|field| holds_shared(&field.ty))
+        .map(|field| format!("{name}.{}", field.name))
         .collect()
 }
 
@@ -1659,8 +1659,8 @@ fn field_type(ty: &str, field: &str, own: &Ledger, library: &Ledger) -> Option<T
     described(ty, own, library)?
         .fields
         .iter()
-        .find(|(name, _)| name == field)
-        .map(|(_, ty)| ty.clone())
+        .find(|declared| declared.name == field)
+        .map(|declared| declared.ty.clone())
 }
 
 /// What `Shared[T]` lowers to, which since ADR-037 D6 is one type with one

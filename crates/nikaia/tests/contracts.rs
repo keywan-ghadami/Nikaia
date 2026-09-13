@@ -982,3 +982,43 @@ fn the_four_lengths_are_i64_and_are_all_called_len() {
         "`usize` left the surface a program can write (D1)"
     );
 }
+
+/// **A field's `pub` is in the ledger, and a ledger without it reads as
+/// private** ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+///
+/// A consumer of another package needs to know which fields it may touch, and
+/// nothing inside the package does — privacy is per package. The word goes in
+/// front of the name, the way the source writes it, so the line reads as the
+/// declaration it came from.
+///
+/// `pub ` is **optional on the way in**, so a ledger written before the word
+/// existed still parses — as a type with no public fields, which is the
+/// fail-closed reading ([ADR-010](../../../docs/specification/adr/adr-010.md) D1)
+/// and the one a stale file should get.
+#[test]
+fn a_fields_visibility_survives_the_ledger() {
+    let l = ledger("pub struct Request { pub id: i64, method: i64 }");
+    let rendered = l.render();
+    assert!(
+        rendered.contains("fields = [\"pub id: i64\", \"method: i64\"]"),
+        "{rendered}"
+    );
+
+    let read = Ledger::parse(&rendered).expect("its own output parses");
+    let fields = &read.types["Request"].fields;
+    assert_eq!(fields[0].name, "id");
+    assert!(fields[0].public);
+    assert_eq!(fields[1].name, "method");
+    assert!(!fields[1].public);
+
+    // A ledger from before the word: every field reads as private.
+    let older = Ledger::parse(
+        "version = 2\ntoolchain = \"probe\"\ninference = \"probe\"\n\n\
+         [type.\"Request\"]\npub = true\nfields = [\"id: i64\"]\n",
+    )
+    .expect("an older ledger parses");
+    assert!(
+        !older.types["Request"].fields[0].public,
+        "no word is not a promise (ADR-010 D1)"
+    );
+}

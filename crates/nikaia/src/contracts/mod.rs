@@ -280,6 +280,22 @@ pub struct Signature {
     pub result: Option<ty::Ty>,
 }
 
+/// One field of a type, as a caller has to know it.
+///
+/// **Including whether it is public**, which is what a consumer of another
+/// package needs and nothing inside the package does: privacy is per package
+/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D1), so a field's
+/// visibility only ever answers a question asked from outside. Until the ledger
+/// carried it, a type whose fields were private could be built by name from
+/// another package and nothing said no - the language below could not help
+/// either, because the emitted struct is in the same crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldContract {
+    pub name: String,
+    pub ty: ty::Ty,
+    pub public: bool,
+}
+
 /// One option of a function, as a caller has to know it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigContract {
@@ -400,7 +416,7 @@ pub struct TypeContract {
     pub borrowed: bool,
     /// Every field, with its type - what a checker needs to say that `r.nmae`
     /// is not a field of `Row`.
-    pub fields: Vec<(String, ty::Ty)>,
+    pub fields: Vec<FieldContract>,
     /// A value of this type **may cross a thread** (ADR-005 §1 Group B).
     ///
     /// Written by hand and never inferred, because it only ever answers for a
@@ -517,8 +533,8 @@ impl Ledger {
             self.functions.insert(key, contract);
         }
         for (name, mut contract) in other.types {
-            for (_, ty) in contract.fields.iter_mut() {
-                *ty = qualify(ty);
+            for field in contract.fields.iter_mut() {
+                field.ty = qualify(&field.ty);
             }
             let key = match module {
                 Some(module) => format!("{module}::{name}"),
@@ -603,11 +619,10 @@ impl Ledger {
                         .collect();
                     let field_types = fields
                         .iter()
-                        .map(|f| {
-                            (
-                                parsed.text(f.name).to_string(),
-                                ty::Ty::from_ast(parsed, &f.ty).erase(&parameters),
-                            )
+                        .map(|f| FieldContract {
+                            name: parsed.text(f.name).to_string(),
+                            ty: ty::Ty::from_ast(parsed, &f.ty).erase(&parameters),
+                            public: f.is_public,
                         })
                         .collect();
                     ledger.types.insert(
@@ -893,7 +908,20 @@ impl Ledger {
                     contract
                         .fields
                         .iter()
-                        .map(|(name, ty)| format!("\"{name}: {}\"", ty.text()))
+                        // `pub ` in front, where it is - the same word the
+                        // source writes, so the line reads as the declaration it
+                        // came from.
+                        .map(|field| {
+                            format!(
+                                "\"{}{}: {}\"",
+                                match field.public {
+                                    true => "pub ",
+                                    false => "",
+                                },
+                                field.name,
+                                field.ty.text()
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
@@ -1023,11 +1051,29 @@ impl Ledger {
                         "fields" => {
                             entry.fields = string_list(value, at())?
                                 .iter()
-                                .map(|field| match field.split_once(':') {
-                                    Some((name, ty)) => {
-                                        (name.trim().to_string(), ty::Ty::parse(ty))
+                                .map(|field| {
+                                    // `pub ` is optional on the way in, so a
+                                    // ledger written before the word existed
+                                    // still parses - as a type with no public
+                                    // fields, which is the fail-closed reading
+                                    // (ADR-010 D1) and the one a stale file
+                                    // should get.
+                                    let (public, field) = match field.trim().strip_prefix("pub ") {
+                                        Some(rest) => (true, rest.trim()),
+                                        None => (false, field.trim()),
+                                    };
+                                    match field.split_once(':') {
+                                        Some((name, ty)) => FieldContract {
+                                            name: name.trim().to_string(),
+                                            ty: ty::Ty::parse(ty),
+                                            public,
+                                        },
+                                        None => FieldContract {
+                                            name: field.to_string(),
+                                            ty: ty::Ty::Unknown,
+                                            public,
+                                        },
                                     }
-                                    None => (field.trim().to_string(), ty::Ty::Unknown),
                                 })
                                 .collect()
                         }

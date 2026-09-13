@@ -28,7 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
-use crate::contracts::{send, ty, ty::Ty, FnContract, Ledger};
+use crate::contracts::{send, ty, ty::Ty, FieldContract, FnContract, Ledger};
 use crate::parser::Parsed;
 use winnow_grammar::Symbol as Ident;
 
@@ -325,7 +325,7 @@ struct Checker<'a> {
     library: &'a Ledger,
     /// Every struct declared here, with its fields. A type whose fields are
     /// not known is simply absent, and an absent type is never an error.
-    structs: BTreeMap<String, Vec<(String, Ty)>>,
+    structs: BTreeMap<String, Vec<FieldContract>>,
     /// Every enum declared here, with its variant names.
     enums: BTreeMap<String, BTreeSet<String>>,
     /// Names in scope, innermost frame last.
@@ -381,13 +381,12 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|g| self.parsed.text(g.name).to_string())
                         .collect();
-                    let fields = fields
+                    let fields: Vec<FieldContract> = fields
                         .iter()
-                        .map(|f| {
-                            (
-                                self.parsed.text(f.name).to_string(),
-                                Ty::from_ast(self.parsed, &f.ty).erase(&parameters),
-                            )
+                        .map(|f| FieldContract {
+                            name: self.parsed.text(f.name).to_string(),
+                            ty: Ty::from_ast(self.parsed, &f.ty).erase(&parameters),
+                            public: f.is_public,
                         })
                         .collect();
                     self.structs
@@ -1036,8 +1035,12 @@ impl<'a> Checker<'a> {
                 let Some(fields) = self.fields_of(ty) else {
                     return Ty::Unknown;
                 };
-                match fields.iter().find(|(f, _)| *f == field) {
-                    Some((_, ty)) => ty.clone(),
+                match fields.iter().find(|f| f.name == field) {
+                    Some(found) => {
+                        let (ty, declared) = (ty.clone(), found.clone());
+                        self.field_is_reachable(&ty, &declared, span);
+                        declared.ty
+                    }
                     None => {
                         let ty = ty.clone();
                         self.no_such_field(&ty, &field, &fields, span);
@@ -1057,10 +1060,11 @@ impl<'a> Checker<'a> {
                         None => self.lookup(&field).unwrap_or(Ty::Unknown),
                     };
                     let Some(declared) = &declared else { continue };
-                    match declared.iter().find(|(f, _)| *f == field) {
-                        Some((_, want)) => {
-                            let want = want.clone();
+                    match declared.iter().find(|f| f.name == field) {
+                        Some(found_field) => {
+                            let want = found_field.ty.clone();
                             let owner = name.clone();
+                            self.field_is_reachable(&name, found_field, span);
                             // The second of Part I 6.2's two places: a field
                             // whose declared type says the value is shared. The
                             // shared type stands in the same line as the value,
@@ -1798,6 +1802,49 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **Part I 9.2, for a field** (`NK1110`).
+    ///
+    /// A type's fields are private to its package unless they say `pub`, and
+    /// until the ledger recorded that ([`FieldContract`]) a type whose fields
+    /// were private could be built by name from another package with nothing
+    /// saying no. The language below cannot help here the way it does for an
+    /// item: the emitted struct is in the **same crate**, so `pub` on a field
+    /// buys nothing there ([ADR-047](../../../../docs/specification/adr/adr-047.md)
+    /// D2).
+    ///
+    /// Only for a **qualified** type, which is the same spelling rule
+    /// [`Checker::reachable`] uses: a type named `http::Request` is another
+    /// package's, and one named `Request` is this package's, where every field is
+    /// visible however it is declared.
+    fn field_is_reachable(&mut self, ty: &str, field: &FieldContract, span: &Span) {
+        if field.public {
+            return;
+        }
+        let Some((package, _)) = ty.trim_start_matches('&').split_once("::") else {
+            return;
+        };
+        if !self.modules.contains(package) {
+            return;
+        }
+        let name = field.name.clone();
+        let ty = ty.to_string();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1110",
+            message: format!("`{ty}.{name}` is private to `{package}`"),
+            notes: vec![
+                "a field is private to the package that declares its type unless it says \
+                 `pub` (Part I, 9.2)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `pub {name}` in `{package}`, or reach it through something that is \
+                 public - a type may keep its fields private and offer methods (Part I, 9.3)"
+            )),
+        });
+    }
+
     /// Part I 9.2: an item is private to its **package** unless it says `pub`.
     ///
     /// The language below enforces this too - `pub` becomes `pub` - but a reader
@@ -1994,8 +2041,8 @@ impl<'a> Checker<'a> {
         });
     }
 
-    fn no_such_field(&mut self, ty: &str, field: &str, declared: &[(String, Ty)], span: &Span) {
-        let names: Vec<&str> = declared.iter().map(|(f, _)| f.as_str()).collect();
+    fn no_such_field(&mut self, ty: &str, field: &str, declared: &[FieldContract], span: &Span) {
+        let names: Vec<&str> = declared.iter().map(|f| f.name.as_str()).collect();
         let near = nearest(field, &names);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
@@ -2117,7 +2164,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The fields of a type, when something knows them.
-    fn fields_of(&self, name: &str) -> Option<Vec<(String, Ty)>> {
+    fn fields_of(&self, name: &str) -> Option<Vec<FieldContract>> {
         if let Some(fields) = self.structs.get(name) {
             return Some(fields.clone()).filter(|f: &Vec<_>| !f.is_empty());
         }

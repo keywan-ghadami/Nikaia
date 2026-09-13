@@ -399,8 +399,11 @@ fn walk(
                     if !seen.insert(name.clone()) {
                         return Crossing::May;
                     }
-                    let answer = join(fields.iter().map(|(field, ty)| {
-                        name_the_field(field, walk(ty, own, library, into, seen, depth - 1))
+                    let answer = join(fields.iter().map(|field| {
+                        name_the_field(
+                            &field.name,
+                            walk(&field.ty, own, library, into, seen, depth - 1),
+                        )
                     }));
                     seen.remove(name);
                     answer
@@ -465,6 +468,15 @@ fn join(answers: impl Iterator<Item = Crossing>) -> Crossing {
         }
     }
     worst
+}
+
+#[cfg(test)]
+fn field(name: &str, ty: super::ty::Ty) -> super::FieldContract {
+    super::FieldContract {
+        name: name.to_string(),
+        ty,
+        public: true,
+    }
 }
 
 #[cfg(test)]
@@ -690,8 +702,8 @@ mod tests {
             "Reading".to_string(),
             TypeContract {
                 fields: vec![
-                    ("name".to_string(), Ty::named("String")),
-                    ("temp".to_string(), Ty::named("f64")),
+                    field("name", Ty::named("String")),
+                    field("temp", Ty::named("f64")),
                 ],
                 ..TypeContract::default()
             },
@@ -699,14 +711,14 @@ mod tests {
         own.types.insert(
             "Counter".to_string(),
             TypeContract {
-                fields: vec![("hits".to_string(), Ty::parse("Shared[Locked[i64]]"))],
+                fields: vec![field("hits", Ty::parse("Shared[Locked[i64]]"))],
                 ..TypeContract::default()
             },
         );
         own.types.insert(
             "Opaque".to_string(),
             TypeContract {
-                fields: vec![("held".to_string(), Ty::named("Mapped"))],
+                fields: vec![field("held", Ty::named("Mapped"))],
                 ..TypeContract::default()
             },
         );
@@ -714,7 +726,7 @@ mod tests {
         own.types.insert(
             "Report".to_string(),
             TypeContract {
-                fields: vec![("counter".to_string(), Ty::named("Counter"))],
+                fields: vec![field("counter", Ty::named("Counter"))],
                 ..TypeContract::default()
             },
         );
@@ -764,8 +776,8 @@ mod tests {
             "Node".to_string(),
             TypeContract {
                 fields: vec![
-                    ("value".to_string(), Ty::named("i64")),
-                    ("next".to_string(), Ty::parse("Option[Node]")),
+                    field("value", Ty::named("i64")),
+                    field("next", Ty::parse("Option[Node]")),
                 ],
                 ..TypeContract::default()
             },
@@ -779,8 +791,8 @@ mod tests {
             "Ring".to_string(),
             TypeContract {
                 fields: vec![
-                    ("held".to_string(), Ty::parse("Shared[Locked[i64]]")),
-                    ("next".to_string(), Ty::parse("Option[Ring]")),
+                    field("held", Ty::parse("Shared[Locked[i64]]")),
+                    field("next", Ty::parse("Option[Ring]")),
                 ],
                 ..TypeContract::default()
             },
