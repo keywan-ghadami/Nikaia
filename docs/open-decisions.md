@@ -6,7 +6,7 @@ record: [ADR-046](specification/adr/adr-046.md),
 [ADR-049](specification/adr/adr-049.md), [ADR-050](specification/adr/adr-050.md)
 and [ADR-051](specification/adr/adr-051.md). §2, §3 and §7 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
-them. **§8 is open.** Each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
+them. **Nothing here is open.** Each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
 
@@ -484,7 +484,7 @@ name rule at all, so declaring one is refused by the checker as `NK1119`.
 
 ---
 
-## 8. How does a package name the packages it depends on?
+## 8. How does a package name the packages it depends on? — **answered** ([ADR-053](specification/adr/adr-053.md); not built)
 
 **Blocked by it:** [`open-work.md`](open-work.md) §2.7 — a package that declares
 Nikaia dependencies of its own is refused rather than resolved, so a library that
@@ -519,7 +519,12 @@ Three answers:
   crate with its own `Cargo.toml`, listing its own dependencies under its own
   manifest keys.
 
-**I would take (c).** It answers both halves without inventing anything: a name
+**Taken: (c)**, and the shape was built by hand and run before it was decided — the
+workspace builds, `app` cannot name the transitive `c` (Rust refuses it), the
+overflow check reaches a Nikaia library crate while a package off the list still
+wraps, and the diamond unifies with a type crossing between the two consumers.
+
+The reasoning, which the probes bore out: It answers both halves without inventing anything: a name
 resolves per crate, so A has no way to name C and rule 2 costs nothing to enforce;
 two packages under one key are in two different crates and never meet; and a
 package reached twice is one crate, so D2 rule 3 holds because Cargo already works
