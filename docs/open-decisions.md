@@ -1,11 +1,11 @@
 # Open decisions — the questions that need the owner
 
-Six entries. Four are answered and one is dropped; three of the answers have
-their records —
-[ADR-046](specification/adr/adr-046.md), [ADR-047](specification/adr/adr-047.md)
-and [ADR-048](specification/adr/adr-048.md); §2 and §6's language half are built,
-and each entry says what is left. They stay here until the owner drops them. The
-rest are questions that work cannot settle. Each one says what is blocked, what the
+Six entries. **Four are answered and one is dropped**, and every answer has its
+record: [ADR-046](specification/adr/adr-046.md),
+[ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md)
+and [ADR-049](specification/adr/adr-049.md). §2 and §3 are built, §6's language
+half is, and each entry says what is left. They stay here until the owner drops
+them. What remains open is **§5** — a question work cannot settle. Each one says what is blocked, what the
 options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
@@ -195,7 +195,7 @@ that the list of types is the list of types.
 
 ---
 
-## 3. `fn { … }`'s automatic `a`, `b`, `c` — **withdrawn**
+## 3. `fn { … }`'s automatic `a`, `b`, `c` — **withdrawn, and built** ([ADR-049](specification/adr/adr-049.md))
 
 Refused, not warned about, and not announced for a later release.
 
