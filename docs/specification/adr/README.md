@@ -49,7 +49,7 @@ and a decision is not an implementation.
 | [006](adr-006.md) | `Cleanup` — teardown that performs I/O, inserted by the compiler on every exit path | Accepted | no |
 | [008](adr-008.md) | Tethered slices in user structs: the tether-state lattice, and one handle per container rather than per token | Accepted | views |
 | [039](adr-039.md) | The lock: two representations stay and the difference becomes unobservable — taking a lock inside a lock is refused, a second derived property says whether a function touches one, the shared mutable type is `SharedMut[T]`, and it has four doors instead of one | Accepted | **no** — neither `SharedMut` nor `Locked` is a type the compiler knows; what exists is the machinery D3 and D6 build on ([027](adr-027.md)'s fixpoint, [005](adr-005.md) §5's structural walk) |
-| [040](adr-040.md) | A handle on a shared value is duplicated, never moved, and each handle dies at the end of its own block — so there is no operation to name and no second meaning for `.clone()` | Accepted | **no** — `Shared[T]` is not a type the compiler knows, so there is no handle to duplicate, no `NK2101` check to exempt and no duplication site for `--sharing` to list |
+| [040](adr-040.md) | A handle on a shared value is duplicated, never moved, and each handle dies at the end of its own block — so there is no operation to name and no second meaning for `.clone()` | Accepted | **partly** — built for a handle handed to a function, including that a borrow duplicates nothing, with `--sharing` naming each site; the task half waits on `spawn` lowering, so there is still no `NK2101` to exempt |
 
 ### Grammar, DSLs, parsing
 
@@ -85,7 +85,7 @@ and a decision is not an implementation.
 | [019](adr-019.md) | Standard input is a stream, read like everything else | Accepted | yes (`std::io`) |
 | [022](adr-022.md) | One lambda form. `fn:` is removed | Accepted | yes |
 | [041](adr-041.md) | Naming a lambda's arguments is the normal form; the automatic `a`, `b`, `c` are experimental and warned about where one is actually used | Accepted | **yes** — `NK1114` from the one function that also writes the parameter list, the specification's examples and six sites in four `examples/` programs |
-| [042](adr-042.md) | A view keeps the type it is a view of, arguments and all, and a container whose ledger records a `deref` is seen through once — as a rescue after a comparison has already failed | Accepted | **yes** — `view_of` and `fits_through_deref` in `check`, exercised by `fs::Mapped`; a `&Vec[i64]` mismatch is this compiler's `NK1102` where it used to be rustc's |
+| [042](adr-042.md) | A view keeps the type it is a view of, arguments and all, and a container whose ledger records a `deref` is seen through once — as a rescue after a comparison has already failed | Accepted | **yes** — `view_of` and `fits_through_deref` in `check`, exercised by `fs::Mapped` and now by `Shared[T]`; a `&Vec[i64]` mismatch is this compiler's `NK1102` where it used to be rustc's |
 | [030](adr-030.md) | A program is more than one file, and that is name resolution | Accepted | yes |
 | [035](adr-035.md) | `f"…"` interpolates and `"…"` is text — the mark belongs on the construct | Accepted | yes |
 
@@ -128,7 +128,7 @@ and a decision is not an implementation.
 
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
-| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` says whether the **user's** code may run concurrently — and the compiler's own threads are not the user's | Accepted | D1–D5; `wasm32-unknown` is refused rather than mis-emitted; §3's structural `Send` check is [005](adr-005.md) §5, and the switch reaches its severity and never its verdict |
+| [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` says whether the **user's** code may run concurrently — and the compiler's own threads are not the user's | Accepted | D1–D8, the emission included: a `Shared` value is lowered to `Rc` or `Arc` from the count D7 infers for it, so that inference has a real input; `wasm32-unknown` is refused rather than mis-emitted; §3's structural `Send` check is [005](adr-005.md) §5, and the switch reaches its severity and never its verdict |
 
 ## What supersedes what
 
