@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Corrected (a defect entry that named the wrong cause)
+
+- **`docs/open-work.md` §1.5 said warnings are not translated. They are.** Re-measured: `nikaia build` on Part I 2.3's own example prints *"warning: src/main.nika:2:5: value assigned to `maybe` is never read"* with the caret on the right statement — the translation path handles a warning exactly as it handles an error, and `is_about_the_program` already drops one that maps to no `.nika` line.
+- **What actually reproduces is on `nikaia run`**, which prints the warning **twice**: the translated one, and then `rustc`'s own spanned against `target/nikaia/gen/….rs`. A `run` cannot use `--message-format=json` — the program's own output is on that stdout — so Cargo renders its *cached* diagnostics to stderr while checking freshness, and nothing intercepts them.
+- **`--quiet` was tried and reverted.** It removes Cargo's progress lines and not the diagnostic replay, so it changes what a reader sees without fixing anything; shipping it under a fix that did not work would have been worse than leaving the defect named.
+- The entry now says what it needs: taking Cargo out of the run step rather than translating anything new.
+
 ### Fixed (a result that borrows from nothing)
 
 - **[ADR-008](docs/specification/adr/adr-008.md) D9: `fn name() -> &str { "Ada" }` compiles.** It emitted `fn name() -> &str` and `rustc` refused it — *"missing lifetime specifier: this function's return type contains a borrowed value, but there is no value for it to be borrowed from"* — about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)).

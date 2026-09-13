@@ -157,24 +157,41 @@ remedy that works is kept; one that leads out of the language is not.
 
 ---
 
-### 1.5. A `rustc` **warning** about the generated file reaches the user
+### 1.5. `nikaia run` prints a warning twice, the second time untranslated
 
-Part I 2.3's own example, written as the page writes it, prints
+**Re-measured, and the first reading of this was wrong.** The entry used to say
+that warnings go untranslated; they do not. `nikaia build` on Part I 2.3's own
+example prints exactly what it should:
 
 ```text
-warning: value assigned to `maybe_string` is never read
-   = help: maybe it is overwritten before being read?
+warning: src/main.nika:2:5: value assigned to `maybe` is never read
+   2 |     let mut maybe: String? = null
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ```
 
-The observation is true of the program, and the message is Rust's about a file
-nobody wrote. `--explain` ([ADR-012](specification/adr/adr-012.md)) translates an
-**error** back to the `.nika` line; a warning goes past it untouched.
+The translation path handles a warning the same way it handles an error, and
+`is_about_the_program` already drops one that maps to no `.nika` line.
 
-*Not a matter of silencing it:* the warning says something the writer of the
-Nikaia program should hear. What it needs is the translation path warnings do not
-take yet - and a decision about which of `rustc`'s warnings are about the user's
-program (this one) and which are about the shape this compiler emitted (the
-class `is_rust_internal` already drops).
+**What reproduces is on `nikaia run` alone**, and it prints the warning *twice*:
+the translated one above, and then `rustc`'s own, spanned against
+`target/nikaia/gen/….rs`. The cause is the second Cargo invocation. A `run`
+cannot use `--message-format=json` - the program's own output is on that stdout
+([`orchestrator::project`](../crates/orchestrator/src/project.rs) says why) - so
+Cargo renders its **cached** diagnostics to stderr as it checks freshness, and
+nothing intercepts them.
+
+*Measured and rejected:* `--quiet` on the run. It removes Cargo's progress lines
+and **not** the diagnostic replay, so it changes what a reader sees without
+fixing anything; tried and reverted rather than shipped under a fix that did not
+work.
+
+*What it needs:* not translating a warning, which already happens, but taking
+Cargo out of the run step - running the built binary directly, so nothing is
+there to replay. The build's captured JSON is where the path would come from, and
+its `compiler-artifact` lines carry an `executable` field; in the generated
+project's layout the binary is under the **rlib cache's** target directory rather
+than the project's, so finding it is the part that needs doing rather than
+guessing.
 
 ---
 
