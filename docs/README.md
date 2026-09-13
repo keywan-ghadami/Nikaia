@@ -60,6 +60,12 @@ rewrite was wrong.
 **What was tried, measured and learned.** The laboratory notebook. Nothing here
 is normative and nothing may depend on it to know what a program means.
 
+* [`open-work.md`](open-work.md) — **the running list**: what is found and
+  broken, what an ADR decided and the compiler does not do yet, and which
+  specification sentences a later decision made false. Every entry carries its
+  reproduction or says it has none.
+* [`open-decisions.md`](open-decisions.md) — the questions work cannot settle,
+  each with what is blocked by it, the options, and a recommendation.
 * [`handoff.md`](handoff.md) — work left open at the end of a session, and where
   it stands.
 * [`staging-candidates.md`](staging-candidates.md) — the survey of where
