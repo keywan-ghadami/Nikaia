@@ -140,6 +140,29 @@ today, because no program can be written that it would reject. The same refusal
 added after programs exist breaks them. That asymmetry belongs to the work, not to
 the order somebody happens to pick.
 
+**And the order lives here**, because this is the list that knows what each item
+costs. It used to live twice — this file and the roadmap's own "next steps" — and
+the second copy is the one that went stale, still asking for `if/else` and structs
+long after both worked. Two lists of one thing is one list and one liability.
+
+So, in order, and each says below why it sits where it does:
+
+1. **The runtime binding `spawn` needs.** Five records are checked and cannot run
+   until it exists, which is the first principle above in its sharpest form. It is
+   also what the two entries after it wait on.
+2. **`SharedMut[T]` and `Locked[T]` as types the backend can build.** The other
+   half of the same story: a program that spawns needs something it may share, and
+   today writing one is checked and then fails to emit.
+3. **`overlap { … }`, and then the automatic reordering out.** In that order and
+   not the other — removing the automatic half first would leave the language with
+   no way to ask for overlap at all. The removal is the second principle's case:
+   free today, breaking once programs exist.
+4. **The diamond in the checker.** Small, self-contained, waits on nothing. It is
+   the only entry here that one afternoon closes.
+5. **A server to bind to, and the `postgres` block.** Its own project rather than a
+   step of this one.
+6. **Supervision.** Last because nothing else waits on it.
+
 ### 2.1. `spawn` has no runtime binding — and five records wait on it
 
 `Expr::Spawn` refuses in the emitter: *"`spawn` needs the runtime integration; not
@@ -209,6 +232,24 @@ type's identity in the ledger to be the package's **canonical path** — which i
 what `packages_of` already computes and what D2 means by identity — rather than
 the word a consumer happened to write.
 
+### 2.6. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+
+The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
+compiles where it is written, every hole goes through `html::Render`, and the
+whole file parses since [ADR-022](specification/adr/adr-022.md) removed the `fn:`
+form. What is left is machinery, not syntax:
+
+* **The `postgres` block**, a deferred-parameter DSL
+  ([ADR-007](specification/adr/adr-007.md) D4): the statement has to reach a
+  driver intact, which is different machinery from the template that exists.
+* **The runtime binding for a handler.** [ADR-018](specification/adr/adr-018.md)
+  decided what a handler *is* — the request as its first implicit argument, and
+  what each return type answers with — and none of it can be built before there is
+  a server to bind to.
+
+Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
+and was also carrying open work. One list.
+
 ---
 
 ## 3. Upkeep
@@ -232,8 +273,9 @@ so this section being empty is a state to try to keep rather than a milestone.
 
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) — the phases,
   and what runs today. The long view; this file is the short one.
-* [`handoff.md`](handoff.md) — a previous session's open work on messages and the
-  parser backend, with its own closed/open split. Still accurate about that area.
+* [`handoff.md`](handoff.md) — how to work on the **parser backend**: how to test a
+  change against Nikaia, what the patch does, and what was tried and must not be
+  redone. A guide rather than a list; what was open in it is an entry above.
 * [`spec-promises.md`](spec-promises.md) — every construct the specification
   names, probed against the compiler. The evidence behind the **Status** notes, and
   the right place to look before adding an entry to §3 here.

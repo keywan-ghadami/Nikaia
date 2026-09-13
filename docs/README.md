@@ -66,8 +66,10 @@ is normative and nothing may depend on it to know what a program means.
   reproduction or says it has none.
 * [`open-decisions.md`](open-decisions.md) — the questions work cannot settle,
   each with what is blocked by it, the options, and a recommendation.
-* [`handoff.md`](handoff.md) — work left open at the end of a session, and where
-  it stands.
+* [`handoff.md`](handoff.md) — how to work on the **parser backend**: testing a
+  change against Nikaia, what the upstream patch does, and what was tried and
+  must not be redone. A guide; the open work that was in it is in
+  [`open-work.md`](open-work.md).
 * [`staging-candidates.md`](staging-candidates.md) — the survey of where
   compile-time staging would pay, and what it costs to check one.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and

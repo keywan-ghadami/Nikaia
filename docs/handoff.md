@@ -1,9 +1,11 @@
-# Handoff — open work on error messages and the parser backend
+# Handoff — the parser backend: how to work on it, and what was already tried
 
 Written at the end of a session that could not finish, because the change it
 depends on lived in a repository that session had no push access to. That
-change is merged and Nikaia is on it; what is still open is below. Read this
-file first.
+change is merged and Nikaia is on it. What is still open is one entry in
+[`open-work.md`](open-work.md); what is here is how to work on this area and
+what has already been measured. Read this file first before touching the parser
+backend.
 
 ---
 
@@ -229,7 +231,10 @@ is left is 3 and 4, and neither is a performance question.
    modules that have them, and the lattice is tested against a ledger that has
    one so the join is checked rather than assumed on that day.
 
-4. **What `fortunes.nika` waits on — G7 is built, two things are left.**
+4. **What `fortunes.nika` waits on — moved.** G7 is built; the two runtime pieces
+   that are left are an entry in [`open-work.md`](open-work.md), because open work
+   belongs in the list of open work and this file is a guide to the parser
+   backend. Kept below for the reasoning, which is not repeated there.
    [ADR-017](specification/adr/adr-017.md) is implemented: `dsl html { … } eod`
    is compiled where it is written, every hole goes through `html::Render`, a
    hole in a position escaping cannot make safe is refused with the position

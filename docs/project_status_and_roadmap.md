@@ -139,7 +139,25 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 
 ---
 
-## Immediate Next Steps
+## What is next
 
-1.  **Implement Control Flow**: Add `if/else` support.
-2.  **Struct Support**: Allow defining and instantiating simple structs.
+This file is the long view: the phases, and what runs today. **What to do next is
+one list, and it is not here** — [`open-work.md`](open-work.md) §2 holds every
+decided-and-unbuilt item in the order to take them, beside the two principles that
+set that order.
+
+The head of it is the runtime binding `spawn` needs. Five records are checked and
+cannot run until it exists, and a check with no program to be tested against is
+the state that rots fastest: nothing fails when it drifts, because nothing
+exercises it.
+
+**The unchecked boxes above are not that list**, and the difference is worth
+keeping: a box is a piece of *scope* — generics, an LSP, compile-time I/O — that
+no record has yet turned into work. An entry in the other list has a record behind
+it saying exactly what happens, so the only question left is when. Scope becomes
+work by being decided, and that is [`open-decisions.md`](open-decisions.md).
+
+This section used to carry a list of its own. It asked for `if/else` and for
+"defining and instantiating simple structs" long after both worked, while the
+other list stayed current — which is what a second copy does, and the reason there
+is one now.
