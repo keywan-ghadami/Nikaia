@@ -231,6 +231,20 @@ own mtime, because Cargo writes into subdirectories and leaves the top alone.
 
 ## 2. Decided and unbuilt
 
+Two things hold across this whole section, and they are here rather than argued
+again inside each entry.
+
+**Checked and unrunnable is the state that rots fastest.** A check with no program
+to be tested against is correctness that quietly stops being true — nothing fails
+when it drifts, because nothing exercises it. An entry here that says *"the check
+runs and the construct does not"* is more urgent than its size suggests.
+
+**A refusal is free before programs exist and breaking afterwards.** Anything in
+this section that adds a refusal — a diagnostic, a narrowed rule — costs nothing
+today, because no program can be written that it would reject. The same refusal
+added after programs exist breaks them. That asymmetry belongs to the work, not to
+the order somebody happens to pick.
+
 ### 2.1. `spawn` has no runtime binding — and four records wait on it
 
 `Expr::Spawn` refuses in the emitter: *"`spawn` needs the runtime integration; not

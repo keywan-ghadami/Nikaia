@@ -1,6 +1,7 @@
 # Open decisions — the questions that need the owner
 
-Six entries. Four are answered; three have their records —
+Six entries. Four are answered and one is dropped; three of the answers have
+their records —
 [ADR-046](specification/adr/adr-046.md), [ADR-047](specification/adr/adr-047.md)
 and [ADR-048](specification/adr/adr-048.md); §2 and §6's language half are built,
 and each entry says what is left. They stay here until the owner drops them. The
@@ -223,33 +224,17 @@ of it.
 
 ---
 
-## 4. What is built next?
+## 4. What is built next? — **dropped, not answered**
 
-**Blocked by it:** my next piece of work.
+This was never a question for the owner. Its own first line said so: *"Blocked by
+it: my next piece of work."* What is built next is chosen by whoever is building,
+from [`open-work.md`](open-work.md), and the one real dependency among the
+candidates — `SharedMut[T]` needs `spawn`, since its whole point is a second task
+— orders itself without anybody ruling on it.
 
-Three candidates, each already specified:
-
-* **`spawn` and the runtime binding** (Part II 11.2). It unblocks the most: three
-  decisions are currently *checked but unrunnable* —
-  [ADR-040](specification/adr/adr-040.md) D1's task half,
-  [ADR-045](specification/adr/adr-045.md) D2, and Part II 12.2's counter.
-* **`SharedMut[T]` and `Locked[T]` as real types** with the four doors
-  ([ADR-039](specification/adr/adr-039.md) D10). Large, and it needs a lock
-  representation per setting plus the lock-touching property.
-* **Part I 2.3's nullable types.** Self-contained, small, and the one item above
-  that a beginner meets on the first page they read.
-
-**I would build `spawn` next.** A decision that is checked and cannot run is the
-state that rots fastest: the check has no program to be tested against, so it is
-the kind of correctness that quietly stops being true. `spawn` turns three such
-decisions into running code at once, and `SharedMut` needs it anyway — its whole
-point is a second task.
-
-**What the other order costs:** nullable types first is the cheapest real
-improvement for somebody learning the language, and if the next weeks are about
-the language's front page rather than its concurrency, that is the better answer.
-`SharedMut` first costs the most and buys the least on its own, because without
-`spawn` there is no second place to hold a lock from.
+The heading stays so the numbering below it does not move. The two pieces of
+reasoning that were worth keeping are now in `open-work.md` §2's opening, where
+they apply to every entry rather than to one week's choice.
 
 ---
 
