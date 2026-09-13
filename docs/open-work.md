@@ -369,6 +369,44 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
+### 2.8. There is no HTTP server, and three records now wait on it
+
+[ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
+runtime is running before `main`, files complete on `io_uring`, sockets signal
+readiness — and **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are
+untouched**. The order that record gives is unchanged: a socket layer that keeps
+registrations rather than answering one readiness question at a time, then a
+minimal HTTP/1.1 server on it, then the parsing moved into Nikaia, then `rustls`,
+then HTTP/2. The first step is the blocker; `worker::poll_one` builds a poller per
+wait today.
+
+What waits inside it:
+
+* [ADR-018](specification/adr/adr-018.md) entire — what a handler sees and what it
+  returns is specified and has nowhere to run;
+* [ADR-058](specification/adr/adr-058.md) D1's `Bytes` body row, D2's `http::File`,
+  D3's mechanism choice and D8's kept mappings, all of which are things to build
+  *on* a server ([#45](https://github.com/keywan-ghadami/Nikaia/pull/45));
+* [`project_status_and_roadmap.md`](project_status_and_roadmap.md) Phase 3's route
+  hashing, which says in as many words that it has no target because there is no
+  server.
+
+**One piece does not wait, and it is the one worth building first.**
+[ADR-058](specification/adr/adr-058.md) D7 — a path out of a request is
+`Untrusted` and may not reach `fs::map`, `fs::read`, `fs::write` or `http::File`
+unchecked — needs no socket. `contracts::trust` exists and `nikaia --trust` prints
+what it found ([ADR-010](specification/adr/adr-010.md) D7); what is missing is the
+consumer, a diagnostic where an untrusted value reaches a path parameter, and
+`fs::within(root, name)` beside it. Testable against `fs::map` today, and every
+program that later writes `http::File` inherits it. It is
+[`open-decisions.md`](open-decisions.md) §4's fourth candidate for that reason.
+
+Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
+bench that decided it (`benches/sendfile/`) and the write-up
+([`zero-copy-send.md`](zero-copy-send.md)); `send_file` beside the ring could have
+been built ahead of the server and deliberately was not, because D3's measurement
+makes it the mechanism that loses at the sizes a server sends most.
+
 ---
 
 ## 3. Upkeep
