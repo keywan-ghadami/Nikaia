@@ -76,12 +76,15 @@ Two of the three letters the withdrawn lambda form used are covered specially
 with a message about the withdrawal, because that is the mistake a reader of the
 old specification will actually make. Every other name is not.
 
-*What it needs:* a decision, not just work. "This expression names something
-nothing declares" is a much wider claim than the statement rule makes, and the
-checker's polarity is that it never refuses a correct program (C.4) — so the list
-of what counts as declaring a name has to be complete before the rule can be
-widened, and today it is not: a name from a package this build cannot see would be
-refused.
+*What it needs:* not an owner's decision — **§3.1 first**. "This expression names
+something nothing declares" is a much wider claim than the statement rule makes,
+and the checker's polarity is that it never refuses a correct program (C.4), so the
+list of what counts as declaring a name has to be complete before the rule can be
+widened. Today it is not, and the gap has a name: **no crate metadata is read**
+(§3.1), so a qualified call into a Rust package — the shape
+`hyper_shim::across_a_thread(handle)` that ADR-038 D7 is about — would be refused
+as undeclared. Close §3.1 and this becomes work with a settled answer rather than a
+question.
 
 ### 1.3. A `std` function whose Rust parameter is a `usize` still needs a written conversion
 

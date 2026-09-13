@@ -1,14 +1,13 @@
 # Open decisions — the questions that need the owner
 
-Seven entries. **Six are answered and one is dropped**, and every answer has its
+Eight entries. **Six are answered and one is dropped**, and every answer has its
 record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
 [ADR-049](specification/adr/adr-049.md) and
 [ADR-050](specification/adr/adr-050.md). The seventh answer still owes its
 record. §2 and §3 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
-them. **Nothing here is open.** The shape below is kept for whatever arrives
-next: each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
+them. **§8 is open.** Each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
 
@@ -466,3 +465,67 @@ lowers to `let c = true as sert;` with no diagnostic at all — the word swallow
 into a cast, `sert` taken for a type name. A program that means something other
 than what is written is the worst class this project names, and it has no fix short
 of this one.
+
+---
+
+## 8. How does a package name the packages it depends on?
+
+**Blocked by it:** [`open-work.md`](open-work.md) §2.7 — a package that declares
+Nikaia dependencies of its own is refused rather than resolved, so a library that
+uses a library does not exist. That is the second step of every real library.
+
+[ADR-047](adr-047.md) D2 gave a package a path dependency, and it is built one level
+deep. What stops the next level is not the visibility rule — rule 2 already says a
+transitive dependency is invisible — but the fact that **every package becomes a
+`mod` at one crate root, named by the manifest key of whoever depends on it**. Two
+things follow, and both need answering rather than working around:
+
+* If A names B as `b`, and B names C as `c`, the root carries `mod b` **and**
+  `mod c`. A can then write `c::thing()` with no dependency on C at all, and the
+  ledger answers — rule 2 broken silently.
+* If A also depends on a *different* package it calls `c`, two packages want one
+  `mod c`. Refusing the clash tells A about B's internals, which rule 2 says A may
+  not see; allowing it gives two types one name.
+
+Three answers:
+
+* **(a) Name the module by package identity.** The root module name comes from
+  something stable about the package rather than from the consumer's word, and the
+  manifest key becomes a local alias onto it. The clash disappears. The leak does
+  not: the module is still at the root, so [ADR-046](adr-046.md) D4's check has to
+  widen from `use` lines to **qualified names**. And "package identity" is the
+  registry-shaped question ADR-002 D1 §5 declines to answer, arriving early.
+* **(b) Nest the modules.** B's dependencies live inside B's module: `mod b`, and
+  `mod c` inside it. A has no path to C, so the leak is structural rather than
+  checked. But the same package reached through two parents becomes two modules,
+  which contradicts ADR-047 D2 rule 3 — same path, same package.
+* **(c) One Rust crate per Nikaia package.** Each package is generated as its own
+  crate with its own `Cargo.toml`, listing its own dependencies under its own
+  manifest keys.
+
+**I would take (c).** It answers both halves without inventing anything: a name
+resolves per crate, so A has no way to name C and rule 2 costs nothing to enforce;
+two packages under one key are in two different crates and never meet; and a
+package reached twice is one crate, so D2 rule 3 holds because Cargo already works
+that way. It also keeps the registry question deferred, because nothing here needs
+a global name — the manifest key is enough when it is only ever read by one crate.
+
+And it is the same move [ADR-002](adr-002.md) D1 already made once. Rust
+dependencies are not resolved by this compiler; the manifest is translated and
+Cargo does it. Package structure is the same kind of problem with the same tool
+sitting under it, and the current shape — everything flattened into one crate — is
+what creates a question Cargo does not have.
+
+**What it costs, and it is not nothing:** a build produces several crates instead
+of one, so the generated project grows a layout and the manifest generation grows
+with it. Every `[build]` setting has to reach every crate, and
+[ADR-043](adr-043.md)'s overflow checks have to name each Nikaia crate on the
+program's side rather than the dependency's — that rule exists
+([ADR-047](adr-047.md) D2 rule 5) and currently has one crate to apply to.
+Incremental builds probably improve, which is a guess and not a claim.
+
+**What the other two cost:** (a) pulls the registry question forward and widens a
+check that was written for `use` lines; (b) is the cheapest to emit and breaks a
+rule that was decided this week. Neither removes the question — they answer it with
+machinery this project would then own, where (c) answers it with machinery it
+already leans on.
