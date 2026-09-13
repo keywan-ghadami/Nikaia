@@ -166,17 +166,23 @@ under `--input` and another under `build` would be worse than one that only
 existed in one place. Finding this is also what turned up §1.6's two further
 holes.
 
-### 1.8. The project tests' cache accumulates and fills the disk
+### 1.8. The compiled-`std` cache accumulates and fills the disk — **fixed**
 
-`target/nikaia-project-tests/` reached **13 GB** in one session, and
-`~/.cache/nikaia` a further 3.7 GB, with the filesystem full and a build failing
-on "no space left on device". Both are caches a test run creates and nothing
-collects — the same class as the scratch roots `tests/common/mod.rs` now collects
-by process liveness, and the fix is likely the same shape.
+`target/nikaia-project-tests/` reached **13 GB** in one session and a user cache
+1.7 GB, with a build then failing on "no space left on device".
 
-*What it needs:* a collection rule for the project tests' cache root. Deleting
-both by hand freed 17 GB and nothing broke, so nothing in a later run depends on
-what an earlier one left.
+Not a test problem, which is how it was first written down here. Each entry is a
+whole Cargo target directory of some 240 MB, and the key that names it holds the
+compiler's own fingerprint — so **every rebuild of the compiler starts a new one**,
+and nothing ever took an old one away. A cache with no eviction is a disk leak, and
+this one leaked by design rather than by accident: coexisting is right
+([ADR-021](specification/adr/adr-021.md) D7), coexisting forever is the defect.
+
+The newest three are kept and idle ones below that are removed (D12.5). An hour's
+age floor sits on top of the count so that a tree a *concurrent* build is writing
+into is never the one that goes, and a build marks its own in use before sweeping,
+so it cannot collect itself. Ordered by a marker file rather than the directory's
+own mtime, because Cargo writes into subdirectories and leaves the top alone.
 
 ---
 

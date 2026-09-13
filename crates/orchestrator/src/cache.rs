@@ -611,6 +611,83 @@ impl Layout {
     }
 }
 
+/// How many compiled-`std` trees are kept beside the newest one.
+///
+/// Small on purpose. Each is a whole Cargo target directory - measured, around
+/// 240 MB - and the key holds the compiler's own identity, so **every rebuild of
+/// this compiler starts a new one**. A developer therefore leaves one behind per
+/// working day, and nothing ever took one away: measured, 1.7 GB in a user cache
+/// and 13 GB in the one the project tests share, with a build then failing on
+/// "no space left on device".
+///
+/// Three, and not one: switching target or codegen table back and forth is a
+/// normal thing to do, and evicting on every switch would turn a cache into a
+/// tax.
+pub const KEEP_TREES: usize = 3;
+
+/// Don't touch a tree that has been written to within this. A concurrent build
+/// is the thing being protected from, and a build that has not touched its own
+/// tree in an hour is not one that is running.
+const IN_USE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Keep the newest [`KEEP_TREES`] entries of a cache directory and remove the
+/// rest.
+///
+/// **A cache with no eviction is a disk leak**, and this one leaks by design
+/// rather than by accident: its key holds the compiler's identity so that two
+/// builds which differ in a way Cargo would answer by rebuilding coexist instead
+/// of evicting one another ([ADR-021](../../../docs/specification/adr/adr-021.md)
+/// D7). Coexisting is right; coexisting *forever* is what makes the disk run out.
+///
+/// Newest by the marker file [`touch`] writes, not by the directory's own
+/// timestamp: Cargo writes into subdirectories, so a tree that is used every day
+/// can have a top-level mtime from the day it was created.
+///
+/// **Failure here is never a failed build.** A cache that cannot be swept is a
+/// fuller disk, which is the situation this is trying to improve and not a reason
+/// to refuse to compile - the same rule D12 gives for a cache that cannot be
+/// opened.
+pub fn sweep(root: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    let mut trees: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .map(|path| (used_at(&path), path))
+        .collect();
+
+    // Newest first, so the tail is what goes.
+    trees.sort_by(|a, b| b.0.cmp(&a.0));
+    for (used, path) in trees.into_iter().skip(keep) {
+        let idle = now.duration_since(used).unwrap_or_default();
+        if idle < IN_USE {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(&path);
+    }
+}
+
+/// Say that a cache directory is in use now.
+pub fn touch(dir: &Path) {
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(USED), b"");
+}
+
+/// When a cache directory was last said to be in use.
+fn used_at(dir: &Path) -> std::time::SystemTime {
+    std::fs::metadata(dir.join(USED))
+        .or_else(|_| std::fs::metadata(dir))
+        .and_then(|meta| meta.modified())
+        .unwrap_or(std::time::UNIX_EPOCH)
+}
+
+/// The marker `touch` writes. A file rather than the directory's own mtime,
+/// because Cargo writes into subdirectories and leaves the top alone.
+const USED: &str = ".nikaia-used";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1053,5 +1130,86 @@ mod tests {
         assert!(cache.lookup("a.nika", "src", &choices(), &dir).is_none());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+
+    fn tree(root: &Path, name: &str, used_ago: std::time::Duration) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(dir.join("debug")).expect("a cargo-shaped tree");
+        std::fs::write(dir.join("debug/artifact"), b"x").expect("something in it");
+        touch(&dir);
+        set_used_at(&dir, std::time::SystemTime::now() - used_ago);
+        dir
+    }
+
+    /// The marker's mtime, set directly - a test cannot wait an hour.
+    fn set_used_at(dir: &Path, when: std::time::SystemTime) {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(dir.join(USED))
+            .expect("the marker is there");
+        file.set_modified(when).expect("set the time");
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nikaia-sweep-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch root");
+        dir
+    }
+
+    const DAY: std::time::Duration = std::time::Duration::from_secs(60 * 60 * 24);
+
+    /// **The newest `keep` stay and the rest go.**
+    ///
+    /// The leak this is about: the key holds the compiler's own identity, so a
+    /// rebuild of the compiler starts a new tree of some 240 MB and nothing ever
+    /// removed one. Measured before this, 1.7 GB in one user cache and 13 GB in
+    /// the one the project tests share.
+    #[test]
+    fn the_oldest_trees_are_removed_and_the_newest_are_kept() {
+        let root = scratch("oldest");
+        let newest = tree(&root, "aaa", DAY);
+        let middle = tree(&root, "bbb", 2 * DAY);
+        let old = tree(&root, "ccc", 3 * DAY);
+        let older = tree(&root, "ddd", 4 * DAY);
+
+        sweep(&root, 2);
+
+        assert!(newest.is_dir(), "the newest stays");
+        assert!(middle.is_dir(), "and the one below it");
+        assert!(!old.is_dir(), "the third is gone");
+        assert!(!older.is_dir(), "and so is the fourth");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// **A tree in use is never removed, however far down the order it is.**
+    ///
+    /// A second build running right now is the thing to be careful of: its tree
+    /// was touched when it started, so an age floor is what keeps a sweep from
+    /// deleting a directory Cargo is writing into.
+    #[test]
+    fn a_tree_touched_recently_is_left_alone() {
+        let root = scratch("recent");
+        let a = tree(&root, "aaa", DAY);
+        let b = tree(&root, "bbb", 2 * DAY);
+        let running = tree(&root, "ccc", std::time::Duration::from_secs(5));
+
+        sweep(&root, 1);
+
+        assert!(running.is_dir(), "a build is using it");
+        assert!(!a.is_dir() && !b.is_dir(), "the idle ones went");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A cache that cannot be swept is a fuller disk, not a failed build - the
+    /// rule ADR-021 D12 already gives for a cache that cannot be opened.
+    #[test]
+    fn sweeping_what_is_not_there_is_not_an_error() {
+        sweep(Path::new("/nowhere/at/all/nikaia"), 3);
     }
 }

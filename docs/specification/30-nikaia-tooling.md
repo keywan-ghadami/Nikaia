@@ -80,6 +80,12 @@ was built from, which is why a build inside the repository needs no configuratio
   ([ADR-021](adr/adr-021.md) D7). `NIKAIA_CACHE_DIR` moves the cache;
   `CARGO_TARGET_DIR` switches it off, because a build that asked Cargo for a
   directory gets it.
+* **The newest three entries are kept, and idle ones below that are removed.**
+  Each is a whole Cargo target directory and the key holds the compiler's own
+  fingerprint, so a rebuilt compiler starts a new one: coexisting has to be
+  bounded or the disk runs out ([ADR-021](adr/adr-021.md) D12.5). A tree written
+  to within the hour is never removed, so a build running beside this one keeps
+  the directory it is using.
 * **`user-parallelism` is not one of those keys.** The switch reaches `std` as a
   value its runtime is started with, never as a compile-time condition, so one
   compiled `std` serves both settings ([ADR-037](adr/adr-037.md) D2).

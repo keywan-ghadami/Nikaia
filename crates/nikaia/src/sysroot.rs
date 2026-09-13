@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use orchestrator::cache::{Key, Layout};
+use orchestrator::cache::{self, Key, Layout};
 
 use crate::emit::Build;
 
@@ -113,6 +113,12 @@ impl Sysroot {
     /// that differ in a way Cargo would answer by rebuilding - a different
     /// codegen table, a different toolchain - coexist instead of evicting one
     /// another (D7, §4's "dimensions coexist; they do not share").
+    /// **Which tree, and the sweep that keeps the rest from piling up.** The key
+    /// holds this compiler's own identity, so every rebuild of it starts a new
+    /// tree and nothing ever took an old one away - measured, 1.7 GB in a user
+    /// cache and 13 GB in the one the project tests share, with a build then
+    /// failing for want of disk. Coexisting is right (D7); coexisting forever is
+    /// the leak. See [`cache::sweep`].
     pub fn rlib_cache(&self, target: &str, codegen: &Codegen) -> PathBuf {
         let key = Key::sysroot(
             env!("NIKAIA_COMPILER"),
@@ -120,7 +126,13 @@ impl Sysroot {
             target,
             &codegen.render(),
         );
-        Layout::user_cache_dir().join("rlib").join(key.as_str())
+        let root = Layout::user_cache_dir().join("rlib");
+        let tree = root.join(key.as_str());
+        // Marked in use *before* the sweep, so this build's own tree is the
+        // newest one and can never be the one that goes.
+        cache::touch(&tree);
+        cache::sweep(&root, cache::KEEP_TREES);
+        tree
     }
 }
 

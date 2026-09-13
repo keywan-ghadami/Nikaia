@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed (the compiled-`std` cache stops filling the disk)
+
+- **A cache with no eviction is a disk leak** (`docs/open-work.md` §1.8). The compiled-`std` tree is a whole Cargo target directory of some 240 MB, and the key naming it holds the compiler's own fingerprint — so every rebuild of the compiler started a new one and nothing ever took an old one away. Measured: 1.7 GB in one user cache, **13 GB** in the directory the project tests share, and a build failing on "no space left on device". Coexisting is right ([ADR-021](docs/specification/adr/adr-021.md) D7 — dimensions coexist, they do not share); coexisting *forever* was the defect, now recorded as D12.5.
+- **The newest three are kept and idle ones below that are removed.** Three because switching target or codegen table back and forth is a normal thing to do and evicting on every switch turns a cache into a tax. An hour's age floor sits on top of the count so that the tree a **concurrent** build is writing into is never the one that goes — and a build marks its own tree in use *before* sweeping, so it can never collect itself. Ordered by a marker file rather than the directory's own timestamp, because Cargo writes into subdirectories and leaves the top alone. A sweep that fails is a fuller disk and never a failed build, which is D12's rule already.
+
 ### Fixed (the explain modes reach a project, and two more shared counts stopped diverging)
 
 - **`--sharing`, `--overlaps` and `--trust` work on `nikaia build` and `nikaia run`** (`docs/open-work.md` §1.7). They were on the single-file path only — `nikaia build --sharing` answered `unexpected argument` — which is exactly where the asking is not done: `--sharing` exists because there is no way to *request* the cheaper reference count, every fallback is enumerated instead, and *"that is only fair if the fallbacks can be asked about. This is the asking."* A person with a real program builds it with `nikaia build`. They report over every file of the package, against the package's own ledger rather than each file's, and one function serves both paths so the two cannot disagree.
