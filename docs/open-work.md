@@ -426,6 +426,41 @@ A stale **Status** note is a defect in its own right
 ([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
 so this section being empty is a state to try to keep rather than a milestone.
 
+### 3.5. Two examples write a postfix `??` the language does not have
+
+Part I 3.5 defines `??` as **null coalescing** — `a ?? b`, a fallback when the
+left side is null — and nothing else. There is no postfix unwrap in that section,
+in the parser, or anywhere the specification states a rule. But two examples use
+one:
+
+* [ADR-018](specification/adr/adr-018.md) D3: `lookup(a.query("id")??)`
+* Part III 17.1, in the same shape, copied from it
+
+Measured, on the form reduced to one line:
+
+```
+error: expected expression; found unexpected token `)`
+   3 |     return lookup(q??)
+                          ^
+```
+
+This is not a rule specified ahead of the compiler — those carry a **Status**
+note and this has none. It is an example using a construct the language never
+defined, which is worse: a reader who copies it gets a parse error with nothing
+to look up, because the section it would be defined in does not mention it.
+
+*What it needs is a decision before any work:* whether the nullable gets a
+postfix unwrap at all. If it does, Part I 3.5 gains it and the parser follows —
+and it wants a name for what it does when the value **is** null, which for an
+abort is Part III A.2's territory. If it does not, the two examples are rewritten
+to use what 3.5 has. Part I 2.3's nullable types are themselves a parse error
+(§2.5), so nothing can be written either way yet, and that is the reason this is
+upkeep rather than a defect: no program is wrong today, only the page is.
+
+The Part III 17.1 example was rewritten while this was found; ADR-018's stands,
+because an ADR is written once and the correction belongs to whatever answers
+the question above.
+
 ## 4. Where the other lists are
 
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) — the phases,

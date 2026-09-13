@@ -910,20 +910,14 @@ under TLS and under HTTP/2 (D5).
 download route is the other program, and it is not the one above with a variable in it:
 
 ```nika
-.route("/download") fn(request) {
-    // A request chose these bytes (ADR-010 D2), so they may not reach a path
-    // unchecked. `fs::within` resolves the join and answers `none` where the
-    // result would leave the root — and its answer is trusted where its
-    // argument was not.
-    let path = fs::within("/srv/files", request.query("file") ?? "")
-
-    if path.is_none() {
-        http::Response(status: 404, body: "no such file")
-    } else {
-        http::File(path??)
-    }
-}
+// A request chose these bytes (ADR-010 D2), so they may not reach a path.
+fs::map(request.query("file") ?? "")
 ```
+
+`fs::within(root, name)` is what clears it: it resolves the join, answers the
+nullable of Part I 3.5 — `none` where the result would leave `root` — and its
+answer is **trusted where its argument was not**. A handler serves the file it
+names and answers 404 for a `none`.
 
 Handing `request.query("file")` to `http::File`, `fs::map`, `fs::read` or `fs::write` directly is
 a **compile error** and not a runtime check ([ADR-058](adr/adr-058.md) D7): a `../../etc/shadow`

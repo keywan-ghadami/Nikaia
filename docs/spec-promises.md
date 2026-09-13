@@ -58,6 +58,7 @@ the Result column; every other row is the original run.
 | `a?.b` | I 3.5 | **built** ([ADR-052](specification/adr/adr-052.md) D6): `map` over a plain field, `and_then` over one that is itself a `T?` |
 | `a?.m()` | — | refused with a sentence: this section writes a field, and a form the specification does not name is not the compiler's to add ([ADR-052](specification/adr/adr-052.md) §4) |
 | `a ?? 1` | I 3.5 | **built**: `a.unwrap_or_else(\|\| 1.into())` |
+| `f(a??)` (postfix unwrap) | — [ADR-018](specification/adr/adr-018.md) D3 and III 17.1 write one; **I 3.5 does not define it** | parse error: *expected expression; found `)`* — see [`open-work.md`](open-work.md) §3.7 |
 | `Conn(id: 1)` (same file) | I 4.2 | **built** |
 | `http::Response(status: 400, …)` | III 17.1, [ADR-018](specification/adr/adr-018.md) D3 | parse error: *expected one of `)`, `,`; found `:`* — the **qualified** path is what fails, so no `std` constructor can be written ([`open-work.md`](open-work.md) §1.1) |
 | `use a::{b, c}` | II 10.5 | **re-run**, and a sentence now: *"names are not brought in; a package is reached through its name. Write `use http`, and `http::Request` where you need it — and `use http as h` if the prefix is long"*, with the caret on the brace ([ADR-046](specification/adr/adr-046.md) D2) |
