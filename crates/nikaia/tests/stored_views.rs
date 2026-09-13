@@ -419,3 +419,72 @@ fn a_view_that_is_only_read_keeps_the_signature_it_had() {
     .rust;
     assert!(rust.contains("fn show(&self, name: &str)"), "{rust}");
 }
+
+// --- a result with nothing to borrow from -----------------------------------
+
+/// **`fn name() -> &str` had no lifetime to elide**, and `rustc` said so about
+/// the generated file: *"missing lifetime specifier — this function's return
+/// type contains a borrowed value, but there is no value for it to be borrowed
+/// from"* (Part III, C.1).
+///
+/// `'static` is the only lifetime that can be written there, which is what makes
+/// this a derivation and not a choice: a view handed back by a function that
+/// borrowed nothing can only point at something outliving the program.
+#[test]
+fn a_result_that_borrows_from_nothing_says_static() {
+    let rust = emit_program(
+        &parse_to_ast("fn name() -> &str { \"Ada\" }\n").expect("the source parses"),
+        Build::default(),
+    )
+    .expect("the source lowers")
+    .rust;
+    assert!(rust.contains("fn name() -> &'static str"), "{rust}");
+}
+
+/// **And a function with something to borrow from keeps the elision**, which is
+/// the half that had to stay: writing `'static` there would demand more of the
+/// caller than the body needs.
+#[test]
+fn a_result_that_borrows_from_a_parameter_keeps_the_elision() {
+    let rust = emit_program(
+        &parse_to_ast(
+            "\
+fn echo(s: &str) -> &str { return s }
+struct Holder { label: &str }
+impl Holder {
+    pub fn label(&self) -> &str { return self.label }
+}
+",
+        )
+        .expect("the source parses"),
+        Build::default(),
+    )
+    .expect("the source lowers")
+    .rust;
+    assert!(rust.contains("fn echo(s: &str) -> &str"), "{rust}");
+    assert!(!rust.contains("fn echo(s: &str) -> &'static str"), "{rust}");
+    // A receiver is something to borrow from too.
+    assert!(!rust.contains("fn label(&self) -> &'static str"), "{rust}");
+}
+
+/// **A body that cannot honour it is still refused** — by the language below,
+/// against the Nikaia line. So the `'static` never accepts a wrong program: it
+/// says what the signature can mean, and the body is checked against it.
+///
+/// `Vec[String]` is passed by value, so it dies at the end of the call and a
+/// view into it cannot leave.
+#[test]
+fn a_body_that_cannot_honour_static_is_refused_by_the_language_below() {
+    let rust = emit_program(
+        &parse_to_ast("fn first(xs: Vec[String]) -> &str { return xs[0].as_str() }\n")
+            .expect("the source parses"),
+        Build::default(),
+    )
+    .expect("the source lowers")
+    .rust;
+    // Nothing among the arguments is a view, so the result says `'static` — and
+    // the refusal that follows is about the *body*, which is the right place for
+    // it and reaches the reader as `cannot return value referencing function
+    // parameter 'xs'`.
+    assert!(rust.contains("-> &'static str"), "{rust}");
+}

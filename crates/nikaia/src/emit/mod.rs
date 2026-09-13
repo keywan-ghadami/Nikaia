@@ -298,6 +298,25 @@ impl Lifetimes {
         reference: "&",
         params: "'a",
     };
+    /// **In the result of a function with nothing to borrow from.**
+    ///
+    /// `fn name() -> &str { "Ada" }` has no reference among its arguments and no
+    /// receiver, so there is no lifetime for Rust's elision to take - and
+    /// `-> &str` is *"missing lifetime specifier"* about a file nobody wrote
+    /// (Part III, C.1).
+    ///
+    /// **`'static` is the only lifetime that can be written there**, which is
+    /// what makes this a derivation rather than a choice: a view handed back by
+    /// a function that borrowed nothing can only point at something that
+    /// outlives the program. And it is safe to write even where the body cannot
+    /// honour it - `rustc` still checks the body, and refuses the Nikaia line
+    /// through [ADR-012](../../../docs/specification/adr/adr-012.md) rather than
+    /// the generated one. So this never accepts a wrong program and never
+    /// refuses a right one.
+    const STATIC: Lifetimes = Lifetimes {
+        reference: "&'static ",
+        params: "'static",
+    };
 
     /// The same, with the reference named: a view **of the input buffer** and
     /// not of whatever the caller lends for the call.
@@ -1680,7 +1699,24 @@ impl<'p> Emitter<'p> {
                 }
                 DSL_PARAMETER.to_string()
             }
-            Some(ty) => self.ty_counted(ty, lifetimes, self.count_at(&key, SHARED_RESULT)),
+            Some(ty) => {
+                // The result's lifetimes are not always the parameters': a view
+                // handed back by a function that borrowed nothing has to say
+                // `'static`, because there is nothing for Rust's elision to take
+                // and `-> &str` is a message about the generated file
+                // (`Lifetimes::STATIC`).
+                //
+                // A receiver counts as something to borrow from, and so does any
+                // parameter that is a view or holds one. Where either is there,
+                // the position keeps the spelling it had.
+                let borrows_from_something =
+                    receiver.is_some() || args.iter().any(|a| holds_view(&a.ty));
+                let result = match holds_view(ty) && !borrows_from_something {
+                    true => Lifetimes::STATIC,
+                    false => lifetimes,
+                };
+                self.ty_counted(ty, result, self.count_at(&key, SHARED_RESULT))
+            }
             None => "()".to_string(),
         };
         let ret = if *throws {

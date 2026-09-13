@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed (a result that borrows from nothing)
+
+- **[ADR-008](docs/specification/adr/adr-008.md) D9: `fn name() -> &str { "Ada" }` compiles.** It emitted `fn name() -> &str` and `rustc` refused it — *"missing lifetime specifier: this function's return type contains a borrowed value, but there is no value for it to be borrowed from"* — about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)).
+- **`'static` is the only lifetime that can be written there**, which is what makes this a derivation rather than a choice. A view's lifetime comes from the input and Rust's elision takes it from a reference among the arguments; a function with no reference among them and no receiver has nothing to take it from, so a view it hands back can only point at something outliving the program.
+- **And it is safe in both directions**, which is the part worth checking rather than asserting. It never refuses a right program, because `rustc` still checks the body: a body that cannot honour the `'static` is refused *about the body* — measured, `fn first(xs: Vec[String]) -> &str` comes back as *"cannot return value referencing function parameter `xs`"*, on the Nikaia line, which is the message a reader wants. And it never accepts a wrong one, since nothing about the signature is taken on trust.
+- **A receiver counts as something to borrow from**, and so does any parameter that is a view or holds one: where either is present the result keeps its elision, because writing `'static` there would demand more of the caller than the body needs.
+- **This entry was in `docs/open-work.md` as needing a decision, and it did not.** The note said *"`'static` is right for a literal and wrong for anything else, so this is not a one-line default"* — which had the direction backwards: where it is wrong the body is what says so, and the body is checked either way.
+
 ### Added (the wrap reaches a call argument, and `?.m()` says what the language has)
 
 - **[ADR-052](docs/specification/adr/adr-052.md) D4's wrap reaches its fourth kind of position:** a call argument. `shown("here".to_string())` into a `String?` comes out `shown(Some(…))`, and `pair(1, 2)` into two `i64?` parameters is told apart by position. Nothing of that record is unbuilt now.

@@ -30,9 +30,12 @@ What was here and is gone: a module that could not hand out types, a bare word
 that became a different program, a refusal that carried a backtrace, a Rust
 warning about the generated file, a `Shared` slot decided twice, the explain modes
 missing from a project build, a cache that filled the disk, a sum of constants
-that could not fit, and **a keyword that could be a name** - which took the `dsl`
+that could not fit, **a keyword that could be a name** - which took the `dsl`
 block's diagnostic, three silent misreadings, and every position that can
-declare one with it ([ADR-051](specification/adr/adr-051.md)). Each is in the CHANGELOG with what it
+declare one with it ([ADR-051](specification/adr/adr-051.md)) - and a result that
+borrowed from nothing and named no lifetime for it.
+
+Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
@@ -154,31 +157,7 @@ remedy that works is kept; one that leads out of the language is not.
 
 ---
 
-### 1.5. A function that hands back a view emits Rust with no lifetime
-
-```nika
-fn name() -> &str { "Ada" }
-```
-
-lowers to `fn name() -> &str { "Ada" }`, and `rustc` refuses it: *"missing
-lifetime specifier — this function's return type contains a borrowed value, but
-there is no value for it to be borrowed from"*, about the generated file. The
-Part III C.1 class.
-
-**Why it happens.** A view's lifetime comes from the parser's input
-([ADR-008](specification/adr/adr-008.md)), and the emitter elides it where a
-reference among the arguments can carry it. A function with **no** reference
-argument has nothing to elide from, and `"Ada"` is a `&'static str` that the
-signature does not say so about.
-
-*Found* while building [ADR-052](specification/adr/adr-052.md), because `&str?`
-made the same signature one step longer and the error easier to read; it is not
-about nullability and reproduces without it. *What it needs:* a decision about
-where a returned view's lifetime comes from when no argument provides one -
-`'static` is right for a literal and wrong for anything else, so this is not a
-one-line default.
-
-### 1.6. A `rustc` **warning** about the generated file reaches the user
+### 1.5. A `rustc` **warning** about the generated file reaches the user
 
 Part I 2.3's own example, written as the page writes it, prints
 
