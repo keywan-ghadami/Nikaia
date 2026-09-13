@@ -914,6 +914,9 @@ const MAIN: &str = "main";
 /// `contracts::sharing`'s answer ([ADR-037](../../../docs/specification/adr/adr-037.md)
 /// D7).
 const SHARED: &str = "Shared";
+/// Part I 6.3's lock, whose shape is decided per value
+/// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
+const LOCKED: &str = "Locked";
 
 /// The slot a function's result is filed under, as `contracts::sharing` keys it.
 const SHARED_RESULT: &str = "<result>";
@@ -2398,10 +2401,47 @@ impl<'p> Emitter<'p> {
     fn written_name(&self, name: &str, count: crate::contracts::sharing::Count) -> String {
         match name {
             SHARED => crate::contracts::sharing::rust_name(count).to_string(),
+            // **The same question, the same answer**
+            // ([ADR-057](../../../docs/specification/adr/adr-057.md) D3): a lock
+            // is only reachable from two places through a shared handle, so the
+            // count that handle was given decides the lock inside it. The count
+            // rides down through the arguments already (`ty_counted`), which is
+            // exactly the thread this needs.
+            //
+            // **And at one user thread it is always the cheap shape** (D2).
+            // Nothing a user writes can cross there, so the safe shape buys
+            // nothing and costs what `user_parallelism = no` exists to save -
+            // and the cheap one keeps the diagnostic, which is the only failure
+            // reachable at that setting.
+            LOCKED => crate::contracts::sharing::lock_name(match self.build.user_parallelism {
+                UserParallelism::No => crate::contracts::sharing::Count::Plain,
+                UserParallelism::Yes => count,
+            })
+            .to_string(),
             // `unaliased`, for the reason [`Emitter::path`] gives: a type may be
             // written with this file's own name for the package that declares it
             // ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
             _ => self.parsed.unaliased(self.map_name(name)),
+        }
+    }
+
+    /// The lock a declared type asks to be allocated, if it asks for one
+    /// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
+    ///
+    /// `Shared[Locked[T]]` and a bare `Locked[T]` both name one; anything deeper
+    /// is a container's element rather than this binding's hull, and a container
+    /// builds its own. The shape is the one `written_name` would write, so the
+    /// constructor and the annotation cannot disagree.
+    fn lock_hull(&self, ty: &Type, count: crate::contracts::sharing::Count) -> Option<String> {
+        let name = self.text(ty.name);
+        let inner = match name {
+            LOCKED => return Some(self.written_name(LOCKED, count)),
+            SHARED => ty.generics.first()?,
+            _ => return None,
+        };
+        match self.text(inner.name) {
+            LOCKED => Some(self.written_name(LOCKED, count)),
+            _ => None,
         }
     }
 
@@ -3158,8 +3198,20 @@ impl<'p> Emitter<'p> {
                 // is *already* nullable is a question about types and this
                 // emitter has none (ADR-028).
                 let wrap = self.nullable_sites.contains(&span.start);
+                // **And the lock is allocated on the same line, for the same
+                // reason** ([ADR-057](../../../docs/specification/adr/adr-057.md)):
+                // the annotation is the constructor, and `Shared[Locked[T]]`
+                // beside a `T` makes two hulls rather than one. There is no
+                // `Locked::new` in the language either.
+                let lock = ty
+                    .as_ref()
+                    .filter(|_| self.shared_sites.contains(&(span.start, bound.to_string())))
+                    .and_then(|ty| self.lock_hull(ty, count));
                 out.push(&format!("let {mutable}{bound}{annotation} = "));
                 if let Some(path) = handle {
+                    out.push(&format!("{path}::new("));
+                }
+                if let Some(path) = &lock {
                     out.push(&format!("{path}::new("));
                 }
                 if wrap {
@@ -3167,6 +3219,9 @@ impl<'p> Emitter<'p> {
                 }
                 self.expr(out, value, depth, flow)?;
                 if wrap {
+                    out.push(")");
+                }
+                if lock.is_some() {
                     out.push(")");
                 }
                 if handle.is_some() {

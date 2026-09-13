@@ -471,6 +471,17 @@ fn balanced(rest: &str) -> Option<&str> {
 
 fn in_this_language(message: &str) -> String {
     shared_names(message)
+        // **The lock's two shapes are one written name**
+        // ([ADR-057](../../../../docs/specification/adr/adr-057.md)), so they go
+        // back like every other substitution (ADR-056 D1) - and where a message
+        // names both, the collapse is caught by the comparison that catches
+        // every other one.
+        .replace("nikaia_std::lock::Crossing", "Locked")
+        .replace("nikaia_std::lock::Local", "Locked")
+        .replace("lock::Crossing", "Locked")
+        .replace("lock::Local", "Locked")
+        .replace("Crossing<", "Locked<")
+        .replace("Local<", "Locked<")
         .replace(", BuildHasherDefault<FxHasher>>", ">")
         .replace("nikaia_std::hash::TrustedMap", "HashMap")
         .replace("nikaia_std::hash::TrustedSet", "HashSet")

@@ -254,17 +254,30 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.4. `SharedMut[T]` and `Locked[T]` are not types the backend can build
+### 2.4. `Locked[T]` has a shape now, and no surface to reach it through
 
-[ADR-039](specification/adr/adr-039.md) §4. The verdicts about them are built —
-the crossing destination ([ADR-045](specification/adr/adr-045.md)), the four doors
-and the nesting rule are specified — but a program that writes one as an
-annotation is checked and then fails to emit. Also waiting inside this:
+[ADR-057](specification/adr/adr-057.md) decided what `Locked[T]` **is**: the safe
+shape is the floor, at one user thread it is always the cheap one, and at several
+it follows the value — the answer the analysis that decides the reference count
+already gives. Both shapes are built, they report the same thing when a program
+re-enters one lock, and the emitter writes them. What is left is mostly not the
+representation:
 
+* **What `access` hands its lambda.** Part II 12.2 writes
+  `counter.access fn(n) { n + 1 }` and `n` is a `&mut T` below, so the idiom does
+  not compile as written. A question about the surface, and the one thing here
+  that needs deciding rather than doing.
+* **The analysis does not watch a `Shared[Locked[T]]` allocation**, so every such
+  value takes the floor and the cheap shape never triggers at
+  `user_parallelism = yes`. Conservative in the safe direction; the fix is the
+  extension `check::becomes_shared` already got.
+* **`SharedMut[T]`** ([ADR-039](specification/adr/adr-039.md) §4) lowers through
+  the same two shapes and is not spelled yet.
 * the **lock-touching** derived property (ADR-039 D3, D7): no function carries it,
   so nothing tells a spawned body from a scope's;
 * the **re-entrancy check as a build switch** (ADR-039 D8), which the cache key
-  already accounts for;
+  already accounts for — and which ADR-057 D2 makes free at one thread and D3
+  charges only on the values that actually cross;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
 ### 2.5. The automatic reordering, `seq` and the `ordering` switch are still here

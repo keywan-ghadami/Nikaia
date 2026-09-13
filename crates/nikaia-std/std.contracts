@@ -621,6 +621,22 @@ pub = true
 sync = true
 signature = "(&Vec[?])"
 
+# Part II 12.2's lock, held for exactly one lambda
+# ([ADR-057](../../docs/specification/adr/adr-057.md)). Written down so the
+# checker can resolve it: without an entry a call to it is "a method nothing
+# describes", which costs the value its plain shape - and 12.2's own idiom
+# cannot be `sync`, which `docs/mutex-floor.md` §3.1 found before this existed.
+#
+# `sync = "from(f)"` (ADR-029 D3): the lambda decides, which is the whole of
+# ADR-005 D6's rule - `access` itself never pauses, and what runs inside it is
+# the caller's own code. Waiting to acquire is not pausing: the rule is about a
+# suspension point while a lock is *held*, and the panic hook must be `sync` and
+# may block (Part I 7.2).
+[fn."Locked::access"]
+pub = true
+sync = "from(f)"
+signature = "(&Locked[$T], f: fn(&$T)) -> ?"
+
 [fn."Vec::sort_by_key"]
 pub = true
 sync = "from(f)"

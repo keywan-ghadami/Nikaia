@@ -1,9 +1,10 @@
 //! What an always-`Mutex` floor for `Locked[T]` would do to `sync`.
 //!
-//! **A probe, not a feature.** `Locked[T]` is unbuilt — the type name and
-//! `access` are accepted by the front end and reach `rustc` as
-//! `Shared<Locked<i32>>`, where they do not exist — so nothing here decides
-//! its representation and nothing here emits anything. What it does is put
+//! **A probe, not a feature**, and it stays one now that the answer is decided
+//! ([ADR-057](../../../docs/specification/adr/adr-057.md)). Nothing here emits
+//! anything; what it does is hold on to the *other* answer's cost, so the
+//! decision keeps its evidence rather than only its conclusion. `with_access`
+//! therefore takes the shipped entry out before putting a variant in. What it does is put
 //! Part II 12.2's open question to the *real* inference
 //! ([`contracts::sync`](../src/contracts/sync.rs), ADR-027) instead of arguing
 //! it: the one thing an always-`Mutex` floor could break is whether
@@ -37,12 +38,36 @@ const IDIOM: &str = "fn tally(counter: Shared[Locked[i32]]) {\n\
                      \x20   tally(counter)\n\
                      }";
 
-/// `std`'s ledger with one `Locked::access` entry appended.
+/// `std`'s ledger with its **own** `Locked::access` entry replaced by the one
+/// this probe wants to ask about.
+///
+/// The entry is real now ([ADR-057](../../../docs/specification/adr/adr-057.md)
+/// §5) and says `sync = "from(f)"`. Appending to the shipped text would leave
+/// the shipped answer standing and quietly turn the second row below into the
+/// first, so the shipped one is taken out first — which is what keeps this file
+/// a probe of both answers rather than a test of the decided one.
 fn with_access(sync_line: &str) -> Ledger {
     let text = format!(
-        "{STD}\n[fn.\"Locked::access\"]\npub = true\n{sync_line}signature = \"(&Locked[$T], f: fn(&$T))\"\n"
+        "{}\n[fn.\"Locked::access\"]\npub = true\n{sync_line}signature = \"(&Locked[$T], f: fn(&$T))\"\n",
+        without_access(STD)
     );
     Ledger::parse(&text).expect("std's ledger plus one entry still parses")
+}
+
+/// The shipped ledger with the `Locked::access` block cut out, comments and all.
+fn without_access(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut skipping = false;
+    for line in text.lines() {
+        if line.starts_with('[') {
+            skipping = line.starts_with("[fn.\"Locked::access\"]");
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// What the compiler concludes about `tally`, given a library ledger and the
@@ -133,4 +158,85 @@ fn a_pausing_acquisition_costs_the_idiom_and_everything_above_it() {
         Sync::No,
         "the loss propagates: ADR-027 D1's fixpoint takes the claim from every caller"
     );
+}
+
+// --- and what `Locked[T]` is in the machine ---------------------------------
+
+/// **At one user thread, every lock is the cheap shape**
+/// ([ADR-057](../../../docs/specification/adr/adr-057.md) D2).
+///
+/// Nothing a user writes can cross a thread there, so the safe shape buys
+/// nothing and costs 11.3 ns an acquisition — which is what that setting exists
+/// to save. It also keeps the one diagnostic reachable at this setting: the
+/// cheap shape says so when a program re-enters one lock, and a bare `Mutex`
+/// hangs for ever without saying anything.
+#[test]
+fn at_one_user_thread_a_lock_is_the_cheap_shape() {
+    let rust = lowered(
+        "fn main() {\n    let n: i64 = 1\n    let c: Shared[Locked[i64]] = n\n}",
+        false,
+    );
+    assert!(
+        rust.contains("nikaia_std::lock::Local<i64>"),
+        "the cheap shape:\n{rust}"
+    );
+    assert!(
+        !rust.contains("lock::Crossing"),
+        "and not the other one:\n{rust}"
+    );
+}
+
+/// **At several, it is decided per value by the analysis that decides the
+/// count** ([ADR-057](../../../docs/specification/adr/adr-057.md) D3).
+///
+/// A lock is only reachable from two places through a shared handle, so the
+/// count that handle was given is the answer for the lock inside it. Here one
+/// value is used by a task and the other is not, and the two come out different
+/// in one program — which is the whole of what "per value" means.
+#[test]
+fn at_several_threads_a_lock_follows_the_value() {
+    let rust = lowered(
+        "fn main() {\n\
+        \x20   let n: i64 = 1\n\
+        \x20   let crossing: Shared[Locked[i64]] = n\n\
+        \x20   let t = spawn fn { crossing.access fn { n } }\n\
+         }",
+        true,
+    );
+    assert!(
+        rust.contains("std::sync::Arc<nikaia_std::lock::Crossing<i64>>"),
+        "a value a task uses takes the shape that can cross:\n{rust}"
+    );
+}
+
+/// And the annotation is the constructor for **both** hulls, because there is no
+/// `Locked::new` in the language any more than there is a `Shared::new`.
+///
+/// **The two hulls are two decisions**, which this pins as well: the count keeps
+/// its own floor ([ADR-037](../../../docs/specification/adr/adr-037.md) D6, atomic
+/// at both settings until the analysis lowers it), while the lock is the cheap
+/// shape here by D2. `Arc<Local<T>>` is not `Send` and does not need to be at
+/// this setting — the answer that matters is that neither hull is guessed from
+/// the other.
+#[test]
+fn the_annotation_allocates_the_lock_as_well_as_the_handle() {
+    let rust = lowered(
+        "fn main() {\n    let n: i64 = 1\n    let c: Shared[Locked[i64]] = n\n}",
+        false,
+    );
+    assert!(
+        rust.contains("::new(nikaia_std::lock::Local::new(n))"),
+        "one line, two hulls:\n{rust}"
+    );
+}
+
+fn lowered(source: &str, parallel: bool) -> String {
+    let parsed = parse_to_ast(source).expect("the fixture parses");
+    let build = match parallel {
+        true => nikaia::emit::Build::parallel(),
+        false => nikaia::emit::Build::default(),
+    };
+    nikaia::emit::emit_program(&parsed, build)
+        .expect("the fixture lowers")
+        .rust
 }

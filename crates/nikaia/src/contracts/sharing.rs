@@ -1683,3 +1683,23 @@ pub fn rust_name(count: Count) -> &'static str {
         Count::Atomic => "std::sync::Arc",
     }
 }
+
+/// What `Locked[T]` lowers to, which is the **same answer to the same question**
+/// ([ADR-057](../../../../docs/specification/adr/adr-057.md) D3).
+///
+/// A lock is only reachable from two places through a shared handle, so the count
+/// this file gave that handle decides the lock inside it: one analysis, two
+/// decisions, no second pass. Every one of [`Fallback`]'s reasons to decline
+/// carries over unchanged, and so does the polarity — where nothing is proved,
+/// the shape that is safe.
+///
+/// The two shapes report the same thing when a program re-enters one lock (D4),
+/// which is what makes choosing between them invisible to a reader. That is
+/// `nikaia_std::lock`'s business and the reason the crossing one carries an owner
+/// check.
+pub fn lock_name(count: Count) -> &'static str {
+    match count {
+        Count::Plain => "nikaia_std::lock::Local",
+        Count::Atomic => "nikaia_std::lock::Crossing",
+    }
+}

@@ -28,6 +28,7 @@ pub mod html;
 pub mod index;
 pub mod io;
 pub mod list;
+pub mod lock;
 pub mod num;
 pub mod rt;
 pub mod task;

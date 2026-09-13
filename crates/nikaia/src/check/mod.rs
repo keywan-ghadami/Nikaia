@@ -3093,6 +3093,9 @@ fn view_of(inner: &Ty) -> Ty {
 
 /// The type several parts of a program own at once (Part I 6.2).
 const SHARED: &str = "Shared";
+/// Part I 6.3's lock, which shares the `Shared` hull's construction line
+/// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
+const LOCKED: &str = "Locked";
 
 /// Whether a plain value standing where `want` is wanted would be the **first
 /// handle** on a shared one.
@@ -3116,8 +3119,33 @@ fn becomes_shared(found: &Ty, want: &Ty) -> bool {
         return false;
     }
     match args.as_slice() {
-        [held] => found.fits(held) && !found.is_unknown(),
+        [held] => {
+            if found.is_unknown() {
+                return false;
+            }
+            // **`Shared[Locked[T]]` beside a `T` makes both hulls on one line**
+            // ([ADR-057](../../../docs/specification/adr/adr-057.md)). The
+            // annotation is the constructor, and there is no `Locked::new` in
+            // the language any more than there is a `Shared::new` - so the same
+            // sentence that gives one hull gives two where two are written.
+            //
+            // Asked in this order, so a value that is *already* a `Locked`
+            // matches at the first level and nothing is wrapped twice - which is
+            // the property the paragraph above rests on.
+            found.fits(held) || found.fits(&locked_content(held))
+        }
         _ => false,
+    }
+}
+
+/// What a `Locked[T]` holds, or the type itself where it is not one.
+fn locked_content(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Named { name, args, view } if name == LOCKED && !*view => match args.as_slice() {
+            [held] => held.clone(),
+            _ => ty.clone(),
+        },
+        _ => ty.clone(),
     }
 }
 
