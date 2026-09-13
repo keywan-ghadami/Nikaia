@@ -50,6 +50,8 @@
 //! kernel, or an operator pinning it (D5).
 
 pub mod config;
+/// The executor (ADR-055 D3): what drives a program that can pause.
+pub mod exec;
 pub mod worker;
 
 #[cfg(target_os = "linux")]

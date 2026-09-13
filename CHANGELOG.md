@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added (the executor, and two tasks interleaving on one thread)
+
+- **[ADR-055](docs/specification/adr/adr-055.md) §6 step 1, the `no` half: `rt::exec`.** A task queue, a `Waker` written out by hand over an atomic flag, `block_on`, a `Slot` a task's value leaves through, and `Yield` — the smallest suspension point there is.
+- **The decisive test is `two_tasks_interleave_on_one_thread`**, and it is Part II 11.2's own sentence: two tasks that yield between their halves come out `a1 b1 a2 b2`. That was unreachable with the synchronous lowering, because neither closure had a point at which it gave the thread up. A suspension point is a `Poll::Pending` now, and the executor runs something else.
+- **A task nobody joins still runs** (D5), which Part I 8.2's own example needs — it keeps no handle. And a `Slot` wakes whoever is waiting on it, which is what will make `.join()` a suspension point rather than a wait.
+- **The `Waker` is four functions rather than a dependency.** `std` has no constructor for one without the unstable `Wake` trait, and each of the four accounts for exactly one `Arc`; the flag is a bit rather than a queue of wakers, so a wake that arrives while the task is already queued is free rather than a duplicate.
+- **`block_on` panics rather than parks** where a task is waiting and nothing can wake it. Until step 3 a pausing `std` entry blocks the thread instead of returning a future, so that state means a future returned `Pending` without arranging a wake — a defect in `std`, and a hang is the worst way to report one.
+- **The `yes` half is not built**, and the reason is worth having: `rayon`'s pool is a work-stealing pool for *closures*, not an executor for futures, so the multi-threaded half is a second executor over the same worker count rather than a use of that one — and it is the step where a spawned future has to be `Send` (§2 D6).
+
 ### Added (ADR-055: the emitted Rust is `async` where a function can pause)
 
 - **The runtime binding `spawn` waits on turned out to need a decision first, and this is it.** The question is what a task *means* at `user_parallelism = no`: Part II 11.2 says *"interleaved on the same thread"*, and two synchronous Rust closures cannot interleave because neither yields. Measured: the emitted Rust contains the word `async` **zero** times, and a pause is a thread that blocks.

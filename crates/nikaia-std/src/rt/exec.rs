@@ -1,0 +1,388 @@
+//! The executor: what drives a Nikaia program that can pause
+//! ([ADR-055](../../../../docs/specification/adr/adr-055.md) D3).
+//!
+//! **Why this is ours and not a bound runtime.**
+//! [ADR-038](../../../../docs/specification/adr/adr-038.md) D3 built the I/O —
+//! completion for files, readiness for everything else — and D4 starts it before
+//! the program's first statement. A `tokio` or a `smol` brings an executor *and*
+//! an I/O layer, so binding one would put two event loops in one process, which
+//! is the hazard D7 treats when a foreign crate causes it. What was missing is
+//! the smaller half: a task queue and a waker. That is this file.
+//!
+//! **What a suspension point becomes.** Before this, a Nikaia function that
+//! paused did it by blocking its thread, and Part II 11.2's *"at `no` the task is
+//! interleaved on the same thread"* was unbuildable — two synchronous closures
+//! cannot interleave, because neither yields. Here a pause is a `Poll::Pending`,
+//! and the executor runs something else.
+//!
+//! **One thread, deliberately.** This is `user_parallelism = no`, which is the
+//! default ([ADR-037](../../../../docs/specification/adr/adr-037.md) D2), and at
+//! that setting *nothing the user wrote ever runs concurrently* — interleaved is
+//! not concurrent. The `yes` executor is the next step and is not here.
+
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+/// A task the executor owns: a future that has been started and whose result
+/// nobody is holding.
+///
+/// `Output = ()` because a task's value leaves through its
+/// [`TaskHandle`](crate::task::TaskHandle) rather than through the queue - the
+/// queue only has to know how to poll it to the end.
+type Task = Pin<Box<dyn Future<Output = ()>>>;
+
+/// Whether a task is ready to be polled again.
+///
+/// **A flag and not a queue of wakers**, which is what keeps this sound with no
+/// locking discipline to get wrong: waking a task sets a bit, and the executor
+/// reads the bit. A wake that arrives while the task is already queued is
+/// therefore free rather than a duplicate.
+struct Alarm(AtomicBool);
+
+impl Alarm {
+    fn woken() -> Arc<Alarm> {
+        Arc::new(Alarm(AtomicBool::new(true)))
+    }
+
+    fn ring(self: &Arc<Self>) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    /// Whether it rang, and clear it.
+    fn take(&self) -> bool {
+        self.0.swap(false, Ordering::Acquire)
+    }
+}
+
+/// A `Waker` over an [`Alarm`], built by hand.
+///
+/// `std` has no constructor for one without the unstable `Wake` trait, and a
+/// `RawWaker` is four functions - so it is written out rather than a dependency
+/// added for it ([ADR-002](../../../../docs/specification/adr/adr-002.md) D1
+/// keeps a dependency to what it is worth).
+fn waker_for(alarm: Arc<Alarm>) -> Waker {
+    unsafe fn clone(data: *const ()) -> RawWaker {
+        let alarm = unsafe { Arc::from_raw(data as *const Alarm) };
+        let cloned = alarm.clone();
+        // The original pointer stays owned by the waker it came from.
+        std::mem::forget(alarm);
+        RawWaker::new(Arc::into_raw(cloned) as *const (), &VTABLE)
+    }
+    unsafe fn wake(data: *const ()) {
+        let alarm = unsafe { Arc::from_raw(data as *const Alarm) };
+        alarm.ring();
+    }
+    unsafe fn wake_by_ref(data: *const ()) {
+        let alarm = unsafe { Arc::from_raw(data as *const Alarm) };
+        alarm.ring();
+        std::mem::forget(alarm);
+    }
+    unsafe fn drop_it(data: *const ()) {
+        drop(unsafe { Arc::from_raw(data as *const Alarm) });
+    }
+    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop_it);
+
+    let raw = RawWaker::new(Arc::into_raw(alarm) as *const (), &VTABLE);
+    // SAFETY: the vtable above is the contract - `clone` hands back another
+    // owned pointer, `wake` consumes one, `wake_by_ref` borrows, and `drop`
+    // releases. Every one of the four accounts for exactly one `Arc`.
+    unsafe { Waker::from_raw(raw) }
+}
+
+/// One started task and the alarm that says it is ready.
+struct Queued {
+    task: Task,
+    alarm: Arc<Alarm>,
+}
+
+// The tasks this thread has started but not finished.
+//
+// Thread-local because this executor is one thread's (ADR-055 D4 at `no`), and
+// because that removes the question of what a `spawn` from inside a task means:
+// it joins the same queue.
+thread_local! {
+    static STARTED: RefCell<VecDeque<Queued>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// Start a task. It runs whether or not anybody joins it (D5).
+pub fn start(future: impl Future<Output = ()> + 'static) {
+    let queued = Queued {
+        task: Box::pin(future),
+        alarm: Alarm::woken(),
+    };
+    STARTED.with(|started| started.borrow_mut().push_back(queued));
+}
+
+/// Drive `future` to its value, running every started task in between.
+///
+/// **The one place a Nikaia program's `main` is driven**
+/// ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4 says where it is
+/// called from). Nothing else blocks: a pause inside the program is a
+/// `Poll::Pending` that comes back here.
+///
+/// A task that is not ready and a `main` that is not ready mean there is nothing
+/// to do on this thread, and the work that will wake either of them is the
+/// runtime's I/O - which is on a thread of its own and already running. So the
+/// wait is a park, and the I/O worker's reply is what ends it.
+pub fn block_on<T>(future: impl Future<Output = T>) -> T {
+    let mut main = Box::pin(future);
+    let alarm = Alarm::woken();
+    let waker = waker_for(alarm.clone());
+    let mut context = Context::from_waker(&waker);
+
+    loop {
+        if alarm.take() {
+            if let Poll::Ready(value) = main.as_mut().poll(&mut context) {
+                return value;
+            }
+        }
+
+        // **Every task that says it is ready, once round.** Taking the queue
+        // rather than iterating it is what lets a task start another one
+        // without this loop seeing its own tail.
+        let ready: Vec<Queued> = STARTED.with(|started| started.borrow_mut().drain(..).collect());
+        let mut progressed = false;
+        let mut again = VecDeque::new();
+        for mut queued in ready {
+            if !queued.alarm.take() {
+                again.push_back(queued);
+                continue;
+            }
+            progressed = true;
+            let task_waker = waker_for(queued.alarm.clone());
+            let mut task_context = Context::from_waker(&task_waker);
+            if queued.task.as_mut().poll(&mut task_context).is_pending() {
+                again.push_back(queued);
+            }
+        }
+        STARTED.with(|started| {
+            let mut started = started.borrow_mut();
+            // The tasks a task started go after the ones that were already
+            // waiting, so a `spawn` cannot starve what was queued before it.
+            again.append(&mut started);
+            *started = again;
+        });
+
+        // Something moved, so `main` may be able to move with it: ring its
+        // alarm and go round. A task that made progress is the only thing on
+        // this thread that could have changed what `main` is waiting for.
+        if progressed {
+            alarm.ring();
+            continue;
+        }
+        // Or `main` was woken while the tasks were being polled - by a task
+        // filling the slot it is waiting on, which is exactly what a `.join()`
+        // is.
+        if alarm.take() {
+            alarm.ring();
+            continue;
+        }
+
+        // **Nothing on this thread can move.** What will wake it is the I/O
+        // worker, which is a thread of its own and already running
+        // ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4). Until
+        // the I/O futures are what a pausing `std` entry returns (that record's
+        // §6 step 3), a `std` call blocks this thread instead of parking here -
+        // so reaching this point with tasks still queued means a program is
+        // waiting on something no `std` entry can deliver yet, and saying so is
+        // better than spinning.
+        let waiting = STARTED.with(|started| started.borrow().len());
+        if waiting == 0 {
+            // `main` is pending and nothing else exists to wake it. Poll once
+            // more rather than park: a future that returns `Pending` without
+            // arranging a wake is a defect in `std`, and a hang is the worst
+            // way to report one.
+            alarm.ring();
+            continue;
+        }
+        panic!(
+            "the runtime has {waiting} task(s) waiting and nothing to wake them. \
+             This is a defect in nikaia-std: a future returned `Pending` without \
+             arranging for its waker to be called (ADR-055 §6)."
+        );
+    }
+}
+
+/// The value a task hands back, and whether it is there yet.
+///
+/// **A slot with a waker in it**, which is what makes a `.join()` a suspension
+/// point rather than a wait: the task fills it and wakes whoever asked.
+pub struct Slot<T> {
+    inner: Mutex<Inner<T>>,
+}
+
+struct Inner<T> {
+    value: Option<T>,
+    waiting: Option<Waker>,
+}
+
+impl<T> Slot<T> {
+    pub fn empty() -> Arc<Slot<T>> {
+        Arc::new(Slot {
+            inner: Mutex::new(Inner {
+                value: None,
+                waiting: None,
+            }),
+        })
+    }
+
+    /// Put the value in and wake whoever is waiting for it.
+    pub fn fill(&self, value: T) {
+        let waiting = {
+            let mut inner = self.inner.lock().expect("the slot's lock");
+            inner.value = Some(value);
+            inner.waiting.take()
+        };
+        // Outside the lock: a waker may poll, and polling may reach for this
+        // slot again.
+        if let Some(waker) = waiting {
+            waker.wake();
+        }
+    }
+
+    fn take(&self, context: &mut Context<'_>) -> Poll<T> {
+        let mut inner = self.inner.lock().expect("the slot's lock");
+        match inner.value.take() {
+            Some(value) => Poll::Ready(value),
+            None => {
+                inner.waiting = Some(context.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+}
+
+/// Awaiting a [`Slot`].
+pub struct Waiting<T> {
+    slot: Arc<Slot<T>>,
+}
+
+impl<T> Waiting<T> {
+    pub fn on(slot: Arc<Slot<T>>) -> Waiting<T> {
+        Waiting { slot }
+    }
+}
+
+impl<T> Future for Waiting<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<T> {
+        self.slot.take(context)
+    }
+}
+
+/// Hand control back to the executor once, so something else may run.
+///
+/// What a suspension point is, with no I/O behind it. `std`'s pausing entries
+/// will return futures of their own (ADR-055 §6 step 3); this is the smallest
+/// one there is, and it is what a test can interleave on.
+pub struct Yield(bool);
+
+impl Yield {
+    pub fn once() -> Yield {
+        Yield(false)
+    }
+}
+
+impl Future for Yield {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        // Wake immediately: this is not a wait, it is a place to be interrupted.
+        context.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+
+    /// **`block_on` drives a future with nothing to wait for.**
+    #[test]
+    fn a_future_that_never_pauses_runs_straight_through() {
+        assert_eq!(block_on(async { 7 }), 7);
+    }
+
+    /// **A suspension point is a place the executor may run something else** —
+    /// which is Part II 11.2's *"interleaved on the same thread"*, and the whole
+    /// reason this file exists (ADR-055 D4).
+    ///
+    /// Two tasks that yield between their two halves come out interleaved. With
+    /// the synchronous lowering this was unreachable: neither closure had a
+    /// point at which it gave the thread up.
+    #[test]
+    fn two_tasks_interleave_on_one_thread() {
+        let order = Rc::new(RefCell::new(Vec::new()));
+
+        let first = order.clone();
+        let second = order.clone();
+        let seen = order.clone();
+
+        block_on(async move {
+            start(async move {
+                first.borrow_mut().push("a1");
+                Yield::once().await;
+                first.borrow_mut().push("a2");
+            });
+            start(async move {
+                second.borrow_mut().push("b1");
+                Yield::once().await;
+                second.borrow_mut().push("b2");
+            });
+            // Let the tasks run: `main` yields until they are done.
+            for _ in 0..4 {
+                Yield::once().await;
+            }
+            assert_eq!(
+                *seen.borrow(),
+                vec!["a1", "b1", "a2", "b2"],
+                "each task ran up to its suspension point before the other resumed"
+            );
+        });
+    }
+
+    /// **A task nobody joins still runs** (D5), which is what Part I 8.2's own
+    /// example needs: it keeps no handle.
+    #[test]
+    fn a_task_nobody_joins_still_runs() {
+        let ran = Rc::new(RefCell::new(false));
+        let inside = ran.clone();
+        let seen = ran.clone();
+
+        block_on(async move {
+            start(async move {
+                *inside.borrow_mut() = true;
+            });
+            Yield::once().await;
+            assert!(*seen.borrow(), "the task ran without being awaited");
+        });
+    }
+
+    /// **A slot is how a value leaves a task**, and taking it is a suspension
+    /// point rather than a wait.
+    #[test]
+    fn a_slot_wakes_whoever_is_waiting_for_it() {
+        let slot = Slot::<i64>::empty();
+        let filling = slot.clone();
+
+        let answer = block_on(async move {
+            start(async move {
+                Yield::once().await;
+                filling.fill(41);
+            });
+            Waiting::on(slot).await + 1
+        });
+        assert_eq!(answer, 42);
+    }
+}
