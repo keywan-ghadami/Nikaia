@@ -20,6 +20,7 @@
 
 pub mod abort;
 pub mod cli;
+pub mod count;
 pub mod error;
 pub mod fs;
 pub mod hash;

@@ -629,10 +629,14 @@ pub = true
 sync = true
 signature = "(&str) -> i64"
 
+# `n` is the `i64` a program can hold, not the `usize` Rust counts in
+# (ADR-054 D2). The conversion is emitted at the call and a negative count
+# aborts saying so - the parameter direction of ADR-048 D1, which that record
+# left open and named this entry as the one site it had.
 [fn."str::repeat"]
 pub = true
 sync = true
-signature = "(&str, n: ?) -> String"
+signature = "(&str, n: i64) -> String"
 
 [fn."str::starts_with"]
 pub = true

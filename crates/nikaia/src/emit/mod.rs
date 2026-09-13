@@ -4034,10 +4034,30 @@ impl<'p> Emitter<'p> {
             let wrap = self
                 .nullable_args
                 .contains(&(flow.statement, callee.to_string(), i));
+            // **A count the language below wants in `usize`**
+            // ([ADR-054](../../../docs/specification/adr/adr-054.md) D2), which
+            // is the parameter direction of ADR-048 D1. The ledger writes such a
+            // parameter as the `i64` a program can hold and the conversion is
+            // emitted, so a user writes `"  ".repeat(indent)` and never
+            // `indent as usize` - a conversion into a type Part I 2.2 does not
+            // offer, which is what that line used to be.
+            //
+            // Not where the argument is written **only in literals**, for
+            // `index::at`'s reason: `of(2)` has nothing to infer its argument
+            // type from, every integer type answers with the same `usize`, and
+            // `cannot infer type` about a generated file is what Part III C.1
+            // forbids. Rust's own inference already gives a literal the `usize`.
+            let count = is_count(callee, i) && !only_literals(arg);
             if wrap {
                 out.push("Some(");
             }
+            if count {
+                out.push("nikaia_std::count::of(");
+            }
             self.expr(out, arg, depth, flow)?;
+            if count {
+                out.push(")");
+            }
             if wrap {
                 out.push(")");
             }
@@ -4251,6 +4271,25 @@ fn only_literals(index: &Expr) -> bool {
 /// four of them have ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
 fn is_length(method: &str, args: &[Expr]) -> bool {
     method == "len" && args.is_empty()
+}
+
+/// Whether a callee's argument at `at` is a **count** the language below takes in
+/// `usize` ([ADR-054](../../../docs/specification/adr/adr-054.md) D2).
+///
+/// A name and a position, not a rule, for the reason `is_length` is one: what it
+/// encodes is a fact about *Rust's* library rather than about this language. The
+/// list is the entries of `std.contracts` whose Rust counterpart counts in
+/// `usize`, and today it is one of them - `str::repeat`, which is the site
+/// ADR-048 §3 named when it wrote this direction down as open.
+/// `a_count_parameter_is_an_i64` in `tests/contracts.rs` keeps the two from
+/// drifting apart.
+///
+/// Being a name is safe here because `count::of` is the **identity** for
+/// anything that is not a number: a method of the program's own called `repeat`
+/// passes through it untouched, which is the same property that lets `index::at`
+/// be written around every index.
+fn is_count(callee: &str, at: usize) -> bool {
+    matches!((callee, at), ("repeat", 0))
 }
 
 fn precedence(op: BinaryOp) -> u8 {

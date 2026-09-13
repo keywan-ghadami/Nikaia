@@ -32,6 +32,16 @@ use crate::contracts::{send, ty, ty::Ty, FieldContract, FnContract, Ledger};
 use crate::parser::Parsed;
 use winnow_grammar::Symbol as Ident;
 
+/// The types Part I 2.2 offers, which is what an `as` may name
+/// ([ADR-054](../../../docs/specification/adr/adr-054.md) D1).
+///
+/// Wider than `record_cast`'s `NUMERIC`, and the two answer different questions:
+/// that one is which conversions are **checked** at run time
+/// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4), this one is which
+/// types a program may **write**. `bool`, `char`, `String` and `&str` are types
+/// of this language and no conversion between them narrows anything.
+const OFFERED: [&str; 8] = ["i32", "i64", "u8", "f64", "bool", "char", "String", "str"];
+
 /// The note every `NK25xx` carries, because it is the reason the code exists.
 ///
 /// ADR-005 §1 Group B and ADR-037 §3: the verdict may not depend on
@@ -806,6 +816,51 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `.{field}`")),
+        });
+    }
+
+    /// Part I 2.2: **`as` names a type this language offers**
+    /// ([ADR-054](../../../docs/specification/adr/adr-054.md) D1).
+    ///
+    /// Nothing ever decided that a program may write `as u128`, and it could:
+    /// the target of an `as` went to the language below unread, so a cast named
+    /// any Rust type at all and was emitted verbatim. Two things followed, and
+    /// the second is the reason this is a refusal rather than a tidy-up. A
+    /// program could hold a value of a type Part I 2.2 does not offer and the
+    /// page had no word for what it was. And `-3 as usize` is
+    /// 18,446,744,073,709,551,613 - a silent reinterpretation, in a language
+    /// where a conversion that does not fit aborts
+    /// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4). The same
+    /// conversion at an index has reported as an access out of bounds since
+    /// [ADR-048](../../../docs/specification/adr/adr-048.md) D1; written by hand
+    /// it reported nothing.
+    ///
+    /// **`NK1122`.** A refusal costs nothing today and would break programs
+    /// later, which is why it is made now rather than when somebody depends on
+    /// the hole.
+    fn cast_names_a_foreign_type(&mut self, into: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1122",
+            message: format!("`{into}` is not a type this language offers, and `as` names one"),
+            notes: vec![
+                "The types are `i32`, `i64`, `u8`, `f64`, `bool`, `char`, `String` and \
+                 `&str` (Part I, 2.2). A conversion into anything else went to \
+                 the language below unread, so a value could have a type this \
+                 page has no word for"
+                    .to_string(),
+            ],
+            help: Some(match into {
+                "usize" | "isize" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i128" => {
+                    "a length and an index are `i64` and the compiler writes the \
+                     machine's conversion itself (ADR-048 D1), so the cast is \
+                     not needed - remove it. Where a narrower type is meant, \
+                     `truncating_i32` says so by name"
+                        .to_string()
+                }
+                _ => "write one of the types above, or none".to_string(),
+            }),
         });
     }
 
@@ -1613,6 +1668,11 @@ impl<'a> Checker<'a> {
             Expr::Cast { expr, ty } => {
                 let from = self.expr(expr, span);
                 let into = Ty::from_ast(self.parsed, ty);
+                if let Ty::Named { name, .. } = &into {
+                    if !OFFERED.contains(&name.as_str()) {
+                        self.cast_names_a_foreign_type(name, span);
+                    }
+                }
                 self.record_cast(&from, &into, span);
                 into
             }

@@ -278,6 +278,20 @@ Three conversions are easy to miss here too:
   back `9007199254740992` — and there is no sensible place to stop, so this is a
   limit written down here rather than an abort.
 
+**An `as` names one of the types above and nothing else.** `n as u128` and
+`n as usize` are refused as `NK1122`, naming the type: a conversion into
+something this page does not offer went to the language below unread, so a value
+could have a type there is no word here for — and `-3 as usize` was
+18,446,744,073,709,551,613, silently, in the middle of a rule that says a
+conversion which does not fit aborts ([ADR-054](adr/adr-054.md) D1).
+
+**Where a machine-width number is what the language below wants, the compiler
+writes the conversion.** A length comes back as an `i64` and an index goes in as
+one ([ADR-048](adr/adr-048.md) D1); so does a **count**, which is why
+`"  ".repeat(indent)` is written with no conversion at all and a negative count
+aborts saying *"a count cannot be negative"* rather than becoming an enormous one
+([ADR-054](adr/adr-054.md) D2).
+
 **A literal that does not fit its type is a compile error, not an abort.**
 `let x: i32 = 3000000000` is decidable where it is written, and so is a sum of
 literals that cannot fit, so neither waits for the program to run

@@ -983,6 +983,53 @@ fn the_four_lengths_are_i64_and_are_all_called_len() {
     );
 }
 
+/// **A `std` parameter the language below counts in `usize` is written as the
+/// `i64` a program can hold** ([ADR-054](../../../docs/specification/adr/adr-054.md)
+/// D2) — the direction [ADR-048](../../../docs/specification/adr/adr-048.md) D1
+/// left open and named this one entry as the whole of.
+///
+/// The emitter chooses the conversion by **name** (`emit::is_count`), the way it
+/// chooses the length conversion by `len`, so the two have to be kept together:
+/// a count parameter written as `?` would take no conversion and a ledger entry
+/// no emitter arm knows would take none either. This is what fails when they
+/// drift.
+#[test]
+fn a_count_parameter_is_an_i64_and_the_emitter_knows_its_name() {
+    let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
+
+    let repeat = library.functions["str::repeat"]
+        .signature
+        .as_ref()
+        .expect("`str::repeat` has a signature");
+    let (name, ty) = repeat.params.last().expect("it takes a count");
+    assert_eq!(name, "n");
+    assert_eq!(ty.text(), "i64", "a count is the type a program can hold");
+
+    // And **no signature** in the ledger names the machine-width type, in
+    // either direction: the conversion is the compiler's to write, at a length
+    // coming back and at a count going in. The comments above such an entry may
+    // of course say the word, which is why this reads the parsed signatures and
+    // not the file.
+    for (key, contract) in &library.functions {
+        let Some(signature) = contract.signature.as_ref() else {
+            continue;
+        };
+        for (name, ty) in &signature.params {
+            assert!(
+                !ty.text().contains("usize"),
+                "`{key}`'s `{name}`: `usize` is not a type a program may meet \
+                 (ADR-048 D1, ADR-054 D2)"
+            );
+        }
+        if let Some(result) = signature.result.as_ref() {
+            assert!(
+                !result.text().contains("usize"),
+                "`{key}` hands back a `usize`, and a length is an `i64` (ADR-048 D1)"
+            );
+        }
+    }
+}
+
 /// **A field's `pub` is in the ledger, and a ledger without it reads as
 /// private** ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
 ///

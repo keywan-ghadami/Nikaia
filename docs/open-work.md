@@ -40,25 +40,16 @@ that could not fit, **a keyword that could be a name** - which took the `dsl`
 block's diagnostic, three silent misreadings, and every position that can
 declare one with it ([ADR-051](specification/adr/adr-051.md)) - and a result that
 borrowed from nothing and named no lifetime for it, a warning the backend said
-twice, and an undeclared name refused only where it stood alone.
+twice, an undeclared name refused only where it stood alone, and **a cast that
+could name any type the language below has** - which is what
+`repeat(indent as usize)` turned out to be, rather than the one open parameter it
+had been filed as ([ADR-054](specification/adr/adr-054.md)).
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. A `std` function whose Rust parameter is a `usize` still needs a written conversion
-
-[ADR-048](specification/adr/adr-048.md) D1 made a length an `i64` and emits both
-conversions, and its scope is deliberately what a length *returns*. The other
-direction is left: `"  ".repeat(indent as usize)` in `examples/json.nika` is the
-one site in this repository, and `as usize` is now a conversion to a type the
-specification does not offer (§3.1 of that record says so).
-
-*What it needs:* the same shape of answer one level over — a parameter a ledger
-describes as `i64` whose Rust counterpart takes a `usize`. No program has yet made
-the answer obvious, which is why the record leaves it open rather than guessing.
-
-### 1.2. A relayed `rustc` message may still name a type the program did not write
+### 1.1. A relayed `rustc` message may still name a type the program did not write
 
 **The map's hasher is fixed.** The emitter writes a trusted input's map as
 `TrustedMap`, so *"type annotations needed for `HashMap<_, _,
@@ -81,7 +72,7 @@ noticing.
 
 ---
 
-### 1.3. An out-of-range literal that nothing constrains is refused in Rust's words
+### 1.2. An out-of-range literal that nothing constrains is refused in Rust's words
 
 ```nika
 let big = 3000000000

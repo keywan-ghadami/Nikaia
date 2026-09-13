@@ -132,9 +132,9 @@ grammar Json_ {
 // The two string cases print the **raw** body back, unchanged. That is the
 // second half of holding it raw: re-escaping a decoded string would be a
 // second copy of the same table, and one of the two would be wrong.
-fn show(value: Json, indent: i32) {
-    let pad = "  ".repeat(indent as usize)
-    let inner = "  ".repeat((indent + 1) as usize)
+fn show(value: Json, indent: i64) {
+    let pad = "  ".repeat(indent)
+    let inner = "  ".repeat(indent + 1)
 
     match value {
         Json::Null => { print("null") }

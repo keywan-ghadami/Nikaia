@@ -1452,3 +1452,47 @@ impl Tally {
         "`self.n` refers to the receiver: {found:#?}"
     );
 }
+
+// --- `as` names a type this language offers (Part I 2.2) ---------------------
+
+/// `NK1122`, and the hole it closes was an **escape hatch nobody decided**
+/// ([ADR-054](../../../docs/specification/adr/adr-054.md) D1).
+///
+/// The target of an `as` went to the language below unread, so a cast named any
+/// Rust type at all and was emitted verbatim. Two things followed: a program
+/// could hold a value of a type Part I 2.2 has no word for, and `-3 as usize`
+/// became 18,446,744,073,709,551,613 — silently, in a language where a
+/// conversion that does not fit aborts. The same conversion at an index has
+/// reported as an access out of bounds since ADR-048 D1; written by hand it
+/// reported nothing at all.
+#[test]
+fn a_cast_to_a_type_the_page_does_not_offer_is_refused() {
+    for into in ["usize", "isize", "u32", "u64", "u128", "i8", "i16", "i128"] {
+        let (code, message) = one(&format!(
+            "fn main() {{ let n: i64 = 3\n let x = n as {into} }}"
+        ));
+        assert_eq!(code, "NK1122", "{message}");
+        assert!(message.contains(into), "it names the type: {message}");
+    }
+}
+
+/// And every type the page **does** name is accepted, so this is a rule and not
+/// a blanket refusal.
+///
+/// `i32`, `i64`, `u8` and `f64` are the four a conversion narrows between and
+/// were never in question; `bool`, `char`, `String` and `&str` are here because
+/// the rule is "a type this language offers" and not "a number" — a narrower
+/// list would refuse a program for a reason nothing on the page states.
+#[test]
+fn a_cast_to_a_type_the_page_offers_is_accepted() {
+    for into in ["i32", "i64", "u8", "f64"] {
+        let found = findings(&format!(
+            "fn main() {{ let n: i64 = 3\n let x = n as {into} }}"
+        ));
+        assert!(
+            found.iter().all(|f| f.code != "NK1122"),
+            "`{into}` is on the page (Part I, 2.2): {:#?}",
+            found.iter().map(|f| &f.message).collect::<Vec<_>>()
+        );
+    }
+}

@@ -609,3 +609,102 @@ fn a_negative_index_aborts_as_an_access_out_of_bounds() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// **A count goes in as an `i64` and the conversion is emitted**
+/// ([ADR-054](../../../docs/specification/adr/adr-054.md) D2) — the parameter
+/// direction of [ADR-048](../../../docs/specification/adr/adr-048.md) D1, which
+/// that record left open and named `"  ".repeat(indent as usize)` as the one
+/// site it had.
+///
+/// Both halves in one program, because one without the other is not the answer:
+/// the user writes **no** conversion, and a **literal** count is left alone
+/// (`of(2)` has nothing to infer its type from, the same reason `index::at` skips
+/// a literal index).
+#[test]
+fn a_count_is_written_as_an_i64_and_the_conversion_is_emitted() {
+    let dir = common::scratch_dir("count-parameter");
+    let rust = lower(
+        &dir,
+        "fn main() {\n    \
+             let indent: i64 = 2\n    \
+             let pad = \"  \".repeat(indent)\n    \
+             let rule = \"-\".repeat(3)\n    \
+             println(f\"[{pad}][{rule}]\")\n\
+         }\n",
+    );
+
+    assert!(
+        rust.contains("\"  \".repeat(nikaia_std::count::of(indent))"),
+        "the conversion is written by the compiler:\n{rust}"
+    );
+    assert!(
+        rust.contains("\"-\".repeat(3)"),
+        "and a literal needs none and can take none:\n{rust}"
+    );
+
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "{}\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run it");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "[    ][---]");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// …and a **negative** count says what it is, which is the one place this differs
+/// from an index ([ADR-054](../../../docs/specification/adr/adr-054.md) D2).
+///
+/// A negative index *is* an access out of bounds and reports as one; a negative
+/// count is not an access at all, so reusing that message would name something
+/// the program does not do. What it must never be is what `as usize` was:
+/// `-1` becoming 18,446,744,073,709,551,615, silently.
+#[test]
+fn a_negative_count_says_what_it_is_rather_than_wrapping() {
+    let dir = common::scratch_dir("negative-count");
+    let rust = lower(
+        &dir,
+        "fn main() {\n    \
+             let n: i64 = 0 - 1\n    \
+             println(\"x\".repeat(n))\n\
+         }\n",
+    );
+
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "{}\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run it");
+    assert!(!ran.status.success(), "a negative count aborts");
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        said.contains("a count cannot be negative") && said.contains("-1"),
+        "the message is about the count, and not about an access: {said}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
