@@ -354,6 +354,30 @@ The syntax is identical either way. You do **not** use `async` keywords on funct
 
 The code remains "Direct Style". You write code as if it were synchronous, and the compiler handles the suspension points.
 
+> **Status:** the `no` column is built and the `yes` column is not
+> ([ADR-055](adr/adr-055.md) §6 steps 1–4).
+>
+> **This section had no status note until the lowering caught up with it**, and
+> it needed one: *"functions yield on I/O events, cooperatively, on one thread"*
+> was not true. The emitted Rust contained the word `async` **zero** times, so a
+> function did not yield on an I/O event — it blocked the thread — and nothing
+> said so. A function the ledger's `sync` column says can pause is an `async fn`
+> now, a call to one carries an `.await` the source never writes, a file read
+> suspends on the kernel's completion queue or an I/O worker's reply, and the
+> executor is the only place a program parks. So the sentence is a claim about
+> the program again.
+>
+> **The work-stealing scheduler at `yes` is not built.** `rayon`'s pool is a
+> work-stealing pool for *closures*, not an executor for futures, so it is a
+> second executor over the same worker count rather than a use of that one — and
+> it is where a spawned future has to be `Send`. Until it exists, `yes` gets the
+> one-thread executor: a program means the same thing, and it uses one core.
+>
+> **`async` is not a keyword you write** and never will be, which is the first
+> line above and is held rather than promised: a test reads every `.nika` file in
+> this repository and fails on the words `async`, `await` and the runtime's type
+> names ([ADR-038](adr/adr-038.md) D3).
+
 ### 11.2. Parallelism via spawn
 Since code is implicitly async, "calling a function" usually means "running it now". To run tasks concurrently or in parallel, you strictly use `spawn`.
 
@@ -363,14 +387,25 @@ The `spawn` function is defined with the `@detached` attribute. This triggers **
 * **Copying, for ordinary data:** If you need to keep **data** — a string, a number, a struct or collection of those — in the parent thread, you must explicitly call `.clone()` before spawning, and the copy is what the task takes (Part I, 8.3).
 * **Nothing to copy, for a handle:** A handle on a `Shared[T]` is the other case. It is **duplicated** where it is handed to the task, so the name in the parent thread keeps working and there is nothing to call — for a handle there is no method, because copying a handle copies none of the data (Part I, 6.2, [ADR-040](adr/adr-040.md) D1).
 
-> **Status:** both bullets are written ahead of the compiler, and for one reason
-> only now. `spawn` does not lower yet and the capture it decides is not reported
-> (Part I, 8.3), so there is no task for either bullet to be about. `Shared[T]`
-> *is* a type the compiler knows (Part I, 6.2) and a handle handed on by value is
-> duplicated, so the second bullet's rule is built everywhere a handle is handed
-> to a **function**; `--sharing` names the `spawn` in a program that writes one as
-> a duplication site, and no emitted program reaches it
-> ([ADR-040](adr/adr-040.md) §4).
+> **Status:** both bullets are built ([ADR-055](adr/adr-055.md) §6 step 4).
+> There is a task for them to be about: `spawn` lowers, the body is an `async`
+> block the captures move into, and the capture the contract decides is reported
+> as `NK2101` (Part I, 8.3).
+>
+> **The first bullet is narrow, and the narrowness is the rule rather than a
+> gap.** A move is only refused where the type is **known** and a move takes the
+> value away: a number, a `bool`, a `char` and a view are *copied*, so the parent
+> keeps them and there is nothing to clone — which is why `let message = "Hello"`
+> is not this bullet's case and `"Hello".to_string()` is. A type nothing
+> describes is not claimed about at all, because refusing on a guess is the one
+> thing the compiler may never do (Part III, C.4). And an assignment between the
+> task and the later use clears it: giving the name a value again is a correct
+> program.
+>
+> **The second bullet is built and held**: a handle handed to a task is
+> duplicated, so using the name again afterwards is not refused — which is what
+> `--sharing` had been naming as a duplication site with no emitted program
+> reaching it ([ADR-040](adr/adr-040.md) §4), and now one does.
 
 #### What a task may take with it
 A task runs on a thread of its own, so **everything it uses has to be able to cross a thread**. The compiler checks that structurally, with no syntax to write and no annotation to forget ([ADR-005](adr/adr-005.md) §1 Group B): a type built out of plain data, and a struct or collection of those, may cross. So does a value that counts its owners: `Shared[T]`'s count is atomic at every setting ([ADR-037](adr/adr-037.md) D6), so it is answered by what it holds rather than by the count. **And so does a lock**, into a task of your own: at `yes` a real operating-system lock is underneath and several threads are what it is for, at `no` the task is interleaved on the same thread and nothing crosses at all — two reasons, one answer ([ADR-045](adr/adr-045.md) D2). A `SharedMut[T]` may therefore be used by a task, and a struct holding one is no worse than the field. What a lock may **not** go to is code nothing written down describes ([ADR-045](adr/adr-045.md) D3, Part III 15.2): there the caller opens the lock and hands over the value inside it, so the called code sees an ordinary value and no lock at all.
@@ -503,6 +538,26 @@ cannot resolve costs the function its inferred promise, because that promise is
 written into the ledger and shipped, and a wrong one puts a pausing body inside
 somebody's lock. Writing `sync` yourself is how you overrule that — an
 assertion, checked as far as the compiler can see, and yours where it cannot.
+
+> **Status:** built, and **`sync` now decides what a function is compiled to**
+> ([ADR-055](adr/adr-055.md) D1). Until that record it was a claim the compiler
+> checked and nothing acted on; a function that could pause and one that could
+> not were the same shape in the output. Now the column that says *"cannot
+> pause"* is the column that says *plain `fn`*, and everything else is an
+> `async fn`.
+>
+> Three things follow, and they are why the paragraph above about the compiler
+> not guessing in your favour matters more than it used to. **The conservatism is
+> the safe direction**: an unresolved call costs a function its claim, which
+> makes it `async` — and an `async fn` that never awaits finishes on its first
+> poll, where a plain `fn` that needed to pause does not compile at all. **The
+> inference carries real information rather than being technically true**:
+> measured across the ten programs in `examples/`, 22 functions are `sync`
+> against 17 that can pause. And **a regression in the inference is now a
+> regression in the output** rather than in a note.
+>
+> What the keyword itself does is unchanged: `NK2202` holds a body to a promise
+> its author wrote down.
 
 ### 12.2. The Dual Nature of the Lock
 To share data that changes, you use **`SharedMut[T]`**: several owners, one value, and the lock inside the type rather than in a second wrapper you write around it (Part I, 6.2). `Locked[T]` is the same lock on its own, for individually locked fields inside a shared structure ([ADR-039](adr/adr-039.md) D9). Everything in this section is about the lock, so it holds for both. Its implementation follows `user_parallelism`, providing "Zero Cost Abstraction" relative to the requirements.
@@ -718,6 +773,14 @@ task::scope fn(s) {
 > underneath — `task::scope` has no entry in `std`, nothing waits the inner
 > tasks out, nothing propagates what a scope's tasks touch up to the surrounding
 > function or refuses a scope inside an open lock, and `NK2102` is not reported.
+>
+> **What it would be built on does exist now** ([ADR-055](adr/adr-055.md) §6
+> steps 1–4): an executor that owns its tasks, and a `spawn` whose body is a
+> future it drives. The `no` bullet below — *"the runtime owns every task, and
+> when a scope ends it collects them before your function's variables
+> disappear"* — is a description of that executor rather than of something
+> hypothetical, so what a scope adds is the **waiting** and the touch
+> propagation, not a mechanism of its own.
 
 **One rule differs with `user_parallelism`.** The promise "everybody gives the notebook back before you leave" is only enforceable if the runtime can actually wait the tasks out:
 

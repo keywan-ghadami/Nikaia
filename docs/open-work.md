@@ -134,10 +134,13 @@ So, in order, and each says below why it sits where it does:
    `Send`, and step 5's `overlap { … }`. So this item is no longer the one the
    others wait on — what waits on a thread waits on its `yes` half, and the rest
    of the list can be taken in its own order.
-2. **`SharedMut[T]` and `Locked[T]` as types the backend can build.** The other
-   half of the same story: a program that spawns needs something it may share, and
-   today writing one is checked and then fails to emit. Independent of the
-   sequence above, so it can be built beside it.
+2. **A surface to reach `Locked[T]` through.** The other half of the same story:
+   a program that spawns needs something it may share.
+   [ADR-057](specification/adr/adr-057.md) decided what the type **is** and both
+   shapes are built, so what is left is mostly not the representation — the one
+   thing in it that needs deciding rather than doing is what `access` hands its
+   lambda, because Part II 12.2's own idiom does not compile as written.
+   Independent of the sequence above, so it can be taken beside it.
 3. **The automatic reordering, `seq` and the `ordering` switch out.** After
    `overlap` and not before — removing the automatic half first would leave the
    language with no way to ask for overlap at all. The removal is the second
@@ -172,7 +175,8 @@ missing thread:
 * **Part II 12.2's counter**, the program `user_parallelism = yes` exists to
   serve. Its `spawn` runs today; what it cannot do is run on two cores.
 * [ADR-045](specification/adr/adr-045.md) D2 — a lock may go into a task. The
-  *task* exists now; the lock is not a type the backend can build (§2.4).
+  *task* exists now; the lock is not a type the backend can build - the entry on
+  `SharedMut[T]` and `Locked[T]` below.
 * [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }` — step 5, which
   that record's own §5 ordered after `spawn`. The vehicle a pausing group needs
   exists (`task::interleave`), so what is left is the construct and not the
@@ -197,7 +201,8 @@ type checker would refuse a correct program (Part III, C.4).
 
 *Evidence:* `examples/fortunes.nika:120` — `.route("/fortunes") fn { fortunes(db) }`,
 a route handler that queries a database. It type-checks clean and no build reaches
-it, because the server it binds to does not exist yet (§2.7 below). So today
+it, because the server it binds to does not exist yet - the `fortunes.nika`
+entry below. So today
 nothing in the repository meets the refusal, and the first program that does will
 be the one that binds a handler.
 
@@ -244,7 +249,7 @@ and not wired to standard input.
 which is what it saw before, so no program behaves differently. What is missing
 is only that the thread is **held** rather than given up for the duration of
 `for line in io::lines()` — which nothing can observe until something else wants
-the thread, and that is `spawn` (§2.1).
+the thread, and that is a task on a second one - the `yes` executor entry above.
 
 *What it needs:* `Op::Readiness` against standard input's descriptor, and a
 `Lines` whose step is a future. The second half is the larger one and is a
@@ -254,7 +259,36 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.4. `Locked[T]` has a shape now, and no surface to reach it through
+### 2.4. A task that never finishes hangs the program, and no deadline bounds it
+
+[ADR-055](specification/adr/adr-055.md) D5 says *"a task nobody joins still
+runs"*, which Part I 8.2's own example needs — it keeps no handle. So `block_on`
+holds `main`'s value until the started queue is empty rather than returning the
+moment `main` is ready.
+
+**A task that never completes therefore never lets the program exit.** Before
+this it would have been dropped at exit and the program would have finished;
+now it is waited for, without a bound.
+
+*Evidence: none.* No program in the repository has one, and the shape needs a
+task that neither finishes nor fails — a loop with a suspension point in it and
+no exit. It is written down because the *change* is real and the direction it
+changed in is the one that hangs, which Part III A.2's own reasoning calls the
+worst way to report anything.
+
+**What is not the answer:** dropping the task at exit, which is the behaviour D5
+rejects. The shape that fits is [ADR-006](specification/adr/adr-006.md) D5's
+drain, which already exists for resources: a bounded wait, `cleanup-deadline`
+from the runtime configuration (Part III 13.3), and a **report** naming what did
+not finish. That deadline is applied in `Started::finish()`, which runs *after*
+`block_on` has returned — so the wait that needs bounding is the one place it
+does not reach.
+
+*What it needs:* the deadline read where the drain happens, and a message in
+Nikaia's words naming the tasks still running. Neither is a decision; the
+mechanism and the configuration key both exist.
+
+### 2.5. `Locked[T]` has a shape now, and no surface to reach it through
 
 [ADR-057](specification/adr/adr-057.md) decided what `Locked[T]` **is**: the safe
 shape is the floor, at one user thread it is always the cheap one, and at several
@@ -280,7 +314,7 @@ representation:
   charges only on the values that actually cross;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.5. The automatic reordering, `seq` and the `ordering` switch are still here
+### 2.6. The automatic reordering, `seq` and the `ordering` switch are still here
 
 [ADR-050](specification/adr/adr-050.md) D1 and D7 withdraw all three, and its §5 says
 **not yet**: the removal is step three, after the runtime binding and `overlap`.
@@ -291,13 +325,13 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.6. Part II 12.8's supervision syntax
+### 2.7. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. A package reached under two names is two types to the checker
+### 2.8. A package reached under two names is two types to the checker
 
 [ADR-053](specification/adr/adr-053.md) is built: a package is its own crate, a
 library may depend on a library, and a program cannot reach past what it declared.
@@ -317,7 +351,7 @@ type's identity in the ledger to be the package's **canonical path** — which i
 what `packages_of` already computes and what D2 means by identity — rather than
 the word a consumer happened to write.
 
-### 2.8. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.9. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the

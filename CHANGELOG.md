@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed (the specification's status notes catch up with the execution model)
+
+- **Part I 8.1 *"Async by Default"* had no status note at all**, and it was the sentence that most needed one: *"functions that perform I/O automatically pause execution without blocking the whole program"* was not true, because the emitted Rust contained the word `async` zero times and at `user_parallelism = no` the blocked thread **is** the program. Every sentence in that section was a promise about a lowering nobody had written. It now says what is built, what still is not, and that *"you do not write a keyword"* is checked by a test that reads the corpus rather than promised.
+- **Part II 11.1 *"Implicit Async & The Scheduler"* likewise had none.** Its `no` column is built; its `yes` column — a work-stealing scheduler — is not, and the note says why `rayon` is not it.
+- **Part II 11.2's `@detached` note said `spawn` does not lower and the capture it decides is not reported.** Both are built. The replacement also states the *narrowness* of the move rule, which is the part worth knowing: only a type that is known and that a move takes away, so a number, a `char` and a view are not it, a `Shared[T]` handle is exempt, and an assignment in between clears it.
+- **Part I 8.4's *"the sidecar exists; the yield point does not"*** — the yield point exists now, for files. A database call and standard input are not that yet, and the note says which is which rather than leaving the bullet reading as done.
+- **Part II 12.1 gained a note because `sync` changed job.** It was a claim the compiler checked and nothing acted on; it now decides whether a function is compiled as `async fn` or plain `fn`, which makes ADR-027's conservatism load-bearing and a regression in the inference a regression in the output. Measured: 22 `sync` against 17 that can pause, across `examples/`.
+- **Part II 12.7's `task::scope` note** says what it would now be built *on*, since the executor that owns tasks and the `spawn` that feeds it both exist — so what a scope adds is the waiting and the touch propagation, not a mechanism.
+- Part I 8.1.2's `overlap` note and Part III 13.3's `user_parallelism` note no longer say `spawn` is unbuilt.
+
+### Fixed (a task that never finishes now hangs the program, and it is written down)
+
+- Holding `main`'s value until the started queue empties is what makes [ADR-055](docs/specification/adr/adr-055.md) D5's *"a task nobody joins still runs"* true — and it means a task that never completes never lets the program exit, where before it was dropped at exit. **No corpus program has one**, and the entry in `docs/open-work.md` says so rather than claiming a reproduction.
+- What fits is [ADR-006](docs/specification/adr/adr-006.md) D5's drain, which already exists for resources: a bounded wait, `cleanup-deadline` from the runtime configuration, and a report naming what did not finish. That deadline is applied in `Started::finish()`, which runs *after* `block_on` returns — so the one wait that needs bounding is the one place it does not reach. Neither the mechanism nor the configuration key has to be invented.
+
 ### Changed (the roadmap and the open-decisions page catch up with the execution model)
 
 - **The roadmap's phases carried no item for the async lowering at all.** Phase 0 is *"The Execution Model"* and named only [ADR-033](docs/specification/adr/adr-033.md); a reader would not have learnt from it that a Nikaia program is now `async`, has an executor, suspends at a file read, or can `spawn`. Phase 0 now has both records, with what each has built, what building it corrected, what the record claimed and building it disproved, and what is open — and the ✅ status list has the line it was missing.

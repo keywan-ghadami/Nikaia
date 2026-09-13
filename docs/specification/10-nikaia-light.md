@@ -1616,6 +1616,27 @@ In Nikaia, functions that perform Input/Output (I/O), like reading a file or dow
 
 Within one task the order is exactly the order you wrote: `let a = fs::read("x")` pauses, and the line after it does not run until `a` is there. What runs meanwhile is some *other* task — a pause point never forks one. Tasks exist only where you put them (`spawn`, `par_iter`, `task::scope`), and `.join()` on a handle is where two of them meet again. Nikaia did not remove the marker for waiting; it kept it exactly where something branches, and left it off where nothing does.
 
+> **Status:** built ([ADR-055](adr/adr-055.md) §6 steps 1–4), and this is the
+> section that most needed saying so.
+>
+> ***"Pause without blocking the whole program"* was not true until it was.**
+> The compiler emitted Rust with the word `async` in it **zero** times, so a
+> function that read a file blocked its thread — and at `user_parallelism = no`
+> that thread is the program. Every sentence above was a promise about a
+> lowering nobody had written. A function the ledger says can pause is an
+> `async fn` now, a file read suspends on the kernel's completion queue or an
+> I/O worker's reply, and the executor is the only place the program parks. So
+> *"what runs meanwhile is some other task"* is a thing that happens.
+>
+> **You still do not write a keyword**, and that is checked rather than
+> promised: a test reads every `.nika` file in this repository and fails on
+> `async`, `await` and the runtime's type names. `.join()` is a word you write,
+> because it is where two **tasks** meet — a different thing from waiting, and
+> the one place something branches.
+>
+> Of the three ways to make a task, `spawn` is built (8.2); `par_iter` and
+> `task::scope` are not.
+
 ### 8.1.1. Order Is Kept Where It Can Be Seen
 
 > **Status — this section is on its way out.**
@@ -1850,7 +1871,8 @@ While `user_parallelism = no` keeps your own logic on one thread ("The Happy Pat
 * **Safety Guarantee:** Data exchange occurs via strict message passing (ownership transfer). Since user code never accesses the Sidecar memory directly, **Race Conditions** remain impossible.
 * **Non-Blocking:** From the developer's perspective, a database call is simply an async yield point. The Runtime guarantees that the main loop never stalls waiting for disk I/O.
 
-> **Status:** the sidecar exists; the yield point does not.
+> **Status:** built, for files ([ADR-055](adr/adr-055.md) §6 step 3). The
+> sidecar existed and the yield point did not; now both do.
 >
 > The runtime starts **before your first statement**, with one I/O thread
 > always and a pool for your own code only at `user_parallelism = yes`
@@ -1862,11 +1884,18 @@ While `user_parallelism = no` keeps your own logic on one thread ("The Happy Pat
 > **kernel** where the machine can complete it, so the commonest heavy
 > operation involves no sidecar thread at all (ADR-038 D3).
 >
-> What is not built is the last bullet. Stage 0 emits a direct call, and the
-> call blocks the calling thread while the kernel works: there is no state
-> machine, so there is no other task for the main loop to run in the meantime.
-> The two halves this section promises therefore arrive in order — the thread
-> that never stalls is here, and the yield point that would use it is not.
+> **The last bullet is what changed.** A file operation used to be a direct call
+> that blocked the calling thread while the kernel worked: no state machine, so
+> no other task for the main loop to run meanwhile. It is a *slot* now — on the
+> ring, or an I/O worker's reply — and asking whether it has finished never
+> blocks, so the main loop runs whatever else is ready and parks in the I/O only
+> when nothing is.
+>
+> **A database call is not that yet**, and neither is standard input: `std::db`
+> does not exist, and a stream needs the readiness half of D3's mechanism, which
+> is built for sockets and not wired to stdin. Both are `async` in their
+> signatures and finish on their first poll, so a caller sees what it saw
+> before.
 
 ---
 
