@@ -112,7 +112,7 @@ fn a_keyword_does_not_swallow_the_start_of_a_longer_word() {
     // `forx` does not begin a loop, so nothing binds `x`.
     //
     // The probe used to be `forx in 0..3 { … }`, and the reserved-word list
-    // (`open-decisions.md` §7) makes that program refused rather than
+    // (ADR-051) makes that program refused rather than
     // misread - `in` is not a name any more, so the three statements it used
     // to be read as cannot be read. Which is the same defect this test is
     // about, one level up; the boundary is what is under test here, so the
@@ -154,7 +154,7 @@ fn the_keywords_themselves_are_untouched() {
     }
 }
 
-// --- the reserved words (`open-decisions.md` §7) -----------------------------
+// --- the reserved words (ADR-051) --------------------------------------------
 
 /// **Every word in `RESERVED_WORDS` is refused as a name**, and that is what
 /// holds the const and the grammar's `RESERVED` rule together.

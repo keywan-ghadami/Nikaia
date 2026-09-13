@@ -1389,7 +1389,8 @@ fn a_declared_a_is_an_ordinary_name() {
 // --- `self` as a declared name (`NK1119`) ------------------------------------
 
 /// **`self` is the one reserved word the grammar has to accept as a name**, and
-/// this is where declaring it is refused (`open-decisions.md` §7).
+/// this is where declaring it is refused
+/// ([ADR-051](../../../docs/specification/adr/adr-051.md)).
 ///
 /// Every other reserved word is excluded from the grammar's `NAME` rule, so
 /// `let fn = 3` does not parse. `self` cannot be: `self.min` refers to it, and

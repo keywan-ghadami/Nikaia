@@ -1,640 +1,253 @@
 # Open decisions — the questions that need the owner
 
-Ten entries. **Eight are answered, one is dropped, and one is open**, and every
-answer has its record: [ADR-046](specification/adr/adr-046.md),
-[ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
-[ADR-049](specification/adr/adr-049.md), [ADR-050](specification/adr/adr-050.md),
-[ADR-051](specification/adr/adr-051.md), [ADR-053](specification/adr/adr-053.md)
-and [ADR-055](specification/adr/adr-055.md).
-Built: the entries on the numeric surface, the withdrawn `a`/`b`/`c`, reserved
-words, how a package names its dependencies, and — at the default setting — what
-a task means. §6's language half is built too, and each entry says what is left. They stay here until the owner drops
-them. **One is open: §10, what `std::http` is** — put here because a record was
-accepted whose surface half describes an interface nobody has chosen, so the
-question arrived after the answer rather than before it. Each entry says what is
-blocked, what the options are, **what I would do**, and what either direction costs — because a
-question without a recommendation is work handed back rather than a decision
-asked for.
+**Six entries, and every one of them is open.** Nothing answered lives here: an
+answer is an [ADR](specification/adr/), and the moment a question is answered its
+entry leaves this file rather than staying with a note on it. What is merely
+**unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
+the compiler does not do it yet, which needs work and not a ruling.
 
-Everything that is merely unbuilt is in [`open-work.md`](open-work.md). An item
-moves from here to there the moment it is answered, and the answer becomes an ADR
-if it changes what a program means.
+The nine entries this file used to carry are gone that way, eight to their
+records and one because it was never a question for the owner at all:
+[ADR-046](specification/adr/adr-046.md) (`use` brings nothing in),
+[ADR-047](specification/adr/adr-047.md) (a package is a directory),
+[ADR-048](specification/adr/adr-048.md) (the numeric surface),
+[ADR-049](specification/adr/adr-049.md) (the automatic `a`, `b`, `c` withdrawn),
+[ADR-050](specification/adr/adr-050.md) (`overlap { … }`),
+[ADR-051](specification/adr/adr-051.md) (keywords are reserved),
+[ADR-053](specification/adr/adr-053.md) (a package is its own crate) and
+[ADR-055](specification/adr/adr-055.md) (a task is a coroutine). Each record
+holds its own reasoning, its alternatives and what they cost; reading the answer
+here *and* there was two copies of one thing, and the copy that goes stale is
+always the notes page.
+
+**Each entry says what is blocked, what the options are, what I would do, and
+what either direction costs** — because a question without a recommendation is
+work handed back rather than a decision asked for.
+
+**What "blocked" means is broader than work, and narrower than everything.** §6
+blocks no work at all and belongs here anyway: it blocks *reading* an accepted
+record whose surface half cannot be evaluated, which is a cost that grows
+silently. What does *not* belong is a question nothing rests on — which SQLite
+binding `std::db` would use is undecided and blocks nothing, because `std::db`
+does not exist in any form. That is **scope**, and
+[`project_status_and_roadmap.md`](project_status_and_roadmap.md) holds it; scope
+becomes a decision by something coming to rest on it.
 
 This file is a notes page: nothing here is normative. A decision taken from it is
 written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. What `use pool` does — **answered** ([ADR-046](specification/adr/adr-046.md); the qualified form is built, the rest waits on a package that can be depended on)
+## 1. What does `access` hand its lambda?
 
-**The answer.** `use pool` makes a module reachable and does nothing else. Every
-name from it is written with its prefix, at every use. `use pool as p` shortens
-that prefix. Nothing is brought in — not by a glob, not by a braced list, not one
-name at a time.
+**Blocked by it:** the surface of `Locked[T]` and `SharedMut[T]`.
+[ADR-057](specification/adr/adr-057.md) decided what the type **is** and built
+both shapes; what a program writes to reach one is this question, and it is the
+last thing between the lock and a program somebody can run.
+
+**The state.** [ADR-039](specification/adr/adr-039.md) D10 gives four doors, and
+two of them take a lambda:
+
+| door | for | what the lambda gets |
+| :--- | :--- | :--- |
+| `kasse.update fn(old) { old + 100 }` | new from old, small values | the value; the result replaces it |
+| `kasse.access fn(state) { … }` | in place, large values | **undecided** |
+
+`update` is settled by its own row: handed the old value, returns the new one,
+and `fn(old) { old + 100 }` is a lambda this language already has. `access` is
+not. Part II 12.2's own in-place example writes `to.balance += 100`, which
+mutates *through* the parameter — and a lambda's parameter has no spelling that
+says it may be mutated, so there is nothing for the compiler to read.
+
+**Three ways out.**
+
+* **(a) `access` hands a mutable reference, and a lambda may name one.** The
+  examples compile as written. It costs the language a new spelling in a
+  parameter list — `fn(mut state)` or `fn(&mut state)` — which is a change to
+  Part I 5.3's one lambda form, and 5.3 is the rule
+  [ADR-049](specification/adr/adr-049.md) was written to protect.
+* **(b) `access` hands a mutable reference and needs no spelling**, because the
+  callee's contract says the parameter is one — the same way
+  [ADR-029](specification/adr/adr-029.md) D1 already gives a lambda's parameters
+  their *types* from the signature rather than from the source. Nothing changes
+  in the grammar; what changes is that a lambda's parameter can be mutable
+  without the reader seeing it.
+* **(c) `access` goes, and `update` is the only lambda door.** A large value is
+  then updated by being handed back, which for a big struct is a move rather
+  than a mutation — and the row's own reason for existing ("in place, large
+  values") is exactly what that gives up.
+
+**What I would do: (b).** The precedent is already set and it is the one this
+language keeps citing — a lambda's parameters are described by the callee, not by
+the caller, because only the callee knows
+([ADR-029](specification/adr/adr-029.md) D1, [ADR-031](specification/adr/adr-031.md)).
+Mutability is the same kind of fact as the type, arrives from the same place, and
+adding a spelling for it in (a) buys a reader one word at the cost of a second
+lambda form across the whole language.
+
+**What it costs, and it is the real objection to (b):** `to.balance += 100`
+inside a lambda mutates something the line does not say is mutable, and this
+language's whole position on `mut` is that a reader can see it. The counter-case
+is that `access` is *named* `access` — a door whose purpose is mutating in
+place — so the mutation is in the construct rather than hidden by it. (a) is the
+answer if that is not enough, and it is not irreversible either way: a spelling
+can be added later without invalidating a lambda written without one.
+
+---
+
+## 2. Does an un-annotated integer literal have a type?
+
+**Blocked by it:** the one remaining entry in
+[`open-work.md`](open-work.md) §1 — an out-of-range literal that nothing
+constrains is refused in Rust's words.
 
 ```nika
-use pool
-use request_handling as rh
-
-fn handle(c: pool::Conn) -> rh::Response {        // in a type
-    let d: pool::Conn = pool::make()              // in a type and in a call
-    let e = pool::Conn(id: 1)                     // in a struct literal
-    let s: Shared[pool::Conn] = pool::make()      // nested, like any other type
-    return rh::ok(d.id + e.id)
-}
+let big = 3000000000
 ```
 
-**The prefix falls where a name is written, not where a value is used.** `d.id`
-and `d.respond(200)` carry none: there is a value in hand, and nothing to resolve.
-In a body that works with values the prefix barely appears, which is what makes the
-answer bearable without an import form.
-
-**A module of the program is one name.** No path, no directories — `use a::b` is
-not a form for a file of your own. The one `use` with a path in it is `std`'s,
-which names the library rather than a file (ADR-030 D1), and that is unchanged.
-
-**Refused, with the way out in the diagnostic:**
-
-```
-error: names are not brought in; a module is reached through its name
-   1 | use pool::{Conn, Pool}
-       ^^^^^^^^^^^^^^^^^^^^^^
-     = write `use pool`, and `pool::Conn` where you need it
-     = if the prefix is long, `use pool as p` shortens it once, in one place
-```
-
-**Two rules that come with it.** A prefix must be introduced: `pool::Conn` without
-`use pool` is refused, so that a file still lists what it depends on at the top.
-And one name per file: two modules that end up under the same name — by alias or
-by collision with another module — is an error rather than a rule about which
-wins.
-
-### Why the selected form is refused rather than left open
-
-Both shapes are proven, and the evidence says so plainly.
-
-* **The blanket form is regretted everywhere it exists.** Rust lints it, Python's
-  style guide forbids it, Elm discourages it for libraries. That is the clearest
-  signal in the whole space, and it settles `use pool::*` on its own.
-* **The selected form is everywhere and regretted nowhere.** Java, Python, Rust,
-  Haskell, Elm and OCaml all have it and none has withdrawn it. It is not a
-  mistake, and refusing it is not a claim that it is one.
-* **Qualified-only is sustained.** Go has had no import selection for fifteen
-  years, with no serious movement to add it.
-* **And one community that had both converged away from the convenient form.**
-  Haskell's practice moved toward explicit lists and qualified names, for the
-  reason this decision is about: knowing where a name came from.
-
-So general experience does not decide it — both work. What decides it is a rule
-this language has already applied to itself: **one form, not two spellings of it.**
-[ADR-041](specification/adr/adr-041.md) withdrew the automatic lambda argument
-names on exactly that ground. A selected import creates the same situation for
-every name in the language — the same type spelled `pool::Conn` here and `Conn`
-there, both correct. Having just paid to remove one such pair, the language should
-not introduce another across its whole surface.
-
-**And the refusal is not irreversible, which is why it can be firm.** Adding a
-selected form later breaks no program: everything written with a prefix stays
-valid. If a program of real size shows the prefix to be a genuine cost rather than
-a predicted one, the form can be added then, with evidence instead of a guess. What
-is not deferred is the decision — a question left open is one that every file
-written in the meantime has to live with unanswered.
-
-### What this does not answer
-
-**Re-export.** There is no way for a module to offer a name that another module
-declares, and this decision does not create one. It is recorded in §6, where
-libraries are, because that is where its cost lands.
-
-### What it costs, and what it does not block
-
-Every use of a foreign name is longer by a prefix, and the prefix lands where this
-language already asks for a type — a signature, and the annotated `let` that is
-the only place sharing begins. What is bought is that a reader of any line knows
-where every name in it comes from without consulting the top of the file, and that
-no edit elsewhere changes what an already-written line means.
-
-The **cross-file type** defect [`open-work.md`](open-work.md) carried was never
-blocked by this. Both answers needed
-the same two pieces — a qualified type name that resolves to the same type, and a
-struct literal that tolerates a prefix. The alias is the one thing this answer adds
-to that repair.
-
----
-
-## 2. The numeric surface, and what `len()` hands back — **answered and built** ([ADR-048](specification/adr/adr-048.md))
-
-The heading asked which numeric types the language offers; the body only argued
-about `len`. Both halves are answered here, because answering the second alone
-leaves the first standing.
-
-### A length is an `i64`
-
-`len` and its three siblings hand back an `i64`. The machine-width type leaves
-the surface a program can write, and `usize::truncating_i32` and
-`usize::truncating_i64` go with it — nothing narrows out of a type no program can
-hold.
-
-**The scope is four signatures**, not a neighbourhood: `Vec::len`, `String::len`,
-`str::len` and `HashMap::len` are every entry in `std.contracts` that returns one.
-On the compiler side the writable surface is one list — `check`'s `NUMERIC`, which
-carries `usize` and `isize` — and `contracts::send`'s plain-type list, which only
-answers whether such a type may cross and is unaffected.
-
-**Why this way round, and what the two conversions really cost.** They are not
-symmetric, and the entry treated them as if they were.
-
-*Out of a length* — `t.len() as i64` — cannot fail. A `usize` exceeds an `i64`
-only above 9,223,372,036,854,775,807 elements; at one byte each that is eight
-exabytes of memory. Every one of those conversions is ceremony with nothing behind
-it, written by the user, in every loop and sum and comparison that meets a length.
-
-*Into an index* — `v[i]` where `i` is an `i64` — can fail, for a negative number,
-which `pos - 1` at `pos == 0` produces. But a negative index **is** an access out
-of bounds, and Part III A.2 already aborts on those. It is not a new failure mode;
-it is the same one, reached a step earlier. And the conversion is emitted rather
-than written: the user writes no conversion at all, in either direction.
-
-So the trade is a great deal of visible ceremony that cannot fail, against one
-invisible abort that already exists.
-
-**One requirement comes with it.** The emitted conversion at an index must report
-as an access out of bounds, not as a failed conversion. Otherwise a user gets a
-diagnostic about a conversion they never wrote, for a mistake they understand as a
-bad index.
-
-**The field agrees, with one dissenter.** Go, Java, C# and Swift all hand back a
-signed integer for a length and index with it — Swift explicitly, on the ground
-that unsigned arithmetic causes more bugs than it prevents. Rust is the outlier,
-and the conversions its `usize` demands are among the most commonly named
-papercuts in it.
-
-### The numeric surface is stated, and `u8` is named
-
-Part I 2.2 offers `i32`, `i64` and `f64`. More than three are reachable:
-`fs::read` hands back a `Vec[u8]`, `std.contracts` says in as many words that *"the
-compiler accepts `u32` and the rest, but the specification does not offer them"*,
-and `usize` was writable until the paragraph above.
-
-**`u8` is named in 2.2**, with the same conversion and arithmetic names every other
-numeric type now has. Not the rest of the unsigned family: an entry exists because
-a program asked for it ([ADR-028](specification/adr/adr-028.md) D5), and a program
-that reads a file asks for a byte. `u32`, `u64` and `isize` stay out until
-something does.
-
-**Why not signed bytes instead.** Java has no unsigned type and pays for it in
-every byte-handling program, where a masking dance undoes the sign at each step.
-Go, Rust, C# and Swift all carry a byte type. The choice here is not whether a
-program meets one — reading a file already hands it one — but whether the
-specification admits it.
-
-**What it costs:** four numeric types where the front page promised three, and a
-beginner meets an unsigned one the first time they read a file. What it buys is
-that the list of types is the list of types.
-
-### Checked before deciding
-
-* `x as i64` where `x` is already an `i64` lowers without complaint, so the
-  four redundant conversions in `examples/1brc.nika` do not have to change with
-  this — they become unnecessary rather than wrong.
-* The machine-width type reaches user code through the one `NUMERIC` list named
-  above and nowhere else in `check`.
-
----
-
-## 3. `fn { … }`'s automatic `a`, `b`, `c` — **withdrawn, and built** ([ADR-049](specification/adr/adr-049.md))
-
-Refused, not warned about, and not announced for a later release.
-
-**What goes with it.** The form, the rule underneath it, and the warning that made
-the rule visible. How many arguments such a lambda takes is read off *which of the
-three names its body mentions*, so a local called `a` inside one is not a local but
-an argument. [ADR-041](specification/adr/adr-041.md) made that visible with
-`NK1114`; visible is not the same as good, and the rule stays true for exactly as
-long as the form exists.
-
-**Why refused rather than announced.** Announcing a withdrawal a release ahead is
-the procedure for a language with code in the world. There is no release and no
-Nikaia outside this repository, so the deprecation window protects nobody. What it
-would do is keep the rule alive for the length of the window, and keep the warning
-code alive with it.
-
-**Scope.** Seven sites still reach for one of the three — `examples/1brc.nika`,
-`examples/access-log.nika` and `examples/k-nucleotide.nika`, in two idioms: folding
-into a map entry, and a sort key. They are rewritten with named arguments as part
-of this, since after it they no longer compile. `NK1114` and the arity-from-body
-mechanism are removed rather than left unreachable; `emit::implicit_params`, which
-the warning shared with the emitter, goes with them.
-
-**What it costs.** A named argument where a letter used to do. That is the whole
-of it.
-
----
-
-## 4. What is built next? — **dropped, not answered**
-
-This was never a question for the owner. Its own first line said so: *"Blocked by
-it: my next piece of work."* What is built next is chosen by whoever is building,
-from [`open-work.md`](open-work.md), and the one real dependency among the
-candidates — `SharedMut[T]` needs `spawn`, since its whole point is a second task
-— orders itself without anybody ruling on it.
-
-The heading stays so the numbering below it does not move. The two pieces of
-reasoning that were worth keeping are now in `open-work.md` §2's opening, where
-they apply to every entry rather than to one week's choice.
-
----
-
-## 5. Statement order, and how a program asks for overlap — **answered** ([ADR-050](specification/adr/adr-050.md); `overlap` is not built, and what it was waiting on now is)
-
-The entry asked when `ordering` gets measured and whether it stays on. Both halves
-are answered, and the first is answered by dropping it.
-
-### The measurement requirement is struck
-
-It could not settle what it was there for. The only corpus is this repository's own
-examples, written by the people who designed the language, and a number off them
-says something about those programs rather than about the language. "Measure it on
-the flagship before v1.0" moves a decision onto an event that will not decide it —
-which is why [ADR-033](specification/adr/adr-033.md) has read *provisional* for
-months.
-
-What decides it is a principle, which is how every other entry here was settled.
-
-### The explicit form: `overlap { … }`
-
-The language has no way to say *"run these and wait for all of them"*. `spawn`
-starts something that outlives the call, `select` takes the first to finish,
-`par_iter` runs one operation over many elements, `seq` forces an order. The one
-shape every other language provides first is missing.
+is *"literal out of range for `i32`"*: the right line, the backend's words, and a
+type the program never wrote, which is the class [Part III
+C.1](specification/30-nikaia-tooling.md) calls a bug in this compiler. `NK1116`
+does not reach it, and **must not simply be widened to it**, because the same
+line is a *correct* program where a use asks for an `i64`:
 
 ```nika
-let (user, rights, prefs) = overlap {
-    db::load_user(id)
-    db::load_rights(id)
-    cache::load_prefs(id)
-}
+let m = 3000000000
+println(f"{wide(m)}")   // fn wide(n: i64) -> i64
 ```
 
-Each statement in the block is one branch. The block starts them all, waits for
-all, and its value is the tuple of their results in written order.
+Rust's inference decides that one and this checker has none, so refusing at the
+`let` would refuse a correct program — the one thing the checker may never do
+(C.4). Part I 2.4 states the rule that makes both lines legal.
 
-**It is not a task.** The block ends before the function continues, so nothing
-outlives it: nothing is moved, borrowing works, and the crossing check has nothing
-to do. That is what makes it lighter than two `spawn`s, and why it earns a form of
-its own rather than being a pattern.
+**Two ways out.**
 
-**The branches must meet on nothing, and the compiler checks it.** The same
-analysis that decides today whether two statements *may* overlap, used the other
-way round — not *"may I?"* but *"you said so; is it true?"*. A branch pair that
-meets on a resource is refused, and the diagnostic names the resource and points at
-`seq { … }` or plain statements for the case where an order was meant. No other
-language checks this; they take the programmer's word.
+* **(a) An un-annotated literal is an `i32`, full stop.** The second program
+  above becomes a refusal, and the language gains a rule a reader can apply
+  without knowing what inference does. It is what the *first* program's error
+  message already assumes, which is why the message exists.
+* **(b) Enough inference to know that nothing else constrains the literal.** Both
+  programs stay legal and the first is refused in Nikaia's words. It is the
+  answer that costs nothing at the surface and the most underneath: a use-site
+  walk this checker does not have, for one rule.
 
-**Failures behave as they do anywhere else.** A branch that fails makes the block
-fail. If two fail, the first **in written order** wins, so the result is
-reproducible — written order is the only order the source has. Per-branch handling
-is `catch` inside the branch, which already works.
+**What I would do: (b), and not soon.** (a) is a smaller compiler and a worse
+language: `let m = 3000000000` followed by `wide(m)` is what somebody writes, and
+Part I 2.4 says it works. The defect is a *message*, not an accepted wrong
+program — the literal never reached run time — so the cost of waiting is one
+poorly-worded error, and the cost of (a) is a program the page promises being
+refused. If the inference turns out not to be worth building, (a) is the
+fallback and Part I 2.4 is what has to change with it.
 
-**A branch is an expression.** Several steps in one branch are a block expression
-inside it. Where two branches would both be multi-line blocks doing the same shape
-of work, the answer is a function called twice, and the code is better for it.
-
-**The meaning is the same at both settings; only how much overlaps differs.** At
-`no` a branch that computes still overlaps with another branch's *waiting*, because
-the waiting is not user code — computation beside I/O overlaps at every setting,
-and only computation beside computation needs `yes`. Same results, different
-duration: `how`, not `what`.
-
-### The automatic reordering goes, and `seq` and the switch go with it
-
-Three packages were coherent: automatic reordering with `seq` and `overlap`;
-`overlap` alone; or today's state, which is the automatic half with no way to ask
-for the rest. The third is the worst of them — unpredictable wins, and no recourse
-where they do not arrive.
-
-**Taken: `overlap` alone.** Statements run in the order they are written, without
-qualification. Whoever wants overlap writes it, and has it checked.
-
-`seq { … }` exists only because statements can be reordered unasked; with nothing
-reordering them it has nothing to do, and goes. So does `ordering` in `[build]`,
-which returns Part I 1.2's count of build switches to the two it promises.
-
-**Why on principle rather than on a number.** The design ships two escapes: `seq`,
-to force an order the analysis cannot see, and a switch to turn the whole thing
-off. Two escapes are an admission — that the analysis can be incomplete, and that
-the correction is by hand. A feature that changes what a program means, resting on
-an analysis admitted to be incomplete, corrected manually after the fact, is the
-shape of a defect source rather than of a guarantee. Against that stands an
-optimisation whose reach nobody has been able to state.
-
-### What is built, and what this needs
-
-**The automatic half is built as a special case, not as a primitive.** A pair of
-adjacent file reads with their failures caught lowers to `task::read_pair(…)` — a
-purpose-built "read two files", with a comment naming the record. `task::both`
-exists in `std`'s Rust and the emitter does not reach it for this.
-
-**So `overlap` is not a small piece of work, and it is not unblocked.** Branches
-that are arbitrary expressions need the general concurrent path — the same runtime
-binding [`open-work.md`](open-work.md)'s `spawn` entry says it is waiting on. What could
-be built ahead of it is more special cases, which is how the automatic half got
-narrow in the first place.
-
-*Order that follows from this:* the runtime binding, then `overlap` on it, then the
-removal of the automatic half, `seq` and the switch — removing them before there is
-a way to ask would leave the language with neither.
-
-**The runtime binding is built** ([ADR-055](specification/adr/adr-055.md) §6
-steps 1–4, at `user_parallelism = no`), so the first item of that order is done
-and `overlap` is the next one. Two things it can now lean on that did not exist
-when the paragraphs above were written:
-
-* **A vehicle that takes futures.** `task::interleave` polls two futures on one
-  thread, whichever suspends giving the thread to the other — which is what
-  [ADR-050](specification/adr/adr-050.md) D6's *"a branch is started up to its
-  first suspension point"* means, and that sentence was about a suspension point
-  the emitted program did not have. The emitter chooses it per group already,
-  because every accountable `std` operation can pause.
-* **`spawn` as the general path**, for a branch that is more than a pair.
-
-What is still special-cased is the *automatic* half, exactly as this section
-describes it — and that is the half ADR-050 D1 withdraws, so the work is
-`overlap` and then the removal, not a widening of what is there.
+**What it costs either way:** (a) is a paragraph in Part I 2.4 and a check that
+already exists; (b) is a use-site pass over a `let`'s scope, which nothing else
+in this compiler currently needs.
 
 ---
 
-## 6. How a Nikaia library is offered, and what consumes one — **answered** ([ADR-047](specification/adr/adr-047.md); the package half is built, the path dependency is not)
+## 3. Is there an unconditional loop?
 
-Two questions were hiding in one, and only the first of them shapes what a program
-means.
+**Blocked by it:** nothing is half-built, and that is why it is here rather than
+in `open-work.md` — there is nothing to build until this is answered.
 
-### The language half: a package is a directory, and its files share one namespace
+Part I 3.3 has `while` and `for` and no third form. `loop` has been on the
+roadmap since it was written and is **not in the specification**, so the
+compiler having no rule for it is correct rather than a gap. What a program
+writes today is `while true { … }`, which works.
 
-**A package is a directory.** The files in it see one another with no `use` at
-all. What the package offers outward is whatever is marked public, in whichever
-file it is declared. A consumer writes `use http` and names the **package**, never
-a file inside it.
+**Two ways out.**
 
-**What this changes.** Part I 9.2's privacy boundary moves from the file to the
-package: a declaration is private to its package unless it says `pub`, and two
-files of one package may not declare the same name. That sentence has to be
-rewritten rather than extended.
+* **(a) Nothing. `while true` is the unconditional loop.** One fewer keyword,
+  and a reader of Part I 3.3 has the whole of control flow on one page.
+* **(b) `loop { … }`.** It says *"this does not end on its own"* at the top
+  rather than leaving a reader to notice that the condition is a constant, and
+  in a language that will eventually want a `break` with a value it is the form
+  that carries one.
 
-**Why this rather than a re-export form.** It removes the problem instead of
-patching it. There is nothing to re-offer, because the names inside a package
-already share a space — so no new form is needed at all. And a library's internal
-file layout stops being its public surface by construction: moving a declaration
-from one file to another is housekeeping, and breaks no consumer.
+**What I would do: (a), until something asks for (b).** No program in the corpus
+writes `while true`, so the form nobody uses does not need a second spelling —
+and a keyword is the most expensive thing to add and the hardest to remove
+([ADR-051](specification/adr/adr-051.md) made every one of them a reserved
+word). (b) is the right answer the day a `break` hands back a value, because
+`while true { … }` with a value-carrying `break` reads as a lie.
 
-The field points the same way. Java, Go and Rust all put the boundary of privacy
-and publication **above** the single file. Python is the one that puts it at the
-file, and `__init__.py` — a front door maintained by hand, forgotten names and
-all — is the consequence, not an accident of it.
-
-**The alternative, considered and refused:** keep file = module and add a
-re-export. It is not wrong, and it would leave 9.2 untouched. It costs a new form
-in a language that has just withdrawn two, and it moves the upkeep onto every
-library author forever.
-
-**A side effect worth stating rather than discovering.**
-The **cross-file type** entry [`open-work.md`](open-work.md) carried was about
-naming a type across a file boundary.
-Inside a package that boundary no longer exists, so half of what it describes
-stops being reachable; what remains is the cross-*package* case, which is the one
-that was always the point.
-
-### The distribution half: a path dependency, and nothing else yet
-
-**A package may be depended on by path**, the way a Rust one already can be.
-`std` arrives that way today ([ADR-002](specification/adr/adr-002.md) D4), so this
-generalises a mechanism rather than adding one.
-
-**No registry, no name space, no distribution format.** The three things ADR-002
-D1 §5 refuses to guess at stay open, deliberately. Go went years with the fetch
-location as the identity; Rust and JavaScript built their registries early and
-have carried decisions made when there were three packages. A registry is built
-when there are libraries, not before.
-
-**Five rules come with it, or they get decided by accident:**
-
-1. **The manifest key is the name.** `use` writes the key, and the path says where
-   it comes from. Two libraries that both want to be `http` are therefore the
-   consumer's to name apart, which is the same authority `use pool as p` already
-   gives them.
-2. **Transitive dependencies are not visible.** If A depends on B and B on C, A
-   does not see C. Otherwise a library's surface is everything it happens to use,
-   and swapping an internal dependency breaks consumers.
-3. **Same path is the same package; a different path is a different package**,
-   identical contents included. With no versions there is nothing to unify, and
-   two paths to two copies would be two types of one name.
-4. **A dependency's `[build]` section is ignored, and the compiler says so.** A
-   package is built with the settings of the program that uses it. Anything else
-   would put two answers to the parallelism question in one build.
-5. **A Nikaia dependency is part of the program, not a foreign package.**
-   [ADR-043](specification/adr/adr-043.md) turns overflow checks on for the
-   program and off for every foreign package; a Nikaia dependency is written in
-   this language, carries this language's promise, and an overflow in it is the
-   same broken state. Without this stated it lands on the foreign side by
-   accident, because that is where a dependency mechanically appears — and then a
-   library computes silently wrong numbers while the program that calls it aborts.
-
-**What this makes real.** The rule that shaped
-[ADR-045](specification/adr/adr-045.md)'s crossing verdict — a library built at one
-setting stays usable at the other — has until now protected a situation nothing
-could construct. A path dependency is the smallest change that makes it testable,
-and the first Nikaia library is the first real test of something that has so far
-only been argued.
+**What it costs:** (a) costs a line in Part I 3.3 saying so, so that the absence
+is a decision rather than an omission — which is the whole point of asking. (b)
+costs a keyword, a reserved word, and a grammar rule.
 
 ---
 
-## 7. Are this language's keywords reserved words? — **answered: yes** ([ADR-051](specification/adr/adr-051.md); built)
+## 4. What may a program do at compile time?
 
-**The answer.** Nikaia has a list of reserved words, and a name may not be one of
-them. The list is what the grammar treats as a keyword **at the Nikaia level** —
-not the vocabulary of the grammar sublanguage (`rule`, `boundary`, `fold`), which
-is reserved inside a grammar block and nowhere else.
+**Blocked by it:** compile-time I/O, and with it the **asset dimension of the
+build cache**, which is carried through `Key::build` and exercised by tests with
+no real producer behind it ([ADR-021](specification/adr/adr-021.md) D13).
 
-**What the state was, and it was not a decision.** `rule NAME = not(digit) n:ident`
-— a name is any identifier that does not start with a digit, and nothing is
-excluded. There is no reserved-word list in the parser at all. So the keywords were
-not *chosen* to be contextual; the question had never been put.
+**This one is written down where it belongs.**
+[ADR-026](specification/adr/adr-026.md) is the record, its status is **Open**,
+and it holds the whole design space: two things already decided (I/O belongs to
+the compiler rather than to a sandbox; a path stays in the project root and `..`
+is refused rather than resolved), six questions as Q1–Q6, prior art, what was
+considered and rejected, and what answering it buys the cache.
 
-**Why reserved rather than contextual.** The reason languages make a keyword
-contextual is backwards compatibility: a new reserved word breaks programs that
-used it as a name, so it is introduced in a position where it cannot be mistaken.
-`var`, `async`, `await` and `nameof` are contextual in C# for exactly that reason,
-and Go, which never had to add one, reserves all of them. **Nikaia has no programs
-outside this repository**, so the reason does not apply, and the choice is free
-today in a way it will never be again.
+**The one that blocks the others is Q4 — what is a program allowed to do in
+`const`?** Everything else in that record is downstream of it: whether a sandbox
+is needed at all, what it would be, and where the trust line goes all read
+differently depending on how much a build-time body may reach.
 
-**Why this rather than a cut in the parser.** `open-work.md`'s **`dsl` block**
-entry offered both: a
-cut, so that once `dsl NAME {` matches the parser may not back out of the rule, or
-reserving the word. A cut repairs **one diagnostic for one construct**. The
-reserved list repairs **the class** — the `dsl` block, the silent miscompilation
-below, and every keyword anybody adds later, without a new cut each time.
+**What I would do:** answer Q4 alone, narrowly, and leave Q1–Q3 and Q5–Q6 where
+they are. A grammar's `action` blocks are arbitrary Nikaia, so evaluating one at
+build time means running user code at build time — and the cheap version of that
+is a restriction rather than a sandbox: name what a `const` body may call, and
+the question of confining it does not arise. ADR-026 §4 makes that case itself.
 
-*(The grammar machinery does have a cut, written `=>`, for user-written grammars.
-Whether the compiler's own grammar can reach it was not established, and does not
-change the order: a local repair against a categorical one.)*
-
-**What it costs.** A program may not name a variable `fn`, `spawn`, `seq`,
-`overlap`, `dsl`. That is what every reserved word costs in every language, and it
-is the price of a word meaning one thing wherever it appears. The list has to be
-written down in Part I rather than left implicit in the grammar, so that a reader
-can see it.
-
-**What it fixes beyond §1.1.** Three rows of
-[`error-corpus.md`](error-corpus.md) marked *"parses"* — `if { }`, `let 5 = x`
-and `if a = b { }` — turned out to be one defect and not three grammar
-liberties: each read the keyword as a **variable** and the rest of the line as
-further statements, with no diagnostic of any kind. A program that means
-something other than what is written is the worst class this project names, and
-it had no fix short of this one.
-
-*(The `assert c` case this section was first written around — `let c = true as
-sert;`, the word swallowed into a cast — turned out already to be fixed, by the
-`KW_*` boundary rules: `KW_AS` is `"as" not(ident)`, and the `s` of `assert`
-fails the boundary. Measured after the list landed and does not reproduce. The
-three above are what the list was actually for.)*
-
-**Built**, and the cost is measured rather than estimated: two identifiers in
-this repository, `seq` in `examples/k-nucleotide.nika` and `from` in
-`tests/samples/while_loop.nika`, both renamed. The record is
-[ADR-051](specification/adr/adr-051.md), which also writes down the two things
-the answer needed that this question did not anticipate: a reserved word after a
-`::` or a `.` is a name, because no construct begins there
-(`Self::dsl`, `scope.spawn`), and `self` cannot be excluded from the grammar's
-name rule at all, so declaring one is refused by the checker as `NK1119`.
+**What it costs:** a narrow answer is a list in a record and a check in the
+compiler. A wide one is a sandbox, which that record's §6 already declines on
+the grounds that nothing in the language needs one yet.
 
 ---
 
-## 8. How does a package name the packages it depends on? — **answered and built** ([ADR-053](specification/adr/adr-053.md))
+## 5. How is a package named by a version?
 
-**What was blocked by it:** a package that declared Nikaia dependencies of its own
-was refused rather than resolved, so a library that used a library did not exist.
-That is the second step of every real library.
+**Blocked by it:** every dependency that is not a path.
+`nikaia.toml` refuses `http-server = "1.2"` and says why — no record names a
+registry, a name space, or a distribution format — and
+[ADR-002](specification/adr/adr-002.md) D1 §5 declines to answer it deliberately,
+so the refusal is correct rather than missing.
+[ADR-053](specification/adr/adr-053.md) was built to keep it deferred: a
+manifest key is only ever read by one crate, so nothing in the language needs a
+global name yet.
 
-[ADR-047](adr-047.md) D2 gave a package a path dependency, and it is built one level
-deep. What stops the next level is not the visibility rule — rule 2 already says a
-transitive dependency is invisible — but the fact that **every package becomes a
-`mod` at one crate root, named by the manifest key of whoever depends on it**. Two
-things follow, and both need answering rather than working around:
+**Three ways out, and they are not equally big.**
 
-* If A names B as `b`, and B names C as `c`, the root carries `mod b` **and**
-  `mod c`. A can then write `c::thing()` with no dependency on C at all, and the
-  ledger answers — rule 2 broken silently.
-* If A also depends on a *different* package it calls `c`, two packages want one
-  `mod c`. Refusing the clash tells A about B's internals, which rule 2 says A may
-  not see; allowing it gives two types one name.
+* **(a) Nothing yet.** A path dependency is what a package gets, and a Nikaia
+  library is distributed the way `std` already is
+  ([ADR-002](specification/adr/adr-002.md) D4). Costs nothing and stays honest
+  as long as there is no second author.
+* **(b) Lean on Cargo's registry.** A Nikaia package is published as a crate,
+  and a version means what Cargo means by one. The resolver, the lockfile and
+  the name space all already exist and this compiler already generates a
+  workspace into them.
+* **(c) A registry of this language's own.** A name space, a distribution
+  format, an index, and the operational commitment that comes with all three.
 
-Three answers:
+**What I would do: (a) now, and (b) when there is a second author.** The
+question is not ripe: there is one author, one repository, and no package
+anybody outside it would fetch — and a distribution format decided before
+anything is distributed is decided on a guess. (b) is the answer when it becomes
+ripe, for the reason ADR-053 took its own answer: machinery this project already
+leans on beats machinery it would then own. (c) needs a reason nothing has given
+yet.
 
-* **(a) Name the module by package identity.** The root module name comes from
-  something stable about the package rather than from the consumer's word, and the
-  manifest key becomes a local alias onto it. The clash disappears. The leak does
-  not: the module is still at the root, so [ADR-046](adr-046.md) D4's check has to
-  widen from `use` lines to **qualified names**. And "package identity" is the
-  registry-shaped question ADR-002 D1 §5 declines to answer, arriving early.
-* **(b) Nest the modules.** B's dependencies live inside B's module: `mod b`, and
-  `mod c` inside it. A has no path to C, so the leak is structural rather than
-  checked. But the same package reached through two parents becomes two modules,
-  which contradicts ADR-047 D2 rule 3 — same path, same package.
-* **(c) One Rust crate per Nikaia package.** Each package is generated as its own
-  crate with its own `Cargo.toml`, listing its own dependencies under its own
-  manifest keys.
-
-**Taken: (c)**, and the shape was built by hand and run before it was decided — the
-workspace builds, `app` cannot name the transitive `c` (Rust refuses it), the
-overflow check reaches a Nikaia library crate while a package off the list still
-wraps, and the diamond unifies with a type crossing between the two consumers.
-
-The reasoning, which the probes bore out: It answers both halves without inventing anything: a name
-resolves per crate, so A has no way to name C and rule 2 costs nothing to enforce;
-two packages under one key are in two different crates and never meet; and a
-package reached twice is one crate, so D2 rule 3 holds because Cargo already works
-that way. It also keeps the registry question deferred, because nothing here needs
-a global name — the manifest key is enough when it is only ever read by one crate.
-
-And it is the same move [ADR-002](adr-002.md) D1 already made once. Rust
-dependencies are not resolved by this compiler; the manifest is translated and
-Cargo does it. Package structure is the same kind of problem with the same tool
-sitting under it, and the current shape — everything flattened into one crate — is
-what creates a question Cargo does not have.
-
-**What it costs, and it is not nothing:** a build produces several crates instead
-of one, so the generated project grows a layout and the manifest generation grows
-with it. Every `[build]` setting has to reach every crate, and
-[ADR-043](adr-043.md)'s overflow checks have to name each Nikaia crate on the
-program's side rather than the dependency's — that rule exists
-([ADR-047](adr-047.md) D2 rule 5) and currently has one crate to apply to.
-Incremental builds probably improve, which is a guess and not a claim.
-
-**What the other two cost:** (a) pulls the registry question forward and widens a
-check that was written for `use` lines; (b) is the cheapest to emit and breaks a
-rule that was decided this week. Neither removes the question — they answer it with
-machinery this project would then own, where (c) answers it with machinery it
-already leans on.
-
-**Built.** A build emits a workspace — always, including for a program that
-depends on nothing — with one member crate per package. A library that uses a
-library works; a program that reaches past what it declared is refused by Rust's
-own resolution, reported against the line that wrote it; and the overflow checks
-name each crate of this language on the program's side. One thing the answer
-claimed is not built and is written down in [`open-work.md`](open-work.md), under *a package reached under
-two names is two types to the checker*:
-Cargo unifies a package reached under two different keys, and the ledger in front
-of it still names a type by the key it was reached through.
+**What it costs:** (a) costs a refusal a future consumer meets, which is where
+it belongs. (b) costs a record and a mapping from a Nikaia package to a crate
+name — and pins this language's distribution to Cargo's, which is a real thing
+to give up and the reason it deserves a decision rather than a drift. (c) costs
+a project of its own.
 
 ---
 
-## 9. What does a task **mean** at `user_parallelism = no`? — **answered: build coroutines** ([ADR-055](specification/adr/adr-055.md); steps 1–4 built)
-
-**The question, and why it had to be asked.** `spawn` was the largest single
-unblocking in [`open-work.md`](open-work.md) and could not be built, and the
-reason turned out not to be machinery. Part II 11.2 says a task at
-`user_parallelism = no` is *"interleaved on the same thread"*; Part I 1.2 says a
-build switch changes *how* a program runs and never *what* it computes. The
-emitted Rust contained the word `async` **zero** times, so a pause was a thread
-that blocks — and two synchronous Rust closures cannot interleave on one thread,
-because there is no point at which either yields. The sentence was unbuildable,
-and each of the three readings a synchronous lowering allows breaks something
-already promised:
-
-* **run the body at the `spawn`** — a legal *schedule* of `yes`, but it deadlocks
-  at `no` where `yes` runs, and it makes 11.2 false;
-* **run it at the `.join()`** — silently drops a task nobody joins, and Part I
-  8.2's own example keeps no handle;
-* **refuse `spawn` at `no`** — makes a library un-compilable where it is
-  consumed, which is the thing [ADR-005](specification/adr/adr-005.md) §1 Group B
-  exists to prevent.
-
-**The answer: coroutines.** The lowering becomes implicitly async — which is the
-*deferred half of the original design* rather than a new direction:
-[ADR-005](specification/adr/adr-005.md) reasons about *"an I/O suspension point,
-which implicit async inherits free from `async fn`'s"*,
-[ADR-006](specification/adr/adr-006.md) exists because *"any function may pause
-at I/O"*, and [ADR-027](specification/adr/adr-027.md) already infers per function
-whether it can pause. The language has been specified this way since Stage 0
-began; only the lowering never was.
-
-**What it cost, which is what made it worth asking about.** Every signature that
-can pause changes shape, so the generated Rust stops reading as a transcription
-in that one respect — which puts [ADR-004](specification/adr/adr-004.md) D2 under
-more pressure than any other lowering. The record's §2 D6 writes that down rather
-than leaving it to be discovered, along with async Rust's three sharp edges;
-`examples/json.nika` produced the first of them (recursion) on the day the
-lowering landed.
-
-**Built:** the executor, `async fn` off the ledger's `sync` column, `std`'s own
-pausing entries, and `spawn` with `TaskHandle`, `.join()` and `NK2101` — all at
-`no`, which is the default. What is left is the *thread*: the `yes` executor,
-where a spawned future has to be `Send`, and §5's `overlap`.
-
----
-
-## 10. What **is** `std::http`? — **open**
+## 6. What **is** `std::http`?
 
 **Why it is here and not in the work list.** [ADR-058](specification/adr/adr-058.md)
 is accepted and none of it is built, which is ordinary; what is not ordinary is

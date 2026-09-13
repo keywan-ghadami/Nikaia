@@ -180,7 +180,7 @@ to `fs::map` ([ADR-016](specification/adr/adr-016.md)) and is tested there.
 (B3), `let 5 = x` (C4) and `if a = b { }` (D2) were all accepted by the grammar,
 and this file said they were *"things the grammar admits that probably should not
 be"* without naming what admitted them. **The reserved-word list
-([`open-decisions.md`](open-decisions.md) §7) closed all three at once**, which
+([ADR-051](specification/adr/adr-051.md)) closed all three at once**, which
 is the evidence that they were one thing:
 
 * `if { }` read `if` as a **variable** and `{ }` as a block — two statements.

@@ -65,7 +65,10 @@ is normative and nothing may depend on it to know what a program means.
   specification sentences a later decision made false. Every entry carries its
   reproduction or says it has none.
 * [`open-decisions.md`](open-decisions.md) — the questions work cannot settle,
-  each with what is blocked by it, the options, and a recommendation.
+  each with what is blocked by it, the options, and a recommendation. **Only
+  what is open**: an answered question leaves this file for its
+  [ADR](specification/adr/) rather than staying with a note on it, so the answer
+  and its reasoning live in one place.
 * [`handoff.md`](handoff.md) — how to work on the **parser backend**: testing a
   change against Nikaia, what the upstream patch does, and what was tried and
   must not be redone. A guide; the open work that was in it is in

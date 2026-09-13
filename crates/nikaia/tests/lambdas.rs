@@ -268,7 +268,8 @@ fn the_expression_lambda_still_says_it_was_removed() {
 ///
 /// This test used to assert that the line was **three statements**: the `sync`
 /// not part of the lambda, the lambda not part of the call. The reserved-word
-/// list (`open-decisions.md` §7) ends that reading - `sync` is not a name, so
+/// list ([ADR-051](../../../docs/specification/adr/adr-051.md)) ends that
+/// reading - `sync` is not a name, so
 /// there is no statement for it to be - and the line is refused where the
 /// `sync` is.
 ///

@@ -117,7 +117,8 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
     Ok(expr)
 }
 
-/// **The words this language keeps for itself** (`open-decisions.md` §7).
+/// **The words this language keeps for itself**
+/// ([ADR-051](../../../docs/specification/adr/adr-051.md)).
 ///
 /// This is the same list the grammar's `RESERVED` rule alternates over, and it
 /// is here in Rust because two readers need it outside the grammar: the note
@@ -1650,7 +1651,7 @@ grammar! {
         rule KW_USE = "use" not(ident)
         rule KW_WHILE = "while" not(ident)
 
-        // **Every reserved word, in one rule** (`open-decisions.md` §7).
+        // **Every reserved word, in one rule** (ADR-051).
         //
         // UPPERCASE for the same reason the `KW_` rules are: this is lexical,
         // and a lowercase rule would let the generator insert the implicit

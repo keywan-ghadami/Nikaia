@@ -1099,7 +1099,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `self` is a reserved word, and this is the one position the grammar
-    /// cannot refuse it in (`open-decisions.md` §7).
+    /// cannot refuse it in ([ADR-051](../../docs/specification/adr/adr-051.md)).
     ///
     /// Every other reserved word is excluded from `NAME` itself, so `let fn = 3`
     /// does not parse. **`self` cannot be**, because it is the one keyword that
