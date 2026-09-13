@@ -96,7 +96,7 @@ fn two_handles_on_one_allocation_share_one_answer() {
     let found = decisions(
         "fn zaehle(counts: Shared[Vec[i64]]) {\n\
              let also = counts\n\
-             spawn({ println(f\"{also.len()}\") })\n\
+             spawn fn { println(f\"{also.len()}\") }\n\
          }",
     );
     assert_eq!(found.len(), 2, "{found:#?}");
@@ -112,7 +112,7 @@ fn two_handles_on_one_allocation_share_one_answer() {
 fn a_spawn_forces_the_atomic_count() {
     let decision = one(
         "fn zaehle(counts: Shared[Vec[i64]]) {\n\
-             spawn({ println(f\"{counts.len()}\") })\n\
+             spawn fn { println(f\"{counts.len()}\") }\n\
          }",
         "counts",
     );
@@ -213,7 +213,7 @@ fn a_call_inside_the_unit_keeps_a_plain_count() {
 fn a_crossing_in_a_callee_reaches_the_callers_handle() {
     let found = decisions(
         "fn laenge(counts: Shared[Vec[i64]]) -> i64 {\n\
-             spawn({ println(f\"{counts.len()}\") })\n\
+             spawn fn { println(f\"{counts.len()}\") }\n\
              1\n\
          }\n\
          fn zaehle(counts: Shared[Vec[i64]]) -> i64 { laenge(counts) }",
@@ -238,7 +238,7 @@ fn a_shared_in_a_struct_field_follows_the_struct_across() {
         "struct Counter { hits: Shared[i64] }\n\
          fn zaehle(hits: Shared[i64]) {\n\
              let c = Counter { hits: hits }\n\
-             spawn({ println(f\"{c.hits}\") })\n\
+             spawn fn { println(f\"{c.hits}\") }\n\
          }",
     );
     let decision = found
@@ -278,11 +278,11 @@ fn a_shared_in_a_struct_field_that_stays_put_keeps_a_plain_count() {
 fn a_struct_field_is_decided_whatever_order_the_functions_are_written_in() {
     for source in [
         "struct Counter { hits: Shared[i64] }\n\
-         fn cross(c: Counter) { spawn({ println(f\"{c.hits}\") }) }\n\
+         fn cross(c: Counter) { spawn fn { println(f\"{c.hits}\") } }\n\
          fn build(hits: Shared[i64]) -> Counter { Counter { hits: hits } }",
         "struct Counter { hits: Shared[i64] }\n\
          fn build(hits: Shared[i64]) -> Counter { Counter { hits: hits } }\n\
-         fn cross(c: Counter) { spawn({ println(f\"{c.hits}\") }) }",
+         fn cross(c: Counter) { spawn fn { println(f\"{c.hits}\") } }",
     ] {
         let found = decisions(source);
         let decision = found
@@ -311,7 +311,7 @@ fn a_type_whose_fields_are_rust_hides_what_it_holds() {
         },
     );
     let source = "fn zaehle(o: Opaque) {\n\
-             spawn({ println(f\"{o}\") })\n\
+             spawn fn { println(f\"{o}\") }\n\
          }";
     let parsed = parse_to_ast(source).expect("the source parses");
     let library = Ledger::parse(STD).expect("std ships a ledger");
@@ -460,9 +460,9 @@ fn a_shared_read_out_of_a_field_is_the_fields_allocation() {
              let h: Shared[i64] = c.hits\n\
              1\n\
          }\n\
-         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }",
+         fn kreuze(c: Counter) { spawn fn { println(f\"{c.hits}\") } }",
         "struct Counter { hits: Shared[i64] }\n\
-         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }\n\
+         fn kreuze(c: Counter) { spawn fn { println(f\"{c.hits}\") } }\n\
          fn hole(c: Counter) -> i64 {\n\
              let h: Shared[i64] = c.hits\n\
              1\n\
@@ -557,9 +557,9 @@ fn a_shared_assigned_into_a_field_joins_the_fields_allocation() {
     for source in [
         "struct Counter { hits: Shared[i64] }\n\
          fn setze(c: Counter, h: Shared[i64]) { c.hits = h }\n\
-         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }",
+         fn kreuze(c: Counter) { spawn fn { println(f\"{c.hits}\") } }",
         "struct Counter { hits: Shared[i64] }\n\
-         fn kreuze(c: Counter) { spawn({ println(f\"{c.hits}\") }) }\n\
+         fn kreuze(c: Counter) { spawn fn { println(f\"{c.hits}\") } }\n\
          fn setze(c: Counter, h: Shared[i64]) { c.hits = h }",
     ] {
         let decision = one(source, "h");
@@ -639,7 +639,7 @@ fn a_public_parameter_that_holds_a_shared_exposes_the_field() {
 fn the_summary_is_a_ledger_column() {
     let (_, own, _) = ledgers(
         "fn weiter(counts: Shared[Vec[i64]]) -> Shared[Vec[i64]] { counts }\n\
-         fn kreuze(hits: Shared[i64]) { spawn({ println(f\"{hits}\") }) }\n\
+         fn kreuze(hits: Shared[i64]) { spawn fn { println(f\"{hits}\") } }\n\
          fn schlicht(x: i64) -> i64 { x }",
     );
 
@@ -669,7 +669,7 @@ fn the_summary_is_a_ledger_column() {
 fn the_column_round_trips_through_the_file() {
     let (_, own, _) = ledgers(
         "fn weiter(counts: Shared[Vec[i64]]) -> Shared[Vec[i64]] { counts }\n\
-         fn kreuze(hits: Shared[i64]) { spawn({ println(f\"{hits}\") }) }",
+         fn kreuze(hits: Shared[i64]) { spawn fn { println(f\"{hits}\") } }",
     );
     let rendered = own.render();
     assert!(
@@ -766,7 +766,7 @@ fn every_fallback_is_enumerated_with_a_remedy() {
 #[test]
 fn the_report_has_the_shape_the_other_explanations_have() {
     let (parsed, own, library) =
-        ledgers("fn kreuze(hits: Shared[i64]) { spawn({ println(f\"{hits}\") }) }");
+        ledgers("fn kreuze(hits: Shared[i64]) { spawn fn { println(f\"{hits}\") } }");
     let report = sharing::report(&parsed, &own, &library);
     assert!(report.starts_with("kreuze:\n"), "{report}");
     assert!(
@@ -897,7 +897,7 @@ fn a_borrowed_handle_is_not_a_duplication_site() {
 #[test]
 fn a_task_that_uses_a_handle_is_a_duplication_site() {
     let decision = one(
-        "fn main() { let db: Shared[i64] = 1\n spawn({ println(f\"{db}\") }) }",
+        "fn main() { let db: Shared[i64] = 1\n spawn fn { println(f\"{db}\") } }",
         "db",
     );
     assert!(
@@ -935,7 +935,7 @@ fn the_same_handover_is_named_once() {
 #[test]
 fn a_handle_taken_out_of_a_field_joins_what_it_is_handed_to() {
     let source = "struct Halter { db: Shared[i64] }\n\
-         fn kreuze(db: Shared[i64]) { spawn({ println(f\"{db}\") }) }\n\
+         fn kreuze(db: Shared[i64]) { spawn fn { println(f\"{db}\") } }\n\
          fn main() { let h = Halter { db: 1 }\n kreuze(h.db) }";
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);

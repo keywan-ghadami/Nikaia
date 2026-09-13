@@ -110,9 +110,9 @@ written call that can fail, in a function that declares nothing.
 ## Left for the owner
 
 Three things were **not** decided here and the specification was unchanged at
-every one of their sites. The second has since been decided; the note is kept
-with what it was, because a page that quietly loses a finding cannot be read
-against the day it was written.
+every one of their sites. The first two have since been decided; the notes are
+kept with what they were, because a page that quietly loses a finding cannot be
+read against the day it was written.
 
 1. **`spawn`.** The specification writes `spawn fn { … }` twelve times
    — six in Part I (5.4 B, 8.2, and four in 8.3, two of them inside `NK2101`'s
@@ -147,6 +147,20 @@ against the day it was written.
    lambda Part I 5.3 already has, and the parser's `spawn "(" expr ")"` rule is
    still what it was. So the compiler-against-specification half of this entry
    stands exactly as written above.
+
+   **Closed** ([ADR-055](specification/adr/adr-055.md) §6 step 4). The decision
+   left here — *"whether `spawn` is a keyword form that becomes a task or a
+   `std` function that takes a lambda"* — turned out to be answered by the thing
+   nobody had asked: what a task **means** at `user_parallelism = no`. Part II
+   11.2 says *"interleaved on the same thread"*, two synchronous Rust closures
+   cannot interleave, and the emitted Rust contained the word `async` zero
+   times. So the lowering moved, and with an executor to run it `spawn` is a
+   keyword form: `TaskHandle::start(async move { … })`, with the body an `async`
+   **block** because a task may pause and Rust has no stable `async` closure. A
+   `std` function taking a lambda could not have been that — a closure has
+   nowhere to pause. The parser's rule is now the trailing lambda, so `spawn fn
+   { … }` parses as the one form, and the parenthesised spelling says what
+   happened to it. Twelve sites, one reading, one rule.
 2. ~~**`throws` with a type.**~~ **Settled, and fixed.** Part I 7.1 states that
    `throws` names no types and the parser agrees; the four sites that
    contradicted it — Part I 6.4 once in code, twice in prose and once inside

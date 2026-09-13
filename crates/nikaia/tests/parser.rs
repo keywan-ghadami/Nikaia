@@ -7,9 +7,9 @@ fn test_advanced_hello_world_compilation() {
     let source_code = r#"
         fn main() {
             println("Hello Nikaia");
-            spawn({
+            spawn fn {
                 log("Async World")
-            })
+            }
         }
     "#;
 
@@ -42,15 +42,21 @@ fn test_advanced_hello_world_compilation() {
             _ => panic!("First statement should be a call"),
         }
 
-        // Verify spawn({ ... })
+        // Verify spawn fn { ... }
         match &body.stmts[1].node {
             Stmt::Expr(Expr::Spawn {
                 body: spawn_body,
                 is_move,
             }) => {
                 assert!(!is_move, "Should not be move by default");
-                // spawn body is a Block expression
-                if let Expr::Block(inner_block) = &**spawn_body {
+                // The body is the lambda of Part I 8.2 - one form, and the
+                // trailing lambda of 5.3 is it.
+                if let Expr::Closure {
+                    body: inner_block,
+                    params,
+                } = &**spawn_body
+                {
+                    assert!(params.is_empty(), "a task is handed nothing");
                     assert_eq!(inner_block.stmts.len(), 1);
                 } else {
                     panic!("Spawn body should be a block");
@@ -140,7 +146,7 @@ fn the_keywords_themselves_are_untouched() {
         "struct S { id: i64 }\nenum E { A }\nimpl S {\n    fn id(&self) -> i64 { return self.id }\n}",
         "use utils\n\nfn main() {\n    utils::f()\n}",
         "fn main() {\n    let s = seq { println(\"a\") }\n}",
-        "fn main() {\n    spawn({ println(\"a\") })\n}",
+        "fn main() {\n    spawn fn { println(\"a\") }\n}",
         "fn main() {\n    match 1 {\n        _ => println(\"x\")\n    }\n}",
         "fn main() {\n    while true { }\n}",
     ] {

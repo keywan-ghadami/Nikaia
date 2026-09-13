@@ -521,8 +521,8 @@ fn the_inference_does_not_depend_on_declaration_order() {
 /// the pure CPU task 12.1 describes - whatever the task turns out to do.
 #[test]
 fn starting_a_task_is_not_pure_computation() {
-    // Part I 8.2's form as the parser takes it today: `spawn(fn { … })`.
-    let l = ledger("fn go(n: i32) { spawn(fn { n + 1 }) }");
+    // Part I 8.2's one form, which the parser now takes: `spawn fn { … }`.
+    let l = ledger("fn go(n: i32) { spawn fn { n + 1 } }");
     assert_eq!(l.functions["go"].sync, Sync::No);
 }
 

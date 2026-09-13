@@ -297,6 +297,9 @@ pub fn check_program(
         fallible_methods: BTreeSet::new(),
         pausing_methods: BTreeSet::new(),
         settled_methods: BTreeSet::new(),
+        moved_into_a_task: Vec::new(),
+        read_at: Vec::new(),
+        written_at: Vec::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
         checked: Checked::default(),
@@ -480,6 +483,24 @@ struct Checker<'a> {
     /// established. The difference is the answer.
     pausing_methods: BTreeSet<(usize, String)>,
     settled_methods: BTreeSet<(usize, String)>,
+    /// **What a task took with it** (`NK2101`): the name, its type, and the byte
+    /// the `spawn`'s statement starts at.
+    ///
+    /// Collected while the function is walked and answered at the end of it,
+    /// because the question is about what comes *after* the `spawn` and a
+    /// single pass reaches a later statement later. Cleared per function: a
+    /// name is a name of one body.
+    /// The `spawn` statement's own **end** is what is kept, not its start: the
+    /// reads inside the task's body are the move itself and lie inside that
+    /// span, so "after the task" means after the statement closes.
+    moved_into_a_task: Vec<(String, Ty, usize)>,
+    /// Every place a local name was read, by the byte its statement starts at.
+    ///
+    /// The other half of the same question. Reads and not writes: an assignment
+    /// *revives* a name the task took - `message = "other"` after the `spawn` is
+    /// a correct program - so those are collected separately.
+    read_at: Vec<(String, usize)>,
+    written_at: Vec<(String, usize)>,
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
@@ -701,6 +722,11 @@ impl<'a> Checker<'a> {
                 format!("this function hands back `{found}`, and it declares `{want}`")
             });
         }
+
+        // **`NK2101`, once the whole body has been seen.** The question is what
+        // comes *after* a `spawn`, and a single pass reaches a later statement
+        // later - so it is asked here rather than at the `spawn`.
+        self.a_task_took_what_is_used_again();
 
         self.expected = outer;
         self.throwing = outer_throwing;
@@ -1234,6 +1260,14 @@ impl<'a> Checker<'a> {
             Stmt::Assign {
                 target, op, value, ..
             } => {
+                // `NK2101`: an assignment **revives** a name a task took with
+                // it - `message = "other"` after the `spawn` is a correct
+                // program - so the target is recorded before it is walked, and
+                // walking it records a read this must not be confused with.
+                if let Expr::Variable(name) = target {
+                    self.written_at
+                        .push((self.parsed.text(*name).to_string(), span.start));
+                }
                 let into = self.expr(target, span);
                 let found = self.expr(value, span);
                 // Only a plain assignment: `n += 1` is whatever the operator
@@ -1346,6 +1380,9 @@ impl<'a> Checker<'a> {
 
             Expr::Variable(name) => {
                 let name = self.parsed.text(*name);
+                // `NK2101`: where this name is read, for the question a `spawn`
+                // asks about what comes after it.
+                self.read_at.push((name.to_string(), span.start));
                 match self.lookup(name) {
                     Some(ty) => ty,
                     None => {
@@ -1792,8 +1829,42 @@ impl<'a> Checker<'a> {
                 // are not yet in scope: a name bound inside the task is the
                 // task's own and crosses nothing.
                 self.crosses_into_a_task(body, span);
-                self.expr(body, span);
-                Ty::Unknown
+
+                // **A `spawn` hands back a `TaskHandle` of what the task's body
+                // comes to** (Part I 8.2, ADR-055 D5), and that is why the body
+                // is walked here rather than through the generic closure arm:
+                // what a lambda hands back is not written down anywhere
+                // (ADR-029 D1), but a task's body is a *block*, and a block's
+                // value is a thing this checker already knows. So `spawn fn {
+                // work(21) }` is a `TaskHandle[i64]` and `handle.join()` is an
+                // `i64`, with nothing inferred that a signature did not say.
+                let Expr::Closure { params, body } = body.as_ref() else {
+                    self.expr(body, span);
+                    return Ty::Unknown;
+                };
+                // A task is handed nothing, so a parameter has nothing to be
+                // bound from. Refused rather than dropped: `spawn fn (x) { … }`
+                // reads as though `x` arrives from somewhere.
+                self.a_task_takes_no_arguments(params, span);
+                // **What the task takes with it** (`NK2101`), read off the body
+                // before it is walked: a name the body binds for itself is the
+                // task's own, and the frame pushed below is what keeps the two
+                // apart.
+                self.a_task_takes_these(
+                    &Expr::Closure {
+                        params: params.clone(),
+                        body: body.clone(),
+                    },
+                    span,
+                );
+                self.scope.push(Vec::new());
+                let value = self.block(body);
+                self.scope.pop();
+                Ty::Named {
+                    name: "TaskHandle".to_string(),
+                    args: vec![value],
+                    view: false,
+                }
             }
 
             Expr::DslFrom { input, .. } => {
@@ -2351,6 +2422,135 @@ impl<'a> Checker<'a> {
         } else {
             self.opaque_methods.insert(key);
         }
+    }
+
+    /// **What a task takes with it** (Part I 8.3, `NK2101`).
+    ///
+    /// Every name the body reads that is a local or a parameter **of the
+    /// enclosing function**, with its type - because the type decides whether
+    /// taking it is taking it away:
+    ///
+    ///   * **Data that is copied** - a number, a `bool`, a `char`, a view -
+    ///     goes into the task and stays here too. Rust copies it, so there is
+    ///     nothing to refuse, and `let n = 7` followed by a `spawn` that prints
+    ///     `n` and a `println` that prints it again is a correct program.
+    ///   * **A handle on a `Shared[T]`** is *duplicated* rather than moved
+    ///     ([ADR-040](../../docs/specification/adr/adr-040.md) D1, D5), so the
+    ///     name outside the task keeps working. Part I 8.3 says `NK2101`
+    ///     belongs to the data case only, and this is where that holds.
+    ///   * **A type nothing describes** is not claimed about at all. Refusing
+    ///     one would be refusing on a guess (Part III, C.4).
+    ///
+    /// What is left is data that a move takes away, which is what the
+    /// diagnostic is about.
+    fn a_task_takes_these(&mut self, body: &Expr, span: &Span) {
+        // The same walk `crosses_into_a_task` uses, and for the same reason: the
+        // names a task's body reads are one question, asked once.
+        for name in send::names_used(self.parsed, body) {
+            let Some((ty, _)) = self.local(&name) else {
+                continue;
+            };
+            if !moves_away(&ty) {
+                continue;
+            }
+            self.moved_into_a_task.push((name, ty, span.end));
+        }
+    }
+
+    /// `NK2101`: data a task took with it, used again afterwards.
+    ///
+    /// **The message `rustc` gave instead** is the reason this exists: *"borrow
+    /// of moved value: `message`"*, with *"consider cloning the value before
+    /// moving it into the closure"* - a closure the program does not have, about
+    /// a file nobody wrote (Part III, C.1).
+    ///
+    /// An **assignment** between the two clears it, and that is not a leniency:
+    /// `message = "other"` gives the name a value again, Rust accepts it, and
+    /// refusing it would refuse a correct program (C.4).
+    fn a_task_took_what_is_used_again(&mut self) {
+        let moved = std::mem::take(&mut self.moved_into_a_task);
+        let read = std::mem::take(&mut self.read_at);
+        let written = std::mem::take(&mut self.written_at);
+
+        for (name, ty, at) in moved {
+            // At or after the byte the `spawn` statement **ends** on. The reads
+            // inside the task's own body are the move itself and lie inside
+            // that statement's span, so they are excluded; a statement span
+            // runs up to the next one's first byte, so the next statement
+            // starts exactly *at* the end and the comparison is not strict.
+            let Some(&(_, used)) = read
+                .iter()
+                .filter(|(seen, when)| seen == &name && *when >= at)
+                .min_by_key(|(_, when)| *when)
+            else {
+                continue;
+            };
+            if written
+                .iter()
+                .any(|(seen, when)| seen == &name && *when >= at && *when <= used)
+            {
+                continue;
+            }
+            self.checked.findings.push(Finding {
+                code: "NK2101",
+                severity: Severity::Error,
+                span: Span {
+                    start: used,
+                    end: used,
+                },
+                message: format!("this background task takes ownership of `{name}`"),
+                notes: vec![
+                    format!(
+                        "a task started with `spawn` may outlive this function, so it cannot \
+                         merely borrow your variables - it takes them with it (Part I, 8.3). \
+                         `{name}` is a `{ty}`, which a move takes away"
+                    ),
+                    "a number, a `bool`, a view or a handle on a `Shared[T]` would not be: \
+                     the first three are copied and the last is duplicated (Part I, 6.2)"
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "clone before the task is built, and give the task the copy: \
+                     `let copy = {name}.clone()`, then use `copy` inside the task"
+                )),
+            });
+        }
+    }
+
+    /// `NK2103`: a `spawn`'s lambda names an argument, and a task is handed
+    /// nothing.
+    ///
+    /// `spawn fn (x) { … }` reads as though `x` arrives from somewhere, and
+    /// nothing gives it to a task (Part I 8.2). Dropping the name silently would
+    /// be the worse answer: the body would then refer to something nothing
+    /// declared, which `NK1117` reports about a name the author *did* write.
+    fn a_task_takes_no_arguments(&mut self, params: &[Ident], span: &Span) {
+        let Some(first) = params.first() else {
+            return;
+        };
+        let named = params
+            .iter()
+            .map(|p| format!("`{}`", self.parsed.text(*p)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.checked.findings.push(Finding {
+            code: "NK2103",
+            severity: Severity::Error,
+            span: span.clone(),
+            message: format!(
+                "this task's lambda names {named}, and a task is handed nothing (Part I, 8.2)"
+            ),
+            notes: vec![
+                "`spawn` starts a body, it does not call it with arguments - what the body \
+                 needs, it takes from around it, and `spawn` moves those in (Part I, 8.3)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "drop the argument list: `spawn fn {{ … }}`. Where `{}` was meant to be a \
+                 value from here, name it before the task and use it inside",
+                self.parsed.text(*first)
+            )),
+        });
     }
 
     /// The same, for the `.await` ([`Checked::pausing_methods`]).
@@ -2991,6 +3191,40 @@ fn is_literal(expr: &Expr) -> bool {
             | Expr::LitChar(_)
             | Expr::LitBool(_)
     )
+}
+
+/// Whether taking a value of this type takes it **away** (`NK2101`).
+///
+/// Three answers and only one of them is a yes, which is the shape Part III C.4
+/// asks for: a refusal on a guess is worse than no refusal.
+///
+///   * **No, it is copied.** A number, a `bool`, a `char` and a **view** all go
+///     into a task and stay here too - Rust copies them, so `let n = 7` and a
+///     `spawn` that prints `n` and a `println` that prints it again is a correct
+///     program. A view is in this list because `&str` is `Copy`, which is why
+///     `let message = "Hello"` is *not* the case Part I 8.3 is about and
+///     `"Hello".to_string()` is.
+///   * **No, it is duplicated.** A handle on a `Shared[T]` keeps working outside
+///     the task ([ADR-040](../../docs/specification/adr/adr-040.md) D1, D5), and
+///     Part I 8.3 says `NK2101` belongs to the data case only.
+///   * **Nothing is claimed**, for a type nothing describes or a nullable of
+///     one: `Unknown` is the absence of an answer and not a licence to refuse.
+fn moves_away(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, view, .. } => {
+            !view
+                && !is_number(name)
+                && !matches!(name.as_str(), "bool" | "char")
+                && name != "Shared"
+                && name != "SharedMut"
+        }
+        // A nullable of data is still data: `Option<String>` moves.
+        Ty::Nullable(inner) => moves_away(inner),
+        // A tuple of copied parts is copied; one with anything else in it is
+        // not. `Unknown`, a function type and a type variable claim nothing.
+        Ty::Tuple(parts) => parts.iter().any(moves_away),
+        _ => false,
+    }
 }
 
 fn is_number(name: &str) -> bool {

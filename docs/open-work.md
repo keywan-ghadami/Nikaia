@@ -126,11 +126,14 @@ So, in order, and each says below why it sits where it does:
    sharpest form — and until this session it looked like one step rather than
    five, because a pause was a thread that blocked and nothing said so.
 
-   **Steps 1, 2 and 3 are built**: the single-threaded executor, `async fn` with
-   `.await` off the ledger, and `std`'s own pausing entries — a file operation
-   now suspends rather than blocking its thread, and the executor is the only
-   place a program parks. What is next is **step 4**, `spawn` and `TaskHandle`,
-   which is what this whole sequence was written for.
+   **Steps 1–4 are built at `user_parallelism = no`, which is the default**: the
+   single-threaded executor, `async fn` with `.await` off the ledger, `std`'s own
+   pausing entries — a file operation suspends rather than blocking its thread —
+   and `spawn` itself, with `TaskHandle`, `.join()` and `NK2101`. What is left is
+   the **thread**: step 1's `yes` executor, where a spawned future has to be
+   `Send`, and step 5's `overlap { … }`. So this item is no longer the one the
+   others wait on — what waits on a thread waits on its `yes` half, and the rest
+   of the list can be taken in its own order.
 2. **`SharedMut[T]` and `Locked[T]` as types the backend can build.** The other
    half of the same story: a program that spawns needs something it may share, and
    today writing one is checked and then fails to emit. Independent of the
@@ -145,49 +148,41 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 6. **Supervision.** Last because nothing else waits on it.
 
-### 2.1. `spawn` has no runtime binding — and five records wait on it
+### 2.1. The `yes` executor, and what still needs a thread
 
-`Expr::Spawn` refuses in the emitter: *"`spawn` needs the runtime integration; not
-emitted yet"*. What is checked but cannot run:
+**`spawn` lowers.** It was the largest single unblocking in this file and the
+reason [ADR-055](specification/adr/adr-055.md) exists; steps 1–4 of that record's
+§6 are built at `user_parallelism = no`, which is the default. A task is a future
+the executor owns, `.join()` is a suspension point, two tasks reading two files
+are both in flight before either finishes, and `NK2101` is raised — so Part II
+11.2's *"interleaved on the same thread"* is a sentence about programs now rather
+than about a lowering nobody had written.
 
-* Part II 11.2's whole section;
-* [ADR-040](specification/adr/adr-040.md) D1's task half — the analysis names a
-  `spawn` body's handle as a duplication site, and no emitted program reaches it,
-  so there is still no `NK2101` to exempt;
-* [ADR-045](specification/adr/adr-045.md) D2 — a lock may go into a task, which is
-  now checked and cannot yet be run;
-* Part II 12.2's counter, the program `user_parallelism = yes` exists to serve;
-* [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }` — the one way a
-  program asks for overlap, now that the automatic half is on its way out. Its §5
-  gives the order and this is step one of it.
+**What is left is the thread.** Step 1's `yes` half: `rayon`'s pool is a
+work-stealing pool for *closures*, not an executor for futures, so the
+multi-threaded half is a second executor over the same worker count rather than a
+use of that one — and it is the step where a spawned future has to be `Send` (§2
+D6), which is the structural check [ADR-005](specification/adr/adr-005.md) §1
+Group B already runs on what a task *captures*, now also asked of everything the
+body holds across a pause.
 
-This is the largest single unblocking in the file.
+So these are checked and still cannot run, and every one of them is the same
+missing thread:
 
-**And it has a record in front of it now** —
-[ADR-055](specification/adr/adr-055.md), which is what the runtime binding turned
-out to need. The question `spawn` could not be built without is what a task
-*means* at `user_parallelism = no`: Part II 11.2 says *"interleaved on the same
-thread"*, and two synchronous Rust closures cannot interleave, because neither
-yields. The emitted Rust contained the word `async` **zero** times and a pause was
-a thread that blocks.
+* **Part II 12.2's counter**, the program `user_parallelism = yes` exists to
+  serve. Its `spawn` runs today; what it cannot do is run on two cores.
+* [ADR-045](specification/adr/adr-045.md) D2 — a lock may go into a task. The
+  *task* exists now; the lock is not a type the backend can build (§2.4).
+* [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }` — step 5, which
+  that record's own §5 ordered after `spawn`. The vehicle a pausing group needs
+  exists (`task::interleave`), so what is left is the construct and not the
+  machinery under it.
 
-The answer is that the lowering becomes implicitly async, which is what the
-language was specified with from [ADR-005](specification/adr/adr-005.md) on —
-[ADR-027](specification/adr/adr-027.md)'s `sync` already says, per function,
-whether it can pause, and that property *is* `async fn` or plain `fn`. So this
-entry is now **step 4 of that record's §6**, not the first thing to do:
-
-1. the executor in `rt` — **built**, the single-threaded half;
-2. `async`/`.await` in the emitter, off the ledger's `sync` column — **built**;
-3. `std`'s own pausing entries — **built**;
-4. `spawn` and `TaskHandle`, with `NK2101`;
-5. [ADR-050](specification/adr/adr-050.md) D2's `overlap`.
-
-**So this entry is what is next.** The risk the record put on steps 1–3 —
-*"until `std` is async a program that calls a pausing entry does not compile"* —
-did not arrive: step 2 asks the *emitter* what pauses, and it was written to ask
-about this program's own functions only, so a pausing `std` entry stayed a plain
-call and the corpus compiled between the steps.
+**And [ADR-040](specification/adr/adr-040.md) D1's task half is closed rather
+than waiting:** the analysis names a `spawn` body's handle as a duplication site,
+`NK2101` is raised, and the exemption is held — a `Shared[T]` handed into a task
+and used again afterwards is not refused, which `tasks.rs` says about a program
+that does it.
 
 ### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
 

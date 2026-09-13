@@ -3726,11 +3726,42 @@ impl<'p> Emitter<'p> {
                 self.expr(out, inner, depth, flow)?;
                 out.push(&format!(", {:?}))", flow.origin));
             }
-            Expr::Spawn { .. } => {
-                // Part II, 11.2. The runtime binding is the next roadmap line.
-                return Err(refused!(
-                    "`spawn` needs the runtime integration; not emitted yet"
-                ));
+            // **Part I 8.2 and ADR-055 D5: a task.**
+            //
+            // `spawn fn { … }` is `TaskHandle::start(async move { … })`. Three
+            // things are in that one line and each is a decision somewhere
+            // else:
+            //
+            //   * an `async` **block** and not a closure, because the body may
+            //     pause and Rust has no stable `async` closure - the same
+            //     reason `task::interleave` takes futures (§6 step 3);
+            //   * `move`, which is Part I 8.3's implicit move: the captures go
+            //     with the task because it may outlive the function that
+            //     started it, and `NK2101` is what stands in front of that for
+            //     data the parent still wanted;
+            //   * a **handle**, always, whether or not the program keeps it. A
+            //     task nobody joins still runs (D5), because the executor owns
+            //     it - so an unused handle is a value dropped and not work
+            //     cancelled.
+            //
+            // The lambda's `params` are not written: a task is handed nothing,
+            // so a `spawn fn (x) { … }` has no argument to bind. `check`
+            // refuses that rather than dropping it silently.
+            Expr::Spawn { body, .. } => {
+                let Expr::Closure { body, .. } = body.as_ref() else {
+                    return Err(refused!("`spawn` takes a lambda: write `spawn fn {{ … }}`"));
+                };
+                out.push("nikaia_std::task::TaskHandle::start(async move ");
+                // `Flow::PLAIN`, like any other lambda body: a `return` inside
+                // the task leaves the task, and a failure in it is the task's.
+                // `in_lambda` is deliberately **not** set - the body is a
+                // future, so a call that pauses is exactly what it may hold.
+                let inside = Flow {
+                    statement: flow.statement,
+                    ..Flow::PLAIN
+                };
+                self.block(out, body, depth, inside, Tail::Return)?;
+                out.push(")");
             }
             Expr::DslFrom { grammar, input } => {
                 self.dsl_from(out, *grammar, input, depth, flow, Propagate::Yes)?

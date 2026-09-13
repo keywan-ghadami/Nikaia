@@ -153,11 +153,13 @@ checked and cannot run until the sequence is done, and a check with no program t
 be tested against is the state that rots fastest: nothing fails when it drifts,
 because nothing exercises it.
 
-That record's §6 has five steps, and the first three are built: a single-threaded
-executor, `async fn` with `.await` written off the ledger's `sync` column, and
-`std`'s own pausing entries — a file operation suspends now rather than blocking
-its thread, and the executor is the only place a program parks. **Step 4 is
-next**, and it is `spawn`.
+That record's §6 has five steps, and **four of them are built at
+`user_parallelism = no`, which is the default**: a single-threaded executor,
+`async fn` with `.await` written off the ledger's `sync` column, `std`'s own
+pausing entries — a file operation suspends now rather than blocking its thread —
+and `spawn` itself, with `TaskHandle`, `.join()` and `NK2101`. What is left is
+the **thread**: the `yes` executor, where a spawned future has to be `Send`, and
+`overlap { … }`.
 
 **The unchecked boxes above are not that list**, and the difference is worth
 keeping: a box is a piece of *scope* — generics, an LSP, compile-time I/O — that

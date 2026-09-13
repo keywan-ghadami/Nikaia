@@ -701,5 +701,34 @@ iterates = "throws"
 # `Shared[Locked[i32]]` is undecided, for the lock's sake and not the count's. A
 # `crosses = true` written here would answer for both, which is the one thing
 # that is not true of the type.
+# **What a `spawn` hands back** (Part I 8.2,
+# [ADR-055](../../docs/specification/adr/adr-055.md) D5).
+#
+# No `crosses`, and here its absence really is "nobody said": whether a handle
+# may cross a thread is a question about the value the task produces and about
+# the executor that owns it, and the multi-threaded executor is not built
+# (ADR-055 §6 step 1's `yes` half). An undecided crossing is handed on rather
+# than read as permission (ADR-010 D1), which is what this file's own note
+# above says.
+[type."TaskHandle"]
+pub = true
+
+# `.join()` is where two tasks meet again, and it is a **suspension point**: the
+# task fills a slot and wakes whoever is waiting on it, so joining gives the
+# thread up rather than holding it. Hence no `sync` line, which is this file's
+# way of saying it can pause - and the emitter turns that into the `.await`
+# (ADR-055 D2).
+#
+# `$T` is bound by the receiver (ADR-031), so one line answers for every
+# `TaskHandle` a program writes. It takes `self` by value because a value can
+# only be joined once.
+#
+# No `throws`: a task's failure is the task's, and what `join` hands back is
+# whatever the body's last statement was. A task whose body can fail hands back
+# a value that says so, which is the same shape any other function has.
+[fn."TaskHandle::join"]
+pub = true
+signature = "(TaskHandle[$T]) -> $T"
+
 [type."Shared"]
 pub = true

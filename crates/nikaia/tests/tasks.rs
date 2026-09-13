@@ -1,0 +1,331 @@
+//! **`spawn`, and what a task means** — Part I 8.2 and 8.3,
+//! [ADR-055](../../../docs/specification/adr/adr-055.md) D5.
+//!
+//! This is what the whole of ADR-055 was written for. `spawn` had no runtime
+//! binding because nobody had asked what a task *means* at
+//! `user_parallelism = no`: Part II 11.2 says *"interleaved on the same
+//! thread"*, and two synchronous Rust closures cannot interleave because
+//! neither yields. With the executor (§6 step 1), `async fn` off the ledger
+//! (step 2) and `std` suspending for real (step 3), they can — and these are
+//! the tests that say so about programs rather than about `std`'s own futures.
+
+mod common;
+
+use nikaia::check::{self, Finding};
+use nikaia::contracts::{Ledger, STD};
+use nikaia::emit;
+use nikaia::parser::parse_to_ast;
+use std::process::Command;
+
+fn findings(source: &str) -> Vec<Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    check::check(&parsed, &own, &library).findings
+}
+
+fn lower(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit::emit_program(&parsed, Default::default())
+        .expect("the source lowers")
+        .rust
+}
+
+/// Lower, compile and run, and hand back what it printed.
+fn run(purpose: &str, source: &str) -> String {
+    let dir = common::scratch_dir(purpose);
+    let rust = lower(source);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "a task's lowering does not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let out = String::from_utf8_lossy(&ran.stdout).to_string();
+    std::fs::remove_dir_all(&dir).ok();
+    out
+}
+
+/// **Part I 8.2's own example, which keeps no handle.**
+///
+/// *"A task nobody joins still runs"* (D5). Returning from `block_on` the
+/// moment `main` was ready would have made that sentence false — the task
+/// would be a future in a queue nobody polls again — so `main`'s value waits
+/// until the queue is empty. This is the test that says it does.
+#[test]
+fn a_task_nobody_joins_still_runs() {
+    let printed = run(
+        "tasks-unjoined",
+        "fn main() {\n\
+         \x20   spawn fn { println(\"I am running in the background!\") }\n\
+         \x20   println(\"main is done\")\n\
+         }",
+    );
+    assert!(
+        printed.contains("I am running in the background!"),
+        "{printed}"
+    );
+    // And `main` got there first, which is what "in the background" means: the
+    // task is started, not called.
+    let main_at = printed.find("main is done").expect("main printed");
+    let task_at = printed.find("I am running").expect("the task printed");
+    assert!(main_at < task_at, "{printed}");
+}
+
+/// `.join()` is an `.await`, and it hands back the body's value (D5).
+#[test]
+fn a_handle_joins_to_the_value_the_body_came_to() {
+    let source = "fn work(n: i64) -> i64 {\n\
+         \x20   return n * 2\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let handle = spawn fn { work(21) }\n\
+         \x20   println(\"started\")\n\
+         \x20   let answer = handle.join()\n\
+         \x20   println(f\"{answer}\")\n\
+         }";
+
+    // The `.await` is the ledger's answer about `TaskHandle::join`, which has no
+    // `sync` line - the same rule every other pausing call gets (ADR-055 D2).
+    let rust = lower(source);
+    assert!(rust.contains(".join().await"), "{rust}");
+    assert!(
+        rust.contains("nikaia_std::task::TaskHandle::start(async move"),
+        "{rust}"
+    );
+
+    assert_eq!(
+        run("tasks-join", source).trim(),
+        "started\n42",
+        "the handle did not carry the body's value"
+    );
+}
+
+/// **Two tasks, both in flight, on one thread** — Part II 11.2's sentence about
+/// something a program writes.
+///
+/// Each task reads a file, which is a real suspension point since §6 step 3. The
+/// claim is in the order: `main` prints before either read finishes, because
+/// `spawn` starts a task rather than running it.
+#[test]
+fn two_tasks_are_in_flight_before_either_finishes() {
+    let dir = common::scratch_dir("tasks-in-flight");
+    std::fs::write(dir.join("eins.txt"), "eins").expect("write");
+    std::fs::write(dir.join("zwei.txt"), "zweizwei").expect("write");
+
+    let source = "use std::fs\n\
+         \n\
+         fn size(path: &str) -> i64 {\n\
+         \x20   let text = fs::read_to_string(path) catch { return 0 }\n\
+         \x20   println(f\"read {path}\")\n\
+         \x20   return text.len()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let first = spawn fn { size(\"eins.txt\") }\n\
+         \x20   let second = spawn fn { size(\"zwei.txt\") }\n\
+         \x20   println(\"both started\")\n\
+         \x20   let a = first.join()\n\
+         \x20   let b = second.join()\n\
+         \x20   println(f\"{a} {b}\")\n\
+         }";
+
+    let rust = lower(source);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    let printed = String::from_utf8_lossy(&ran.stdout);
+
+    let started = printed.find("both started").expect("main printed");
+    let first_read = printed.find("read eins.txt").expect("the first read");
+    assert!(
+        started < first_read,
+        "a task ran at the `spawn` rather than being started:\n{printed}"
+    );
+    assert!(printed.trim_end().ends_with("4 8"), "{printed}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **`NK2101`: data a task took with it, used again afterwards** (Part I 8.3).
+///
+/// The message this replaces is `rustc`'s — *"borrow of moved value:
+/// `message`"*, with *"consider cloning the value before moving it into the
+/// closure"* — a closure the program does not have, about a file nobody wrote
+/// (Part III, C.1).
+#[test]
+fn data_a_task_took_and_the_program_used_again_is_refused() {
+    let found = findings(
+        "fn main() {\n\
+         \x20   let message = \"Hello\".to_string()\n\
+         \x20   spawn fn { println(message) }\n\
+         \x20   println(message)\n\
+         }",
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].code, "NK2101");
+    assert!(
+        found[0].message.contains("takes ownership of `message`"),
+        "{:?}",
+        found[0]
+    );
+    // The way out is named, and it is the one Part I 8.3 names.
+    let help = found[0].help.clone().unwrap_or_default();
+    assert!(help.contains("message.clone()"), "{help}");
+    // Nikaia's words and not the backend's.
+    for backend in ["closure", "borrow of moved", "async"] {
+        assert!(!format!("{found:?}").contains(backend), "`{backend}`");
+    }
+}
+
+/// **What `NK2101` must not refuse**, which is most of what a program writes.
+///
+/// Four cases, and each is a different reason: a value that was cloned first
+/// (Part I 8.3's own way out), a number and a view (both **copied**, so the
+/// task takes a copy and the name keeps working), and a name **assigned again**
+/// after the task — which gives it a value, is accepted by Rust, and refusing
+/// it would refuse a correct program (Part III, C.4).
+#[test]
+fn a_copy_a_clone_and_a_reassignment_are_not_refused() {
+    let source = "fn main() {\n\
+         \x20   let message = \"Hello\".to_string()\n\
+         \x20   let copy = message.clone()\n\
+         \x20   spawn fn { println(copy) }\n\
+         \x20   println(message)\n\
+         \n\
+         \x20   let n = 7\n\
+         \x20   spawn fn { println(f\"{n}\") }\n\
+         \x20   println(f\"{n}\")\n\
+         \n\
+         \x20   let word = \"Welt\"\n\
+         \x20   spawn fn { println(word) }\n\
+         \x20   println(word)\n\
+         \n\
+         \x20   let mut again = \"eins\".to_string()\n\
+         \x20   spawn fn { println(again) }\n\
+         \x20   again = \"zwei\".to_string()\n\
+         \x20   println(again)\n\
+         }";
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    // And it is not accepted by being un-compilable: the whole of it runs.
+    let printed = run("tasks-accepted", source);
+    assert!(printed.contains("Hello"), "{printed}");
+    assert!(printed.contains("zwei"), "{printed}");
+}
+
+/// `NK2103`: a task's lambda may not name an argument, because a task is handed
+/// nothing (Part I, 8.2).
+///
+/// Dropping the name silently would be worse: the body would then refer to
+/// something nothing declared, which `NK1117` reports about a name the author
+/// *did* write.
+#[test]
+fn a_task_that_names_an_argument_is_refused() {
+    let found = findings("fn main() { spawn fn(x) { println(f\"{x}\") } }");
+    assert!(found.iter().any(|f| f.code == "NK2103"), "{found:?}");
+    let first = found
+        .iter()
+        .find(|f| f.code == "NK2103")
+        .expect("checked above");
+    assert!(
+        first.message.contains("a task is handed nothing"),
+        "{first:?}"
+    );
+}
+
+/// A handle on a `Shared[T]` is **duplicated** into a task, not moved
+/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1, D5).
+///
+/// Part I 8.3 says `NK2101` belongs to the data case only, and this is the other
+/// case: using the value again after the task is built is the very thing the
+/// duplication serves, so there is nothing to refuse and no `.clone()` to write.
+#[test]
+fn a_shared_handle_into_a_task_is_not_refused() {
+    let found = findings(
+        "fn main() {\n\
+         \x20   let counts: Shared[Vec[i64]] = Vec::new()\n\
+         \x20   spawn fn { println(f\"{counts.len()}\") }\n\
+         \x20   println(f\"{counts.len()}\")\n\
+         }",
+    );
+    assert!(
+        !found.iter().any(|f| f.code == "NK2101"),
+        "a duplicated handle was refused as a move: {found:?}"
+    );
+}
+
+/// The parenthesised `spawn ( … )` says what happened to it.
+///
+/// Part I 8.2 called it *"a bug in the parser and not a second form"*, and
+/// programs were written against it — so the arm stays, as a sentence rather
+/// than as an alternative.
+#[test]
+fn the_parenthesised_form_says_what_happened_to_it() {
+    let message = format!(
+        "{:#}",
+        parse_to_ast("fn main() { spawn(1) }").expect_err("refused")
+    );
+    assert!(message.contains("`spawn` takes a lambda"), "{message}");
+    assert!(message.contains("spawn fn"), "{message}");
+}
+
+/// The emitted Rust has no closure in it, and that is the decision.
+///
+/// A task's body may **pause**, and Rust has no stable `async` closure — so the
+/// body is an `async move` *block*, which is a future. `move` is Part I 8.3's
+/// implicit move and Rust's `move` meeting at the same place.
+#[test]
+fn a_task_is_an_async_block_and_never_a_closure() {
+    let rust = lower(
+        "use std::fs\n\
+         fn main() {\n\
+         \x20   spawn fn { fs::read_to_string(\"x\") catch { \"\".to_string() } }\n\
+         }",
+    );
+    assert!(rust.contains("TaskHandle::start(async move"), "{rust}");
+    // The pausing call inside the task takes its `.await`, which is the thing a
+    // closure could not have held.
+    assert!(rust.contains("read_to_string(\"x\").await"), "{rust}");
+    assert!(!rust.contains("start(|| "), "{rust}");
+}
+
+/// The `.nika` sources in this repository stay free of the runtime's words.
+///
+/// `runtime.rs` holds this for `examples/`; here it is about the one construct
+/// that names a task. `spawn` is Nikaia's word; `async`, `await` and `Future`
+/// are not, and a task is where they would leak in first.
+#[test]
+fn nothing_a_task_needs_is_written_in_nikaia() {
+    let source = "fn main() {\n\
+         \x20   let h = spawn fn { 1 }\n\
+         \x20   println(f\"{h.join()}\")\n\
+         }";
+    for word in ["async", "await", "Future", "move"] {
+        assert!(!source.contains(word), "`{word}` in a Nikaia program");
+    }
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    assert_eq!(run("tasks-no-words", source).trim(), "1");
+}

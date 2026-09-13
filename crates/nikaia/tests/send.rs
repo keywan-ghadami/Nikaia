@@ -148,7 +148,7 @@ fn an_ordinary_value_crosses_into_a_task() {
     let clean = crossings(
         "struct Reading { name: String, temp: f64 }\n\
          fn report(text: String, counts: Vec[i64], r: Reading) {\n\
-             spawn({ println(f\"{text} {counts.len()} {r.temp}\") })\n\
+             spawn fn { println(f\"{text} {counts.len()} {r.temp}\") }\n\
          }",
     );
     assert!(clean.is_empty(), "{clean:#?}");
@@ -167,7 +167,7 @@ fn a_value_whose_type_is_not_written_down_is_not_refused() {
     let clean = crossings(
         "fn report(path: String) throws {\n\
              let handle = fs::map(path) catch { return }\n\
-             spawn({ println(f\"{handle.len()}\") })\n\
+             spawn fn { println(f\"{handle.len()}\") }\n\
          }",
     );
     assert!(clean.is_empty(), "{clean:#?}");
@@ -186,7 +186,7 @@ fn a_value_whose_type_is_not_written_down_is_not_refused() {
 fn a_shared_crosses_into_a_task() {
     let clean = crossings(
         "fn zaehle(counts: Shared[Vec[i64]]) {\n\
-             spawn({ println(f\"{counts.len()}\") })\n\
+             spawn fn { println(f\"{counts.len()}\") }\n\
          }",
     );
     assert!(clean.is_empty(), "{clean:#?}");
@@ -199,7 +199,7 @@ fn a_struct_that_holds_a_shared_crosses_into_a_task() {
     let clean = crossings(
         "struct Tally { hits: Shared[i64] }\n\
          fn zaehle(t: Tally) {\n\
-             spawn({ println(f\"{t.hits}\") })\n\
+             spawn fn { println(f\"{t.hits}\") }\n\
          }",
     );
     assert!(clean.is_empty(), "{clean:#?}");
@@ -221,7 +221,7 @@ fn a_struct_that_holds_a_shared_crosses_into_a_task() {
 fn a_lock_goes_into_a_task_of_our_own() {
     let clean = crossings(
         "fn zaehle(counter: Shared[Locked[i32]]) {\n\
-             spawn({ println(f\"{counter}\") })\n\
+             spawn fn { println(f\"{counter}\") }\n\
          }",
     );
     assert!(
@@ -278,7 +278,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     // added. Without this half the refusal above would read as the old rule.
     assert!(crossings(
         "fn zaehle(counter: Shared[Locked[i32]]) {\n\
-             spawn({ println(f\"{counter}\") })\n\
+             spawn fn { println(f\"{counter}\") }\n\
          }",
     )
     .is_empty());
@@ -337,13 +337,13 @@ fn a_call_this_compiler_can_see_is_not_a_crossing() {
 fn the_verdict_is_the_same_at_both_settings() {
     for source in [
         "fn zaehle(counts: Shared[Vec[i64]]) {\n\
-             spawn({ println(f\"{counts.len()}\") })\n\
+             spawn fn { println(f\"{counts.len()}\") }\n\
          }",
         "fn ueber(handle: Shared[String]) {\n\
              fremd::auf_einen_thread(handle)\n\
          }",
         "fn zaehle(counter: Shared[Locked[i32]]) {\n\
-             spawn({ println(f\"{counter}\") })\n\
+             spawn fn { println(f\"{counter}\") }\n\
          }",
     ] {
         // The analysis never sees a switch, so there is one verdict to compare.
@@ -371,7 +371,7 @@ fn the_verdict_is_the_same_at_both_settings() {
 fn the_shared_half_of_part_ii_12_2s_counter_no_longer_refuses() {
     let source = "fn zaehle(counter: Shared[Locked[i32]]) {\n\
                       counter.access(fn(a) { a })\n\
-                      spawn({ println(f\"{counter}\") })\n\
+                      spawn fn { println(f\"{counter}\") }\n\
                   }";
     for setting in ["no", "yes"] {
         assert_eq!(refused_at(source, setting), None, "at `{setting}`");

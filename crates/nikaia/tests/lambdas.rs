@@ -298,25 +298,29 @@ fn an_effect_annotation_on_a_lambda_is_refused_where_the_annotation_is() {
 /// Part III C.1 forbids.
 ///
 /// `spawn` is a reserved word now, so neither reading exists: there is no
-/// variable and no function of that name to be, and the refusal is this
-/// compiler's, at the `fn`, saying the rule wants a parenthesis. What `spawn`
-/// *means* is still unbuilt (`docs/open-work.md`, the `spawn` entry) - this is
-/// only about who
-/// says so.
+/// variable and no function of that name to be.
+///
+/// **And the refusal has moved twice since.** It was the parser's, at the `fn`,
+/// saying the rule wanted a parenthesis - because `spawn` took `( expr )`, which
+/// Part I 8.2 called a bug in the parser rather than a second form. `spawn` now
+/// takes the trailing lambda of 5.3, so `spawn fn(x) { … }` *parses*, and what
+/// refuses it is `NK2103` (`tasks.rs`): a task is handed nothing, so a named
+/// argument has nothing to be bound from. A better place and a better sentence,
+/// about the same mistake.
 #[test]
 fn spawn_with_a_named_lambda_is_refused_rather_than_read_as_something_else() {
     let source = "fn main() { spawn fn(x) { x } }";
-    let message = format!("{:#}", parse_to_ast(source).expect_err("refused"));
-    assert!(message.contains("expected `(`"), "{message}");
+    parse_to_ast(source).expect("`spawn fn(x) { … }` parses now");
+    // What refuses it is `NK2103`, in `tasks.rs`: the refusal is the checker's
+    // now and belongs with the rest of what a task means.
 
-    // And the form the grammar does have is untouched: `spawn` reserved means
-    // the keyword is the keyword, not that the construct went away. Parsed
-    // rather than lowered, because the emitter still refuses it - that is
-    // §2.1 and not this.
-    assert!(
-        parse_to_ast("fn main() { spawn(1) }").is_ok(),
-        "`spawn(expr)` still parses"
+    // And the parenthesised form says what happened to it, rather than
+    // *"expected `fn`"*: programs were written against it.
+    let message = format!(
+        "{:#}",
+        parse_to_ast("fn main() { spawn(1) }").expect_err("refused")
     );
+    assert!(message.contains("`spawn` takes a lambda"), "{message}");
 }
 
 /// **The count comes from the list, and a local called `a` is a local.**

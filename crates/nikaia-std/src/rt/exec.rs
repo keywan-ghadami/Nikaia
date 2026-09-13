@@ -131,6 +131,14 @@ pub fn start(future: impl Future<Output = ()> + 'static) {
 /// wait is a park, and the I/O worker's reply is what ends it.
 pub fn block_on<T>(future: impl Future<Output = T>) -> T {
     let mut main = Box::pin(future);
+    // **`main`'s value, held rather than returned** (ADR-055 D5).
+    //
+    // *"A task nobody joins still runs"* is what a program of one `spawn`
+    // needs - Part I 8.2's own example keeps no handle - and returning here the
+    // moment `main` is ready would have made that sentence false: the task
+    // would be a future in a queue nobody polls again. So the value waits until
+    // the queue is empty, and until then this loop is the tasks' turn.
+    let mut outcome: Option<T> = None;
     let alarm = Alarm::woken();
     let waker = waker_for(alarm.clone());
     let mut context = Context::from_waker(&waker);
@@ -143,9 +151,9 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // (`rt::io::generation`).
         let generation = crate::rt::io::generation();
 
-        if alarm.take() {
+        if outcome.is_none() && alarm.take() {
             if let Poll::Ready(value) = main.as_mut().poll(&mut context) {
-                return value;
+                outcome = Some(value);
             }
         }
 
@@ -174,6 +182,15 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
             again.append(&mut started);
             *started = again;
         });
+
+        // **`main` is done and so is every task it started.** The one place
+        // this returns.
+        let waiting = STARTED.with(|started| started.borrow().len());
+        if waiting == 0 {
+            if let Some(value) = outcome.take() {
+                return value;
+            }
+        }
 
         // Something moved, so `main` may be able to move with it: ring its
         // alarm and go round. A task that made progress is the only thing on
@@ -221,7 +238,6 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // **There was no I/O to wait for either.** A future returned `Pending`
         // without arranging for its waker to be called, which is a defect in
         // `std` - and a hang is the worst way to report one.
-        let waiting = STARTED.with(|started| started.borrow().len());
         if waiting == 0 {
             // `main` alone, and nothing exists that could wake it. Poll once
             // more rather than park: the cheapest way to be wrong here is to

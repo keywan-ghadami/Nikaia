@@ -19,6 +19,50 @@
 //! Which of the two a pair of statements gets is decided in the emitter, which
 //! is where the build switches live; what each one *is* is decided here.
 
+/// **What a `spawn` hands back** (Part I 8.2,
+/// [ADR-055](../../../docs/specification/adr/adr-055.md) D5).
+///
+/// ```nika
+/// let handle = spawn fn { process(path) }
+/// let result = handle.join()
+/// ```
+///
+/// `.join()` is where two tasks meet again, and it is an `.await`: the task
+/// fills a slot and wakes whoever is waiting on it, so joining gives the thread
+/// up rather than holding it. That is what makes Part II 11.2's *"uniform API"*
+/// true - the same two lines mean the same thing at either setting of
+/// `user_parallelism`, and the only difference is how many threads the executor
+/// has.
+///
+/// **A task nobody joins still runs** (D5), which Part I 8.2's own example
+/// needs: the executor owns the task, so dropping the handle drops the handle
+/// and not the work.
+pub struct TaskHandle<T> {
+    slot: std::sync::Arc<crate::rt::exec::Slot<T>>,
+}
+
+impl<T: 'static> TaskHandle<T> {
+    /// Start `body` as a task, and hand back the handle to its value.
+    ///
+    /// **The captures have already moved**, because the emitter writes the body
+    /// as an `async move` block - which is Part I 8.3's implicit move and Rust's
+    /// `move` meeting at the same place, with `NK2101` in front of it for the
+    /// data the parent still wanted.
+    pub fn start(body: impl std::future::Future<Output = T> + 'static) -> TaskHandle<T> {
+        let slot = crate::rt::exec::Slot::empty();
+        let filling = slot.clone();
+        crate::rt::exec::start(async move {
+            filling.fill(body.await);
+        });
+        TaskHandle { slot }
+    }
+
+    /// The task's value, once it has one. **A suspension point**, not a wait.
+    pub async fn join(self) -> T {
+        crate::rt::exec::Waiting::on(self.slot).await
+    }
+}
+
 /// Run both closures, return both results, keep both panics.
 ///
 /// **Why the pool and not a fresh thread.** `std::thread::scope` reads more

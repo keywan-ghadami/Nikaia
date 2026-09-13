@@ -1611,7 +1611,7 @@ Even at `user_parallelism = no`, you can perform multiple tasks concurrently, su
 ### 8.1. Async by Default
 In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
 
-Within one task the order is exactly the order you wrote: `let a = fs::read("x")` pauses, and the line after it does not run until `a` is there. What runs meanwhile is some *other* task — a pause point never forks one. Tasks exist only where you put them (`spawn`, `par_iter`, `task::scope`), and `.await` on a handle is where two of them meet again. Nikaia did not remove the marker for waiting; it kept it exactly where something branches, and left it off where nothing does.
+Within one task the order is exactly the order you wrote: `let a = fs::read("x")` pauses, and the line after it does not run until `a` is there. What runs meanwhile is some *other* task — a pause point never forks one. Tasks exist only where you put them (`spawn`, `par_iter`, `task::scope`), and `.join()` on a handle is where two of them meet again. Nikaia did not remove the marker for waiting; it kept it exactly where something branches, and left it off where nothing does.
 
 ### 8.1.1. Order Is Kept Where It Can Be Seen
 
@@ -1814,18 +1814,27 @@ nothing to refuse: using the value again after the task is built is the very thi
 the duplication of 6.2 serves, so there is no error and no `.clone()` to write
 ([ADR-040](adr/adr-040.md) D5).
 
-> **Status:** not built, in either case. `spawn` does not lower yet — the runtime
-> integration it needs is the next step (Part II, 11.2) — and `NK2101` is
-> catalogued but never raised (Part III, Appendix C.3). The move rule is
-> therefore written ahead of both. `Shared[T]` is a type the compiler knows now
-> (6.2) and a handle handed on by value is duplicated, so the rule the other case
-> states is built everywhere a handle is handed to a **function**; into a task it
-> is not, because there is no task to hand one to, and there is no raised `NK2101`
-> for the exemption above to apply to either
-> ([ADR-040](adr/adr-040.md) §4). The form above is the one
-> spelling of a `spawn`, the trailing lambda of 5.3; the parser still insists on
-> parentheses around the body instead, which is a bug in the parser and not a
-> second form.
+> **Status:** built, in both cases ([ADR-055](adr/adr-055.md) §6 step 4).
+> `spawn` lowers: the body becomes a future the executor owns, `.join()` is a
+> suspension point, and a task nobody joins still runs — the example at the top
+> of 8.2 prints what it says it prints, after `main` has gone on. `NK2101` is
+> raised, and it is **narrow on purpose**: only where the type is known and a
+> move takes it away. A number, a `bool`, a `char` and a **view** are copied, so
+> `let message = "Hello"` is not this case and `"Hello".to_string()` is; a
+> handle on a `Shared[T]` is duplicated, which is the exemption this section
+> states ([ADR-040](adr/adr-040.md) D1, D5); and an **assignment** between the
+> task and the later use clears it, because giving the name a value again is a
+> correct program. The form above is the one spelling of a `spawn`, the trailing
+> lambda of 5.3, and the parser takes it — it used to insist on parentheses
+> around the body, which was a bug in the parser and not a second form; that
+> spelling now says so rather than parsing. A lambda that **names** an argument
+> is refused as `NK2103`: a task is handed nothing.
+>
+> What is not built is the *multi-threaded* half. At `user_parallelism = yes` a
+> task would move between threads, so its future must be `Send`
+> ([ADR-055](adr/adr-055.md) §2 D6) — and that executor is the `yes` half of
+> that record's §6 step 1, which is unbuilt. Every task today interleaves on the
+> one thread, which is what Part II 11.2 promises at `no`.
 
 ### 8.4. The Runtime Sidecar Model
 While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.

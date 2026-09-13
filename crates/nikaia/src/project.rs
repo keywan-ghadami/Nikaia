@@ -604,7 +604,19 @@ pub fn check(
             plural(aliases)
         ));
     }
-    let rules = findings.len() - types - crossings - aliases;
+    // `NK21xx` is tasks and capture: what a `spawn` took with it. Counted on its
+    // own because the way out is a third one - a value to clone before the task
+    // is built - and because the tally has to say what it counted: `NK2101` in
+    // the line below would have read "a place that can fail without saying so",
+    // which is a different rule.
+    let tasks = count("NK21");
+    if tasks > 0 {
+        refused.push(format!(
+            "{tasks} value{} a task took with it",
+            plural(tasks)
+        ));
+    }
+    let rules = findings.len() - types - crossings - aliases - tasks;
     if rules > 0 {
         refused.push(format!(
             "{rules} place{} that can fail without saying so",

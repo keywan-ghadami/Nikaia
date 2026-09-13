@@ -218,7 +218,7 @@ fn a_naked_view_given_to_a_task_is_refused() {
         struct Summary { label: &str }
         impl Summary {
             fn post(&self, name: &str) {
-                spawn({ println(name) })
+                spawn fn { println(name) }
             }
         }
         "#);

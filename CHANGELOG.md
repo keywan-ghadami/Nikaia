@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added (`spawn` lowers, and a task interleaves on the one thread)
+
+- **[ADR-055](docs/specification/adr/adr-055.md) §6 step 4** — the thing the whole record was written for. `spawn fn { … }` becomes a future the executor owns, `.join()` is an `.await` read off the ledger like any other pausing call, and both mean the same thing at either setting of `user_parallelism`, which is what Part II 11.2 calls the uniform API. Two tasks reading two files are both in flight before either finishes, on one thread — that section's own sentence, now about a program somebody writes rather than about `std`'s own futures.
+- **An `async` block and never a closure**, for the reason step 3 gave: a task's body may pause, and Rust has no stable `async` closure. `move` is Part I 8.3's implicit move and Rust's `move` meeting at the same place, so the generated program has no `move` keyword the source did not imply.
+- **`spawn` took `( expr )`**, which Part I 8.2 called *"a bug in the parser and not a second form"*. It takes the trailing lambda of 5.3 now, so there is **one** lambda form in the language. The parenthesised spelling stays as a sentence rather than as an alternative, because programs were written against it — and a lambda that *names* an argument is refused as **`NK2103`**: a task is handed nothing, and dropping the name silently would leave the body naming something nothing declares.
+- **A task nobody joins did not run.** `block_on` returned the moment `main` was ready, so a spawned task was a future in a queue nobody polls again — and D5 says it runs, which Part I 8.2's own example needs, since it keeps no handle. `main`'s value is held now until the queue empties.
+- **`.await` was a spelling the specification offered** on a handle, beside `.join()`, while Part I 8.1 says a Nikaia program contains the word nowhere and a test reads the corpus to hold it. The two contradicted each other and D5 settles it: `.join()` is where two *tasks* meet again, which is worth a word, and the `.await` is the compiler's to write.
+
+### Added (`NK2101`: data a task took with it, used again afterwards)
+
+- **What it takes back is `rustc`'s *"borrow of moved value: `message`"*,** whose advice was *"consider cloning the value before moving it into the closure"* — a closure the program does not have, about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)). The message names the value, says a task may outlive the function that started it, and gives Part I 8.3's own way out.
+- **Narrow on purpose, and the narrowing is the work.** Only where the type is **known** and a move takes the value away: a number, a `bool`, a `char` and a **view** are *copied*, which is why `let message = "Hello"` is not this case and `"Hello".to_string()` is; a handle on a `Shared[T]` is *duplicated*, which is the exemption Part I 8.3 states ([ADR-040](docs/specification/adr/adr-040.md) D1, D5); and a type nothing describes is not claimed about at all (C.4).
+- **An assignment between the task and the later use clears it.** `message = "other"` gives the name a value again, Rust accepts it, and refusing it would refuse a correct program — so the analysis collects reads and writes separately rather than treating every mention as a use.
+- `spawn` now hands back a `TaskHandle[T]` of what the task's body came to, which is why `handle.join()` has a type at all. A task's body is a **block**, and a block's value is something the checker already knows — where what a *lambda* hands back is written down nowhere ([ADR-029](docs/specification/adr/adr-029.md) D1), so nothing is inferred that a signature did not say.
+
 ### Added (`std` suspends for real, and the executor is the only place a program parks)
 
 - **[ADR-055](docs/specification/adr/adr-055.md) §6 step 3.** A file operation is a **slot** on the ring, or an I/O worker's reply, behind one handle; polling it never blocks, and `rt::exec::block_on` waits *in the I/O* when nothing else on the thread can move. Before this, [ADR-038](docs/specification/adr/adr-038.md) D3's operations blocked the calling thread — the ring waited in `io_uring_enter`, the fallback on a reply channel — so a suspension point is now a place the executor runs something else, which is what step 1 built the queue for.

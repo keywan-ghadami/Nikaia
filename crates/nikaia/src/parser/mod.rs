@@ -1509,10 +1509,31 @@ grammar! {
         rule paren_expr -> Expr =
             "(" e:expr ")" -> { e }
 
-        // Part I, 8.2: spawn takes a block lambda - `spawn({ ... })`.
+        // **Part I 8.2: `spawn fn { … }`, and that is the one spelling.**
+        //
+        // It used to be `spawn ( expr )`, which the specification called a bug
+        // in the parser rather than a second form - so `spawn` takes the
+        // trailing lambda of 5.3, the same rule every other lambda position
+        // takes, and there is one lambda form in the language.
+        //
+        // The parenthesised form is kept as a `fail` and not as an alternative,
+        // because programs were written against it: the arm reaches further
+        // than the lambda arm can at a `(`, so a reader gets the sentence
+        // rather than *"expected `fn`"*.
         rule spawn_expr -> Expr =
-            KW_SPAWN "(" body:expr ")" -> {
+            KW_SPAWN body:trailing_lambda -> {
                 Expr::Spawn { body: Box::new(body), is_move: false }
+            }
+          | KW_SPAWN "(" fail("`spawn` takes a lambda: write `spawn fn { … }` \
+                              (Part I, 8.2). The parenthesised form was a bug in \
+                              this parser and not a second form") -> {
+                Expr::Spawn {
+                    body: Box::new(Expr::Closure {
+                        params: Vec::new(),
+                        body: Block { stmts: Vec::new() },
+                    }),
+                    is_move: false,
+                }
             }
 
         // Part II, 10.2/10.5: `dsl Json from input` - a named grammar run over
