@@ -84,6 +84,12 @@ brings a name in — a glob, a braced list, a single name — is refused. The sc
 this repair is therefore the two pieces above plus the alias: no import form is
 being built, and the answer changed nothing else about what is needed here.
 
+**And [`open-decisions.md`](open-decisions.md) §6 removes half of this entry.**
+A package is a directory whose files share one namespace, so two files of one
+package have no boundary between them to name across. What survives here is the
+cross-*package* case — which is the one the entry was always about, and is
+unchanged by that answer.
+
 And the parser half is not the whole of it: once a qualified struct literal
 parses, **visibility decides whether it is allowed**. A struct whose fields are
 private to the file that declares it may not be built from another one, and the
@@ -339,6 +345,19 @@ call forcing the atomic count whatever the setting.
 
 A notes page is a laboratory record and is allowed to be a snapshot — what it is
 not allowed to do is read as current. A dated header on each is enough.
+
+---
+
+### 3.5. Part I 9.2 makes the file the boundary of privacy
+
+[`open-decisions.md`](open-decisions.md) §6 moves it to the package: files of one
+package see one another with no `use`, and `pub` publishes out of the package
+rather than out of the file. 9.2's two bullets — *"only visible inside the file
+they are defined in"* and *"only visible inside the file where the struct is
+defined"* — are false under that answer, and 9.1's *"every file in Nikaia is
+implicitly a Module"* needs the package above it. **Rewritten rather than
+extended**, and the record that takes the decision is where it happens; the entry
+exists so the sentences are not left standing while it is written.
 
 ---
 

@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-Six entries. One is answered and kept here until its record exists;
+Six entries. Two are answered and kept here until their records exist;
 the rest are questions that work cannot settle. Each one says what is blocked, what the
 options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
@@ -229,57 +229,83 @@ three.
 
 ---
 
-## 6. How is a Nikaia library distributed, and what consumes one?
+## 6. How a Nikaia library is offered, and what consumes one — **answered**
 
-**Blocked by it:** whether the rule that shaped
-[ADR-045](specification/adr/adr-045.md)'s crossing verdict guards a case this
-toolchain can produce.
+Two questions were hiding in one, and only the first of them shapes what a program
+means.
 
-Part III 13.2's manifest shows a Nikaia package next to a Rust one and refuses the
-first with its reason: no record names a registry, a name space or a distribution
-format, so the compiler does not guess ([ADR-002](specification/adr/adr-002.md) D1
-§5). `type = "rust"` dependencies resolve through Cargo; `std` arrives by path
-into a sysroot. Between them there is no way for one Nikaia package to depend on
-another.
+### The language half: a package is a directory, and its files share one namespace
 
-**Why this is not only a missing convenience.** The reason a crossing verdict may
-not consult `user_parallelism` is that *a library built at one setting has to stay
-usable at the other*. That sentence decided the shape of ADR-045 D1 — the verdict
-takes the destination rather than the switch, so that both answers stay
-switch-independent. It is a correct rule and it should stay. But it currently
-protects a situation nothing can construct: there are no Nikaia libraries, because
-there is no way to depend on one.
+**A package is a directory.** The files in it see one another with no `use` at
+all. What the package offers outward is whatever is marked public, in whichever
+file it is declared. A consumer writes `use http` and names the **package**, never
+a file inside it.
 
-**And a second half that §1 handed over.** There is no **re-export**: no way for a
-module to offer a name that another module declares. A library is many files, and
-without it the consumer must name the file a declaration happens to sit in — so the
-library's *internal layout is its public surface*, and moving a declaration between
-files breaks every consumer. A library that cannot curate what it offers has no
-stable surface to offer. Whatever answer (a), (b) or (c) gets, this comes with it:
-it is not an ergonomic form like §1's braced import, it is the difference between a
-library having a front door and not having one.
+**What this changes.** Part I 9.2's privacy boundary moves from the file to the
+package: a declaration is private to its package unless it says `pub`, and two
+files of one package may not declare the same name. That sentence has to be
+rewritten rather than extended.
 
-Three answers:
+**Why this rather than a re-export form.** It removes the problem instead of
+patching it. There is nothing to re-offer, because the names inside a package
+already share a space — so no new form is needed at all. And a library's internal
+file layout stops being its public surface by construction: moving a declaration
+from one file to another is housekeeping, and breaks no consumer.
 
-* **(a) A path dependency first.** A Nikaia package may be depended on by path,
-  the way a Rust one already can be. No registry, no name space, no distribution
-  format — the three things ADR-002 D1 §5 refuses to guess are all still open.
-* **(b) The whole question at once** — resolution, versions, a place packages come
-  from.
-* **(c) Leave it.** A program is one package, and the portability rule stays a
-  precaution.
+The field points the same way. Java, Go and Rust all put the boundary of privacy
+and publication **above** the single file. Python is the one that puts it at the
+file, and `__init__.py` — a front door maintained by hand, forgotten names and
+all — is the consequence, not an accident of it.
 
-**I would take (a).** It is the smallest change that makes a library a thing that
-exists, it needs none of the three decisions ADR-002 declines to make, and it is
-the only one of the three that turns the portability rule from a precaution into
-something a test can exercise. A rule nothing can reach is a rule that quietly
-stops being true, which is the same argument §4 makes for building `spawn`.
+**The alternative, considered and refused:** keep file = module and add a
+re-export. It is not wrong, and it would leave 9.2 untouched. It costs a new form
+in a language that has just withdrawn two, and it moves the upkeep onto every
+library author forever.
 
-**What it costs, and it is worth seeing before deciding:** a second package in one
-build is a second analysis boundary, so
-[`open-work.md`](open-work.md) §1.6 stops being about files and becomes about
-packages — where a field's count is agreed is then a question across a boundary
-nobody can see across, rather than across two files of one program. Taking (a)
-before §1.6 is answered multiplies it. (b) costs the most and would be decided
-without a single Nikaia library existing to learn from. (c) is defensible for as
-long as the language has one user, and stops being defensible the day it has two.
+**A side effect worth stating rather than discovering.**
+[`open-work.md`](open-work.md) §1.1 is about naming a type across a file boundary.
+Inside a package that boundary no longer exists, so half of what it describes
+stops being reachable; what remains is the cross-*package* case, which is the one
+that was always the point.
+
+### The distribution half: a path dependency, and nothing else yet
+
+**A package may be depended on by path**, the way a Rust one already can be.
+`std` arrives that way today ([ADR-002](specification/adr/adr-002.md) D4), so this
+generalises a mechanism rather than adding one.
+
+**No registry, no name space, no distribution format.** The three things ADR-002
+D1 §5 refuses to guess at stay open, deliberately. Go went years with the fetch
+location as the identity; Rust and JavaScript built their registries early and
+have carried decisions made when there were three packages. A registry is built
+when there are libraries, not before.
+
+**Five rules come with it, or they get decided by accident:**
+
+1. **The manifest key is the name.** `use` writes the key, and the path says where
+   it comes from. Two libraries that both want to be `http` are therefore the
+   consumer's to name apart, which is the same authority `use pool as p` already
+   gives them.
+2. **Transitive dependencies are not visible.** If A depends on B and B on C, A
+   does not see C. Otherwise a library's surface is everything it happens to use,
+   and swapping an internal dependency breaks consumers.
+3. **Same path is the same package; a different path is a different package**,
+   identical contents included. With no versions there is nothing to unify, and
+   two paths to two copies would be two types of one name.
+4. **A dependency's `[build]` section is ignored, and the compiler says so.** A
+   package is built with the settings of the program that uses it. Anything else
+   would put two answers to the parallelism question in one build.
+5. **A Nikaia dependency is part of the program, not a foreign package.**
+   [ADR-043](specification/adr/adr-043.md) turns overflow checks on for the
+   program and off for every foreign package; a Nikaia dependency is written in
+   this language, carries this language's promise, and an overflow in it is the
+   same broken state. Without this stated it lands on the foreign side by
+   accident, because that is where a dependency mechanically appears — and then a
+   library computes silently wrong numbers while the program that calls it aborts.
+
+**What this makes real.** The rule that shaped
+[ADR-045](specification/adr/adr-045.md)'s crossing verdict — a library built at one
+setting stays usable at the other — has until now protected a situation nothing
+could construct. A path dependency is the smallest change that makes it testable,
+and the first Nikaia library is the first real test of something that has so far
+only been argued.
