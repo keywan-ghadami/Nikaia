@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added (the wrap reaches a call argument, and `?.m()` says what the language has)
+
+- **[ADR-052](docs/specification/adr/adr-052.md) D4's wrap reaches its fourth kind of position:** a call argument. `shown("here".to_string())` into a `String?` comes out `shown(Some(…))`, and `pair(1, 2)` into two `i64?` parameters is told apart by position. Nothing of that record is unbuilt now.
+- **Keyed by the statement, the callee *as written*, and the position** — the narrowest thing that identifies an argument, since an expression carries no span, a statement may hold several calls, and one call may pass several arguments. The **written** name and not the resolved one, because the emitter has only what the source says: a method's key is `Type::method` and a constructor's is `Type::new`, and neither stands at the call.
+- **`?.m()` is refused with a sentence rather than built**, and that is a decision rather than a shortfall: Part I 3.5 writes a **field**, and a form the specification does not name is not this compiler's to add. It used to be *"expected expression; found unexpected token `)`"* — the `()` read as an empty parenthesised expression after the reach had already matched. The message now says what the language has instead: take the value with `??`, or `match` on it where there is no fallback to give. Whether the language *should* have `?.m()` is the owner's question, and it is on the record as one.
+- The arm consumes the `(` for the reason the `self`-parameter arm consumes its colon: a `fail` here is high priority and **not fatal**, so it has to reach further than the alternative or the field arm's reading wins.
+
 ### Fixed (every position that can declare a name called `self`)
 
 - **A struct field named `self` is `NK1119`**, which took a span of its own on `FieldDef`: without one the nearest span that walk had was a statement's, on a different line, and a caret on the wrong line is worse than no message ([ADR-051](docs/specification/adr/adr-051.md) D4). `field_def` takes `@=` now, `FnArg` takes a span too, and the caret lands on the field.

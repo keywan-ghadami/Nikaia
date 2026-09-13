@@ -354,3 +354,95 @@ fn the_coalescing_operator_is_not_a_safe_reach() {
         "`?` and `.` apart is not `?.`"
     );
 }
+
+// --- the wrap at an argument, and `?.m()` -----------------------------------
+
+/// **The third position for D4's wrap**, keyed by the callee as the source
+/// wrote it and the argument's position.
+///
+/// That is the narrowest key that works: an expression carries no span, a
+/// statement may hold several calls, and one call may pass several arguments.
+/// The **written** name and not the resolved one, because the emitter has only
+/// what the source says — a method's key is `Type::method` and a constructor's
+/// is `Type::new`, and neither stands at the call.
+#[test]
+fn a_plain_value_in_a_nullable_parameter_is_wrapped() {
+    let rust = compiled(
+        "nullable-argument",
+        "\
+fn shown(what: String?) -> String {
+    return what ?? \"nothing\".to_string()
+}
+
+fn pair(a: i64?, b: i64?) -> i64 {
+    return (a ?? 0) + (b ?? 0)
+}
+
+fn main() {
+    println(f\"{shown(\\\"here\\\".to_string())}\")
+    println(f\"{shown(null)}\")
+    println(f\"{pair(1, 2)}\")
+}
+",
+    );
+    assert!(rust.contains("shown(Some(\"here\".to_string()))"), "{rust}");
+    // `null` is a `T?` already, so nothing goes round it.
+    assert!(rust.contains("shown(None)"), "{rust}");
+    assert!(!rust.contains("Some(None)"), "{rust}");
+    // Two parameters, told apart by their position.
+    assert!(rust.contains("pair(Some(1), Some(2))"), "{rust}");
+}
+
+/// And a value that is **already** nullable is handed on as it is.
+#[test]
+fn a_nullable_argument_is_not_wrapped() {
+    let rust = compiled(
+        "nullable-argument-passthrough",
+        "\
+struct Box { label: String? }
+
+fn shown(what: String?) -> String {
+    return what ?? \"nothing\".to_string()
+}
+
+fn main() {
+    let b = Box(label: \"on it\".to_string())
+    println(f\"{shown(b.label)}\")
+}
+",
+    );
+    assert!(rust.contains("shown(b.label)"), "{rust}");
+    assert!(!rust.contains("Some(b.label)"), "{rust}");
+    // The field itself does need the wrap, which is the other position.
+    assert!(
+        rust.contains("label: Some(\"on it\".to_string())"),
+        "{rust}"
+    );
+}
+
+/// **`?.` onto a method is refused with a sentence**, because Part I 3.5 writes
+/// only the field and a form the specification does not name is not this
+/// compiler's to add.
+///
+/// It used to be *"expected expression; found unexpected token `)`"* — the `()`
+/// read as an empty parenthesised expression after the reach had already
+/// matched.
+#[test]
+fn a_safe_reach_onto_a_method_says_what_the_language_has() {
+    let message = format!(
+        "{:#}",
+        parse_to_ast(
+            "\
+struct User { name: String }
+fn find(id: i64) -> User? { return null }
+fn main() { let g = find(1)?.greet() }
+"
+        )
+        .expect_err("refused")
+    );
+    assert!(message.contains("reaches a field"), "{message}");
+    assert!(message.contains("Part I, 3.5"), "{message}");
+    // Every refusal names a way out (Part III C.2), and here there are two.
+    assert!(message.contains("??"), "{message}");
+    assert!(message.contains("match"), "{message}");
+}

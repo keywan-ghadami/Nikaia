@@ -783,6 +783,10 @@ struct Emitter<'p> {
     /// Part I 2.3: the struct-literal fields where a plain value stands in a
     /// nullable slot (`check::Checked::nullable_fields`).
     nullable_fields: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 2.3: the call arguments where a plain value stands in a nullable
+    /// parameter, by statement, callee as written, and position
+    /// (`check::Checked::nullable_args`).
+    nullable_args: std::collections::BTreeSet<(usize, String, usize)>,
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
@@ -1144,6 +1148,7 @@ impl<'p> Emitter<'p> {
             nullable_sites: propagation.nullable,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
+            nullable_args: propagation.nullable_in_args,
             own_contracts,
             library,
             ordering,
@@ -3233,7 +3238,7 @@ impl<'p> Emitter<'p> {
                 }
                 out.push("(");
                 let takes = self.takes_a_handle(self.text(*method));
-                self.args(out, args, &takes, depth, flow)?;
+                self.args(out, self.text(*method), args, &takes, depth, flow)?;
                 self.dsl_parameters(out, self.text(*method), args.len(), config, depth, flow)?;
                 out.push(")");
 
@@ -3593,7 +3598,7 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 out.push(&format!("{text}!(\"{{}}\", "));
-                self.args(out, args, &[], depth, flow)?;
+                self.args(out, text, args, &[], depth, flow)?;
                 out.push(")");
                 return Ok(());
             }
@@ -3601,7 +3606,7 @@ impl<'p> Emitter<'p> {
             if self.structs.contains(name) {
                 out.push(&format!("{text}::new("));
                 let takes = self.takes_a_handle(&format!("{text}::new"));
-                self.args(out, args, &takes, depth, flow)?;
+                self.args(out, text, args, &takes, depth, flow)?;
                 out.push(")");
                 return Ok(());
             }
@@ -3610,7 +3615,14 @@ impl<'p> Emitter<'p> {
         self.expr(out, func, depth, flow)?;
         out.push("(");
         let takes = self.takes_a_handle_at(func);
-        self.args(out, args, &takes, depth, flow)?;
+        // The written callee, which is what the checker keyed the wrap by: a
+        // bare name for a free call, and nothing for anything else, where
+        // nothing can have been recorded either.
+        let callee = match func {
+            Expr::Variable(name) => self.text(*name),
+            _ => "",
+        };
+        self.args(out, callee, args, &takes, depth, flow)?;
 
         if let Expr::Variable(name) = func {
             self.dsl_parameters(out, self.text(*name), args.len(), config, depth, flow)?;
@@ -3953,6 +3965,10 @@ impl<'p> Emitter<'p> {
     fn args(
         &self,
         out: &mut Out,
+        // The callee as the source wrote it. Part I 2.3's wrap at an argument
+        // is keyed by it, because a statement may hold several calls and one
+        // call several arguments (`check::Checked::nullable_args`).
+        callee: &str,
         args: &[Expr],
         // Which positional parameters of the callee take a **handle** on a shared
         // value by value, where a ledger describes the callee. Empty where nothing
@@ -3977,7 +3993,18 @@ impl<'p> Emitter<'p> {
             // so there is no second owner and nothing to duplicate.
             let duplicate = takes_a_handle.get(i).copied().unwrap_or(false)
                 && matches!(arg, Expr::Variable(_) | Expr::Field { .. });
+            // Part I 2.3: a plain value in a parameter the callee declares
+            // nullable.
+            let wrap = self
+                .nullable_args
+                .contains(&(flow.statement, callee.to_string(), i));
+            if wrap {
+                out.push("Some(");
+            }
             self.expr(out, arg, depth, flow)?;
+            if wrap {
+                out.push(")");
+            }
             if duplicate {
                 // `.clone()` and not `Rc::clone(&x)`: it is right under either
                 // count, so it cannot disagree with the type the position was

@@ -254,30 +254,13 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.4. `?.` onto a **method**, and the nullable wrap at an argument
-
-[ADR-052](specification/adr/adr-052.md) §4. The type is built and so is `?.` over
-a field — `map` over a plain one, `and_then` over one that is itself a `T?`. Two
-pieces are left, and neither is a question.
-
-**`x?.m()`** parses as a call *of* the reach, because the grammar has no arm for
-the call form, and the checker says what is wrong with a sentence rather than a
-parse error. Building it needs the method's return type to pick `map` or
-`and_then`, which the ledger has — so this is an afternoon rather than a
-decision.
-
-**The wrap at an argument** — `takes(42)` where the parameter is an `i64?` — is
-not a position this compiler can name: an expression carries no span, and the
-four places that *are* covered are each named by a statement, or by a statement
-and a field. The four places that *are* covered are each named by a statement, or by a statement and a field; an argument needs a key of its own, and `(statement, callee, index)` is the shape that is there for the taking.
-
-### 2.5. Part II 12.8's supervision syntax
+### 2.4. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.6. A package's own package dependencies are not resolved
+### 2.5. A package's own package dependencies are not resolved
 
 [ADR-047](specification/adr/adr-047.md) D2 is built one level deep: a program
 depends on a package by path, and a package that declares Nikaia dependencies **of

@@ -1274,6 +1274,19 @@ grammar! {
           // There is no arm for `?.m()`: a call postfix follows this one, so
           // `x?.m()` parses as a call *of* the reach, and the checker says what
           // is wrong with a sentence rather than a parse error.
+          // **A method is not a field**, and Part I 3.5 writes only the field.
+          // Before the field arm and consuming the `(`, because a `fail` is
+          // high priority and *not* fatal: it has to get further than the
+          // alternative or the field arm's reading wins and the `()` fails as
+          // an empty parenthesised expression, which is what a reader used to
+          // get.
+          | "?." SEGMENT "(" fail(
+                "`?.` reaches a field of a value that may be absent \
+                 (Part I, 3.5), and a method is not a field. To call one, take \
+                 the value first: `let u = maybe ?? fallback` and then \
+                 `u.method()`, or `match` on it where there is no fallback to \
+                 give"
+            ) -> { Postfix::SafeField(_state.intern("")) }
           | "?." name:SEGMENT -> { Postfix::SafeField(name) }
           | "[" index:expr "]" -> {
                 Postfix::Index(Box::new(index))

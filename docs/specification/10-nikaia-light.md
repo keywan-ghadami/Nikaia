@@ -350,10 +350,8 @@ an allocation happens only where you wrote that you wanted one, and [ADR-024](ad
 > `String` standing where a `String?` is wanted is the one widening this language
 > has, and the constructor is the **compiler's** to write: there is no `Some` in
 > Nikaia and must not be, or the type's whole purpose becomes paperwork. It is
-> written at an annotated `let`, an assignment and a `return`. An argument is not
-> covered yet — `takes(42)` where the parameter is an `i64?` — because an
-> argument inside a call is not a position this compiler can name
-> (`docs/open-work.md`).
+> written wherever a plain value meets a nullable slot: an annotated `let`, an
+> assignment, a `return`, a struct-literal field, and a call argument.
 >
 > `let m = null` with nothing beside it is **not** refused here, and that is on
 > purpose: `let mut m = null` and then `m = "hi"` is a correct program, and this
@@ -605,9 +603,10 @@ let display_name = name ?? "Guest"
 > note that explained it, which used to name the machinery instead of the
 > operator ([ADR-052](adr/adr-052.md) D8).
 >
-> **Not built:** `?.` onto a *method*. `x?.m()` needs the method's return type to
-> pick between the two, which is work rather than a question
-> (`docs/open-work.md`).
+> **`?.` onto a *method* is refused**, with a sentence: this section writes a
+> field, and a form the specification does not name is not the compiler's to add.
+> The way out it names is taking the value with `??`, or a `match` where there is
+> no fallback to give.
 
 ---
 

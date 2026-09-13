@@ -172,6 +172,18 @@ pub struct Checked {
     /// `shared_sites`, which covers the same construct for the same kind of
     /// reason.
     pub nullable_fields: BTreeSet<(usize, String)>,
+    /// The **call arguments** where a plain value stands in a nullable
+    /// parameter, as the byte the statement starts at, the callee as the source
+    /// wrote it, and the argument's position (Part I 2.3).
+    ///
+    /// The third position D4's wrap needs a key for, and the narrowest one that
+    /// works: an expression carries no span, a statement may hold several calls,
+    /// and one call may pass several arguments - so the callee's written name
+    /// and the index together say which. **The written name and not the
+    /// resolved key**, because the emitter has only what the source says: a
+    /// method's key is `Type::method` and a constructor's is `Type::new`, and
+    /// neither is what stands at the call.
+    pub nullable_args: BTreeSet<(usize, String, usize)>,
     /// The **narrowing conversions**, as the byte the statement they stand in
     /// starts at and the type converted to (ADR-043 D4).
     ///
@@ -334,6 +346,8 @@ pub struct Propagation {
     pub flattened: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
     pub nullable_in_fields: BTreeSet<(usize, String)>,
+    /// [`Checked::nullable_args`].
+    pub nullable_in_args: BTreeSet<(usize, String, usize)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -365,6 +379,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
         nullable_in_fields: checked.nullable_fields,
+        nullable_in_args: checked.nullable_args,
     }
 }
 
@@ -1363,7 +1378,15 @@ impl<'a> Checker<'a> {
                     .map(|ty| ty::substitute(ty, &bound))
                     .collect();
                 let found = self.arguments_given(args, &expected, span);
-                let result = self.arguments(&key, contract, args, &found, &[], span);
+                let result = self.arguments(
+                    &key,
+                    self.parsed.text(*method),
+                    contract,
+                    args,
+                    &found,
+                    &[],
+                    span,
+                );
                 ty::substitute(&result, &bound)
             }
 
@@ -1874,7 +1897,7 @@ impl<'a> Checker<'a> {
             .strip_suffix("::new")
             .filter(|_| !name.ends_with("::new"))
             .map(Ty::named);
-        let result = self.arguments(&key, contract, args, &found, &passed, span);
+        let result = self.arguments(&key, &name, contract, args, &found, &passed, span);
         constructed.unwrap_or(result)
     }
 
@@ -1883,9 +1906,13 @@ impl<'a> Checker<'a> {
     /// `given` is the argument expressions, for the one diagnostic that has to
     /// name the **value** rather than its type: `NK1115` points at the line where
     /// the sharing belongs, and that line starts with the name the caller wrote.
+    #[allow(clippy::too_many_arguments)]
     fn arguments(
         &mut self,
         key: &str,
+        // The callee as the source writes it, which is the part the emitter can
+        // match a recorded argument against (`nullable_args`).
+        written: &str,
         contract: &FnContract,
         given: &[Expr],
         found: &[Ty],
@@ -1952,6 +1979,20 @@ impl<'a> Checker<'a> {
             // gives a *method* call the answer earlier).
             if let Some(given) = given.get(at) {
                 self.constant_fits(given, Some(want), span);
+            }
+            // Part I 2.3's third position for the wrap: a plain value in a
+            // parameter the callee declares nullable. Recorded before `fits`
+            // is consulted, because this *is* the fit - `Ty::fits` allows it,
+            // and what is left is telling the emitter to write the
+            // constructor.
+            if matches!(want, Ty::Nullable(_)) && !matches!(found, Ty::Nullable(_)) {
+                let is_literal = given.get(at).is_some_and(is_literal);
+                if !found.is_unknown() || is_literal {
+                    self.checked
+                        .nullable_args
+                        .insert((span.start, written.to_string(), at));
+                    continue;
+                }
             }
             if self.fits_through_deref(found, want) {
                 continue;
