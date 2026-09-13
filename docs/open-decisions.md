@@ -1,7 +1,7 @@
 # Open decisions — the questions that need the owner
 
-Nine entries. **Eight are answered and one is dropped**, and every answer has its
-record: [ADR-046](specification/adr/adr-046.md),
+Ten entries. **Eight are answered, one is dropped, and one is open**, and every
+answer has its record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
 [ADR-049](specification/adr/adr-049.md), [ADR-050](specification/adr/adr-050.md),
 [ADR-051](specification/adr/adr-051.md), [ADR-053](specification/adr/adr-053.md)
@@ -9,7 +9,10 @@ and [ADR-055](specification/adr/adr-055.md).
 Built: the entries on the numeric surface, the withdrawn `a`/`b`/`c`, reserved
 words, how a package names its dependencies, and — at the default setting — what
 a task means. §6's language half is built too, and each entry says what is left. They stay here until the owner drops
-them. **Nothing here is open.** Each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
+them. **One is open: §10, what `std::http` is** — put here because a record was
+accepted whose surface half describes an interface nobody has chosen, so the
+question arrived after the answer rather than before it. Each entry says what is
+blocked, what the options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
 
@@ -628,3 +631,49 @@ lowering landed.
 pausing entries, and `spawn` with `TaskHandle`, `.join()` and `NK2101` — all at
 `no`, which is the default. What is left is the *thread*: the `yes` executor,
 where a spawned future has to be `Send`, and §5's `overlap`.
+
+---
+
+## 10. What **is** `std::http`? — **open**
+
+**Why it is here and not in the work list.** [ADR-058](specification/adr/adr-058.md)
+is accepted and none of it is built, which is ordinary; what is not ordinary is
+that four of its nine decisions describe a **surface nobody has chosen**. `http::File`
+is a type in an interface that does not exist. "A body may be a `Bytes` or a
+mapping" says what a handler may return. A bounded, invalidated table of mappings
+is the inside of a library there is no outside for. Each of those reads as settled
+and is not — the question they rest on has never been put.
+
+**What is *not* in question**, so the record is not reopened wholesale. Five of its
+decisions constrain whatever `std::http` turns out to be, and hold either way:
+
+* a path out of a request is `Untrusted` and may not reach the filesystem
+  unchecked — a statement about the provenance lattice and the filesystem, not
+  about a server, and the one piece buildable before a socket exists;
+* `std` chooses the mechanism and the program never does, with the operator able
+  to overrule — a principle, and the one four production servers arrived at
+  independently;
+* `splice` is not it; TLS turns the file path off as a property; whatever carries
+  the bytes pauses through the executor or is not `std`'s to call;
+* the length is settled before the status line — a fact about HTTP.
+
+**The question.** Not how a server is implemented, but what its surface *is*:
+
+* **What answers a request.** A handler returns the answer today
+  ([ADR-018](specification/adr/adr-018.md) D2), and the set of things it may
+  return is what ADR-058 D1 and D2 quietly extend. Is that set open, closed, or a
+  trait the program may implement?
+* **Who builds the server.** `http::Server::new().route(…).listen(…)` is the
+  README's shape and nothing decides it.
+* **Whether `std` ships it at all**, or whether an HTTP server is a package —
+  which is now a real alternative, since a package can depend on a package
+  ([ADR-053](specification/adr/adr-053.md)). `std` shipping a web server is a
+  choice most languages made once and regretted differently.
+
+**What is blocked by it:** nothing today, and that is the point. It blocks
+*reading* — an accepted record whose surface half cannot be evaluated, because
+what it would constrain has no shape yet. The order is the wrong way round, and
+writing that down is cheaper than discovering it when somebody builds to it.
+
+**A note on order rather than a recommendation.** The path check needs no answer
+here and closes a security hole; it can be built while this stays open.
