@@ -869,6 +869,7 @@ What a handler returns is what answers the request:
 | :--- | :--- |
 | `String` | 200, `text/plain; charset=utf-8` |
 | `html::Raw` | 200, `text/html; charset=utf-8` |
+| `Bytes` | 200, `application/octet-stream` |
 | `Response` | itself |
 | `T throws` | the value on success; on failure **500 with a generic body**, the error logged |
 
@@ -876,6 +877,65 @@ The last row is a decision: an error's message is written for the operator, and 
 returns one to the client is how internal paths and driver messages end up in a bug report. A
 status code, a header or a body of one's own is a `Response`, built where it is returned —
 `http::Response(status: 400, body: "id is required")`.
+
+**A body need not be bytes the program allocated** ([ADR-058](adr/adr-058.md) D1). `Bytes` is the
+shared buffer of Part I 6.6 and `Mapped` derefs to it, so a page mapped **once, outside the
+handler** is a body that costs a reference count per request rather than a read — the handler
+answering with it duplicates the handle rather than moving it
+([ADR-040](adr/adr-040.md) D1's rule, applied to a buffer):
+
+```nika
+fn main() throws {
+    let page = fs::map("index.html")
+
+    http::Server::new()
+        .route("/") fn { page }
+        .listen(":8080")
+}
+```
+
+Reading the file inside the handler instead is a syscall, an allocation and a UTF-8 validation
+per request, and on the measurement [ADR-058](adr/adr-058.md) §1 quotes it is **twice** the
+machine's CPU for a 4 KiB page.
+
+**And a response may be a file the program never read at all** ([ADR-058](adr/adr-058.md) D2):
+`http::File("index.html")` is a body whose bytes go from the page cache to the socket without
+entering the process. Its `Content-Type` follows the extension, and its length — and any failure
+to open it — are settled before the status line, because after the headers are written there is
+no status code left to send (D6). Whether that becomes `sendfile(2)`, a mapping, or an ordinary
+read is `std`'s to choose at run time and not the program's to name (D3), and it is unavailable
+under TLS and under HTTP/2 (D5).
+
+**When the request names the file, the path is `Untrusted` and the compiler says so.** A
+download route is the other program, and it is not the one above with a variable in it:
+
+```nika
+// A request chose these bytes (ADR-010 D2), so they may not reach a path.
+fs::map(request.query("file") ?? "")
+```
+
+`fs::within(root, name)` is what clears it: it resolves the join, answers the
+nullable of Part I 3.5 — `none` where the result would leave `root` — and its
+answer is **trusted where its argument was not**. A handler serves the file it
+names and answers 404 for a `none`.
+
+Handing `request.query("file")` to `http::File`, `fs::map`, `fs::read` or `fs::write` directly is
+a **compile error** and not a runtime check ([ADR-058](adr/adr-058.md) D7): a `../../etc/shadow`
+that arrives as a 200 is not a failure a status code fixes afterwards. The provenance is
+[ADR-010](adr/adr-010.md) D1's lattice, so the taint survives the `join` that is exactly how a
+traversal bug is written, and `trusted: true` at the source is the other way to clear it — for
+the program that knows something the compiler does not, recorded in `nikaia.contracts` with its
+site.
+
+What `std` keeps between requests is bounded, dropped when the file's identity or modification
+time moves, and sized by the operator rather than the program ([ADR-058](adr/adr-058.md) D8). A
+page that must be held for certain is mapped by the program itself, outside the handler, which is
+the first example above.
+
+> **Status:** `std::http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes`
+> row nor `http::File` exists, and neither does `fs::within` or D7's refusal — the provenance
+> analysis it would rest on does (`std::collections`, below, and `nikaia --trust`). `fs::map` and
+> `Bytes` exist.
 
 The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
 and `query(name)` yield `&str`, so a parameter used inside the request's scope costs nothing and

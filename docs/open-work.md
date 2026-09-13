@@ -369,6 +369,54 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
+### 2.9. There is no HTTP server, and three records now wait on it
+
+[ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
+runtime is running before `main`, files complete on `io_uring`, sockets signal
+readiness — and [ADR-055](specification/adr/adr-055.md) has since put an executor
+on top of them at `user_parallelism = no`, so a task can pause and another can
+run. **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are untouched**, and
+the executor does not change that: what is missing is not somewhere for a
+handler to run, it is a socket to run it for. The order that record gives is unchanged: a socket layer that keeps
+registrations rather than answering one readiness question at a time, then a
+minimal HTTP/1.1 server on it, then the parsing moved into Nikaia, then `rustls`,
+then HTTP/2. The first step is the blocker; `worker::poll_one` builds a poller per
+wait today.
+
+What waits inside it:
+
+* [ADR-018](specification/adr/adr-018.md) entire — what a handler sees and what it
+  returns is specified and has nowhere to run;
+* [ADR-058](specification/adr/adr-058.md) D1's `Bytes` body row, D2's `http::File`,
+  D3's mechanism choice and D8's kept mappings, all of which are things to build
+  *on* a server ([#45](https://github.com/keywan-ghadami/Nikaia/pull/45));
+* [`project_status_and_roadmap.md`](project_status_and_roadmap.md) Phase 3's route
+  hashing, which says in as many words that it has no target because there is no
+  server.
+
+**One piece does not wait, and it is the one worth building first.**
+[ADR-058](specification/adr/adr-058.md) D7 — a path out of a request is
+`Untrusted` and may not reach `fs::map`, `fs::read`, `fs::write` or `http::File`
+unchecked — needs no socket. `contracts::trust` exists and `nikaia --trust` prints
+what it found ([ADR-010](specification/adr/adr-010.md) D7); what is missing is the
+consumer, a diagnostic where an untrusted value reaches a path parameter, and
+`fs::within(root, name)` beside it. Testable against `fs::map` today, and every
+program that later writes `http::File` inherits it.
+
+**It is also the only entry in this section that closes a security hole rather
+than an ergonomic one**, which is worth saying where a reader chooses what to
+pick up. [ADR-010](specification/adr/adr-010.md) D8 built a taint lattice and
+argued for building it generally rather than as a hasher special case; its
+second consumer is the test of whether that generalised, and it costs no new
+analysis. Everything else here is a feature nobody can use yet — this one is
+absent from every program written before it lands.
+
+Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
+bench that decided it (`benches/sendfile/`) and the write-up
+([`zero-copy-send.md`](zero-copy-send.md)); `send_file` beside the ring could have
+been built ahead of the server and deliberately was not, because D3's measurement
+makes it the mechanism that loses at the sizes a server sends most.
+
 ---
 
 ## 3. Upkeep
@@ -387,6 +435,43 @@ current while writing lambdas in the form
 A stale **Status** note is a defect in its own right
 ([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
 so this section being empty is a state to try to keep rather than a milestone.
+
+### 3.5. Two examples write a postfix `??` the language does not have
+
+Part I 3.5 defines `??` as **null coalescing** — `a ?? b`, a fallback when the
+left side is null — and nothing else. There is no postfix unwrap in that section,
+in the parser, or anywhere the specification states a rule. But two examples use
+one:
+
+* [ADR-018](specification/adr/adr-018.md) D3: `lookup(a.query("id")??)`
+* Part III 17.1, in the same shape, copied from it
+
+Measured, on the form reduced to one line:
+
+```
+q.nika: Parse error:
+expected expression; found unexpected token `)` at line 3, column 22
+   3 |     return lookup(q??)
+                            ^
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `seq`, `{`, digits, identifier
+```
+
+This is not a rule specified ahead of the compiler — those carry a **Status**
+note and this has none. It is an example using a construct the language never
+defined, which is worse: a reader who copies it gets a parse error with nothing
+to look up, because the section it would be defined in does not mention it.
+
+*What it needs is a decision before any work:* whether the nullable gets a
+postfix unwrap at all. If it does, Part I 3.5 gains it and the parser follows —
+and it wants a name for what it does when the value **is** null, which for an
+abort is Part III A.2's territory. If it does not, the two examples are rewritten
+to use what 3.5 has. Part I 2.3's nullable types are themselves a parse error
+(§2.5), so nothing can be written either way yet, and that is the reason this is
+upkeep rather than a defect: no program is wrong today, only the page is.
+
+The Part III 17.1 example was rewritten while this was found; ADR-018's stands,
+because an ADR is written once and the correction belongs to whatever answers
+the question above.
 
 ## 4. Where the other lists are
 

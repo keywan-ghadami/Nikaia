@@ -287,44 +287,51 @@ that only works single-threaded.
 
 ## 💻 Code example
 
-A HTTP server. Note what is *absent*: no `async`, no `await`, no `.unwrap()`, no lifetimes,
-no `Arc::clone`.
+A HTTP server: two routes, one of which reads a query parameter.
 
 ```nika
 use std::http
-use std::fs
 
-// `throws` replaces Result-Unwrapping. Errors bubble up automatically.
-fn handle_request(req: http::Request) throws IoError {
-    // Looks synchronous, but is non-blocking I/O (Suspension Point)
-    let data = fs::read_string("index.html")
-    return req.respond(200, data)
-}
-
-fn main() {
-    println("Starting Nikaia Server on :8080")
-
-    // `spawn` behaves polymorphically:
-    // - at user_parallelism = no:  green thread on the main loop
-    // - at user_parallelism = yes: task on the thread pool
-    // Syntax: Uses 'fn' block for lambdas (no '||')
-    spawn fn {
-        http::Server::new()
-            .route("/", handle_request)
-            .listen(":8080")
-    }
-
-    // No `await` needed. The process stays alive.
+fn main() throws {
+    http::Server::new()
+        .route("/") fn { "Hello, World" }
+        .route("/hello") fn(request) {
+            let name = request.query("name") ?? "world"
+            return f"Hello, {name}"
+        }
+        .listen(":8080")
 }
 ```
+
+A handler is a trailing lambda, and it receives the request only if it mentions it
+([ADR-018](docs/specification/adr/adr-018.md) D1): the first route names nothing, so it takes
+nothing. What a handler *returns* is the answer — a `String` is 200 `text/plain`, an
+`html::Raw` is 200 `text/html`, a `Response` built where it is returned is itself, and a
+handler that fails is a 500 whose message goes to the log rather than to the client (D2).
+`query` yields the nullable of Part I 3.5, so `??` is where the default is written and no empty
+string can be mistaken for an answer.
+
+Two things are not in the source and are not omissions. Which runtime this is: the switch
+chooses the executor and the same text is the program at either setting
+([ADR-011](docs/specification/adr/adr-011.md) D4). And where it pauses: a handler does I/O, so a
+call that waits looks like a call (Part II, 11.1) — the emitted Rust is an `async fn` with an
+`.await` at that call, decided by what the ledger already knows and **built**
+([ADR-055](docs/specification/adr/adr-055.md) D1, D2).
+
+> **Status:** `std::http` is not built ([ADR-038](docs/specification/adr/adr-038.md) D1) — this
+> is what the specification says a server is, not something you can run today. What *is* built
+> underneath it: the runtime, the executor at `user_parallelism = no`, and `spawn`
+> ([ADR-055](docs/specification/adr/adr-055.md) §6); what is missing is the socket layer and the
+> HTTP/1.1 parser above them. The programs in [`examples/`](examples/) are the ones that run.
 
 Bigger, more revealing programs live in [`examples/`](examples/): the One Billion Row
 Challenge, a four-function calculator, a web access log summarised, an INI file with comments, a
 JSON document, two Computer Language Benchmarks Game programs, an HTML table that cannot be
 made to leak markup, a stock list rendered to a page **on disk**, a pipe tallied in constant
-memory, and the TechEmpower `fortunes` benchmark. **Ten of the eleven compile, run, and are
-checked by `cargo test` at either setting**, with their output — and, where one is written, the file they produce — required to
-be identical; `fortunes` is still written at specification level. They are there because writing a real program against a spec is the
+memory, the same program split across three files, and the TechEmpower `fortunes` benchmark.
+**Eleven of the twelve compile, run, and are checked by `cargo test` at either setting**, with
+their output — and, where one is written, the file they produce — required to be identical;
+`fortunes` is still written at specification level. They are there because writing a real program against a spec is the
 cheapest way to find out what the spec forgot, and
 [`examples/README.md`](examples/README.md) lists exactly which gaps each one exposed and
 which are still open. `tests/samples/` holds the smaller programs the bootstrap compiler can
