@@ -1307,3 +1307,51 @@ fn a_declared_a_is_an_ordinary_name() {
         "and here it is the argument"
     );
 }
+
+// --- `self` as a declared name (`NK1119`) ------------------------------------
+
+/// **`self` is the one reserved word the grammar has to accept as a name**, and
+/// this is where declaring it is refused (`open-decisions.md` §7).
+///
+/// Every other reserved word is excluded from the grammar's `NAME` rule, so
+/// `let fn = 3` does not parse. `self` cannot be: `self.min` refers to it, and
+/// `NAME` is the rule both for declaring a name and for referring to one. The
+/// case it takes back is the same C.1 one as the rest - `let self = 3` lowered
+/// to `let self = 3;` and `rustc` refused the generated file with *"expected
+/// identifier, found keyword `self`"*.
+#[test]
+fn declaring_a_name_called_self_is_refused() {
+    for source in [
+        "fn main() { let self = 3 }",
+        "fn main() { for self in 0..3 { } }",
+        "fn main() { let f = fn(self) { 1 } }",
+    ] {
+        let found = findings(source);
+        let it = found
+            .iter()
+            .find(|f| f.code == "NK1119")
+            .unwrap_or_else(|| panic!("no NK1119 for {source}: {found:#?}"));
+        assert!(it.message.contains("`self` is a reserved word"), "{it:#?}");
+        assert!(
+            it.help.is_some(),
+            "every error names a way out (Part III C.2): {it:#?}"
+        );
+    }
+}
+
+/// And *referring* to `self` is untouched, which is the half that had to keep
+/// working: every method body in the repository does it.
+#[test]
+fn referring_to_self_is_not_refused() {
+    let source = "\
+struct Tally { n: i64 }
+impl Tally {
+    pub fn bump(&mut self) { self.n += 1 }
+}
+";
+    let found = findings(source);
+    assert!(
+        !found.iter().any(|f| f.code == "NK1119"),
+        "`self.n` refers to the receiver: {found:#?}"
+    );
+}

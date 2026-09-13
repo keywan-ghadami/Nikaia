@@ -121,10 +121,10 @@ fn a_view_handed_back_in_the_result_it_came_from_is_not_a_finding() {
     assert!(findings(
         r#"
         struct Tally { n: i64 }
-        fn count(seq: &str, k: usize) -> HashMap[&str, Tally] {
+        fn count(dna: &str, k: usize) -> HashMap[&str, Tally] {
             let mut counts: HashMap[&str, Tally] = HashMap::new()
-            for i in 0..seq.len() {
-                let fragment = &seq[i..i + k]
+            for i in 0..dna.len() {
+                let fragment = &dna[i..i + k]
                 counts.entry(fragment).or_insert_with fn { Tally(1) }
             }
             return counts

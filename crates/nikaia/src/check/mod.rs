@@ -831,6 +831,47 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `self` is a reserved word, and this is the one position the grammar
+    /// cannot refuse it in (`open-decisions.md` §7).
+    ///
+    /// Every other reserved word is excluded from `NAME` itself, so `let fn = 3`
+    /// does not parse. **`self` cannot be**, because it is the one keyword that
+    /// *is* a name: `self.min` refers to it, and `NAME` is the rule both for
+    /// declaring a name and for referring to one. So the refusal is here, where
+    /// the declaration is - and it can say more than a parse error would.
+    ///
+    /// **Three of the declaring positions, and the two that are left out are
+    /// left out for a reason a reader can check.** A `let`, a `for` binding and
+    /// a lambda's argument each carry a span, so the caret lands on the line
+    /// that is wrong. A parameter and a struct field do not: neither `FnArg` nor
+    /// `FieldDef` records one, and the nearest span this walk has is the body's
+    /// first statement - a different line. A caret on the wrong line is worse
+    /// than no message, so those two wait for the span
+    /// (`docs/open-work.md`).
+    ///
+    /// **`NK1119`**, and it is the same C.1 case as the rest of the list: `let
+    /// self = 3` lowered to `let self = 3;` and `rustc` refused the generated
+    /// file with *"expected identifier, found keyword `self`"*.
+    fn not_self(&mut self, name: &str, span: &Span, what: &str) {
+        if name != "self" {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1119",
+            message: format!("`self` is a reserved word, so {what} may not be called that"),
+            notes: vec![
+                "`self` already names one thing - the value a method was called on - and it \
+                 is the only reserved word that is a name at all, which is why the rest of \
+                 the list is refused by the grammar and this one is refused here \
+                 (Part I, 2.1)"
+                    .to_string(),
+            ],
+            help: Some("pick another name; `it`, `this` and `me` are all free".to_string()),
+        });
+    }
+
     /// ADR-043 D5.5: a division whose divisor is a constant zero is refused
     /// here, in this language's words.
     ///
@@ -904,6 +945,7 @@ impl<'a> Checker<'a> {
             } => {
                 let found = self.expr(value, span);
                 let name = self.parsed.text(*name).to_string();
+                self.not_self(&name, span, "a `let`");
                 let bound = match ty {
                     Some(ty) => {
                         let want = Ty::from_ast(self.parsed, ty);
@@ -979,10 +1021,13 @@ impl<'a> Checker<'a> {
                 let over = self.expr(iter, span);
                 self.fallible_step(&over, bindings.len(), span);
                 let element = element_of(&over, bindings.len());
-                let frame = bindings
+                let frame: Vec<Local> = bindings
                     .iter()
                     .map(|b| (self.parsed.text(*b).to_string(), element.clone(), None))
                     .collect();
+                for (name, _, _) in &frame {
+                    self.not_self(&name.clone(), span, "a `for` binding");
+                }
                 self.scope.push(frame);
                 self.block(body);
                 self.scope.pop();
@@ -1262,6 +1307,9 @@ impl<'a> Checker<'a> {
                     .iter()
                     .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown, None))
                     .collect();
+                for (name, _, _) in &frame {
+                    self.not_self(&name.clone(), span, "a lambda's argument");
+                }
                 self.scope.push(frame);
                 self.block(body);
                 self.scope.pop();

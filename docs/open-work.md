@@ -29,41 +29,14 @@ it to know what a program means.
 What was here and is gone: a module that could not hand out types, a bare word
 that became a different program, a refusal that carried a backtrace, a Rust
 warning about the generated file, a `Shared` slot decided twice, the explain modes
-missing from a project build, a cache that filled the disk, and a sum of constants
-that could not fit. Each is in the CHANGELOG with what it was and what fixed it; a
-fixed entry kept here only makes the list longer to read.
+missing from a project build, a cache that filled the disk, a sum of constants
+that could not fit, and **a keyword that could be a name** - which took the `dsl`
+block's diagnostic and three silent misreadings with it
+([ADR-051](specification/adr/adr-051.md)). Each is in the CHANGELOG with what it
+was and what fixed it; a fixed entry kept here only makes the list longer to
+read.
 
-### 1.1. A `dsl` block missing its `} eod` is reported as an undeclared name
-
-`dsl postgres { SELECT 1 }` without the closing `} eod` is not a `dsl` block at
-all, so what is left parses as statements and `NK1117` says *"nothing declares
-`postgres`"*. True, and not what the writer got wrong.
-
-**The obvious fix does not work, and this is why.** A `fail("…")` arm on
-`dsl_block_expr` — the shape ADR-022's `fn: …` refusal uses — is *not fatal* in
-this parser: its own documentation says **"an error that got further still wins
-(progress before priority)"**. So where the rest of the file has a reading that
-parses, as it does here, the `fail` is discarded along with everything else about
-that attempt. Tried and reverted this session.
-
-Two answers, and both are bigger than the entry looks:
-
-* **A cut.** Once `dsl NAME {` is matched, forbid backtracking out of the rule.
-  The grammar library offers `not`, `peek`, `until`, `recover` and `fail`, and no
-  cut, so this is a change to that library.
-* **Reserve the word** — and this is the answer, taken in
-  [`open-decisions.md`](open-decisions.md) §7. `dsl` is a keyword (Part II, 10.5)
-  and `NAME` matches it anyway, which is what gives the bad reading its
-  alternative. The objection recorded here was that `rule`, `boundary` and `fold`
-  are words a program may want; they are keywords of the **grammar sublanguage**,
-  reserved inside a grammar block and nowhere else, so they are not at issue. A
-  cut repairs this one diagnostic; the reserved list repairs the class, §1.6
-  included.
-
-Where a `dsl` block opens and nothing else parses, the message is already good:
-the parser names `} eod` among what it expected.
-
-### 1.2. An undeclared name is refused as a **statement** and nowhere else
+### 1.1. An undeclared name is refused as a **statement** and nowhere else
 
 `NK1117` fires where a statement is one name. A name used inside an expression —
 `let n = q + 1`, `f(q)`, `q.len()` — resolves to nothing and is passed over in
@@ -76,6 +49,22 @@ Two of the three letters the withdrawn lambda form used are covered specially
 with a message about the withdrawal, because that is the mistake a reader of the
 old specification will actually make. Every other name is not.
 
+**The reserved-word list narrowed this and left one case behind**, which is what
+makes it worth reading against [`spec-promises.md`](spec-promises.md). Every word
+the specification names for a construct the grammar does not have — `assert`,
+`const`, `unsafe`, `test`, `bench`, `macro` — is a name in statement position, and
+`NK1117` refuses each of them by name. `quote` is the exception, and it is this
+entry exactly:
+
+```nika
+let q = quote { 1 + 1 }
+```
+
+parses as `let q = quote` and then `{ 1 + 1 }`, and **lowers in silence**, because
+the undeclared name is the *value of a `let`* and not a statement. So this is not
+a hypothetical: it is the one row of that page still marked *"means something
+else"*.
+
 *What it needs:* a decision, not just work. "This expression names something
 nothing declares" is a much wider claim than the statement rule makes, and the
 checker's polarity is that it never refuses a correct program (C.4) — so the list
@@ -83,7 +72,7 @@ of what counts as declaring a name has to be complete before the rule can be
 widened, and today it is not: a name from a package this build cannot see would be
 refused.
 
-### 1.3. A `std` function whose Rust parameter is a `usize` still needs a written conversion
+### 1.2. A `std` function whose Rust parameter is a `usize` still needs a written conversion
 
 [ADR-048](specification/adr/adr-048.md) D1 made a length an `i64` and emits both
 conversions, and its scope is deliberately what a length *returns*. The other
@@ -95,7 +84,7 @@ specification does not offer (§3.1 of that record says so).
 describes as `i64` whose Rust counterpart takes a `usize`. No program has yet made
 the answer obvious, which is why the record leaves it open rather than guessing.
 
-### 1.4. A relayed `rustc` message may still name a type the program did not write
+### 1.3. A relayed `rustc` message may still name a type the program did not write
 
 **The map's hasher is fixed.** The emitter writes a trusted input's map as
 `TrustedMap`, so *"type annotations needed for `HashMap<_, _,
@@ -118,7 +107,7 @@ noticing.
 
 ---
 
-### 1.5. An out-of-range literal that nothing constrains is refused in Rust's words
+### 1.4. An out-of-range literal that nothing constrains is refused in Rust's words
 
 ```nika
 let big = 3000000000
@@ -161,32 +150,27 @@ remedy that works is kept; one that leads out of the language is not.
 
 ---
 
-### 1.6. A keyword that is no construct is read as something else, silently
+### 1.5. A parameter or a struct field may still be called `self`
 
-Measured this session, and **recorded before and lost in a rewrite of this file**.
+[ADR-051](specification/adr/adr-051.md) D4. `self` is a reserved word the grammar
+cannot exclude from its name rule - `self.min` refers to it, and one rule serves
+both declaring a name and referring to one - so declaring one is `NK1119` from
+the checker. It covers a `let`, a `for` binding and a lambda's argument, and not
+a parameter or a struct field.
 
 ```nika
-fn main() {
-    let c = true
-    assert c
-}
+fn f(self: i32) -> i32 { return self }
 ```
 
-lowers, with no diagnostic of any kind, to
+is accepted here and refused by `rustc` about the generated file - *"expected
+identifier, found keyword `self`"* - which is the Part III C.1 class, now down to
+two positions from all of them.
 
-```rust
-let c = true as sert;
-```
-
-`assert` is swallowed into an `as` cast and `sert` is taken for a type name. The
-program means something other than what is written, which is the worst class this
-file names — worse than a refusal in the backend's words, because nothing is
-reported at all.
-
-*Root cause:* `rule NAME = not(digit) n:ident` admits any identifier, and there is
-no reserved-word list in the parser. *What it needs:*
-[`open-decisions.md`](open-decisions.md) §7, which answers that — this entry is
-what that answer is for, and it is not fixable one word at a time.
+*Why it is not simply done:* neither `FnArg` nor `FieldDef` records a source
+position, and the nearest span each walk has is the body's first statement, which
+is a different line. A caret on the wrong line is worse than no message, so this
+waits on the span rather than being approximated. **Small and mechanical**: one
+field on each of two AST nodes, set where the parser already has `_span`.
 
 ---
 

@@ -129,6 +129,41 @@ let mut y = 10
 y = 20     // This is allowed
 ```
 
+**Reserved words**
+
+These words mean one thing wherever they appear, so a name may not be one of them
+([ADR-051](adr/adr-051.md) D1):
+
+```text
+as      catch   dsl     else    enum    false   fn      for
+from    grammar if      impl    in      let     match   mut
+overlap pub     return  self    seq     spawn   struct  sync
+throw   throws  true    use     while
+```
+
+Three things about the list, because each of them is a question a reader will
+have:
+
+* **A `grammar` block has its own vocabulary**, and it is not here: `rule`,
+  `boundary`, `fold`, `par_fold` and `unchecked` are keywords *inside* one
+  (Part II, 10.1) and ordinary names everywhere else (D2).
+* **After a `::` or a `.`, a reserved word is a name.** A segment follows a `::`
+  and a member follows a `.`, and no construct begins in either position - so
+  `Self::dsl` (Part II, 10.5) and `scope.spawn fn { … }` (Part II, 12.5) are what
+  they look like (D3).
+* **`self` is on the list and is also a name** - the one the receiver of a method
+  has. So *using* it is what every method body does; *declaring* one is refused
+  (D4).
+
+> **Status:** built. A name that is a reserved word does not parse, and the parse
+> error names the word and says it is reserved. `self` is the one the grammar
+> cannot refuse - `NAME` is the rule for declaring a name *and* for referring to
+> one - so declaring it is `NK1119` from the checker, at a `let`, a `for` binding
+> and a lambda's argument. A parameter and a struct field are not covered yet,
+> for a reason worth knowing: neither records a source position, and a caret on
+> the wrong line is worse than no message
+> ([ADR-051](adr/adr-051.md) D4, `docs/open-work.md`).
+
 ### 2.2. Primitive Data Types
 Nikaia provides basic types to represent simple values.
 
