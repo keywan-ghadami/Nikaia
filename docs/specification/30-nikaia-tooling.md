@@ -1046,7 +1046,7 @@ Some modules are only available, or behave restrictively, depending on the machi
 * **`std::process`**: Spawning child processes.
 * **`std::thread` / `spawn`**:
     * **At `user_parallelism = yes`:** Supports full concurrency. The primary mechanism is `spawn`.
-        * **Strict Implicit Move:** To ensure thread safety without complex lifetime tracking, Nikaia enforces **Implicit Move Semantics** for all tasks spawned this way. Ownership of variables used inside the `spawn` block is automatically transferred to the new thread.
+        * **Strict Implicit Move:** To ensure thread safety without complex lifetime tracking, Nikaia enforces **Implicit Move Semantics** for a task spawned this way: ownership of the ordinary data used inside the `spawn` block is transferred to the new thread. A handle on a shared value is the one exception and is *duplicated* instead, so the name outside keeps working ([ADR-040](adr/adr-040.md) D1, Part I 6.2) — which is why this says "ordinary data" rather than "variables".
     * **At `user_parallelism = no`, and on `wasm32-*` whatever it says:** Direct usage of `std::thread` is a **compile-time error**. A share-nothing architecture is what makes `user_parallelism = no` mean something, and what keeps a program compatible with WASM hosts.
 
 > **Status:** the thread count this switch decides is built

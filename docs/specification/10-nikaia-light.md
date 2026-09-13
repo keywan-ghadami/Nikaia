@@ -689,7 +689,9 @@ println(prefix)
 
 #### B. Detached Context (`@detached`)
 If a function stores the callback, executes it later, or sends it to another thread/task, it is a **Detached Context**.
-* **Behavior:** Implicit Move (Ownership Transfer).
+* **Behavior:** Implicit Move (Ownership Transfer) for ordinary data. A handle on a
+  shared value is **duplicated** rather than moved, so the name outside stays usable
+  ([ADR-040](adr/adr-040.md) D1, and 6.2 for the rule).
 * **Examples:** `spawn`, `defer`, `set_timeout`, `channel.on_receive`.
 
 ```nika
@@ -747,12 +749,15 @@ You write `Shared[T]` yourself — it is not inferred, because sharing changes *
 * **`Locked[T]`**: for individually locked fields inside a shared structure — one lock per field rather than one lock around the whole of it. It is the same lock as the one inside `SharedMut[T]`, opened by the same four doors.
 
 **How the second owner comes about.** You do not write the step that produces
-one. Where a handle on a `Shared[T]` is handed on — passed to a function, or used
-by a task (Part II, 11.2) — the handle is **duplicated**, and each handle is
+one. Where a handle on a `Shared[T]` or a `SharedMut[T]` is handed on — passed to
+a function, or used by a task (Part II, 11.2) — the handle is **duplicated**, and
+each handle is
 cleaned up at the end of its own block (6.1). There is no method to call, because
 there would be nothing for it to do: a duplicated handle copies none of the data
 and produces no second value — one value, one more owner — so there is nothing to
-name ([ADR-040](adr/adr-040.md) D1).
+name ([ADR-040](adr/adr-040.md) D1). Both are shared values, so the rule is the
+same for both — though a `SharedMut[T]` has nowhere to be handed *to* across a
+thread, because it may not cross one (Part II, 11.2).
 
 **This is the handle and nothing else.** Ordinary data — a string, a number, a
 struct of those — is still **moved** where it is handed on (8.3). An automatic
