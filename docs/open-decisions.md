@@ -2,8 +2,9 @@
 
 Six entries. **Five are answered and one is dropped**, and every answer has its
 record: [ADR-046](specification/adr/adr-046.md),
-[ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md)
-and [ADR-049](specification/adr/adr-049.md) — §5's is owed. §2 and §3 are built, §6's language
+[ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
+[ADR-049](specification/adr/adr-049.md) and
+[ADR-050](specification/adr/adr-050.md). §2 and §3 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
 them. **Nothing here is open.** The shape below is kept for whatever arrives
 next: each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
@@ -238,7 +239,7 @@ they apply to every entry rather than to one week's choice.
 
 ---
 
-## 5. Statement order, and how a program asks for overlap — **answered**
+## 5. Statement order, and how a program asks for overlap — **answered** ([ADR-050](specification/adr/adr-050.md); not built — it needs the runtime binding `spawn` waits on)
 
 The entry asked when `ordering` gets measured and whether it stays on. Both halves
 are answered, and the first is answered by dropping it.
