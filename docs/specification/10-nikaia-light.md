@@ -156,13 +156,15 @@ have:
   (D4).
 
 > **Status:** built. A name that is a reserved word does not parse, and the parse
-> error names the word and says it is reserved. `self` is the one the grammar
-> cannot refuse - `NAME` is the rule for declaring a name *and* for referring to
-> one - so declaring it is `NK1119` from the checker, at a `let`, a `for` binding
-> and a lambda's argument. A parameter and a struct field are not covered yet,
-> for a reason worth knowing: neither records a source position, and a caret on
-> the wrong line is worse than no message
-> ([ADR-051](adr/adr-051.md) D4, `docs/open-work.md`).
+> error names the word and says it is reserved.
+>
+> `self` is the one the grammar cannot refuse that way - `NAME` is the rule for
+> declaring a name *and* for referring to one - so declaring it is `NK1119` from
+> the checker: at a `let`, a `for` binding, a lambda's argument and a struct
+> field. A **parameter** named `self` never parsed at all, because the receiver
+> takes the word and the type beside it has nowhere to go; it says so in a
+> sentence now rather than asking for a closing parenthesis
+> ([ADR-051](adr/adr-051.md) D4).
 
 ### 2.2. Primitive Data Types
 Nikaia provides basic types to represent simple values.

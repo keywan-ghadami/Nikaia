@@ -1325,6 +1325,10 @@ fn declaring_a_name_called_self_is_refused() {
         "fn main() { let self = 3 }",
         "fn main() { for self in 0..3 { } }",
         "fn main() { let f = fn(self) { 1 } }",
+        // A struct field, which took a span of its own on `FieldDef` to
+        // reach: without one the nearest span this walk had was a
+        // statement's, on a different line.
+        "struct Bad { self: i64 }",
     ] {
         let found = findings(source);
         let it = found
@@ -1337,6 +1341,21 @@ fn declaring_a_name_called_self_is_refused() {
             "every error names a way out (Part III C.2): {it:#?}"
         );
     }
+}
+
+/// **A parameter named `self` is refused by the grammar**, which is where it
+/// turns out to belong: `fn f(self: i64)` never parsed at all, because the
+/// receiver rule takes the word and the `: i64` has nowhere to go. It says so
+/// in a sentence now rather than *"expected `)`; found `:`"*
+/// ([ADR-051](../../../docs/specification/adr/adr-051.md) D4).
+#[test]
+fn a_parameter_called_self_is_refused_by_the_grammar() {
+    let message = format!(
+        "{:#}",
+        parse_to_ast("fn f(self: i64) -> i64 { return 1 }").expect_err("refused")
+    );
+    assert!(message.contains("`self` is a reserved word"), "{message}");
+    assert!(message.contains("`&mut self`"), "{message}");
 }
 
 /// And *referring* to `self` is untouched, which is the half that had to keep

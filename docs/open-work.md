@@ -31,8 +31,8 @@ that became a different program, a refusal that carried a backtrace, a Rust
 warning about the generated file, a `Shared` slot decided twice, the explain modes
 missing from a project build, a cache that filled the disk, a sum of constants
 that could not fit, and **a keyword that could be a name** - which took the `dsl`
-block's diagnostic and three silent misreadings with it
-([ADR-051](specification/adr/adr-051.md)). Each is in the CHANGELOG with what it
+block's diagnostic, three silent misreadings, and every position that can
+declare one with it ([ADR-051](specification/adr/adr-051.md)). Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
@@ -150,29 +150,7 @@ remedy that works is kept; one that leads out of the language is not.
 
 ---
 
-### 1.5. A parameter or a struct field may still be called `self`
-
-[ADR-051](specification/adr/adr-051.md) D4. `self` is a reserved word the grammar
-cannot exclude from its name rule - `self.min` refers to it, and one rule serves
-both declaring a name and referring to one - so declaring one is `NK1119` from
-the checker. It covers a `let`, a `for` binding and a lambda's argument, and not
-a parameter or a struct field.
-
-```nika
-fn f(self: i32) -> i32 { return self }
-```
-
-is accepted here and refused by `rustc` about the generated file - *"expected
-identifier, found keyword `self`"* - which is the Part III C.1 class, now down to
-two positions from all of them.
-
-*Why it is not simply done:* neither `FnArg` nor `FieldDef` records a source
-position, and the nearest span each walk has is the body's first statement, which
-is a different line. A caret on the wrong line is worse than no message, so this
-waits on the span rather than being approximated. **Small and mechanical**: one
-field on each of two AST nodes, set where the parser already has `_span`.
-
-### 1.6. A function that hands back a view emits Rust with no lifetime
+### 1.5. A function that hands back a view emits Rust with no lifetime
 
 ```nika
 fn name() -> &str { "Ada" }
@@ -196,7 +174,7 @@ where a returned view's lifetime comes from when no argument provides one -
 `'static` is right for a literal and wrong for anything else, so this is not a
 one-line default.
 
-### 1.7. A `rustc` **warning** about the generated file reaches the user
+### 1.6. A `rustc` **warning** about the generated file reaches the user
 
 Part I 2.3's own example, written as the page writes it, prints
 
@@ -291,7 +269,7 @@ decision.
 **The wrap at an argument** — `takes(42)` where the parameter is an `i64?` — is
 not a position this compiler can name: an expression carries no span, and the
 four places that *are* covered are each named by a statement, or by a statement
-and a field. So this waits on the same thing §1.5 does, one field on an AST node.
+and a field. The four places that *are* covered are each named by a statement, or by a statement and a field; an argument needs a key of its own, and `(statement, callee, index)` is the shape that is there for the taking.
 
 ### 2.5. Part II 12.8's supervision syntax
 

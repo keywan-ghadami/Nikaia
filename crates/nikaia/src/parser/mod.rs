@@ -498,6 +498,27 @@ grammar! {
                 Receiver { is_ref: true, is_mut: true }
             }
           | "&" KW_SELF -> { Receiver { is_ref: true, is_mut: false } }
+          // Before the bare arm: `self: i64` is a parameter somebody named
+          // `self`, and the bare arm would take the word and leave the `: i64`
+          // to fail as the *next* parameter - at the colon, with nothing to say.
+          // `self` is a reserved word (ADR-051 D1) and the only one the grammar
+          // cannot exclude from `NAME`, so this is where declaring one is
+          // refused in a position `NAME` never sees.
+          //
+          // **The colon is consumed and not peeked**, which is the opposite of
+          // what ADR-046 D2's import refusals do, and measured both ways: with
+          // `peek(":")` - or `peek((KW_SELF ":"))` - the bare arm below reaches
+          // just as far and its *"expected `)`"* wins, because a `fail` is high
+          // priority and not fatal ("progress before priority"). So the arm has
+          // to get further than the alternative, and the cost is the caret: it
+          // lands on the type rather than on the word, one token past where a
+          // reader would put it. The sentence is what carries the answer.
+          | KW_SELF ":" fail(
+                "`self` is a reserved word, so a parameter may not be called \
+                 that (Part I, 2.1). It already names one thing - the value a \
+                 method was called on - and that is written `self`, `&self` or \
+                 `&mut self`, with no type beside it"
+            ) -> { Receiver { is_ref: false, is_mut: false } }
           | KW_SELF -> { Receiver { is_ref: false, is_mut: false } }
 
         // Kap 9.2: use std::fs
@@ -621,9 +642,12 @@ grammar! {
         // Kap 9.2: `pub` on a field, which is a different question from `pub`
         // on the struct - a public type may keep its parts to itself, and 9.3
         // says that is the point.
-        rule field_def -> FieldDef =
+        // `@=` for the span: a diagnostic about a field puts its caret on the
+        // field, and the nearest span the walk around it has is a statement's
+        // (ADR-051 D4).
+        rule field_def -> FieldDef @=
             vis:kw_pub? name:NAME ":" ty:type_ref -> {
-                FieldDef { name, ty, is_public: vis.is_some() }
+                FieldDef { name, ty, is_public: vis.is_some(), span: _span }
             }
 
         // --- Argumente & Typen ---
@@ -640,10 +664,7 @@ grammar! {
 
         rule fn_arg_def_tail -> FnArg = "," arg:fn_arg_def -> { arg }
 
-        rule fn_arg_def -> FnArg =
-            name:NAME ":" ty:type_ref -> {
-                FnArg { name, ty }
-            }
+        rule fn_arg_def -> FnArg @= name:NAME ":" ty:type_ref -> { FnArg { name, ty, span: _span } }
 
         rule return_type_arrow -> Type =
             "->" ty:type_ref -> { ty }

@@ -475,6 +475,14 @@ pub struct GenericParam {
 pub struct FnArg {
     pub name: Ident,
     pub ty: Type,
+    /// Where the parameter is written.
+    ///
+    /// **A declaration needs one of its own**, which a statement's span cannot
+    /// stand in for: a diagnostic about a parameter has to put its caret on the
+    /// parameter, and the nearest span a body's walk has is its first statement,
+    /// which is a different line
+    /// ([ADR-051](../../../docs/specification/adr/adr-051.md) D4).
+    pub span: Span,
 }
 
 /// `timeout: 60` at a call site.
@@ -509,6 +517,8 @@ pub struct FieldDef {
     /// Kap 9.2: a field is visible outside the file that declares its struct
     /// only where it says `pub`.
     pub is_public: bool,
+    /// Where the field is written, for the reason [`FnArg::span`] gives.
+    pub span: Span,
 }
 
 // Part III, Kap 16.1: $dst = out(reg) result

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed (every position that can declare a name called `self`)
+
+- **A struct field named `self` is `NK1119`**, which took a span of its own on `FieldDef`: without one the nearest span that walk had was a statement's, on a different line, and a caret on the wrong line is worse than no message ([ADR-051](docs/specification/adr/adr-051.md) D4). `field_def` takes `@=` now, `FnArg` takes a span too, and the caret lands on the field.
+- **A parameter named `self` turned out never to have parsed**, and `NK1119` is not where it belongs. `fn f(self: i64)` is refused by the *grammar* — the receiver rule takes the word and the `: i64` has nowhere to go — and what it said was *"expected `)`; found `:`"*. The arm that says it in a sentence is in `receiver`, before the bare `self` alternative. The first guess about this position was wrong and the record says so rather than being quietly corrected.
+- **And that arm consumes the colon rather than peeking it**, which is the opposite of what [ADR-046](docs/specification/adr/adr-046.md) D2's import refusals do — measured both ways. With `peek(":")`, or `peek((KW_SELF ":"))`, the bare arm below reaches just as far and its *"expected `)`"* wins, because a `fail` here is high priority and **not fatal**: progress before priority, the same rule `docs/open-work.md` §1.1 recorded about the `dsl` block. So the arm has to get *further* than the alternative, and the cost is the caret, which lands on the type rather than on the word. The sentence is what carries the answer.
+
 ### Added (`?.`, and the fourth place the `Some(…)` goes)
 
 - **[ADR-052](docs/specification/adr/adr-052.md) D6: Part I 3.5's `?.` is built**, so both halves of that section now work. `x?.a` lowers to `x.map(|it| it.a)` over a plain field and to `x.and_then(|it| it.a)` over one that is **itself** a `T?` — and that second one is the whole difficulty, because `map` there would give an `Option<Option<T>>` and `a?.b?.c` would come out reaching through a nullable of a nullable. Which of the two is a question about the declared type, so the checker decides and the emitter writes the word; the key is the statement and the field's name, which is the shape `fallible_methods` already uses and documents.

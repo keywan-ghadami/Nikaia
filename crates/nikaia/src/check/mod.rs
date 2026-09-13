@@ -444,6 +444,10 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|g| self.parsed.text(g.name).to_string())
                         .collect();
+                    for f in fields {
+                        let name = self.parsed.text(f.name).to_string();
+                        self.not_self(&name, &f.span, "a field");
+                    }
                     let fields: Vec<FieldContract> = fields
                         .iter()
                         .map(|f| FieldContract {
@@ -598,8 +602,10 @@ impl<'a> Checker<'a> {
             frame.push(("self".to_string(), ty, None));
         }
         for arg in args {
+            let name = self.parsed.text(arg.name).to_string();
+            self.not_self(&name, &arg.span, "a parameter");
             frame.push((
-                self.parsed.text(arg.name).to_string(),
+                name,
                 Ty::from_ast(self.parsed, &arg.ty).erase(&parameters),
                 None,
             ));
@@ -957,14 +963,14 @@ impl<'a> Checker<'a> {
     /// declaring a name and for referring to one. So the refusal is here, where
     /// the declaration is - and it can say more than a parse error would.
     ///
-    /// **Three of the declaring positions, and the two that are left out are
-    /// left out for a reason a reader can check.** A `let`, a `for` binding and
-    /// a lambda's argument each carry a span, so the caret lands on the line
-    /// that is wrong. A parameter and a struct field do not: neither `FnArg` nor
-    /// `FieldDef` records one, and the nearest span this walk has is the body's
-    /// first statement - a different line. A caret on the wrong line is worse
-    /// than no message, so those two wait for the span
-    /// (`docs/open-work.md`).
+    /// **Every position that declares a name**: a `let`, a `for` binding, a
+    /// lambda's argument, a parameter and a struct field.
+    ///
+    /// The last two took a span of their own on `FnArg` and `FieldDef` to
+    /// reach. Without one the nearest span each walk had was the body's first
+    /// statement - a different line - and a caret on the wrong line is worse
+    /// than no message, which is why they waited rather than being
+    /// approximated.
     ///
     /// **`NK1119`**, and it is the same C.1 case as the rest of the list: `let
     /// self = 3` lowered to `let self = 3;` and `rustc` refused the generated
