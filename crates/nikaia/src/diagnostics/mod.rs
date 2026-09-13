@@ -223,12 +223,11 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
         // Detected by comparing the two, which is what makes this general: a
         // substitution added later needs no entry anywhere, because it is the
         // *collapse* that is noticed and not the name.
-        let internal = match both_sides_the_same(&message).is_some()
-            && both_sides_the_same(raw).is_none()
-        {
-            true => Some(raw.to_string()),
-            false => None,
-        };
+        let internal =
+            match both_sides_the_same(&message).is_some() && both_sides_the_same(raw).is_none() {
+                true => Some(raw.to_string()),
+                false => None,
+            };
 
         let primary = value["spans"].as_array().and_then(|spans| {
             spans
@@ -501,7 +500,10 @@ fn in_this_language(message: &str) -> String {
 pub fn log_internal(diagnostics: &[Diagnostic], gen_dir: &Path) -> Option<PathBuf> {
     use std::io::Write;
 
-    let originals: Vec<&String> = diagnostics.iter().filter_map(|d| d.internal.as_ref()).collect();
+    let originals: Vec<&String> = diagnostics
+        .iter()
+        .filter_map(|d| d.internal.as_ref())
+        .collect();
     if originals.is_empty() {
         return None;
     }
@@ -556,7 +558,10 @@ pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path:
             .as_ref()
             .and_then(|l| source.lines().nth(l.line - 1))
         {
-            out.push_str(&format!("{:>4} | {text}\n", diagnostic.location.as_ref().map_or(0, |l| l.line)));
+            out.push_str(&format!(
+                "{:>4} | {text}\n",
+                diagnostic.location.as_ref().map_or(0, |l| l.line)
+            ));
         }
         return out;
     }

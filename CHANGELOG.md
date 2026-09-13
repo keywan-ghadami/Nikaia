@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed (a relayed message names no type the program did not write)
+
+- **The rule is one rule now, and there is no list** ([ADR-056](docs/specification/adr/adr-056.md) D1). The emitter writes type names a program does not — `TrustedMap` for a map whose input the operator chose, `Rc` or `Arc` for a `Shared[T]`, and in time a DSL's shadow struct and a grammar's generated types. Two of them had been decided one at a time and in opposite directions; a third would have arrived with nothing noticing. Every substituted name is put back, including nested ones: `Arc<Vec<Rc<Conn>>>` reads as `Shared[Vec<Shared[Conn]>]`.
+- **`Shared[T]` was the one deliberately left in Rust's words**, on the ground that `Rc` and `Arc` are different types and *"expected `Shared[T]`, found `Shared[T]`"* would hide a defect in this compiler. That weighed two options where there are three: a reader who wrote `Shared[Conn]` is no better served by `Rc` and `Arc`, and [Part III C.1](docs/specification/30-nikaia-tooling.md) calls an untranslated backend error reaching them a bug in this compiler — and names the third way in its next sentence.
+- **So the collapse is reported rather than avoided** ([ADR-056](docs/specification/adr/adr-056.md) D2). A message that says the same thing on both sides of an `expected … found …` is not a fact about the program: it means this compiler emitted two different Rust types for one of the program's, which is a defect of its own. It is shown as *"internal error: this is a Nikaia bug, please report it"*, with what the backend actually said — displayed, and appended to a log beside the generated Rust whose path the build names. The reader is told their program may well be fine.
+- **Detected by comparing before and after, which is what makes it general.** A message `rustc` itself wrote that way — two types of one name, from two crates — is a real thing to say about a real program and stays one. The rule is not *"names one thing twice"* but *"only became that way here"*, so a substitution added later needs no entry anywhere.
+- One decision reversed, one test with it: what asserted `Shared[T]` stays in the backend's words now asserts the internal error.
+
 ### Added (the executor, and two tasks interleaving on one thread)
 
 - **[ADR-055](docs/specification/adr/adr-055.md) §6 step 1, the `no` half: `rt::exec`.** A task queue, a `Waker` written out by hand over an atomic flag, `block_on`, a `Slot` a task's value leaves through, and `Yield` — the smallest suspension point there is.

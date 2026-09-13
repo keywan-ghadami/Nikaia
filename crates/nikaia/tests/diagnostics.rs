@@ -380,8 +380,7 @@ fn a_translation_that_collapses_a_distinction_is_an_internal_error() {
 
     let translated = diagnostics::translate(&json, &lowered.map, GOOD);
     assert_eq!(
-        translated[0].message,
-        "expected struct `Shared[Conn]`, found struct `Shared[Conn]`",
+        translated[0].message, "expected struct `Shared[Conn]`, found struct `Shared[Conn]`",
         "the name is put back like every other"
     );
     assert_eq!(
@@ -391,7 +390,10 @@ fn a_translation_that_collapses_a_distinction_is_an_internal_error() {
     );
 
     let rendered = diagnostics::render(&translated[0], "p.nika", GOOD, "p.rs");
-    assert!(rendered.starts_with("internal error: p.nika:"), "{rendered}");
+    assert!(
+        rendered.starts_with("internal error: p.nika:"),
+        "{rendered}"
+    );
     assert!(
         rendered.contains("this is a Nikaia bug"),
         "the reader is told whose mistake it is: {rendered}"
@@ -417,7 +419,8 @@ fn a_message_the_backend_wrote_that_way_is_not_an_internal_error() {
     let end = offset + 4;
     let json = format!(
         r#"{{"$message_type":"diagnostic","message":{},"level":"error","spans":[{{"file_name":"lowered.rs","byte_start":{offset},"byte_end":{end},"line_start":1,"column_start":1,"is_primary":true}}],"children":[]}}"#,
-        serde_json::to_string("expected struct `Conn`, found struct `Conn`").expect("a JSON string"),
+        serde_json::to_string("expected struct `Conn`, found struct `Conn`")
+            .expect("a JSON string"),
     );
 
     let translated = diagnostics::translate(&json, &lowered.map, GOOD);

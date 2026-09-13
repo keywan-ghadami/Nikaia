@@ -40,39 +40,18 @@ that could not fit, **a keyword that could be a name** - which took the `dsl`
 block's diagnostic, three silent misreadings, and every position that can
 declare one with it ([ADR-051](specification/adr/adr-051.md)) - and a result that
 borrowed from nothing and named no lifetime for it, a warning the backend said
-twice, an undeclared name refused only where it stood alone, and **a cast that
-could name any type the language below has** - which is what
-`repeat(indent as usize)` turned out to be, rather than the one open parameter it
-had been filed as ([ADR-054](specification/adr/adr-054.md)).
+twice, an undeclared name refused only where it stood alone, **a cast that could
+name any type the language below has** - which is what `repeat(indent as usize)`
+turned out to be, rather than the one open parameter it had been filed as
+([ADR-054](specification/adr/adr-054.md)) - and **a relayed message naming a type
+the program never wrote**, which wanted a rule and not a list
+([ADR-056](specification/adr/adr-056.md)).
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. A relayed `rustc` message may still name a type the program did not write
-
-**The map's hasher is fixed.** The emitter writes a trusted input's map as
-`TrustedMap`, so *"type annotations needed for `HashMap<_, _,
-BuildHasherDefault<FxHasher>>"* named a hasher this compiler chose
-([ADR-010](specification/adr/adr-010.md) D5) in a message about a real defect in
-the program, on the right line. A name this compiler substituted on the way out is
-put back on the way in, and the criterion is the substitution's own: `map_name`
-says *"same table, same API, same full-content equality — so this is a name and
-not a translation"*, and only that kind is undone. `Shared[T]` deliberately is
-not: `Rc` and `Arc` are different types, and *"expected `Shared[T]`, found
-`Shared[T]`"* would hide a defect in this compiler rather than translate one of
-Rust's words.
-
-*What is left:* the general rule. Every other type the emitter writes and the
-program does not — the shadow struct of a deferred-parameter DSL, a grammar's
-generated types, `nikaia_std`'s own names — can appear in a relayed message, and
-there is no list saying which of them are names and which are translations. The
-two that exist are handled where they are; a third will arrive without anything
-noticing.
-
----
-
-### 1.2. An out-of-range literal that nothing constrains is refused in Rust's words
+### 1.1. An out-of-range literal that nothing constrains is refused in Rust's words
 
 ```nika
 let big = 3000000000
