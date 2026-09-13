@@ -66,6 +66,7 @@ and a decision is not an implementation.
 | :--- | :--- | :--- | :--- |
 | [012](adr-012.md) | Errors are reported in the `.nika` file the user wrote, never in generated Rust | Accepted | yes |
 | [015](adr-015.md) | The backend's diagnostics are built lazily, because building them eagerly dominated the flagship | Accepted | yes |
+| [044](adr-044.md) | One location table beside the program, and the panic hook looks the site up — so every abort names the Nikaia line, not the generated one | Accepted | **no** — the emitter keeps no line table and the panic hook is itself unbuilt |
 
 ### Trust and provenance
 
@@ -115,6 +116,7 @@ and a decision is not an implementation.
 | [026](adr-026.md) | Compile-time I/O — what a build may read, and what may run while it reads | **Open** | no |
 | [033](adr-033.md) | Program order is a guarantee only where it is observable: operations with disjoint **touch** sets have no order between them | Accepted, **provisional** (§7–§8) | four increments — a run of any length on `task::both`, `seq` (D7's keyword, still provisional), the resources `file`/`stdin`/`stdout`/`stderr`/`args`, and **D10's completion pair**: two file reads overlap at `user_parallelism = no` too, because the kernel carries them and no thread carries user code; plus `--overlaps`, which now answers per pair, and D8's manifest key; not a method call, not a non-literal argument, not two writes in flight, no socket or lock until something asks |
 | [034](adr-034.md) | A handler that can `return` makes the next statement conditional, so it may not be started early | Accepted | yes |
+| [043](adr-043.md) | An arithmetic overflow aborts at every build; wrapping and saturating get Rust's names rather than a new operator; a narrowing cast aborts and an out-of-range literal is a compile error; the check is forced through the generated project with an exception for foreign packages | Accepted | **no** — one profile and no overflow setting, no `wrapping_`/`saturating_` entry in `std`, no cast checked |
 
 ### The runtime
 
