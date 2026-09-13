@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-Five questions that work cannot settle. Each one says what is blocked, what the
+Six questions that work cannot settle. Each one says what is blocked, what the
 options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
@@ -161,3 +161,51 @@ knowing about a feature that changes what a program means.
 it stays an argument. Turning it off by default would be cheaper to defend and
 would make every program slower than the model promises, which is the worst of the
 three.
+
+---
+
+## 6. How is a Nikaia library distributed, and what consumes one?
+
+**Blocked by it:** whether the rule that shaped
+[ADR-045](specification/adr/adr-045.md)'s crossing verdict guards a case this
+toolchain can produce.
+
+Part III 13.2's manifest shows a Nikaia package next to a Rust one and refuses the
+first with its reason: no record names a registry, a name space or a distribution
+format, so the compiler does not guess ([ADR-002](specification/adr/adr-002.md) D1
+§5). `type = "rust"` dependencies resolve through Cargo; `std` arrives by path
+into a sysroot. Between them there is no way for one Nikaia package to depend on
+another.
+
+**Why this is not only a missing convenience.** The reason a crossing verdict may
+not consult `user_parallelism` is that *a library built at one setting has to stay
+usable at the other*. That sentence decided the shape of ADR-045 D1 — the verdict
+takes the destination rather than the switch, so that both answers stay
+switch-independent. It is a correct rule and it should stay. But it currently
+protects a situation nothing can construct: there are no Nikaia libraries, because
+there is no way to depend on one.
+
+Three answers:
+
+* **(a) A path dependency first.** A Nikaia package may be depended on by path,
+  the way a Rust one already can be. No registry, no name space, no distribution
+  format — the three things ADR-002 D1 §5 refuses to guess are all still open.
+* **(b) The whole question at once** — resolution, versions, a place packages come
+  from.
+* **(c) Leave it.** A program is one package, and the portability rule stays a
+  precaution.
+
+**I would take (a).** It is the smallest change that makes a library a thing that
+exists, it needs none of the three decisions ADR-002 declines to make, and it is
+the only one of the three that turns the portability rule from a precaution into
+something a test can exercise. A rule nothing can reach is a rule that quietly
+stops being true, which is the same argument §4 makes for building `spawn`.
+
+**What it costs, and it is worth seeing before deciding:** a second package in one
+build is a second analysis boundary, so
+[`open-work.md`](open-work.md) §1.6 stops being about files and becomes about
+packages — where a field's count is agreed is then a question across a boundary
+nobody can see across, rather than across two files of one program. Taking (a)
+before §1.6 is answered multiplies it. (b) costs the most and would be decided
+without a single Nikaia library existing to learn from. (c) is defensible for as
+long as the language has one user, and stops being defensible the day it has two.

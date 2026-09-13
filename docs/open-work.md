@@ -81,6 +81,13 @@ second is parser work; the first is one place in `check`. See
 [`open-decisions.md`](open-decisions.md) §1 for the one question in it — whether
 `use pool` should also bring the names in.
 
+And the parser half is not the whole of it: once a qualified struct literal
+parses, **visibility decides whether it is allowed**. A struct whose fields are
+private to the file that declares it may not be built from another one, and the
+refusal should name the module's own functions rather than only saying no. Part I
+9.2 makes private fields the ordinary case, which is the encapsulation this change
+must not spend on its way to making types usable.
+
 ### 1.2. A bare word that is no construct becomes a different program
 
 The worst class in this file, because nothing is refused. Source:
@@ -176,6 +183,67 @@ correctly when tried again.
 *What it needs:* find the shape or strike the entry. It stays only because a
 lifetime defect in generated code is the class Part III C.1 is about, and
 `docs/stored-views.md` is where the surrounding analysis is written down.
+
+### 1.6. A `Shared` field's count is decided per file, and §1.1 is hiding it
+
+Which reference count a value gets is an optimisation over an atomic floor, and
+it may only ever lower where it *proves* nothing crosses a thread
+([ADR-037](specification/adr/adr-037.md) D7). A public field of a public type is
+one of the enumerated fallbacks, so within a file the field forces the atomic
+count and the value flowing into it is pulled along with it. Measured, one file:
+
+```nika
+pub struct Pool { pub db: Shared[Conn] }
+let c: Shared[Conn] = Conn(id: 1)
+let p = Pool(db: c)
+```
+
+```rust
+pub db: std::sync::Arc<Conn>,
+let c: std::sync::Arc<Conn> = std::sync::Arc::new(Conn { id: 1 });
+```
+
+Both atomic. Correct — the constraint propagates from the field to the value.
+
+**Split over two files, the two answers diverge.** `Pool` in `pool.nika`, the
+value in `main.nika`, and the generated Rust carries both:
+
+```rust
+pub struct Pool {
+    pub db: std::sync::Arc<Conn>,      // decided in pool.nika
+}
+    let c: std::rc::Rc<Conn> = ...      // decided in main.nika
+```
+
+The second run never sees the field, so nothing forces it and it lowers. A field's
+emitted type is derived from the values this run watched, and there is no ledger
+column in which the two runs could agree — `FnContract::sharing` covers parameters
+and `<result>`, and a field has no slot.
+
+**This entry's point is the sequencing.** The build stops at §1.1's name
+resolution long before `rustc` sees either type, so the divergence is inert today.
+**Fixing §1.1 uncovers it**, and what a user would then get is a type mismatch
+reported about a generated file — the class Part III C.1 forbids. The two belong
+in one piece of work, not one after the other.
+
+*What it needs:* a decision on where a field's count is agreed, and until then
+the polarity this analysis already states — where it cannot prove, it does not
+lower. A field whose count no run can see in full is such a case.
+
+### 1.7. The explain modes cannot be reached from a project build
+
+`--sharing`, `--overlaps` and `--trust` exist on the single-file path only.
+`nikaia build --sharing` answers `unexpected argument`.
+
+`--sharing`'s own help says why it exists: there is no way to *ask* for the
+cheaper count, every fallback is enumerated instead, and *"that is only fair if
+the fallbacks can be asked about. This is the asking, and it is what a person
+reads when they want the 9 ns back."* A person with a real program builds it with
+`nikaia build`, so the asking is unavailable exactly where it would be done.
+
+*What it needs:* the three flags on `build`, reporting over the project's files
+rather than over one. Nothing about the analyses changes; they already run in that
+path.
 
 ---
 
