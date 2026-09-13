@@ -4,7 +4,8 @@ Seven entries. **Six are answered and one is dropped**, and every answer has its
 record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
 [ADR-049](specification/adr/adr-049.md) and
-[ADR-050](specification/adr/adr-050.md) — §7's is owed. §2 and §3 are built, §6's language
+[ADR-050](specification/adr/adr-050.md). The seventh answer still owes its
+record. §2 and §3 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
 them. **Nothing here is open.** The shape below is kept for whatever arrives
 next: each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
