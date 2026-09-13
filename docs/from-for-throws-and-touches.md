@@ -1,5 +1,15 @@
 # Does `from(f)` generalise? The worked cases for `throws` and `touches`
 
+**Date:** September 12, 2026 — a laboratory record, and a snapshot of that day.
+
+> **Read as a snapshot.** The lambdas on this page are written in the form
+> [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
+> the argument read off the body — and **no sample here compiles as written**; the
+> current spelling names its arguments, `sort_by_key fn(x) { x }` (Part I, 5.3).
+> The analysis each section records is unaffected: what a lambda's arguments are
+> called changes nothing about when it runs or what it touches, which is what this
+> page is about. Transcribe the reasoning, not the code.
+
 [ADR-029](specification/adr/adr-029.md) D3 added a fourth `sync` state to the
 ledger, `sync = "from(f)"`, and rested it on one sentence:
 

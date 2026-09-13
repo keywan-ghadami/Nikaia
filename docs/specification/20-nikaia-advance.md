@@ -67,9 +67,9 @@ fn parse_input(input: String) throws {
 
 > **Status:** **B is built and A is not.** There is no `const` in the parser at
 > all — at item level it is a parse error, and inside a function body `const X =
-> 1` is read as two statements — so the compile-time half of dual-mode parsing
-> has no syntax to be written in, and a `dsl … from …` runs at runtime wherever
-> it stands.
+> 1` parses as two statements and is then refused by `NK1117`, *"nothing declares
+> `const`"*. So the compile-time half of dual-mode parsing has no syntax to be
+> written in, and a `dsl … from …` runs at runtime wherever it stands.
 
 ### 10.3. Code Generation (Quasi-Quoting)
 While parsing reads data, **Macros** create new code. Nikaia uses a mechanism called **Quasi-Quoting**. The `quote` block allows you to write Nikaia code as data templates and fill in the blanks with variables.

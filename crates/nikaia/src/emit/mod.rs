@@ -773,6 +773,20 @@ struct Emitter<'p> {
     /// telling `let db: Shared[C] = connect(…)` from `let b: Shared[C] = db`
     /// means knowing what the value on the right is, and nothing here has types.
     shared_sites: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 2.3: the statements where a plain value stands in a nullable slot
+    /// and the `Some(…)` is this emitter's to write
+    /// (`check::Checked::nullable_sites`).
+    nullable_sites: std::collections::BTreeSet<usize>,
+    /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
+    /// therefore flatten (`check::Checked::flattened_reaches`).
+    flattened_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 2.3: the struct-literal fields where a plain value stands in a
+    /// nullable slot (`check::Checked::nullable_fields`).
+    nullable_fields: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 2.3: the call arguments where a plain value stands in a nullable
+    /// parameter, by statement, callee as written, and position
+    /// (`check::Checked::nullable_args`).
+    nullable_args: std::collections::BTreeSet<(usize, String, usize)>,
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
@@ -1131,6 +1145,10 @@ impl<'p> Emitter<'p> {
             narrowing_casts: propagation.narrowing,
             shared,
             shared_sites: propagation.shared,
+            nullable_sites: propagation.nullable,
+            flattened_reaches: propagation.flattened,
+            nullable_fields: propagation.nullable_in_fields,
+            nullable_args: propagation.nullable_in_args,
             own_contracts,
             library,
             ordering,
@@ -2018,6 +2036,7 @@ impl<'p> Emitter<'p> {
                                 generics: Vec::new(),
                                 is_view: false,
                                 is_tuple: false,
+                                is_nullable: false,
                             },
                             Lifetimes::NAMED,
                         );
@@ -2310,6 +2329,19 @@ impl<'p> Emitter<'p> {
                 .map(|g| self.ty_counted(g, lifetimes, count))
                 .collect();
             return format!("({})", parts.join(", "));
+        }
+
+        // Part I 2.3: `T?` is an `Option<T>`, which is the mapping Part III 15.2
+        // writes the other way round. The `?` is peeled and the rest of this
+        // function renders the type it is nullable *of* - so `&str?` is an
+        // `Option<&'a str>` and the view still picks up its lifetime, which it
+        // would not if the wrapper were applied by name.
+        if ty.is_nullable {
+            let inner = Type {
+                is_nullable: false,
+                ..ty.clone()
+            };
+            return format!("Option<{}>", self.ty_counted(&inner, lifetimes, count));
         }
 
         // A view is a borrow of the parser's input, and that is where the
@@ -2926,23 +2958,41 @@ impl<'p> Emitter<'p> {
                     .shared_sites
                     .contains(&(span.start, bound.to_string()))
                     .then(|| crate::contracts::sharing::rust_name(count));
+                // Part I 2.3: a plain value standing in a nullable slot. The
+                // checker says where, because whether the value beside the `=`
+                // is *already* nullable is a question about types and this
+                // emitter has none (ADR-028).
+                let wrap = self.nullable_sites.contains(&span.start);
                 out.push(&format!("let {mutable}{bound}{annotation} = "));
                 if let Some(path) = handle {
                     out.push(&format!("{path}::new("));
                 }
+                if wrap {
+                    out.push("Some(");
+                }
                 self.expr(out, value, depth, flow)?;
+                if wrap {
+                    out.push(")");
+                }
                 if handle.is_some() {
                     out.push(")");
                 }
                 out.push(";");
             }
             Stmt::Assign { target, op, value } => {
+                let wrap = self.nullable_sites.contains(&span.start);
                 self.expr(out, target, depth, flow)?;
                 match op {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
                     None => out.push(" = "),
                 }
+                if wrap {
+                    out.push("Some(");
+                }
                 self.expr(out, value, depth, flow)?;
+                if wrap {
+                    out.push(")");
+                }
                 out.push(";");
             }
             // Kap 3.3. Name for name (ADR-011 D2): the language below spells
@@ -3002,7 +3052,7 @@ impl<'p> Emitter<'p> {
             // the function past that expression. It falls through to the arm
             // below and stays a `return`.
             Stmt::Return(Some(value)) if tail == Tail::Return => {
-                self.expr(out, value, depth, flow)?;
+                self.nullable(out, value, span, depth, flow)?;
             }
             Stmt::Return(value) => {
                 // Kap 7.1: a `throws` function returns a `Result`, so what the
@@ -3010,12 +3060,12 @@ impl<'p> Emitter<'p> {
                 match (value, flow.throws) {
                     (Some(value), true) => {
                         out.push("return Ok(");
-                        self.expr(out, value, depth, flow)?;
+                        self.nullable(out, value, span, depth, flow)?;
                         out.push(");");
                     }
                     (Some(value), false) => {
                         out.push("return ");
-                        self.expr(out, value, depth, flow)?;
+                        self.nullable(out, value, span, depth, flow)?;
                         out.push(";");
                     }
                     (None, true) => out.push("return Ok(());"),
@@ -3054,6 +3104,31 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// An expression, with Part I 2.3's `Some(…)` around it where the checker
+    /// says a plain value stands in a nullable slot.
+    ///
+    /// A `return` needs this and a `let` writes it inline, because a `let` has
+    /// the shared-value constructor to nest inside as well and the order of the
+    /// two parentheses is that statement's business.
+    fn nullable(
+        &self,
+        out: &mut Out,
+        value: &Expr,
+        span: &Span,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let wrap = self.nullable_sites.contains(&span.start);
+        if wrap {
+            out.push("Some(");
+        }
+        self.expr(out, value, depth, flow)?;
+        if wrap {
+            out.push(")");
+        }
+        Ok(())
+    }
+
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
             Expr::LitInt(v) => out.push(&v.to_string()),
@@ -3070,6 +3145,12 @@ impl<'p> Emitter<'p> {
                 self.expr(out, end, depth, flow)?;
             }
             Expr::LitBool(b) => out.push(&b.to_string()),
+            // Part I 2.3. `None` and nothing around it: `null` has no type of
+            // its own, so the type beside it is what says what it is the
+            // absence of - and a `None` the language below cannot type is a
+            // program `rustc` asks an annotation for, which is the honest
+            // answer rather than one this compiler invented.
+            Expr::LitNull => out.push("None"),
             Expr::Variable(name) => out.push(self.text(*name)),
             // ADR-017: the template is compiled where it is written. What comes
             // out is the string building a hand-written renderer would do, with
@@ -3157,7 +3238,7 @@ impl<'p> Emitter<'p> {
                 }
                 out.push("(");
                 let takes = self.takes_a_handle(self.text(*method));
-                self.args(out, args, &takes, depth, flow)?;
+                self.args(out, self.text(*method), args, &takes, depth, flow)?;
                 self.dsl_parameters(out, self.text(*method), args.len(), config, depth, flow)?;
                 out.push(")");
 
@@ -3205,6 +3286,24 @@ impl<'p> Emitter<'p> {
             Expr::Field { base, name } => {
                 self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!(".{}", self.text(*name)));
+            }
+            // Part I 3.5: `x?.name` reaches the field only where there is
+            // something to reach it on.
+            //
+            // **`map` or `and_then`, and the checker says which.** Over a plain
+            // field `map` is right; over a field that is *itself* a `T?` it
+            // would make an `Option<Option<T>>`, and `and_then` is what
+            // flattens - which is a question about the declared type, so it is
+            // answered where the types are (ADR-028). `map` is the fallback,
+            // because it is the one that cannot nest a plain field.
+            Expr::SafeField { base, name } => {
+                let field = self.text(*name).to_string();
+                let flattens = self
+                    .flattened_reaches
+                    .contains(&(flow.statement, field.clone()));
+                let how = if flattens { "and_then" } else { "map" };
+                self.postfix_base(out, base, depth, flow)?;
+                out.push(&format!(".{how}(|__nikaia_it| __nikaia_it.{field})"));
             }
             Expr::Index { base, index } => {
                 // **A length is an `i64`, so an index is one too**
@@ -3297,20 +3396,41 @@ impl<'p> Emitter<'p> {
                                 self.count_at(SHARED_FIELDS, &slot),
                             )
                         });
+                    // Part I 2.3: a plain value in a field the struct
+                    // declares nullable. Keyed by the field's own name, because
+                    // a struct literal has one of these per field and the
+                    // statement has only one span.
+                    let wrap = self
+                        .nullable_fields
+                        .contains(&(flow.statement, self.text(field.name).to_string()));
                     if let Some(value) = &field.value {
                         out.push(": ");
                         if let Some(path) = handle {
                             out.push(&format!("{path}::new("));
                         }
+                        if wrap {
+                            out.push("Some(");
+                        }
                         self.expr(out, value, depth, flow)?;
+                        if wrap {
+                            out.push(")");
+                        }
                         if handle.is_some() {
                             out.push(")");
                         }
-                    } else if let Some(path) = handle {
+                    } else if handle.is_some() || wrap {
                         // `Counter { db }` is the shorthand for `db: db`
-                        // (Part I 4.1), and the constructor has to be written
+                        // (Part I 4.1), and a constructor has to be written
                         // around the name - which means writing the pair out.
-                        out.push(&format!(": {path}::new({})", self.text(field.name)));
+                        let name = self.text(field.name);
+                        let inner = match wrap {
+                            true => format!("Some({name})"),
+                            false => name.to_string(),
+                        };
+                        match handle {
+                            Some(path) => out.push(&format!(": {path}::new({inner})")),
+                            None => out.push(&format!(": {inner}")),
+                        }
                     }
                 }
                 out.push(" }");
@@ -3478,7 +3598,7 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 out.push(&format!("{text}!(\"{{}}\", "));
-                self.args(out, args, &[], depth, flow)?;
+                self.args(out, text, args, &[], depth, flow)?;
                 out.push(")");
                 return Ok(());
             }
@@ -3486,7 +3606,7 @@ impl<'p> Emitter<'p> {
             if self.structs.contains(name) {
                 out.push(&format!("{text}::new("));
                 let takes = self.takes_a_handle(&format!("{text}::new"));
-                self.args(out, args, &takes, depth, flow)?;
+                self.args(out, text, args, &takes, depth, flow)?;
                 out.push(")");
                 return Ok(());
             }
@@ -3495,7 +3615,14 @@ impl<'p> Emitter<'p> {
         self.expr(out, func, depth, flow)?;
         out.push("(");
         let takes = self.takes_a_handle_at(func);
-        self.args(out, args, &takes, depth, flow)?;
+        // The written callee, which is what the checker keyed the wrap by: a
+        // bare name for a free call, and nothing for anything else, where
+        // nothing can have been recorded either.
+        let callee = match func {
+            Expr::Variable(name) => self.text(*name),
+            _ => "",
+        };
+        self.args(out, callee, args, &takes, depth, flow)?;
 
         if let Expr::Variable(name) = func {
             self.dsl_parameters(out, self.text(*name), args.len(), config, depth, flow)?;
@@ -3838,6 +3965,10 @@ impl<'p> Emitter<'p> {
     fn args(
         &self,
         out: &mut Out,
+        // The callee as the source wrote it. Part I 2.3's wrap at an argument
+        // is keyed by it, because a statement may hold several calls and one
+        // call several arguments (`check::Checked::nullable_args`).
+        callee: &str,
         args: &[Expr],
         // Which positional parameters of the callee take a **handle** on a shared
         // value by value, where a ledger describes the callee. Empty where nothing
@@ -3862,7 +3993,18 @@ impl<'p> Emitter<'p> {
             // so there is no second owner and nothing to duplicate.
             let duplicate = takes_a_handle.get(i).copied().unwrap_or(false)
                 && matches!(arg, Expr::Variable(_) | Expr::Field { .. });
+            // Part I 2.3: a plain value in a parameter the callee declares
+            // nullable.
+            let wrap = self
+                .nullable_args
+                .contains(&(flow.statement, callee.to_string(), i));
+            if wrap {
+                out.push("Some(");
+            }
             self.expr(out, arg, depth, flow)?;
+            if wrap {
+                out.push(")");
+            }
             if duplicate {
                 // `.clone()` and not `Rc::clone(&x)`: it is right under either
                 // count, so it cannot disagree with the type the position was
@@ -4299,7 +4441,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             }
         }
         Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
-        Expr::Field { base, .. } => visit_expr(base, f),
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr(base, f),
         Expr::StructLit { fields, .. } => fields
             .iter()
             .filter_map(|field| field.value.as_ref())

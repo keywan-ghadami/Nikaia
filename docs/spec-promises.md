@@ -40,24 +40,25 @@ the Result column; every other row is the original run.
 | `-> [User]` (list type) | III 14.3 | parse error: *expected type; found `[`* |
 | `Vec[i64]`, `xs[0]`, `xs[k] = v` | I 4.5 | **built** |
 | `macro Name(…) -> AstExpr { … }` | II 10.3 | parse error: *expected end of input; found `macro`* |
-| `quote { … }` | II 10.3, 10.4 | parses, means something else: `let q = quote; { 1 + 1 }` |
+| `quote { … }` | II 10.3, 10.4 | parses, means something else: `let q = quote;` then `{ 1 + 1 }` — **re-run, and still silent.** `NK1117` reaches a statement that is one name, and this one is the *value of a `let`*, which is `open-work.md` §1.1 |
 | `struct User with Describe { … }` | II 10.3 | parse error: *expected `{`; found `with`* |
 | `const NAME: T = …` (item) | II 10.2, I 9.2 | parse error: *expected end of input; found `const`* |
-| `const NAME = …` (in a body) | II 10.2 | parses, means something else: `const; LIMIT = 10;` |
+| `const NAME = …` (in a body) | II 10.2 | parses as `const; LIMIT = 10;` — **re-run**, and refused now: `NK1117` on the name |
 | `select { … }` | II 12.4 | parse error: *expected expression; found `>`* (at the arm's `=>`) |
 | `test "name" { … }` | III 14.1 | parse error: *expected end of input; found `test`* |
 | `test "name" (u: User) { … }` | III 14.3 | parse error: *expected end of input; found `test`* |
 | `bench "name" { … }` | III 14.4 | parse error: *expected end of input; found `bench`* |
-| `assert cond` | III 14.1, 14.2 | parses, means something else: `assert; b != 0;` — the assertion disappears |
+| `assert cond` | III 14.1, 14.2 | parses as `assert; b != 0;` — **re-run**, and refused now: `NK1117`, *"nothing declares `assert`, and this statement is just that name"*. The assertion still does not exist; it no longer disappears in silence |
 | `assert cond, "message"` | III 14.2 | parse error: *expected `}`; found `,`* |
 | `assert(cond)` | — | parses as a call to a function named `assert` |
 | `extern "C" { … }` | III 15.1 | parse error: *expected end of input; found `extern`* |
-| `unsafe { … }` | III 15.1, 16.3 | parses, means something else: `unsafe; { puts("hi") }` |
-| `null` | I 2.3, 3.5 | parses as an ordinary name: `let x = null;` |
-| `String?`, `&str?` | I 2.3 | parse error: *expected `)`* / *expected `=`*; *found `?`* |
-| `a?.b` | I 3.5 | parse error: *expected `}`; found `?`* |
+| `unsafe { … }` | III 15.1, 16.3 | parses as `unsafe; { puts("hi") }` — **re-run**, and refused now: `NK1117` on the name |
+| `null` | I 2.3, 3.5 | **built** ([ADR-052](specification/adr/adr-052.md)): a reserved word, lowering to `None` |
+| `String?`, `&str?` | I 2.3 | **built**: `Option<String>`, `Option<&str>` — and the `Some(…)` where a plain value stands in a nullable slot is the compiler's to write |
+| `a?.b` | I 3.5 | **built** ([ADR-052](specification/adr/adr-052.md) D6): `map` over a plain field, `and_then` over one that is itself a `T?` |
+| `a?.m()` | — | refused with a sentence: this section writes a field, and a form the specification does not name is not the compiler's to add ([ADR-052](specification/adr/adr-052.md) §4) |
 | `a ?? 1` | I 3.5 | **built**: `a.unwrap_or_else(\|\| 1.into())` |
-| `use a::{b, c}` | II 10.5 | parse error: *expected identifier; found `{`* |
+| `use a::{b, c}` | II 10.5 | **re-run**, and a sentence now: *"names are not brought in; a package is reached through its name. Write `use http`, and `http::Request` where you need it — and `use http as h` if the prefix is long"*, with the caret on the brace ([ADR-046](specification/adr/adr-046.md) D2) |
 | `use std::fs`, `use utils` | I 9.1 | **built** |
 | `Point { line, .. }` (pattern) | I 7.1 | parse error: *expected `}`; found `.`* |
 | `Point { line }` (pattern) | I 3.4 | **built** |
@@ -70,7 +71,7 @@ the Result column; every other row is the original run.
 | `x.m fn(a) { … }` | I 5.3, II 12.3 | **built** (re-run after the trailing lambda took a parameter head): `users.map(\|user\| { … })` |
 | `f(a, b) fn(x, y) { … }` | II 12.3 | **built** (re-run): `access_all(a, b, \|x, y\| { … })` |
 | `p::q fn(s) { … }` / `p::q fn { … }` | II 12.7 | **built** (re-run): `task::scope(\|s\| { … })` — the callee has no `std` entry, so the *call* is what is built |
-| `fn(a) sync { … }` | I 7.2 | parses, means something else: `fn(a); sync { a };` — re-run, unchanged: a parameter list is followed by the body and by nothing else |
+| `fn(a) sync { … }` | I 7.2 | parses, means something else: `fn(a); sync { a };` — **re-run, and refused** since `sync` became a reserved word ([ADR-051](specification/adr/adr-051.md)): *expected `{`; found unexpected token `sync`*, at the annotation. What is unbuilt is unchanged — a parameter list is still followed by the body and by nothing else — and the three statements are gone |
 | `1_000` | I 2.2 (silent) | parses, means something else: `let x = 1; _000;` |
 | `0xFF` | I 2.2 (silent) | parses, means something else: `let x = 0; xFF;` |
 | `1i64` | I 2.2 (silent) | parses, means something else: `let x = 1; i64;` |
@@ -127,6 +128,15 @@ against the day it was written.
    closer to the truth, and still an error. Whether `spawn` is a keyword form
    that becomes a task or a `std` function that takes a lambda is the decision
    left here; nothing in the parser's `spawn` rule changed.
+
+   **Re-run again, after the reserved-word list.** `spawn` is a reserved word
+   now ([ADR-051](specification/adr/adr-051.md)), so there is no variable and no
+   function of that name for the line to be read as: `spawn fn { … }` is
+   *expected `(`; found unexpected token `fn`*, this compiler's refusal at the
+   `fn` rather than `rustc`'s about the generated file. Both readings above are
+   gone and the decision left here is untouched — what `spawn` **means** is
+   still `open-work.md` §2.1, and the parser's `spawn "(" expr ")"` rule is still
+   what it was.
 
    **The spelling is settled; the rest of this entry is not.** `spawn fn { … }`
    is the one form, in all three Parts — the parenthesised `spawn({ … })` that

@@ -29,41 +29,14 @@ it to know what a program means.
 What was here and is gone: a module that could not hand out types, a bare word
 that became a different program, a refusal that carried a backtrace, a Rust
 warning about the generated file, a `Shared` slot decided twice, the explain modes
-missing from a project build, and a cache that filled the disk. Each is in the
-CHANGELOG with what it was and what fixed it; a fixed entry kept here only makes
-the list longer to read.
+missing from a project build, a cache that filled the disk, a sum of constants
+that could not fit, and **a keyword that could be a name** - which took the `dsl`
+block's diagnostic, three silent misreadings, and every position that can
+declare one with it ([ADR-051](specification/adr/adr-051.md)). Each is in the CHANGELOG with what it
+was and what fixed it; a fixed entry kept here only makes the list longer to
+read.
 
-### 1.1. A `dsl` block missing its `} eod` is reported as an undeclared name
-
-`dsl postgres { SELECT 1 }` without the closing `} eod` is not a `dsl` block at
-all, so what is left parses as statements and `NK1117` says *"nothing declares
-`postgres`"*. True, and not what the writer got wrong.
-
-**The obvious fix does not work, and this is why.** A `fail("…")` arm on
-`dsl_block_expr` — the shape ADR-022's `fn: …` refusal uses — is *not fatal* in
-this parser: its own documentation says **"an error that got further still wins
-(progress before priority)"**. So where the rest of the file has a reading that
-parses, as it does here, the `fail` is discarded along with everything else about
-that attempt. Tried and reverted this session.
-
-Two answers, and both are bigger than the entry looks:
-
-* **A cut.** Once `dsl NAME {` is matched, forbid backtracking out of the rule.
-  The grammar library offers `not`, `peek`, `until`, `recover` and `fail`, and no
-  cut, so this is a change to that library.
-* **Reserve the word** — and this is the answer, taken in
-  [`open-decisions.md`](open-decisions.md) §7. `dsl` is a keyword (Part II, 10.5)
-  and `NAME` matches it anyway, which is what gives the bad reading its
-  alternative. The objection recorded here was that `rule`, `boundary` and `fold`
-  are words a program may want; they are keywords of the **grammar sublanguage**,
-  reserved inside a grammar block and nowhere else, so they are not at issue. A
-  cut repairs this one diagnostic; the reserved list repairs the class, §1.6
-  included.
-
-Where a `dsl` block opens and nothing else parses, the message is already good:
-the parser names `} eod` among what it expected.
-
-### 1.2. An undeclared name is refused as a **statement** and nowhere else
+### 1.1. An undeclared name is refused as a **statement** and nowhere else
 
 `NK1117` fires where a statement is one name. A name used inside an expression —
 `let n = q + 1`, `f(q)`, `q.len()` — resolves to nothing and is passed over in
@@ -76,17 +49,34 @@ Two of the three letters the withdrawn lambda form used are covered specially
 with a message about the withdrawal, because that is the mistake a reader of the
 old specification will actually make. Every other name is not.
 
-*What it needs:* not an owner's decision — **§3.1 first**. "This expression names
-something nothing declares" is a much wider claim than the statement rule makes,
-and the checker's polarity is that it never refuses a correct program (C.4), so the
-list of what counts as declaring a name has to be complete before the rule can be
-widened. Today it is not, and the gap has a name: **no crate metadata is read**
-(§3.1), so a qualified call into a Rust package — the shape
-`hyper_shim::across_a_thread(handle)` that ADR-038 D7 is about — would be refused
-as undeclared. Close §3.1 and this becomes work with a settled answer rather than a
-question.
+**The reserved-word list narrowed this and left one case behind**, which is what
+makes it worth reading against [`spec-promises.md`](spec-promises.md). Every word
+the specification names for a construct the grammar does not have — `assert`,
+`const`, `unsafe`, `test`, `bench`, `macro` — is a name in statement position, and
+`NK1117` refuses each of them by name. `quote` is the exception, and it is this
+entry exactly:
 
-### 1.3. A `std` function whose Rust parameter is a `usize` still needs a written conversion
+```nika
+let q = quote { 1 + 1 }
+```
+
+parses as `let q = quote` and then `{ 1 + 1 }`, and **lowers in silence**, because
+the undeclared name is the *value of a `let`* and not a statement. So this is not
+a hypothetical: it is the one row of that page still marked *"means something
+else"*.
+
+*What it needs:* not an owner's decision — a missing input first. "This expression
+names something nothing declares" is a much wider claim than the statement rule
+makes, and the checker's polarity is that it never refuses a correct program
+(C.4), so the list of what counts as declaring a name has to be complete before
+the rule can be widened. Today it is not, and the gap has a name: **this compiler
+reads no metadata of a Rust crate** — §3 records the specification sentence that
+claimed otherwise, corrected there rather than here. So a qualified call into a
+Rust package, the shape `hyper_shim::across_a_thread(handle)` that ADR-038 D7 is
+about, would be refused as undeclared. Give the checker that input and this
+becomes work with a settled answer rather than a question.
+
+### 1.2. A `std` function whose Rust parameter is a `usize` still needs a written conversion
 
 [ADR-048](specification/adr/adr-048.md) D1 made a length an `i64` and emits both
 conversions, and its scope is deliberately what a length *returns*. The other
@@ -98,7 +88,7 @@ specification does not offer (§3.1 of that record says so).
 describes as `i64` whose Rust counterpart takes a `usize`. No program has yet made
 the answer obvious, which is why the record leaves it open rather than guessing.
 
-### 1.4. A relayed `rustc` message may still name a type the program did not write
+### 1.3. A relayed `rustc` message may still name a type the program did not write
 
 **The map's hasher is fixed.** The emitter writes a trusted input's map as
 `TrustedMap`, so *"type annotations needed for `HashMap<_, _,
@@ -121,7 +111,7 @@ noticing.
 
 ---
 
-### 1.5. An out-of-range literal that nothing constrains is refused in Rust's words
+### 1.4. An out-of-range literal that nothing constrains is refused in Rust's words
 
 ```nika
 let big = 3000000000
@@ -148,6 +138,14 @@ literal — or a decision that an un-annotated literal is an `i32` full stop, wh
 would make the second program above a refusal and is not what the page says
 today.
 
+**The constant fold does not reach it, and that is worth stating** now that the
+fold exists ([ADR-043](specification/adr/adr-043.md) §4, which closed the *sum*
+of constants this list used to carry). The fold answers *what a constant
+expression comes to*; this entry is about *what type it has*, and those are
+different questions. So `let b = 3000000000 + 1` is the same one entry as `let big
+= 3000000000`: the fold evaluates both and neither has a type to be measured
+against, because a literal pins nothing. Only inference closes it.
+
 *Fixed on the way past:* the note `rustc` attaches to it — *"consider using the
 type `u32` instead"* — is dropped. It was kept once, checked, because it
 compiles; [ADR-048](specification/adr/adr-048.md) D2 is what changed, since the
@@ -156,32 +154,48 @@ remedy that works is kept; one that leads out of the language is not.
 
 ---
 
-### 1.6. A keyword that is no construct is read as something else, silently
-
-Measured this session, and **recorded before and lost in a rewrite of this file**.
+### 1.5. A function that hands back a view emits Rust with no lifetime
 
 ```nika
-fn main() {
-    let c = true
-    assert c
-}
+fn name() -> &str { "Ada" }
 ```
 
-lowers, with no diagnostic of any kind, to
+lowers to `fn name() -> &str { "Ada" }`, and `rustc` refuses it: *"missing
+lifetime specifier — this function's return type contains a borrowed value, but
+there is no value for it to be borrowed from"*, about the generated file. The
+Part III C.1 class.
 
-```rust
-let c = true as sert;
+**Why it happens.** A view's lifetime comes from the parser's input
+([ADR-008](specification/adr/adr-008.md)), and the emitter elides it where a
+reference among the arguments can carry it. A function with **no** reference
+argument has nothing to elide from, and `"Ada"` is a `&'static str` that the
+signature does not say so about.
+
+*Found* while building [ADR-052](specification/adr/adr-052.md), because `&str?`
+made the same signature one step longer and the error easier to read; it is not
+about nullability and reproduces without it. *What it needs:* a decision about
+where a returned view's lifetime comes from when no argument provides one -
+`'static` is right for a literal and wrong for anything else, so this is not a
+one-line default.
+
+### 1.6. A `rustc` **warning** about the generated file reaches the user
+
+Part I 2.3's own example, written as the page writes it, prints
+
+```text
+warning: value assigned to `maybe_string` is never read
+   = help: maybe it is overwritten before being read?
 ```
 
-`assert` is swallowed into an `as` cast and `sert` is taken for a type name. The
-program means something other than what is written, which is the worst class this
-file names — worse than a refusal in the backend's words, because nothing is
-reported at all.
+The observation is true of the program, and the message is Rust's about a file
+nobody wrote. `--explain` ([ADR-012](specification/adr/adr-012.md)) translates an
+**error** back to the `.nika` line; a warning goes past it untouched.
 
-*Root cause:* `rule NAME = not(digit) n:ident` admits any identifier, and there is
-no reserved-word list in the parser. *What it needs:*
-[`open-decisions.md`](open-decisions.md) §7, which answers that — this entry is
-what that answer is for, and it is not fixable one word at a time.
+*Not a matter of silencing it:* the warning says something the writer of the
+Nikaia program should hear. What it needs is the translation path warnings do not
+take yet - and a decision about which of `rustc`'s warnings are about the user's
+program (this one) and which are about the shape this compiler emitted (the
+class `is_rust_internal` already drops).
 
 ---
 
@@ -244,25 +258,13 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.4. A sum of constants that cannot fit is still `rustc`'s refusal
-
-[ADR-043](specification/adr/adr-043.md) §3 and §4. `NK1116` refuses an out-of-range
-**literal** where a type stands beside it; `let b = a + 1` where both are constants
-is still refused by rustc, with *"this arithmetic operation will overflow"* about
-the generated file. The same Part III C.1 class as §1.2 and §1.4 above.
-
-### 2.5. Part I 2.3's nullable types are a parse error
-
-A trailing `?` on a type does not parse and `null` is read as an ordinary name, so
-neither line of that section's own example is accepted. `??` (Part I 3.5) is built.
-
-### 2.6. Part II 12.8's supervision syntax
+### 2.4. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. A package's own package dependencies are not resolved
+### 2.5. A package's own package dependencies are not resolved
 
 [ADR-047](specification/adr/adr-047.md) D2 is built one level deep: a program
 depends on a package by path, and a package that declares Nikaia dependencies **of
@@ -293,45 +295,20 @@ So this waits on a decision and not on an afternoon.
 
 ## 3. Upkeep
 
-### 3.1. Part III 15.2 promises crate metadata the compiler does not read
+**Empty**, which it has not been before, so what was here is worth naming: Part
+III 15.2 claimed the compiler *"reads the metadata of the Rust Crate"* and quoted
+an error about an `Rc<i32>` that nothing produces; the same section's type mapping
+stopped at three rows and had no entry for the type
+[ADR-045](specification/adr/adr-045.md) §3's whole argument turns on; Part III 15.3
+said a single-threaded build generates no atomic operations, which
+[ADR-037](specification/adr/adr-037.md) D6 made false; and five notes pages read as
+current while writing lambdas in the form
+[ADR-049](specification/adr/adr-049.md) withdrew or reasoning from what
+`user_parallelism` used to imply. Each is in the CHANGELOG.
 
-[ADR-045](specification/adr/adr-045.md) §5, found and deliberately not fixed
-there. The *"Thread Safety (Send/Sync)"* block says *"The compiler reads the
-metadata of the Rust Crate"*, that a `Send` Rust type is allowed in a `spawn`
-task, and quotes an error about `Rc<i32>`. **No crate metadata is read**: a foreign
-call is one no ledger describes, and the verdict is taken on the argument's Nikaia
-type. The section's `Status` note covers the lock rule and not this claim, so the
-claim stands unmarked.
-
-### 3.2. …and the same section's type mapping has no shared entry
-
-It maps `i32`, `String` and `Option<T>` and stops, so nothing written down says
-which Rust type a `Shared[T]` is at a boundary — which is the type
-[ADR-045](specification/adr/adr-045.md) §3's whole argument turns on.
-
-### 3.3. Part III 15.3 says a single-threaded build generates no atomic operations
-
-*"the compiler does not generate OS-level mutexes or atomic operations in this
-mode"* has been false since [ADR-037](specification/adr/adr-037.md) D6 made the
-owner count atomic at both settings, and ADR-045 §3's measurement shows a foreign
-call forcing the atomic count whatever the setting.
-
-### 3.4. Two notes pages carry claims a later decision displaced
-
-* [`foreign-runtime.md`](foreign-runtime.md) and [`std-sysroot.md`](std-sysroot.md)
-  predate [ADR-037](specification/adr/adr-037.md) D6 in the places where they talk
-  about what follows `user_parallelism`.
-* [`from-for-throws-and-touches.md`](from-for-throws-and-touches.md),
-  [`mutex-floor.md`](mutex-floor.md) and
-  [`rc-or-arc.md`](rc-or-arc.md) write their lambdas in the form
-  [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, which
-  no longer compiles. The analysis each records is unaffected; the samples are not
-  copyable.
-
-A notes page is a laboratory record and is allowed to be a snapshot — what it is
-not allowed to do is read as current. A dated header on each is enough.
-
----
+A stale **Status** note is a defect in its own right
+([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
+so this section being empty is a state to try to keep rather than a milestone.
 
 ## 4. Where the other lists are
 

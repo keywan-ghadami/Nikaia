@@ -260,36 +260,62 @@ fn the_expression_lambda_still_says_it_was_removed() {
     }
 }
 
-/// **Not built, and this is where it stands.** Part I 7.2 and ADR-006 D6 write
-/// the panic hook as `panic::on_panic fn(info) sync { … }`: the lambda carries
-/// an effect annotation, and nothing in the grammar gives a lambda one - a
-/// closure's parameter list is followed by its block and by nothing else.
+/// **Not built, and this is where it stands - a refusal now, not three
+/// statements.** Part I 7.2 and ADR-006 D6 write the panic hook as
+/// `panic::on_panic fn(info) sync { … }`: the lambda carries an effect
+/// annotation, and nothing in the grammar gives a lambda one - a closure's
+/// parameter list is followed by its block and by nothing else.
 ///
-/// So the `sync` is not part of the lambda, the lambda is not part of the call,
-/// and the line is three statements. Recorded as a test rather than left to be
-/// rediscovered: the trailing lambda now takes named arguments everywhere
-/// *except* where an effect annotation follows them.
+/// This test used to assert that the line was **three statements**: the `sync`
+/// not part of the lambda, the lambda not part of the call. The reserved-word
+/// list (`open-decisions.md` §7) ends that reading - `sync` is not a name, so
+/// there is no statement for it to be - and the line is refused where the
+/// `sync` is.
+///
+/// **Which is the whole point of the list.** What is unbuilt is unchanged; what
+/// changed is that a program writing the specification's own form is told so
+/// instead of quietly meaning something else.
 #[test]
-fn an_effect_annotation_on_a_lambda_is_still_three_statements() {
-    let rust = lowered("fn main() { panic::on_panic fn(info) sync { info } }");
-    assert!(rust.contains("panic::on_panic;"), "{rust}");
-    assert!(!rust.contains("panic::on_panic(|info|"), "{rust}");
+fn an_effect_annotation_on_a_lambda_is_refused_where_the_annotation_is() {
+    let source = "fn main() { panic::on_panic fn(info) sync { info } }";
+    let message = format!("{:#}", parse_to_ast(source).expect_err("refused"));
+    assert!(message.contains("`sync`"), "{message}");
+    assert!(
+        message.contains("is a reserved word"),
+        "the note says why, which is what a reader acts on: {message}"
+    );
 }
 
-/// **`spawn` is a call now, and still does not resolve.** Part I 8.2 writes
-/// `spawn fn { … }`; the parser's own `spawn` rule is `spawn "(" expr ")"`, so
-/// the keyword form never reached it and was read as the variable `spawn`
-/// followed by a closure - `cannot find value 'spawn' in this scope`.
+/// **`spawn fn { … }` is refused here now**, and the history of this one row is
+/// the argument for the reserved-word list in miniature.
 ///
-/// With a trailing lambda reaching a path, it is one expression: a call to a
-/// function named `spawn`, with the lambda as its argument. That is what the
-/// source says and what `std` has no entry for, so rustc now says *function*
-/// where it said *value*. Nothing here redesigns `spawn`; the rule that would
-/// make it a task rather than a call is still `spawn "(" expr ")"`.
+/// Part I 8.2 writes `spawn fn { … }`; the parser's rule is `spawn "(" expr
+/// ")"`, so the keyword form never reached it. It was first read as the
+/// *variable* `spawn` followed by a closure (`cannot find value 'spawn'`), and
+/// then, once a trailing lambda could reach a path, as a *call* to a function
+/// named `spawn` (`cannot find function 'spawn'`). Two different wrong readings,
+/// both reported by `rustc` about the generated file, which is the class
+/// Part III C.1 forbids.
+///
+/// `spawn` is a reserved word now, so neither reading exists: there is no
+/// variable and no function of that name to be, and the refusal is this
+/// compiler's, at the `fn`, saying the rule wants a parenthesis. What `spawn`
+/// *means* is still unbuilt (`docs/open-work.md` §2.1) - this is only about who
+/// says so.
 #[test]
-fn spawn_with_a_named_lambda_is_read_as_a_call() {
-    let rust = lowered("fn main() { spawn fn(x) { x } }");
-    assert!(rust.contains("spawn(|x| { x })"), "{rust}");
+fn spawn_with_a_named_lambda_is_refused_rather_than_read_as_something_else() {
+    let source = "fn main() { spawn fn(x) { x } }";
+    let message = format!("{:#}", parse_to_ast(source).expect_err("refused"));
+    assert!(message.contains("expected `(`"), "{message}");
+
+    // And the form the grammar does have is untouched: `spawn` reserved means
+    // the keyword is the keyword, not that the construct went away. Parsed
+    // rather than lowered, because the emitter still refuses it - that is
+    // §2.1 and not this.
+    assert!(
+        parse_to_ast("fn main() { spawn(1) }").is_ok(),
+        "`spawn(expr)` still parses"
+    );
 }
 
 /// **The count comes from the list, and a local called `a` is a local.**

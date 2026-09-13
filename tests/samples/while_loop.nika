@@ -1,6 +1,6 @@
 // Kap 3.3: the `while` loop, which Part I documents with this shape.
-fn countdown(from: i32) -> i32 {
-    let mut n = from
+fn countdown(start: i32) -> i32 {
+    let mut n = start
     let mut steps = 0
     while n > 0 {
         n = n - 1

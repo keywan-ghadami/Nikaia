@@ -94,20 +94,20 @@ impl Tally {
 
 // Every fragment of length `k`, and how often each occurs.
 //
-// The keys are **views into `seq`** - `seq[i..i + k]` is a slice, not a copy -
+// The keys are **views into `dna`** - `dna[i..i + k]` is a slice, not a copy -
 // so a sequence of a million characters counted at k = 12 builds a table of
 // pointers and lengths rather than a million small strings. That is the same
 // claim `1brc.nika` makes about station names (Part II, 10.6), on a buffer the
 // program owns rather than one it mapped.
-fn count(seq: &str, k: i64) -> HashMap[&str, Tally] {
+fn count(dna: &str, k: i64) -> HashMap[&str, Tally] {
     let mut counts: HashMap[&str, Tally] = HashMap::new()
 
-    if seq.len() < k {
+    if dna.len() < k {
         return counts
     }
 
-    for i in 0..seq.len() - k + 1 {
-        let fragment = &seq[i..i + k]
+    for i in 0..dna.len() - k + 1 {
+        let fragment = &dna[i..i + k]
         counts
             .entry(fragment)
             .and_modify fn (tally) { tally.bump() }
@@ -122,8 +122,8 @@ fn count(seq: &str, k: i64) -> HashMap[&str, Tally] {
 // Two stable sorts state the compound order the benchmark asks for, which is
 // what Part I 4.5 says they are for: by fragment ascending, then by count
 // descending, and the second keeps the order of the first among equals.
-fn report_frequencies(seq: &str, k: i64) {
-    let counts = count(seq, k)
+fn report_frequencies(dna: &str, k: i64) {
+    let counts = count(dna, k)
 
     let mut rows = Vec::new()
     let mut total = 0
@@ -144,8 +144,8 @@ fn report_frequencies(seq: &str, k: i64) {
 
 // One named fragment, and how often it occurs. `k` is the fragment's own
 // length, so the table is built for exactly the width being asked about.
-fn report_fragment(seq: &str, fragment: &str) {
-    let counts = count(seq, fragment.len())
+fn report_fragment(dna: &str, fragment: &str) {
+    let counts = count(dna, fragment.len())
     // A trailing lambda goes outside the parentheses and is the last
     // argument; a lambda in any other position is written out.
     let n = counts.get(fragment).map_or(0, fn(t) { t.n })
@@ -174,26 +174,26 @@ fn main() throws {
     // answer as the default.
     let wanted = cli::args().nth(1) ?? "THREE"
 
-    let mut seq = String::new()
+    let mut dna = String::new()
     for section in sections {
         if section.header.starts_with(wanted.as_str()) {
             for line in section.lines {
-                seq.push_str(&line.to_uppercase())
+                dna.push_str(&line.to_uppercase())
             }
         }
     }
 
-    if seq.len() == 0 {
+    if dna.len() == 0 {
         eprintln(f"no section whose header starts with {wanted}")
         return
     }
 
-    report_frequencies(&seq, 1)
-    report_frequencies(&seq, 2)
+    report_frequencies(&dna, 1)
+    report_frequencies(&dna, 2)
 
-    report_fragment(&seq, "GGT")
-    report_fragment(&seq, "GGTA")
-    report_fragment(&seq, "GGTATT")
-    report_fragment(&seq, "GGTATTTTAATT")
-    report_fragment(&seq, "GGTATTTTAATTTATAGT")
+    report_fragment(&dna, "GGT")
+    report_fragment(&dna, "GGTA")
+    report_fragment(&dna, "GGTATT")
+    report_fragment(&dna, "GGTATTTTAATT")
+    report_fragment(&dna, "GGTATTTTAATTTATAGT")
 }

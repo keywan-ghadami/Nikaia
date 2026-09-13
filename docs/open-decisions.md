@@ -1,11 +1,10 @@
 # Open decisions — the questions that need the owner
 
-Eight entries. **Six are answered and one is dropped**, and every answer has its
+Eight entries. **Seven are answered and one is dropped**, and every answer has its
 record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md),
-[ADR-049](specification/adr/adr-049.md) and
-[ADR-050](specification/adr/adr-050.md). The seventh answer still owes its
-record. §2 and §3 are built, §6's language
+[ADR-049](specification/adr/adr-049.md), [ADR-050](specification/adr/adr-050.md)
+and [ADR-051](specification/adr/adr-051.md). §2, §3 and §7 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
 them. **§8 is open.** Each entry says what is blocked, what the options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
@@ -424,7 +423,7 @@ only been argued.
 
 ---
 
-## 7. Are this language's keywords reserved words? — **answered: yes**
+## 7. Are this language's keywords reserved words? — **answered: yes** ([ADR-051](specification/adr/adr-051.md); built)
 
 **The answer.** Nikaia has a list of reserved words, and a name may not be one of
 them. The list is what the grammar treats as a keyword **at the Nikaia level** —
@@ -460,11 +459,28 @@ is the price of a word meaning one thing wherever it appears. The list has to be
 written down in Part I rather than left implicit in the grammar, so that a reader
 can see it.
 
-**What it fixes beyond §1.1.** The entry restored as a defect below: `assert c`
-lowers to `let c = true as sert;` with no diagnostic at all — the word swallowed
-into a cast, `sert` taken for a type name. A program that means something other
-than what is written is the worst class this project names, and it has no fix short
-of this one.
+**What it fixes beyond §1.1.** Three rows of
+[`error-corpus.md`](error-corpus.md) marked *"parses"* — `if { }`, `let 5 = x`
+and `if a = b { }` — turned out to be one defect and not three grammar
+liberties: each read the keyword as a **variable** and the rest of the line as
+further statements, with no diagnostic of any kind. A program that means
+something other than what is written is the worst class this project names, and
+it had no fix short of this one.
+
+*(The `assert c` case this section was first written around — `let c = true as
+sert;`, the word swallowed into a cast — turned out already to be fixed, by the
+`KW_*` boundary rules: `KW_AS` is `"as" not(ident)`, and the `s` of `assert`
+fails the boundary. Measured after the list landed and does not reproduce. The
+three above are what the list was actually for.)*
+
+**Built**, and the cost is measured rather than estimated: two identifiers in
+this repository, `seq` in `examples/k-nucleotide.nika` and `from` in
+`tests/samples/while_loop.nika`, both renamed. The record is
+[ADR-051](specification/adr/adr-051.md), which also writes down the two things
+the answer needed that this question did not anticipate: a reserved word after a
+`::` or a `.` is a name, because no construct begins there
+(`Self::dsl`, `scope.spawn`), and `self` cannot be excluded from the grammar's
+name rule at all, so declaring one is refused by the checker as `NK1119`.
 
 ---
 

@@ -78,7 +78,7 @@ it is trivially the furthest thing that failed.
 | :-- | :--- | :--- | :--- | :--- |
 | B1 | `let y = ` | **`expected expression`** | ⚠️ `` `//`, whitespace `` | ✅ `expected expression` |
 | B2 | `let y = 1 + ` | `expected expression` | ⚠️ 8 tokens | ✅ `expected expression` |
-| B3 | `if { }` | `expected expression` | ○ **parses** | ○ |
+| B3 | `if { }` | `expected expression` | ○ **parses** | ⚠️ refused, token soup |
 | B4 | `f(1, )` | `expected expression` | ⚠️ 8 tokens | ✅ `expected expression` |
 | B5 | `let x: = 1` | `expected type` | ⚠️ `` `//`, whitespace `` | ✅ `expected type` |
 
@@ -102,8 +102,8 @@ any ranking, so no label helps.
 | C1 | `struct S { name &str }` | `:` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `:` `` |
 | C2 | `rule A -> i32 = n:digit1 { n }` | `->` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `->` `` |
 | C3 | `fn main( {` | `)` or a parameter | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` `` |
-| C4 | `let 5 = x` | a name | ○ **parses** | ○ |
-| C5 | `impl S { struct T {} }` | a method | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `fn`/`pub` in the note |
+| C4 | `let 5 = x` | a name | ○ **parses** | ⚠️ refused, ``expected `mut` `` |
+| C5 | `impl S { struct T {} }` | a method | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `fn`/`pub` in the note, and `struct` named as reserved |
 
 C1 is the best row in the corpus and worth keeping as the example: `expected ':'`
 is exactly what a reader can act on.
@@ -133,7 +133,7 @@ A1, and recorded here rather than argued away.
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | D1 | `/ a broken comment` at top level | `//` named | ⚠️ 4 tokens incl. `//` | ✅ `expected end of input` |
-| D2 | `if a = b { }` | open question | ○ **parses** | ○ |
+| D2 | `if a = b { }` | open question | ○ **parses** | ✅ ``expected `{` `` at the `=` |
 | D3 | `a:B -> C` where `=>` was meant | the cut is `=>` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `{` `` |
 
 D1 is the case where a comment form *is* the answer, and the decision to keep
@@ -176,12 +176,46 @@ to `fs::map` ([ADR-016](specification/adr/adr-016.md)) and is tested there.
 
 ## What the corpus turned up on its own
 
-**Five cases do not fail.** `if { }` (B3), `let 5 = x` (C4) and `if a = b { }`
-(D2) are all accepted by the grammar. Those are not message bugs, they are
-things the grammar admits that probably should not be — and the corpus found
-them by trying to break the compiler on purpose.
+**Five cases did not fail, and three of them were the same defect.** `if { }`
+(B3), `let 5 = x` (C4) and `if a = b { }` (D2) were all accepted by the grammar,
+and this file said they were *"things the grammar admits that probably should not
+be"* without naming what admitted them. **The reserved-word list
+([`open-decisions.md`](open-decisions.md) §7) closed all three at once**, which
+is the evidence that they were one thing:
 
-**All twenty-one failing rows now say what a reader needs.**
+* `if { }` read `if` as a **variable** and `{ }` as a block — two statements.
+* `let 5 = x` read `let` as a variable, then `5 = x` as an assignment — two
+  statements.
+* `if a = b { }` read `if` as a variable, `a = b` as an assignment, and `{ }` as
+  a block — three.
+
+So none of the three was a message bug **or** a grammar-admits-too-much bug: each
+was a program that meant something other than what was written, with no
+diagnostic of any kind, because a keyword could be a name. That is the worst
+class this project names, and it was hiding in this file behind a `○`.
+
+The two that remain are `d:nosuchbuiltin` (E2), where the backend refuses it and
+the parser is right not to, and `let café = 1` (G2), which is accepted on
+purpose.
+
+**Two of the three are refusals now rather than good messages**, and the row says
+so: B3 hands back the token list from the `head_expr` chain, which has no label,
+and C4 says ``expected `mut` `` because that is the first thing `let_stmt`
+alternates on. Both have the caret in the right place. D2 is the one that came
+out well — ``expected `{` `` at the `=` — and it also answers the *"open
+question"* that row carried: an assignment is not an expression, so `if a = b`
+is refused rather than read as a condition.
+
+**Three tokens joined the lists** and no headline changed:
+[ADR-052](specification/adr/adr-052.md) added `null` where an expression may
+start, `?` where a type may continue, and `?.` where a postfix may. The rows are
+regenerated with them because the file is the compiler's output and not a claim
+of its own; that they are the *only* change is what says the record added a type
+and an operator and moved no diagnostic.
+
+**Twenty-two of the twenty-four failing rows say what a reader needs** — the
+twenty-one that always failed, plus D2. B3 and C4 are the two that do not, and
+they are new arrivals rather than regressions: they were silent before.
 
 What A4, B1 and G1 turned out to be is worth keeping, because they were filed
 as something else for two rounds. They reported whitespace and were never a

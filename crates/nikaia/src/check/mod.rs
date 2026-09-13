@@ -130,6 +130,60 @@ pub struct Checked {
     /// fail-quietly this module's other answers keep: the set never claims a
     /// call fails that does not.
     pub fallible_methods: BTreeSet<(usize, String)>,
+    /// The statements where a **plain value stands in a nullable slot** and the
+    /// emitter therefore writes the `Some(…)`, by the byte the statement starts
+    /// at (Part I 2.3).
+    ///
+    /// `let mut m: &str? = null` then `m = "World"`: the second line hands a
+    /// `&str` to an `Option<&str>`, and the language below needs the
+    /// constructor written. The same arrangement as `shared_sites` and for the
+    /// same reason - the emitter has no types (ADR-028), and whether the value
+    /// beside the `=` is *already* nullable is the whole question.
+    ///
+    /// **Only where this checker is sure of both sides.** A value whose type is
+    /// `Unknown` is left out, because wrapping a value that is already an
+    /// `Option<T>` would make an `Option<Option<T>>` - so the set never claims
+    /// a wrap that is not needed, which is the fail-closed direction
+    /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1).
+    pub nullable_sites: BTreeSet<usize>,
+    /// The `?.` reaches whose field is **itself** nullable, as the byte the
+    /// statement starts at and the field's name (Part I 3.5).
+    ///
+    /// `x?.a` over a plain `a` is `x.map(|v| v.a)`; over an `a` that is already
+    /// a `T?` it has to be `and_then`, or the result holds a nullable of a
+    /// nullable and `a?.b?.c` comes out wrong. Which of the two is a question
+    /// about the declared type, so it is answered here and the emitter writes
+    /// the word (ADR-028).
+    ///
+    /// The statement and the name, for the reason `fallible_methods` gives at
+    /// length: an expression carries no span, so a pair is recorded only where
+    /// **every** `?.` of that name in that statement flattens. A mixed
+    /// statement is left out of the set entirely rather than resolved by
+    /// position, which keeps `map` - the answer that cannot make a nested
+    /// option out of a plain field - as the one it falls back to.
+    pub flattened_reaches: BTreeSet<(usize, String)>,
+    /// The **struct-literal fields** where a plain value stands in a nullable
+    /// slot, as the byte the statement starts at and the field's name
+    /// (Part I 2.3).
+    ///
+    /// `nullable_sites` covers the three positions a statement *is* - an
+    /// annotated `let`, an assignment, a `return` - and a struct literal has
+    /// one position per field, so it needs the name too. Same shape as
+    /// `shared_sites`, which covers the same construct for the same kind of
+    /// reason.
+    pub nullable_fields: BTreeSet<(usize, String)>,
+    /// The **call arguments** where a plain value stands in a nullable
+    /// parameter, as the byte the statement starts at, the callee as the source
+    /// wrote it, and the argument's position (Part I 2.3).
+    ///
+    /// The third position D4's wrap needs a key for, and the narrowest one that
+    /// works: an expression carries no span, a statement may hold several calls,
+    /// and one call may pass several arguments - so the callee's written name
+    /// and the index together say which. **The written name and not the
+    /// resolved key**, because the emitter has only what the source says: a
+    /// method's key is `Type::method` and a constructor's is `Type::new`, and
+    /// neither is what stands at the call.
+    pub nullable_args: BTreeSet<(usize, String, usize)>,
     /// The **narrowing conversions**, as the byte the statement they stand in
     /// starts at and the type converted to (ADR-043 D4).
     ///
@@ -286,6 +340,14 @@ pub struct Propagation {
     pub shared: BTreeSet<(usize, String)>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
+    /// [`Checked::nullable_sites`].
+    pub nullable: BTreeSet<usize>,
+    /// [`Checked::flattened_reaches`].
+    pub flattened: BTreeSet<(usize, String)>,
+    /// [`Checked::nullable_fields`].
+    pub nullable_in_fields: BTreeSet<(usize, String)>,
+    /// [`Checked::nullable_args`].
+    pub nullable_in_args: BTreeSet<(usize, String, usize)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -314,8 +376,24 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         methods: checked.fallible_methods,
         shared: checked.shared_sites,
         narrowing: checked.narrowing_casts,
+        nullable: checked.nullable_sites,
+        flattened: checked.flattened_reaches,
+        nullable_in_fields: checked.nullable_fields,
+        nullable_in_args: checked.nullable_args,
     }
 }
+
+/// A name in scope: what it is called, the type it holds, and - where this
+/// checker could work it out - the constant integer it stands for.
+///
+/// **Only a `let` ever fills the third**, and only an immutable one whose value
+/// folded ([`Checker::constant_of`]). A parameter, a `for` binding, a `match`
+/// arm's name and a lambda's argument all name something no compile-time
+/// evaluation reaches, so they carry `None` and the fold stops at them - which
+/// is the fail-closed direction the refusal needs (ADR-010 D1): a name this
+/// checker cannot evaluate makes the whole expression unevaluable, and an
+/// unevaluable expression is never refused.
+type Local = (String, Ty, Option<i128>);
 
 struct Checker<'a> {
     parsed: &'a Parsed,
@@ -329,7 +407,7 @@ struct Checker<'a> {
     /// Every enum declared here, with its variant names.
     enums: BTreeMap<String, BTreeSet<String>>,
     /// Names in scope, innermost frame last.
-    scope: Vec<Vec<(String, Ty)>>,
+    scope: Vec<Vec<Local>>,
     /// What the function being walked declared it hands back.
     expected: Option<Ty>,
     /// Whether it declared `throws` - which is what says a failure may leave
@@ -381,6 +459,10 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|g| self.parsed.text(g.name).to_string())
                         .collect();
+                    for f in fields {
+                        let name = self.parsed.text(f.name).to_string();
+                        self.not_self(&name, &f.span, "a field");
+                    }
                     let fields: Vec<FieldContract> = fields
                         .iter()
                         .map(|f| FieldContract {
@@ -465,10 +547,10 @@ impl<'a> Checker<'a> {
     }
 
     /// Every `name:pattern` in a pattern, all of them `?`.
-    fn bindings_of(&self, pattern: &ast::Pattern, out: &mut Vec<(String, Ty)>) {
+    fn bindings_of(&self, pattern: &ast::Pattern, out: &mut Vec<Local>) {
         match pattern {
             ast::Pattern::Bind { name, pat } => {
-                out.push((self.parsed.text(*name).to_string(), Ty::Unknown));
+                out.push((self.parsed.text(*name).to_string(), Ty::Unknown, None));
                 self.bindings_of(&pat.node, out);
             }
             ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
@@ -525,19 +607,22 @@ impl<'a> Checker<'a> {
         // resolves it - so it is a name that stands for a type, like `T`.
         parameters.insert("Self".to_string());
 
-        let mut frame: Vec<(String, Ty)> = Vec::new();
+        let mut frame: Vec<Local> = Vec::new();
         if let Some(receiver) = receiver {
             let ty = match target {
                 Some(target) if receiver.is_ref => Ty::view(target),
                 Some(target) => Ty::named(target),
                 None => Ty::Unknown,
             };
-            frame.push(("self".to_string(), ty));
+            frame.push(("self".to_string(), ty, None));
         }
         for arg in args {
+            let name = self.parsed.text(arg.name).to_string();
+            self.not_self(&name, &arg.span, "a parameter");
             frame.push((
-                self.parsed.text(arg.name).to_string(),
+                name,
                 Ty::from_ast(self.parsed, &arg.ty).erase(&parameters),
+                None,
             ));
         }
 
@@ -568,7 +653,7 @@ impl<'a> Checker<'a> {
     /// Whether a conversion narrows, recorded for the emitter (ADR-043 D4).
     ///
     /// **Only among the numeric types this compiler knows the range of**, for the
-    /// reason `literal_fits` gives: a claim about a type neither the
+    /// reason `constant_fits` gives: a claim about a type neither the
     /// specification nor the ledger describes would be a claim about a surface
     /// that is not there. Anything this does not recognise is recorded as
     /// widening, which leaves the conversion exactly as it is today.
@@ -681,58 +766,293 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// Part I 2.2: a literal that does not fit the type it is given is a compile
-    /// error rather than something the program finds out about at run time.
+    /// Part I 3.5: `?.` is for a value that may be absent.
     ///
-    /// **`NK1116`, and it exists to take a message back rather than to prevent an
-    /// abort.** This was already refused where it was written - but by `rustc`, in
-    /// Rust's words, down to the lint name `overflowing_literals` and the advice
-    /// to use a `u32`, about a file nobody wrote (Part III, C.1). An out-of-range
-    /// literal never reached run time and never will; what changes is who says so.
+    /// `"Ada"?.len` reaches through something that cannot be missing, and the
+    /// language below has no `map` on it - so this was `rustc`'s refusal about
+    /// the generated file (Part III, C.1). **`NK1121`**, and the way out is the
+    /// plain `.`, which is what the program meant.
     ///
-    /// A literal has no type of its own on purpose (`Expr::LitInt` answers
-    /// `Unknown`, so `add(3)` is right wherever the parameter is numeric), so this
-    /// is asked only where a type stands beside it: an annotated `let`, a
-    /// `return` against a declared result, and an argument whose parameter says
-    /// what it takes.
-    ///
-    /// **Only a bare literal, and only a signed integer type.** A sum of
-    /// constants is refused by `rustc` too and is not covered here - ADR-043 §3
-    /// names that as the gap this does not close. `u32` and the rest are accepted
-    /// by the compiler and not offered by Part I 2.2, so a range for them would be
-    /// a claim about a surface that is not promised.
-    fn literal_fits(&mut self, value: &Expr, want: &Ty, span: &Span) {
-        let Expr::LitInt(text) = value else {
-            return;
-        };
-        let Ty::Named { name, args, view } = want else {
-            return;
-        };
-        if !args.is_empty() || *view {
-            return;
-        }
-        // **`i32` is the only range this can answer**, and that is a fact about
-        // the AST rather than a choice: `Expr::LitInt` already holds an `i64`, so
-        // a literal that reached here fits an `i64` by construction and one that
-        // did not never got this far. The day a wider integer type exists, the
-        // literal will need its digits kept rather than its value.
-        if name != "i32" {
-            return;
-        }
-        if i32::try_from(*text).is_ok() {
+    /// **Only where the receiver's type is known.** A receiver this checker
+    /// could not work out says nothing: refusing there would refuse a correct
+    /// program, which is the one thing it may never do (Part III, C.4).
+    fn reaches_through_a_plain_value(&mut self, on: &Ty, field: &str, span: &Span) {
+        if on.is_unknown() {
             return;
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: span.clone(),
+            code: "NK1121",
+            message: format!("`?.` reaches through a `{on}`, which cannot be absent"),
+            notes: vec![
+                "`?.` exists for a nullable type - it reaches the field only where there \
+                 is something to reach it on, and answers `null` otherwise (Part I, 3.5). \
+                 A type that is not `T?` always has a value"
+                    .to_string(),
+            ],
+            help: Some(format!("write `.{field}`")),
+        });
+    }
+
+    /// Part I 2.3: record where the emitter has to write the `Some(…)`.
+    ///
+    /// A type is non-nullable unless it says otherwise, so a plain `T` standing
+    /// where a `T?` is wanted is the one widening this language has - `let mut
+    /// m: &str? = null` and then `m = "World"`. `Ty::fits` allows it; the
+    /// language below needs the constructor written, and this is where the
+    /// emitter is told.
+    ///
+    /// **The value has to be known not to be nullable already**, because
+    /// wrapping one that is would make an `Option<Option<T>>`. Two ways it can
+    /// be known, and a type is only the first:
+    ///
+    /// * its type says so — anything this checker worked out that is not a
+    ///   `T?`; or
+    /// * **it is a literal**, which no literal ever is. That second one is not
+    ///   a convenience: a number has no type of its own on purpose (Part I 2.4,
+    ///   so that `add(3)` is right wherever the parameter is numeric), so
+    ///   `return 42` against a declared `i64?` answers `Unknown` and the type
+    ///   alone would leave the commonest case in the section unwrapped.
+    ///
+    /// Everything else is left alone rather than guessed at, so the set never
+    /// claims a wrap that is not needed (ADR-010 D1). `null` is excluded by the
+    /// first rule, being a `T?` itself.
+    fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
+        let Ty::Nullable(_) = want else {
+            return;
+        };
+        if matches!(found, Ty::Nullable(_)) {
+            return;
+        }
+        let known = !found.is_unknown() || is_literal(value);
+        if !known {
+            return;
+        }
+        self.checked.nullable_sites.insert(span.start);
+    }
+
+    /// Part I 2.2: a constant that does not fit the type it is given is a
+    /// compile error rather than something the program finds out about at run
+    /// time.
+    ///
+    /// **`NK1116`, and it exists to take a message back rather than to prevent an
+    /// abort.** This was already refused where it was written - but by `rustc`, in
+    /// Rust's words, down to the lint name `overflowing_literals` and the advice
+    /// to use a `u32`, about a file nobody wrote (Part III, C.1). An out-of-range
+    /// constant never reached run time and never will; what changes is who says so.
+    ///
+    /// **A literal alone is asked only where a type stands beside it**, because a
+    /// literal has no type of its own on purpose: `Expr::LitInt` answers
+    /// `Unknown`, so `add(3)` is right wherever the parameter is numeric, and
+    /// `let m = 3000000000` is a correct program where the next line passes `m`
+    /// to an `i64` (Part I 2.4, `docs/open-work.md` §1.5). So the places are an
+    /// annotated `let`, a `return` against a declared result, and an argument
+    /// whose parameter says what it takes.
+    ///
+    /// **A sum reaches further, and that is ADR-043 §3's gap closing.** Where an
+    /// operand's *declaration* pins the type - `let a: i32 = …`, then `a + 1` -
+    /// the arithmetic has a type whatever stands beside it, so the bare `let` is
+    /// asked too. That is the one case `rustc` refused about the generated file
+    /// with *"attempt to compute `i32::MAX + 1_i32`"*.
+    ///
+    /// **Only the two integer types Part I 2.2 offers.** `u32` and the rest are
+    /// accepted by the compiler below and not offered here, so a range for them
+    /// would be a claim about a surface that is not promised.
+    fn constant_fits(&mut self, value: &Expr, want: Option<&Ty>, span: &Span) {
+        let Some(folded) = self.constant_of(value) else {
+            return;
+        };
+        // The type it answers to: what stands beside it if that is an integer
+        // this language offers, and otherwise what an operand's declaration
+        // pinned. Neither, and there is nothing to measure against - which is
+        // the literal-alone case that must stay accepted (C.4).
+        let named = want.and_then(integer_named);
+        let Some(ty) = named.or(folded.pinned) else {
+            return;
+        };
+        let fits = match ty.as_str() {
+            "i32" => i32::try_from(folded.value).is_ok(),
+            "i64" => i64::try_from(folded.value).is_ok(),
+            _ => return,
+        };
+        if fits {
+            return;
+        }
+        let (low, high) = match ty.as_str() {
+            "i32" => (i32::MIN as i128, i32::MAX as i128),
+            _ => (i64::MIN as i128, i64::MAX as i128),
+        };
+        // A bare literal says its own digits; anything folded says what it came
+        // to, because the expression is on the line the caret is under and the
+        // number is the part the reader cannot see.
+        let message = match value {
+            Expr::LitInt(text) => format!("`{text}` does not fit in an `{ty}`"),
+            _ => format!(
+                "this comes to {}, which does not fit in an `{ty}`",
+                folded.value
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
             code: "NK1116",
-            message: format!("`{text}` does not fit in an `i32`"),
-            notes: vec![format!(
-                "an `i32` holds {} to {} (Part I, 2.2)",
-                i32::MIN,
-                i32::MAX
-            )],
-            help: Some("write `i64` where the number needs it".to_string()),
+            message,
+            notes: vec![format!("an `{ty}` holds {low} to {high} (Part I, 2.2)")],
+            help: Some(match ty.as_str() {
+                "i32" => "write `i64` where the number needs it".to_string(),
+                _ => "an `i64` is the widest number this language has, so this \
+                      computation has to be arranged to stay inside it"
+                    .to_string(),
+            }),
+        });
+    }
+
+    /// What a constant integer expression comes to, and the type an operand's
+    /// declaration pinned.
+    ///
+    /// **Folded in an `i128`** so that a sum which cannot fit an `i64` is a
+    /// number this checker can name rather than one it wrapped - the fold must
+    /// not do quietly what it exists to refuse.
+    ///
+    /// **Every step is `checked_`, and `None` means nothing is claimed.** A name
+    /// this checker cannot evaluate, an operator it does not fold, a division by
+    /// a constant zero, a fold that leaves the `i128` - each one stops the whole
+    /// expression, and an expression that does not fold is never refused. That
+    /// is the polarity the checker is held to (Part III, C.4): it may fail to
+    /// refuse a program `rustc` will, and it may never refuse one that is right.
+    fn constant_of(&self, expr: &Expr) -> Option<Constant> {
+        match expr {
+            Expr::LitInt(value) => Some(Constant {
+                value: *value as i128,
+                pinned: None,
+            }),
+            Expr::Variable(name) => {
+                let (ty, constant) = self.local(self.parsed.text(*name))?;
+                Some(Constant {
+                    value: constant?,
+                    pinned: integer_named(&ty),
+                })
+            }
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => {
+                let inner = self.constant_of(expr)?;
+                Some(Constant {
+                    value: inner.value.checked_neg()?,
+                    pinned: inner.pinned,
+                })
+            }
+            Expr::Binary { op, lhs, rhs } => {
+                let lhs = self.constant_of(lhs)?;
+                let rhs = self.constant_of(rhs)?;
+                // Two operands that pin different types are a mismatch `expect`
+                // reports on its own; folding them would be arithmetic in a type
+                // neither of them has.
+                let pinned = match (&lhs.pinned, &rhs.pinned) {
+                    (Some(a), Some(b)) if a != b => return None,
+                    (Some(a), _) => Some(a.clone()),
+                    (_, pinned) => pinned.clone(),
+                };
+                let value = match op {
+                    BinaryOp::Add => lhs.value.checked_add(rhs.value)?,
+                    BinaryOp::Sub => lhs.value.checked_sub(rhs.value)?,
+                    BinaryOp::Mul => lhs.value.checked_mul(rhs.value)?,
+                    BinaryOp::Div => lhs.value.checked_div(rhs.value)?,
+                    BinaryOp::Rem => lhs.value.checked_rem(rhs.value)?,
+                    _ => return None,
+                };
+                Some(Constant { value, pinned })
+            }
+            _ => None,
+        }
+    }
+
+    /// `self` is a reserved word, and this is the one position the grammar
+    /// cannot refuse it in (`open-decisions.md` §7).
+    ///
+    /// Every other reserved word is excluded from `NAME` itself, so `let fn = 3`
+    /// does not parse. **`self` cannot be**, because it is the one keyword that
+    /// *is* a name: `self.min` refers to it, and `NAME` is the rule both for
+    /// declaring a name and for referring to one. So the refusal is here, where
+    /// the declaration is - and it can say more than a parse error would.
+    ///
+    /// **Every position that declares a name**: a `let`, a `for` binding, a
+    /// lambda's argument, a parameter and a struct field.
+    ///
+    /// The last two took a span of their own on `FnArg` and `FieldDef` to
+    /// reach. Without one the nearest span each walk had was the body's first
+    /// statement - a different line - and a caret on the wrong line is worse
+    /// than no message, which is why they waited rather than being
+    /// approximated.
+    ///
+    /// **`NK1119`**, and it is the same C.1 case as the rest of the list: `let
+    /// self = 3` lowered to `let self = 3;` and `rustc` refused the generated
+    /// file with *"expected identifier, found keyword `self`"*.
+    fn not_self(&mut self, name: &str, span: &Span, what: &str) {
+        if name != "self" {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1119",
+            message: format!("`self` is a reserved word, so {what} may not be called that"),
+            notes: vec![
+                "`self` already names one thing - the value a method was called on - and it \
+                 is the only reserved word that is a name at all, which is why the rest of \
+                 the list is refused by the grammar and this one is refused here \
+                 (Part I, 2.1)"
+                    .to_string(),
+            ],
+            help: Some("pick another name; `it`, `this` and `me` are all free".to_string()),
+        });
+    }
+
+    /// ADR-043 D5.5: a division whose divisor is a constant zero is refused
+    /// here, in this language's words.
+    ///
+    /// It was already refused where it was written, and by the same mechanism as
+    /// the sum `constant_fits` takes back: `rustc`'s `unconditional_panic`, with
+    /// *"attempt to divide `1_i32` by zero"* about a file nobody wrote
+    /// (Part III, C.1).
+    ///
+    /// **`NK1118`, and the polarity is the fold's.** A divisor that does not
+    /// fold to a constant says nothing: a division by something this checker
+    /// cannot evaluate is the ordinary case, and it aborts at run time with the
+    /// Nikaia line the table names (ADR-044). Only a zero it can *prove* is
+    /// refused.
+    fn divisor_is_not_zero(&mut self, op: BinaryOp, rhs: &Expr, span: &Span) {
+        if !matches!(op, BinaryOp::Div | BinaryOp::Rem) {
+            return;
+        }
+        let Some(divisor) = self.constant_of(rhs) else {
+            return;
+        };
+        if divisor.value != 0 {
+            return;
+        }
+        let what = match op {
+            BinaryOp::Div => "divides",
+            _ => "takes the remainder",
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1118",
+            message: format!("this {what} by zero"),
+            notes: vec![
+                "a division by zero is unrecoverable (Part III, A.2) - and this one is \
+                 decidable where it is written, so it is said here rather than left to \
+                 abort"
+                    .to_string(),
+            ],
+            help: Some(
+                "if the divisor is meant to be able to be zero, it cannot be a constant: \
+                 test it before dividing"
+                    .to_string(),
+            ),
         });
     }
 
@@ -756,10 +1076,14 @@ impl<'a> Checker<'a> {
     fn stmt(&mut self, stmt: &Stmt, span: &Span) -> Ty {
         match stmt {
             Stmt::Let {
-                name, ty, value, ..
+                name,
+                mutable,
+                ty,
+                value,
             } => {
                 let found = self.expr(value, span);
                 let name = self.parsed.text(*name).to_string();
+                self.not_self(&name, span, "a `let`");
                 let bound = match ty {
                     Some(ty) => {
                         let want = Ty::from_ast(self.parsed, ty);
@@ -768,7 +1092,8 @@ impl<'a> Checker<'a> {
                         // the constructor, so a plain value standing here is not
                         // a mistake - it is the one line that makes one, and the
                         // emitter is told where to write it.
-                        self.literal_fits(value, &want, span);
+                        self.constant_fits(value, Some(&want), span);
+                        self.wraps_into_nullable(&found, &want, value, span);
                         match becomes_shared(&found, &want) {
                             true => {
                                 self.checked.shared_sites.insert((span.start, name.clone()));
@@ -781,9 +1106,25 @@ impl<'a> Checker<'a> {
                         }
                         want
                     }
-                    None => found,
+                    None => {
+                        // **No annotation, and a type all the same** where an
+                        // operand's declaration pinned one: `let a: i32 = …`
+                        // then `let b = a + 1` is arithmetic in an `i32`, and
+                        // that is the sum ADR-043 §3 left to `rustc`.
+                        self.constant_fits(value, None, span);
+                        found
+                    }
                 };
-                self.bind(name, bound);
+                // **Only an immutable `let` carries its value forward.** A
+                // `mut` one may be given another before the name is read again,
+                // and this checker does not follow assignments - so the value
+                // it started with would be a claim about a program that no
+                // longer holds (Part III, C.4).
+                let constant = match mutable {
+                    false => self.constant_of(value).map(|c| c.value),
+                    true => None,
+                };
+                self.bind_with(name, bound, constant);
                 Ty::Tuple(Vec::new())
             }
 
@@ -795,6 +1136,7 @@ impl<'a> Checker<'a> {
                 // Only a plain assignment: `n += 1` is whatever the operator
                 // makes of the two, and Stage 0 does not model operators.
                 if op.is_none() {
+                    self.wraps_into_nullable(&found, &into, value, span);
                     self.expect(&found, &into, span.clone(), "assign", |found, want| {
                         format!("this is `{found}`, and what it is assigned to is `{want}`")
                     });
@@ -819,10 +1161,13 @@ impl<'a> Checker<'a> {
                 let over = self.expr(iter, span);
                 self.fallible_step(&over, bindings.len(), span);
                 let element = element_of(&over, bindings.len());
-                let frame = bindings
+                let frame: Vec<Local> = bindings
                     .iter()
-                    .map(|b| (self.parsed.text(*b).to_string(), element.clone()))
+                    .map(|b| (self.parsed.text(*b).to_string(), element.clone(), None))
                     .collect();
+                for (name, _, _) in &frame {
+                    self.not_self(&name.clone(), span, "a `for` binding");
+                }
                 self.scope.push(frame);
                 self.block(body);
                 self.scope.pop();
@@ -836,7 +1181,10 @@ impl<'a> Checker<'a> {
                 };
                 if let Some(expected) = self.expected.clone() {
                     if let Some(value) = value {
-                        self.literal_fits(value, &expected, span);
+                        self.constant_fits(value, Some(&expected), span);
+                    }
+                    if let Some(value) = value {
+                        self.wraps_into_nullable(&found, &expected, value, span);
                     }
                     self.expect(&found, &expected, span.clone(), "returns", |found, want| {
                         format!("this returns `{found}`, and the function declares `{want}`")
@@ -883,6 +1231,14 @@ impl<'a> Checker<'a> {
             }
             Expr::LitChar(_) => Ty::named("char"),
             Expr::LitBool(_) => Ty::named("bool"),
+            // **A nullable of it-does-not-say.** `null` names the absence of a
+            // value without naming what value, so the inside is `Unknown` and
+            // anything nullable fits it - which is what makes `let mut m: &str?
+            // = null` right and what keeps `let m = null` from being refused
+            // here: `let mut m = null` then `m = "hi"` is a correct program
+            // (Part III, C.4), and it is `rustc` that asks for an annotation
+            // where nothing ever says.
+            Expr::LitNull => Ty::Nullable(Box::new(Ty::Unknown)),
 
             Expr::Variable(name) => {
                 let name = self.parsed.text(*name);
@@ -1022,7 +1378,15 @@ impl<'a> Checker<'a> {
                     .map(|ty| ty::substitute(ty, &bound))
                     .collect();
                 let found = self.arguments_given(args, &expected, span);
-                let result = self.arguments(&key, contract, args, &found, &[], span);
+                let result = self.arguments(
+                    &key,
+                    self.parsed.text(*method),
+                    contract,
+                    args,
+                    &found,
+                    &[],
+                    span,
+                );
                 ty::substitute(&result, &bound)
             }
 
@@ -1040,6 +1404,47 @@ impl<'a> Checker<'a> {
                         let (ty, declared) = (ty.clone(), found.clone());
                         self.field_is_reachable(&ty, &declared, span);
                         declared.ty
+                    }
+                    None => {
+                        let ty = ty.clone();
+                        self.no_such_field(&ty, &field, &fields, span);
+                        Ty::Unknown
+                    }
+                }
+            }
+
+            // Part I 3.5: `x?.field`. The receiver must be a `T?` and the
+            // result is a `U?` - flattened, because a field that is *itself*
+            // nullable would otherwise give a nullable of a nullable.
+            Expr::SafeField { base, name } => {
+                let on = self.expr(base, span);
+                let field = self.parsed.text(*name).to_string();
+                let Ty::Nullable(inner) = &on else {
+                    self.reaches_through_a_plain_value(&on, &field, span);
+                    return Ty::Unknown;
+                };
+                let Ty::Named { name: ty, .. } = inner.as_ref() else {
+                    return Ty::Unknown;
+                };
+                let Some(fields) = self.fields_of(ty) else {
+                    return Ty::Unknown;
+                };
+                match fields.iter().find(|f| f.name == field) {
+                    Some(found) => {
+                        let (ty, declared) = (ty.clone(), found.clone());
+                        self.field_is_reachable(&ty, &declared, span);
+                        // **The `and_then` case is the field that is already a
+                        // `T?`**, and the emitter is told which by name: `map`
+                        // over one would make an `Option<Option<T>>`, and that
+                        // is a question about the declared type, which this
+                        // module answers and the emitter cannot (ADR-028).
+                        match &declared.ty {
+                            Ty::Nullable(_) => {
+                                self.checked.flattened_reaches.insert((span.start, field));
+                                declared.ty
+                            }
+                            plain => Ty::Nullable(Box::new(plain.clone())),
+                        }
                     }
                     None => {
                         let ty = ty.clone();
@@ -1077,6 +1482,23 @@ impl<'a> Checker<'a> {
                                     .insert((span.start, format!("{owner}.{field}")));
                                 continue;
                             }
+                            // Part I 2.3's fourth position: a plain value in a
+                            // field the struct declares nullable. The same rule
+                            // as the other three (`wraps_into_nullable`), keyed
+                            // by the field as well, because a struct literal
+                            // has one of these per field and a statement only
+                            // one span.
+                            let value = init.value.as_ref();
+                            let is_literal = value.is_some_and(is_literal);
+                            if matches!(want, Ty::Nullable(_))
+                                && !matches!(found, Ty::Nullable(_))
+                                && (!found.is_unknown() || is_literal)
+                            {
+                                self.checked
+                                    .nullable_fields
+                                    .insert((span.start, field.clone()));
+                                continue;
+                            }
                             self.expect(
                                 &found,
                                 &want,
@@ -1098,10 +1520,13 @@ impl<'a> Checker<'a> {
             // empty frame - and a body reaching for `a` is then a body naming
             // something nothing declares, which `NK1117` refuses.
             Expr::Closure { params, body } => {
-                let frame: Vec<(String, Ty)> = params
+                let frame: Vec<Local> = params
                     .iter()
-                    .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown))
+                    .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown, None))
                     .collect();
+                for (name, _, _) in &frame {
+                    self.not_self(&name.clone(), span, "a lambda's argument");
+                }
                 self.scope.push(frame);
                 self.block(body);
                 self.scope.pop();
@@ -1132,6 +1557,7 @@ impl<'a> Checker<'a> {
             Expr::Binary { op, lhs, rhs } => {
                 let left = self.expr(lhs, span);
                 let right = self.expr(rhs, span);
+                self.divisor_is_not_zero(*op, rhs, span);
                 match op {
                     BinaryOp::And | BinaryOp::Or => {
                         self.expect_bool(&left, span, "`&&` and `||` join two `bool`s");
@@ -1229,7 +1655,8 @@ impl<'a> Checker<'a> {
                 let outer = std::mem::replace(&mut self.caught, true);
                 self.expr(expr, span);
                 self.caught = outer;
-                self.scope.push(vec![("error".to_string(), Ty::Unknown)]);
+                self.scope
+                    .push(vec![("error".to_string(), Ty::Unknown, None)]);
                 self.block(handler);
                 self.scope.pop();
                 Ty::Unknown
@@ -1470,7 +1897,7 @@ impl<'a> Checker<'a> {
             .strip_suffix("::new")
             .filter(|_| !name.ends_with("::new"))
             .map(Ty::named);
-        let result = self.arguments(&key, contract, args, &found, &passed, span);
+        let result = self.arguments(&key, &name, contract, args, &found, &passed, span);
         constructed.unwrap_or(result)
     }
 
@@ -1479,9 +1906,13 @@ impl<'a> Checker<'a> {
     /// `given` is the argument expressions, for the one diagnostic that has to
     /// name the **value** rather than its type: `NK1115` points at the line where
     /// the sharing belongs, and that line starts with the name the caller wrote.
+    #[allow(clippy::too_many_arguments)]
     fn arguments(
         &mut self,
         key: &str,
+        // The callee as the source writes it, which is the part the emitter can
+        // match a recorded argument against (`nullable_args`).
+        written: &str,
         contract: &FnContract,
         given: &[Expr],
         found: &[Ty],
@@ -1547,7 +1978,21 @@ impl<'a> Checker<'a> {
             // against is not known yet at that point (ADR-029's ordering is what
             // gives a *method* call the answer earlier).
             if let Some(given) = given.get(at) {
-                self.literal_fits(given, want, span);
+                self.constant_fits(given, Some(want), span);
+            }
+            // Part I 2.3's third position for the wrap: a plain value in a
+            // parameter the callee declares nullable. Recorded before `fits`
+            // is consulted, because this *is* the fit - `Ty::fits` allows it,
+            // and what is left is telling the emitter to write the
+            // constructor.
+            if matches!(want, Ty::Nullable(_)) && !matches!(found, Ty::Nullable(_)) {
+                let is_literal = given.get(at).is_some_and(is_literal);
+                if !found.is_unknown() || is_literal {
+                    self.checked
+                        .nullable_args
+                        .insert((span.start, written.to_string(), at));
+                    continue;
+                }
             }
             if self.fits_through_deref(found, want) {
                 continue;
@@ -2066,18 +2511,26 @@ impl<'a> Checker<'a> {
 
     // --- looking things up ---------------------------------------------------
 
-    fn bind(&mut self, name: String, ty: Ty) {
+    /// Bind a name, with the constant it stands for where there is one
+    /// (ADR-043 D5). Only [`Stmt::Let`] ever passes anything but `None`.
+    fn bind_with(&mut self, name: String, ty: Ty, constant: Option<i128>) {
         if let Some(frame) = self.scope.last_mut() {
-            frame.push((name, ty));
+            frame.push((name, ty, constant));
         }
     }
 
     fn lookup(&self, name: &str) -> Option<Ty> {
+        self.local(name).map(|(ty, _)| ty)
+    }
+
+    /// The innermost binding of a name: its type, and the constant it stands
+    /// for where the checker could evaluate one.
+    fn local(&self, name: &str) -> Option<(Ty, Option<i128>)> {
         self.scope
             .iter()
             .rev()
-            .find_map(|frame| frame.iter().rev().find(|(n, _)| n == name))
-            .map(|(_, ty)| ty.clone())
+            .find_map(|frame| frame.iter().rev().find(|(n, _, _)| n == name))
+            .map(|(_, ty, constant)| (ty.clone(), *constant))
     }
 
     /// A function by the name a call wrote: this unit's, then a constructor,
@@ -2125,7 +2578,7 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|p| self.parsed.text(*p).to_string())
             .enumerate()
-            .map(|(at, name)| (name, given.get(at).cloned().unwrap_or(Ty::Unknown)))
+            .map(|(at, name)| (name, given.get(at).cloned().unwrap_or(Ty::Unknown), None))
             .collect();
 
         self.scope.push(frame);
@@ -2214,17 +2667,17 @@ impl<'a> Checker<'a> {
 
     /// The names a `match` arm brings into scope, all of them unknown: what a
     /// variant carries is not in the ledger yet.
-    fn pattern_bindings(&self, pattern: &MatchPattern) -> Vec<(String, Ty)> {
+    fn pattern_bindings(&self, pattern: &MatchPattern) -> Vec<Local> {
         match pattern {
             MatchPattern::Wildcard | MatchPattern::Literal(_) => Vec::new(),
             // A single segment binds; `Op::Times` names a variant.
             MatchPattern::Path(segments) if segments.len() == 1 => {
-                vec![(self.parsed.text(segments[0]).to_string(), Ty::Unknown)]
+                vec![(self.parsed.text(segments[0]).to_string(), Ty::Unknown, None)]
             }
             MatchPattern::Path(_) => Vec::new(),
             MatchPattern::Tuple { bindings, .. } | MatchPattern::Named { bindings, .. } => bindings
                 .iter()
-                .map(|b| (self.parsed.text(*b).to_string(), Ty::Unknown))
+                .map(|b| (self.parsed.text(*b).to_string(), Ty::Unknown, None))
                 .collect(),
         }
     }
@@ -2333,6 +2786,50 @@ fn convert(found: &Ty, want: &Ty) -> String {
         }
         _ => format!("make it a `{want}`, or change what is declared to `{found}`"),
     }
+}
+
+/// What a constant integer expression came to, and the type an operand's
+/// declaration pinned ([`Checker::constant_of`]).
+struct Constant {
+    /// Folded in an `i128` so a sum that cannot fit an `i64` is still a number
+    /// this checker can name rather than one it wrapped.
+    value: i128,
+    /// The integer type an operand's *declaration* fixed, where one did. **A
+    /// literal pins nothing**: `3000000000` is an `i64` wherever a use asks for one
+    /// (Part I 2.4), which is why a literal standing alone may not be refused.
+    pinned: Option<String>,
+}
+
+/// The name of the integer type this is, among the two Part I 2.2 offers.
+///
+/// A view or a type with arguments is neither: `&i32` is a reference and
+/// `Vec[i32]` is a list, and a number does not stand beside either of them.
+fn integer_named(ty: &Ty) -> Option<String> {
+    let Ty::Named { name, args, view } = ty else {
+        return None;
+    };
+    if !args.is_empty() || *view {
+        return None;
+    }
+    matches!(name.as_str(), "i32" | "i64").then(|| name.clone())
+}
+
+/// Whether an expression is a literal — a value written in the source rather
+/// than computed.
+///
+/// **What it is for:** a literal is never a `T?`, whatever this checker did or
+/// did not work out about its type. `null` is deliberately absent, because it
+/// *is* one.
+fn is_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::LitInt(_)
+            | Expr::LitFloat(_)
+            | Expr::LitStr(_)
+            | Expr::LitInterpolated(_)
+            | Expr::LitChar(_)
+            | Expr::LitBool(_)
+    )
 }
 
 fn is_number(name: &str) -> bool {

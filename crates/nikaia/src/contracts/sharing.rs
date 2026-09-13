@@ -1000,6 +1000,7 @@ impl<'a> Analysis<'a> {
             | Expr::LitInterpolated(_)
             | Expr::LitChar(_)
             | Expr::LitBool(_)
+            | Expr::LitNull
             | Expr::StructLit { .. } => true,
             Expr::Call { func, .. } => self.hands_back_a_plain_value(self.path_of(func).as_deref()),
             Expr::MethodCall { method, .. } => {
@@ -1284,7 +1285,9 @@ impl<'a> Analysis<'a> {
             | Expr::Try(expr)
             | Expr::Throw(expr)
             | Expr::Cast { expr, .. } => self.expr(function, expr, scope),
-            Expr::Field { base, .. } => self.expr(function, base, scope),
+            Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
+                self.expr(function, base, scope)
+            }
             Expr::Index { base, index } => {
                 self.expr(function, base, scope);
                 self.expr(function, index, scope);

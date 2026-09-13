@@ -117,6 +117,54 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
     Ok(expr)
 }
 
+/// **The words this language keeps for itself** (`open-decisions.md` §7).
+///
+/// This is the same list the grammar's `RESERVED` rule alternates over, and it
+/// is here in Rust because two readers need it outside the grammar: the note
+/// [`reserved_word_note`] adds to a parse error, and the checker, which refuses
+/// `self` as a *declared* name (the one word the grammar cannot exclude,
+/// because `self.min` refers to it).
+///
+/// `rule`, `boundary`, `fold`, `par_fold` and `unchecked` are **not** here: they
+/// are the grammar sublanguage's vocabulary, reserved inside a `grammar` block
+/// and words a program may want everywhere else.
+///
+/// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
+/// every word here is refused as a name, and the sublanguage's words are not -
+/// so the list and the rule cannot drift apart in silence.
+pub const RESERVED_WORDS: [&str; 30] = [
+    "as", "catch", "dsl", "else", "enum", "false", "fn", "for", "from", "grammar", "if", "impl",
+    "in", "let", "match", "mut", "null", "overlap", "pub", "return", "self", "seq", "spawn",
+    "struct", "sync", "throw", "throws", "true", "use", "while",
+];
+
+/// The note a parse error gets when what it tripped over is a reserved word.
+///
+/// **Read off the rendered message rather than off the error**, because what a
+/// reader needs is attached to what a reader sees, and the grammar backend's
+/// error carries the position but not the word. The shape it looks for is the
+/// backend's own *"found unexpected token `…`"*; where that is not there, or the
+/// token is an ordinary name, the note is simply absent. A note that
+/// disappears is the safe way for this to be wrong - it adds a sentence and
+/// corrects nothing.
+fn reserved_word_note(rendered: &str) -> String {
+    const MARK: &str = "found unexpected token `";
+    let Some(after) = rendered.split(MARK).nth(1) else {
+        return String::new();
+    };
+    let Some(token) = after.split('`').next() else {
+        return String::new();
+    };
+    if !RESERVED_WORDS.contains(&token) {
+        return String::new();
+    }
+    format!(
+        "\nnote: `{token}` is a reserved word, so it is not a name (Part I, 2.1). \
+         Either pick another name, or - if the construct was meant - it does not \
+         belong in this position."
+    )
+}
+
 pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // Generated parsers run on a `Stateful` stream: `LocatingSlice` supplies the
     // spans, `ParseContext` carries the shared parser state including the
@@ -136,7 +184,11 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         .parse_next(&mut stream)
         // A refusal and not a failure of this compiler: the program is what is
         // wrong, so it leaves without a backtrace (`diagnostics::Refused`).
-        .map_err(|e| crate::diagnostics::refuse(format!("Parse error:\n{}", e.render(input))))?;
+        .map_err(|e| {
+            let rendered = e.render(input);
+            let note = reserved_word_note(&rendered);
+            crate::diagnostics::refuse(format!("Parse error:\n{rendered}{note}"))
+        })?;
 
     // The generated entry point already refuses leftover input; this is a
     // backstop so a partial parse can never be reported as a success.
@@ -166,6 +218,9 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
 #[derive(Debug, Clone)]
 pub enum Postfix {
     Field(Symbol),
+    /// Part I 3.5: `?.name`, which reaches the field only if the receiver holds
+    /// something.
+    SafeField(Symbol),
     Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Index(Box<ast::Expr>),
 }
@@ -202,6 +257,10 @@ pub fn fold_binary(head: ast::Expr, tail: Vec<(ast::BinaryOp, ast::Expr)>) -> as
 pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
     tail.into_iter().fold(base, |recv, step| match step {
         Postfix::Field(name) => ast::Expr::Field {
+            base: Box::new(recv),
+            name,
+        },
+        Postfix::SafeField(name) => ast::Expr::SafeField {
             base: Box::new(recv),
             name,
         },
@@ -439,6 +498,27 @@ grammar! {
                 Receiver { is_ref: true, is_mut: true }
             }
           | "&" KW_SELF -> { Receiver { is_ref: true, is_mut: false } }
+          // Before the bare arm: `self: i64` is a parameter somebody named
+          // `self`, and the bare arm would take the word and leave the `: i64`
+          // to fail as the *next* parameter - at the colon, with nothing to say.
+          // `self` is a reserved word (ADR-051 D1) and the only one the grammar
+          // cannot exclude from `NAME`, so this is where declaring one is
+          // refused in a position `NAME` never sees.
+          //
+          // **The colon is consumed and not peeked**, which is the opposite of
+          // what ADR-046 D2's import refusals do, and measured both ways: with
+          // `peek(":")` - or `peek((KW_SELF ":"))` - the bare arm below reaches
+          // just as far and its *"expected `)`"* wins, because a `fail` is high
+          // priority and not fatal ("progress before priority"). So the arm has
+          // to get further than the alternative, and the cost is the caret: it
+          // lands on the type rather than on the word, one token past where a
+          // reader would put it. The sentence is what carries the answer.
+          | KW_SELF ":" fail(
+                "`self` is a reserved word, so a parameter may not be called \
+                 that (Part I, 2.1). It already names one thing - the value a \
+                 method was called on - and that is written `self`, `&self` or \
+                 `&mut self`, with no type beside it"
+            ) -> { Receiver { is_ref: false, is_mut: false } }
           | KW_SELF -> { Receiver { is_ref: false, is_mut: false } }
 
         // Kap 9.2: use std::fs
@@ -474,7 +554,26 @@ grammar! {
         // libraries that both want to be `http` are the consumer's to name apart.
         rule use_alias -> Symbol = KW_AS n:NAME -> { n }
 
-        rule path_segment -> Symbol = "::" n:NAME -> { n }
+        // **A segment after `::` may be a reserved word**, and `SEGMENT` rather
+        // than `NAME` is what says so. Nothing can be misread there: a segment
+        // follows a `::` and no construct begins in that position, so the word
+        // is a name whatever else it is elsewhere. `Self::dsl` is the case that
+        // requires it - the shadow type of a deferred-parameter DSL is spelled
+        // with the keyword (ADR-007 D5, Part II 10.5) - and the general rule is
+        // the reason to allow it rather than that one type.
+        rule path_segment -> Symbol = "::" n:SEGMENT -> { n }
+
+        // **A name that can only be a name.** `SEGMENT` is `NAME` without the
+        // reserved-word check, and it is used exactly where a separator has
+        // already decided that what follows is a member: after `::` and after
+        // `.`. No construct begins in either position, so a reserved word there
+        // is a name whatever it is elsewhere - which is what lets `Self::dsl`
+        // (ADR-007 D5) and `scope.spawn fn { … }` (Part II 12.5) keep their
+        // spellings.
+        //
+        // Everywhere a name is *declared* or stands on its own, `NAME` is what
+        // the grammar uses, and that is where the list bites.
+        rule SEGMENT -> Symbol = not(digit) n:ident -> { n }
 
         // --- Structs ---
         //
@@ -543,9 +642,12 @@ grammar! {
         // Kap 9.2: `pub` on a field, which is a different question from `pub`
         // on the struct - a public type may keep its parts to itself, and 9.3
         // says that is the point.
-        rule field_def -> FieldDef =
+        // `@=` for the span: a diagnostic about a field puts its caret on the
+        // field, and the nearest span the walk around it has is a statement's
+        // (ADR-051 D4).
+        rule field_def -> FieldDef @=
             vis:kw_pub? name:NAME ":" ty:type_ref -> {
-                FieldDef { name, ty, is_public: vis.is_some() }
+                FieldDef { name, ty, is_public: vis.is_some(), span: _span }
             }
 
         // --- Argumente & Typen ---
@@ -562,10 +664,7 @@ grammar! {
 
         rule fn_arg_def_tail -> FnArg = "," arg:fn_arg_def -> { arg }
 
-        rule fn_arg_def -> FnArg =
-            name:NAME ":" ty:type_ref -> {
-                FnArg { name, ty }
-            }
+        rule fn_arg_def -> FnArg @= name:NAME ":" ty:type_ref -> { FnArg { name, ty, span: _span } }
 
         rule return_type_arrow -> Type =
             "->" ty:type_ref -> { ty }
@@ -593,26 +692,38 @@ grammar! {
             view:amp?
             name:type_name
             generics:generic_type_args?
+            nullable:question?
             -> {
                 Type {
                     name,
                     generics: generics.unwrap_or_default(),
                     is_view: view.is_some(),
                     is_tuple: false,
+                    is_nullable: nullable.is_some(),
                 }
             }
           // `(A, B)`. The parts go where a named type's arguments go, so
           // everything that walks a type's arguments walks a tuple's parts.
+          //
+          // **No `?` here**, and that is Part I 2.3's own scope: `(A, B)?` is
+          // not in the specification, and a form the emitter would have to
+          // invent a lowering for is worse unwritten than written wrong.
           | "(" parts:type_refs ")" -> {
                 Type {
                     name: _state.intern("tuple"),
                     generics: parts,
                     is_view: false,
                     is_tuple: true,
+                    is_nullable: false,
                 }
             }
 
         rule amp -> () = "&" -> { () }
+
+        // Part I 2.3: the trailing `?` that makes a type nullable. It comes
+        // last, after the arguments, so `Vec[i64]?` is a nullable list and not
+        // a list of nullables - which is `Vec[i64?]`.
+        rule question -> () = "?" -> { () }
 
         // USING [ ] SYNTAX directly for testing
         rule generic_type_args -> Vec<Type> =
@@ -1137,15 +1248,15 @@ grammar! {
             // has to be tried before the plain call, or the call matches and
             // the lambda is left over - which is the parse error this form did
             // not have a grammar for until ADR-022.
-            "." name:NAME args:call_arg_list lambda:trailing_lambda -> {
+            "." name:SEGMENT args:call_arg_list lambda:trailing_lambda -> {
                 let (mut positional, config) = args;
                 positional.push(lambda);
                 Postfix::Method(name, positional, config)
             }
-          | "." name:NAME lambda:trailing_lambda -> {
+          | "." name:SEGMENT lambda:trailing_lambda -> {
                 Postfix::Method(name, vec![lambda], Vec::new())
             }
-          | "." name:NAME args:call_arg_list? -> {
+          | "." name:SEGMENT args:call_arg_list? -> {
                 match args {
                     // Kap 5.1's `;` reaches a method call too, and what stands
                     // after it is kept: ADR-007 D5's deferred parameters arrive
@@ -1155,6 +1266,28 @@ grammar! {
                     None => Postfix::Field(name),
                 }
             }
+          // Part I 3.5: `?.name`. **One literal** rather than `"?" "."`, so the
+          // generator cannot insert the implicit whitespace between them -
+          // `a ? . b` is not safe navigation, and `a ?? b` is the coalescing
+          // operator, which this cannot begin to match.
+          //
+          // There is no arm for `?.m()`: a call postfix follows this one, so
+          // `x?.m()` parses as a call *of* the reach, and the checker says what
+          // is wrong with a sentence rather than a parse error.
+          // **A method is not a field**, and Part I 3.5 writes only the field.
+          // Before the field arm and consuming the `(`, because a `fail` is
+          // high priority and *not* fatal: it has to get further than the
+          // alternative or the field arm's reading wins and the `()` fails as
+          // an empty parenthesised expression, which is what a reader used to
+          // get.
+          | "?." SEGMENT "(" fail(
+                "`?.` reaches a field of a value that may be absent \
+                 (Part I, 3.5), and a method is not a field. To call one, take \
+                 the value first: `let u = maybe ?? fallback` and then \
+                 `u.method()`, or `match` on it where there is no fallback to \
+                 give"
+            ) -> { Postfix::SafeField(_state.intern("")) }
+          | "?." name:SEGMENT -> { Postfix::SafeField(name) }
           | "[" index:expr "]" -> {
                 Postfix::Index(Box::new(index))
             }
@@ -1248,6 +1381,7 @@ grammar! {
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
+          | n:null_lit -> { n }
           // Before `path_expr`: a PEG keeps the first alternative that matches,
           // and `f"…"` starts with what `NAME` reads as the variable `f`.
           | s:f_str_lit -> { s }
@@ -1477,6 +1611,8 @@ grammar! {
         rule KW_LET = "let" not(ident)
         rule KW_MATCH = "match" not(ident)
         rule KW_MUT = "mut" not(ident)
+        rule KW_NULL = "null" not(ident)
+        rule KW_OVERLAP = "overlap" not(ident)
         rule KW_PAR_FOLD = "par_fold" not(ident)
         rule KW_PUB = "pub" not(ident)
         rule KW_RETURN = "return" not(ident)
@@ -1493,6 +1629,73 @@ grammar! {
         rule KW_USE = "use" not(ident)
         rule KW_WHILE = "while" not(ident)
 
+        // **Every reserved word, in one rule** (`open-decisions.md` §7).
+        //
+        // UPPERCASE for the same reason the `KW_` rules are: this is lexical,
+        // and a lowercase rule would let the generator insert the implicit
+        // whitespace inside it.
+        //
+        // **The list is the Nikaia level and nothing else.** `rule`,
+        // `boundary`, `fold`, `par_fold` and `unchecked` are the grammar
+        // sublanguage's vocabulary - they are keywords inside a `grammar`
+        // block and words a program may want everywhere else, so they are not
+        // here. `overlap` is here and the grammar has no construct for it yet
+        // ([ADR-050](../../../../docs/specification/adr/adr-050.md) D2):
+        // reserving a word costs nothing before programs exist and breaks them
+        // afterwards, so the free moment is now.
+        //
+        // **`self` is deliberately absent**, and that is not an oversight. It
+        // is the one keyword that *is* a name - `self.min` refers to it - and
+        // `NAME` is the rule both for declaring a name and for referring to
+        // one, so excluding it here would refuse every method body in the
+        // repository. Declaring it is refused where the declaration is, by the
+        // checker, which can say what is wrong.
+        //
+        // Order does not matter: every alternative carries its own `not(ident)`
+        // boundary, so `throw` does not match the start of `throws`.
+        // **Split in two** because the alternation the backend generates is a
+        // tuple, and a tuple has a width the library implements `Alt` up to.
+        // Twenty-eight is over it. Nothing else distinguishes the halves.
+        //
+        // **And every arm hands back a `0` that nothing reads**, which is not a
+        // style choice either: an alternation with no action generates a unit
+        // expression per arm, and `clippy::unused_unit` refuses the whole macro
+        // expansion for it. A value is the smallest thing that is not a unit.
+        rule RESERVED -> u8 = w:RESERVED_A -> { w } | w:RESERVED_B -> { w }
+
+        rule RESERVED_A -> u8 =
+            KW_AS -> { 0 }
+          | KW_CATCH -> { 0 }
+          | KW_DSL -> { 0 }
+          | KW_ELSE -> { 0 }
+          | KW_ENUM -> { 0 }
+          | KW_FALSE -> { 0 }
+          | KW_FN -> { 0 }
+          | KW_FOR -> { 0 }
+          | KW_FROM -> { 0 }
+          | KW_GRAMMAR -> { 0 }
+          | KW_IF -> { 0 }
+          | KW_IMPL -> { 0 }
+          | KW_IN -> { 0 }
+          | KW_LET -> { 0 }
+
+        rule RESERVED_B -> u8 =
+            KW_MATCH -> { 0 }
+          | KW_MUT -> { 0 }
+          | KW_NULL -> { 0 }
+          | KW_OVERLAP -> { 0 }
+          | KW_PUB -> { 0 }
+          | KW_RETURN -> { 0 }
+          | KW_SEQ -> { 0 }
+          | KW_SPAWN -> { 0 }
+          | KW_STRUCT -> { 0 }
+          | KW_SYNC -> { 0 }
+          | KW_THROW -> { 0 }
+          | KW_THROWS -> { 0 }
+          | KW_TRUE -> { 0 }
+          | KW_USE -> { 0 }
+          | KW_WHILE -> { 0 }
+
         // The compiler's identifier.
         //
         // The backend's `ident` accepts a **leading digit** - `1` is an
@@ -1505,7 +1708,12 @@ grammar! {
         //
         // `not(digit)` consumes nothing and demands nothing, so it costs a
         // character comparison at the start of every name.
-        rule NAME -> Symbol = not(digit) n:ident -> { n }
+        //
+        // **`not(RESERVED)` is the same shape and answers `open-decisions.md`
+        // §7.** A reserved word is not a name, so `let fn = 3` - which used to
+        // lower to `let fn = 3;` and be refused by `rustc` about the generated
+        // file (Part III, C.1) - does not parse as a `let` of a name at all.
+        rule NAME -> Symbol = not(digit) not(RESERVED) n:ident -> { n }
 
         rule pattern_lit -> Expr =
             b:bool_lit -> { b }
@@ -1623,6 +1831,13 @@ grammar! {
         rule bool_lit -> Expr =
             KW_TRUE -> { Expr::LitBool(true) }
           | KW_FALSE -> { Expr::LitBool(false) }
+
+        // Part I 2.3. Beside `bool_lit` because it is the same kind of thing: a
+        // word the grammar knows, which is why it is a reserved word
+        // ([ADR-051](../../../../docs/specification/adr/adr-051.md) D1) - read
+        // as a name it would be `NK1117`, and read as a name that *is* declared
+        // it would be a different program.
+        rule null_lit -> Expr = KW_NULL -> { Expr::LitNull }
 
         // Kap 2.5. `f` before the quote is what makes a string *code* - without
         // it the braces are braces (ADR-035). UPPERCASE, so the `f` and the

@@ -807,7 +807,9 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
             children.extend(args);
             children.extend(config.iter().map(|c| &c.value));
         }
-        Expr::Field { base, .. } => children.push(base),
+        // A safe reach borrows what a plain one does: whether it happens is
+        // decided at run time, and a view analysis is about *what* is reached.
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } => children.push(base),
         Expr::Index { base, index } => {
             children.push(base);
             children.push(index);
@@ -863,6 +865,8 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
         | Expr::LitStr(_)
         | Expr::LitInterpolated(_)
         | Expr::LitChar(_)
-        | Expr::LitBool(_) => {}
+        | Expr::LitBool(_)
+        // `null` holds nothing, so it borrows nothing.
+        | Expr::LitNull => {}
     }
 }

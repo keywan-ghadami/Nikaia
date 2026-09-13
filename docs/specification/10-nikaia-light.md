@@ -129,6 +129,43 @@ let mut y = 10
 y = 20     // This is allowed
 ```
 
+**Reserved words**
+
+These words mean one thing wherever they appear, so a name may not be one of them
+([ADR-051](adr/adr-051.md) D1):
+
+```text
+as      catch   dsl     else    enum    false   fn      for
+from    grammar if      impl    in      let     match   mut
+overlap pub     return  self    seq     spawn   struct  sync
+throw   throws  true    use     while
+```
+
+Three things about the list, because each of them is a question a reader will
+have:
+
+* **A `grammar` block has its own vocabulary**, and it is not here: `rule`,
+  `boundary`, `fold`, `par_fold` and `unchecked` are keywords *inside* one
+  (Part II, 10.1) and ordinary names everywhere else (D2).
+* **After a `::` or a `.`, a reserved word is a name.** A segment follows a `::`
+  and a member follows a `.`, and no construct begins in either position - so
+  `Self::dsl` (Part II, 10.5) and `scope.spawn fn { … }` (Part II, 12.5) are what
+  they look like (D3).
+* **`self` is on the list and is also a name** - the one the receiver of a method
+  has. So *using* it is what every method body does; *declaring* one is refused
+  (D4).
+
+> **Status:** built. A name that is a reserved word does not parse, and the parse
+> error names the word and says it is reserved.
+>
+> `self` is the one the grammar cannot refuse that way - `NAME` is the rule for
+> declaring a name *and* for referring to one - so declaring it is `NK1119` from
+> the checker: at a `let`, a `for` binding, a lambda's argument and a struct
+> field. A **parameter** named `self` never parsed at all, because the receiver
+> takes the word and the type beside it has nowhere to go; it says so in a
+> sentence now rather than asking for a closing parenthesis
+> ([ADR-051](adr/adr-051.md) D4).
+
 ### 2.2. Primitive Data Types
 Nikaia provides basic types to represent simple values.
 
@@ -254,12 +291,25 @@ literals that cannot fit, so neither waits for the program to run
 > The `wrapping_` and `saturating_` names are built for `i32` and `i64` — the two
 > integer types named above — and `crates/nikaia/tests/overflow.rs` runs them
 > beside the same arithmetic with `*`, which aborts. `saturating_shl` and
-> `saturating_shr` do not exist, here or in the language below. The out-of-range literal is
+> `saturating_shr` do not exist, here or in the language below. The out-of-range constant is
 > refused here now, as `NK1116`, wherever a type stands beside it: an annotated
 > `let`, a `return` against a declared result, or an argument whose parameter says
 > what it takes. It prevented no abort — one never happened — and what it takes
 > back is the message, which was the backend's, in Rust's words, about a file
 > nobody wrote.
+>
+> **A sum reaches further than a literal.** `let b = a + 1`, where `a` is a
+> constant an annotation declared an `i32`, is folded and refused with no
+> annotation on the `let` line at all: the operand's declaration is what gives the
+> arithmetic a type. `+ - * / %` and a negation fold, through any number of
+> immutable `let`s, in a wider number than either type so that the message can
+> name what the expression comes to. Everything else stops the fold and is
+> accepted — a `mut` local, a parameter, a `for` binding, a cast — and an
+> expression that does not fold is never refused.
+>
+> And a division whose divisor is a constant zero is `NK1118`
+> ([ADR-043](adr/adr-043.md) D5.5). Every other division by zero stays where
+> Part III A.2 puts it: unrecoverable, at run time, naming this line.
 >
 > The narrowing check is built too, and `crates/nikaia/tests/overflow.rs`
 > compiles the conversions with `-O` and **no** check flag — a conversion carries
@@ -269,8 +319,11 @@ literals that cannot fit, so neither waits for the program to run
 > `big.truncating_i32()` is the same `as` it always was. The `truncating_` names
 > exist for the three sources above and for `i32` and `i64` as destinations.
 >
-> **Not built:** a sum of constants that cannot fit, which is still refused the
-> other way (Part III, C.1).
+> **Not built:** a literal that nothing at all constrains — `let big =
+> 3000000000` on its own, and `let b = 3000000000 + 1`. That is still refused the
+> other way (Part III, C.1), and it stays that way on purpose: the same line is a
+> correct program where a later use asks for an `i64` (2.4), and this compiler has
+> no inference to tell the two apart.
 
 ### 2.3. Nullable Types (Null Safety)
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
@@ -287,9 +340,28 @@ A literal is a **view** of text the program was compiled with, not a `String` �
 an allocation happens only where you wrote that you wanted one, and [ADR-024](adr/adr-024.md) D5.
 `.to_string()` is how you say you want one.
 
-> **Status:** not built. A trailing `?` on a type is a parse error, and `null` is
-> read as an ordinary name rather than as a value — so neither line of the
-> example above is accepted as written, while `??` (3.5) is.
+> **Status:** built ([ADR-052](adr/adr-052.md)). `T?` lowers to the language
+> below's `Option<T>` — the mapping Part III 15.2 writes the other way round —
+> and `null` is a reserved word (2.1) that lowers to `None`. The `?` comes last,
+> after the type's arguments, so `Vec[i64]?` is a nullable list and `Vec[i64?]`
+> is a list of nullables.
+>
+> **The second line of the example is the one that needed deciding.** A plain
+> `String` standing where a `String?` is wanted is the one widening this language
+> has, and the constructor is the **compiler's** to write: there is no `Some` in
+> Nikaia and must not be, or the type's whole purpose becomes paperwork. It is
+> written wherever a plain value meets a nullable slot: an annotated `let`, an
+> assignment, a `return`, a struct-literal field, and a call argument.
+>
+> `let m = null` with nothing beside it is **not** refused here, and that is on
+> purpose: `let mut m = null` and then `m = "hi"` is a correct program, and this
+> compiler has no inference to tell it from the one where nothing ever says. So
+> the backend asks for the annotation, which is the honest answer.
+>
+> `(A, B)?` is deliberately absent — this section does not write it.
+>
+> Part I 3.5's `??` was already built and now has a type to be used on, and
+> `?.` is built beside it.
 
 ### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
@@ -509,8 +581,32 @@ let name = repo.find_user(id)?.full_name
 let display_name = name ?? "Guest"
 ```
 
-> **Status:** `??` is built. `?.` is not: there is no safe-navigation operator in
-> the parser, and a `?` after an expression is a parse error.
+> **Status:** `??` is built, and 2.3's `T?` is what it operates on
+> ([ADR-052](adr/adr-052.md)): `a ?? b` lowers to `a.unwrap_or_else(|| b.into())`.
+>
+> `?.` is built too. It lowers to `map` over a plain field and to `and_then`
+> over one that is **itself** a `T?` — the second being the whole difficulty,
+> since `map` there would leave `a?.b?.c` reaching through a nullable of a
+> nullable. Which of the two is a question about the declared type, so the
+> compiler decides it, the way 2.3's `Some(…)` is decided
+> ([ADR-052](adr/adr-052.md) D6).
+>
+> The result is a `T?` either way, which is what lets `??` end a chain and `?.`
+> continue one.
+>
+> **`?.` through something that cannot be absent is refused** as `NK1121`, and
+> the way out is the plain `.` — a type that is not `T?` always has a value.
+>
+> **And `?.` takes the value it reaches through**, so using the receiver again is
+> refused by the language below with *"use of moved value"* on this line. That is
+> a real rule and not an accident of the lowering; what was translated is the
+> note that explained it, which used to name the machinery instead of the
+> operator ([ADR-052](adr/adr-052.md) D8).
+>
+> **`?.` onto a *method* is refused**, with a sentence: this section writes a
+> field, and a form the specification does not name is not the compiler's to add.
+> The way out it names is taking the value with `??`, or a `match` where there is
+> no fallback to give.
 
 ---
 

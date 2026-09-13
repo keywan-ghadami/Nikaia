@@ -331,6 +331,10 @@ fn walk(
         Ty::Var { .. } => Crossing::Undecided { part: ty.text() },
         // A lambda is its captures, and nothing writes those down.
         Ty::Fn { .. } => Crossing::Undecided { part: ty.text() },
+        // **A `T?` crosses exactly as its `T` does**, because that is what it
+        // lowers to: an `Option<T>` is `Send` when `T` is, and it holds one `T`
+        // or nothing. Neither answer is changed by the emptiness.
+        Ty::Nullable(inner) => walk(inner, own, library, into, seen, depth - 1),
         // `()` holds nothing, so there is nothing to be wrong about; a pair is
         // its parts.
         Ty::Tuple(parts) => join(

@@ -610,7 +610,7 @@ fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)) {
         Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Cast { expr, .. } => {
             visit_expr(parsed, expr, f)
         }
-        Expr::Field { base, .. } => visit_expr(parsed, base, f),
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr(parsed, base, f),
         Expr::Index { base, index } => {
             visit_expr(parsed, base, f);
             visit_expr(parsed, index, f);

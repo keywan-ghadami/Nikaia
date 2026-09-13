@@ -85,6 +85,20 @@ pub enum Ty {
     /// What the lambda *hands back* is deliberately absent: nothing needs it
     /// yet, and a spelling is easier to add than to change.
     Fn { params: Vec<Ty> },
+    /// `T?` - Part I 2.3's nullable type, and the whole of it: a type is
+    /// non-nullable unless it says otherwise.
+    ///
+    /// **A wrapper rather than a flag**, which is the opposite of how the AST
+    /// records it, and for a reason: the AST's flag sits beside `is_view`
+    /// because `&str?` is a nullable view and the two are independent, while
+    /// here every reader of a type already recurses, so a wrapper is one arm
+    /// per reader instead of a condition inside each of them.
+    ///
+    /// `Option<T>` is what it lowers to and **not** what it is called: the
+    /// specification's own mapping is Rust `Option<T>` to Nikaia `T?`
+    /// (Part III, 15.2), so a diagnostic that said `Option[String]` would name a
+    /// type the program cannot write (Part III, C.1).
+    Nullable(Box<Ty>),
 }
 
 impl Ty {
@@ -133,6 +147,15 @@ impl Ty {
             // about a type called `$V`. `substitute` is supposed to have
             // removed it; this is the belt to that pair of braces.
             (Ty::Var { .. }, _) | (_, Ty::Var { .. }) => true,
+            // Two nullables fit when what they may hold fits.
+            (Ty::Nullable(a), Ty::Nullable(b)) => a.fits(b),
+            // **And a plain value fits a nullable slot**, which is the one
+            // widening this checker has. Part I 2.3 writes it: `let mut m:
+            // &str? = null` and then `m = "World"`, a `&str` into a `&str?`.
+            // The other direction is not a fit - a `T?` where a `T` is wanted
+            // is the whole point of the type being separate - and `??` (3.5) is
+            // how a program gets from one to the other.
+            (found, Ty::Nullable(want)) => found.fits(want),
             (
                 Ty::Named {
                     name: a,
@@ -164,6 +187,13 @@ impl Ty {
         let text = text.trim();
         if text.is_empty() || text == "?" {
             return Ty::Unknown;
+        }
+        // A trailing `?` is Part I 2.3's nullable marker, read before anything
+        // else so that `&str?` and `Vec[i64]?` reach the branches below as the
+        // types they are nullable *of*. `"?"` alone is `Unknown` and was taken
+        // one line up, which is what keeps the two spellings apart.
+        if let Some(inner) = text.strip_suffix('?') {
+            return Ty::Nullable(Box::new(Ty::parse(inner)));
         }
         if let Some(inner) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
             return Ty::Tuple(split_args(inner).iter().map(|p| Ty::parse(p)).collect());
@@ -224,6 +254,7 @@ impl Ty {
                 name: name.clone(),
                 view: *view,
             },
+            Ty::Nullable(inner) => Ty::Nullable(Box::new(inner.erase(parameters))),
             Ty::Named { name, args, view } => {
                 if args.is_empty() && parameters.contains(name) {
                     return Ty::Unknown;
@@ -246,6 +277,15 @@ impl Ty {
                     .map(|g| Ty::from_ast(parsed, g))
                     .collect(),
             );
+        }
+        // The `?` wraps whatever the rest of the declaration says, so it is
+        // read last here and first in `parse` - the same order either way round.
+        if ty.is_nullable {
+            let inner = ast::Type {
+                is_nullable: false,
+                ..ty.clone()
+            };
+            return Ty::Nullable(Box::new(Ty::from_ast(parsed, &inner)));
         }
         Ty::Named {
             // `unaliased`, because a type may be written with this file's own
@@ -283,6 +323,9 @@ impl fmt::Display for Ty {
                 }
                 write!(f, "${name}")
             }
+            // `T?` and never `Option[T]`: the program cannot write the second
+            // one, so a message must not either (Part III, C.1).
+            Ty::Nullable(inner) => write!(f, "{inner}?"),
             Ty::Named { name, args, view } => {
                 if *view {
                     f.write_str("&")?;
@@ -529,6 +572,7 @@ pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty
         Ty::Fn { params } => Ty::Fn {
             params: params.iter().map(|p| substitute(p, bound)).collect(),
         },
+        Ty::Nullable(inner) => Ty::Nullable(Box::new(substitute(inner, bound))),
         Ty::Unknown => Ty::Unknown,
     }
 }

@@ -19,6 +19,14 @@ starts here)
 `crates/nikaia/tests/lock_floor.rs` (the question put to the real `sync`
 inference), and the seven `.nika` and three `.rs` probes quoted below
 
+> **Read as a snapshot.** The lambdas on this page are written in the form
+> [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
+> the argument read off the body — and **no sample here compiles as written**; the
+> current spelling names its arguments, `sort_by_key fn(x) { x }` (Part I, 5.3).
+> The analysis each section records is unaffected: what a lambda's arguments are
+> called changes nothing about when it runs or what it touches, which is what this
+> page is about. Transcribe the reasoning, not the code.
+
 [`rc-or-arc.md`](rc-or-arc.md) §7 ended by naming the decision it could not
 make: *"`RefCell` and `Mutex` are not observationally equivalent… That is the
 second decision D3's question turns out to contain."* Part II 12.2 gives

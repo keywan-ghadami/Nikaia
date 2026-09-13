@@ -436,11 +436,13 @@ One consequence is worth stating for a library author: **writing a signature dow
 Testing and verification are first-class citizens in Nikaia.
 
 > **Status for the whole chapter:** not built. `test` and `bench` are parse
-> errors; `assert` is not a keyword, so `assert cond` is read as two statements
-> and `assert(cond)` as a call to a function of that name, and `assert cond,
-> "message"` does not parse at all. There is no `nikaia test` or `nikaia bench`
-> command (13.2), so no fuzzing, no `impl Generator` dispatch, no
-> `--with-asserts` and no `--history`.
+> errors; `assert` is not a keyword — it is not on Part I 2.1's list, because that
+> list is what the grammar *has* and this chapter is unbuilt — so `assert cond`
+> parses as two statements and is then **refused** by `NK1117`, *"nothing declares
+> `assert`, and this statement is just that name"*. `assert(cond)` is a call to a
+> function of that name and `assert cond, "message"` does not parse at all. There
+> is no `nikaia test` or `nikaia bench` command (13.2), so no fuzzing, no
+> `impl Generator` dispatch, no `--with-asserts` and no `--history`.
 
 ### 14.1. Unit Tests (`test`)
 Standard tests check specific inputs. These blocks are only compiled during `nikaia test`.
@@ -558,8 +560,10 @@ fn raw_alloc() {
 ```
 
 > **Status:** not built. `extern "C"` is a parse error, and `unsafe` is not a
-> keyword — `unsafe { … }` is read as a name followed by a block, so the example
-> above means something other than what it says.
+> keyword — it is not on Part I 2.1's list, because that list is what the grammar
+> *has*. So `unsafe { … }` parses as a name followed by a block and is then
+> **refused** by `NK1117`, *"nothing declares `unsafe`"*: the example above does
+> not mean something other than what it says, it does not compile.
 
 ### 15.2. Rust Integration (Deep Integration)
 Nikaia treats Rust Crates differently than C libraries. Because Rust has a strong type system, Nikaia can verify safety properties.
@@ -580,15 +584,39 @@ The rule reaches exactly as far as the Rust signature is true. A Rust API that d
 
 **Mapping Types**
 * Rust `i32` -> Nikaia `i32`
-* Rust `String` -> Nikaia `String`
+* Rust `i64`, `u8` -> Nikaia `i64`, `u8` — the rest of the numeric surface (Part I, 2.2)
+* Rust `String` -> Nikaia `String`, and Rust `&str` -> Nikaia `&str`, which is a
+  **view** and not a lifetime (Part II, 10.6)
 * Rust `Option<T>` -> Nikaia `T?` (Nullable)
+* Rust `Vec<T>` -> Nikaia `Vec[T]`, and `HashMap<K, V>` -> `HashMap[K, V]`
+* Rust `Rc<T>` **or** `Arc<T>` -> Nikaia `Shared[T]`. **One Nikaia type, two Rust
+  ones**, and which it becomes is the compiler's to decide from what the value
+  crosses ([ADR-045](adr/adr-045.md) §3): a `Shared[T]` that reaches a foreign
+  call is an `Arc<T>`, because a call whose body this compiler cannot see is a
+  call that may put what it is given on a thread of its own. That is the entry
+  this table was missing, and it is the one [ADR-045](adr/adr-045.md) §3's whole
+  argument turns on.
 
 **Thread Safety (Send/Sync)**
-Nikaia can detect thread safety in Rust code. The compiler reads the metadata of the Rust Crate.
+Nikaia decides whether a value may cross into foreign code from the **Nikaia type
+of the argument**, not from the Rust crate.
 
-* If a Rust type implements the `Send` trait (safe to move between threads), Nikaia allows using it in `spawn` tasks.
-* If a Rust type is `!Send` (e.g., `Rc<T>`), and you try to use it where your code runs in parallel, the Nikaia compiler produces an error:
-    > "Error: Cannot move Rust type 'Rc<i32>' to another thread. It is not Thread-Safe."
+* A type this compiler knows may cross is allowed in a `spawn` task and in a
+  foreign call.
+* A type it knows may not — a `Shared[T]` that is an `Rc<T>` on this side — is
+  refused as `NK2502` (C.5), and the diagnostic names the Nikaia type, because
+  that is the one the program wrote.
+
+> **Status:** **no crate metadata is read**, and this section used to say it was.
+> A foreign call is one no ledger describes ([ADR-024](adr/adr-024.md)), and the
+> verdict is taken on the argument's Nikaia type — so there is no reading of a
+> Rust crate's `Send` implementations, and there is no message about an
+> `Rc<i32>` in Rust's words. What is built is `NK2502` on the crossing this
+> compiler can decide about, at **both** settings of `user_parallelism`
+> ([ADR-038](adr/adr-038.md) D7), and C.5's third answer — *undecided* — for
+> everything else. Reading the metadata would be a different and larger
+> mechanism; nothing in this repository needs it yet, and the sentence claiming
+> it is gone rather than left standing.
 
 ```nika
 // Usage of a Rust crate
@@ -608,7 +636,21 @@ fn process() {
 A single-threaded build possesses a natural affinity for WebAssembly. Since WASM (in its basic form) shares a linear memory model and runs in single-threaded host environments, `user_parallelism = no` is the perfect match.
 
 **Zero Overhead**
-Compiling with `nikaia build --target=wasm32-unknown` produces extremely compact binaries because the compiler does not generate OS-level mutexes or atomic operations in this mode.
+Compiling with `nikaia build --target=wasm32-unknown` produces compact binaries:
+the runtime a `no` build starts is the I/O worker and nothing else
+([ADR-038](adr/adr-038.md) D4), and no OS-level mutex is generated.
+
+> **Status:** the mutex half is true and the **atomic** half is not, and this
+> section used to claim both. A `Shared[T]`'s owner count is atomic at *both*
+> settings of `user_parallelism` ([ADR-037](adr/adr-037.md) D6): the switch bounds
+> what your code runs at once, and the count is touched by the runtime as well —
+> so making it depend on the switch would make a program's own data race with the
+> machinery under it. And [ADR-045](adr/adr-045.md) §3 measures a foreign call
+> forcing the atomic count whatever the setting, for the same reason C.5's rule
+> has: a call whose body this compiler cannot see may put what it is given on a
+> thread of its own. **Measured, not argued**: `benches/refcount` is what settled
+> the cost, and it is small enough that one count per program is not the place to
+> win it back.
 
 **JavaScript Interoperability (`dsl js`)**
 Instead of trying to map the entire DOM to Nikaia structs, Nikaia embeds raw JavaScript using the `dsl` keyword (Part II, 10.5).
@@ -693,9 +735,12 @@ declares a different vocabulary — `dsl wasm` has locals and a value stack, not
 *   **Optimization:** a backend DSL can emit target-specific or SIMD instructions without any
     change to the language.
 *   **`unsafe`:** this was the keyword's only specified use. It remains
-    **reserved** for the FFI work of 15.1 rather than being dropped from the
-    specification — the grammar has no `unsafe` to keep, so the reservation is a
-    name held open and nothing more.
+    **held open** for the FFI work of 15.1 rather than being dropped from the
+    specification — and it is deliberately *not* on Part I 2.1's reserved list,
+    which is the list of words the grammar has a construct for
+    ([ADR-051](adr/adr-051.md) D1). A word held open for later is a name today,
+    refused by `NK1117` where a program writes it, and it joins the list on the
+    day the construct does.
 
 ---
 
@@ -1122,7 +1167,7 @@ Errors arising from external circumstances (File not found, Network timeout).
 * **Handling:** Enforced by the compiler via `catch{}` blocks or propagation.
 
 ### A.2. Unrecoverable Errors (`panic`)
-Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, **Arithmetic Overflow**, **a conversion whose value does not fit**, explicit `panic()`). An overflow is in this list at **every** build, which is what keeps Part I 1.2's rule — you choose *how*, never *what* — true of arithmetic as well; where a program means to wrap or to stop at the limit it says so by name (Part I, 2.2) ([ADR-043](adr/adr-043.md) D1). A conversion is the same kind of thing and is in the list for the same reason, by a different mechanism: the check is in the emitted code rather than in a build setting, because `as` in the language below truncates by definition and offers nothing to switch on — and `truncating_i32` is how a program says it wanted the low digits ([ADR-043](adr/adr-043.md) D4, D7). Three build switches exist (13.3) and a panic depends on **two** of them — `user_parallelism` and `target` — on different grounds:
+Errors indicating an inconsistent program state (Index Out of Bounds, Division by Zero, **Arithmetic Overflow**, **a conversion whose value does not fit**, explicit `panic()`). An overflow is in this list at **every** build, which is what keeps Part I 1.2's rule — you choose *how*, never *what* — true of arithmetic as well; where a program means to wrap or to stop at the limit it says so by name (Part I, 2.2) ([ADR-043](adr/adr-043.md) D1). A conversion is the same kind of thing and is in the list for the same reason, by a different mechanism: the check is in the emitted code rather than in a build setting, because `as` in the language below truncates by definition and offers nothing to switch on — and `truncating_i32` is how a program says it wanted the low digits ([ADR-043](adr/adr-043.md) D4, D7). **Two of these are also said at compile time where the answer is already on the page, and that changes nothing in this list:** a constant that cannot fit the type it is given is `NK1116` and a division whose divisor is a *constant* zero is `NK1118` ([ADR-043](adr/adr-043.md) D5 and D5.5). Neither takes a case out of the list - a program whose divisor the compiler cannot evaluate divides by whatever it is handed, and a zero there is unrecoverable exactly as written here. What they take back is the message in the one case where no program had to run to know it (C.1). Three build switches exist (13.3) and a panic depends on **two** of them — `user_parallelism` and `target` — on different grounds:
 
 | `user_parallelism` | Panic Behavior | Consequence |
 | :--- | :--- | :--- |
@@ -1213,7 +1258,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 
 | Range | Domain | Examples defined so far |
 | :--- | :--- | :--- |
-| `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. `NK1109` a call names an option the callee does not have (Part I, 5.1). `NK1110` a call reaches an item — or a field — another **package** keeps private (Part I, 9.2). Raised since a package can be depended on by path: *`secret` is private to `http`*, and *`http::Request.method` is private to `http`* for reading such a field and for giving one a value in a struct literal. A field's `pub` is in the ledger because the language below cannot enforce it: a dependency's items are in the same crate ([ADR-047](adr/adr-047.md) D2). All ten are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). `NK1111` (**warning, and temporary**) a plain string holds what looks like a hole, or a doubled brace that used to be an escape - the one-release migration to `f"…"` ([ADR-035](adr/adr-035.md) D5), and the only thing this checker warns about rather than refusing. `NK1112` a call does not pass a parameter the DSL statement it is given declares, and `NK1113` names one that statement does not have (Part II, 10.5) - answered from the statement's own body rather than from the ledger, because the body is where a `:name` is written ([ADR-007](adr/adr-007.md) D5). `NK1114` is **retired**: it warned about a lambda reaching for one of the automatic argument names `a`, `b`, `c`, and those are withdrawn ([ADR-049](adr/adr-049.md)). A body that reaches for one now names something nothing declares, which is `NK1117` below — so the rule the warning made visible is gone rather than made quieter, and the number is not reused. `NK1115` a call wants a shared value and is given a plain one (Part I, 6.2). The way out is never an implicit wrap at the call — a call in which the word does not appear would move the cleanup point silently, and at such a place there is no saying whether the value was handed on or duplicated — so the message points at the line where the sharing belongs: an annotated `let`, or a field whose declared type says so ([ADR-040](adr/adr-040.md) D1). `NK1116` a literal does not fit the type it is given (Part I, 2.2) - at an annotated `let`, a `return` against a declared result, or an argument whose parameter says what it takes. It prevents no abort, because an out-of-range literal never reached run time: what it takes back is the **message**, which was the backend's, in Rust's words, about a file nobody wrote ([ADR-043](adr/adr-043.md) D5, C.1). `NK1117` a statement is one name and nothing declares it. This language has no word it does not know: the grammar is scannerless, so a word it has no rule for is read as a name, and a name on its own is a legal statement. `assert c`, `unsafe { … }` and the `_000` of `1_000` (Part I, 2.2) all used to lower and be refused by `rustc` about a file nobody wrote, which is the C.1 class. Four things count as declaring a name - a local or parameter in scope, a function either ledger describes, a type declared here, and a module of this program - and anything this compiler cannot see is a name it does not refuse (C.4). |
+| `NK1xxx` | Syntax & types | `NK1101` a call passes the wrong number of arguments. `NK1102` an argument is not what the parameter takes. `NK1103` a `let` says one type and is given another. `NK1104` a `return` - or a body's last expression - is not what was declared. `NK1105` an assignment is not what the target holds. `NK1106` a struct literal gives a field the wrong type. `NK1107` a field that is not there. `NK1108` a condition that is not a `bool`. `NK1109` a call names an option the callee does not have (Part I, 5.1). `NK1110` a call reaches an item — or a field — another **package** keeps private (Part I, 9.2). Raised since a package can be depended on by path: *`secret` is private to `http`*, and *`http::Request.method` is private to `http`* for reading such a field and for giving one a value in a struct literal. A field's `pub` is in the ledger because the language below cannot enforce it: a dependency's items are in the same crate ([ADR-047](adr/adr-047.md) D2). All ten are answered from the ledger (13.5), so a call into a library is checked against the contracts the library ships ([ADR-024](adr/adr-024.md)). `NK1111` (**warning, and temporary**) a plain string holds what looks like a hole, or a doubled brace that used to be an escape - the one-release migration to `f"…"` ([ADR-035](adr/adr-035.md) D5), and the only thing this checker warns about rather than refusing. `NK1112` a call does not pass a parameter the DSL statement it is given declares, and `NK1113` names one that statement does not have (Part II, 10.5) - answered from the statement's own body rather than from the ledger, because the body is where a `:name` is written ([ADR-007](adr/adr-007.md) D5). `NK1114` is **retired**: it warned about a lambda reaching for one of the automatic argument names `a`, `b`, `c`, and those are withdrawn ([ADR-049](adr/adr-049.md)). A body that reaches for one now names something nothing declares, which is `NK1117` below — so the rule the warning made visible is gone rather than made quieter, and the number is not reused. `NK1115` a call wants a shared value and is given a plain one (Part I, 6.2). The way out is never an implicit wrap at the call — a call in which the word does not appear would move the cleanup point silently, and at such a place there is no saying whether the value was handed on or duplicated — so the message points at the line where the sharing belongs: an annotated `let`, or a field whose declared type says so ([ADR-040](adr/adr-040.md) D1). `NK1116` a constant does not fit the type it is given (Part I, 2.2) - at an annotated `let`, a `return` against a declared result, or an argument whose parameter says what it takes, and at a bare `let` where an operand's **declaration** pins the type, which is what makes `let b = a + 1` answerable ([ADR-043](adr/adr-043.md) §4). A literal standing with nothing beside it keeps its own type-less reading, because a use may still ask for an `i64` (Part I, 2.4). It prevents no abort, because an out-of-range literal never reached run time: what it takes back is the **message**, which was the backend's, in Rust's words, about a file nobody wrote ([ADR-043](adr/adr-043.md) D5, C.1). `NK1117` a statement is one name and nothing declares it. This language has no word it does not know: the grammar is scannerless, so a word it has no rule for is read as a name, and a name on its own is a legal statement. `assert c`, `unsafe { … }` and the `_000` of `1_000` (Part I, 2.2) all used to lower and be refused by `rustc` about a file nobody wrote, which is the C.1 class. Four things count as declaring a name - a local or parameter in scope, a function either ledger describes, a type declared here, and a module of this program - and anything this compiler cannot see is a name it does not refuse (C.4). `NK1118` a division - or a remainder - whose divisor is a constant zero ([ADR-043](adr/adr-043.md) D5.5). A division by zero stays where Part III A.2 puts it, unrecoverable and at run time; what this takes back is the one case already decided on the page, which `rustc` refused with *"attempt to divide `1_i32` by zero"* about the generated file. Both this and `NK1116` read the same constant fold - a literal, an immutable `let` whose value folded, `+ - * / %` and a negation, in an `i128` - and a divisor the fold cannot evaluate is a divisor nothing is claimed about. `NK1119` a `let`, a `for` binding or a lambda's argument is called `self` ([ADR-051](adr/adr-051.md) D4). Every other reserved word is excluded from the grammar's name rule, so `let fn = 3` does not parse at all; `self` cannot be, because it is the one reserved word that *is* a name - `self.min` refers to it - and one rule serves both declaring a name and referring to one. Reached at a `let`, a `for` binding, a lambda's argument and a **struct field** - the last taking a span of its own on `FieldDef`, since the nearest one that walk had was a statement's and a caret on the wrong line is worse than no message. A **parameter** named `self` is refused by the grammar instead: it never parsed, because the receiver takes the word. `NK1120` is **unused** and the number is not reused. `NK1121` a `?.` reaches through a value that cannot be absent ([ADR-052](adr/adr-052.md) D7): `?.` exists for a `T?` and answers `null` where there is nothing to reach on, so a type that always has a value has nothing for it to do - the way out is the plain `.`. Asked only where the receiver's type is known, because refusing an unknown one would refuse a correct program (C.4). |
 | `NK21xx` | Tasks & capture | `NK2101` task takes ownership of a variable still used afterwards (Part I, 8.3). `NK2102` scoped tasks must be `sync` where they run in parallel (Part II, 12.7). |
 | `NK22xx` | Locks & suspension | `NK2201` no I/O while holding locked data (Part II, 12.2). `NK2202` a `sync` function called something that can pause (Part II, 12.1), answered from the ledger (13.5). `NK2203` a lock taken while a lock is held — written one inside the other, reached through a chain of calls, or opened as a scope inside the block, because a scope's tasks run during the call and one of them waiting for the held lock is a deadlock rather than a risk ([ADR-039](adr/adr-039.md) D2, D3). The way out is asking for both at once: `access_all(a, b) fn(x, y) { … }` (Part II, 12.3). `NK2204` an assignment to a `SharedMut` directly; the message names the door — `kasse.set(42)` for `kasse = 42` ([ADR-039](adr/adr-039.md) D10). `NK2205` a `set` whose argument reads the same container with `get`; the message names `update`, which is handed the old value and returns the new one ([ADR-039](adr/adr-039.md) D10). Worked through in C.6. |
 | `NK23xx` | Aliasing | `NK2301` cannot change a collection while looping over it (Part I, 6.8). `NK2302` a parameter written `&str` is kept past the call it was given in, and nothing names the buffer it views (Part I, 6.6). A view inside a struct carries the buffer it points into ([ADR-008](adr/adr-008.md) D1) and a naked one does not, so the message names the struct form as the way out. Reported where the destination names no buffer: a function or method whose subject holds no view, a view handed back through the result, a view given to a task. Where the destination *does* name one — a field of a subject that holds a view — the program is lowered instead, with the parameter written as a view of that buffer. That last case is accepted **without being decided**: a call on the subject may or may not keep what it is given, nothing written down says which, and an analysis that fails open here emits Rust that does not compile — so it is treated as keeping it ([ADR-010](adr/adr-010.md) D1's polarity, where the cost of the safe direction is a narrower signature rather than a refusal). |

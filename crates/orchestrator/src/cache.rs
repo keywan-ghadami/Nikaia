@@ -660,7 +660,7 @@ pub fn sweep(root: &Path, keep: usize) {
         .collect();
 
     // Newest first, so the tail is what goes.
-    trees.sort_by(|a, b| b.0.cmp(&a.0));
+    trees.sort_by_key(|(used, _)| std::cmp::Reverse(*used));
     for (used, path) in trees.into_iter().skip(keep) {
         let idle = now.duration_since(used).unwrap_or_default();
         if idle < IN_USE {

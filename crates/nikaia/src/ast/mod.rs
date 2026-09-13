@@ -223,6 +223,14 @@ pub enum Expr {
     /// lowering is a transcription and nothing has to decode it twice.
     LitChar(String),
     LitBool(bool),
+    /// Part I 2.3: `null`, the absence of a value. It lowers to `None`.
+    ///
+    /// **It has no type of its own**, exactly as an integer literal does not:
+    /// what it stands for is whatever the type beside it says, so `let mut m:
+    /// &str? = null` is an `Option<&str>` and `let m = null` on its own is a
+    /// program `rustc` will ask for an annotation about - which is right,
+    /// because nothing here can say what it is the absence of.
+    LitNull,
     Variable(Ident),
 
     // Kap 3.1: Blöcke sind Expressions
@@ -331,6 +339,17 @@ pub enum Expr {
         rhs: Box<Expr>,
     },
 
+    /// Part I 3.5: `x?.field`, safe navigation.
+    ///
+    /// The receiver is a `T?`; the whole expression is a `U?`, where `U` is what
+    /// the field holds. A separate variant rather than a flag on
+    /// [`Expr::Field`], for the reason [`Expr::LitInterpolated`] gives: every
+    /// analysis has to say what it does with a reach that may not happen.
+    SafeField {
+        base: Box<Expr>,
+        name: Ident,
+    },
+
     // Kap 7.1: expr?
     Try(Box<Expr>),
 
@@ -390,6 +409,10 @@ pub struct Type {
     /// (`holds_view`, `names_borrowing`) reach them without knowing about
     /// tuples at all.
     pub is_tuple: bool,
+    /// Part I 2.3: a trailing `?`. A type is non-nullable unless it says
+    /// otherwise, and `&str?` is a nullable view - so this is a flag beside
+    /// `is_view` rather than a wrapper, because the two are independent.
+    pub is_nullable: bool,
 }
 
 /// One variant of an enum (Kap 4.4).
@@ -452,6 +475,14 @@ pub struct GenericParam {
 pub struct FnArg {
     pub name: Ident,
     pub ty: Type,
+    /// Where the parameter is written.
+    ///
+    /// **A declaration needs one of its own**, which a statement's span cannot
+    /// stand in for: a diagnostic about a parameter has to put its caret on the
+    /// parameter, and the nearest span a body's walk has is its first statement,
+    /// which is a different line
+    /// ([ADR-051](../../../docs/specification/adr/adr-051.md) D4).
+    pub span: Span,
 }
 
 /// `timeout: 60` at a call site.
@@ -486,6 +517,8 @@ pub struct FieldDef {
     /// Kap 9.2: a field is visible outside the file that declares its struct
     /// only where it says `pub`.
     pub is_public: bool,
+    /// Where the field is written, for the reason [`FnArg::span`] gives.
+    pub span: Span,
 }
 
 // Part III, Kap 16.1: $dst = out(reg) result
