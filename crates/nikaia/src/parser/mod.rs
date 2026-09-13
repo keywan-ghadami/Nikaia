@@ -924,12 +924,16 @@ grammar! {
             -> {
                 Expr::Closure {
                     params: params.unwrap_or_default(),
-                    implicit: false,
                     body,
                 }
             }
+          // `fn { … }` takes **no arguments**, and used to take however many of
+          // `a`, `b`, `c` its body mentioned (ADR-049 withdrew that). A body that
+          // reaches for one of the three is now a body naming something nothing
+          // declares, which `NK1117` refuses - so the form needs no rule of its
+          // own to be refused by.
           | KW_FN body:block -> {
-                Expr::Closure { params: Vec::new(), implicit: true, body }
+                Expr::Closure { params: Vec::new(), body }
             }
 
         rule closure_params -> Vec<Symbol> =
@@ -1073,10 +1077,8 @@ grammar! {
 
 
         // The lambda `closure_expr` reads, in the position where it follows
-        // the call instead of sitting inside its parentheses: the arguments
-        // are named or implicit (`a`, `b`), and which of the implicit names
-        // the body actually uses is settled when it is emitted rather than
-        // guessed here.
+        // the call instead of sitting inside its parentheses. Its arguments are
+        // the ones it names (Kap 5.2); a `fn { … }` takes none.
         //
         // `fn(user) { … }` is not a second lambda form - it is the explicit
         // spelling of the one form (Kap 5.2), so both positions have to accept
@@ -1084,21 +1086,19 @@ grammar! {
         // rather than written twice.
         //
         // The named arm first, for the reason `closure_expr` puts it first: a
-        // PEG keeps the first alternative that matches, and the implicit arm
-        // matches the bare `fn` of `fn(user) { … }` and then fails on the `(`
-        // with the parameter list already unreachable. The `fn ":"` arm stays
-        // last and still wins at a `fn:`, because neither arm above it can
-        // match a colon.
+        // PEG keeps the first alternative that matches, and the bare arm matches
+        // the `fn` of `fn(user) { … }` and then fails on the `(` with the
+        // parameter list already unreachable. The `fn ":"` arm stays last and
+        // still wins at a `fn:`, because neither arm above it can match a colon.
         rule trailing_lambda -> Expr =
             KW_FN "(" params:closure_params? ")" body:block -> {
                 Expr::Closure {
                     params: params.unwrap_or_default(),
-                    implicit: false,
                     body,
                 }
             }
           | KW_FN body:block -> {
-                Expr::Closure { params: Vec::new(), implicit: true, body }
+                Expr::Closure { params: Vec::new(), body }
             }
             // ADR-022: `fn: expr` was removed, and a form that was in the
             // specification deserves a sentence rather than a parse error at
@@ -1109,7 +1109,6 @@ grammar! {
                            after it landed *inside* the lambda - silently") -> {
                 Expr::Closure {
                     params: Vec::new(),
-                    implicit: true,
                     body: Block { stmts: Vec::new() },
                 }
             }

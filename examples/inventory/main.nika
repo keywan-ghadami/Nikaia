@@ -49,7 +49,7 @@ fn main() throws {
         return
     }
 
-    entries.sort_by_key fn { -a.count }
+    entries.sort_by_key fn (entry) { -entry.count }
 
     let total = total(&entries)
     let count = entries.len()

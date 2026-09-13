@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Removed (the automatic `a`, `b`, `c`)
+
+- **[ADR-049](docs/specification/adr/adr-049.md) D1: the three automatic lambda argument names are withdrawn** — refused, not warned about, and not announced a release ahead. What goes with the form is the rule underneath it: a lambda's arity was read off **which of the three names its body mentioned**, so a local called `a` inside one was not a local but an argument. [ADR-041](docs/specification/adr/adr-041.md) made that visible with `NK1114`, and visible is not the same as good — the rule stayed true for exactly as long as the form existed.
+- **Not announced ahead**, because that is the procedure for a language with code in the world: there is no release and no Nikaia outside this repository, so a deprecation window protects nobody while keeping both the rule and the warning alive for its length.
+- **`Expr::Closure` has no `implicit` flag**, `emit::implicit_params` and `check::warn_automatic_names` are gone, and `NK1114` is retired — its number is not reused, because a code that meant something in a published specification should not come back meaning something else. A `fn { … }` is a lambda of no arguments, which is what `.or_insert_with fn { Stats(0) }` always wanted.
+- **And reaching for one of the three is refused by this compiler, not by `rustc`.** `xs.map fn { a.id }` — the idiom that existed until this record — now lowers to `|| { a.id }`, which does not compile, so the message has to be this language's and has to say what happened to the form: *"`a`, `b` and `c` used to be a lambda's arguments without being written down, and that form is withdrawn"*, with the rewrite beside it. Keyed on those three names and only on them; the general case is now `docs/open-work.md` §1.2, because "this expression names something nothing declares" is a much wider claim than the statement rule makes.
+- **Eight sites in four programs are rewritten** — `1brc`, `access-log`, `k-nucleotide` and `inventory`, in two idioms: folding into a map entry and a sort key. The names are better than the letters were: `fn (stats) { stats.add(m.temp) }` says what is being added to.
+
 ### Fixed (a program that imports nothing may still use a map)
 
 - **The preamble that makes `std`'s names resolve was written only where the program had a `use std::…` of its own** — which is not the same question (`docs/open-work.md` §1.4, the other half of the line fixed earlier). `HashMap` is a name the prelude provides and a program may write it without importing anything; such a program lowered to a file where `TrustedMap` — the name a trusted input's map gets ([ADR-010](docs/specification/adr/adr-010.md) D5) — was undeclared, and `rustc` said so about a file nobody wrote.

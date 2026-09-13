@@ -385,17 +385,33 @@ fn parentheses_without_a_comma_are_still_grouping() {
     assert!(!emitted.contains("((1 + 2))"), "{emitted}");
 }
 
-/// A lambda's implicit arguments are read off which of `a`, `b`, `c` its body
-/// mentions - and a string's holes are the one place a body can mention one
-/// without the AST showing it, because a literal keeps its text and the holes
-/// are parsed when it is emitted.
+/// **A lambda that names no arguments takes none, whatever its body says**
+/// ([ADR-049](../../../docs/specification/adr/adr-049.md) D1).
+///
+/// This used to be the opposite test. A lambda's arity was read off which of `a`,
+/// `b`, `c` its body mentioned, and a string's holes were the one place a body
+/// could mention one without the AST showing it - so `fn { f"{a.0}" }` was
+/// generated with a parameter. Nothing is read off a body now, and the name in
+/// the hole is a name nothing declares.
 #[test]
-fn an_implicit_lambda_sees_the_names_in_a_string_hole() {
+fn a_lambda_that_names_nothing_takes_nothing() {
     let source =
         "fn f(xs: List) -> String {\n    return xs.map fn { f\"{a.0}={a.1}\" }.join(\",\")\n}\n";
     let emitted = emit(source, Build::default());
-    assert!(emitted.contains("map(|a|"), "{emitted}");
-    assert!(!emitted.contains("map(||"), "{emitted}");
+    assert!(emitted.contains("map(||"), "{emitted}");
+    assert!(!emitted.contains("map(|a|"), "{emitted}");
+
+    // …and the name in the hole is refused, which is what makes the emitted
+    // shape unreachable rather than merely different (`NK1117`).
+    let parsed = nikaia::parser::parse_to_ast(source).expect("it parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let library =
+        nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
+    let found = nikaia::check::check(&parsed, &own, &library).findings;
+    assert!(
+        found.iter().any(|f| f.code == "NK1117"),
+        "the hole names `a`, and nothing declares it: {found:#?}"
+    );
 }
 
 /// Kap 4.4: the three shapes a variant can have, and no others.

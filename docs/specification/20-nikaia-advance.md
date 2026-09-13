@@ -85,10 +85,10 @@ pub macro Describe(def: StructDef) -> AstExpr {
     // .map() iterates over the fields and creates a list of code blocks.
     // Syntax: a trailing lambda, outside the parentheses - and where there are
     // no other arguments, the parentheses go with them.
-    let print_statements = def.fields.map fn { quote {
-        // 'quote' creates a piece of code. 
-        // We inject 'a.name' and 'self.a.name' into this code.
-        println("Value of " + a.name + " is: " + self.a.name)
+    let print_statements = def.fields.map fn (field) { quote {
+        // 'quote' creates a piece of code.
+        // We inject 'field.name' and 'self.field.name' into this code.
+        println("Value of " + field.name + " is: " + self.field.name)
     } }
 
     let name = def.name
@@ -431,7 +431,7 @@ fn calculate_physics(obj: Object) sync {
 // Usage in Parallel Iterator
 // par_iter requires a 'sync' closure because it runs purely on CPU cores.
 // A trailing lambda goes outside the parentheses.
-particles.par_iter().for_each fn { calculate_physics(a) }
+particles.par_iter().for_each fn (p) { calculate_physics(p) }
 ```
 
 **You do not have to write the word for the rule to be satisfied.** A function

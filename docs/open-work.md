@@ -26,208 +26,70 @@ it to know what a program means.
 
 ## 1. Defects
 
-### 1.1. A module can hand out functions, but not types — **fixed, and half of it dissolved**
+What was here and is gone: a module that could not hand out types, a bare word
+that became a different program, a refusal that carried a backtrace, a Rust
+warning about the generated file, a `Shared` slot decided twice, the explain modes
+missing from a project build, and a cache that filled the disk. Each is in the
+CHANGELOG with what it was and what fixed it; a fixed entry kept here only makes
+the list longer to read.
 
-Three findings, and the first always worked: the qualified **call**. The other two
-are fixed — the qualified type name now resolves to the type the call hands back
-(`Ledger::absorb` qualifies the types *inside* an entry, not only its key), and a
-struct from another file can be built, its fields read from the program's own
-ledger by the exact key.
-
-**And then the boundary moved.** A package is a directory whose files share one
-namespace ([ADR-047](specification/adr/adr-047.md) D1), so naming a type across a
-*file* boundary is not a thing that happens any more: the names are bare. What the
-repair is for is the cross-**package** boundary, where the prefix comes back — and
-it is built and waiting there.
-
-*Still open, and neither is affected by the boundary:* **visibility** — a struct
-whose fields are not `pub` can be built from outside, because the ledger records no
-per-field `pub`, and it will matter the day a package can be depended on; and the
-**alias** `use x as y`, which waits on the same thing.
-
-### 1.2. A bare word that is no construct becomes a different program — **fixed**
-
-Two causes, and both are closed.
-
-**A word keyword matched the beginning of a longer word**, because the grammar is
-scannerless and nothing said where a word ends. Measured:
-
-```text
-true asfoo      ->  `true as foo`
-returnx         ->  `return x`
-forx in 0..3    ->  `for x in 0..3`
-assert c        ->  `let c = true as sert; c;`
-```
-
-`forx` is the worst of them: a **valid program with a different meaning**, because
-it binds `x` where the source says `forx`. Every word keyword now carries a
-boundary (`parser::KW_*`), which is one rule per keyword because the generator has
-no parameters — and UPPERCASE, which is not style: a lowercase rule is syntactic,
-so the implicit whitespace would be inserted between the word and its boundary and
-`as i32` would be refused for having a space in it.
-
-**And a statement that is one undeclared name was accepted**, so what was left of
-the class reached `rustc` about a file nobody wrote. It is `NK1117` now, in this
-language's words. Four things count as declaring a name — a local or parameter in
-scope, a function either ledger describes, a type declared here, and a module of
-this program — and anything the compiler cannot see is a name it does not refuse,
-because refusing a correct program is the one thing it may never do (Part III,
-C.4).
-
-One thing that had to be fixed to make the refusal safe: a `fn { … }` declares no
-parameter list, so the checker walked its body with `a` in scope nowhere. It now
-binds the automatic names from `emit::implicit_params` — the same answer the
-emitter writes the parameter list from, so the two cannot disagree.
-
-### 1.3. A refusal exits through `anyhow`, and carries a backtrace — **fixed everywhere**
-
-`Error: 1 type error` used to follow a clean diagnostic, and with
-`RUST_BACKTRACE=1` in the environment — a normal thing for a developer to have set
-— ten frames of `nikaia::project::check` and below came with it.
-`diagnostics::Refused` marks a statement about the *program*; `main` prints one
-without the `Error:` envelope and without the trace, and the tally stays. A parse
-error travels the same path, which needed one more fix: `modules.rs` formatted the
-error into a string to prefix the file name, losing the type that says it is a
-refusal.
-
-**A failure of this compiler keeps its trace**, deliberately, and a test asserts
-that half too — otherwise the change would be indistinguishable from one that
-swallowed everything.
-
-**And then the same class turned up in four more modules**, because the first pass
-covered where a refusal *usually* comes from rather than where one can come from.
-The emitter refusing a `dsl` that names a grammar nobody has, the manifest reader
-refusing an unknown key, the project driver refusing a missing entry point, the CLI
-refusing a backend nobody has: every one arrived with `Error:` in front of it and
-ten frames behind it. Thirty-odd sites, and the choice at each is the whole
-decision — a statement about the program, or a failure of this compiler? Two
-macros now make that choice visible at a glance, named to mirror the pair they
-replace: `refused!` is `anyhow!` and `refuse!` is `bail!`.
-
-Three sites keep their trace on purpose: two emitter invariants ("not a function",
-"not a string literal"), the wrapper being invoked with no `rustc` named, and
-reading the sysroot's own files. Those are this compiler's problems, and the frames
-are then the most useful thing on the screen.
-
-### 1.4. A Rust warning about the generated file reaches the user — **fixed, twice**
-
-Both halves, because either alone leaves the hole. The line this compiler wrote
-itself carries `#[allow(unused_imports)]`, so the warning is not produced; and a
-**warning** that maps to no Nikaia line is not reported at all, so the next
-machine-written construct cannot do the same thing again.
-
-An **error** with nowhere to put it is still reported. A warning suppressed costs
-nothing; an error suppressed leaves a build that failed with no reason given
-anywhere. Such an error is a defect in this compiler, and it should be visible.
-
-*What the line was, and what it is now.* It was `use super::*` in each `mod`,
-which also brought in the sibling modules — so it could not simply be left out
-where it looked unused. That `mod` is gone: a package is one crate root
-([ADR-047](specification/adr/adr-047.md) D1), and one namespace needs nothing
-brought in.
-
-**The other half of the same rule, found later.** The preamble that makes `std`'s
-names resolve was written only where the program had a `use std::…` of its own,
-which is not the same question: `HashMap` is a name the prelude provides, a program
-may write it without importing anything, and such a program lowered to a file where
-`TrustedMap` was undeclared. It is written always now, with the same `#[allow]` —
-what a program uses is not a list the emitter keeps, and it does not need one.
-`std` itself is the one exception, because it *is* the prelude, and it says so
-(`emit::emit_std`) rather than being detected.
-
-### 1.5. A struct holding a view, across files — **struck: does not reproduce**
-
-Recorded earlier as an `E0106` (a missing lifetime in the generated Rust) from a
-struct holding a `&str`. The entry said: find the shape or strike it.
-
-Tried again with the package boundary built and cross-file types resolving, in the
-shapes most likely to break it — three view-holding structs in another file, a
-`Vec[Row]` of them, a struct holding a view-holding struct, an `impl` whose methods
-hand views of `self` back, and the whole thing behind a `Shared`. Every one lowers
-with the lifetime inserted correctly and runs. `crates/nikaia/tests/stored_views.rs`
-is where that ground is held.
-
-Struck rather than carried: a suspicion nobody can reproduce is a claim about this
-compiler that nothing supports, and the entry was costing more attention than it
-was worth.
-
-### 1.6. A `Shared` slot's count is decided per file — **fixed, fail-closed**
-
-Confirmed exactly as predicted the moment §1.1 stopped hiding it: `Arc` in the
-field and `Rc` in the value, in one generated file, refused by `rustc`.
-
-The fix is the polarity this analysis already runs on, not a new answer: **where
-it cannot prove that nothing crosses, it does not lower.** A slot whose owner
-another file declares keeps the atomic floor as `Fallback::ForeignFile` — a
-seventh row in the enumeration `--sharing` prints, because a fallback that is not
-named is one nobody can ask about. Forced in **one place**, after the walk and
-before the classes are read off, rather than at each of the sites that create a
-slot.
-
-**It is about any slot and not about fields**, which the first version got wrong
-and a test written for something else found: a `Shared` handed to a **public
-parameter** of a function another file declares diverged in exactly the same way.
-The floor is read off the union-find rather than off the recorded handles, because
-a slot another file owns has no handle in this run — joining to it is the only
-trace of it there is.
-
-**And a third hole came with it.** The sharing analysis did not walk into an
-interpolated string, so `println(f"{hold(c)}")` handed a handle to a function it
-never saw. A hole is Nikaia source ([ADR-032](specification/adr/adr-032.md) D3),
-the type checker has walked holes since that record, and any analysis that stops
-at a literal is one a hole can be hidden in.
-
-**The package decision does not retire any of this.** The analysis runs once per
-*file*, and a package of several files is still several runs of it.
-
-*What is still open:* where a slot's count is **agreed** rather than
-independently refused. Running the analysis over a whole package at once would let
-the floor be lifted where everything is visible; across a package boundary it never
-can be, and that wants something written down.
-
-### 1.7. The explain modes cannot be reached from a project build — **fixed**
-
-`--sharing`, `--overlaps` and `--trust` are accepted on `build` and `run` now, and
-report over **every file** of the package — against the package's own ledger and
-not each file's, because `sync`, the touch sets and the sharing classes are
-whole-program facts and a report built from one file's inferences would answer a
-different question from the one the build answers.
-
-One function serves both paths (`project::explain`): a report that said one thing
-under `--input` and another under `build` would be worse than one that only
-existed in one place. Finding this is also what turned up §1.6's two further
-holes.
-
-### 1.7b. A `dsl` block missing its `} eod` is reported as an undeclared name
+### 1.1. A `dsl` block missing its `} eod` is reported as an undeclared name
 
 `dsl postgres { SELECT 1 }` without the closing `} eod` is not a `dsl` block at
 all, so what is left parses as statements and `NK1117` says *"nothing declares
 `postgres`"*. True, and not what the writer got wrong.
 
-*What it needs:* the refusal to notice that a `dsl` was opened. Small, and it wants
-a decision about how far a diagnostic may look for the cause rather than the
+*What it needs:* the refusal to notice that a `dsl` was opened. Small, and it
+wants a decision about how far a diagnostic may look for the cause rather than the
 symptom — the same question `NK1117`'s help answers by listing what a bare word
 could have been.
 
-### 1.8. The compiled-`std` cache accumulates and fills the disk — **fixed**
+### 1.2. An undeclared name is refused as a **statement** and nowhere else
 
-`target/nikaia-project-tests/` reached **13 GB** in one session and a user cache
-1.7 GB, with a build then failing on "no space left on device".
+`NK1117` fires where a statement is one name. A name used inside an expression —
+`let n = q + 1`, `f(q)`, `q.len()` — resolves to nothing and is passed over in
+silence, and `rustc` then refuses the generated file about a name the user did
+write but never declared. That is the Part III C.1 class, one step milder than the
+cases already fixed: the *line* is the user's even though the message is Rust's.
 
-Not a test problem, which is how it was first written down here. Each entry is a
-whole Cargo target directory of some 240 MB, and the key that names it holds the
-compiler's own fingerprint — so **every rebuild of the compiler starts a new one**,
-and nothing ever took an old one away. A cache with no eviction is a disk leak, and
-this one leaked by design rather than by accident: coexisting is right
-([ADR-021](specification/adr/adr-021.md) D7), coexisting forever is the defect.
+Two of the three letters the withdrawn lambda form used are covered specially
+([ADR-049](specification/adr/adr-049.md) §5): a free `a`, `b` or `c` is refused
+with a message about the withdrawal, because that is the mistake a reader of the
+old specification will actually make. Every other name is not.
 
-The newest three are kept and idle ones below that are removed (D12.5). An hour's
-age floor sits on top of the count so that a tree a *concurrent* build is writing
-into is never the one that goes, and a build marks its own in use before sweeping,
-so it cannot collect itself. Ordered by a marker file rather than the directory's
-own mtime, because Cargo writes into subdirectories and leaves the top alone.
+*What it needs:* a decision, not just work. "This expression names something
+nothing declares" is a much wider claim than the statement rule makes, and the
+checker's polarity is that it never refuses a correct program (C.4) — so the list
+of what counts as declaring a name has to be complete before the rule can be
+widened, and today it is not: a name from a package this build cannot see would be
+refused.
 
----
+### 1.3. A `std` function whose Rust parameter is a `usize` still needs a written conversion
+
+[ADR-048](specification/adr/adr-048.md) D1 made a length an `i64` and emits both
+conversions, and its scope is deliberately what a length *returns*. The other
+direction is left: `"  ".repeat(indent as usize)` in `examples/json.nika` is the
+one site in this repository, and `as usize` is now a conversion to a type the
+specification does not offer (§3.1 of that record says so).
+
+*What it needs:* the same shape of answer one level over — a parameter a ledger
+describes as `i64` whose Rust counterpart takes a `usize`. No program has yet made
+the answer obvious, which is why the record leaves it open rather than guessing.
+
+### 1.4. A `rustc` message about the user's own line can still carry Rust's insides
+
+`let m = HashMap::new()` with nothing to infer the key type from is a real defect
+in the *program*, and the line reported is the user's — but the message reads
+*"type annotations needed for `HashMap<_, _, BuildHasherDefault<FxHasher>>`"*, and
+`BuildHasherDefault<FxHasher>` is a hasher this compiler chose
+([ADR-010](specification/adr/adr-010.md) D5), not something the program mentions.
+
+Part III C.1 is about messages that name the generated *file*; this one names the
+right line and leaks the same insides. The diagnostics filter is where it would be
+answered.
+
+*Evidence:* reproduced this session. *What it needs:* a rule for what a relayed
+`rustc` message may say about types the program did not write.
 
 ## 2. Decided and unbuilt
 
@@ -286,7 +148,7 @@ record exists.
 [ADR-043](specification/adr/adr-043.md) §3 and §4. `NK1116` refuses an out-of-range
 **literal** where a type stands beside it; `let b = a + 1` where both are constants
 is still refused by rustc, with *"this arithmetic operation will overflow"* about
-the generated file. The same Part III C.1 class as 1.2 and 1.4 above.
+the generated file. The same Part III C.1 class as §1.2 and §1.4 above.
 
 ### 2.5. Part I 2.3's nullable types are a parse error
 
@@ -299,17 +161,37 @@ neither line of that section's own example is accepted. `??` (Part I 3.5) is bui
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. `isize` is checked and has no `truncating_` name — **gone with the surface**
+### 2.7. A Nikaia package cannot be depended on
 
-[ADR-043](specification/adr/adr-043.md) §4 recorded the asymmetry on purpose:
-nothing handed back an `isize`, so no program could reach a conversion out of one,
-and it was in the checked list anyway rather than left to truncate.
+[ADR-047](specification/adr/adr-047.md) D2, and the D1 half of that record is
+built: a package is a directory whose files share one namespace. What is not built
+is the **path dependency** — the manifest key, the five rules that come with it,
+and Part III 13.2's refusal that still stands.
 
-[ADR-048](specification/adr/adr-048.md) D1 removed the question instead of
-answering it. `check`'s `NUMERIC` list is the **writable** surface, and the
-machine-width types were in it because `len` handed one back; a length is an `i64`
-now, so they are not in it and there is no asymmetry left to explain. `usize`'s two
-`truncating_` entries went with them.
+It is the largest unblocking after §2.1, because three things become observable
+for the first time only when a second package exists:
+
+* **`pub` starts to mean something a program can see.** Privacy is per package
+  now, so `NK1110` is built and reaches no program at all
+  ([ADR-047](specification/adr/adr-047.md) §5) — it is the one code in Part III
+  C.3's catalogue with a check behind it and nothing that can trigger it.
+* **A struct's fields have no recorded visibility.** The ledger's `fields` carries
+  no per-field `pub`, so a type whose fields are private could be built from
+  another package by name. Harmless while there is no other package; a hole the
+  day there is.
+* **[ADR-045](specification/adr/adr-045.md)'s portability rule becomes testable.**
+  A library built at one `user_parallelism` staying usable at the other is the
+  sentence that decided that record's shape, and nothing can construct the
+  situation today.
+
+### 2.8. `use` cannot succeed, so four of [ADR-046](specification/adr/adr-046.md)'s rules are unreachable
+
+D1's qualified form is built. D2's refusals in this language's words
+(`use pool::{…}` is a parse error at the brace instead), D3's `use x as y`, D4's
+"a prefix must be introduced" and D5's "one name per file" all wait on §2.7: every
+`use` that is not `std`'s is refused today for the simpler reason that there is no
+package to name.
+
 
 ---
 
@@ -343,36 +225,15 @@ call forcing the atomic count whatever the setting.
 * [`foreign-runtime.md`](foreign-runtime.md) and [`std-sysroot.md`](std-sysroot.md)
   predate [ADR-037](specification/adr/adr-037.md) D6 in the places where they talk
   about what follows `user_parallelism`.
+* [`from-for-throws-and-touches.md`](from-for-throws-and-touches.md),
+  [`mutex-floor.md`](mutex-floor.md) and
+  [`rc-or-arc.md`](rc-or-arc.md) write their lambdas in the form
+  [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, which
+  no longer compiles. The analysis each records is unaffected; the samples are not
+  copyable.
 
 A notes page is a laboratory record and is allowed to be a snapshot — what it is
 not allowed to do is read as current. A dated header on each is enough.
-
----
-
-### 3.5. Part I 9.2 makes the file the boundary of privacy
-
-[`open-decisions.md`](open-decisions.md) §6 moves it to the package: files of one
-package see one another with no `use`, and `pub` publishes out of the package
-rather than out of the file. 9.2's two bullets — *"only visible inside the file
-they are defined in"* and *"only visible inside the file where the struct is
-defined"* — are false under that answer, and 9.1's *"every file in Nikaia is
-implicitly a Module"* needs the package above it. **Rewritten rather than
-extended**, and the record that takes the decision is where it happens; the entry
-exists so the sentences are not left standing while it is written.
-
----
-
-### 3.6. Part I 2.2 names three numeric types and the surface hands out more
-
-[`open-decisions.md`](open-decisions.md) §2 answers what the list is: `len` and
-its three siblings hand back an `i64`, the machine-width type leaves the writable
-surface with its two `truncating_` entries, and **`u8` is named** — `fs::read`
-already hands back a `Vec[u8]`, and `std.contracts` says outright that *"the
-compiler accepts `u32` and the rest, but the specification does not offer them"*.
-
-So 2.2 grows by one type and the compiler loses two: `check`'s `NUMERIC` list
-carries `usize` and `isize`, and neither is in the answered surface. Until the
-record exists, the page promises three types while a program can hold five.
 
 ---
 

@@ -231,7 +231,8 @@ fn a_return_in_a_loop_body_is_kept() {
 /// its own value and the rewrite applies there as it does to a function.
 #[test]
 fn a_return_at_the_end_of_a_lambda_is_the_lambdas_value() {
-    let rust =
-        lowered("fn f(xs: Vec[i64]) -> i64 {\n    let y = xs.map fn { return a + 1 }\n    0\n}\n");
-    assert!(rust.contains("|a| { a + 1 }"), "{rust}");
+    let rust = lowered(
+        "fn f(xs: Vec[i64]) -> i64 {\n    let y = xs.map fn (n) { return n + 1 }\n    0\n}\n",
+    );
+    assert!(rust.contains("|n| { n + 1 }"), "{rust}");
 }

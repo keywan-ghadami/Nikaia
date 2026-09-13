@@ -123,7 +123,7 @@ impl Report {
         if e.status >= 400 { self.failures += 1 }
         self.paths
             .entry(e.path)
-            .and_modify fn { a.add(e.bytes) }
+            .and_modify fn (counts) { counts.add(e.bytes) }
             .or_insert_with fn { Counts(e.bytes) }
     }
 
@@ -133,7 +133,7 @@ impl Report {
         for (path, counts) in other.paths {
             self.paths
                 .entry(path)
-                .and_modify fn { a.merge(&counts) }
+                .and_modify fn (into) { into.merge(&counts) }
                 .or_insert(counts)
         }
     }

@@ -193,12 +193,19 @@ fn a_method_takes_arguments_and_a_trailing_lambda() {
     );
 }
 
-/// The trailing lambda without arguments still works, and so does a chain
-/// after it - a block ends at its `}`, so there is nothing to swallow.
+/// The trailing lambda works, and so does a chain after it - a block ends at its
+/// `}`, so there is nothing to swallow.
+///
+/// The argument is named, because that is the only spelling: the automatic `a`
+/// is withdrawn (ADR-049), and `fn { … }` is a lambda of no arguments.
 #[test]
 fn a_block_lambda_does_not_swallow_the_chain() {
-    let emitted = emit("fn main() { let n = xs.map fn { a.id } .len() }");
-    assert!(emitted.contains(".map(|a| { a.id }).len()"), "{emitted}");
+    let emitted = emit("fn main() { let n = xs.map fn (x) { x.id } .len() }");
+    assert!(emitted.contains(".map(|x| { x.id }).len()"), "{emitted}");
+
+    // …and one that names nothing takes nothing.
+    let emitted = emit("fn main() { let n = xs.map fn { 1 } .len() }");
+    assert!(emitted.contains(".map(|| { 1 }).len()"), "{emitted}");
 }
 
 /// `fn: …` is gone, and says so.

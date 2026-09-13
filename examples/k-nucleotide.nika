@@ -110,7 +110,7 @@ fn count(seq: &str, k: i64) -> HashMap[&str, Tally] {
         let fragment = &seq[i..i + k]
         counts
             .entry(fragment)
-            .and_modify fn { a.bump() }
+            .and_modify fn (tally) { tally.bump() }
             .or_insert_with fn { Tally(1) }
     }
 
@@ -132,8 +132,8 @@ fn report_frequencies(seq: &str, k: i64) {
         rows.push((fragment, tally.n))
     }
 
-    rows.sort_by_key fn { a.0 }
-    rows.sort_by_key fn { -a.1 }
+    rows.sort_by_key fn (row) { row.0 }
+    rows.sort_by_key fn (row) { -row.1 }
 
     for row in rows {
         let percent = (row.1 as f64) * 100.0 / (total as f64)

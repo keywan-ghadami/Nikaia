@@ -1827,12 +1827,7 @@ impl<'p> Emitter<'p> {
     /// nothing, so the accumulator is threaded; a method that returns a new
     /// accumulator is left exactly as written.
     fn fold_step(&self, out: &mut Out, step: &Expr) -> Result<()> {
-        if let Expr::Closure {
-            params,
-            implicit: false,
-            body,
-        } = step
-        {
+        if let Expr::Closure { params, body } = step {
             if let [accumulator, item] = params.as_slice() {
                 if let Some(Stmt::Expr(Expr::MethodCall {
                     receiver, method, ..
@@ -1901,11 +1896,6 @@ impl<'p> Emitter<'p> {
         }
 
         self.expr(out, merge, 0, Flow::PLAIN)
-    }
-
-    /// [`implicit_params`], for the one caller that has a `self`.
-    fn implicit_params(&self, body: &Block) -> Vec<String> {
-        implicit_params(self.parsed, body)
     }
 
     // --- Types ---
@@ -3177,16 +3167,11 @@ impl<'p> Emitter<'p> {
                 }
                 out.push(" }");
             }
-            Expr::Closure {
-                params,
-                implicit,
-                body,
-            } => {
-                let params = if *implicit {
-                    self.implicit_params(body)
-                } else {
-                    params.iter().map(|p| self.text(*p).to_string()).collect()
-                };
+            // A lambda's arguments are the ones it names (ADR-049): nothing is
+            // read off the body, so `fn { … }` is `||`.
+            Expr::Closure { params, body } => {
+                let params: Vec<String> =
+                    params.iter().map(|p| self.text(*p).to_string()).collect();
                 out.push(&format!("|{}| ", params.join(", ")));
                 // A lambda's `return` leaves the lambda, not the function
                 // around it, so it never carries the enclosing `Ok`.
@@ -4092,48 +4077,6 @@ fn truncating(method: &str) -> Option<&'static str> {
         "i64" => Some("i64"),
         _ => None,
     }
-}
-
-/// Kap 5.2: the implicit arguments are `a`, `b`, `c`, and a lambda takes as
-/// many of them as its body reaches for.
-///
-/// *Reaches for* is any mention, a local of the same name included - which is
-/// why the three names are the lambda's and a body must not bind them (Part I,
-/// 5.2). Telling a use from a shadowing binding would need the scope analysis
-/// Stage 0 does not have, and guessing wrong either way produces a closure whose
-/// arity does not match its call.
-///
-/// **A free function because two passes need the same answer.** The emitter asks
-/// it to write the parameter list; the type checker asks it whether this lambda
-/// reaches for an automatic name at all, which is what `NK1114` warns about
-/// (Part I, 5.3). One rule in one place: two copies of "which of `a`, `b`, `c`
-/// does this body mention" would be a warning that fires where no parameter is
-/// generated, or the reverse.
-pub(crate) fn implicit_params(parsed: &Parsed, body: &Block) -> Vec<String> {
-    const NAMES: [&str; 3] = ["a", "b", "c"];
-
-    let mut used = [false; 3];
-    let mut mark = |expr: &Expr| {
-        if let Expr::Variable(name) = expr {
-            if let Some(i) = NAMES.iter().position(|n| *n == parsed.text(*name)) {
-                used[i] = true;
-            }
-        }
-    };
-    visit_block(body, &mut |expr| {
-        mark(expr);
-        // A string's holes are expressions too, and they are the one place a
-        // body can reach for `a` without the AST showing it: a literal keeps its
-        // text and the holes are parsed when it is emitted. A lambda whose whole
-        // body is `"{a.0} {a.1}"` would otherwise be generated with no
-        // parameters at all.
-        for hole in literal_expressions(parsed, expr) {
-            visit_expr(&hole, &mut mark);
-        }
-    });
-
-    let count = used.iter().rposition(|u| *u).map_or(0, |i| i + 1);
-    NAMES[..count].iter().map(|n| n.to_string()).collect()
 }
 
 /// Walk every expression in a block, including the ones inside statements.

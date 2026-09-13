@@ -193,7 +193,7 @@ impl Summary {
     fn record(&mut self, m: Reading) sync {
         self.stations
             .entry(m.name)
-            .and_modify fn { a.add(m.temp) }
+            .and_modify fn (stats) { stats.add(m.temp) }
             .or_insert_with fn { Stats(m.temp) }
     }
 
@@ -201,7 +201,7 @@ impl Summary {
         for (name, stats) in other.stations {
             self.stations
                 .entry(name)
-                .and_modify fn { a.merge(&stats) }
+                .and_modify fn (into) { into.merge(&stats) }
                 .or_insert(stats)
         }
     }

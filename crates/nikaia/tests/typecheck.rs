@@ -804,81 +804,62 @@ fn a_callee_no_ledger_describes_is_not_guessed_at() {
     assert!(findings("fn ruft() -> i64 { return fremd::macht_irgendwas(1) }").is_empty());
 }
 
-// --- the automatic lambda argument names (Part I 5.3) ------------------------
+// --- the withdrawn automatic argument names (Part I 5.3) ---------------------
 
-/// A lambda that reaches for `a` is warned about and still compiles.
+/// **A lambda that reaches for `a` is refused, and the message says what
+/// happened to the form** ([ADR-049](../../../docs/specification/adr/adr-049.md)
+/// D1).
 ///
-/// Named arguments are the normal form; the automatic naming is carried as
-/// experimental, so this is a warning and never an error. What it asks for is
-/// the mechanical rewrite: the same letters, in a parameter list, after which
-/// the count is written down instead of read off the body.
+/// These tests used to hold the opposite: `NK1114`, a warning, because named
+/// arguments were the normal form and the automatic naming was carried as
+/// experimental. It is withdrawn now - and the reason the refusal has to be
+/// *this* compiler's is Part III C.1: `xs.map fn { a + 1 }` lowers to
+/// `|| { a + 1 }`, and `rustc` would say *cannot find value `a`* about a file
+/// nobody wrote.
 #[test]
-fn a_lambda_that_reaches_for_an_automatic_name_is_warned_about() {
-    let found = findings("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { a + 1 } }");
-    assert_eq!(found.len(), 1, "{found:#?}");
-    assert_eq!(found[0].code, "NK1114");
-    assert_eq!(found[0].severity, Severity::Warning);
-    assert!(found[0].message.contains("`a`"), "{:?}", found[0].message);
-    let help = found[0].help.as_deref().unwrap_or_default();
-    assert!(help.contains("fn(a)"), "{help}");
-}
-
-/// Two of them, and both are named in the rewrite.
-#[test]
-fn two_automatic_names_are_both_named_in_the_help() {
-    let found = findings("fn total(xs: Vec[i64]) -> i64 { return xs.reduce(0) fn { a + b } }");
-    assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(
-        found[0].message.contains("`a, b`"),
-        "{:?}",
-        found[0].message
-    );
-    assert!(
-        found[0]
-            .help
-            .as_deref()
-            .unwrap_or_default()
-            .contains("fn(a, b)"),
-        "{:?}",
-        found[0].help
-    );
-}
-
-/// **A lambda that names its arguments is not warned about.** It is the form the
-/// warning asks for.
-#[test]
-fn a_named_lambda_is_not_warned_about() {
-    assert!(
-        findings("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn(x) { x + 1 } }").is_empty(),
-        "a named lambda must not warn"
-    );
-}
-
-/// **And neither is a lambda that reaches for none of the three.** The form is
-/// not deprecated - the automatic *naming* is - so `fn { … }` with no argument
-/// at all is untouched, and a warning here would fire where no parameter is
-/// generated.
-#[test]
-fn a_lambda_that_uses_no_automatic_name_is_not_warned_about() {
+fn a_lambda_that_reaches_for_a_withdrawn_name_is_refused() {
     for source in [
-        "fn sevens(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { 7 } }",
-        "fn shout(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { let n = 1\n n } }",
+        "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { a + 1 } }",
+        "fn total(xs: Vec[i64]) -> i64 { return xs.reduce(0) fn { a + b } }",
     ] {
-        assert!(findings(source).is_empty(), "{source}: must not warn");
+        let found = findings(source);
+        assert!(!found.is_empty(), "{source}");
+        assert!(
+            found.iter().all(|f| f.code == "NK1117"),
+            "{source}: {found:#?}"
+        );
+        assert!(
+            found.iter().all(|f| f.severity == Severity::Error),
+            "{source}: refused, not warned about"
+        );
+        let notes = found[0].notes.join(" ");
+        assert!(notes.contains("withdrawn"), "{notes}");
+        let help = found[0].help.as_deref().unwrap_or_default();
+        assert!(help.contains("fn ("), "{help}");
     }
 }
 
-/// A local that happens to be called `a` inside a lambda that reaches for `a`
-/// is the trap the named form removes, and the note says so rather than the
-/// warning pretending to know which it is.
+/// **A lambda that names its arguments is fine**, and so is one that names none
+/// and reaches for none. The first is the form; the second is the zero-argument
+/// lambda `.or_insert_with fn { Stats(0) }` has always wanted.
 #[test]
-fn the_warning_explains_the_trap_rather_than_resolving_it() {
-    let found = findings("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { a + 1 } }");
-    let notes = found[0].notes.join(" ");
-    assert!(
-        notes.contains("a local of the same name becomes an argument"),
-        "{notes}"
-    );
+fn a_lambda_that_declares_what_it_uses_is_not_refused() {
+    for source in [
+        "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn(x) { x + 1 } }",
+        // The three letters are ordinary names once they are declared.
+        "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn(a) { a + 1 } }",
+        "fn sevens(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { 7 } }",
+        "fn shout(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { let n = 1\n n } }",
+        // A local called `a` is a local now, which is the whole of what the
+        // withdrawal bought.
+        "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { let a = 1\n a } }",
+    ] {
+        assert!(
+            findings(source).is_empty(),
+            "{source}: {:#?}",
+            findings(source)
+        );
+    }
 }
 
 // --- a view of a generic type, and of a transparent one (Part I 6.5) ---------
@@ -1170,22 +1151,25 @@ fn a_name_something_declares_is_not_refused() {
     }
 }
 
-/// An automatic lambda argument is declared too, and this is what proves it.
+/// **The three withdrawn names are ordinary names again once something declares
+/// them** ([ADR-049](../../../docs/specification/adr/adr-049.md) D1).
 ///
-/// `fn { a }` declares no parameter list, so the checker used to walk that body
-/// with `a` in scope nowhere - harmless while nothing asked whether a name is
-/// declared, and a false refusal the moment `NK1117` does. The answer comes from
-/// `emit::implicit_params`, the same function the emitter writes the parameter
-/// list from, so the two cannot disagree about it.
-///
-/// The `NK1114` warning about reaching for an automatic name is expected here and
-/// is not an error: the form is carried as experimental (ADR-041 D2).
+/// This used to be about the opposite: a `fn { … }` declared no parameter list, so
+/// its body walked with `a` in scope nowhere, and the automatic names had to be
+/// bound from the same function the emitter wrote the parameter list from. Nothing
+/// is read off a body now - so `fn { a }` is a lambda of no arguments reaching for
+/// a name nothing declares, and `fn (a) { a }` is a lambda whose argument is
+/// called `a`.
 #[test]
-fn an_automatic_lambda_argument_is_declared() {
+fn a_declared_a_is_an_ordinary_name() {
     let found = findings("fn f(s: &str) {\n    s.map(fn { a })\n}");
     assert!(
-        found.iter().all(|f| f.severity == Severity::Warning),
-        "only the `NK1114` warning, and no refusal: {found:#?}"
+        found.iter().any(|f| f.code == "NK1117"),
+        "nothing declares `a` here: {found:#?}"
     );
-    assert!(found.iter().all(|f| f.code == "NK1114"), "{found:#?}");
+
+    assert!(
+        findings("fn f(s: &str) {\n    s.map(fn (a) { a })\n}").is_empty(),
+        "and here it is the argument"
+    );
 }

@@ -595,7 +595,7 @@ Nikaia includes built-in types for storing groups of data.
     passes say a compound order without a comparator:
     ```nika
     names.sort()                                  // by name
-    names.sort_by_key fn { -report[a].hits }         // then by hits, descending
+    names.sort_by_key fn (name) { -report[name].hits }   // then by hits, descending
     ```
     That matters because of the line below: a map has no order to borrow, so a
     program that prints one says which.
@@ -710,14 +710,14 @@ fn init {
 A lambda is written `fn { … }`, and 5.3 is the whole of it. There is no second, shorter form for
 single-line bodies.
 
-Naming the arguments — `fn(user) { … }`, 5.3 Option A — is that one form spelled out rather than a
+Naming the arguments — `fn(user) { … }`, 5.3 — is that one form spelled out rather than a
 second one: the body is a block either way, and both spellings go in all the same places.
 
-**Naming them is the normal way to write one.** Leaving the arguments to be named
-automatically still compiles and is still the same form, but it is carried as
-experimental and the compiler warns where one of the automatic names is actually
-used (5.3, `NK1114`). The reason is that the automatic rule cannot be changed
-while every lambda depends on it: [ADR-041](adr/adr-041.md).
+**The arguments are the ones it names.** A lambda that names none takes none, so
+`fn { … }` is a lambda of no arguments. There were once three automatic names —
+`a`, `b`, `c`, with the count read off which of them the body mentioned — and they
+are **withdrawn** ([ADR-049](adr/adr-049.md)): a body reaching for one now names
+something nothing declares, and that is `NK1117`.
 
 The short form `fn: expression` is **not** part of the language. It saved four characters and its
 body ran to the end of the expression, so a `.method()` chained after it landed *inside* the
@@ -727,12 +727,13 @@ specification and readers will have it in their fingers. Full reasoning:
 [ADR-022](adr/adr-022.md).
 
 ### 5.3. Lambdas (`fn { ... }`)
-When logic requires multiple steps, use a Block Lambda. Name its arguments; the
-automatic names are still accepted and are being phased out.
+When logic requires multiple steps, use a Block Lambda. Its arguments are the ones
+it names.
 
-**Option A: Named Arguments — the normal form**
 * **Syntax:** `fn(name) { ... }`, and `fn(first, second) { ... }` for more than one
 * **Args:** as many as the list says, and the list is the only thing that says so
+* **A lambda that names none takes none**, so `fn { ... }` is the zero-argument
+  form — which is what a `.or_insert_with fn { Stats(0) }` wants
 
 ```nika
 let complex = users.map fn(user) {
@@ -740,26 +741,19 @@ let complex = users.map fn(user) {
     // Implicit return of the last line
     user.score + bonus
 }
+
+let ids = users.map fn(user) { user.id }
 ```
 
-**Option B: Automatic Names — experimental, and warned about**
-* **Syntax:** `fn { ... }`
-* **Args:** `a` (1st), `b` (2nd), `c` (3rd)
-* **How many arguments it takes is read off the body**, not written anywhere: the
-  lambda takes as many of the three names as its body *mentions*.
-* **So the three names belong to the lambda and a body must not bind them.** A
-  body that writes `let c = …` is asking for a third argument rather than
-  shadowing anything. That is the trap Option A removes, and it is why naming
-  them is the normal form.
-* **Using one is a warning** — `NK1114`, which names the mechanical rewrite: the
-  same letters in a parameter list. The program still compiles. A `fn { … }` that
-  reaches for none of the three is not warned about, because the form is not
-  being withdrawn; the automatic *naming* is
-  ([ADR-041](adr/adr-041.md) D2).
+**The automatic `a`, `b`, `c` are withdrawn** ([ADR-049](adr/adr-049.md)). They
+were a second spelling in which the arguments were not written down at all and
+*how many there were* was read off which of the three names the body mentioned — so
+a local called `a` inside such a lambda was not a local but an argument. That rule
+could not be changed while every lambda depended on it, and a body that reaches for
+one of the three is now a body naming something nothing declares:
 
-```nika
-// Accepted, and warned about: `a` is the argument.
-let ids = users.map fn { a.id }
+```text
+error[NK1117]: nothing declares `a`, and this statement is just that name
 ```
 
 **Trailing Syntax**
@@ -789,18 +783,17 @@ users.map fn(user) {
 }
 ```
 
-> **Status:** built, in both spellings and in both positions, and the warning on
-> Option B is built too. A trailing lambda may name its arguments or leave them
-> automatic, and it may follow a method call with or without other arguments, a
-> plain call, or a path: `users.map fn(user) { … }`, `users.map fn { a.id }`
-> (with `NK1114`), `numbers.reduce(0) fn(acc, n) { … }`,
-> `access_all(a, b) fn(x, y) { … }` (Part II, 12.3), `task::scope fn(s) { … }`
-> (Part II, 12.7), and the chain above. `NK1114` fires once per lambda that
-> reaches for one of the three names, positioned at the statement around it,
-> because an expression carries no span of its own. **Not built:** an effect
-> marker on a lambda. A parameter list is followed by the body and by nothing
-> else, so `fn(info) sync { … }` (7.2) ends the lambda at the `sync` and the line
-> is read as three expressions rather than one.
+> **Status:** built, in both positions, and the automatic names are gone from the
+> compiler rather than left unreachable — the warning that made their rule visible
+> (`NK1114`), the arity-from-body mechanism and the one function the emitter and
+> the checker shared to compute it went with them ([ADR-049](adr/adr-049.md)).
+> A trailing lambda may follow a method call with or without other arguments, a
+> plain call, or a path: `users.map fn(user) { … }`, `numbers.reduce(0) fn(acc, n)
+> { … }`, `access_all(a, b) fn(x, y) { … }` (Part II, 12.3),
+> `task::scope fn(s) { … }` (Part II, 12.7), and the chain above.
+> **Not built:** an effect marker on a lambda. A parameter list is followed by the
+> body and by nothing else, so `fn(info) sync { … }` (7.2) ends the lambda at the
+> `sync` and the line is read as three expressions rather than one.
 
 ### 5.4. Contextual Capture (The Lifecycle Rule)
 Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at either `user_parallelism`.
@@ -816,7 +809,7 @@ let names = ["Alice", "Bob"]
 
 // 'map' is @immediate. It executes completely within this stack frame.
 // 'prefix' is implicitly borrowed.
-let formatted = names.map fn { prefix + a } 
+let formatted = names.map fn (name) { prefix + name }
 
 // 'prefix' is still valid here because it was only borrowed.
 println(prefix)
@@ -1246,7 +1239,7 @@ error[NK2301]: cannot change `users` while looping over it
   note: removing items mid-loop would invalidate the loop's position
         (this is a crash or silent bug in most languages)
   help: use the built-in method that does this safely:
-        users.retain fn { !a.is_duplicate() }
+        users.retain fn (user) { !user.is_duplicate() }
 ```
 
 For every known pattern of this kind, the standard library provides a safe, named method (`retain`, `drain`, `entry`, `swap(i, j)`, …) and the error message points directly at it.

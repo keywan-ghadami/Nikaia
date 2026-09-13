@@ -887,7 +887,13 @@ impl<'a> Checker<'a> {
 
             Expr::Variable(name) => {
                 let name = self.parsed.text(*name);
-                self.lookup(name).unwrap_or(Ty::Unknown)
+                match self.lookup(name) {
+                    Some(ty) => ty,
+                    None => {
+                        self.withdrawn_automatic_name(name, span);
+                        Ty::Unknown
+                    }
+                }
             }
 
             Expr::Path(segments) => {
@@ -1081,32 +1087,15 @@ impl<'a> Checker<'a> {
                 Ty::named(name)
             }
 
-            Expr::Closure {
-                params,
-                implicit,
-                body,
-            } => {
-                if *implicit {
-                    self.warn_automatic_names(body, span);
-                }
-                // **The automatic names are bound here too**, and not only where
-                // a signature says how many there are (`lambda` below). A
-                // `fn { … }` declares no parameters, so without this its body
-                // walks with `a` and `b` in scope nowhere - which was harmless
-                // while nothing asked whether a name is declared, and is a false
-                // refusal the moment something does (`nothing_declares_it`).
-                // `emit::implicit_params` is the same answer the emitter writes
-                // the parameter list from, so the two cannot disagree.
-                let frame: Vec<(String, Ty)> = match *implicit {
-                    true => crate::emit::implicit_params(self.parsed, body)
-                        .into_iter()
-                        .map(|name| (name, Ty::Unknown))
-                        .collect(),
-                    false => params
-                        .iter()
-                        .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown))
-                        .collect(),
-                };
+            // A lambda's arguments are the ones it names (ADR-049). There is
+            // nothing to read off the body any more, so a `fn { … }` pushes an
+            // empty frame - and a body reaching for `a` is then a body naming
+            // something nothing declares, which `NK1117` refuses.
+            Expr::Closure { params, body } => {
+                let frame: Vec<(String, Ty)> = params
+                    .iter()
+                    .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown))
+                    .collect();
                 self.scope.push(frame);
                 self.block(body);
                 self.scope.pop();
@@ -1267,6 +1256,47 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **`a`, `b` and `c` were a lambda's arguments, and are not** (`NK1117`).
+    ///
+    /// [ADR-049](../../../../docs/specification/adr/adr-049.md) D1 withdrew the
+    /// three automatic names. Without this, `xs.map fn { a.id }` - the idiom that
+    /// existed until that record - lowers to `|| { a.id }` and `rustc` says
+    /// *cannot find value `a`* about a file nobody wrote, which is the one thing
+    /// Part III C.1 forbids. A form that was in the specification deserves a
+    /// sentence, which is the same ground [ADR-022](../../../../docs/specification/adr/adr-022.md)
+    /// stands on for `fn: …`.
+    ///
+    /// **This is not the mechanism that was removed.** That one read a lambda's
+    /// *arity* off which of the three its body mentioned, and every lambda in the
+    /// language depended on it. This reads nothing: it is a message at the place a
+    /// name was used and nothing declares it, and a lambda that declares `a` for
+    /// itself never reaches it.
+    ///
+    /// Keyed on the three names, and **only** on them. A general "this expression
+    /// names something nothing declares" is a much wider claim than the statement
+    /// rule above makes, and this checker does not make it yet
+    /// (`docs/open-work.md`).
+    fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) {
+        if !matches!(name, "a" | "b" | "c") {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1117",
+            message: format!("nothing declares `{name}`"),
+            notes: vec![
+                "`a`, `b` and `c` used to be a lambda's arguments without being written \
+                 down, and that form is withdrawn (Part I, 5.3)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "name the argument: `fn ({name}) {{ … }}`, or give it a name that says what \
+                 it is - `fn (user) {{ user.id }}`"
+            )),
+        });
+    }
+
     /// **The one thing this checker warns about rather than refusing** - a
     /// plain string that was written when every string was a template
     /// (ADR-035 D5).
@@ -1311,51 +1341,6 @@ impl<'a> Checker<'a> {
             );
             return;
         }
-    }
-
-    /// Part I 5.3: a lambda that reaches for `a`, `b` or `c` is warned about, and
-    /// still compiles.
-    ///
-    /// **Only where one is actually reached for.** `fn { total + 1 }` names none
-    /// of the three, generates no parameter, and gets no warning - the form is
-    /// not deprecated, the automatic *naming* is. So the question asked here is
-    /// exactly the one the emitter asks to write the parameter list, from the
-    /// same function, or a warning could fire where no parameter is generated.
-    ///
-    /// The span is the enclosing statement's, because an expression carries
-    /// none. A statement with two such lambdas is warned about once per lambda
-    /// at the same place, which is noisier than it is wrong.
-    fn warn_automatic_names(&mut self, body: &Block, span: &Span) {
-        let used = crate::emit::implicit_params(self.parsed, body);
-        if used.is_empty() {
-            return;
-        }
-        let named = used.join(", ");
-        let plural = match used.len() {
-            1 => "name",
-            _ => "names",
-        };
-        self.checked.findings.push(Finding {
-            severity: Severity::Warning,
-            span: span.clone(),
-            code: "NK1114",
-            message: format!("this lambda reaches for the automatic argument {plural} `{named}`"),
-            notes: vec![
-                "the automatic names are experimental: how many arguments the lambda takes \
-                 is read off which of them the body mentions, so a local of the same name \
-                 becomes an argument (Part I, 5.3)"
-                    .to_string(),
-            ],
-            // The same letters, deliberately: this is the mechanical rewrite
-            // that compiles and means exactly the same thing, and it is the
-            // step that matters - after it the count is written down instead of
-            // read off the body, and renaming to something that says what the
-            // argument is becomes an ordinary edit.
-            help: Some(format!(
-                "write the arguments down: `fn({named}) {{ … }}` - same body, and the \
-                 count no longer comes from which names it mentions"
-            )),
-        });
     }
 
     fn warn_migration(&mut self, span: &Span, message: String, help: String) {
@@ -2064,14 +2049,9 @@ impl<'a> Checker<'a> {
         args.iter()
             .enumerate()
             .map(|(at, arg)| match (arg, expected.get(at)) {
-                (
-                    Expr::Closure {
-                        params,
-                        implicit,
-                        body,
-                    },
-                    Some(Ty::Fn { params: given }),
-                ) => self.lambda(params, *implicit, body, given),
+                (Expr::Closure { params, body }, Some(Ty::Fn { params: given })) => {
+                    self.lambda(params, body, given)
+                }
                 _ => self.expr(arg, span),
             })
             .collect()
@@ -2086,30 +2066,10 @@ impl<'a> Checker<'a> {
     /// bound here, in order, to whatever the signature says the lambda is
     /// handed. A body that mentions fewer of them simply leaves the later
     /// bindings unused.
-    fn lambda(
-        &mut self,
-        params: &[winnow_grammar::Symbol],
-        implicit: bool,
-        body: &Block,
-        given: &[Ty],
-    ) -> Ty {
-        const IMPLICIT: [&str; 3] = ["a", "b", "c"];
-
-        let names: Vec<String> = if implicit {
-            IMPLICIT
-                .iter()
-                .take(given.len())
-                .map(|n| n.to_string())
-                .collect()
-        } else {
-            params
-                .iter()
-                .map(|p| self.parsed.text(*p).to_string())
-                .collect()
-        };
-
-        let frame = names
-            .into_iter()
+    fn lambda(&mut self, params: &[winnow_grammar::Symbol], body: &Block, given: &[Ty]) -> Ty {
+        let frame = params
+            .iter()
+            .map(|p| self.parsed.text(*p).to_string())
             .enumerate()
             .map(|(at, name)| (name, given.get(at).cloned().unwrap_or(Ty::Unknown)))
             .collect();

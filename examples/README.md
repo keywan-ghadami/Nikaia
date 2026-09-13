@@ -346,7 +346,7 @@ over a list was specified. ADR-010 D6 is why it cannot be left to the map: an un
 seeded randomly, so its iteration order differs between runs. The answer is the explicit form,
 and now it is written down — Part I 4.5 specifies `sort()` and `sort_by_key`, and says both are
 **stable**, which is what lets two passes state a compound order without a comparator:
-`names.sort()` then `names.sort_by_key fn { -hits }` is hits descending, ties by name.
+`names.sort()` then `names.sort_by_key fn (name) { -report[name].hits }` is hits descending, ties by name.
 `access-log.nika` prints that way.
 
 **G10 — no tuple.** Found by `calc.nika`, which has to carry an operator alongside the operand
@@ -440,10 +440,10 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 
 **G6 — the HTTP handler cannot see the request.** *Decided*
 ([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime
-binding. The request is the handler's **first implicit argument**, under the rule Part I 5.3
-already has: a lambda takes as many implicit arguments as its body reaches for, so
-`fn { "Hello World" }` keeps working unchanged and `fn { a.query("name") }` reads one. Nothing is added
-to the language. A handler *returns* what answers the request — a `String` is 200 text/plain, an
+binding. The request is the handler's **first argument**, under the rule Part I 5.3
+already has: a lambda's arguments are the ones it names, so `fn { "Hello World" }` is a handler
+that does not need the request and `fn (request) { request.query("name") }` is one that does.
+Nothing is added to the language. A handler *returns* what answers the request — a `String` is 200 text/plain, an
 `html::Raw` is 200 text/html (ADR-017 D2 read from the other end: the type that says "this is
 markup" is the type that may be sent as markup), a `Response` is itself, and a `throws` that fails
 is 500 with a **generic** body and the error in the log, because an error message is written for

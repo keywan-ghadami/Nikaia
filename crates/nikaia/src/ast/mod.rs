@@ -306,11 +306,11 @@ pub enum Expr {
         fields: Vec<FieldInit>,
     },
 
-    // Kap 5.2/5.3: `fn(acc, m) { ... }`, and the implicit form `fn: a + b`,
-    // whose parameters are the `a`, `b`, `c` its body uses.
+    // Kap 5.2: `fn(acc, m) { … }`. One form, and its arguments are the ones it
+    // names - the automatic `a`, `b`, `c` are withdrawn (ADR-049), so `fn { … }`
+    // is a lambda of no arguments and nothing is read off the body.
     Closure {
         params: Vec<Ident>,
-        implicit: bool,
         body: Block,
     },
 

@@ -176,19 +176,69 @@ fn a_path_takes_a_named_trailing_lambda() {
     assert!(rust.contains("s.spawn(|| { total + 1 })"), "{rust}");
 }
 
-/// The implicit form is untouched, in every position that had it.
+/// **A lambda that names nothing takes nothing**, in every position that has one
+/// ([ADR-049](../../../docs/specification/adr/adr-049.md) D1).
+///
+/// This used to assert the opposite of its first half: `fn { a.id }` was a lambda
+/// of one argument called `a`. Nothing is read off a body now, so the same source
+/// is a lambda of none - and `a` is a name nothing declares, which the test below
+/// holds. The second half is the form that was always the zero-argument one and is
+/// unchanged.
 #[test]
-fn the_implicit_trailing_lambda_is_unchanged() {
+fn a_lambda_that_names_nothing_takes_nothing() {
     let rust = lowered(
         "fn main() {\n\
-         \x20   let n = xs.map fn { a.id } .len()\n\
+         \x20   let n = xs.map fn (x) { x.id } .len()\n\
          \x20   let s = Server::new().route(\"/x\") fn { handler(db) }.listen(\":8080\")\n\
          }",
     );
-    assert!(rust.contains(".map(|a| { a.id }).len()"), "{rust}");
+    assert!(rust.contains(".map(|x| { x.id }).len()"), "{rust}");
     assert!(
         rust.contains(r#".route("/x", || { handler(db) }).listen(":8080")"#),
         "{rust}"
+    );
+}
+
+/// **And reaching for one of the three withdrawn names is refused here**, not by
+/// `rustc` about the generated file (Part III, C.1).
+///
+/// `xs.map fn { a.id }` is the idiom that existed until ADR-049. It now lowers to
+/// `|| { a.id }`, which does not compile - so the message has to be this
+/// language's, and it has to say what happened to the form rather than only that
+/// a name is unknown. The same ground ADR-022 stands on for `fn: …`.
+#[test]
+fn reaching_for_a_withdrawn_automatic_name_is_refused() {
+    let source = "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { a.id } }";
+    let parsed = nikaia::parser::parse_to_ast(source).expect("it parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let library =
+        nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
+    let found = nikaia::check::check(&parsed, &own, &library).findings;
+
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1117");
+    assert!(
+        found[0].message.contains("nothing declares `a`"),
+        "{found:#?}"
+    );
+    assert!(
+        found[0].notes[0].contains("withdrawn"),
+        "the message says what happened to the form: {found:#?}"
+    );
+    assert!(
+        found[0].help.as_deref().is_some_and(|h| h.contains("fn (")),
+        "and what to write instead: {found:#?}"
+    );
+
+    // A lambda that declares the name for itself never reaches this.
+    let fine = "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn (a) { a.id } }";
+    let parsed = nikaia::parser::parse_to_ast(fine).expect("it parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    assert!(
+        nikaia::check::check(&parsed, &own, &library)
+            .findings
+            .is_empty(),
+        "`a` is declared here"
     );
 }
 
@@ -242,25 +292,23 @@ fn spawn_with_a_named_lambda_is_read_as_a_call() {
     assert!(rust.contains("spawn(|x| { x })"), "{rust}");
 }
 
-/// **With named arguments the count comes from the list.** That is the trap the
-/// named form removes, and it is worth a test of its own rather than being
-/// implied by the warning that asks for it.
+/// **The count comes from the list, and a local called `a` is a local.**
 ///
-/// A lambda with implicit arguments takes as many as its body *mentions*, so a
-/// local called `a` inside one becomes a second argument and the closure's arity
-/// stops matching its call. With the arguments written down, a local of that
-/// name is a local: one parameter, whatever the body calls its variables.
+/// This is what ADR-049 bought, and it is worth a test of its own. A lambda's
+/// arity used to be read off which of `a`, `b`, `c` its body *mentioned*, so a
+/// local called `a` inside one became an argument and the closure's arity stopped
+/// matching its call. With the arguments written down - the only spelling now - a
+/// local of that name is a local.
 #[test]
-fn a_named_lambda_takes_its_arguments_from_the_list_and_not_from_its_body() {
+fn a_lambda_takes_its_arguments_from_the_list_and_not_from_its_body() {
     let named =
         lowered("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn(x) { let a = 1\n x + a } }");
     assert!(named.contains("|x|"), "{named}");
     assert!(!named.contains("|x, a|"), "{named}");
 
-    // The same body without the parameter list: `a` is read as an argument, so
-    // the closure takes one that was meant to be a local. This is what the
-    // warning in `tests/typecheck.rs` asks the author to get out of.
-    let implicit =
-        lowered("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { let a = 1\n a } }");
-    assert!(implicit.contains("|a|"), "{implicit}");
+    // The same body with no parameter list is a lambda of no arguments, and the
+    // `a` in it is the local the author wrote.
+    let none = lowered("fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { let a = 1\n a } }");
+    assert!(none.contains("||"), "{none}");
+    assert!(!none.contains("|a|"), "{none}");
 }

@@ -275,9 +275,13 @@ fn a_helper_that_uses_an_iterator_method_may_be_called_from_a_lock() {
 /// (ADR-031).
 ///
 /// `HashMap[&str, Stats]` binds `$V` to `Stats`, so `entry` hands back an
-/// `Entry[Stats]`, so `and_modify`'s `fn(&$V)` is a `fn(&Stats)`, so the `a` in
-/// the lambda is a `&Stats`, so `a.add(v)` resolves to `Stats::add`, which is
-/// pure - and `record` is `sync` without anyone writing the word.
+/// `Entry[Stats]`, so `and_modify`'s `fn(&$V)` is a `fn(&Stats)`, so the `stats`
+/// in the lambda is a `&Stats`, so `stats.add(v)` resolves to `Stats::add`, which
+/// is pure - and `record` is `sync` without anyone writing the word.
+///
+/// The argument is **named**, which is the only spelling since ADR-049 - and the
+/// chain is the same one either way: what types it is the callee's signature, not
+/// where the name came from.
 ///
 /// Every one of those links had to exist. This is the test that they do.
 #[test]
@@ -292,7 +296,7 @@ fn a_map_of_structs_types_its_lambda_all_the_way_down() {
          pub struct Summary { stations: HashMap[&str, Stats] }\n\
          impl Summary {\n\
              fn record(&mut self, name: &str, v: i64) {\n\
-                 self.stations.entry(name).and_modify fn { a.add(v) }.or_insert_with fn { Stats(v) }\n\
+                 self.stations.entry(name).and_modify fn (stats) { stats.add(v) }.or_insert_with fn { Stats(v) }\n\
              }\n\
          }",
     );
