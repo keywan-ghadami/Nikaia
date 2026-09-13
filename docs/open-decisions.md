@@ -1,9 +1,9 @@
 # Open decisions — the questions that need the owner
 
-Six entries. **Four are answered and one is dropped**, and every answer has its
+Six entries. **Five are answered and one is dropped**, and every answer has its
 record: [ADR-046](specification/adr/adr-046.md),
 [ADR-047](specification/adr/adr-047.md), [ADR-048](specification/adr/adr-048.md)
-and [ADR-049](specification/adr/adr-049.md). §2 and §3 are built, §6's language
+and [ADR-049](specification/adr/adr-049.md) — §5's is owed. §2 and §3 are built, §6's language
 half is, and each entry says what is left. They stay here until the owner drops
 them. What remains open is **§5** — a question work cannot settle. Each one says what is blocked, what the
 options are, **what I would do**, and what either direction costs — because a
@@ -238,27 +238,105 @@ they apply to every entry rather than to one week's choice.
 
 ---
 
-## 5. When does `ordering` get measured, and does it stay on by default?
+## 5. Statement order, and how a program asks for overlap — **answered**
 
-**Blocked by it:** whether the execution model that everything else is built on is
-still provisional at v1.0.
+The entry asked when `ordering` gets measured and whether it stays on. Both halves
+are answered, and the first is answered by dropping it.
 
-[ADR-033](specification/adr/adr-033.md) changed what a program *means*: two
-operations touching disjoint resources have no order between them, and the roadmap
-calls the decision **provisional and unmeasured**. `--ordering strict` turns it
-off. Two increments are built and tested; what has never been produced is a number
-saying what the reordering buys on a real program.
+### The measurement requirement is struck
 
-**I would measure it on the flagship before v1.0 and keep it on by default.**
-Keeping it on is the whole decision — a default that has to be asked for is not a
-language rule — and measuring it is the thing that makes "provisional" a stage
-rather than a permanent label. If the number turns out to be small, that is worth
-knowing about a feature that changes what a program means.
+It could not settle what it was there for. The only corpus is this repository's own
+examples, written by the people who designed the language, and a number off them
+says something about those programs rather than about the language. "Measure it on
+the flagship before v1.0" moves a decision onto an event that will not decide it —
+which is why [ADR-033](specification/adr/adr-033.md) has read *provisional* for
+months.
 
-**What the other direction costs:** shipping it unmeasured means the argument for
-it stays an argument. Turning it off by default would be cheaper to defend and
-would make every program slower than the model promises, which is the worst of the
-three.
+What decides it is a principle, which is how every other entry here was settled.
+
+### The explicit form: `overlap { … }`
+
+The language has no way to say *"run these and wait for all of them"*. `spawn`
+starts something that outlives the call, `select` takes the first to finish,
+`par_iter` runs one operation over many elements, `seq` forces an order. The one
+shape every other language provides first is missing.
+
+```nika
+let (user, rights, prefs) = overlap {
+    db::load_user(id)
+    db::load_rights(id)
+    cache::load_prefs(id)
+}
+```
+
+Each statement in the block is one branch. The block starts them all, waits for
+all, and its value is the tuple of their results in written order.
+
+**It is not a task.** The block ends before the function continues, so nothing
+outlives it: nothing is moved, borrowing works, and the crossing check has nothing
+to do. That is what makes it lighter than two `spawn`s, and why it earns a form of
+its own rather than being a pattern.
+
+**The branches must meet on nothing, and the compiler checks it.** The same
+analysis that decides today whether two statements *may* overlap, used the other
+way round — not *"may I?"* but *"you said so; is it true?"*. A branch pair that
+meets on a resource is refused, and the diagnostic names the resource and points at
+`seq { … }` or plain statements for the case where an order was meant. No other
+language checks this; they take the programmer's word.
+
+**Failures behave as they do anywhere else.** A branch that fails makes the block
+fail. If two fail, the first **in written order** wins, so the result is
+reproducible — written order is the only order the source has. Per-branch handling
+is `catch` inside the branch, which already works.
+
+**A branch is an expression.** Several steps in one branch are a block expression
+inside it. Where two branches would both be multi-line blocks doing the same shape
+of work, the answer is a function called twice, and the code is better for it.
+
+**The meaning is the same at both settings; only how much overlaps differs.** At
+`no` a branch that computes still overlaps with another branch's *waiting*, because
+the waiting is not user code — computation beside I/O overlaps at every setting,
+and only computation beside computation needs `yes`. Same results, different
+duration: `how`, not `what`.
+
+### The automatic reordering goes, and `seq` and the switch go with it
+
+Three packages were coherent: automatic reordering with `seq` and `overlap`;
+`overlap` alone; or today's state, which is the automatic half with no way to ask
+for the rest. The third is the worst of them — unpredictable wins, and no recourse
+where they do not arrive.
+
+**Taken: `overlap` alone.** Statements run in the order they are written, without
+qualification. Whoever wants overlap writes it, and has it checked.
+
+`seq { … }` exists only because statements can be reordered unasked; with nothing
+reordering them it has nothing to do, and goes. So does `ordering` in `[build]`,
+which returns Part I 1.2's count of build switches to the two it promises.
+
+**Why on principle rather than on a number.** The design ships two escapes: `seq`,
+to force an order the analysis cannot see, and a switch to turn the whole thing
+off. Two escapes are an admission — that the analysis can be incomplete, and that
+the correction is by hand. A feature that changes what a program means, resting on
+an analysis admitted to be incomplete, corrected manually after the fact, is the
+shape of a defect source rather than of a guarantee. Against that stands an
+optimisation whose reach nobody has been able to state.
+
+### What is built, and what this needs
+
+**The automatic half is built as a special case, not as a primitive.** A pair of
+adjacent file reads with their failures caught lowers to `task::read_pair(…)` — a
+purpose-built "read two files", with a comment naming the record. `task::both`
+exists in `std`'s Rust and the emitter does not reach it for this.
+
+**So `overlap` is not a small piece of work, and it is not unblocked.** Branches
+that are arbitrary expressions need the general concurrent path — the same runtime
+binding [`open-work.md`](open-work.md) §2.1 says `spawn` is waiting on. What could
+be built ahead of it is more special cases, which is how the automatic half got
+narrow in the first place.
+
+*Order that follows from this:* the runtime binding, then `overlap` on it, then the
+removal of the automatic half, `seq` and the switch — removing them before there is
+a way to ask would leave the language with neither.
 
 ---
 
