@@ -1095,6 +1095,84 @@ fn a_literal_that_fits_is_not_mentioned() {
     }
 }
 
+/// **And it reaches a name inside an expression**, which is what
+/// `docs/open-work.md` carried: `NK1117` used to fire only where a
+/// statement *was* one name, so `let n = q + 1` was passed over in silence and
+/// `rustc` refused the generated file about a name the user did write.
+///
+/// The list of what declares a name had to be complete first, and it was not.
+/// Two sources were missing, and the corpus is what found them:
+///
+/// * a **template's `<for>`** — `<for r in :rows>{r.name}</for>` declares `r`
+///   for the holes inside it (ADR-017), which `examples/escaping.nika` writes;
+/// * a **config option** — `fn f(a: i64; separator: &str = " ")` (Part I 5.1)
+///   was simply absent from the checker's scope frame, which nothing noticed
+///   while a name in an expression was never asked about.
+#[test]
+fn an_undeclared_name_inside_an_expression_is_refused_too() {
+    for (source, name) in [
+        ("fn main() { let n = q + 1 }", "q"),
+        // The misparse the statement rule was built for, one position over: a
+        // number with a separator in it is a number beside a name (Part I 2.2).
+        ("fn main() { let n = 1_000 }", "_000"),
+        // `quote { … }` (Part II 10.3) is unbuilt, and was the one row of
+        // `docs/spec-promises.md` still marked *"means something else"*: it
+        // parsed as `let q = quote` and a block, and lowered in silence.
+        ("fn main() { let q = quote { 1 + 1 } }", "quote"),
+        // Inside an interpolation, which is Nikaia source too (ADR-032 D3).
+        (r#"fn main() { let s = f"{nope}" }"#, "nope"),
+        // And as an argument.
+        (
+            "fn f(n: i64) -> i64 { return n }
+fn main() { f(gone) }",
+            "gone",
+        ),
+    ] {
+        let found = findings(source);
+        let it = found
+            .iter()
+            .find(|f| f.code == "NK1117")
+            .unwrap_or_else(|| panic!("no NK1117 for {source}: {found:#?}"));
+        assert!(
+            it.message.contains(&format!("nothing declares `{name}`")),
+            "{it:#?}"
+        );
+        assert_eq!(
+            found.iter().filter(|f| f.code == "NK1117").count(),
+            1,
+            "one mistake, one finding: {found:#?}"
+        );
+    }
+}
+
+/// **And the two sources the corpus found are declarations like any other.**
+#[test]
+fn a_template_binding_and_a_config_option_declare_a_name() {
+    for source in [
+        // A template's `<for>`, which is `examples/escaping.nika`'s shape.
+        r#"
+struct Row { name: String }
+fn table(rows: Vec[Row]) -> String {
+    return dsl html {
+        <for r in :rows><td>{r.name}</td></for>
+    } eod
+}
+"#,
+        // A config option, which is `examples/tally.nika`'s.
+        r#"
+fn summary(lines: i64; separator: &str = " ") -> String {
+    return f"{lines}{separator}"
+}
+"#,
+    ] {
+        let found = findings(source);
+        assert!(
+            !found.iter().any(|f| f.code == "NK1117"),
+            "{source} declares every name it uses: {found:#?}"
+        );
+    }
+}
+
 // --- a sum of constants that cannot fit (ADR-043 §3) ------------------------
 
 /// **The gap [ADR-043](../../../docs/specification/adr/adr-043.md) §3 named, closing.**
@@ -1152,7 +1230,7 @@ fn a_sum_of_constants_that_cannot_fit_is_refused_here() {
 ///
 /// All but one of these `rustc` accepts as well, so this compiler and the one
 /// below agree. **The exception is the unpinned literal**, and it is the
-/// `open-work.md` §1.5 case rather than a new one: `rustc` refuses
+/// `open-work.md` out-of-range-literal case rather than a new one: `rustc` refuses
 /// `3000000000 + 1` because it *has* inference and defaults the literal to an
 /// `i32`, and this checker has none - so refusing here would also refuse the
 /// program that passes the sum to an `i64`, which is the one thing it may never

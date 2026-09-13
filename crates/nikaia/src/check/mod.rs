@@ -576,6 +576,7 @@ impl<'a> Checker<'a> {
             generics,
             receiver,
             args,
+            config,
             ret_type,
             body,
             throws,
@@ -622,6 +623,19 @@ impl<'a> Checker<'a> {
             frame.push((
                 name,
                 Ty::from_ast(self.parsed, &arg.ty).erase(&parameters),
+                None,
+            ));
+        }
+        // **An option is a parameter** (Part I 5.1): it stands after the `;`,
+        // it is named at the call rather than passed by position, and it has a
+        // default - and none of that changes that the body may use it. It was
+        // missing from this frame, which nothing noticed while an undeclared
+        // name was only refused in statement position: measured on
+        // `examples/tally.nika`, whose `f"{lines}{separator}{blank}"` names one.
+        for option in config {
+            frame.push((
+                self.parsed.text(option.name).to_string(),
+                Ty::from_ast(self.parsed, &option.ty).erase(&parameters),
                 None,
             ));
         }
@@ -703,7 +717,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// A statement that is one name, and nothing declares the name (`NK1117`).
+    /// A name nothing declares (`NK1117`).
     ///
     /// **This exists because a misparse is otherwise a different program.** The
     /// grammar is scannerless, so a word this language does not know is read as a
@@ -751,9 +765,9 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1117",
-            message: format!("nothing declares `{name}`, and this statement is just that name"),
+            message: format!("nothing declares `{name}`"),
             notes: vec![
-                "this language has no word it does not know: one that stands on its own is \
+                "this language has no word it does not know: one it has no rule for is \
                  read as a name, and a name has to be declared somewhere (Part I, 9.1)"
                     .to_string(),
             ],
@@ -846,7 +860,8 @@ impl<'a> Checker<'a> {
     /// literal has no type of its own on purpose: `Expr::LitInt` answers
     /// `Unknown`, so `add(3)` is right wherever the parameter is numeric, and
     /// `let m = 3000000000` is a correct program where the next line passes `m`
-    /// to an `i64` (Part I 2.4, `docs/open-work.md` §1.5). So the places are an
+    /// to an `i64` (Part I 2.4, and `docs/open-work.md`'s out-of-range literal).
+    /// So the places are an
     /// annotated `let`, a `return` against a declared result, and an argument
     /// whose parameter says what it takes.
     ///
@@ -1193,10 +1208,11 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
 
-            Stmt::Expr(expr) => {
-                self.nothing_declares_it(expr, span);
-                self.expr(expr, span)
-            }
+            // **One site, not two.** A statement that is one name is an
+            // expression statement, so the walk below reaches it - and the
+            // refusal now lives where every name is read rather than only where
+            // one stands alone.
+            Stmt::Expr(expr) => self.expr(expr, span),
         }
     }
 
@@ -1245,7 +1261,16 @@ impl<'a> Checker<'a> {
                 match self.lookup(name) {
                     Some(ty) => ty,
                     None => {
-                        self.withdrawn_automatic_name(name, span);
+                        // **The specific message wins.** A free `a`, `b` or `c`
+                        // is the mistake a reader of the old specification
+                        // makes, and `withdrawn_automatic_name` says what
+                        // happened to the form rather than only that the name
+                        // is unknown (ADR-049 §5). Where it has spoken, the
+                        // general refusal would be a second finding about one
+                        // mistake.
+                        if !self.withdrawn_automatic_name(name, span) {
+                            self.nothing_declares_it(expr, span);
+                        }
                         Ty::Unknown
                     }
                 }
@@ -1709,9 +1734,11 @@ impl<'a> Checker<'a> {
     /// names something nothing declares" is a much wider claim than the statement
     /// rule above makes, and this checker does not make it yet
     /// (`docs/open-work.md`).
-    fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) {
+    /// Hands back whether it said anything, so the general refusal can stand
+    /// aside for it.
+    fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) -> bool {
         if !matches!(name, "a" | "b" | "c") {
-            return;
+            return false;
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
@@ -1728,6 +1755,7 @@ impl<'a> Checker<'a> {
                  it is - `fn (user) {{ user.id }}`"
             )),
         });
+        true
     }
 
     /// **The one thing this checker warns about rather than refusing** - a
@@ -1837,8 +1865,25 @@ impl<'a> Checker<'a> {
     /// business - `Render` decides for a template and `Display` for a string -
     /// and what the checker is here for is everything *inside* it.
     fn holes(&mut self, literal: &Expr, span: &Span) {
-        for hole in crate::emit::literal_expressions(self.parsed, literal) {
+        // **A template's `<for>` declares a name**, and the holes inside it use
+        // it: `<for r in :rows>{r.name}</for>` (ADR-017). That is the fifth
+        // thing that counts as declaring one, after the four
+        // `nothing_declares_it` lists - and the one a reader of a hole cannot
+        // see, because the binding is in the markup around it.
+        //
+        // Measured: widening `NK1117` to a name in an expression refused
+        // `examples/escaping.nika` for its `{r.shade}` until this frame existed.
+        for (hole, bound) in crate::emit::literal_expressions_bound(self.parsed, literal) {
+            let frame: Vec<Local> = bound
+                .into_iter()
+                // What the element's type is, is a question about the
+                // collection, and this walk does not ask it: what it needs is
+                // that the name is *declared*.
+                .map(|name| (name, Ty::Unknown, None))
+                .collect();
+            self.scope.push(frame);
             self.expr(&hole, span);
+            self.scope.pop();
         }
     }
 

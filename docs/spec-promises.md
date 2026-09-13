@@ -40,7 +40,7 @@ the Result column; every other row is the original run.
 | `-> [User]` (list type) | III 14.3 | parse error: *expected type; found `[`* |
 | `Vec[i64]`, `xs[0]`, `xs[k] = v` | I 4.5 | **built** |
 | `macro Name(…) -> AstExpr { … }` | II 10.3 | parse error: *expected end of input; found `macro`* |
-| `quote { … }` | II 10.3, 10.4 | parses, means something else: `let q = quote;` then `{ 1 + 1 }` — **re-run, and still silent.** `NK1117` reaches a statement that is one name, and this one is the *value of a `let`*, which is `open-work.md` §1.1 |
+| `quote { … }` | II 10.3, 10.4 | parses as `let q = quote;` then `{ 1 + 1 }` — **re-run, and refused now**: `NK1117` reaches a name in an expression, not only one standing alone, so the *value of a `let`* is asked about too. The construct is still unbuilt; it no longer means something else in silence |
 | `struct User with Describe { … }` | II 10.3 | parse error: *expected `{`; found `with`* |
 | `const NAME: T = …` (item) | II 10.2, I 9.2 | parse error: *expected end of input; found `const`* |
 | `const NAME = …` (in a body) | II 10.2 | parses as `const; LIMIT = 10;` — **re-run**, and refused now: `NK1117` on the name |

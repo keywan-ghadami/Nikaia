@@ -4530,6 +4530,31 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
 ///
 /// A hole that does not parse yields nothing here. The emitter reports it, in
 /// its own words, at the place it happens; an analysis has nothing to add.
+/// The same as [`literal_expressions`], with the names a template's `<for>`
+/// binds around each hole. Empty for anything that is not a template.
+pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Expr, Vec<String>)> {
+    match expr {
+        Expr::Dsl {
+            target, content, ..
+        } if crate::dsl::is_deferred(parsed.text(*target), content) => Vec::new(),
+        Expr::Dsl { content, .. } => match template::split(content.trim()) {
+            Ok(segments) => template_holes_bound(&segments)
+                .into_iter()
+                .filter_map(|(hole, bound)| {
+                    parse_expression(&parsed.interner, &hole)
+                        .ok()
+                        .map(|expr| (expr, bound))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+        _ => literal_expressions(parsed, expr)
+            .into_iter()
+            .map(|hole| (hole, Vec::new()))
+            .collect(),
+    }
+}
+
 pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
     match expr {
         Expr::LitInterpolated(literal) => match interpolation(literal) {
@@ -4562,22 +4587,52 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
 /// does not become invisible by being repeated, any more than it becomes safe
 /// by it (ADR-017 D3).
 fn template_holes(segments: &[template::Segment]) -> Vec<String> {
+    template_holes_bound(segments)
+        .into_iter()
+        .map(|(hole, _)| hole)
+        .collect()
+}
+
+/// The same, with **what a `<for>` binds around each hole**.
+///
+/// `<for r in :rows>{r.name}</for>`: `r` is declared by the template and named
+/// in the hole, so a reader of a hole that does not know that sees a name
+/// nothing declares. Which is what a checker asking *"does anything declare
+/// this?"* needs, and nothing else does - the emitter only needs the text
+/// ([ADR-017](../../../docs/specification/adr/adr-017.md)).
+///
+/// Innermost last, so a nested `<for>` shadowing the same word behaves the way
+/// a nested block does.
+pub(crate) fn template_holes_bound(segments: &[template::Segment]) -> Vec<(String, Vec<String>)> {
     let mut holes = Vec::new();
+    walk_template_holes(segments, &mut Vec::new(), &mut holes);
+    holes
+}
+
+fn walk_template_holes(
+    segments: &[template::Segment],
+    bound: &mut Vec<String>,
+    out: &mut Vec<(String, Vec<String>)>,
+) {
     for segment in segments {
         match segment {
             template::Segment::Text(_) => {}
-            template::Segment::Hole { expr, .. } => holes.push(expr.clone()),
+            template::Segment::Hole { expr, .. } => out.push((expr.clone(), bound.clone())),
             template::Segment::For {
-                collection, body, ..
+                binding,
+                collection,
+                body,
             } => {
                 // The collection is captured from the enclosing scope with `:`
-                // (ADR-007 D4), and it is a name this program wrote.
-                holes.push(collection.clone());
-                holes.extend(template_holes(body));
+                // (ADR-007 D4), and it is a name this program wrote - so it is
+                // read *outside* the binding, which is where it lives.
+                out.push((collection.clone(), bound.clone()));
+                bound.push(binding.clone());
+                walk_template_holes(body, bound, out);
+                bound.pop();
             }
         }
     }
-    holes
 }
 
 /// A plain string on its way into a Rust *format* string.

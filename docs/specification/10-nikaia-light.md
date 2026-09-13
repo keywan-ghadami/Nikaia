@@ -382,7 +382,8 @@ println(f"{wide(m)}")   // fn wide(n: i64) -> i64
 
 > **Status:** the *rule* is built, and it is the language below that holds it — so
 > the refusal in the first line is `rustc`'s, in Rust's words about a type the
-> program did not write (`docs/open-work.md` §1.5). This compiler's own `NK1116`
+> program did not write (`docs/open-work.md`, the out-of-range literal). This
+> compiler's own `NK1116`
 > answers the case where a type **stands beside** the literal — an annotated
 > `let`, a `return` against a declared result, an argument whose parameter says
 > what it takes — and stays silent otherwise, because a literal whose use widens

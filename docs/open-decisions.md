@@ -108,7 +108,8 @@ the only place sharing begins. What is bought is that a reader of any line knows
 where every name in it comes from without consulting the top of the file, and that
 no edit elsewhere changes what an already-written line means.
 
-[`open-work.md`](open-work.md) §1.1 was never blocked by this. Both answers needed
+The **cross-file type** defect [`open-work.md`](open-work.md) carried was never
+blocked by this. Both answers needed
 the same two pieces — a qualified type name that resolves to the same type, and a
 struct literal that tolerates a prefix. The alias is the one thing this answer adds
 to that repair.
@@ -374,7 +375,8 @@ in a language that has just withdrawn two, and it moves the upkeep onto every
 library author forever.
 
 **A side effect worth stating rather than discovering.**
-[`open-work.md`](open-work.md) §1.1 is about naming a type across a file boundary.
+The **cross-file type** entry [`open-work.md`](open-work.md) carried was about
+naming a type across a file boundary.
 Inside a package that boundary no longer exists, so half of what it describes
 stops being reachable; what remains is the cross-*package* case, which is the one
 that was always the point.
@@ -443,7 +445,8 @@ and Go, which never had to add one, reserves all of them. **Nikaia has no progra
 outside this repository**, so the reason does not apply, and the choice is free
 today in a way it will never be again.
 
-**Why this rather than a cut in the parser.** `open-work.md` §1.1 offered both: a
+**Why this rather than a cut in the parser.** `open-work.md`'s **`dsl` block**
+entry offered both: a
 cut, so that once `dsl NAME {` matches the parser may not back out of the rule, or
 reserving the word. A cut repairs **one diagnostic for one construct**. The
 reserved list repairs **the class** — the `dsl` block, the silent miscompilation

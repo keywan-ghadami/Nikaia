@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed (an undeclared name is refused wherever it is written)
+
+- **`NK1117` reaches a name inside an expression.** It used to fire only where a statement *was* one name, so `let n = q + 1` was passed over in silence and `rustc` refused the generated file about a name the user did write — the [Part III C.1](docs/specification/30-nikaia-tooling.md) class. The `docs/open-work.md` entry said this needed a decision because *"the list of what counts as declaring a name has to be complete before the rule can be widened, and today it is not"*. That was right, and the corpus is what said which two sources were missing.
+- **A template's `<for>` declares a name** — `<for r in :rows>{r.name}</for>` (Part II 10.6, [ADR-017](docs/specification/adr/adr-017.md)) — and the hole walk did not know it, because `template_holes` flattened a `<for>` and dropped its binding. `examples/escaping.nika` is what found it: widening the rule refused its `{r.shade}` until the walk carried a scope.
+- **A config option is a parameter** (Part I 5.1) and was simply absent from the checker's scope frame. Nothing noticed while a name in an expression was never asked about; `examples/tally.nika`'s `f"{lines}{separator}{blank}"` names one. That is a defect the widening *found* rather than caused.
+- **One mistake, one finding.** The statement-position call is gone — a statement that is one name is an expression statement, so the walk reaches it — and where the withdrawn-`a`/`b`/`c` message applies, the general one stands aside, because the specific message says what happened to the form and the general one only that a name is unknown.
+- **`quote { … }` was the last row of `docs/spec-promises.md` marked *"means something else"*, and it is a refusal now.** `let q = quote { 1 + 1 }` parsed as `let q = quote` and a block, and lowered in silence. The construct (Part II 10.3) is still unbuilt; it no longer means something else without saying so.
+- `let n = 1_000` is caught in an expression too, which is where the misparse the statement rule was built for actually appears.
+
+### Changed (how a notes-page entry is cited)
+
+- **Nine citations pointed at whichever entry had moved into the slot.** `docs/open-work.md`'s numbers renumber whenever something closes, and this round closed three entries — so `§1.1` in three records, the specification and five tests silently came to mean something else. Every one of them now names the entry's **subject** instead, and the page says to do that: what an entry *is* stays put, where it sits does not.
+
 ### Fixed (a warning the backend said twice)
 
 - **[ADR-012](docs/specification/adr/adr-012.md) D8: a project build runs the binary itself.** `nikaia run` printed a warning twice — once translated against the `.nika` line, and once as `rustc` about `target/nikaia/gen/….rs`, which is what [Part III C.1](docs/specification/30-nikaia-tooling.md) forbids. The cause was the second Cargo invocation: a `run` cannot use the JSON channel, because the program's own output is on that stdout, so Cargo rendered its **cached** diagnostics to stderr while checking freshness and nothing intercepted them.

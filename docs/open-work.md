@@ -13,6 +13,12 @@ things to be wrong about:
   made false. `docs/README.md` §1 makes a stale **Status** note a defect in its
   own right, because a reader cannot tell a plan from a promise.
 
+**Cite an entry by its subject and not by its number.** The numbers renumber
+whenever something closes - measured the hard way, by a round that closed three
+entries and left nine citations in the specification, the records and the tests
+pointing at whichever entry had moved into the slot. What an entry *is* stays
+put; where it sits does not.
+
 **Every entry carries its evidence or says that it has none.** An item with a
 reproduction is a fact; an item without one is a suspicion, and it is marked as
 such rather than inheriting the authority of the list around it. Questions that
@@ -33,54 +39,14 @@ missing from a project build, a cache that filled the disk, a sum of constants
 that could not fit, **a keyword that could be a name** - which took the `dsl`
 block's diagnostic, three silent misreadings, and every position that can
 declare one with it ([ADR-051](specification/adr/adr-051.md)) - and a result that
-borrowed from nothing and named no lifetime for it, and a warning the backend
-said twice.
+borrowed from nothing and named no lifetime for it, a warning the backend said
+twice, and an undeclared name refused only where it stood alone.
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. An undeclared name is refused as a **statement** and nowhere else
-
-`NK1117` fires where a statement is one name. A name used inside an expression —
-`let n = q + 1`, `f(q)`, `q.len()` — resolves to nothing and is passed over in
-silence, and `rustc` then refuses the generated file about a name the user did
-write but never declared. That is the Part III C.1 class, one step milder than the
-cases already fixed: the *line* is the user's even though the message is Rust's.
-
-Two of the three letters the withdrawn lambda form used are covered specially
-([ADR-049](specification/adr/adr-049.md) §5): a free `a`, `b` or `c` is refused
-with a message about the withdrawal, because that is the mistake a reader of the
-old specification will actually make. Every other name is not.
-
-**The reserved-word list narrowed this and left one case behind**, which is what
-makes it worth reading against [`spec-promises.md`](spec-promises.md). Every word
-the specification names for a construct the grammar does not have — `assert`,
-`const`, `unsafe`, `test`, `bench`, `macro` — is a name in statement position, and
-`NK1117` refuses each of them by name. `quote` is the exception, and it is this
-entry exactly:
-
-```nika
-let q = quote { 1 + 1 }
-```
-
-parses as `let q = quote` and then `{ 1 + 1 }`, and **lowers in silence**, because
-the undeclared name is the *value of a `let`* and not a statement. So this is not
-a hypothetical: it is the one row of that page still marked *"means something
-else"*.
-
-*What it needs:* not an owner's decision — a missing input first. "This expression
-names something nothing declares" is a much wider claim than the statement rule
-makes, and the checker's polarity is that it never refuses a correct program
-(C.4), so the list of what counts as declaring a name has to be complete before
-the rule can be widened. Today it is not, and the gap has a name: **this compiler
-reads no metadata of a Rust crate** — §3 records the specification sentence that
-claimed otherwise, corrected there rather than here. So a qualified call into a
-Rust package, the shape `hyper_shim::across_a_thread(handle)` that ADR-038 D7 is
-about, would be refused as undeclared. Give the checker that input and this
-becomes work with a settled answer rather than a question.
-
-### 1.2. A `std` function whose Rust parameter is a `usize` still needs a written conversion
+### 1.1. A `std` function whose Rust parameter is a `usize` still needs a written conversion
 
 [ADR-048](specification/adr/adr-048.md) D1 made a length an `i64` and emits both
 conversions, and its scope is deliberately what a length *returns*. The other
@@ -92,7 +58,7 @@ specification does not offer (§3.1 of that record says so).
 describes as `i64` whose Rust counterpart takes a `usize`. No program has yet made
 the answer obvious, which is why the record leaves it open rather than guessing.
 
-### 1.3. A relayed `rustc` message may still name a type the program did not write
+### 1.2. A relayed `rustc` message may still name a type the program did not write
 
 **The map's hasher is fixed.** The emitter writes a trusted input's map as
 `TrustedMap`, so *"type annotations needed for `HashMap<_, _,
@@ -115,7 +81,7 @@ noticing.
 
 ---
 
-### 1.4. An out-of-range literal that nothing constrains is refused in Rust's words
+### 1.3. An out-of-range literal that nothing constrains is refused in Rust's words
 
 ```nika
 let big = 3000000000

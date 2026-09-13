@@ -597,7 +597,7 @@ fn compiled_stds(cache: &Path) -> BTreeMap<PathBuf, Option<std::time::SystemTime
     found
 }
 
-/// **The explain modes reach a project build** (`docs/open-work.md` §1.7).
+/// **The explain modes reach a project build** (`docs/open-work.md`, since closed).
 ///
 /// `--sharing`'s own help says why they exist: there is no way to *ask* for the
 /// cheaper reference count, every fallback is enumerated instead, and *"that is
