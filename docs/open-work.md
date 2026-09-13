@@ -276,31 +276,22 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.4. Part I 3.5's `?.`, and the nullable wrap at an argument
+### 2.4. `?.` onto a **method**, and the nullable wrap at an argument
 
-[ADR-052](specification/adr/adr-052.md) §4. The type is built — `T?`, `null`, and
-the `Some(…)` at an annotated `let`, an assignment and a `return`. Two pieces are
-left, and each has its own reason for being left.
+[ADR-052](specification/adr/adr-052.md) §4. The type is built and so is `?.` over
+a field — `map` over a plain one, `and_then` over one that is itself a `T?`. Two
+pieces are left, and neither is a question.
 
-**`?.` needs the checker and not the emitter.** The lowering is not the
-difficulty: `x?.full_name` is `x.map(|v| v.full_name)`. It is that a field which
-is **itself** nullable needs `and_then` instead, or `a?.b?.c` comes out holding a
-nullable of a nullable — and which of the two is right is a question about the
-field's declared type. So it goes the way D4's wrap does: the checker decides and
-the emitter writes. The key can be `(statement, field name)`, which is the shape
-`fallible_methods` already uses and documents.
-
-*What is measurable now:* `let name = repo.find_user(id)?.full_name` is a parse
-error at the `?`. The position is free — the parser never builds `Expr::Try`,
-because failure propagation is implicit
-([ADR-025](specification/adr/adr-025.md)) — so there is nothing to disambiguate
-against.
+**`x?.m()`** parses as a call *of* the reach, because the grammar has no arm for
+the call form, and the checker says what is wrong with a sentence rather than a
+parse error. Building it needs the method's return type to pick `map` or
+`and_then`, which the ledger has — so this is an afternoon rather than a
+decision.
 
 **The wrap at an argument** — `takes(42)` where the parameter is an `i64?` — is
-not a position this compiler can name: expressions carry no spans, and the three
-places that *are* covered are each named by the statement they stand in. So this
-waits on the same thing §1.5 does, one field on an AST node, or on a different
-key.
+not a position this compiler can name: an expression carries no span, and the
+four places that *are* covered are each named by a statement, or by a statement
+and a field. So this waits on the same thing §1.5 does, one field on an AST node.
 
 ### 2.5. Part II 12.8's supervision syntax
 

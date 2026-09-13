@@ -23,7 +23,21 @@ fn lowered(source: &str) -> String {
 }
 
 /// Lower, compile the result as a Rust library, and hand the emitted text back.
+///
+/// **The checker runs too**, because a build runs it: without that a program
+/// this compiler would have refused reaches `rustc` and fails there, and the
+/// test then reports the wrong thing. (Written after exactly that: a `?.` on a
+/// plain value came back as *"`User` is not an iterator"*.)
 fn compiled(purpose: &str, source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let findings = check::check(&parsed, &own, &library).findings;
+    assert!(
+        findings.is_empty(),
+        "{purpose} is a correct program and the checker says otherwise: {findings:#?}"
+    );
+
     let rust = lowered(source);
     let dir = common::scratch_dir(purpose);
     let file = dir.join("lowered.rs");
@@ -195,5 +209,148 @@ fn main() {
     assert!(
         !it.message.contains("Option"),
         "a message may not name a type the program cannot write (C.1): {it:#?}"
+    );
+}
+
+// --- Part I 3.5's `?.` ------------------------------------------------------
+
+/// **The section's own shape**, chained, and it compiles.
+///
+/// `map` over a plain field and `and_then` over one that is itself a `T?`: the
+/// second is the whole difficulty, because `map` there would give an
+/// `Option<Option<T>>` and `a?.b?.c` would come out holding a nullable of a
+/// nullable. Which of the two is right is a question about the declared type,
+/// so the checker decides and this emitter writes the word
+/// ([ADR-052](../../../docs/specification/adr/adr-052.md) §4,
+/// [ADR-028](../../../docs/specification/adr/adr-028.md)).
+#[test]
+fn a_safe_reach_maps_over_a_plain_field_and_flattens_a_nullable_one() {
+    let rust = compiled(
+        "safe-navigation",
+        "\
+struct Address { city: String, zip: String? }
+struct User { name: String, home: Address? }
+
+fn find(id: i64) -> User? {
+    if id > 0 {
+        let home = Address(city: \"Bletchley\".to_string(), zip: null)
+        return User(name: \"Ada\".to_string(), home: home)
+    }
+    return null
+}
+
+fn main() {
+    let name = find(1)?.name ?? \"nobody\".to_string()
+    let city = find(1)?.home?.city ?? \"nowhere\".to_string()
+    let zip = find(1)?.home?.zip ?? \"none\".to_string()
+    println(f\"{name} {city} {zip}\")
+}
+",
+    );
+    // `name` is a plain `String`, so `map`.
+    assert!(
+        rust.contains(".map(|__nikaia_it| __nikaia_it.name)"),
+        "{rust}"
+    );
+    // `home` is an `Address?`, so `and_then` — otherwise `?.home?.city` would
+    // be reaching through a nullable of a nullable.
+    assert!(
+        rust.contains(".and_then(|__nikaia_it| __nikaia_it.home)"),
+        "{rust}"
+    );
+    // And `zip` is a `String?`, so `and_then` again.
+    assert!(
+        rust.contains(".and_then(|__nikaia_it| __nikaia_it.zip)"),
+        "{rust}"
+    );
+}
+
+/// **A struct-literal field is Part I 2.3's fourth position for the wrap.**
+///
+/// `Address(city: …, zip: null)` needs nothing, and `User(name: …, home: home)`
+/// where `home` is an `Address` and the field is an `Address?` needs the
+/// `Some(…)`. Keyed by the field's own name, because a struct literal has one of
+/// these per field and a statement has only one span.
+#[test]
+fn a_plain_value_in_a_nullable_field_is_wrapped() {
+    let rust = compiled(
+        "nullable-field",
+        "\
+struct Address { city: String }
+struct User { name: String, home: Address? }
+
+fn main() {
+    let home = Address(city: \"Bletchley\".to_string())
+    let u = User(name: \"Ada\".to_string(), home: home)
+    let city = u.home?.city ?? \"nowhere\".to_string()
+    println(f\"{city}\")
+}
+",
+    );
+    assert!(rust.contains("home: Some(home)"), "{rust}");
+}
+
+/// **`?.` through something that cannot be absent is `NK1121`.**
+///
+/// The language below has no `map` on a plain struct, so this was `rustc`'s
+/// refusal about the generated file. The way out is the plain `.`, which is
+/// what the program meant.
+#[test]
+fn reaching_through_a_plain_value_is_refused() {
+    let source = "\
+struct User { name: String }
+fn main() {
+    let u = User(name: \"Ada\".to_string())
+    let n = u?.name
+    println(f\"{n}\")
+}
+";
+    let parsed = parse_to_ast(source).expect("parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let findings = check::check(&parsed, &own, &library).findings;
+    let it = findings
+        .iter()
+        .find(|f| f.code == "NK1121")
+        .unwrap_or_else(|| panic!("no NK1121: {findings:#?}"));
+    assert!(it.message.contains("`User`"), "{it:#?}");
+    assert!(
+        it.help.as_deref() == Some("write `.name`"),
+        "every error names a way out (Part III C.2): {it:#?}"
+    );
+}
+
+/// And a receiver this checker could not work out says nothing: refusing there
+/// would refuse a correct program (Part III, C.4).
+#[test]
+fn reaching_through_an_unknown_receiver_is_not_refused() {
+    let source = "\
+fn main() {
+    let whatever = cli::args().nth(1)
+    let n = whatever?.something
+}
+";
+    let parsed = parse_to_ast(source).expect("parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let findings = check::check(&parsed, &own, &library).findings;
+    assert!(
+        !findings.iter().any(|f| f.code == "NK1121"),
+        "{findings:#?}"
+    );
+}
+
+/// **`a ?? b` is not `a?.b`**, and the grammar keeps them apart by spelling
+/// `?.` as one token: the generator cannot insert the implicit whitespace
+/// inside a literal, so `a ? . b` is not safe navigation either.
+#[test]
+fn the_coalescing_operator_is_not_a_safe_reach() {
+    let rust = lowered("fn main() { let a: i64? = null\nlet b = a ?? 1 }");
+    assert!(rust.contains("unwrap_or_else"), "{rust}");
+    assert!(!rust.contains("map("), "{rust}");
+
+    assert!(
+        parse_to_ast("fn main() { let a: i64? = null\nlet b = a ? . x }").is_err(),
+        "`?` and `.` apart is not `?.`"
     );
 }

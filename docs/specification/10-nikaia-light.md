@@ -360,8 +360,8 @@ an allocation happens only where you wrote that you wanted one, and [ADR-024](ad
 >
 > `(A, B)?` is deliberately absent — this section does not write it.
 >
-> Part I 3.5's `??` was already built and now has a type to be used on; `?.` is
-> not (3.5).
+> Part I 3.5's `??` was already built and now has a type to be used on, and
+> `?.` is built beside it.
 
 ### 2.4. Type Inference
 Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
@@ -584,11 +584,28 @@ let display_name = name ?? "Guest"
 > **Status:** `??` is built, and 2.3's `T?` is what it operates on
 > ([ADR-052](adr/adr-052.md)): `a ?? b` lowers to `a.unwrap_or_else(|| b.into())`.
 >
-> `?.` is not built. The lowering is not the difficulty — `x.map(|v| v.field)` —
-> it is that a field which is **itself** nullable needs `and_then` instead, or
-> `a?.b?.c` comes out holding a nullable of a nullable. Which of the two is right
-> is a question about the field's declared type, so it goes through the checker
-> the way 2.3's `Some(…)` does ([ADR-052](adr/adr-052.md) §4).
+> `?.` is built too. It lowers to `map` over a plain field and to `and_then`
+> over one that is **itself** a `T?` — the second being the whole difficulty,
+> since `map` there would leave `a?.b?.c` reaching through a nullable of a
+> nullable. Which of the two is a question about the declared type, so the
+> compiler decides it, the way 2.3's `Some(…)` is decided
+> ([ADR-052](adr/adr-052.md) D6).
+>
+> The result is a `T?` either way, which is what lets `??` end a chain and `?.`
+> continue one.
+>
+> **`?.` through something that cannot be absent is refused** as `NK1121`, and
+> the way out is the plain `.` — a type that is not `T?` always has a value.
+>
+> **And `?.` takes the value it reaches through**, so using the receiver again is
+> refused by the language below with *"use of moved value"* on this line. That is
+> a real rule and not an accident of the lowering; what was translated is the
+> note that explained it, which used to name the machinery instead of the
+> operator ([ADR-052](adr/adr-052.md) D8).
+>
+> **Not built:** `?.` onto a *method*. `x?.m()` needs the method's return type to
+> pick between the two, which is work rather than a question
+> (`docs/open-work.md`).
 
 ---
 

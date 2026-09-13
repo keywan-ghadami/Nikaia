@@ -1285,7 +1285,9 @@ impl<'a> Analysis<'a> {
             | Expr::Try(expr)
             | Expr::Throw(expr)
             | Expr::Cast { expr, .. } => self.expr(function, expr, scope),
-            Expr::Field { base, .. } => self.expr(function, base, scope),
+            Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
+                self.expr(function, base, scope)
+            }
             Expr::Index { base, index } => {
                 self.expr(function, base, scope);
                 self.expr(function, index, scope);

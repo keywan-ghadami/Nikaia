@@ -777,6 +777,12 @@ struct Emitter<'p> {
     /// and the `Some(…)` is this emitter's to write
     /// (`check::Checked::nullable_sites`).
     nullable_sites: std::collections::BTreeSet<usize>,
+    /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
+    /// therefore flatten (`check::Checked::flattened_reaches`).
+    flattened_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 2.3: the struct-literal fields where a plain value stands in a
+    /// nullable slot (`check::Checked::nullable_fields`).
+    nullable_fields: std::collections::BTreeSet<(usize, String)>,
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
@@ -1136,6 +1142,8 @@ impl<'p> Emitter<'p> {
             shared,
             shared_sites: propagation.shared,
             nullable_sites: propagation.nullable,
+            flattened_reaches: propagation.flattened,
+            nullable_fields: propagation.nullable_in_fields,
             own_contracts,
             library,
             ordering,
@@ -3274,6 +3282,24 @@ impl<'p> Emitter<'p> {
                 self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!(".{}", self.text(*name)));
             }
+            // Part I 3.5: `x?.name` reaches the field only where there is
+            // something to reach it on.
+            //
+            // **`map` or `and_then`, and the checker says which.** Over a plain
+            // field `map` is right; over a field that is *itself* a `T?` it
+            // would make an `Option<Option<T>>`, and `and_then` is what
+            // flattens - which is a question about the declared type, so it is
+            // answered where the types are (ADR-028). `map` is the fallback,
+            // because it is the one that cannot nest a plain field.
+            Expr::SafeField { base, name } => {
+                let field = self.text(*name).to_string();
+                let flattens = self
+                    .flattened_reaches
+                    .contains(&(flow.statement, field.clone()));
+                let how = if flattens { "and_then" } else { "map" };
+                self.postfix_base(out, base, depth, flow)?;
+                out.push(&format!(".{how}(|__nikaia_it| __nikaia_it.{field})"));
+            }
             Expr::Index { base, index } => {
                 // **A length is an `i64`, so an index is one too**
                 // ([ADR-048](../../../docs/specification/adr/adr-048.md) D1), and
@@ -3365,20 +3391,41 @@ impl<'p> Emitter<'p> {
                                 self.count_at(SHARED_FIELDS, &slot),
                             )
                         });
+                    // Part I 2.3: a plain value in a field the struct
+                    // declares nullable. Keyed by the field's own name, because
+                    // a struct literal has one of these per field and the
+                    // statement has only one span.
+                    let wrap = self
+                        .nullable_fields
+                        .contains(&(flow.statement, self.text(field.name).to_string()));
                     if let Some(value) = &field.value {
                         out.push(": ");
                         if let Some(path) = handle {
                             out.push(&format!("{path}::new("));
                         }
+                        if wrap {
+                            out.push("Some(");
+                        }
                         self.expr(out, value, depth, flow)?;
+                        if wrap {
+                            out.push(")");
+                        }
                         if handle.is_some() {
                             out.push(")");
                         }
-                    } else if let Some(path) = handle {
+                    } else if handle.is_some() || wrap {
                         // `Counter { db }` is the shorthand for `db: db`
-                        // (Part I 4.1), and the constructor has to be written
+                        // (Part I 4.1), and a constructor has to be written
                         // around the name - which means writing the pair out.
-                        out.push(&format!(": {path}::new({})", self.text(field.name)));
+                        let name = self.text(field.name);
+                        let inner = match wrap {
+                            true => format!("Some({name})"),
+                            false => name.to_string(),
+                        };
+                        match handle {
+                            Some(path) => out.push(&format!(": {path}::new({inner})")),
+                            None => out.push(&format!(": {inner}")),
+                        }
                     }
                 }
                 out.push(" }");
@@ -4367,7 +4414,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             }
         }
         Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
-        Expr::Field { base, .. } => visit_expr(base, f),
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr(base, f),
         Expr::StructLit { fields, .. } => fields
             .iter()
             .filter_map(|field| field.value.as_ref())

@@ -218,6 +218,9 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
 #[derive(Debug, Clone)]
 pub enum Postfix {
     Field(Symbol),
+    /// Part I 3.5: `?.name`, which reaches the field only if the receiver holds
+    /// something.
+    SafeField(Symbol),
     Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Index(Box<ast::Expr>),
 }
@@ -254,6 +257,10 @@ pub fn fold_binary(head: ast::Expr, tail: Vec<(ast::BinaryOp, ast::Expr)>) -> as
 pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
     tail.into_iter().fold(base, |recv, step| match step {
         Postfix::Field(name) => ast::Expr::Field {
+            base: Box::new(recv),
+            name,
+        },
+        Postfix::SafeField(name) => ast::Expr::SafeField {
             base: Box::new(recv),
             name,
         },
@@ -1238,6 +1245,15 @@ grammar! {
                     None => Postfix::Field(name),
                 }
             }
+          // Part I 3.5: `?.name`. **One literal** rather than `"?" "."`, so the
+          // generator cannot insert the implicit whitespace between them -
+          // `a ? . b` is not safe navigation, and `a ?? b` is the coalescing
+          // operator, which this cannot begin to match.
+          //
+          // There is no arm for `?.m()`: a call postfix follows this one, so
+          // `x?.m()` parses as a call *of* the reach, and the checker says what
+          // is wrong with a sentence rather than a parse error.
+          | "?." name:SEGMENT -> { Postfix::SafeField(name) }
           | "[" index:expr "]" -> {
                 Postfix::Index(Box::new(index))
             }

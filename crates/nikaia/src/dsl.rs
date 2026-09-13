@@ -395,9 +395,10 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_expr(lhs, f);
             visit_expr(rhs, f);
         }
-        Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Field { base: expr, .. } => {
-            visit_expr(expr, f)
-        }
+        Expr::Unary { expr, .. }
+        | Expr::Try(expr)
+        | Expr::Field { base: expr, .. }
+        | Expr::SafeField { base: expr, .. } => visit_expr(expr, f),
         Expr::TryCatch { expr, handler } => {
             visit_expr(expr, f);
             visit_block(handler, f);

@@ -146,6 +146,32 @@ pub struct Checked {
     /// a wrap that is not needed, which is the fail-closed direction
     /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1).
     pub nullable_sites: BTreeSet<usize>,
+    /// The `?.` reaches whose field is **itself** nullable, as the byte the
+    /// statement starts at and the field's name (Part I 3.5).
+    ///
+    /// `x?.a` over a plain `a` is `x.map(|v| v.a)`; over an `a` that is already
+    /// a `T?` it has to be `and_then`, or the result holds a nullable of a
+    /// nullable and `a?.b?.c` comes out wrong. Which of the two is a question
+    /// about the declared type, so it is answered here and the emitter writes
+    /// the word (ADR-028).
+    ///
+    /// The statement and the name, for the reason `fallible_methods` gives at
+    /// length: an expression carries no span, so a pair is recorded only where
+    /// **every** `?.` of that name in that statement flattens. A mixed
+    /// statement is left out of the set entirely rather than resolved by
+    /// position, which keeps `map` - the answer that cannot make a nested
+    /// option out of a plain field - as the one it falls back to.
+    pub flattened_reaches: BTreeSet<(usize, String)>,
+    /// The **struct-literal fields** where a plain value stands in a nullable
+    /// slot, as the byte the statement starts at and the field's name
+    /// (Part I 2.3).
+    ///
+    /// `nullable_sites` covers the three positions a statement *is* - an
+    /// annotated `let`, an assignment, a `return` - and a struct literal has
+    /// one position per field, so it needs the name too. Same shape as
+    /// `shared_sites`, which covers the same construct for the same kind of
+    /// reason.
+    pub nullable_fields: BTreeSet<(usize, String)>,
     /// The **narrowing conversions**, as the byte the statement they stand in
     /// starts at and the type converted to (ADR-043 D4).
     ///
@@ -304,6 +330,10 @@ pub struct Propagation {
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
     pub nullable: BTreeSet<usize>,
+    /// [`Checked::flattened_reaches`].
+    pub flattened: BTreeSet<(usize, String)>,
+    /// [`Checked::nullable_fields`].
+    pub nullable_in_fields: BTreeSet<(usize, String)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -333,6 +363,8 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         shared: checked.shared_sites,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
+        flattened: checked.flattened_reaches,
+        nullable_in_fields: checked.nullable_fields,
     }
 }
 
@@ -710,6 +742,35 @@ impl<'a> Checker<'a> {
                  digits with no separators, so `1_000` is `1` beside the name `_000` \
                  (Part I, 2.2)"
             )),
+        });
+    }
+
+    /// Part I 3.5: `?.` is for a value that may be absent.
+    ///
+    /// `"Ada"?.len` reaches through something that cannot be missing, and the
+    /// language below has no `map` on it - so this was `rustc`'s refusal about
+    /// the generated file (Part III, C.1). **`NK1121`**, and the way out is the
+    /// plain `.`, which is what the program meant.
+    ///
+    /// **Only where the receiver's type is known.** A receiver this checker
+    /// could not work out says nothing: refusing there would refuse a correct
+    /// program, which is the one thing it may never do (Part III, C.4).
+    fn reaches_through_a_plain_value(&mut self, on: &Ty, field: &str, span: &Span) {
+        if on.is_unknown() {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1121",
+            message: format!("`?.` reaches through a `{on}`, which cannot be absent"),
+            notes: vec![
+                "`?.` exists for a nullable type - it reaches the field only where there \
+                 is something to reach it on, and answers `null` otherwise (Part I, 3.5). \
+                 A type that is not `T?` always has a value"
+                    .to_string(),
+            ],
+            help: Some(format!("write `.{field}`")),
         });
     }
 
@@ -1323,6 +1384,47 @@ impl<'a> Checker<'a> {
                 }
             }
 
+            // Part I 3.5: `x?.field`. The receiver must be a `T?` and the
+            // result is a `U?` - flattened, because a field that is *itself*
+            // nullable would otherwise give a nullable of a nullable.
+            Expr::SafeField { base, name } => {
+                let on = self.expr(base, span);
+                let field = self.parsed.text(*name).to_string();
+                let Ty::Nullable(inner) = &on else {
+                    self.reaches_through_a_plain_value(&on, &field, span);
+                    return Ty::Unknown;
+                };
+                let Ty::Named { name: ty, .. } = inner.as_ref() else {
+                    return Ty::Unknown;
+                };
+                let Some(fields) = self.fields_of(ty) else {
+                    return Ty::Unknown;
+                };
+                match fields.iter().find(|f| f.name == field) {
+                    Some(found) => {
+                        let (ty, declared) = (ty.clone(), found.clone());
+                        self.field_is_reachable(&ty, &declared, span);
+                        // **The `and_then` case is the field that is already a
+                        // `T?`**, and the emitter is told which by name: `map`
+                        // over one would make an `Option<Option<T>>`, and that
+                        // is a question about the declared type, which this
+                        // module answers and the emitter cannot (ADR-028).
+                        match &declared.ty {
+                            Ty::Nullable(_) => {
+                                self.checked.flattened_reaches.insert((span.start, field));
+                                declared.ty
+                            }
+                            plain => Ty::Nullable(Box::new(plain.clone())),
+                        }
+                    }
+                    None => {
+                        let ty = ty.clone();
+                        self.no_such_field(&ty, &field, &fields, span);
+                        Ty::Unknown
+                    }
+                }
+            }
+
             Expr::StructLit { name, fields } => {
                 // `unaliased`, the same as a type: `h::Request(path: …)` builds
                 // `http::Request` (ADR-046 D3).
@@ -1349,6 +1451,23 @@ impl<'a> Checker<'a> {
                                 self.checked
                                     .shared_sites
                                     .insert((span.start, format!("{owner}.{field}")));
+                                continue;
+                            }
+                            // Part I 2.3's fourth position: a plain value in a
+                            // field the struct declares nullable. The same rule
+                            // as the other three (`wraps_into_nullable`), keyed
+                            // by the field as well, because a struct literal
+                            // has one of these per field and a statement only
+                            // one span.
+                            let value = init.value.as_ref();
+                            let is_literal = value.is_some_and(is_literal);
+                            if matches!(want, Ty::Nullable(_))
+                                && !matches!(found, Ty::Nullable(_))
+                                && (!found.is_unknown() || is_literal)
+                            {
+                                self.checked
+                                    .nullable_fields
+                                    .insert((span.start, field.clone()));
                                 continue;
                             }
                             self.expect(

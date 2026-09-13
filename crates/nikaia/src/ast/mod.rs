@@ -339,6 +339,17 @@ pub enum Expr {
         rhs: Box<Expr>,
     },
 
+    /// Part I 3.5: `x?.field`, safe navigation.
+    ///
+    /// The receiver is a `T?`; the whole expression is a `U?`, where `U` is what
+    /// the field holds. A separate variant rather than a flag on
+    /// [`Expr::Field`], for the reason [`Expr::LitInterpolated`] gives: every
+    /// analysis has to say what it does with a reach that may not happen.
+    SafeField {
+        base: Box<Expr>,
+        name: Ident,
+    },
+
     // Kap 7.1: expr?
     Try(Box<Expr>),
 

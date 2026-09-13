@@ -270,6 +270,16 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
 /// is `i64` or a use that widens the literal. A remedy that works is kept; one
 /// that leads out of the language is not.
 ///
+/// **And three notes a `?.` used to hang on a move error.** `x?.field` is an
+/// `Option::map`, so using `x` again is a move - a rule the language below is
+/// right to hold ([ADR-005](../../../../docs/specification/adr/adr-005.md)), and
+/// the headline names the program's own variable on the program's own line. The
+/// notes did not: `Option::<T>::map` takes ownership, so *consider calling
+/// `.as_ref()`*, `.as_mut()`, or `clone`. None of the three is anything a
+/// `.nika` file can write, and all of them are about a shape this compiler
+/// chose. **The headline is kept and the notes go**, which is the split this
+/// function is for.
+///
 /// **What is deliberately kept**, because it was checked rather than assumed:
 /// *"if this is intentional, prefix it with an underscore"* describes something
 /// that works in Nikaia - `let _unused = 5` is accepted - so dropping it would
@@ -283,10 +293,22 @@ fn is_rust_internal(note: &str) -> bool {
         "RUST_BACKTRACE",
         "rustc --explain",
     ];
-    const NOT_OFFERED: [&str; 3] = [
+    const NOT_OFFERED: [&str; 6] = [
         "consider using the type `u32`",
         "consider using the type `u64`",
         "consider using the type `usize`",
+        // Part I 3.5: `x?.field` is an `Option::map`, so reusing `x` afterwards
+        // is a move error - which the language below is right to hold
+        // ([ADR-005](../../../../docs/specification/adr/adr-005.md)), and the
+        // headline *"use of moved value"* names the program's own variable on
+        // the program's own line. What it hangs three notes on is
+        // `Option::<T>::map` and the way out of it: `.as_ref()`, `.as_mut()`,
+        // and `clone`. **All three name the shape this compiler emitted**, and
+        // none of them is a thing a `.nika` file can write
+        // ([ADR-052](../../../../docs/specification/adr/adr-052.md) §4).
+        "consider calling `.as_ref()`",
+        "consider calling `.as_mut()`",
+        "you can `clone` the value and consume it",
     ];
 
     ATTRIBUTES.iter().any(|a| note.contains(a))
@@ -311,6 +333,15 @@ fn is_rust_internal(note: &str) -> bool {
 /// with different costs, and a message that said *"expected `Shared[T]`, found
 /// `Shared[T]`"* would hide a defect in this compiler rather than translate one of
 /// Rust's words.
+///
+/// **And one that is a translation rather than a name.** `x?.field` lowers to
+/// `Option::map` (or `and_then`), which takes its receiver by value - so using
+/// `x` again is a move, and the note explaining *why* says
+/// *"`Option::<T>::map` takes ownership of the receiver `self`"*. The
+/// explanation is the part a reader needs and the spelling is a shape this
+/// compiler chose, so the spelling is replaced with the one the program wrote:
+/// `?.`. This is not the `Shared[T]` case - there is no second Nikaia form for
+/// it to be confused with, so nothing about this compiler can hide behind it.
 fn in_this_language(message: &str) -> String {
     message
         .replace(", BuildHasherDefault<FxHasher>>", ">")
@@ -318,6 +349,14 @@ fn in_this_language(message: &str) -> String {
         .replace("nikaia_std::hash::TrustedSet", "HashSet")
         .replace("TrustedMap", "HashMap")
         .replace("TrustedSet", "HashSet")
+        .replace(
+            "`Option::<T>::map` takes ownership of the receiver `self`",
+            "`?.` takes the value it reaches through (Part I, 3.5)",
+        )
+        .replace(
+            "`Option::<T>::and_then` takes ownership of the receiver `self`",
+            "`?.` takes the value it reaches through (Part I, 3.5)",
+        )
 }
 
 /// Render a diagnostic the way a compiler does: the place, the message, the

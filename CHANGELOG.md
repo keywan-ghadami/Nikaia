@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added (`?.`, and the fourth place the `Some(…)` goes)
+
+- **[ADR-052](docs/specification/adr/adr-052.md) D6: Part I 3.5's `?.` is built**, so both halves of that section now work. `x?.a` lowers to `x.map(|it| it.a)` over a plain field and to `x.and_then(|it| it.a)` over one that is **itself** a `T?` — and that second one is the whole difficulty, because `map` there would give an `Option<Option<T>>` and `a?.b?.c` would come out reaching through a nullable of a nullable. Which of the two is a question about the declared type, so the checker decides and the emitter writes the word; the key is the statement and the field's name, which is the shape `fallible_methods` already uses and documents.
+- **The result is a `T?` either way**, which is what lets `??` end a chain and `?.` continue one.
+- **`?.` through a value that cannot be absent is `NK1121`**, with the plain `.` as the way out — a type that is not `T?` always has a value, and the language below has no `map` on it, so this was `rustc`'s refusal about the generated file. Asked only where the receiver's type is known: refusing an unknown one would refuse a correct program.
+- **`?.` takes the value it reaches through, and the move error is now entirely in this language's words.** `Option::map` takes its receiver by value, so using the receiver again is a move — a rule the language below is right to hold ([ADR-005](docs/specification/adr/adr-005.md)), with a headline that names the program's own variable on its own line. Its four notes did not: *"`Option::<T>::map` takes ownership of the receiver `self`"* is **translated** to *"`?.` takes the value it reaches through"* — the explanation is the part a reader needs and the spelling is a shape this compiler chose — and *"consider calling `.as_ref()`"*, `.as_mut()` and *"you can `clone` the value"* are **dropped**, none of the three being a thing this language offers. Same rule that dropped the `u32` remedy.
+- **A struct-literal field turned out to be the fourth position for D4's wrap**, found by a program that did not compile: `User(name: …, home: home)` where the field is an `Address?`. Keyed by the field's own name, because a struct literal has one of these per field and a statement has only one span — and the shorthand `User { home }` is written out as `home: Some(home)`, since a constructor has to go around the name.
+- **The grammar spells `?.` as one token**, so the generator cannot insert the implicit whitespace inside it: `a ? . b` is not safe navigation, and `a ?? b` is the coalescing operator, which the arm cannot begin to match.
+- **The test harness runs the checker as well as `rustc`** now, added after it caught the test author: a `?.` on a plain value reached the backend and came back as *"`User` is not an iterator"* — reporting the wrong thing about a program this compiler would have refused.
+- **Not built:** `?.m()` onto a *method*, which needs the method's return type to pick between `map` and `and_then` (the ledger has it, so this is work and not a question), and the wrap at an **argument**, which is not a position this compiler can name.
+
 ### Added (`T?` is a type, `null` is a word)
 
 - **[ADR-052](docs/specification/adr/adr-052.md): Part I 2.3 is built**, and neither line of its own example used to be accepted — `&str?` was a parse error and `null` was read as an ordinary name. `T?` lowers to the language below's `Option<T>`, which is the mapping Part III 15.2 already wrote the other way round, and `null` lowers to `None`.

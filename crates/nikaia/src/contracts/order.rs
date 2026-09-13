@@ -566,7 +566,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // carrying it to another thread is, and that is the same decision the
         // literal rule defers. The walk goes on through it, so that
         // `f("a").field` is still known to perform `f`.
-        Expr::Field { base, .. } => {
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
             out.note(Accounted::Opaque("a value read from somewhere else"));
             walk(parsed, base, out);
         }
@@ -1107,7 +1107,7 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             // and a name read inside one is read.
             config.iter().for_each(|c| names_in(parsed, &c.value, out));
         }
-        Expr::Field { base, .. } => names_in(parsed, base, out),
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } => names_in(parsed, base, out),
         Expr::Binary { lhs, rhs, .. } => {
             names_in(parsed, lhs, out);
             names_in(parsed, rhs, out);
