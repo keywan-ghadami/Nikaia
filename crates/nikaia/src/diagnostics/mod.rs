@@ -18,6 +18,8 @@
 // was wrong. Correcting a position is a lookup; translating a text would be a
 // second compiler.
 
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 
 use crate::ast::Span;
@@ -130,6 +132,16 @@ pub struct Diagnostic {
     /// worth being able to check against its origin.
     pub generated_line: Option<usize>,
     pub notes: Vec<String>,
+    /// The backend's own words, kept **only** where translating them made the
+    /// message say the same thing on both sides of an `expected … found …`.
+    ///
+    /// That is not a message about the program: it is this compiler having
+    /// emitted two different Rust types for one Nikaia type, which is a defect
+    /// of its own ([ADR-056](../../../../docs/specification/adr/adr-056.md) D2).
+    /// So the message becomes an internal error and this is what it carries -
+    /// shown to the reader and written to a log, because whoever fixes the
+    /// compiler needs the words the compiler below actually said.
+    pub internal: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -194,11 +206,29 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
             continue;
         }
 
-        let message = value["message"].as_str().unwrap_or_default();
-        if message.starts_with("aborting due to") {
+        let raw = value["message"].as_str().unwrap_or_default();
+        if raw.starts_with("aborting due to") {
             continue;
         }
-        let message = in_this_language(message);
+        let message = in_this_language(raw);
+
+        // **The one rule, and it needs no list** (ADR-056 D2). Every name this
+        // compiler substituted on the way out is put back on the way in; where
+        // putting it back makes the message say the same thing on *both* sides
+        // of an `expected … found …`, the substitution collapsed a distinction
+        // the reader would need - and it did so because this compiler wrote two
+        // different Rust types for one Nikaia type, which is a defect of its
+        // own. So that message is not shown as a fact about the program.
+        //
+        // Detected by comparing the two, which is what makes this general: a
+        // substitution added later needs no entry anywhere, because it is the
+        // *collapse* that is noticed and not the name.
+        let internal = match both_sides_the_same(&message).is_some()
+            && both_sides_the_same(raw).is_none()
+        {
+            true => Some(raw.to_string()),
+            false => None,
+        };
 
         let primary = value["spans"].as_array().and_then(|spans| {
             spans
@@ -233,6 +263,7 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
             location,
             generated_line,
             notes,
+            internal,
         });
     }
 
@@ -326,13 +357,21 @@ fn is_rust_internal(note: &str) -> bool {
 /// for `let m = HashMap::new()`, which is a real defect in the program reported
 /// against the right line in half the backend's words.
 ///
-/// **Only a substitution that is purely a name is undone.** `map_name`'s own rule
-/// is the criterion: *"same table, same API, same full-content equality - so this
-/// is a name and not a translation."* `Shared[T]` is deliberately **not** here,
-/// even though the emitter substitutes it too: `Rc` and `Arc` are different types
-/// with different costs, and a message that said *"expected `Shared[T]`, found
-/// `Shared[T]`"* would hide a defect in this compiler rather than translate one of
-/// Rust's words.
+/// **Every substitution is undone, and there is no list**
+/// ([ADR-056](../../../../docs/specification/adr/adr-056.md) D1). This used to be
+/// decided per name, on whether the substitution was *"a name and not a
+/// translation"* - and `Shared[T]` was kept out on the ground that `Rc` and `Arc`
+/// are different types, so a message saying *"expected `Shared[T]`, found
+/// `Shared[T]`"* would hide a defect in this compiler.
+///
+/// **That reasoning had only two options where there are three.** Leaving Rust's
+/// words standing does not help the reader either: they wrote `Shared[Conn]` and
+/// have no idea what an `Rc` is, and C.1 calls an untranslated backend error
+/// reaching them a bug in this compiler. The third option is the one the page
+/// already names: report it **as** that bug. So the name is put back like every
+/// other, and where putting it back makes the message say the same thing twice,
+/// `translate_units` turns it into an internal error carrying the backend's own
+/// words (D2).
 ///
 /// **And one that is a translation rather than a name.** `x?.field` lowers to
 /// `Option::map` (or `and_then`), which takes its receiver by value - so using
@@ -342,8 +381,97 @@ fn is_rust_internal(note: &str) -> bool {
 /// compiler chose, so the spelling is replaced with the one the program wrote:
 /// `?.`. This is not the `Shared[T]` case - there is no second Nikaia form for
 /// it to be confused with, so nothing about this compiler can hide behind it.
+/// The two types an `expected … found …` names, where both are the same.
+///
+/// Rust writes a type mismatch as *"expected `A`, found `B`"*, so a message
+/// naming one thing twice is a message that cannot be about the program. Used on
+/// both sides of the translation: a message rustc itself wrote that way is its
+/// own business (two types of one name, from two crates), and one that only
+/// *became* that way is this compiler's.
+fn both_sides_the_same(message: &str) -> Option<String> {
+    let expected = backticked_after(message, "expected ")?;
+    let found = backticked_after(message, "found ")?;
+    match expected == found {
+        true => Some(expected),
+        false => None,
+    }
+}
+
+/// What stands between the first pair of backticks after `word`.
+fn backticked_after(message: &str, word: &str) -> Option<String> {
+    let rest = &message[message.find(word)? + word.len()..];
+    let open = rest.find('`')? + 1;
+    let close = rest[open..].find('`')? + open;
+    Some(rest[open..close].to_string())
+}
+
+/// `Rc<T>` and `Arc<T>` are both `Shared[T]`, which is the word the program
+/// wrote ([ADR-056](../../../../docs/specification/adr/adr-056.md) D1).
+///
+/// The brackets are matched rather than searched for, so a nested type comes
+/// through whole: `Rc<Vec<Conn>>` is `Shared[Vec<Conn>]`, and the inner one is
+/// then substituted by the same pass over the result.
+fn shared_names(message: &str) -> String {
+    const HULLS: [&str; 6] = [
+        "std::rc::Rc<",
+        "alloc::rc::Rc<",
+        "std::sync::Arc<",
+        "alloc::sync::Arc<",
+        "Rc<",
+        "Arc<",
+    ];
+
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    'outer: while !rest.is_empty() {
+        for hull in HULLS {
+            if rest.starts_with(hull) {
+                // A bare `Rc<` must not eat the tail of `MyRc<`: a hull is a
+                // name, so what stands in front of it may not be one.
+                let bare = !hull.contains("::");
+                let preceded_by_a_name = bare
+                    && out
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':');
+                if !preceded_by_a_name {
+                    if let Some(inner) = balanced(&rest[hull.len()..]) {
+                        out.push_str("Shared[");
+                        out.push_str(&shared_names(inner));
+                        out.push(']');
+                        rest = &rest[hull.len() + inner.len() + 1..];
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+        let step = rest.chars().next().map(char::len_utf8).unwrap_or(1);
+        out.push_str(&rest[..step]);
+        rest = &rest[step..];
+    }
+    out
+}
+
+/// What stands before the `>` that closes the `<` already consumed.
+fn balanced(rest: &str) -> Option<&str> {
+    let mut depth = 1usize;
+    for (at, c) in rest.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&rest[..at]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn in_this_language(message: &str) -> String {
-    message
+    shared_names(message)
         .replace(", BuildHasherDefault<FxHasher>>", ">")
         .replace("nikaia_std::hash::TrustedMap", "HashMap")
         .replace("nikaia_std::hash::TrustedSet", "HashSet")
@@ -361,8 +489,77 @@ fn in_this_language(message: &str) -> String {
 
 /// Render a diagnostic the way a compiler does: the place, the message, the
 /// line it is about, and what part of it.
+/// Write the backend's own words for every internal error to a log beside the
+/// generated Rust, and answer where it went
+/// ([ADR-056](../../../../docs/specification/adr/adr-056.md) D2).
+///
+/// Appended rather than replaced, because a build reports what that build found
+/// and a reader collecting a report wants the run before it too. A log that
+/// cannot be written costs the report and never the build: this is already a
+/// message about a defect, and failing to record it would replace a bad message
+/// with no message.
+pub fn log_internal(diagnostics: &[Diagnostic], gen_dir: &Path) -> Option<PathBuf> {
+    use std::io::Write;
+
+    let originals: Vec<&String> = diagnostics.iter().filter_map(|d| d.internal.as_ref()).collect();
+    if originals.is_empty() {
+        return None;
+    }
+
+    let path = gen_dir.join("internal-errors.log");
+    std::fs::create_dir_all(gen_dir).ok()?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok()?;
+    for original in originals {
+        writeln!(file, "{original}").ok()?;
+    }
+    Some(path)
+}
+
 pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path: &str) -> String {
     let mut out = String::new();
+
+    // **An internal error, and the backend's own words with it**
+    // ([ADR-056](../../../../docs/specification/adr/adr-056.md) D2). Part III
+    // C.1 says an unmapped backend error reaching the user is a bug in this
+    // compiler and is reported as one rather than as normal output; this is the
+    // neighbouring case, where the mapping *succeeded* and produced a message
+    // that cannot be about the program. The reader needs to know it is not their
+    // mistake; whoever fixes it needs the sentence `rustc` actually wrote, so
+    // that is shown here as well as written to the log beside the generated Rust.
+    if let Some(original) = &diagnostic.internal {
+        // Where the map knew, the `.nika` line; where it did not, the generated
+        // one - saying `.nika` for a line nothing maps to would be a guess, and
+        // in a message that already says something went wrong here that is the
+        // worst place to make one.
+        let at = match &diagnostic.location {
+            Some(location) => format!("{path}:{}:{}", location.line, location.column),
+            None => match diagnostic.generated_line {
+                Some(line) => format!("{generated_path}:{line}"),
+                None => generated_path.to_string(),
+            },
+        };
+        out.push_str(&format!(
+            "internal error: {at}: this is a Nikaia bug, please report it.\n\
+             \x20    = translating the backend's message left it saying the same thing \
+             on both sides, which means this compiler emitted two different types \
+             for one of yours\n\
+             \x20    = your program may well be fine; nothing here is about a mistake \
+             you made\n\
+             \x20    = what the backend said: {original}\n"
+        ));
+        if let Some(text) = diagnostic
+            .location
+            .as_ref()
+            .and_then(|l| source.lines().nth(l.line - 1))
+        {
+            out.push_str(&format!("{:>4} | {text}\n", diagnostic.location.as_ref().map_or(0, |l| l.line)));
+        }
+        return out;
+    }
 
     match &diagnostic.location {
         Some(location) => {

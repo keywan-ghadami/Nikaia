@@ -1307,15 +1307,24 @@ impl Project {
             .collect();
         let generated = self.gen_dir().display().to_string();
 
-        for diagnostic in diagnostics::translate_units(messages, &lowered.map, &sources)
+        let translated: Vec<_> = diagnostics::translate_units(messages, &lowered.map, &sources)
             .into_iter()
             .filter(diagnostics::is_about_the_program)
-        {
+            .collect();
+
+        for diagnostic in &translated {
             let at = diagnostic.location.as_ref().map_or(0, |l| l.unit);
             eprint!(
                 "{}",
-                diagnostics::render(&diagnostic, &paths[at], sources[at], &generated)
+                diagnostics::render(diagnostic, &paths[at], sources[at], &generated)
             );
+        }
+
+        // **The backend's own words, kept** (ADR-056 D2). Shown above because
+        // the reader is being told this is not their mistake, and written here
+        // because a bug report is made later and from a file.
+        if let Some(log) = diagnostics::log_internal(&translated, &self.gen_dir()) {
+            eprintln!("note: the backend's own messages are in {}", log.display());
         }
         Ok(())
     }

@@ -355,13 +355,25 @@ fn the_hasher_this_compiler_chose_is_not_in_the_message() {
     }
 }
 
-/// …and the one that is **not** a name is left alone, because undoing it would
-/// hide a defect rather than translate a word.
+/// …and so is the one that used to be left alone
+/// ([ADR-056](../../../docs/specification/adr/adr-056.md) D1).
+///
+/// `Rc<Conn>` and `Arc<Conn>` are both `Shared[Conn]`, and this message used to
+/// reach the user in Rust's words on the ground that translating it would say
+/// the same thing twice and hide a defect in this compiler. It does say the same
+/// thing twice — and that is **reported**, not avoided (D2): a reader who wrote
+/// `Shared[Conn]` is no better served by `Rc` and `Arc`, two words the page does
+/// not have, and Part III C.1 calls an untranslated backend error reaching them a
+/// bug in this compiler.
 #[test]
-fn the_shared_count_is_left_in_the_backends_words() {
+fn a_translation_that_collapses_a_distinction_is_an_internal_error() {
     let lowered = lower(GOOD);
+    let offset = (0..lowered.rust.len())
+        .find(|at| lowered.map.source_span(*at).is_some())
+        .expect("the map covers some of what was emitted");
+    let end = offset + 4;
     let json = format!(
-        r#"{{"$message_type":"diagnostic","message":{},"level":"error","spans":[{{"file_name":"lowered.rs","byte_start":0,"byte_end":4,"line_start":1,"column_start":1,"is_primary":true}}],"children":[]}}"#,
+        r#"{{"$message_type":"diagnostic","message":{},"level":"error","spans":[{{"file_name":"lowered.rs","byte_start":{offset},"byte_end":{end},"line_start":1,"column_start":1,"is_primary":true}}],"children":[]}}"#,
         serde_json::to_string("expected struct `Arc<Conn>`, found struct `Rc<Conn>`")
             .expect("a JSON string"),
     );
@@ -369,6 +381,75 @@ fn the_shared_count_is_left_in_the_backends_words() {
     let translated = diagnostics::translate(&json, &lowered.map, GOOD);
     assert_eq!(
         translated[0].message,
-        "expected struct `Arc<Conn>`, found struct `Rc<Conn>`"
+        "expected struct `Shared[Conn]`, found struct `Shared[Conn]`",
+        "the name is put back like every other"
     );
+    assert_eq!(
+        translated[0].internal.as_deref(),
+        Some("expected struct `Arc<Conn>`, found struct `Rc<Conn>`"),
+        "and the backend's own words are kept, because that is what a bug report needs"
+    );
+
+    let rendered = diagnostics::render(&translated[0], "p.nika", GOOD, "p.rs");
+    assert!(rendered.starts_with("internal error: p.nika:"), "{rendered}");
+    assert!(
+        rendered.contains("this is a Nikaia bug"),
+        "the reader is told whose mistake it is: {rendered}"
+    );
+    assert!(
+        rendered.contains("`Arc<Conn>`") && rendered.contains("`Rc<Conn>`"),
+        "and shown what the backend said: {rendered}"
+    );
+}
+
+/// **A message rustc itself wrote that way is its own business.**
+///
+/// Two types of one name, from two crates, is a real thing to say about a real
+/// program — so the rule is not "a message that names one thing twice" but "a
+/// message that only *became* that way here" (D2). Getting this backwards would
+/// turn somebody's correct diagnostic into a bug report about this compiler.
+#[test]
+fn a_message_the_backend_wrote_that_way_is_not_an_internal_error() {
+    let lowered = lower(GOOD);
+    let offset = (0..lowered.rust.len())
+        .find(|at| lowered.map.source_span(*at).is_some())
+        .expect("the map covers some of what was emitted");
+    let end = offset + 4;
+    let json = format!(
+        r#"{{"$message_type":"diagnostic","message":{},"level":"error","spans":[{{"file_name":"lowered.rs","byte_start":{offset},"byte_end":{end},"line_start":1,"column_start":1,"is_primary":true}}],"children":[]}}"#,
+        serde_json::to_string("expected struct `Conn`, found struct `Conn`").expect("a JSON string"),
+    );
+
+    let translated = diagnostics::translate(&json, &lowered.map, GOOD);
+    assert_eq!(
+        translated[0].internal, None,
+        "nothing here was collapsed by this compiler"
+    );
+    assert!(
+        diagnostics::render(&translated[0], "p.nika", GOOD, "p.rs").starts_with("error: p.nika:"),
+        "so it stays a message about the program"
+    );
+}
+
+/// And a hull inside a hull comes through whole, which is what says the brackets
+/// are **matched** rather than searched for.
+#[test]
+fn a_nested_shared_type_is_translated_whole() {
+    let lowered = lower(GOOD);
+    let offset = (0..lowered.rust.len())
+        .find(|at| lowered.map.source_span(*at).is_some())
+        .expect("the map covers some of what was emitted");
+    let end = offset + 4;
+    let json = format!(
+        r#"{{"$message_type":"diagnostic","message":{},"level":"error","spans":[{{"file_name":"lowered.rs","byte_start":{offset},"byte_end":{end},"line_start":1,"column_start":1,"is_primary":true}}],"children":[]}}"#,
+        serde_json::to_string("`Arc<Vec<Rc<Conn>>>` is not what this takes")
+            .expect("a JSON string"),
+    );
+
+    let translated = diagnostics::translate(&json, &lowered.map, GOOD);
+    assert_eq!(
+        translated[0].message,
+        "`Shared[Vec<Shared[Conn]>]` is not what this takes"
+    );
+    assert_eq!(translated[0].internal, None);
 }
