@@ -301,3 +301,64 @@ fn a_note_about_rust_rather_than_the_program_is_dropped() {
         );
     }
 }
+
+/// **A name this compiler substituted on the way out is put back on the way in**
+/// (`docs/open-work.md` §1.4).
+///
+/// The emitter writes a trusted input's map as `TrustedMap`, which is
+/// `HashMap<K, V, BuildHasherDefault<FxHasher>>` (ADR-010 D5). Measured before
+/// this: `let m = HashMap::new()` — a real defect in the *program*, reported
+/// against the right line — said *"type annotations needed for `HashMap<_, _,
+/// BuildHasherDefault<FxHasher>>`"*, naming a hasher nothing in the program
+/// mentions.
+///
+/// **Only a substitution that is purely a name is undone**, which is `map_name`'s
+/// own rule: same table, same API, same equality. `Shared[T]` is deliberately not
+/// undone even though the emitter substitutes it too — `Rc` and `Arc` are
+/// different types, and *"expected `Shared[T]`, found `Shared[T]`"* would hide a
+/// defect in this compiler instead of translating one of Rust's words.
+#[test]
+fn the_hasher_this_compiler_chose_is_not_in_the_message() {
+    let lowered = lower(GOOD);
+    let json = format!(
+        r#"{{"$message_type":"diagnostic","message":{},"level":"error","spans":[{{"file_name":"lowered.rs","byte_start":0,"byte_end":4,"line_start":1,"column_start":1,"is_primary":true}}],"children":[{{"level":"note","message":{}}}]}}"#,
+        serde_json::to_string(
+            "type annotations needed for `HashMap<_, _, BuildHasherDefault<FxHasher>>`"
+        )
+        .expect("a JSON string"),
+        serde_json::to_string("`TrustedMap<&str, i64>` is the type of `m`").expect("a JSON string"),
+    );
+
+    let translated = diagnostics::translate(&json, &lowered.map, GOOD);
+    assert_eq!(translated.len(), 1, "{translated:#?}");
+    assert_eq!(
+        translated[0].message,
+        "type annotations needed for `HashMap<_, _>`"
+    );
+    assert_eq!(
+        translated[0].notes[0],
+        "`HashMap<&str, i64>` is the type of `m`"
+    );
+    for said in [&translated[0].message, &translated[0].notes[0]] {
+        assert!(!said.contains("FxHasher"), "{said}");
+        assert!(!said.contains("Trusted"), "{said}");
+    }
+}
+
+/// …and the one that is **not** a name is left alone, because undoing it would
+/// hide a defect rather than translate a word.
+#[test]
+fn the_shared_count_is_left_in_the_backends_words() {
+    let lowered = lower(GOOD);
+    let json = format!(
+        r#"{{"$message_type":"diagnostic","message":{},"level":"error","spans":[{{"file_name":"lowered.rs","byte_start":0,"byte_end":4,"line_start":1,"column_start":1,"is_primary":true}}],"children":[]}}"#,
+        serde_json::to_string("expected struct `Arc<Conn>`, found struct `Rc<Conn>`")
+            .expect("a JSON string"),
+    );
+
+    let translated = diagnostics::translate(&json, &lowered.map, GOOD);
+    assert_eq!(
+        translated[0].message,
+        "expected struct `Arc<Conn>`, found struct `Rc<Conn>`"
+    );
+}

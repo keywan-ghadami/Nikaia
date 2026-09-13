@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed (a name this compiler substituted is put back in the message)
+
+- **The map's hasher was in a message about the user's own line** (`docs/open-work.md` §1.4). The emitter writes a trusted input's map as `TrustedMap`, so `let m = HashMap::new()` — a real defect in the *program*, reported against the right line — said *"type annotations needed for `HashMap<_, _, BuildHasherDefault<FxHasher>>`"*, naming a hasher this compiler chose ([ADR-010](docs/specification/adr/adr-010.md) D5) and nothing in the program mentions. A name substituted on the way out is put back on the way in.
+- **Only a substitution that is purely a name is undone**, and the criterion is the substitution's own: `map_name` says *"same table, same API, same full-content equality — so this is a name and not a translation"*. `Shared[T]` is deliberately left alone even though the emitter substitutes it too — `Rc` and `Arc` are different types with different costs, and *"expected `Shared[T]`, found `Shared[T]`"* would hide a defect in this compiler instead of translating one of Rust's words. Both halves have a test.
+- **`docs/open-work.md` §1.1 is sharper rather than fixed.** A `dsl` block missing its `} eod` is reported as an undeclared grammar name, and the obvious repair was tried and reverted: a `fail("…")` arm is **not fatal** in this parser — its own documentation says *"an error that got further still wins (progress before priority)"* — so where the rest of the file parses, as it does here, the message is discarded with the attempt. What it needs is a cut in the parser library or a decision to reserve the word, and the entry now says so.
+
 ### Removed (the automatic `a`, `b`, `c`)
 
 - **[ADR-049](docs/specification/adr/adr-049.md) D1: the three automatic lambda argument names are withdrawn** — refused, not warned about, and not announced a release ahead. What goes with the form is the rule underneath it: a lambda's arity was read off **which of the three names its body mentioned**, so a local called `a` inside one was not a local but an argument. [ADR-041](docs/specification/adr/adr-041.md) made that visible with `NK1114`, and visible is not the same as good — the rule stayed true for exactly as long as the form existed.

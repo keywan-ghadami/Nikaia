@@ -39,10 +39,26 @@ the list longer to read.
 all, so what is left parses as statements and `NK1117` says *"nothing declares
 `postgres`"*. True, and not what the writer got wrong.
 
-*What it needs:* the refusal to notice that a `dsl` was opened. Small, and it
-wants a decision about how far a diagnostic may look for the cause rather than the
-symptom — the same question `NK1117`'s help answers by listing what a bare word
-could have been.
+**The obvious fix does not work, and this is why.** A `fail("…")` arm on
+`dsl_block_expr` — the shape ADR-022's `fn: …` refusal uses — is *not fatal* in
+this parser: its own documentation says **"an error that got further still wins
+(progress before priority)"**. So where the rest of the file has a reading that
+parses, as it does here, the `fail` is discarded along with everything else about
+that attempt. Tried and reverted this session.
+
+Two answers, and both are bigger than the entry looks:
+
+* **A cut.** Once `dsl NAME {` is matched, forbid backtracking out of the rule.
+  The grammar library offers `not`, `peek`, `until`, `recover` and `fail`, and no
+  cut, so this is a change to that library.
+* **Reserve the word.** `dsl` is a keyword (Part II, 10.5) and `NAME` matches it
+  anyway, which is what gives the bad reading its alternative. Reserving it is one
+  word in the grammar and a decision about whether this language's keywords are
+  reserved words — today they are contextual, and some of them (`rule`,
+  `boundary`, `fold`) are words a program may well want.
+
+Where a `dsl` block opens and nothing else parses, the message is already good:
+the parser names `} eod` among what it expected.
 
 ### 1.2. An undeclared name is refused as a **statement** and nowhere else
 
@@ -76,20 +92,28 @@ specification does not offer (§3.1 of that record says so).
 describes as `i64` whose Rust counterpart takes a `usize`. No program has yet made
 the answer obvious, which is why the record leaves it open rather than guessing.
 
-### 1.4. A `rustc` message about the user's own line can still carry Rust's insides
+### 1.4. A relayed `rustc` message may still name a type the program did not write
 
-`let m = HashMap::new()` with nothing to infer the key type from is a real defect
-in the *program*, and the line reported is the user's — but the message reads
-*"type annotations needed for `HashMap<_, _, BuildHasherDefault<FxHasher>>`"*, and
-`BuildHasherDefault<FxHasher>` is a hasher this compiler chose
-([ADR-010](specification/adr/adr-010.md) D5), not something the program mentions.
+**The map's hasher is fixed.** The emitter writes a trusted input's map as
+`TrustedMap`, so *"type annotations needed for `HashMap<_, _,
+BuildHasherDefault<FxHasher>>"* named a hasher this compiler chose
+([ADR-010](specification/adr/adr-010.md) D5) in a message about a real defect in
+the program, on the right line. A name this compiler substituted on the way out is
+put back on the way in, and the criterion is the substitution's own: `map_name`
+says *"same table, same API, same full-content equality — so this is a name and
+not a translation"*, and only that kind is undone. `Shared[T]` deliberately is
+not: `Rc` and `Arc` are different types, and *"expected `Shared[T]`, found
+`Shared[T]`"* would hide a defect in this compiler rather than translate one of
+Rust's words.
 
-Part III C.1 is about messages that name the generated *file*; this one names the
-right line and leaks the same insides. The diagnostics filter is where it would be
-answered.
+*What is left:* the general rule. Every other type the emitter writes and the
+program does not — the shadow struct of a deferred-parameter DSL, a grammar's
+generated types, `nikaia_std`'s own names — can appear in a relayed message, and
+there is no list saying which of them are names and which are translations. The
+two that exist are handled where they are; a third will arrive without anything
+noticing.
 
-*Evidence:* reproduced this session. *What it needs:* a rule for what a relayed
-`rustc` message may say about types the program did not write.
+---
 
 ## 2. Decided and unbuilt
 

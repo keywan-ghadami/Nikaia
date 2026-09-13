@@ -194,10 +194,11 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
             continue;
         }
 
-        let message = value["message"].as_str().unwrap_or_default().to_string();
+        let message = value["message"].as_str().unwrap_or_default();
         if message.starts_with("aborting due to") {
             continue;
         }
+        let message = in_this_language(message);
 
         let primary = value["spans"].as_array().and_then(|spans| {
             spans
@@ -221,7 +222,7 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
                     .filter(|c| matches!(c["level"].as_str(), Some("note") | Some("help")))
                     .filter_map(|c| c["message"].as_str())
                     .filter(|note| !is_rust_internal(note))
-                    .map(str::to_string)
+                    .map(in_this_language)
                     .collect()
             })
             .unwrap_or_default();
@@ -276,6 +277,32 @@ fn is_rust_internal(note: &str) -> bool {
     ];
 
     ATTRIBUTES.iter().any(|a| note.contains(a)) || TOOLING.iter().any(|t| note.contains(t))
+}
+
+/// **A name this compiler substituted on the way out, put back on the way in.**
+///
+/// The emitter writes a trusted input's map as `TrustedMap`, which is
+/// `HashMap<K, V, BuildHasherDefault<FxHasher>>`
+/// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D5). So a `rustc`
+/// message about such a map names a hasher the program never mentions - measured,
+/// *"type annotations needed for `HashMap<_, _, BuildHasherDefault<FxHasher>>`"*
+/// for `let m = HashMap::new()`, which is a real defect in the program reported
+/// against the right line in half the backend's words.
+///
+/// **Only a substitution that is purely a name is undone.** `map_name`'s own rule
+/// is the criterion: *"same table, same API, same full-content equality - so this
+/// is a name and not a translation."* `Shared[T]` is deliberately **not** here,
+/// even though the emitter substitutes it too: `Rc` and `Arc` are different types
+/// with different costs, and a message that said *"expected `Shared[T]`, found
+/// `Shared[T]`"* would hide a defect in this compiler rather than translate one of
+/// Rust's words.
+fn in_this_language(message: &str) -> String {
+    message
+        .replace(", BuildHasherDefault<FxHasher>>", ">")
+        .replace("nikaia_std::hash::TrustedMap", "HashMap")
+        .replace("nikaia_std::hash::TrustedSet", "HashSet")
+        .replace("TrustedMap", "HashMap")
+        .replace("TrustedSet", "HashSet")
 }
 
 /// Render a diagnostic the way a compiler does: the place, the message, the
