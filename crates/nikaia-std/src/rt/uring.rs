@@ -84,6 +84,24 @@ struct Job {
     /// `None` while the job is running.
     outcome: Option<io::Result<()>>,
     kind: Kind,
+    /// **A handle holds this slot and will come back for its answer**, so
+    /// nothing else may release it.
+    ///
+    /// Rule 3 - *"the next operation reconciles before it submits"* - is what
+    /// reclaims a slot an abandoned call left behind, and it reads "finished
+    /// and nobody waiting" as "free". That was true when every caller finished
+    /// its operation inside the call that started it. A future does not: it is
+    /// started at its first poll and its answer is taken at a later one, and in
+    /// between the slot is finished and nobody is *in* a call for it.
+    ///
+    /// So freeing it there dropped the buffer the kernel had already filled and
+    /// the read came back as somebody else's bytes. Found by
+    /// `ordering.rs`'s `a_group_of_four_compiles_and_runs`, which printed
+    /// `ccc leer` for `zwei vier`.
+    ///
+    /// [`Ring::abandon`] is what clears it, from the handle's own `Drop` - so a
+    /// future dropped before it finished still gives its slot back.
+    owned: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -170,6 +188,130 @@ impl Ring {
         self.finish(slot).map(|_| ())
     }
 
+    /// Put a read on the ring and hand back its slot, **without waiting**.
+    ///
+    /// The slot is the handle: [`Ring::poll_slot`] asks whether it has
+    /// finished, and nothing on this path blocks. That is what makes a file
+    /// read a suspension point rather than a wait
+    /// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 3) -
+    /// `read_many` above is the same operation for a caller that is going to
+    /// wait for it anyway, and both are here because the ring is the same ring.
+    pub fn begin_read(&mut self, path: &Path) -> io::Result<usize> {
+        self.release_finished();
+        let slot = self.begin(path, Kind::Read, Vec::new())?;
+        self.claim(slot);
+        self.submit_one(slot);
+        // Handed to the kernel now rather than at the next poll: a submission
+        // sitting in the queue is an operation that has not started.
+        let _ = self.ring.submit();
+        Ok(slot)
+    }
+
+    /// The same for a write.
+    ///
+    /// `bytes` arrives by value for the reason [`Ring::write`] gives: it is the
+    /// soundness rule, not a convenience.
+    pub fn begin_write(
+        &mut self,
+        path: &Path,
+        bytes: Vec<u8>,
+        append: bool,
+        create: bool,
+    ) -> io::Result<usize> {
+        self.release_finished();
+        let slot = self.open_for_write(path, bytes, append, create)?;
+        self.claim(slot);
+        self.submit_one(slot);
+        let _ = self.ring.submit();
+        Ok(slot)
+    }
+
+    /// Whether `slot` has finished, and what it came to if it has.
+    ///
+    /// **Never blocks**, which is the whole of its contract: a future polls
+    /// this and returns `Pending` on a `None`.
+    ///
+    /// A read may take several turns, because `stat`'s answer is a hint and not
+    /// a contract - so a slot whose turn finished with the file not yet ended
+    /// is **resubmitted here**. A poll that submits is still a poll that does
+    /// not wait.
+    pub fn poll_slot(&mut self, slot: usize) -> Option<io::Result<Vec<u8>>> {
+        self.reap();
+        match self.jobs.get(slot).and_then(Option::as_ref) {
+            // Still running, and nothing outstanding: the last turn moved bytes
+            // and the file had more, so the next turn goes on the ring.
+            Some(job) if job.outcome.is_none() => {
+                if job.outstanding == 0 {
+                    self.submit_one(slot);
+                    let _ = self.ring.submit();
+                }
+                None
+            }
+            // Finished, but the kernel still holds a submission for the buffer.
+            // Rule 2: the slot is released by whoever reaps its last
+            // completion, so this waits for that rather than freeing it.
+            Some(job) if job.outstanding > 0 => None,
+            Some(_) => Some(self.finish(slot).map(|(buf, _)| buf)),
+            // A slot nobody holds any more. Reported rather than waited on: a
+            // `None` here would be a future that never finishes.
+            None => Some(Err(io::Error::other(
+                "the runtime lost a file operation's slot",
+            ))),
+        }
+    }
+
+    /// Wait until the kernel has posted at least one completion.
+    ///
+    /// The executor's park hook: it is called when no task can make progress,
+    /// and it is the only place on this path that blocks. `false` means there
+    /// was nothing outstanding to wait for, which tells the executor that
+    /// waiting would be waiting forever.
+    pub fn park(&mut self) -> bool {
+        if self.unreaped == 0 {
+            return false;
+        }
+        let _ = self.ring.submit_and_wait(1);
+        self.reap();
+        true
+    }
+
+    /// Say that a handle holds `slot` and will take its answer ([`Job::owned`]).
+    fn claim(&mut self, slot: usize) {
+        if let Some(job) = self.jobs.get_mut(slot).and_then(Option::as_mut) {
+            job.owned = true;
+        }
+    }
+
+    /// Give `slot` back without taking its answer.
+    ///
+    /// Called from the handle's `Drop` for a future that never finished. The
+    /// slot is *not* freed here - rule 2 still holds, and the kernel may have a
+    /// submission for the buffer - it only stops being somebody's, so the next
+    /// [`Ring::release_finished`] may reclaim it once its completions are in.
+    pub fn abandon(&mut self, slot: usize) {
+        if let Some(job) = self.jobs.get_mut(slot).and_then(Option::as_mut) {
+            job.owned = false;
+        }
+    }
+
+    /// Release the slots whose last completion has arrived.
+    ///
+    /// [`Ring::reconcile`] without the wait - the half that is safe to run on a
+    /// path that may not block. A slot not released here is released by the
+    /// next call: what rule 2 forbids is freeing one early, never late.
+    fn release_finished(&mut self) {
+        self.reap();
+        for slot in 0..self.jobs.len() {
+            let free = matches!(
+                self.jobs[slot].as_ref(),
+                Some(job) if job.outstanding == 0 && job.outcome.is_some() && !job.owned
+            );
+            if free {
+                self.jobs[slot] = None;
+            }
+        }
+    }
+
     /// Open `path`, size it, and take a slot with a buffer the kernel can use.
     fn begin(&mut self, path: &Path, kind: Kind, bytes: Vec<u8>) -> io::Result<usize> {
         let file = File::open(path)?;
@@ -190,6 +332,7 @@ impl Ring {
             outstanding: 0,
             outcome: None,
             kind,
+            owned: false,
         }))
     }
 
@@ -213,6 +356,7 @@ impl Ring {
             outstanding: 0,
             outcome: None,
             kind: Kind::Write,
+            owned: false,
         }))
     }
 
@@ -405,9 +549,12 @@ impl Ring {
             self.reap();
         }
         for slot in 0..self.jobs.len() {
+            // `owned`: a finished slot whose answer a future has not taken yet
+            // is not free, and reading it as free is what lost a read's bytes
+            // before ([`Job::owned`]).
             let free = matches!(
                 self.jobs[slot].as_ref(),
-                Some(job) if job.outstanding == 0 && job.outcome.is_some()
+                Some(job) if job.outstanding == 0 && job.outcome.is_some() && !job.owned
             );
             if free {
                 self.jobs[slot] = None;

@@ -13,7 +13,10 @@ measured against), §8.5 (the prediction this settles) and D10 (the lowering §6
 sentence that there was nothing to time: *"the sidecar thread is already running; two overlapped
 reads are two messages, not two thread starts… **This is a prediction, not a measurement** —
 there is no event loop, no sidecar and no async lowering yet."* All three now exist - the
-async lowering last, in [ADR-055](specification/adr/adr-055.md) §6.
+async lowering last, in [ADR-055](specification/adr/adr-055.md) §6, whose step 3 also moved
+the *waiting* out of the operation and into the executor. The numbers below were measured
+before that and are about the mechanism rather than about who waits for it: the syscalls
+are the same syscalls, and what changed is which frame is parked in them.
 This is the measurement, its method, its machine, its spread, and the two things it found that
 were not predicted.
 

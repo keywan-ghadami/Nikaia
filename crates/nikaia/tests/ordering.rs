@@ -49,8 +49,26 @@ fn lowered(source: &str, ordering: Ordering) -> String {
 /// must not change its answer because the vehicle changed.
 fn overlaps(source: &str) -> bool {
     let rust = lowered(source, Ordering::Effects);
-    rust.contains("task::both") || rust.contains("task::read_pair")
+    rust.contains(POOL) || rust.contains("task::both") || rust.contains("task::read_pair")
 }
+
+/// The pool vehicle's name in the emitted Rust.
+///
+/// `task::interleave` and not `task::both` since
+/// [ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 3. D10's
+/// question - which vehicle a group gets - has not changed; what changed is
+/// that **every accountable operation `std` has can now pause**, and the pool's
+/// vehicle is `rayon::join`, which takes closures. Rust has no stable `async`
+/// closure, so a pausing half has no shape there; `task::interleave` takes
+/// futures, an `async` block is one, and what it does at `user_parallelism = no`
+/// is Part II 11.2's own sentence.
+///
+/// **`task::both` is still what a pair that cannot pause gets**, and there is
+/// one in this file: `cli::args` reads the vector the process was started with,
+/// which is memory, so two reads of it overlap on the pool with no future in
+/// sight (`the_programs_arguments_are_a_resource`). That is why the choice is
+/// per *group* and not per function.
+const POOL: &str = "task::interleave";
 
 const TWO_READS: &str = "use std::fs\n\
      fn main() throws {\n\
@@ -280,7 +298,7 @@ fn two_expression_statements_overlap() {
 #[test]
 fn a_pair_that_binds_nothing_binds_nothing() {
     let rust = lowered(TWO_WRITES, Ordering::Effects);
-    assert!(rust.contains("\n    task::both("), "{rust}");
+    assert!(rust.contains("\n    task::interleave("), "{rust}");
     assert!(!rust.contains("let (_, _)"), "{rust}");
 }
 
@@ -379,8 +397,11 @@ fn three_statements_overlap_as_one_group() {
     let rust = lowered(THREE_READS, Ordering::Effects);
     // One group and not a pair with a statement after it: three closures, and
     // the pattern that collects them is nested exactly as the calls are.
-    assert_eq!(rust.matches("task::both").count(), 2, "{rust}");
-    assert!(rust.contains("let (a, (b, c)) = task::both("), "{rust}");
+    assert_eq!(rust.matches(POOL).count(), 2, "{rust}");
+    assert!(
+        rust.contains("let (a, (b, c)) = task::interleave("),
+        "{rust}"
+    );
     // … and nothing is left behind: no third `let a =`-shaped read outside it.
     assert_eq!(rust.matches("fs::read_to_string").count(), 3, "{rust}");
 }
@@ -482,7 +503,10 @@ fn a_group_may_mix_bindings_with_statements() {
          }",
         Ordering::Effects,
     );
-    assert!(rust.contains("let (a, (_, c)) = task::both("), "{rust}");
+    assert!(
+        rust.contains("let (a, (_, c)) = task::interleave("),
+        "{rust}"
+    );
 }
 
 /// A group of four, mixed, compiled and run.
@@ -502,9 +526,9 @@ fn a_group_of_four_compiles_and_runs() {
          }";
 
     let rust = lowered(FOUR, Ordering::Effects);
-    assert_eq!(rust.matches("task::both").count(), 3, "{rust}");
+    assert_eq!(rust.matches(POOL).count(), 3, "{rust}");
     assert!(
-        rust.contains("let (_, (b, (_, d))) = task::both("),
+        rust.contains("let (_, (b, (_, d))) = task::interleave("),
         "{rust}"
     );
 
@@ -556,9 +580,10 @@ fn a_group_stops_before_the_value_of_a_function() {
              fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
          }";
     let rust = lowered(source, Ordering::Effects);
-    assert_eq!(rust.matches("task::both").count(), 1, "{rust}");
+    assert_eq!(rust.matches(POOL).count(), 1, "{rust}");
     // The read is the value, so it is emitted on its own and without a `;`.
-    let group_ends = rust.find(");").expect("the group closes");
+    // The group closes with the `.await` the pausing vehicle takes (ADR-055 D2).
+    let group_ends = rust.find(").await;").expect("the group closes");
     assert!(
         rust.find("fs::read_to_string")
             .expect("the read is emitted")

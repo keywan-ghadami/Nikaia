@@ -1121,8 +1121,13 @@ Some modules are only available, or behave restrictively, depending on the machi
 > workers and nothing else, so there is no vehicle for anything **you** wrote
 > to run on; at `yes` a pool for user code starts with it, sized by
 > `user-pool` (13.3b). `spawn` and `task::scope` themselves are not built, and
-> the refusal at `no` is `task::both` degrading rather than a diagnostic
-> ([ADR-033](adr/adr-033.md) §8.2b).
+> the refusal at `no` is the overlap's vehicle degrading rather than a
+> diagnostic ([ADR-033](adr/adr-033.md) §8.2b). The **executor** at `no` is
+> built ([ADR-055](adr/adr-055.md) §6 steps 1-3): a pausing function is an
+> `async fn`, a file read suspends rather than blocking its thread, and the one
+> place a program parks is the executor — which is what a task will interleave
+> in, and is why `spawn` is now one step of that record rather than a piece of
+> machinery of its own.
 
 **`std::db` (Universal SQL)**
 Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.

@@ -29,23 +29,37 @@
 //! every repeat is printed, because a single number without its spread is not
 //! a measurement (`benches/overlap/README.md`).
 
-use nikaia_std::{fs, task};
+use nikaia_std::{fs, rt, task};
 
 const A: &str = "eins.txt";
 const B: &str = "zwei.txt";
 
 /// One read, then the other. What `--ordering strict` emits.
+///
+/// **Driven rather than called**, since
+/// [ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 2: a read is
+/// an `.await` in the emitted program and `block_on` is what drives it, so
+/// measuring the call without the executor would measure a program this
+/// compiler does not produce - which is the same rule the `match` above is kept
+/// for.
 fn sequential() -> usize {
-    let a = fs::read(A).unwrap_or_default();
-    let b = fs::read(B).unwrap_or_default();
-    a.len() + b.len()
+    rt::exec::block_on(async {
+        let a = fs::read(A).await.unwrap_or_default();
+        let b = fs::read(B).await.unwrap_or_default();
+        a.len() + b.len()
+    })
 }
 
 /// ADR-033 §8.4's vehicle: two closures on the pool, one wake-up per pair.
+///
+/// The reads here are the runtime's **synchronous** surface, because a closure
+/// on a pool cannot await: this shape is the one the pool serves, and a pool
+/// worker that is going to block is what §8.4 priced. `sequential` above is the
+/// shape the emitter writes today.
 fn joined() -> usize {
     let (a, b) = task::both(
-        || fs::read(A).unwrap_or_default(),
-        || fs::read(B).unwrap_or_default(),
+        || rt::io::read(A.as_ref()).unwrap_or_default(),
+        || rt::io::read(B.as_ref()).unwrap_or_default(),
     );
     a.len() + b.len()
 }

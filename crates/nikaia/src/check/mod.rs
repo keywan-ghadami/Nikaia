@@ -151,9 +151,10 @@ pub struct Checked {
     /// one statement is both a pausing call and a call that is not is in neither
     /// set.
     ///
-    /// **This program's own functions only.** A `std` entry still blocks its
-    /// thread until ADR-055 §6 step 3, so awaiting one would be awaiting a value
-    /// rather than a future.
+    /// **Either ledger**, since §6 step 3 made `std`'s own pausing entries
+    /// `async fn`. Before it this was narrowed to the program's own, because
+    /// awaiting a `std` entry that blocked its thread would have been awaiting a
+    /// value rather than a future.
     pub pausing_methods: BTreeSet<(usize, String)>,
     /// The statements where a **plain value stands in a nullable slot** and the
     /// emitter therefore writes the `Some(…)`, by the byte the statement starts
@@ -1470,12 +1471,11 @@ impl<'a> Checker<'a> {
                 // around it declares `throws` - where it does not, `NK2605`
                 // below refuses the program and nothing is emitted at all.
                 self.method_propagates(*method, !contract.throws.is_empty(), span);
-                // ADR-055 D2, the method half. **This program's own only**: a
-                // `std` entry still blocks its thread until §6 step 3, so the
-                // key has to be one `own` records and not one `method` found in
-                // the library.
-                let mine = self.own.functions.contains_key(&key);
-                self.method_pauses(*method, mine && !contract.sync.is_sync(), span);
+                // ADR-055 D2, the method half. Either ledger since §6 step 3
+                // made `std`'s own pausing entries `async fn`: before it, a
+                // `std` entry blocked its thread and awaiting one would have
+                // been awaiting a value rather than a future.
+                self.method_pauses(*method, !contract.sync.is_sync(), span);
                 // A method call is a written call, so the rule reaches it too
                 // (`NK2605`) - and here the receiver's type was known and a
                 // ledger described the method, which is the only case this

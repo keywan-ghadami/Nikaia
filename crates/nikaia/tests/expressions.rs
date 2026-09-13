@@ -240,8 +240,11 @@ fn a_loop_whose_step_can_fail_unwraps_the_step() {
          \x20   return n\n\
          }",
     );
+    // The `.await` is ADR-055 D2 - `io::lines` is a pausing `std` entry since
+    // that record's §6 step 3 - and the step's `?` is unchanged by it: the two
+    // rules are the same shape one ledger column apart, and they compose.
     assert!(
-        rust.contains("for line in io::lines() {\n        let line = line?;"),
+        rust.contains("for line in io::lines().await {\n        let line = line?;"),
         "the step is not unwrapped:\n{rust}"
     );
 

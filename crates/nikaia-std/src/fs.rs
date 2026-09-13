@@ -49,7 +49,17 @@ impl AsRef<str> for Mapped {
 /// Fails as the file system does, and additionally when the file is not
 /// UTF-8 - a parser handed such a mapping would find that out one byte at a
 /// time, and the boundary of a frame is a string, not a byte.
-pub fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
+///
+/// **`async` with nothing awaited inside it, and that costs nothing.** A
+/// mapping is an `open`, a `stat` and an `mmap` - a path walk and a page-table
+/// change, with no data transfer to complete and so nothing to suspend on
+/// (`rt::uring`'s own note about what is not completed there). It is `async`
+/// because the ledger says it does I/O and may pause, which is a claim about
+/// the *surface* - and an `async fn` that never awaits finishes on its first
+/// poll ([ADR-055](../../../docs/specification/adr/adr-055.md) D1). A page
+/// fault later is not a suspension point this language can see, and pretending
+/// otherwise would be a promise nothing keeps.
+pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
     let file = std::fs::File::open(path)?;
     if file.metadata()?.len() == 0 {
         return Ok(Mapped {
@@ -92,8 +102,8 @@ pub fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
 /// invisible from a `.nika` file - that is what "one `std` surface" means, and
 /// it is why the next change of mechanism is a `std` change rather than a
 /// compiler change (ADR-033 §8.4 gave the same reason for `task::both`).
-pub fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
-    text(read(path)?)
+pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
+    text(read(path).await?)
 }
 
 /// Bytes as text, or the failure `read_to_string` reports for bytes that are
@@ -154,8 +164,8 @@ pub fn read_both(
 /// that is not text is not a failure here, because nothing downstream is going
 /// to cut a `&str` out of it. Reach for this where the bytes are the point -
 /// an image, a checksum, a format with a length prefix.
-pub fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
-    crate::rt::io::read(path.as_ref())
+pub async fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
+    crate::rt::io::reading(path.as_ref()).await
 }
 
 /// A whole file, written.
@@ -191,7 +201,7 @@ pub fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
 ///
 /// It is not `sync` (Part II, 12.1) and it is not a source (ADR-010 D2): it
 /// does I/O, and the bytes travel out of the program rather than in.
-pub fn write(
+pub async fn write(
     path: impl AsRef<Path>,
     data: impl AsRef<[u8]>,
     append: bool,
@@ -201,7 +211,9 @@ pub fn write(
     // borrowed slice and the runtime owns the copy only where the *kernel*
     // needs one to outlive the submission - which is the completion path, and
     // is `rt::uring`'s soundness rule rather than a convenience.
-    crate::rt::io::write(path.as_ref(), data.as_ref(), append, create)
+    crate::rt::io::writing(path.as_ref(), data.as_ref(), append, create)
+        .await
+        .map(|_| ())
 }
 
 /// Below this, the pool costs more than the check does.
@@ -276,17 +288,30 @@ mod tests {
 
         let text = dir.join("text");
         std::fs::write(&text, "Hamburg;12.0\n").expect("write");
-        assert_eq!(
-            crate::task::as_text(super::read(&text)).expect("text"),
-            super::read_to_string(&text).expect("text")
-        );
+        // Driven rather than called, since ADR-055 §6 step 3: a read is a
+        // future now, and `block_on` is what a program's `main` drives it with
+        // (ADR-038 D4) - so a test that awaited it any other way would be
+        // testing something no program does.
+        let (mine, theirs) = crate::rt::exec::block_on(async {
+            (
+                crate::task::as_text(super::read(&text).await),
+                super::read_to_string(&text).await,
+            )
+        });
+        assert_eq!(mine.expect("text"), theirs.expect("text"));
 
         // `0xff` is not UTF-8 anywhere, so both routes have to refuse it - and
         // refuse it with the same words and the same byte offset.
         let bytes = dir.join("bytes");
         std::fs::write(&bytes, [b'a', 0xff]).expect("write");
-        let one = crate::task::as_text(super::read(&bytes)).expect_err("not text");
-        let other = super::read_to_string(&bytes).expect_err("not text");
+        let (one, other) = crate::rt::exec::block_on(async {
+            (
+                crate::task::as_text(super::read(&bytes).await),
+                super::read_to_string(&bytes).await,
+            )
+        });
+        let one = one.expect_err("not text");
+        let other = other.expect_err("not text");
         assert_eq!(one.kind(), other.kind());
         assert_eq!(one.to_string(), other.to_string());
         assert!(one.to_string().contains("byte 1"), "{one}");
@@ -301,28 +326,42 @@ mod tests {
         let path = std::env::temp_dir().join(format!("nikaia-write-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
-        super::write(&path, "Hamburg;12.0\n", false, true).expect("write");
-        assert_eq!(
-            super::read_to_string(&path).expect("read back"),
-            "Hamburg;12.0\n"
-        );
+        // One `block_on` for the whole test, which is what a program is: the
+        // executor drives `main` and every read and write inside it (ADR-055 §6
+        // step 2 and step 3).
+        crate::rt::exec::block_on(async {
+            super::write(&path, "Hamburg;12.0\n", false, true)
+                .await
+                .expect("write");
+            assert_eq!(
+                super::read_to_string(&path).await.expect("read back"),
+                "Hamburg;12.0\n"
+            );
 
-        super::write(&path, "Bremen;9.5\n", false, true).expect("write again");
-        assert_eq!(
-            super::read_to_string(&path).expect("read back"),
-            "Bremen;9.5\n",
-            "a second write truncates rather than appends"
-        );
+            super::write(&path, "Bremen;9.5\n", false, true)
+                .await
+                .expect("write again");
+            assert_eq!(
+                super::read_to_string(&path).await.expect("read back"),
+                "Bremen;9.5\n",
+                "a second write truncates rather than appends"
+            );
 
-        // Bytes are bytes: what `read` hands back is what `write` was given,
-        // with no check in between - which is the difference from
-        // `read_to_string` and the reason both exist.
-        super::write(&path, [0xFFu8, 0x00, 0xFE], false, true).expect("write bytes");
-        assert_eq!(super::read(&path).expect("read bytes"), [0xFF, 0x00, 0xFE]);
-        assert!(
-            super::read_to_string(&path).is_err(),
-            "the same bytes are not text, and the text half says so"
-        );
+            // Bytes are bytes: what `read` hands back is what `write` was
+            // given, with no check in between - which is the difference from
+            // `read_to_string` and the reason both exist.
+            super::write(&path, [0xFFu8, 0x00, 0xFE], false, true)
+                .await
+                .expect("write bytes");
+            assert_eq!(
+                super::read(&path).await.expect("read bytes"),
+                [0xFF, 0x00, 0xFE]
+            );
+            assert!(
+                super::read_to_string(&path).await.is_err(),
+                "the same bytes are not text, and the text half says so"
+            );
+        });
 
         std::fs::remove_file(&path).expect("clean up");
     }
@@ -334,7 +373,7 @@ mod tests {
         let path = std::env::temp_dir()
             .join("nikaia-no-such-directory")
             .join("report.html");
-        assert!(super::write(&path, "x", false, true).is_err());
+        assert!(crate::rt::exec::block_on(super::write(&path, "x", false, true)).is_err());
     }
 
     /// The two options Part III 17.1 names, doing what it says they do.
@@ -343,24 +382,37 @@ mod tests {
         let path = std::env::temp_dir().join(format!("nikaia-options-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
-        super::write(&path, "one\n", false, true).expect("write");
-        super::write(&path, "two\n", true, true).expect("append");
-        assert_eq!(
-            super::read_to_string(&path).expect("read back"),
-            "one\ntwo\n",
-            "appending kept what was there"
-        );
-
-        // …and `create: false` is how a program says it means to overwrite
-        // something in particular, rather than to make a file.
         let missing = std::env::temp_dir().join(format!("nikaia-absent-{}", std::process::id()));
         let _ = std::fs::remove_file(&missing);
-        assert!(super::write(&missing, "x", false, false).is_err());
-        assert!(!missing.exists(), "`create: false` made the file anyway");
 
-        // On a file that *is* there it writes, and truncates as `write` does.
-        super::write(&path, "three\n", false, false).expect("overwrite");
-        assert_eq!(super::read_to_string(&path).expect("read back"), "three\n");
+        crate::rt::exec::block_on(async {
+            super::write(&path, "one\n", false, true)
+                .await
+                .expect("write");
+            super::write(&path, "two\n", true, true)
+                .await
+                .expect("append");
+            assert_eq!(
+                super::read_to_string(&path).await.expect("read back"),
+                "one\ntwo\n",
+                "appending kept what was there"
+            );
+
+            // …and `create: false` is how a program says it means to overwrite
+            // something in particular, rather than to make a file.
+            assert!(super::write(&missing, "x", false, false).await.is_err());
+            assert!(!missing.exists(), "`create: false` made the file anyway");
+
+            // On a file that *is* there it writes, and truncates as `write`
+            // does.
+            super::write(&path, "three\n", false, false)
+                .await
+                .expect("overwrite");
+            assert_eq!(
+                super::read_to_string(&path).await.expect("read back"),
+                "three\n"
+            );
+        });
 
         std::fs::remove_file(&path).expect("clean up");
     }

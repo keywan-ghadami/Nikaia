@@ -126,10 +126,11 @@ So, in order, and each says below why it sits where it does:
    sharpest form — and until this session it looked like one step rather than
    five, because a pause was a thread that blocked and nothing said so.
 
-   **Steps 1 and 2 are built**: the single-threaded executor, and `async fn`
-   with `.await` off the ledger. What is next is **step 3**, `std`'s own pausing
-   entries — the largest single diff of the five and the one with no decisions
-   in it.
+   **Steps 1, 2 and 3 are built**: the single-threaded executor, `async fn` with
+   `.await` off the ledger, and `std`'s own pausing entries — a file operation
+   now suspends rather than blocking its thread, and the executor is the only
+   place a program parks. What is next is **step 4**, `spawn` and `TaskHandle`,
+   which is what this whole sequence was written for.
 2. **`SharedMut[T]` and `Locked[T]` as types the backend can build.** The other
    half of the same story: a program that spawns needs something it may share, and
    today writing one is checked and then fails to emit. Independent of the
@@ -178,15 +179,15 @@ entry is now **step 4 of that record's §6**, not the first thing to do:
 
 1. the executor in `rt` — **built**, the single-threaded half;
 2. `async`/`.await` in the emitter, off the ledger's `sync` column — **built**;
-3. `std`'s own pausing entries;
+3. `std`'s own pausing entries — **built**;
 4. `spawn` and `TaskHandle`, with `NK2101`;
 5. [ADR-050](specification/adr/adr-050.md) D2's `overlap`.
 
-**Step 3 is what is next**, and the reason steps 1–3 were said to land close
-together turned out not to bind: step 2 asks the *emitter* what pauses, and it
-asks about this program's own functions only. A pausing `std` entry still blocks
-its thread and is still called without an `.await`, so no program is refused for
-calling one and the corpus compiles between the steps.
+**So this entry is what is next.** The risk the record put on steps 1–3 —
+*"until `std` is async a program that calls a pausing entry does not compile"* —
+did not arrive: step 2 asks the *emitter* what pauses, and it was written to ask
+about this program's own functions only, so a pausing `std` entry stayed a plain
+call and the corpus compiled between the steps.
 
 ### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
 
@@ -205,11 +206,13 @@ it, because the server it binds to does not exist yet (§2.7 below). So today
 nothing in the repository meets the refusal, and the first program that does will
 be the one that binds a handler.
 
-*What it needs:* step 3 and step 4. Once `std`'s own signatures say which
-parameters take something that may pause, a lambda handed to one of those can be
-written as a closure that **returns** a future — `|| async move { … }`, which is
-stable Rust and is how a handler is taken in practice. It is a signature question
-in `std.contracts`, not a new mechanism.
+*What it needs:* a `std` signature that says a parameter takes something which
+may pause, so a lambda handed to one can be written as a closure that **returns**
+a future — `|| async move { … }`, which is stable Rust and is how a handler is
+taken in practice. Step 3 showed the shape works: `task::interleave` takes
+futures where `task::both` takes closures, and the emitter chooses between them
+per group. What is left is that a *callee's* parameter has to say which it wants,
+and the ledger has no column for it. Not a new mechanism — a claim to record.
 
 **A recursive pausing *method* is not boxed.** §6 step 2 boxes a call that closes
 a cycle of pausing functions, and it resolves a callee's name the way the emitter
@@ -228,7 +231,35 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.3. `SharedMut[T]` and `Locked[T]` are not types the backend can build
+### 2.3. Standard input is `async` and does not suspend
+
+[ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
+an `async fn`, and made **files** actually suspend: a read is a slot on the ring
+or a worker's reply, and `exec::block_on` is the only place a program parks. A
+read of standard input is not. `io::read`, `io::read_to_string` and `io::lines`
+are `async fn` whose bodies are the blocking read they always were, so they
+finish on their first poll.
+
+That is [ADR-038](specification/adr/adr-038.md) D3's own split rather than
+something the step left half done: its completion mechanism serves files, and a
+stream needs the readiness half — which is built (`rt::io::wait`, for sockets)
+and not wired to standard input.
+
+*Evidence: none, and none is possible yet.* A caller sees a read that returns,
+which is what it saw before, so no program behaves differently. What is missing
+is only that the thread is **held** rather than given up for the duration of
+`for line in io::lines()` — which nothing can observe until something else wants
+the thread, and that is `spawn` (§2.1).
+
+*What it needs:* `Op::Readiness` against standard input's descriptor, and a
+`Lines` whose step is a future. The second half is the larger one and is a
+question of its own: a `for` over a **stream** is `while let Some(x) =
+s.next().await` in the language below, and Rust has no stable trait for one. The
+parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` — a
+property of the *type*, recorded in the ledger, that makes the emitter write the
+step differently — so the shape to copy exists.
+
+### 2.4. `SharedMut[T]` and `Locked[T]` are not types the backend can build
 
 [ADR-039](specification/adr/adr-039.md) §4. The verdicts about them are built —
 the crossing destination ([ADR-045](specification/adr/adr-045.md)), the four doors
@@ -241,7 +272,7 @@ annotation is checked and then fails to emit. Also waiting inside this:
   already accounts for;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.4. The automatic reordering, `seq` and the `ordering` switch are still here
+### 2.5. The automatic reordering, `seq` and the `ordering` switch are still here
 
 [ADR-050](specification/adr/adr-050.md) D1 and D7 withdraw all three, and its §5 says
 **not yet**: the removal is step three, after the runtime binding and `overlap`.
@@ -252,13 +283,13 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.5. Part II 12.8's supervision syntax
+### 2.6. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.6. A package reached under two names is two types to the checker
+### 2.7. A package reached under two names is two types to the checker
 
 [ADR-053](specification/adr/adr-053.md) is built: a package is its own crate, a
 library may depend on a library, and a program cannot reach past what it declared.
@@ -278,7 +309,7 @@ type's identity in the ledger to be the package's **canonical path** — which i
 what `packages_of` already computes and what D2 means by identity — rather than
 the word a consumer happened to write.
 
-### 2.7. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.8. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the

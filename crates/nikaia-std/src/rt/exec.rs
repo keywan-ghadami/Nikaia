@@ -136,6 +136,13 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
     let mut context = Context::from_waker(&waker);
 
     loop {
+        // **Read before polling, and that ordering is the correctness.** An I/O
+        // completion that arrives between the poll below and the park at the
+        // bottom has already moved this count, so the park returns at once
+        // rather than waiting for a wake that has already happened
+        // (`rt::io::generation`).
+        let generation = crate::rt::io::generation();
+
         if alarm.take() {
             if let Poll::Ready(value) = main.as_mut().poll(&mut context) {
                 return value;
@@ -183,27 +190,49 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
             continue;
         }
 
-        // **Nothing on this thread can move.** What will wake it is the I/O
-        // worker, which is a thread of its own and already running
-        // ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4). Until
-        // the I/O futures are what a pausing `std` entry returns (that record's
-        // §6 step 3), a `std` call blocks this thread instead of parking here -
-        // so reaching this point with tasks still queued means a program is
-        // waiting on something no `std` entry can deliver yet, and saying so is
-        // better than spinning.
+        // **Nothing on this thread can move**, so what will move is the I/O -
+        // the kernel's completion queue, or an I/O worker, which is a thread of
+        // its own and already running
+        // ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4). This is
+        // the **one place in the program that parks**, which is what makes a
+        // `std` read a suspension point: the thread is given up here and
+        // nowhere else, so every other task has already had its turn.
+        //
+        // `generation` was read at the top of this round, before anything was
+        // polled - so a completion that arrived while the tasks were being
+        // polled is already accounted for and this returns immediately.
+        if crate::rt::io::park(generation) {
+            // **The I/O moved, so everything gets another turn.** Which task
+            // was waiting for *this* completion is not something the executor
+            // knows: an I/O future stores no waker, because the executor is the
+            // only thing on this thread that parks and it parks in the I/O
+            // (`rt::io::Reading`). So the answer to "who should be polled now"
+            // is everyone, which at one thread is a handful of futures and one
+            // `main`.
+            alarm.ring();
+            STARTED.with(|started| {
+                for queued in started.borrow().iter() {
+                    queued.alarm.ring();
+                }
+            });
+            continue;
+        }
+
+        // **There was no I/O to wait for either.** A future returned `Pending`
+        // without arranging for its waker to be called, which is a defect in
+        // `std` - and a hang is the worst way to report one.
         let waiting = STARTED.with(|started| started.borrow().len());
         if waiting == 0 {
-            // `main` is pending and nothing else exists to wake it. Poll once
-            // more rather than park: a future that returns `Pending` without
-            // arranging a wake is a defect in `std`, and a hang is the worst
-            // way to report one.
+            // `main` alone, and nothing exists that could wake it. Poll once
+            // more rather than park: the cheapest way to be wrong here is to
+            // spin one extra round, and the most expensive is to hang.
             alarm.ring();
             continue;
         }
         panic!(
-            "the runtime has {waiting} task(s) waiting and nothing to wake them. \
-             This is a defect in nikaia-std: a future returned `Pending` without \
-             arranging for its waker to be called (ADR-055 §6)."
+            "the runtime has {waiting} task(s) waiting, and neither the tasks nor the \
+             I/O can move. This is a defect in nikaia-std: a future returned \
+             `Pending` without arranging for its waker to be called (ADR-055 §6)."
         );
     }
 }
@@ -384,5 +413,98 @@ mod tests {
             Waiting::on(slot).await + 1
         });
         assert_eq!(answer, 42);
+    }
+}
+
+#[cfg(test)]
+mod io_tests {
+    /// **Two file reads in flight at once, on one thread**
+    /// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 3).
+    ///
+    /// The claim step 3 adds to step 1's: a suspension point is no longer only
+    /// `Yield`, it is a `std` read - so `task::interleave` over two reads is
+    /// Part II 11.2's sentence about something a program actually writes.
+    ///
+    /// It reads two files and checks both answers. What makes it a test of the
+    /// *interleaving* rather than of reading twice is that neither half is
+    /// awaited before the other is started: both are polled by the same
+    /// `poll_fn`, and the executor's park is what waits for either.
+    #[test]
+    fn two_reads_are_in_flight_at_once_on_one_thread() {
+        let dir = std::env::temp_dir().join(format!("nikaia-exec-io-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let one = dir.join("eins.txt");
+        let two = dir.join("zwei.txt");
+        std::fs::write(&one, "eins").expect("write");
+        std::fs::write(&two, "zweizwei").expect("write");
+
+        let (a, b) = super::block_on(crate::task::interleave(
+            crate::fs::read_to_string(&one),
+            crate::fs::read_to_string(&two),
+        ));
+        assert_eq!(a.expect("eins"), "eins");
+        assert_eq!(b.expect("zwei"), "zweizwei");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A read that fails is a failure and not a hang.
+    ///
+    /// The park is the place a mistake here becomes a program that never
+    /// finishes, so the path where there is nothing to wait for has its own
+    /// test: the `open` fails before anything reaches the kernel, so the future
+    /// is finished at its first poll and the executor never parks.
+    #[test]
+    fn a_read_of_a_file_that_is_not_there_fails_rather_than_hangs() {
+        let missing = std::env::temp_dir().join(format!("nikaia-absent-{}", std::process::id()));
+        let _ = std::fs::remove_file(&missing);
+        let outcome = super::block_on(crate::fs::read_to_string(&missing));
+        assert!(outcome.is_err(), "a missing file read as something");
+    }
+
+    /// **Many reads at once**, which is where a slot table gets its accounting
+    /// wrong.
+    ///
+    /// A finished slot whose answer nobody had taken yet used to be released as
+    /// free, and the next operation reused its buffer - so a read came back as
+    /// another operation's bytes. `uring::Job::owned` is the fix and this is the
+    /// shape that finds it: every file has different contents, and they are
+    /// checked against the file they were asked for.
+    #[test]
+    fn eight_reads_at_once_each_get_their_own_bytes() {
+        let dir = std::env::temp_dir().join(format!("nikaia-exec-many-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let paths: Vec<_> = (0..8)
+            .map(|n| {
+                let path = dir.join(format!("{n}.txt"));
+                std::fs::write(&path, "x".repeat(n + 1)).expect("write");
+                path
+            })
+            .collect();
+
+        let read = super::block_on(async {
+            let mut out = Vec::new();
+            // Pinned so each one can be polled where it stands: what this is
+            // about is eight slots held at once, so they are all started before
+            // any answer is taken.
+            let mut futures: Vec<_> = paths
+                .iter()
+                .map(|path| Box::pin(crate::fs::read_to_string(path)))
+                .collect();
+            for future in &mut futures {
+                out.push(future.as_mut().await);
+            }
+            out
+        });
+
+        for (n, text) in read.into_iter().enumerate() {
+            assert_eq!(
+                text.expect("read"),
+                "x".repeat(n + 1),
+                "file {n} came back as somebody else's bytes"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -2948,8 +2948,86 @@ impl<'p> Emitter<'p> {
         if let Some(pattern) = self.overlapped_pattern(group) {
             out.push(&format!("let {pattern} = "));
         }
-        self.both_of(out, group, depth, flow)?;
+        // **A group whose halves can pause takes the other vehicle**
+        // (ADR-055 §6 step 3). `task::both` is `rayon::join`, which takes
+        // closures - and Rust has no stable `async` closure, so a pausing half
+        // has no shape there. `task::interleave` takes futures, an `async`
+        // block is one, and what it does is Part II 11.2's own sentence:
+        // interleaved on the same thread.
+        //
+        // Asked of the group rather than of the enclosing function, because the
+        // two are different questions: a function may be `async` for a call
+        // that has nothing to do with this group, and emitting futures for a
+        // group that cannot pause would drop the pool it was put on the pool
+        // for.
+        match group.iter().any(|stmt| self.group_half_pauses(stmt, flow)) {
+            true => {
+                self.interleave_of(out, group, depth, flow)?;
+                out.push(".await");
+            }
+            false => self.both_of(out, group, depth, flow)?,
+        }
         out.push(";");
+        Ok(())
+    }
+
+    /// Whether one member of an overlapped group can pause (ADR-055 §6 step 3).
+    ///
+    /// A walk and not a lookup, because the question is about *this statement*
+    /// and the answers the ledger and the checker give are keyed one by callee
+    /// and one by statement. Both are consulted here: a free call by the key it
+    /// resolves to, a method call by what the checker said about the statement
+    /// it stands in - which is the same pair of sources `call` and the method
+    /// arm use, asked ahead of time.
+    fn group_half_pauses(&self, stmt: &Spanned<Stmt>, flow: Flow<'_>) -> bool {
+        let (_, value) = self.overlapped_half(&stmt.node);
+        let flow = flow.at(stmt.span.start);
+        let mut pauses = false;
+        visit_expr(value, &mut |expr| match expr {
+            Expr::Call { func, .. } => pauses |= self.pausing_key(func).is_some(),
+            Expr::MethodCall { method, .. } => pauses |= self.method_pauses(flow, *method),
+            _ => {}
+        });
+        pauses
+    }
+
+    /// `task::interleave(async move { … }, async move { … })` over a group of
+    /// two or more, nested to the right exactly as [`Emitter::both_of`] nests.
+    ///
+    /// An `async` **block** and not a closure, which is the whole difference:
+    /// the block is a future, and a future is what the pausing vehicle takes.
+    /// `move` because each half owns what it reads, the way each closure did.
+    fn interleave_of(
+        &self,
+        out: &mut Out,
+        group: &[Spanned<Stmt>],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let pad = "    ".repeat(depth);
+        let inner = "    ".repeat(depth + 1);
+        let (first, rest) = group
+            .split_first()
+            .expect("`group_of` never answers fewer than two");
+
+        out.push(&format!("task::interleave(\n{inner}async move {{ "));
+        let (_, value) = self.overlapped_half(&first.node);
+        out.from(&first.span, |out| self.expr(out, value, depth + 1, flow))?;
+        out.push(&format!(" }},\n{inner}async move {{ "));
+
+        match rest {
+            [last] => {
+                let (_, value) = self.overlapped_half(&last.node);
+                out.from(&last.span, |out| self.expr(out, value, depth + 1, flow))?;
+            }
+            // The nested half is itself a pair, so it is awaited where it
+            // stands: the outer future's value is the inner pair's.
+            _ => {
+                self.interleave_of(out, rest, depth + 1, flow)?;
+                out.push(".await");
+            }
+        }
+        out.push(&format!(" }},\n{pad})"));
         Ok(())
     }
 
@@ -3897,6 +3975,24 @@ impl<'p> Emitter<'p> {
             .is_some_and(|contract| !contract.sync.is_sync())
     }
 
+    /// Whether a call to a **library** entry pauses (ADR-055 §6 step 3).
+    ///
+    /// Separate from [`Emitter::pauses`] because the resolution is: `std`'s
+    /// ledger is keyed by the path a program writes, and a program writes
+    /// `fs::read_to_string` rather than a bare name - so this is an exact
+    /// lookup and never the suffix match a *method* needs.
+    ///
+    /// Step 2 deliberately did not ask this: a pausing `std` entry blocked its
+    /// thread then, so awaiting one would have been awaiting a value. Step 3 is
+    /// what made `std`'s pausing entries `async fn`, and this is the line that
+    /// reads them.
+    fn library_pauses(&self, key: &str) -> bool {
+        self.library
+            .functions
+            .get(key)
+            .is_some_and(|contract| !contract.sync.is_sync())
+    }
+
     /// Whether a call to this callee carries an `.await` (ADR-055 D2).
     ///
     /// The same resolution [`Emitter::can_fail`] does, one ledger column over:
@@ -3904,15 +4000,16 @@ impl<'p> Emitter<'p> {
     /// the callee's contract and neither resolving a name
     /// ([ADR-011](../../../docs/specification/adr/adr-011.md) D2).
     ///
-    /// **This program's own functions only, and that is what makes the step
-    /// compilable on its own.** A `std` entry still blocks its thread until
-    /// ADR-055 §6 step 3, so awaiting one would be awaiting a value rather than
-    /// a future. The library is deliberately not consulted here.
     /// The ledger key a call resolves to, when that key pauses - `None` when the
     /// call takes no `.await` at all.
     ///
     /// D6's boxing needs to know *which* function is being called and not just
     /// that it pauses, so the answer is the name rather than a yes.
+    ///
+    /// **Both ledgers**, since §6 step 3 made `std`'s own pausing entries
+    /// `async fn`. Step 2 asked only this program's own, because a `std` entry
+    /// blocked its thread then and awaiting one would have been awaiting a value
+    /// rather than a future - which is what let step 2 land on its own.
     fn pausing_key(&self, func: &Expr) -> Option<String> {
         let name = match func {
             Expr::Variable(name) => self.text(*name).to_string(),
@@ -3924,7 +4021,10 @@ impl<'p> Emitter<'p> {
             _ => return None,
         };
         let name = self.parsed.unaliased(&name);
-        if self.pauses(&name) {
+        // This unit's own first, then `std`'s - the order every other name
+        // resolution here uses, because a local name shadows nothing in a
+        // library.
+        if self.pauses(&name) || self.library_pauses(&name) {
             return Some(name);
         }
         // Kap 4.2's anonymous constructor: `Stats(temp)` is a call to the `new`

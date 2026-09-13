@@ -9,9 +9,20 @@
 //!
 //! Neither function is `sync`: a read from a pipe is a suspension point, which
 //! is exactly what the `sync` rule (Part II, 12.1) exists to keep out of a
-//! `par_iter` body. Stage 0 emits ordinary Rust, so the suspension is the
-//! blocking read the runtime binding will replace - what the source says does
-//! not change when it does.
+//! `par_iter` body.
+//!
+//! **They are `async` and they do not suspend yet**, and the difference is
+//! worth stating rather than leaving to be discovered. Since
+//! [ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 3 the
+//! signatures say a read from here may pause, which is what a caller's compiler
+//! reads and what makes the enclosing function `async` - and the body is still
+//! the blocking read it was. That is [ADR-038](../../../docs/specification/adr/adr-038.md)
+//! D3's own split: its mechanism serves **files**, and a stream needs the
+//! readiness half, which is built for sockets and not wired to standard input.
+//! An `async fn` that never awaits finishes on its first poll, so what a caller
+//! sees is a read that returns - exactly what it saw before. What is left is
+//! that the thread is given up at a `for line in io::lines()` rather than held,
+//! and `docs/open-work.md` carries it.
 
 use std::io::{BufRead, Read};
 
@@ -23,7 +34,7 @@ use std::io::{BufRead, Read};
 ///
 /// Reading it a second time yields what the operating system says, which is
 /// nothing.
-pub fn read_to_string() -> Result<String, std::io::Error> {
+pub async fn read_to_string() -> Result<String, std::io::Error> {
     let mut text = String::new();
     std::io::stdin().lock().read_to_string(&mut text)?;
     Ok(text)
@@ -33,7 +44,7 @@ pub fn read_to_string() -> Result<String, std::io::Error> {
 ///
 /// The half for input that is not text - and the one that says what
 /// `read_to_string` is doing, since the only difference is the check.
-pub fn read() -> Result<Vec<u8>, std::io::Error> {
+pub async fn read() -> Result<Vec<u8>, std::io::Error> {
     let mut bytes = Vec::new();
     std::io::stdin().lock().read_to_end(&mut bytes)?;
     Ok(bytes)
@@ -72,7 +83,7 @@ pub fn read() -> Result<Vec<u8>, std::io::Error> {
 ///
 /// The trailing newline is not part of a line, and a final line without one is
 /// still a line.
-pub fn lines() -> Lines {
+pub async fn lines() -> Lines {
     Lines {
         inner: std::io::stdin().lock().lines(),
     }

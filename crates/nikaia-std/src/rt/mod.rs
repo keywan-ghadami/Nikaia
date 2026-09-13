@@ -61,7 +61,7 @@ pub use config::{Config, Method};
 pub use worker::Interest;
 
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 
 /// Whether the program's own code may run concurrently
 /// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D2), as the
@@ -116,6 +116,34 @@ pub struct Runtime {
 }
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// **The bell an I/O worker rings when it has finished something**, and the
+/// count of rings so far.
+///
+/// The completion path has the ring itself to wait on - one
+/// `io_uring_enter` covers every operation in flight. The fallback has one
+/// private reply channel per operation and no way at all to wait for
+/// *whichever finishes first*, which is what an executor's park hook needs.
+///
+/// So a worker bumps the count and wakes whoever is parked, and the hook waits
+/// for the count to move past the value the caller read **before** it polled.
+/// That ordering is the whole of the correctness: a worker that finishes
+/// between the poll and the park has already bumped the count, so the park
+/// returns at once instead of waiting for a ring that will never come again.
+///
+/// It is a generation and not a queue: each future reads its own reply channel,
+/// and all this has to say is *"something changed, poll again"*.
+static FINISHED: Mutex<u64> = Mutex::new(0);
+static BELL: Condvar = Condvar::new();
+
+/// Rung by an I/O worker, after the operation and before it takes the next one.
+pub(crate) fn ring_the_bell() {
+    let mut count = FINISHED.lock().unwrap_or_else(|e| e.into_inner());
+    *count += 1;
+    // Every parked thread, because any of them may be the one waiting for this
+    // operation - and at `user_parallelism = no` there is exactly one.
+    BELL.notify_all();
+}
 
 /// Start the runtime, and hand back the guard whose `finish` drains it.
 ///
@@ -459,6 +487,243 @@ pub mod io {
             // One operation, and the caller is going to wait for it: a worker
             // would cost a wake-up and buy no overlap.
             Files::Blocking => worker::blocking_write(path, bytes, append, create),
+        }
+    }
+
+    /// **A file operation in flight**, whichever mechanism is serving it.
+    ///
+    /// D3's one surface, as a value: a caller polls this and cannot tell
+    /// whether the kernel is doing the read or an I/O worker is. That is the
+    /// same claim `read` above makes for a caller that waits, and it is the
+    /// claim [ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 3
+    /// needs for one that suspends instead.
+    pub enum InFlight {
+        /// A slot on the ring.
+        #[cfg(target_os = "linux")]
+        Ring(usize),
+        /// An I/O worker's reply, on its own channel.
+        Worker(std::sync::mpsc::Receiver<Result<Vec<u8>>>),
+        /// Finished before it was ever polled - a path that does not exist
+        /// fails at the `open`, and a write on the fallback runs on the calling
+        /// thread.
+        ///
+        /// `None` once it has been taken, which is what makes polling it twice
+        /// an error rather than a second answer.
+        Done(Option<Result<Vec<u8>>>),
+    }
+
+    impl Drop for InFlight {
+        /// **A slot given back without its answer being taken.**
+        ///
+        /// A future dropped before it finished - a `catch` that diverted, a
+        /// task nobody polled again - still holds a ring slot, and the ring
+        /// cannot tell that from one somebody is about to come back for. So the
+        /// handle says so itself: `abandon` stops the slot being anybody's, and
+        /// the next operation reclaims it once the kernel's completions for its
+        /// buffer are in (`uring::Job::owned`, rule 2).
+        ///
+        /// The buffer is *not* freed here, and that is the soundness rule
+        /// rather than an omission.
+        fn drop(&mut self) {
+            #[cfg(target_os = "linux")]
+            if let InFlight::Ring(slot) = self {
+                let slot = *slot;
+                handle().with_ring(|ring| ring.abandon(slot));
+            }
+        }
+    }
+
+    /// Start reading `path` whole, and hand back the operation.
+    ///
+    /// Nothing here waits. The mechanism is chosen exactly where `read_all`
+    /// chooses it, and for the same reason: the choice is `std`'s, once, at
+    /// startup.
+    pub fn begin_read(path: &Path) -> InFlight {
+        off_the_io_thread();
+        let runtime = handle();
+        match runtime.files() {
+            #[cfg(target_os = "linux")]
+            Files::Completion => {
+                match runtime
+                    .with_ring(|ring| ring.begin_read(path))
+                    .expect("`Files::Completion` means there is a ring")
+                {
+                    Ok(slot) => InFlight::Ring(slot),
+                    // The `open` or the `stat` failed, which is a path walk and
+                    // not a transfer: there was never anything on the ring.
+                    Err(e) => InFlight::Done(Some(Err(e))),
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            Files::Completion => unreachable!("no completion queue off Linux"),
+            Files::Blocking => {
+                let (reply, answer) = std::sync::mpsc::channel();
+                match runtime.workers.send(worker::Op::Read {
+                    path: path.to_path_buf(),
+                    reply,
+                }) {
+                    true => InFlight::Worker(answer),
+                    false => InFlight::Done(Some(Err(Error::other(
+                        "the runtime has already been drained",
+                    )))),
+                }
+            }
+        }
+    }
+
+    /// Start writing `bytes` to `path`, and hand back the operation.
+    ///
+    /// **On the fallback this is not in flight at all**, and that is D3's own
+    /// split rather than a shortcut: `worker::blocking_write`'s comment says a
+    /// caller that is going to wait for its own write gains nothing from
+    /// handing it to another thread, and there is no `Op` for one. So on that
+    /// path the write happens here and the operation is already `Done` - which
+    /// a caller cannot tell apart from a very fast completion.
+    pub fn begin_write(path: &Path, bytes: &[u8], append: bool, create: bool) -> InFlight {
+        off_the_io_thread();
+        let runtime = handle();
+        match runtime.files() {
+            #[cfg(target_os = "linux")]
+            Files::Completion => {
+                match runtime
+                    .with_ring(|ring| ring.begin_write(path, bytes.to_vec(), append, create))
+                    .expect("`Files::Completion` means there is a ring")
+                {
+                    Ok(slot) => InFlight::Ring(slot),
+                    Err(e) => InFlight::Done(Some(Err(e))),
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            Files::Completion => unreachable!("no completion queue off Linux"),
+            Files::Blocking => InFlight::Done(Some(
+                worker::blocking_write(path, bytes, append, create).map(|()| Vec::new()),
+            )),
+        }
+    }
+
+    /// Whether the operation has finished, and what it came to if it has.
+    ///
+    /// **Never blocks.** A future polls this and returns `Pending` on a `None`,
+    /// having first read [`generation`] so that a completion arriving between
+    /// the two cannot be missed.
+    pub fn poll(operation: &mut InFlight) -> Option<Result<Vec<u8>>> {
+        match operation {
+            #[cfg(target_os = "linux")]
+            InFlight::Ring(slot) => {
+                let slot = *slot;
+                let done = handle()
+                    .with_ring(|ring| ring.poll_slot(slot))
+                    .expect("`Files::Completion` means there is a ring");
+                if done.is_some() {
+                    // **The slot is not ours any more**, so `Drop` must not
+                    // give it back: `poll_slot` cleared it when it handed the
+                    // answer over, and by the time this value is dropped the
+                    // index may already belong to another operation - giving
+                    // *that* one's slot away is the defect `Job::owned` exists
+                    // to prevent.
+                    *operation = InFlight::Done(None);
+                }
+                done
+            }
+            InFlight::Worker(answer) => match answer.try_recv() {
+                Ok(done) => Some(done),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Some(Err(Error::other("the runtime's I/O worker went away")))
+                }
+            },
+            InFlight::Done(done) => Some(done.take().unwrap_or_else(|| {
+                Err(Error::other(
+                    "a file operation was asked for its answer twice",
+                ))
+            })),
+        }
+    }
+
+    /// **A file operation, as something that can be awaited.**
+    ///
+    /// The whole of what makes a `std` read a suspension point: it polls the
+    /// operation, and where the operation has not finished it returns
+    /// `Pending` **with the waker recorded by the executor rather than here**.
+    /// That is not a shortcut - the executor is the only thing on this thread
+    /// that parks, and it parks in the I/O (`exec::block_on`), so it is already
+    /// awake when the answer arrives and re-arms what it is holding. A waker
+    /// stored here would be a second mechanism for the same wake.
+    pub struct Reading {
+        operation: InFlight,
+    }
+
+    impl std::future::Future for Reading {
+        type Output = Result<Vec<u8>>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            match poll(&mut self.get_mut().operation) {
+                Some(done) => std::task::Poll::Ready(done),
+                None => {
+                    // **No waker is stored and none is rung**, which is the one
+                    // place this executor differs from a general one. What this
+                    // waits for is the I/O, the executor is the only thing on
+                    // this thread that parks, and it parks *in* the I/O
+                    // (`exec::block_on`) - so when the answer arrives the
+                    // executor is already awake and re-arms everything it is
+                    // holding. Ringing the waker here instead would be a spin:
+                    // a ready task with an unfinished read, polled round after
+                    // round, and never a park to wait in.
+                    let _ = context;
+                    std::task::Poll::Pending
+                }
+            }
+        }
+    }
+
+    /// Read `path` whole, as a future.
+    pub fn reading(path: &Path) -> Reading {
+        Reading {
+            operation: begin_read(path),
+        }
+    }
+
+    /// Write `bytes` to `path`, as a future.
+    pub fn writing(path: &Path, bytes: &[u8], append: bool, create: bool) -> Reading {
+        Reading {
+            operation: begin_write(path, bytes, append, create),
+        }
+    }
+
+    /// The count of I/O completions the runtime has seen, read **before** a
+    /// poll so that [`park`] cannot wait for a ring that has already been rung.
+    pub fn generation() -> u64 {
+        *super::FINISHED.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// **Wait for the I/O to move**, and nothing else. The executor's park hook.
+    ///
+    /// `since` is what [`generation`] answered before the poll that found
+    /// nothing to do. `false` means there is nothing outstanding to wait for,
+    /// which tells the executor that waiting would be waiting forever - and a
+    /// hang is the worst way to report a defect (§6 step 1).
+    pub fn park(since: u64) -> bool {
+        let runtime = handle();
+        match runtime.files() {
+            #[cfg(target_os = "linux")]
+            Files::Completion => runtime
+                .with_ring(|ring| ring.park())
+                .expect("`Files::Completion` means there is a ring"),
+            #[cfg(not(target_os = "linux"))]
+            Files::Completion => unreachable!("no completion queue off Linux"),
+            Files::Blocking => {
+                if runtime.pending() == 0 {
+                    return false;
+                }
+                let mut count = super::FINISHED.lock().unwrap_or_else(|e| e.into_inner());
+                while *count <= since {
+                    count = super::BELL.wait(count).unwrap_or_else(|e| e.into_inner());
+                }
+                true
+            }
         }
     }
 

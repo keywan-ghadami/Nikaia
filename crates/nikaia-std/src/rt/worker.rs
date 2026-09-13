@@ -182,6 +182,11 @@ fn run(outbox: &Mutex<Receiver<Op>>, pending: &AtomicUsize) {
         }
         perform(op);
         pending.fetch_sub(1, Ordering::SeqCst);
+        // The reply is on its way; this says *that* one is, for a caller parked
+        // on "whichever finishes first" (`rt::ring_the_bell`). Rung after the
+        // count drops, so a parked executor that wakes and looks at `pending`
+        // sees the finished state rather than the one before it.
+        super::ring_the_bell();
     }
 }
 

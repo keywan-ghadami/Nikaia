@@ -49,6 +49,66 @@ where
     rayon::join(a, b)
 }
 
+/// **Both futures in flight at once, on this one thread**
+/// ([ADR-055](../../../docs/specification/adr/adr-055.md) D1, Part II 11.2).
+///
+/// [`both`]'s twin for a pair whose halves can **pause**. The pool cannot carry
+/// one: `rayon::join` takes closures, Rust has no stable `async` closure, and a
+/// plain closure holding an `.await` does not compile. What it takes instead is
+/// two futures - which is what an `async` *block* is, and those are stable.
+///
+/// **And this is Part II 11.2's sentence rather than a way round a limitation.**
+/// *"Interleaved on the same thread"* is exactly what happens here: both halves
+/// are polled, whichever suspends gives the thread to the other, and neither
+/// waits for the other to finish. At `user_parallelism = no` there is no pool to
+/// want - and the pair costs no thread wake-up at all, where [`both`]'s costs
+/// ~48 µs (`benches/overlap/`).
+///
+/// Polled in the order they were written, on every round, so a pair whose halves
+/// both finish at once finishes in the order the sequential program would have.
+///
+/// **Panics.** A panic in either half unwinds into the caller, which is where
+/// the sequential program's panic went - the same claim [`both`] makes, and here
+/// it needs no arrangement: there is no other thread for it to be on.
+pub async fn interleave<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: std::future::Future<Output = RA>,
+    B: std::future::Future<Output = RB>,
+{
+    // Pinned on the heap rather than with `pin!`, because `poll_fn`'s closure
+    // owns them and a stack pin cannot be moved into one. One allocation a
+    // pair, against the ~48 µs a pool hand-off costs.
+    let mut a = Box::pin(a);
+    let mut b = Box::pin(b);
+    let mut first: Option<RA> = None;
+    let mut second: Option<RB> = None;
+
+    std::future::poll_fn(move |context| {
+        if first.is_none() {
+            if let std::task::Poll::Ready(value) = a.as_mut().poll(context) {
+                first = Some(value);
+            }
+        }
+        if second.is_none() {
+            if let std::task::Poll::Ready(value) = b.as_mut().poll(context) {
+                second = Some(value);
+            }
+        }
+        match (first.is_some(), second.is_some()) {
+            (true, true) => std::task::Poll::Ready((
+                first.take().expect("checked just above"),
+                second.take().expect("checked just above"),
+            )),
+            // **No waker is rung here**, and that is deliberate: what the halves
+            // are waiting for is the I/O, and the executor is the only thing on
+            // this thread that parks - it parks in the I/O and re-arms
+            // everything it holds (`rt::io::Reading`, `rt::exec::block_on`).
+            _ => std::task::Poll::Pending,
+        }
+    })
+    .await
+}
+
 /// Two file reads the **compiler** put together, both in flight where that is
 /// free (ADR-033 D10).
 ///

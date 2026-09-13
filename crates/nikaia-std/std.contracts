@@ -116,6 +116,14 @@ inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 # reason than that nobody had written this line.
 [fn."cli::args"]
 pub = true
+# `sync` because there is nothing here to pause on: the arguments are a vector
+# the process was started with, and reading them is memory. It had no `sync`
+# line for want of somebody classifying it rather than because anybody decided
+# it could pause - and an absent `sync` means *not* sync, which is what this
+# file's own note above says. Found by ADR-055 §6 step 3: with `std`'s pausing
+# entries awaited, `cli::args()` became `cli::args().await` and `Args` is not a
+# future.
+sync = true
 touches = ["args read"]
 provenance = "trusted"
 signature = "() -> Args"

@@ -11,6 +11,16 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The word in the emitted Rust that says the pair was overlapped.
+///
+/// `task::interleave` and not `task::both` since
+/// [ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 3: a
+/// `fs::write` can pause, and the pool vehicle takes closures, which cannot
+/// hold an `.await`. What the tests below claim is that the **switch reached the
+/// emitter** - which vehicle it chose is ADR-033 D10's question and is asserted
+/// in `ordering.rs`.
+const OVERLAPPED: &str = "task::interleave";
+
 /// A project directory: a manifest, and a source with two **writes** that meet
 /// on nothing and therefore overlap wherever the analysis is allowed to run.
 ///
@@ -18,8 +28,8 @@ use std::process::Command;
 /// reaches the emitter - and a pair of *reads* overlaps at both settings of
 /// `user_parallelism` now, on a vehicle that carries no code of the program's
 /// ([ADR-033](../../../docs/specification/adr/adr-033.md) D10). A pair of
-/// writes has only `task::both`, so it is the shape that can still tell the two
-/// settings apart.
+/// writes has only the pool's vehicle - there is no completion pair for a write
+/// - so it is the shape that can still tell the two settings apart.
 fn project(purpose: &str, manifest: &str) -> PathBuf {
     let dir = common::scratch_dir(purpose);
     std::fs::write(
@@ -67,7 +77,7 @@ fn lower(dir: &Path, flags: &[&str]) -> String {
 fn the_manifest_decides_the_switches() {
     let dir = project("manifest-decides", "[build]\nuser-parallelism = \"yes\"\n");
     assert!(
-        lower(&dir, &[]).contains("task::both"),
+        lower(&dir, &[]).contains(OVERLAPPED),
         "the manifest's `yes` did not reach the emitter"
     );
 
@@ -75,7 +85,7 @@ fn the_manifest_decides_the_switches() {
     // hold for a program that overlaps whatever anyone writes.
     let plain = project("manifest-absent", "");
     assert!(
-        !lower(&plain, &[]).contains("task::both"),
+        !lower(&plain, &[]).contains(OVERLAPPED),
         "a project with no `[build]` table must stay at `user_parallelism = no`"
     );
 }
@@ -86,13 +96,13 @@ fn the_manifest_decides_the_switches() {
 fn a_flag_overrides_a_committed_switch() {
     let parallel = project("flag-over-yes", "[build]\nuser-parallelism = \"yes\"\n");
     assert!(
-        !lower(&parallel, &["--user-parallelism", "no"]).contains("task::both"),
+        !lower(&parallel, &["--user-parallelism", "no"]).contains(OVERLAPPED),
         "`--user-parallelism no` did not override the manifest"
     );
 
     let sequential = project("flag-over-no", "[build]\nuser-parallelism = \"no\"\n");
     assert!(
-        lower(&sequential, &["--user-parallelism", "yes"]).contains("task::both"),
+        lower(&sequential, &["--user-parallelism", "yes"]).contains(OVERLAPPED),
         "`--user-parallelism yes` did not override the manifest"
     );
 }
@@ -107,7 +117,7 @@ fn ordering_is_a_project_setting_too() {
     );
     let strict = lower(&dir, &[]);
     assert!(
-        !strict.contains("task::both"),
+        !strict.contains(OVERLAPPED),
         "the manifest's `strict` did not reach the emitter"
     );
     assert_eq!(
@@ -116,7 +126,7 @@ fn ordering_is_a_project_setting_too() {
         "and it is the same program the flag produces"
     );
     assert!(
-        lower(&dir, &["--ordering", "effects"]).contains("task::both"),
+        lower(&dir, &["--ordering", "effects"]).contains(OVERLAPPED),
         "`--ordering effects` did not override the manifest"
     );
 }
