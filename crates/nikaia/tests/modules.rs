@@ -550,3 +550,32 @@ fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
     assert_eq!(run(&entry, Build::default()).trim(), "1");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// **A program that uses `HashMap` without importing anything from `std`
+/// compiles.**
+///
+/// The preamble line that makes `std`'s names resolve was written only where the
+/// program had a `use std::…` of its own — which is not the same question.
+/// `HashMap` is a name the prelude provides and a program may write it without
+/// importing anything; such a program lowered to a file where `TrustedMap` (the
+/// name a trusted input's map gets, ADR-010 D5) was undeclared, and `rustc` said
+/// so about a file nobody wrote (Part III, C.1).
+///
+/// It is written always now, with `#[allow(unused_imports)]`: what a program uses
+/// is not a list the emitter keeps, and it does not need one.
+#[test]
+fn a_program_that_imports_nothing_may_still_use_a_map() {
+    let (dir, entry) = project(
+        "no-import",
+        &[(
+            "main.nika",
+            "fn main() {\n\
+             \x20   let mut m = HashMap::new()\n\
+             \x20   m.insert(\"a\", 1)\n\
+             \x20   println(f\"{m.len()}\")\n\
+             }\n",
+        )],
+    );
+    assert_eq!(run(&entry, Build::default()).trim(), "1");
+    let _ = std::fs::remove_dir_all(dir);
+}

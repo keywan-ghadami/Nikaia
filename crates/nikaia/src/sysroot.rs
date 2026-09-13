@@ -32,8 +32,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use orchestrator::cache::{self, Key, Layout};
 
-use crate::emit::Build;
-
 /// The development override, named for what it is.
 ///
 /// It replaced `NIKAIA_STD_PATH`, which named a *crate directory* and could
@@ -200,8 +198,8 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let parsed = crate::parser::parse_to_ast(&source)
         .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
-    let lowered = crate::emit::emit_program(&parsed, Build::default())
-        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let lowered =
+        crate::emit::emit_std(&parsed).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     Ok(lowered.rust)
 }
 

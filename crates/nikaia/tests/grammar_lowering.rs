@@ -328,7 +328,13 @@ fn a_rule_without_a_label_gains_nothing() {
     let source = "grammar G {\n    rule atom -> i32 = n:digit1 -> { 1 }\n}\n";
     let emitted = emit(source, Build::default());
     assert!(emitted.contains("rule atom -> i32 ="), "{emitted}");
-    assert!(!emitted.contains('#'), "{emitted}");
+    // The preamble's `#[allow(unused_imports)]` is not part of the grammar, and
+    // it is there in every file now - so the claim is about the rule's own line.
+    let rule = emitted
+        .lines()
+        .find(|line| line.contains("rule atom"))
+        .expect("the rule is emitted");
+    assert!(!rule.contains('#'), "{emitted}");
 }
 
 /// `(A, B)` as a type, `(a, b)` as a value, `t.0` to read a part - Part I 4.5.

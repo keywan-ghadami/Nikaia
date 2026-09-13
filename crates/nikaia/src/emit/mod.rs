@@ -454,6 +454,23 @@ pub fn emit_program_with_trust(
     Emitter::new(parsed, build, provenance, Ordering::default()).program()
 }
 
+/// **`std`'s own Nikaia half**, which is the one program that must not import
+/// the prelude: it *is* the prelude ([ADR-014](../../../docs/specification/adr/adr-014.md)
+/// D1, [ADR-002](../../../docs/specification/adr/adr-002.md) D4).
+///
+/// Every other program gets `pub use nikaia_std::prelude::*;` whether or not it
+/// asked, because what a program uses is not a list this emitter keeps and a name
+/// the prelude provides has to resolve. `std` is where that stops being true, and
+/// it is one program rather than a class - so it says so here rather than being
+/// detected.
+pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
+    let build = Build::default();
+    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    Emitter::new(parsed, build, trust.provenance, Ordering::default())
+        .for_std()
+        .program()
+}
+
 /// A module's items, with no preamble and no `mod` around them.
 ///
 /// The driver writes the preamble once for the whole program and the `mod`
@@ -555,15 +572,23 @@ impl Needs {
             out.push_str("use winnow_grammar::rt::Parallelism;\n");
             out.push_str("use winnow_grammar::ParseContext;\n");
         }
-        if self.std {
-            // Nikaia's `std` is a crate rather than a table in this file, so
-            // `fs::map`, `cli::args` and `HashMap` resolve as written and what
-            // they mean is code someone can read.
-            // `pub use`, because the grammar module the backend generates
-            // reaches these names through a glob of its own, and a private
-            // import is not re-exported into one.
-            out.push_str("pub use nikaia_std::prelude::*;\n");
-        }
+        // **Always, and allowed to be unused.** It used to be written only where
+        // the program had a `use std::…` line of its own, which is not the same
+        // question: `HashMap` is a name the prelude provides and a program may
+        // write it without importing anything, and such a program lowered to a
+        // file where `TrustedMap` was undeclared - `rustc` about a file nobody
+        // wrote (Part III, C.1). What a program uses is not a list this emitter
+        // keeps, and it does not need one: the import is one line, a locally
+        // declared name shadows a glob, and `#[allow]` is what keeps an unused
+        // one from reaching a reader (the same move the emitted `use super::*`
+        // made).
+        // Nikaia's `std` is a crate rather than a table in this file, so
+        // `fs::map`, `cli::args` and `HashMap` resolve as written and what
+        // they mean is code someone can read.
+        // `pub use`, because the grammar module the backend generates
+        // reaches these names through a glob of its own, and a private
+        // import is not re-exported into one.
+        out.push_str("#[allow(unused_imports)]\npub use nikaia_std::prelude::*;\n");
         if self.fails {
             // Kap 7.1: `error.full()` is a method on whatever a `catch` bound, so
             // the trait has to be in scope even in a program that imports no `std`
@@ -665,8 +690,12 @@ struct Emitter<'p> {
     /// is not written down. `None` marks a name two impls disagree about - and
     /// an ambiguous name is left alone rather than resolved by preference.
     by_name: HashMap<Symbol, Option<Method>>,
-    /// Whether the program imports anything from `std`.
+    /// Whether the program imports anything from `std`. Kept because a
+    /// **grammar** module's glob needs to know whether there is anything to
+    /// re-export; the preamble no longer asks (see [`emit_std`]).
     uses_std: bool,
+    /// Whether this *is* `std`, the one program that may not import the prelude.
+    is_std: bool,
     fails: bool,
     /// ADR-010: nobody outside the program chose the bytes its maps are keyed
     /// by, so a map may have the fast hash.
@@ -993,6 +1022,7 @@ impl<'p> Emitter<'p> {
             methods,
             by_name,
             uses_std,
+            is_std: false,
             fails,
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             fallible_loops: propagation.loops,
@@ -1011,6 +1041,12 @@ impl<'p> Emitter<'p> {
     /// The same, said of a module rather than of the crate root.
     fn for_entry(mut self, entry: bool) -> Self {
         self.entry = entry;
+        self
+    }
+
+    /// This is `std` itself - see [`emit_std`].
+    fn for_std(mut self) -> Self {
+        self.is_std = true;
         self
     }
 
@@ -1051,14 +1087,11 @@ impl<'p> Emitter<'p> {
             out.push("use winnow_grammar::rt::Parallelism;\n");
             out.push("use winnow_grammar::ParseContext;\n");
         }
-        if self.uses_std {
-            // Nikaia's `std` is a crate rather than a table in this file, so
-            // `fs::map`, `cli::args` and `HashMap` resolve as written and what
-            // they mean is code someone can read.
-            // `pub use`, because the grammar module the backend generates
-            // reaches these names through a glob of its own, and a private
-            // import is not re-exported into one.
-            out.push("pub use nikaia_std::prelude::*;\n");
+        // Always, except in `std` itself, which is the prelude - see
+        // [`emit_std`] and [`Needs::preamble`], the copy of this that a program
+        // of several files uses.
+        if !self.is_std {
+            out.push("#[allow(unused_imports)]\npub use nikaia_std::prelude::*;\n");
         }
         if self.fails {
             // Kap 7.1: `error.full()` is a method on whatever a `catch` bound, so

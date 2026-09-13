@@ -109,30 +109,47 @@ Three sites keep their trace on purpose: two emitter invariants ("not a function
 reading the sysroot's own files. Those are this compiler's problems, and the frames
 are then the most useful thing on the screen.
 
-### 1.4. A Rust warning about the generated file reaches the user — **fixed**
+### 1.4. A Rust warning about the generated file reaches the user — **fixed, twice**
 
-Both halves, because either alone leaves the hole. The emitted `use super::*`
-carries `#[allow(unused_imports)]`, so the warning is not produced; and a
+Both halves, because either alone leaves the hole. The line this compiler wrote
+itself carries `#[allow(unused_imports)]`, so the warning is not produced; and a
 **warning** that maps to no Nikaia line is not reported at all, so the next
-machine-written construct cannot do the same thing again. The import cannot simply
-be left out where it looks unused — it also brings in the sibling modules, which
-is how `utils::helper()` resolves.
+machine-written construct cannot do the same thing again.
 
 An **error** with nowhere to put it is still reported. A warning suppressed costs
 nothing; an error suppressed leaves a build that failed with no reason given
 anywhere. Such an error is a defect in this compiler, and it should be visible.
 
-### 1.5. A struct holding a view, across files — suspicion, no reproduction
+*What the line was, and what it is now.* It was `use super::*` in each `mod`,
+which also brought in the sibling modules — so it could not simply be left out
+where it looked unused. That `mod` is gone: a package is one crate root
+([ADR-047](specification/adr/adr-047.md) D1), and one namespace needs nothing
+brought in.
 
-Recorded earlier in this session as an `E0106` (a missing lifetime in the
-generated Rust) from a struct that holds a `&str`. **The reproduction is not
-re-established**: a struct with a view field, a struct holding such a struct, and
-a public one declared in another module all lower with the lifetime inserted
-correctly when tried again.
+**The other half of the same rule, found later.** The preamble that makes `std`'s
+names resolve was written only where the program had a `use std::…` of its own,
+which is not the same question: `HashMap` is a name the prelude provides, a program
+may write it without importing anything, and such a program lowered to a file where
+`TrustedMap` was undeclared. It is written always now, with the same `#[allow]` —
+what a program uses is not a list the emitter keeps, and it does not need one.
+`std` itself is the one exception, because it *is* the prelude, and it says so
+(`emit::emit_std`) rather than being detected.
 
-*What it needs:* find the shape or strike the entry. It stays only because a
-lifetime defect in generated code is the class Part III C.1 is about, and
-`docs/stored-views.md` is where the surrounding analysis is written down.
+### 1.5. A struct holding a view, across files — **struck: does not reproduce**
+
+Recorded earlier as an `E0106` (a missing lifetime in the generated Rust) from a
+struct holding a `&str`. The entry said: find the shape or strike it.
+
+Tried again with the package boundary built and cross-file types resolving, in the
+shapes most likely to break it — three view-holding structs in another file, a
+`Vec[Row]` of them, a struct holding a view-holding struct, an `impl` whose methods
+hand views of `self` back, and the whole thing behind a `Shared`. Every one lowers
+with the lifetime inserted correctly and runs. `crates/nikaia/tests/stored_views.rs`
+is where that ground is held.
+
+Struck rather than carried: a suspicion nobody can reproduce is a claim about this
+compiler that nothing supports, and the entry was costing more attention than it
+was worth.
 
 ### 1.6. A `Shared` slot's count is decided per file — **fixed, fail-closed**
 

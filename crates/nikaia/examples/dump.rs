@@ -17,9 +17,12 @@ fn main() -> anyhow::Result<()> {
     let path = args
         .next()
         .ok_or_else(|| anyhow::anyhow!("usage: dump <file.nika> [target] [user-parallelism]"))?;
+    // `no`, not `0`: `user-parallelism` is a yes-or-no question and a count is
+    // refused (ADR-037 D2). The default here was still a count, so the command a
+    // failing fixture test tells you to run did not run.
     let build = Build::parse(
         &args.next().unwrap_or_else(|| "x86_64-linux".to_string()),
-        &args.next().unwrap_or_else(|| "0".to_string()),
+        &args.next().unwrap_or_else(|| "no".to_string()),
     )?;
 
     let source = std::fs::read_to_string(&path)?;
