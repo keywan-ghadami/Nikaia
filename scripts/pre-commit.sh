@@ -1,4 +1,10 @@
 #!/bin/sh
+# `rust-toolchain.toml` names `stable`, which is a moving target: a lint that
+# arrives in a later stable is invisible to a gate run against an older one, and
+# CI resolves `stable` on its own schedule. So a local run says nothing about CI
+# until this has happened.
+rustup update stable
+
 # Format all code
 cargo fmt
 

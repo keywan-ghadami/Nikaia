@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed (a clippy lint only CI could see)
+
+- **`cache::sweep`'s `sort_by` is a `sort_by_key`.** `clippy::unnecessary_sort_by` turned `trees.sort_by(|a, b| b.0.cmp(&a.0))` into an error, and CI had been red on it for two commits before anyone looked — including a documentation-only one, which is what says the failure was not the change under it.
+- **The reason it passed locally is worth recording**, because it will recur otherwise: `rust-toolchain.toml` names `stable` and the container's stable was **1.94.1** while CI's was **1.98.1**. A lint that arrives in a later stable is invisible to every gate run against an older one, so `cargo clippy -- -D warnings` passing locally says nothing about CI until `rustup update stable` has been run. Running the six gates is not enough; running them on the toolchain CI resolves `stable` to is.
+
 ### Fixed (keywords are reserved words, and three silent miscompilations go with it)
 
 - **[ADR-051](docs/specification/adr/adr-051.md): a name may not be a reserved word**, answering `docs/open-decisions.md` §7. Twenty-nine words, written down in Part I 2.1 so a reader can see them and in `parser::RESERVED_WORDS` so a diagnostic can read them. `rule NAME = not(digit) n:ident` excluded nothing, and that was never a decision — the grammar is scannerless ([ADR-001](docs/specification/adr/adr-001.md) D2), so there was no place a reserved list would naturally have lived and none was written.
