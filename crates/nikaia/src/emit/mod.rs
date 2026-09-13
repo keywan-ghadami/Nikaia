@@ -616,6 +616,32 @@ struct Emitter<'p> {
     /// is, so only the type checker can say what it calls (ADR-028). Nothing
     /// here resolves a receiver.
     fallible_methods: std::collections::BTreeSet<(usize, String)>,
+    /// Which reference count each `Shared` value got, by the slot key
+    /// `function::value` ([ADR-037](../../../docs/specification/adr/adr-037.md)
+    /// D7).
+    ///
+    /// **Per value and not per type**, which is why `map_name` cannot answer it:
+    /// `Shared[T]` is one atomic count at both settings of `user_parallelism`
+    /// (D6), and a value the analysis proves never crosses a thread gets a plain
+    /// one instead. That is a question about where a particular handle goes, so
+    /// it is computed by `contracts::sharing` over the whole unit and looked up
+    /// here - the same arrangement `fallible_loops` and `fallible_methods` have,
+    /// and for the same reason.
+    ///
+    /// A count belongs to the **allocation**, so every position of one
+    /// union-find class carries the same answer and the types a call writes on
+    /// both sides of it agree by construction. A slot this map does not have gets
+    /// the atomic floor.
+    shared: std::collections::BTreeMap<String, crate::contracts::sharing::Count>,
+    /// The places where a declared `Shared[T]` makes the **first handle** out of
+    /// a plain value, by the byte the statement starts at and the name the
+    /// sharing is written against (`check::Checked::shared_sites`).
+    ///
+    /// The annotation is the constructor (Part I 6.2), and this is where the
+    /// `Rc::new` or the `Arc::new` is written. It is the checker's answer because
+    /// telling `let db: Shared[C] = connect(…)` from `let b: Shared[C] = db`
+    /// means knowing what the value on the right is, and nothing here has types.
+    shared_sites: std::collections::BTreeSet<(usize, String)>,
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
@@ -677,6 +703,20 @@ const DSL_PARAMETER: &str = "NikaiaDsl";
 
 /// The name a Nikaia program gives its entry point.
 const MAIN: &str = "main";
+
+/// The type several parts of a program own at once (Part I 6.2).
+///
+/// The one name whose lowering is decided per **value**: what it expands to is a
+/// reference count, and which of the two a particular value gets is
+/// `contracts::sharing`'s answer ([ADR-037](../../../docs/specification/adr/adr-037.md)
+/// D7).
+const SHARED: &str = "Shared";
+
+/// The slot a function's result is filed under, as `contracts::sharing` keys it.
+const SHARED_RESULT: &str = "<result>";
+
+/// The pseudo-function a `<struct>.<field>` slot is filed under, the same.
+const SHARED_FIELDS: &str = "<field>";
 
 /// What the program's own `main` is called in the emitted Rust.
 ///
@@ -783,6 +823,17 @@ struct Flow<'a> {
     /// outer one's - which is what the checker records, because it walks
     /// statements the same way.
     statement: usize,
+    /// The key the ledger records the function being emitted under - `main`, or
+    /// `Counter::record` for a method.
+    ///
+    /// It is here for the same reason `statement` is: the answer about a
+    /// `Shared` value is keyed by the function it is written in and the name the
+    /// source gives it (`contracts::sharing`), and a `let` has no way to look
+    /// itself up without knowing which function it stands in. `origin` is the
+    /// name a `throw` reports and is deliberately not this: an error raised in a
+    /// method says the method's own name (ADR-023 D6), and a ledger key says
+    /// `Type::method`.
+    function: &'a str,
 }
 
 impl Flow<'_> {
@@ -792,6 +843,7 @@ impl Flow<'_> {
         sequential: false,
         caught: false,
         statement: usize::MAX,
+        function: "",
     };
 
     /// The same surroundings, with reordering switched off for what is inside a
@@ -914,6 +966,13 @@ impl<'p> Emitter<'p> {
         // there is one type checker (ADR-028).
         let propagation = crate::check::propagation_against(parsed, &own_contracts);
 
+        // ADR-037 D7: which count each `Shared` value gets. Computed over the
+        // whole unit, because a count belongs to an allocation and a handle's
+        // class may reach into another function.
+        let library = std_ledger();
+        let shared =
+            crate::contracts::sharing::analyse_program(parsed, &own_contracts, &library).counts;
+
         Self {
             parsed,
             build,
@@ -928,8 +987,10 @@ impl<'p> Emitter<'p> {
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             fallible_loops: propagation.loops,
             fallible_methods: propagation.methods,
+            shared,
+            shared_sites: propagation.shared,
             own_contracts,
-            library: std_ledger(),
+            library,
             ordering,
             dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
             entry: true,
@@ -1181,17 +1242,22 @@ impl<'p> Emitter<'p> {
                 for field in fields {
                     // Public, because the actions that build this struct are
                     // generated into the grammar's own module.
+                    let slot = format!("{}.{}", self.text(*name), self.text(field.name));
                     out.push(&format!(
                         "    {}{}: {},\n",
                         if field.is_public { "pub " } else { "" },
                         self.text(field.name),
-                        self.ty(&field.ty, Lifetimes::NAMED)
+                        self.ty_counted(
+                            &field.ty,
+                            Lifetimes::NAMED,
+                            self.count_at(SHARED_FIELDS, &slot)
+                        )
                     ));
                 }
                 out.push("}\n");
                 Ok(())
             }
-            Item::Fn { .. } => self.function(out, item, 0, Lifetimes::ELIDED, None),
+            Item::Fn { .. } => self.function(out, item, 0, Lifetimes::ELIDED, None, None),
             Item::Impl {
                 trait_name,
                 target,
@@ -1232,7 +1298,7 @@ impl<'p> Emitter<'p> {
                     let carries = self.carries_input.get(&method.span.start);
                     out.from(&method.span, |out| {
                         out.push("    ");
-                        self.function(out, &method.node, 1, lifetimes, carries)
+                        self.function(out, &method.node, 1, lifetimes, carries, Some(&target_name))
                     })?;
                 }
                 out.push("}\n");
@@ -1281,7 +1347,7 @@ impl<'p> Emitter<'p> {
             let carries = self.carries_input.get(&method.span.start);
             out.from(&method.span, |out| {
                 out.push("    ");
-                self.function(out, &method.node, 1, lifetimes, carries)
+                self.function(out, &method.node, 1, lifetimes, carries, Some(target))
             })?;
         }
         out.push("}\n");
@@ -1309,6 +1375,10 @@ impl<'p> Emitter<'p> {
         // the call (`Emitter::carries_input`). `None` where there is no such
         // parameter, which is almost every function.
         carries_input: Option<&HashSet<Symbol>>,
+        // The type this is a method of, where it is one. It is what makes the
+        // ledger key - `Counter::record` rather than `record` - and the key is
+        // what a `Shared` position looks its count up by (`contracts::sharing`).
+        owner: Option<&str>,
     ) -> Result<()> {
         let Item::Fn {
             name,
@@ -1334,6 +1404,19 @@ impl<'p> Emitter<'p> {
             ));
         }
 
+        // The key the ledger - and therefore `contracts::sharing` - records this
+        // function under, arrived at the same way both of them arrive at it: the
+        // anonymous constructor of Part I 4.2 is `new`, and a method carries its
+        // type in front.
+        let own_name = match name {
+            Some(name) => self.text(*name).to_string(),
+            None => "new".to_string(),
+        };
+        let key = match owner {
+            Some(owner) => format!("{owner}::{own_name}"),
+            None => own_name.clone(),
+        };
+
         let mut params = Vec::new();
         if let Some(receiver) = receiver {
             params.push(
@@ -1352,20 +1435,25 @@ impl<'p> Emitter<'p> {
             true => lifetimes.of_the_input(),
             false => lifetimes,
         };
-        params.extend(
-            args.iter()
-                .map(|a| format!("{}: {}", self.text(a.name), self.ty(&a.ty, how(a.name)))),
-        );
+        params.extend(args.iter().map(|a| {
+            let name = self.text(a.name);
+            format!(
+                "{name}: {}",
+                self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name))
+            )
+        }));
         // Kap 5.1: the language below has neither named arguments nor defaults,
         // so an option becomes an ordinary parameter here - in declaration
         // order, which is the order every call site fills in. The names stay
         // the source's, so a `rustc` diagnostic about one still lands on the
         // parameter the programmer wrote (ADR-012).
-        params.extend(
-            config
-                .iter()
-                .map(|c| format!("{}: {}", self.text(c.name), self.ty(&c.ty, how(c.name)))),
-        );
+        params.extend(config.iter().map(|c| {
+            let name = self.text(c.name);
+            format!(
+                "{name}: {}",
+                self.ty_counted(&c.ty, how(c.name), self.count_at(&key, name))
+            )
+        }));
 
         // ADR-007 D5: `...args: Self::dsl` is the one parameter whose type the
         // *call site* decides, because the DSL string it comes from decides it.
@@ -1394,7 +1482,7 @@ impl<'p> Emitter<'p> {
                 }
                 DSL_PARAMETER.to_string()
             }
-            Some(ty) => self.ty(ty, lifetimes),
+            Some(ty) => self.ty_counted(ty, lifetimes, self.count_at(&key, SHARED_RESULT)),
             None => "()".to_string(),
         };
         let ret = if *throws {
@@ -1406,10 +1494,7 @@ impl<'p> Emitter<'p> {
         };
 
         let vis = if *is_public { "pub " } else { "" };
-        let name = match name {
-            Some(name) => self.text(*name).to_string(),
-            None => "new".to_string(),
-        };
+        let name = own_name;
         // ADR-038 D4: `fn main` is the runtime's, and the program's own entry
         // point is called from inside it. Only at the crate root, and only for
         // the shape `entry_point` writes a wrapper for - `user_main` and this
@@ -1430,7 +1515,7 @@ impl<'p> Emitter<'p> {
             dsl.unwrap_or_default(),
             params.join(", ")
         ));
-        self.function_body(out, body, depth, *throws, ret_type.is_some(), &name)?;
+        self.function_body(out, body, depth, *throws, ret_type.is_some(), &key)?;
         out.push("\n");
         Ok(())
     }
@@ -1444,14 +1529,20 @@ impl<'p> Emitter<'p> {
         depth: usize,
         throws: bool,
         returns_value: bool,
-        origin: &str,
+        // The ledger key of the function these statements are in: `main`, or
+        // `Counter::record` for a method. Two things read it - a `Shared` value's
+        // count is filed under it (`contracts::sharing`), and a `throw` raised
+        // here reports the function's **own** name, which is the key's last
+        // segment (ADR-023 D6: a `throw` in `main` says `main`).
+        key: &str,
     ) -> Result<()> {
         let flow = Flow {
             throws,
-            origin,
+            origin: key.rsplit("::").next().unwrap_or(key),
             sequential: false,
             caught: false,
             statement: usize::MAX,
+            function: key,
         };
 
         // A function body's last statement is the *function's* value, which is
@@ -1979,12 +2070,65 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// The name a type is written with below, which for one name depends on the
+    /// value and not only on the name.
+    ///
+    /// `Shared[T]` is `Rc<T>` or `Arc<T>`, and **which one is decided per value**
+    /// (ADR-037 D7): the atomic count is the floor at both settings of
+    /// `user_parallelism` (D6), and a value the analysis proves never crosses a
+    /// thread gets the plain one. So the count has to arrive from outside -
+    /// `map_name` above sees only a name and could not answer it.
+    ///
+    /// The **full path** and no `use`: `sharing::rust_name` already names both as
+    /// paths, two names as common as `Rc` and `Arc` are two a program may have of
+    /// its own, and nothing about the emitted file needs them shortened.
+    fn written_name(&self, name: &str, count: crate::contracts::sharing::Count) -> String {
+        match name {
+            SHARED => crate::contracts::sharing::rust_name(count).to_string(),
+            _ => self.map_name(name).to_string(),
+        }
+    }
+
+    /// The count the analysis gave the `Shared` written at one position, with the
+    /// atomic floor where it has no answer (ADR-037 D6).
+    fn count_at(&self, function: &str, value: &str) -> crate::contracts::sharing::Count {
+        self.shared
+            .get(&format!("{function}::{value}"))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// A type, with the atomic floor for any `Shared` inside it.
+    ///
+    /// Every position whose count is actually known names it with
+    /// [`Emitter::ty_counted`] instead. The floor is what a position nothing
+    /// decided gets, which is ADR-037 D6's answer and never a wrong one - only a
+    /// slower one.
     fn ty(&self, ty: &Type, lifetimes: Lifetimes) -> String {
+        self.ty_counted(ty, lifetimes, crate::contracts::sharing::Count::Atomic)
+    }
+
+    /// The same, where the count a `Shared` in this position was given is known.
+    ///
+    /// The count rides down through the arguments, because `Vec[Shared[i64]]` in
+    /// a parameter is the parameter's class and not a class of its own - a count
+    /// belongs to the allocation, and the analysis keys it by the position the
+    /// source wrote.
+    fn ty_counted(
+        &self,
+        ty: &Type,
+        lifetimes: Lifetimes,
+        count: crate::contracts::sharing::Count,
+    ) -> String {
         let mut out = String::new();
 
         // `(A, B)` in both languages, and the parts are the arguments.
         if ty.is_tuple {
-            let parts: Vec<String> = ty.generics.iter().map(|g| self.ty(g, lifetimes)).collect();
+            let parts: Vec<String> = ty
+                .generics
+                .iter()
+                .map(|g| self.ty_counted(g, lifetimes, count))
+                .collect();
             return format!("({})", parts.join(", "));
         }
 
@@ -1993,9 +2137,13 @@ impl<'p> Emitter<'p> {
         if ty.is_view {
             out.push_str(lifetimes.reference);
         }
-        out.push_str(self.map_name(self.text(ty.name)));
+        out.push_str(&self.written_name(self.text(ty.name), count));
 
-        let mut params: Vec<String> = ty.generics.iter().map(|g| self.ty(g, lifetimes)).collect();
+        let mut params: Vec<String> = ty
+            .generics
+            .iter()
+            .map(|g| self.ty_counted(g, lifetimes, count))
+            .collect();
         // A struct that holds a view carries the input lifetime with it.
         if self.borrowing.contains(&ty.name) {
             params.insert(0, lifetimes.params.to_string());
@@ -2582,12 +2730,30 @@ impl<'p> Emitter<'p> {
                 value,
             } => {
                 let mutable = if *mutable { "mut " } else { "" };
+                let bound = self.text(*name);
+                let count = self.count_at(flow.function, bound);
                 let annotation = match ty {
-                    Some(ty) => format!(": {}", self.ty(ty, Lifetimes::ELIDED)),
+                    Some(ty) => format!(": {}", self.ty_counted(ty, Lifetimes::ELIDED, count)),
                     None => String::new(),
                 };
-                out.push(&format!("let {mutable}{}{annotation} = ", self.text(*name)));
+                // Part I 6.2: the annotation **is** the constructor. Where the
+                // checker says this line makes the first handle on a shared value
+                // - the declared type says `Shared[T]` and the value beside it is
+                // a `T` - the count is allocated around the value here. There is
+                // no `Shared::new` in the language and must not be (ADR-040 §3),
+                // so this is the one place one is written.
+                let handle = self
+                    .shared_sites
+                    .contains(&(span.start, bound.to_string()))
+                    .then(|| crate::contracts::sharing::rust_name(count));
+                out.push(&format!("let {mutable}{bound}{annotation} = "));
+                if let Some(path) = handle {
+                    out.push(&format!("{path}::new("));
+                }
                 self.expr(out, value, depth, flow)?;
+                if handle.is_some() {
+                    out.push(")");
+                }
                 out.push(";");
             }
             Stmt::Assign { target, op, value } => {
@@ -2836,15 +3002,40 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(" as {}", self.ty(ty, Lifetimes::ELIDED)));
             }
             Expr::StructLit { name, fields } => {
-                out.push(&format!("{} {{ ", self.text(*name)));
+                let owner = self.text(*name);
+                out.push(&format!("{owner} {{ "));
                 for (i, field) in fields.iter().enumerate() {
                     if i > 0 {
                         out.push(", ");
                     }
                     out.push(self.text(field.name));
+                    // The second of Part I 6.2's two places where the first
+                    // handle is made: a field whose declared type says the value
+                    // is shared. The slot is the struct's field, which is what
+                    // `contracts::sharing` keys a field's count by.
+                    let slot = format!("{owner}.{}", self.text(field.name));
+                    let handle = self
+                        .shared_sites
+                        .contains(&(flow.statement, slot.clone()))
+                        .then(|| {
+                            crate::contracts::sharing::rust_name(
+                                self.count_at(SHARED_FIELDS, &slot),
+                            )
+                        });
                     if let Some(value) = &field.value {
                         out.push(": ");
+                        if let Some(path) = handle {
+                            out.push(&format!("{path}::new("));
+                        }
                         self.expr(out, value, depth, flow)?;
+                        if handle.is_some() {
+                            out.push(")");
+                        }
+                    } else if let Some(path) = handle {
+                        // `Counter { db }` is the shorthand for `db: db`
+                        // (Part I 4.1), and the constructor has to be written
+                        // around the name - which means writing the pair out.
+                        out.push(&format!(": {path}::new({})", self.text(field.name)));
                     }
                 }
                 out.push(" }");

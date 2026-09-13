@@ -848,22 +848,23 @@ names each duplication site beside the count it printed for that value — the c
 of an extra handle stays something you can look up
 ([ADR-040](adr/adr-040.md) D5).
 
-> **Status:** not built. None of the three is a type the compiler knows: writing
-> `Shared[T]`, `SharedMut[T]` or `Locked[T]` names a type that does not exist,
-> and the backend has no lowering for any of them. So everything above about them
-> is unbuilt one step further back: there is no handle to duplicate, `--sharing`
-> names no duplication site, the annotated `let` that makes the first handle
-> produces nothing, and `NK1115` is catalogued and never raised
-> ([ADR-040](adr/adr-040.md) §4, Part III C.3).
+> **Status:** `Shared[T]` is built. It is a type the compiler knows — `std`'s
+> ledger carries the entry, the backend lowers it to one of the two owner counts,
+> and the annotated `let` above really does make the first handle, as does a field
+> whose declared type says so. `serve(&db)` works through the `deref` entry and
+> nothing else ([ADR-042](adr/adr-042.md) D2), and the call that wants a shared
+> value and is given a plain one is refused by `NK1115` rather than wrapped
+> silently (Part III, C.3).
 >
-> **The borrowing half is built, and not for these types.** `&` keeping the type
-> it is a view of, and a container whose ledger records a `deref` being seen
-> through, are both in the compiler and exercised by `fs::Mapped`
-> ([ADR-042](adr/adr-042.md) §4) — so `serve(&db)` will work the day `Shared[T]`
-> has an entry, with nothing further to decide. What *is* built is the
-> reasoning above them — which owner count a `Shared` position gets is inferred,
-> and `--sharing` prints it ([ADR-037](adr/adr-037.md) D7,
-> [ADR-039](adr/adr-039.md) §4).
+> **`SharedMut[T]` and `Locked[T]` are not.** Writing either names a type that
+> does not exist, the backend has no lowering for one, and the four doors of 6.3
+> wait on the same thing ([ADR-039](adr/adr-039.md) §4).
+>
+> **And the duplication is not built yet, for either.** A handle handed on by
+> value is handed on as it stands, so nothing steps the count and `--sharing`
+> names no duplication site ([ADR-040](adr/adr-040.md) §4). What *is* built above
+> that is the reasoning: which owner count a `Shared` value gets is inferred per
+> value, and `--sharing` prints it ([ADR-037](adr/adr-037.md) D7).
 
 ### 6.3. Changing Shared Data: The Four Doors
 A value behind a lock is not changed by assignment — the lock has to be opened
@@ -1483,12 +1484,13 @@ the duplication of 6.2 serves, so there is no error and no `.clone()` to write
 > **Status:** not built, in either case. `spawn` does not lower yet — the runtime
 > integration it needs is the next step (Part II, 11.2) — and `NK2101` is
 > catalogued but never raised (Part III, Appendix C.3). The move rule is
-> therefore written ahead of both. The duplication is unbuilt for a reason
-> further back: `Shared[T]` is not a type the compiler knows (6.2), so there is
-> no handle to duplicate, and no raised `NK2101` for the exemption above to apply
-> to ([ADR-040](adr/adr-040.md) §4). The form above is the one spelling of a
-> `spawn`, the trailing lambda of 5.3; the parser still insists on parentheses
-> around the body instead, which is a bug in the parser and not a second form.
+> therefore written ahead of both. `Shared[T]` is a type the compiler knows now
+> (6.2), so the handle the other case is about exists; what does not is the
+> duplication of it, and there is no raised `NK2101` for the exemption above to
+> apply to either ([ADR-040](adr/adr-040.md) §4). The form above is the one
+> spelling of a `spawn`, the trailing lambda of 5.3; the parser still insists on
+> parentheses around the body instead, which is a bug in the parser and not a
+> second form.
 
 ### 8.4. The Runtime Sidecar Model
 While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.

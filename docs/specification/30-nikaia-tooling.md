@@ -1188,17 +1188,17 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 The catalogue grows with the implementation; adding an NK code requires adding its reproduction test and its worked example to the relevant spec chapter.
 
 > **Status:** "defined so far" above means defined *here*, not emitted. The codes
-> the compiler reports are `NK1101`–`NK1114`, `NK2202`, `NK2302`, `NK2501`,
+> the compiler reports are `NK1101`–`NK1115`, `NK2202`, `NK2302`, `NK2501`,
 > `NK2502`, `NK2605` and `NK2701`; `NK2101`, `NK2102`, `NK2201`, `NK2301`,
-> `NK2401`, `NK2601`–`NK2604`, `NK2203`–`NK2205`, `NK2503` and `NK1115` are
-> specified ahead of the check that would raise them. `NK1115` is the one of
-> those that waits on a *type* rather than on a check: it is about handing a
-> plain value where a shared one is wanted, and no program can write either
-> ([ADR-039](adr/adr-039.md) §4).
+> `NK2401`, `NK2601`–`NK2604`, `NK2203`–`NK2205` and `NK2503` are specified ahead
+> of the check that would raise them. `NK1115` was the one of those that waited on
+> a *type* rather than on a check, and the type is built: `Shared[T]` is a type a
+> program can write (Part I, 6.2), so handing a plain value where a shared one is
+> wanted is a program somebody can write and this is what it is told.
 >
 > **A code specified ahead of its check has no reproduction test, and must not
 > have one.** The paragraph above asks for one per code, and that obligation is
-> owed by a code the compiler emits: for these fourteen there is nothing to
+> owed by a code the compiler emits: for these thirteen there is nothing to
 > reproduce, and a test that cannot fail would claim a check that is not there.
 > The four that [ADR-039](adr/adr-039.md) adds are in exactly the position of
 > the nine before them — catalogued, with their shapes written down (C.6), and

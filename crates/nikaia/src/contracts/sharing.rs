@@ -80,9 +80,13 @@
 //     an account, `std`'s entries are written in the file that ships and
 //     reviewed like code (ADR-005 §5.1), and a call nothing describes is the
 //     crossing. The residual is the one §5.3 names - "enforceable only as far as
-//     a foreign crate is honest". Today no `std` entry takes or hands back a
-//     `Shared` at all, and `a_std_entry_that_takes_a_shared_needs_a_second_look`
-//     in `tests/sharing.rs` is what makes somebody look on the day one does.
+//     a foreign crate is honest". No `std` entry takes or hands back a **handle**
+//     on a `Shared`: the one entry that mentions the type at all is
+//     `Shared::deref`, which takes `&Shared[$T]` and hands back `&$T` - a borrow
+//     duplicates nothing (ADR-040 D1) and what comes out is a view of the value
+//     inside, so there is no handle for it to keep.
+//     `a_std_entry_that_takes_a_shared_needs_a_second_look` in `tests/sharing.rs`
+//     is what makes somebody look on the day one does take one.
 //
 // Everywhere else is [`Fallback`], and the remedy for every row of it is to
 // write the contract down - ADR-033 D4's own closing argument, which is why
@@ -308,6 +312,34 @@ pub struct Sharing {
     /// Per function key, the allocation classes of its caller-visible
     /// positions. What [`super::FnContract::sharing`] records.
     pub summaries: BTreeMap<String, Vec<Class>>,
+    /// The count every slot's class got, by the slot key `function::value`.
+    ///
+    /// [`Sharing::decisions`] is the **report** - one line per value a person
+    /// wrote - and it leaves the internal slots out: a function's `<result>`,
+    /// and a `<struct>.<field>`. The **emitter** needs all of them, because
+    /// `Shared[T]` is written at those positions too and every one of them has
+    /// to be lowered to the type its class was given. So this is the same
+    /// answer, keyed for a lookup rather than shaped for a reader.
+    ///
+    /// It is handed to the emitter the way `check::Checked::fallible_loops` and
+    /// `fallible_methods` are: computed where the knowledge is, looked up where
+    /// the code is written. A slot this map has no entry for gets
+    /// [`Count::Atomic`] from [`Sharing::count_of`], because that is the floor
+    /// (ADR-037 D6) and a site nothing is known about may not be lowered.
+    pub counts: BTreeMap<String, Count>,
+}
+
+impl Sharing {
+    /// The count one slot's class got, with the floor where nothing is known.
+    ///
+    /// `value` is the name the source gives it, `<result>` for what a function
+    /// hands back, or `<struct>.<field>` under `<field>` for a field.
+    pub fn count_of(&self, function: &str, value: &str) -> Count {
+        self.counts
+            .get(&slot(function, value))
+            .copied()
+            .unwrap_or_default()
+    }
 }
 
 /// Every `Shared` value in a program, which count it would get, and the
@@ -685,10 +717,20 @@ impl<'a> Analysis<'a> {
                             // count belongs to the allocation, so a handle whose
                             // allocation is elsewhere is not one this analysis
                             // may lower.
+                            //
+                            // **Unless this line is where it is made.** Part I
+                            // 6.2 makes an annotated `let` the constructor: where
+                            // the declared type is `Shared[T]` and the value
+                            // beside it is a plain `T`, the allocation happens
+                            // here and this analysis watched it. Before the type
+                            // existed there was no such case, which is why
+                            // `UnseenOrigin` used to be the only answer.
                             None => match self.slot_of(function, value, scope) {
                                 Some(source) => {
                                     self.join(&slot(function, &name), &source);
                                 }
+                                None if declared.as_ref().is_some_and(by_value_shared)
+                                    && self.allocates_here(value) => {}
                                 None => self.origin_unseen(function, &name, value),
                             },
                         }
@@ -740,6 +782,58 @@ impl<'a> Analysis<'a> {
         if let Some(source) = self.slot_of(function, value, scope) {
             self.join(&slot(function, RESULT), &source);
         }
+    }
+
+    /// Whether an annotated `let` is itself the place the first handle is made.
+    ///
+    /// Part I 6.2: the annotation is the constructor, so `let db: Shared[C] =
+    /// connect(…)` allocates the count on this line - and a count this analysis
+    /// watched being made is not [`Fallback::UnseenOrigin`], whatever else it may
+    /// turn out to be.
+    ///
+    /// **The question is only ever answered yes where something written down says
+    /// the value is not already a handle**, which keeps the polarity this file
+    /// runs on. A literal and a struct literal are plain values by construction.
+    /// A call is one where a ledger gives it a result type and that type is known
+    /// and holds no `Shared`; a result of `?` is the absence of a claim
+    /// (ADR-024 D1) and is answered no, because a call that may hand a handle back
+    /// is a handle whose allocation is elsewhere. Everything else is no.
+    fn allocates_here(&self, value: &Expr) -> bool {
+        match value {
+            Expr::LitInt(_)
+            | Expr::LitFloat(_)
+            | Expr::LitStr(_)
+            | Expr::LitInterpolated(_)
+            | Expr::LitChar(_)
+            | Expr::LitBool(_)
+            | Expr::StructLit { .. } => true,
+            Expr::Call { func, .. } => self.hands_back_a_plain_value(self.path_of(func).as_deref()),
+            Expr::MethodCall { method, .. } => {
+                self.hands_back_a_plain_value(Some(self.parsed.text(*method)))
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a ledger says this callee's result is a value and not a handle.
+    fn hands_back_a_plain_value(&self, callee: Option<&str>) -> bool {
+        let Some(callee) = callee else {
+            return false;
+        };
+        let suffix = format!("::{callee}");
+        let contract = [self.own, self.library].into_iter().find_map(|ledger| {
+            ledger.functions.get(callee).or_else(|| {
+                ledger
+                    .functions
+                    .iter()
+                    .find(|(key, _)| key.ends_with(&suffix))
+                    .map(|(_, contract)| contract)
+            })
+        });
+        contract
+            .and_then(|contract| contract.signature.as_ref())
+            .and_then(|signature| signature.result.as_ref())
+            .is_some_and(|result| !result.is_unknown() && !holds_shared(result))
     }
 
     /// A handle whose allocation this analysis did not watch being made.
@@ -1049,7 +1143,7 @@ impl<'a> Analysis<'a> {
             };
             match (&described, callee) {
                 (Some((key, params)), _) => match params.get(at) {
-                    Some(param) => {
+                    Some((param, _)) => {
                         let (key, param) = (key.clone(), param.clone());
                         self.join(&slot(function, &handle), &slot(&key, &param));
                     }
@@ -1089,11 +1183,17 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    /// A callee's ledger key and its parameter names, where a ledger has them.
+    /// A callee's ledger key and its parameters - name and declared type -
+    /// where a ledger has them.
     ///
     /// The program's own ledger first, then `std`'s, with the suffix rule every
     /// other resolution in this compiler uses (ADR-011 D2).
-    fn parameters(&self, callee: &str) -> Option<(String, Vec<String>)> {
+    ///
+    /// **The type is here for one question only**: whether the position takes
+    /// the handle by value or lends the inner value out. A by-value `Shared`
+    /// parameter is a second handle (ADR-040 D1); a `&Shared` one is a borrow
+    /// and duplicates nothing. Neither changes which count the class gets.
+    fn parameters(&self, callee: &str) -> Option<(String, Vec<(String, Ty)>)> {
         let suffix = format!("::{callee}");
         let (key, contract) = [self.own, self.library].into_iter().find_map(|ledger| {
             ledger.functions.get_key_value(callee).or_else(|| {
@@ -1104,14 +1204,7 @@ impl<'a> Analysis<'a> {
             })
         })?;
         let signature = contract.signature.as_ref()?;
-        Some((
-            key.clone(),
-            signature
-                .arguments()
-                .iter()
-                .map(|(name, _)| name.clone())
-                .collect(),
-        ))
+        Some((key.clone(), signature.arguments().to_vec()))
     }
 
     // --- colouring -------------------------------------------------------
@@ -1133,6 +1226,7 @@ impl<'a> Analysis<'a> {
 
         let keys: Vec<String> = self.handles.keys().cloned().collect();
         let mut decisions = Vec::new();
+        let mut counts: BTreeMap<String, Count> = BTreeMap::new();
         let mut classes: BTreeMap<String, BTreeMap<usize, Class>> = BTreeMap::new();
         for key in keys {
             let id = self.id(&key);
@@ -1155,6 +1249,7 @@ impl<'a> Analysis<'a> {
                 entry.members.push(handle.value.clone());
                 entry.count = entry.count.join(count);
             }
+            counts.insert(key.clone(), count);
             if !handle.internal {
                 decisions.push(Decision {
                     function: handle.function.clone(),
@@ -1186,6 +1281,7 @@ impl<'a> Analysis<'a> {
         Sharing {
             decisions,
             summaries,
+            counts,
         }
     }
 }
@@ -1236,6 +1332,18 @@ fn split_slot(key: &str) -> (String, String) {
         Some((function, name)) => (function.to_string(), name.to_string()),
         None => (String::new(), key.to_string()),
     }
+}
+
+/// Whether a position takes a handle on a shared value **by value**.
+///
+/// `Shared[T]` does; `&Shared[T]` does not, and the difference is
+/// [ADR-040](../../../../docs/specification/adr/adr-040.md) D1's correction:
+/// lending the inner value out hands no handle on, so nothing is duplicated and
+/// no atomic instruction is paid. A type that merely *holds* a `Shared` does not
+/// either - a struct is carried by whatever holds it, which is D1's own scope
+/// note.
+fn by_value_shared(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, view: false, .. } if name == SHARED)
 }
 
 /// Whether a type is, or holds, a `Shared`.
@@ -1293,10 +1401,14 @@ fn field_type(ty: &str, field: &str, own: &Ledger, library: &Ledger) -> Option<T
 /// What `Shared[T]` lowers to, which since ADR-037 D6 is one type with one
 /// optimisation on top of it.
 ///
-/// Named here rather than in `emit` because **nothing emits it**: the emitter has
-/// no `Rc::new` and no `Arc::new`, and the grammar has no way to construct a
-/// `Shared`. D6 decides that the floor is `std::sync::Arc`; D7 decides that a
-/// value this analysis proves never crosses may be `std::rc::Rc` instead.
+/// D6 decides that the floor is `std::sync::Arc`; D7 decides that a value this
+/// analysis proves never crosses may be `std::rc::Rc` instead.
+///
+/// Named here rather than in `emit` because the answer is **per value**: the
+/// emitter asks it of the count this file gave a particular position, which is
+/// why `emit::Emitter::map_name` could not have answered it. The full path and no
+/// `use`, because the emitted file writes every `std` type that way and two names
+/// as common as these are two a program may have of its own.
 pub fn rust_name(count: Count) -> &'static str {
     match count {
         Count::Plain => "std::rc::Rc",

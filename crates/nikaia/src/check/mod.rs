@@ -130,6 +130,25 @@ pub struct Checked {
     /// fail-quietly this module's other answers keep: the set never claims a
     /// call fails that does not.
     pub fallible_methods: BTreeSet<(usize, String)>,
+    /// The places where a declared `Shared[T]` makes the **first handle** out
+    /// of a plain value (Part I 6.2), by the byte the statement starts at and
+    /// the name the sharing is written against.
+    ///
+    /// The third thing this module answers for the emitter, after
+    /// `fallible_loops` and `fallible_methods`, and for the reason said once
+    /// there: `let db: Shared[Connection] = connect(…)` needs the constructor
+    /// written around the value and `let b: Shared[Connection] = db` does not,
+    /// and telling those apart means knowing what `connect` and `db` are. The
+    /// emitter has no types (ADR-028), so the answer is computed here and handed
+    /// over; the emitter writes the `Rc::new` or the `Arc::new`.
+    ///
+    /// **Two shapes and no others**, which is Part I 6.2's own list: an
+    /// annotated `let`, keyed by the name it binds, and a struct literal's field
+    /// whose declared type says so, keyed `<struct>.<field>`. A call site is
+    /// deliberately absent - a call in which the word does not appear would move
+    /// the cleanup point silently, so it is `NK1115` instead
+    /// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1).
+    pub shared_sites: BTreeSet<(usize, String)>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -207,11 +226,12 @@ pub fn check_program(
     checker.checked
 }
 
-/// Everything the emitter needs in order to make a failure travel: the loops
-/// whose step can fail and the method calls that can fail.
+/// Everything the emitter needs that only a type checker can answer: the loops
+/// whose step can fail, the method calls that can fail, and the places where a
+/// declared `Shared[T]` makes the first handle.
 ///
-/// Both together because both come out of one pass, and a second pass would
-/// cost a whole type check to answer a question the first one already
+/// All three together because all three come out of one pass, and a second pass
+/// would cost a whole type check to answer a question the first one already
 /// answered.
 #[derive(Debug, Clone, Default)]
 pub struct Propagation {
@@ -219,6 +239,13 @@ pub struct Propagation {
     pub loops: BTreeSet<usize>,
     /// [`Checked::fallible_methods`].
     pub methods: BTreeSet<(usize, String)>,
+    /// [`Checked::shared_sites`].
+    ///
+    /// Not about a failure travelling, and here anyway: it is the same
+    /// arrangement - an answer only a type checker can give, wanted by the
+    /// emitter - and it comes out of the same pass, so carrying it here costs
+    /// nothing and a second entry point would cost a whole type check.
+    pub shared: BTreeSet<(usize, String)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -245,6 +272,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
     Propagation {
         loops: checked.fallible_loops,
         methods: checked.fallible_methods,
+        shared: checked.shared_sites,
     }
 }
 
@@ -517,17 +545,29 @@ impl<'a> Checker<'a> {
                 name, ty, value, ..
             } => {
                 let found = self.expr(value, span);
+                let name = self.parsed.text(*name).to_string();
                 let bound = match ty {
                     Some(ty) => {
                         let want = Ty::from_ast(self.parsed, ty);
-                        self.expect(&found, &want, span.clone(), "let", |found, want| {
-                            format!("this is `{found}`, and the `let` says `{want}`")
-                        });
+                        // Part I 6.2: an annotated `let` is where the first
+                        // handle on a shared value is made. The annotation *is*
+                        // the constructor, so a plain value standing here is not
+                        // a mistake - it is the one line that makes one, and the
+                        // emitter is told where to write it.
+                        match becomes_shared(&found, &want) {
+                            true => {
+                                self.checked.shared_sites.insert((span.start, name.clone()));
+                            }
+                            false => {
+                                self.expect(&found, &want, span.clone(), "let", |found, want| {
+                                    format!("this is `{found}`, and the `let` says `{want}`")
+                                });
+                            }
+                        }
                         want
                     }
                     None => found,
                 };
-                let name = self.parsed.text(*name).to_string();
                 self.bind(name, bound);
                 Ty::Tuple(Vec::new())
             }
@@ -755,7 +795,7 @@ impl<'a> Checker<'a> {
                     .map(|ty| ty::substitute(ty, &bound))
                     .collect();
                 let found = self.arguments_given(args, &expected, span);
-                let result = self.arguments(&key, contract, &found, &[], span);
+                let result = self.arguments(&key, contract, args, &found, &[], span);
                 ty::substitute(&result, &bound)
             }
 
@@ -793,6 +833,16 @@ impl<'a> Checker<'a> {
                         Some((_, want)) => {
                             let want = want.clone();
                             let owner = name.clone();
+                            // The second of Part I 6.2's two places: a field
+                            // whose declared type says the value is shared. The
+                            // shared type stands in the same line as the value,
+                            // which is the whole of what the rule asks.
+                            if becomes_shared(&found, &want) {
+                                self.checked
+                                    .shared_sites
+                                    .insert((span.start, format!("{owner}.{field}")));
+                                continue;
+                            }
                             self.expect(
                                 &found,
                                 &want,
@@ -1086,6 +1136,18 @@ impl<'a> Checker<'a> {
     /// Whether an expression names anything that exists here - a variable in
     /// scope or a function some ledger has. This is what keeps the warning off
     /// a stylesheet: `margin` is nobody's variable.
+    /// The name an expression writes, where it writes one.
+    ///
+    /// For `NK1115`'s help line, which has to say `let db: Shared[…] = …` with
+    /// the caller's own name in it. A value that is not a name has no such line
+    /// to be pointed at, and the message says so instead of inventing one.
+    fn names_of(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+            _ => None,
+        }
+    }
+
     fn names_something_here(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Variable(name) => {
@@ -1174,15 +1236,20 @@ impl<'a> Checker<'a> {
             .strip_suffix("::new")
             .filter(|_| !name.ends_with("::new"))
             .map(Ty::named);
-        let result = self.arguments(&key, contract, &found, &passed, span);
+        let result = self.arguments(&key, contract, args, &found, &passed, span);
         constructed.unwrap_or(result)
     }
 
     /// The count and the types of what a call passes, against what it takes.
+    ///
+    /// `given` is the argument expressions, for the one diagnostic that has to
+    /// name the **value** rather than its type: `NK1115` points at the line where
+    /// the sharing belongs, and that line starts with the name the caller wrote.
     fn arguments(
         &mut self,
         key: &str,
         contract: &FnContract,
+        given: &[Expr],
         found: &[Ty],
         passed: &[(String, Ty)],
         span: &Span,
@@ -1239,8 +1306,43 @@ impl<'a> Checker<'a> {
             }
         }
 
-        for ((name, want), found) in wanted.iter().zip(found) {
+        for (at, ((name, want), found)) in wanted.iter().zip(found).enumerate() {
             if self.fits_through_deref(found, want) {
+                continue;
+            }
+            // Part I 6.2: a plain value may become a shared one only where the
+            // shared type stands in the same line, and a call site is not such a
+            // place - a call in which the word does not appear would move the
+            // cleanup point silently, and at such a place there would be no
+            // saying whether the value was handed on or duplicated. So this is
+            // refused by a code of its own, whose message points at the line
+            // where the sharing belongs (ADR-040 D1, Part III C.3).
+            if becomes_shared(found, want) {
+                let value = given.get(at).and_then(|arg| self.names_of(arg));
+                self.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: span.clone(),
+                    code: "NK1115",
+                    message: match &value {
+                        Some(value) => {
+                            format!("`{key}` takes a shared value, and `{value}` is not one")
+                        }
+                        None => format!("`{key}` takes a shared value, and this is not one"),
+                    },
+                    notes: vec![format!("`{key}{}`", signature.text())],
+                    help: Some(match &value {
+                        Some(value) => format!(
+                            "write the sharing where it starts: `let {value}: {} = …` - or a \
+                             field whose declared type says so (Part I, 6.2)",
+                            want.text()
+                        ),
+                        None => format!(
+                            "write the sharing where the value starts - an annotated `let` that \
+                             says `{}`, or a field whose declared type does (Part I, 6.2)",
+                            want.text()
+                        ),
+                    }),
+                });
                 continue;
             }
             self.checked.findings.push(Finding {
@@ -1887,6 +1989,36 @@ fn view_of(inner: &Ty) -> Ty {
         // A tuple of views is not a view of a tuple, and nothing writes down
         // what a view of a lambda would be.
         _ => Ty::Unknown,
+    }
+}
+
+/// The type several parts of a program own at once (Part I 6.2).
+const SHARED: &str = "Shared";
+
+/// Whether a plain value standing where `want` is wanted would be the **first
+/// handle** on a shared one.
+///
+/// `want` is `Shared[T]` and `found` is the `T` it holds. That is the one shape
+/// Part I 6.2 gives the annotation: the shared type stands in the line, and the
+/// value beside it is what the handle is made of. `Shared::new` does not exist
+/// and must not, so the annotation is the constructor
+/// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3).
+///
+/// **It never turns a refusal into an acceptance on its own.** Every caller asks
+/// it only after a direct comparison has already failed, and then either records
+/// the site (the two places 6.2 permits) or refuses with `NK1115` (everywhere
+/// else). A `Shared` already standing where a `Shared` is wanted never reaches
+/// here, so a handle is never wrapped twice.
+fn becomes_shared(found: &Ty, want: &Ty) -> bool {
+    let Ty::Named { name, args, view } = want else {
+        return false;
+    };
+    if name != SHARED || *view {
+        return false;
+    }
+    match args.as_slice() {
+        [held] => found.fits(held) && !found.is_unknown(),
+        _ => false,
     }
 }
 

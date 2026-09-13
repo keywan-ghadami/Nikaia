@@ -169,10 +169,16 @@ impl Codegen {
 /// decided now (ADR-002 D4), and it is sound for exactly as long as **nothing
 /// switch-sensitive appears in `std`'s `.nika` files**.
 ///
-/// `Shared` is what would break it. [ADR-037](../../../docs/specification/adr/adr-037.md)
-/// D3 makes it `Rc` at `user_parallelism = no` and `Arc` at `yes`, so a `Shared`
-/// in a `.nika` file here would be lowered to `Rc` and handed to a program built
-/// at `yes` - a `std` that cannot cross a thread inside a program that may. The
+/// `Shared` was what would have broken it, and no longer is.
+/// [ADR-037](../../../docs/specification/adr/adr-037.md) D3 made it `Rc` at
+/// `user_parallelism = no` and `Arc` at `yes`, so a `Shared` in a `.nika` file
+/// here would have been lowered to `Rc` and handed to a program built at `yes` -
+/// a `std` that cannot cross a thread inside a program that may. **D6 took the
+/// representation off the switch**: there is one count, and which of the two a
+/// particular value gets is decided per value by `contracts::sharing`, which
+/// never reads `user_parallelism` (D4's note on the `sharing` column). So a
+/// `Shared` here lowers to the same bytes at both settings, and what would break
+/// this is anything else the emitter writes differently per switch. The
 /// constraint is checked rather than only written down:
 /// `tests/sysroot.rs::stds_nikaia_half_lowers_the_same_at_both_switches` lowers
 /// every module at both settings and requires the bytes to agree, so the day

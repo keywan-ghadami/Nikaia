@@ -17,10 +17,12 @@
 //! depend on the order somebody wrote their functions in. That test is here, and
 //! so are its siblings.
 //!
-//! **Every source here parses and is analysed for real.** `Shared` has no
-//! constructor - there is no `Rc::new` or `Arc::new` in the emitter - so a
-//! `Shared` can only arrive as a *declared type*, which is exactly how
-//! `tests/send.rs` reaches the same type. Nothing is emitted.
+//! **Every source here parses and is analysed for real, and nothing is
+//! emitted.** `Shared` has no constructor and must not get one (ADR-040 §3), so
+//! a `Shared` arrives as a *declared type* - which is how `tests/send.rs` reaches
+//! the same type, and since Part I 6.2's annotated `let` is built it is also how
+//! a program makes one. What the lowering does with the answers is
+//! `tests/shared.rs`, which compiles and runs.
 
 use nikaia::contracts::sharing::{self, Count, Fallback};
 use nikaia::contracts::{Ledger, TypeContract, STD};
@@ -759,34 +761,72 @@ fn the_report_has_the_shape_the_other_explanations_have() {
     );
 }
 
-/// No `std` entry takes or hands back a `Shared`, and the day one does somebody
-/// has to look at it.
+/// No `std` entry can **keep** a handle on a `Shared`, and the day one could
+/// somebody has to look at it.
 ///
 /// The analysis treats a call the ledger describes as **accounted for**, which
 /// is what ADR-005 §5.2 already does for the same question - a contract is an
 /// account, and `std`'s are reviewed like code. What that rests on is that a
 /// described callee does not quietly stash a handle and cross with it, which is
-/// ADR-005 §5.3's "enforceable only as far as a foreign crate is honest". Today
-/// the exposure is **zero**, because no `std` signature mentions the type at
-/// all. This is the guard that notices when it stops being zero.
+/// ADR-005 §5.3's "enforceable only as far as a foreign crate is honest".
+///
+/// **`Shared::deref` is the one entry that mentions the type, and it is the
+/// shape this guard is not about.** It takes `&Shared[$T]` and hands back `&$T`:
+/// a borrow duplicates nothing (ADR-040 D1's correction), and what comes out is a
+/// view of the value inside rather than a handle on it - so there is no handle for
+/// the entry to keep and nothing for it to cross with. It is there because
+/// ADR-042 D2 sees a transparent container through to what it holds, which is
+/// what makes `serve(&db)` mean something. So the guard asks the question it was
+/// always for rather than the one its first spelling asked: a position that takes
+/// or hands back a **handle** is the decision, and a borrow of one is not.
 #[test]
 fn a_std_entry_that_takes_a_shared_needs_a_second_look() {
     let library = Ledger::parse(STD).expect("std ships a ledger");
-    let mentions: Vec<&String> = library
-        .functions
-        .iter()
-        .filter(|(_, contract)| {
-            contract
-                .signature
-                .as_ref()
-                .is_some_and(|s| s.text().contains("Shared"))
-        })
-        .map(|(name, _)| name)
-        .collect();
+    let mut carries: Vec<String> = Vec::new();
+    for (name, contract) in &library.functions {
+        let Some(signature) = contract.signature.as_ref() else {
+            continue;
+        };
+        let positions = signature
+            .params
+            .iter()
+            .map(|(_, ty)| ty.clone())
+            .chain(signature.result.clone());
+        for ty in positions {
+            if carries_a_handle(&ty) {
+                carries.push(format!("{name}{}", signature.text()));
+                break;
+            }
+        }
+    }
     assert!(
-        mentions.is_empty(),
-        "a `std` entry now mentions `Shared`: {mentions:?}. `contracts::sharing` treats a \
-         described callee as accounted for, so somebody has to decide whether that entry may \
-         keep a handle and cross with it - see the module header."
+        carries.is_empty(),
+        "a `std` entry now takes or hands back a handle on a `Shared`: {carries:?}. \
+         `contracts::sharing` treats a described callee as accounted for, so somebody has to \
+         decide whether that entry may keep the handle and cross a thread with it - see the \
+         module header of `contracts::sharing`. A `&Shared[$T]` receiver is not this case: a \
+         borrow duplicates nothing (ADR-040 D1)."
     );
+}
+
+/// Whether a position is a **handle** on a shared value rather than a borrow of
+/// one.
+///
+/// `Shared[T]` is, and so is anything holding one - a `Vec[Shared[T]]` a callee
+/// is lent can still have a handle cloned out of it. `&Shared[T]` is not, and it
+/// is the only exemption: the view reaches the value inside and produces no
+/// second owner.
+fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
+    use nikaia::contracts::ty::Ty;
+    match ty {
+        Ty::Named { name, args, view } => {
+            if name == "Shared" {
+                return !*view || args.iter().any(carries_a_handle);
+            }
+            args.iter().any(carries_a_handle)
+        }
+        Ty::Tuple(parts) => parts.iter().any(carries_a_handle),
+        Ty::Fn { params } => params.iter().any(carries_a_handle),
+        Ty::Unknown | Ty::Var { .. } => false,
+    }
 }

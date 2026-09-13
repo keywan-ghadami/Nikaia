@@ -948,3 +948,114 @@ fn a_view_of_a_view_is_the_view() {
         "a view of a view must still fit"
     );
 }
+
+// --- a shared value: where one is made, and where it is refused (Part I 6.2) --
+
+/// **An annotated `let` makes the first handle**, so a plain value standing
+/// there is not a mistake.
+///
+/// There is no `Shared::new` and must not be: the annotation is the constructor
+/// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3), which is why this
+/// is an acceptance rather than a conversion the checker suggests.
+#[test]
+fn an_annotated_let_makes_a_plain_value_shared() {
+    assert!(
+        findings(
+            "struct Conn { host: String }\n\
+             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn main() { let db: Shared[Conn] = connect() }"
+        )
+        .is_empty(),
+        "the annotated `let` is where the sharing starts"
+    );
+}
+
+/// …and a field whose declared type says so is the other place.
+#[test]
+fn a_field_whose_declared_type_says_so_makes_a_handle() {
+    assert!(
+        findings(
+            "struct Conn { host: String }\n\
+             struct Pool { db: Shared[Conn] }\n\
+             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn main() { let p = Pool { db: connect() } }"
+        )
+        .is_empty(),
+        "a field's declared type is where the sharing starts"
+    );
+}
+
+/// **A call site is not such a place** (`NK1115`).
+///
+/// A call in which the word does not appear would move the cleanup point
+/// silently, and at such a place there would be no saying whether the value was
+/// handed on or duplicated. So it is refused, and the message points at the line
+/// where the sharing belongs.
+#[test]
+fn a_call_that_wants_a_shared_value_and_is_given_a_plain_one_is_refused() {
+    let (code, message) = one("struct Conn { host: String }\n\
+         fn keep(db: Shared[Conn]) { }\n\
+         fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+         fn main() { let db = connect()\n keep(db) }");
+    assert_eq!(code, "NK1115");
+    assert_eq!(message, "`keep` takes a shared value, and `db` is not one");
+    let help = findings(
+        "struct Conn { host: String }\n\
+         fn keep(db: Shared[Conn]) { }\n\
+         fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+         fn main() { let db = connect()\n keep(db) }",
+    )[0]
+    .help
+    .clone()
+    .expect("Part III C.2: every diagnostic names a way out");
+    assert!(
+        help.contains("let db: Shared[Conn] = "),
+        "it has to point at the line where the sharing belongs: {help}"
+    );
+}
+
+/// A shared value handed where a shared value is wanted is fine, and nothing
+/// about the rule above reaches it.
+#[test]
+fn a_shared_value_fits_a_shared_parameter() {
+    assert!(
+        findings(
+            "struct Conn { host: String }\n\
+             fn keep(db: Shared[Conn]) { }\n\
+             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn main() { let db: Shared[Conn] = connect()\n keep(db) }"
+        )
+        .is_empty(),
+        "a handle fits a parameter that takes one"
+    );
+}
+
+/// **Lending the inner value out duplicates nothing, and the checker is what
+/// makes it writable.** `serve(&db)` takes a view of the value inside, through
+/// `Shared::deref` and [ADR-042](../../../docs/specification/adr/adr-042.md) D2 -
+/// a generic container seen through with what *this* one holds (ADR-031).
+#[test]
+fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
+    assert!(
+        findings(
+            "struct Conn { host: String }\n\
+             fn serve(db: &Conn) { }\n\
+             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn main() { let db: Shared[Conn] = connect()\n serve(&db) }"
+        )
+        .is_empty(),
+        "a function that only uses the value takes an ordinary view"
+    );
+}
+
+/// Seeing a `Shared` through is still a **rescue**: one that holds something
+/// else is refused, with this compiler's own words rather than rustc's.
+#[test]
+fn a_shared_value_does_not_fit_a_view_of_just_anything() {
+    let (code, message) = one("struct Conn { host: String }\n\
+         fn count(n: &i64) { }\n\
+         fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+         fn main() { let db: Shared[Conn] = connect()\n count(&db) }");
+    assert_eq!(code, "NK1102");
+    assert!(message.contains("&Shared[Conn]"), "{message}");
+}

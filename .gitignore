@@ -13,3 +13,6 @@ node_modules/
 /hello_world
 /hello_world.rs
 /check_rustc.rs
+
+# A stray rustc invocation without `-o` leaves one of these.
+/a.out

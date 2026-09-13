@@ -88,11 +88,14 @@
 #
 # `sharing` on a `[fn."…"]` says which of a function's `Shared` positions are one
 # allocation and which reference count each of those classes gets (ADR-037 D7).
-# No `std` entry has one, because no `std` signature mentions `Shared` - and
-# `a_std_entry_that_takes_a_shared_needs_a_second_look` in
-# `crates/nikaia/tests/sharing.rs` is what makes somebody look on the day one
-# does: the analysis treats a described callee as accounted for, so an entry that
-# could keep a handle and cross a thread with it is a decision and not a line.
+# No `std` entry has one. `Shared::deref` is the only entry that mentions the
+# type, and it takes the handle as a **borrow** and hands back a view of what is
+# inside - so it has no `Shared` position of its own to classify: a borrow
+# duplicates nothing (ADR-040 D1). `a_std_entry_that_takes_a_shared_needs_a_second_look`
+# in `crates/nikaia/tests/sharing.rs` is what makes somebody look on the day an
+# entry takes a handle by value or hands one back: the analysis treats a described
+# callee as accounted for, so an entry that could keep a handle and cross a thread
+# with it is a decision and not a line.
 #
 # `provenance` marks a **source**: a function whose result is bytes that entered
 # the program from outside, and who chose them (ADR-010 D2). Its absence is not
@@ -308,6 +311,31 @@ pub = true
 sync = "from(f)"
 signature = "(Entry[$V], f: fn()) -> &$V"
 
+# `Shared[T]` is the type several parts of a program own at once (Part I 6.2).
+# It is here rather than inferred for the reason the whole of this section is
+# here: what it expands to is Rust - one reference count, atomic at both
+# settings of `user_parallelism` (ADR-037 D6), with a plain one where
+# `contracts::sharing` proves the value never crosses a thread (D7).
+#
+# **There is no constructor entry, and there must not be one.** The annotation
+# *is* the constructor: `let db: Shared[Connection] = connect(…)` makes the
+# first handle, and a `Shared::new` would write the same thing twice
+# (ADR-040 §3, Part I 6.2). There is no entry for making a second handle either,
+# because a handle handed on by value is duplicated and there is nothing to call
+# (ADR-040 D1).
+#
+# `deref` is the one entry, and it is what makes `serve(&db)` mean something.
+# ADR-042 D2 sees a container through to what it holds wherever its ledger
+# records a `deref`, and D2's own note says `Shared` is seen through "the moment
+# it has a `deref` entry, with no further decision". This is that entry. `$T` is
+# bound by the receiver (ADR-031), which is why one line answers for every
+# `Shared` a program writes rather than for one instantiation.
+[fn."Shared::deref"]
+pub = true
+sync = true
+returns = "borrows(self)"
+signature = "(&Shared[$T]) -> &$T"
+
 # `String::new()` reaches nothing and hands back an empty one. Four adjacent
 # pairs in `examples/` named it as the callee nobody had described, which is
 # what asked for the entry.
@@ -423,3 +451,17 @@ pub = true
 [type."io::Lines"]
 pub = true
 iterates = "throws"
+
+# The type several parts of a program own at once (Part I 6.2), and the one type
+# here whose `deref` entry above a caller is not meant to notice: a function that
+# takes `&Connection` accepts a `&Shared[Connection]`, which is ADR-042 D2's
+# rescue rather than a rule of this file's own.
+#
+# No `crosses` line, deliberately, and its absence is not "nobody said" here.
+# `contracts::send` keeps `Shared` in its **container** list since ADR-037 D6, so
+# a `Shared[T]` is answered by what `T` is: `Shared[String]` crosses and
+# `Shared[Locked[i32]]` is undecided, for the lock's sake and not the count's. A
+# `crosses = true` written here would answer for both, which is the one thing
+# that is not true of the type.
+[type."Shared"]
+pub = true
