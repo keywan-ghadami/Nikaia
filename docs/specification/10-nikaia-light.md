@@ -860,11 +860,15 @@ of an extra handle stays something you can look up
 > does not exist, the backend has no lowering for one, and the four doors of 6.3
 > wait on the same thing ([ADR-039](adr/adr-039.md) §4).
 >
-> **And the duplication is not built yet, for either.** A handle handed on by
-> value is handed on as it stands, so nothing steps the count and `--sharing`
-> names no duplication site ([ADR-040](adr/adr-040.md) §4). What *is* built above
-> that is the reasoning: which owner count a `Shared` value gets is inferred per
-> value, and `--sharing` prints it ([ADR-037](adr/adr-037.md) D7).
+> **The duplication is built for a handle handed to a function**, and not for one
+> used by a task. A handle handed on by value — to a call whose parameter takes one
+> — is duplicated, so the name outside stays usable; lending the inner value out
+> duplicates nothing; and `--sharing` names each duplication site beside the count
+> it printed ([ADR-040](adr/adr-040.md) D1, D5). The task half waits on `spawn`,
+> which does not lower yet (Part II, 11.2) — the analysis sees it and names it, and
+> no emitted program reaches it. What is built above all of it is the reasoning:
+> which owner count a `Shared` value gets is inferred per value, and `--sharing`
+> prints it ([ADR-037](adr/adr-037.md) D7).
 
 ### 6.3. Changing Shared Data: The Four Doors
 A value behind a lock is not changed by assignment — the lock has to be opened
@@ -1485,9 +1489,11 @@ the duplication of 6.2 serves, so there is no error and no `.clone()` to write
 > integration it needs is the next step (Part II, 11.2) — and `NK2101` is
 > catalogued but never raised (Part III, Appendix C.3). The move rule is
 > therefore written ahead of both. `Shared[T]` is a type the compiler knows now
-> (6.2), so the handle the other case is about exists; what does not is the
-> duplication of it, and there is no raised `NK2101` for the exemption above to
-> apply to either ([ADR-040](adr/adr-040.md) §4). The form above is the one
+> (6.2) and a handle handed on by value is duplicated, so the rule the other case
+> states is built everywhere a handle is handed to a **function**; into a task it
+> is not, because there is no task to hand one to, and there is no raised `NK2101`
+> for the exemption above to apply to either
+> ([ADR-040](adr/adr-040.md) §4). The form above is the one
 > spelling of a `spawn`, the trailing lambda of 5.3; the parser still insists on
 > parentheses around the body instead, which is a bug in the parser and not a
 > second form.

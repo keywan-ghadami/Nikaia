@@ -363,10 +363,13 @@ The `spawn` function is defined with the `@detached` attribute. This triggers **
 * **Copying, for ordinary data:** If you need to keep **data** — a string, a number, a struct or collection of those — in the parent thread, you must explicitly call `.clone()` before spawning, and the copy is what the task takes (Part I, 8.3).
 * **Nothing to copy, for a handle:** A handle on a `Shared[T]` is the other case. It is **duplicated** where it is handed to the task, so the name in the parent thread keeps working and there is nothing to call — for a handle there is no method, because copying a handle copies none of the data (Part I, 6.2, [ADR-040](adr/adr-040.md) D1).
 
-> **Status:** both bullets are written ahead of the compiler. `spawn` does not
-> lower yet and the capture it decides is not reported (Part I, 8.3), and the
-> duplication waits on something further back — `Shared[T]` is not a type the
-> compiler knows (Part I, 6.2), so there is no handle to duplicate
+> **Status:** both bullets are written ahead of the compiler, and for one reason
+> only now. `spawn` does not lower yet and the capture it decides is not reported
+> (Part I, 8.3), so there is no task for either bullet to be about. `Shared[T]`
+> *is* a type the compiler knows (Part I, 6.2) and a handle handed on by value is
+> duplicated, so the second bullet's rule is built everywhere a handle is handed
+> to a **function**; `--sharing` names the `spawn` in a program that writes one as
+> a duplication site, and no emitted program reaches it
 > ([ADR-040](adr/adr-040.md) §4).
 
 #### What a task may take with it
@@ -374,7 +377,7 @@ A task runs on a thread of its own, so **everything it uses has to be able to cr
 
 The answer is **the same at both settings**, so that a library written at one cannot turn out un-compilable where it is used. What the setting changes is only whether this build performs the crossing: at `no` nothing you wrote runs concurrently, so the task does not run and the refusal is a lint rather than an error. The diagnostic is `NK2501`, worked through in Part III C.5.
 
-> **Status.** The check runs, and today no type reaches its refusing half: the lock and `SharedMut[T]` are the types that may not cross and neither is a type the compiler knows (6.2, Part III C.5). `spawn` itself does not yet lower either, because the runtime integration it needs is the next step. So `NK2501` is reported ahead of the construct it is about — which is the right order, since the check is what has to exist before a value that may not cross one does.
+> **Status.** The check runs, and today no type reaches its refusing half: the lock and `SharedMut[T]` are the types that may not cross and neither is a type the compiler knows (6.2, Part III C.5) — `Shared[T]` is one, and it is answered by what it holds rather than refused. `spawn` itself does not yet lower either, because the runtime integration it needs is the next step. So `NK2501` is reported ahead of the construct it is about — which is the right order, since the check is what has to exist before a value that may not cross one does.
 
 **The nesting rule does not reach into a spawned task, and a lock still cannot be handed to one.** Two different rules, and only the first is about nesting. A `spawn`'s body runs later and elsewhere rather than during the call, so it is not part of whatever its writer was holding at the time, and the rule that refuses a lock taken while a lock is held (12.3) does not reach into it ([ADR-039](adr/adr-039.md) D3). A scope is the other case, because it waits for its tasks — see 12.7.
 

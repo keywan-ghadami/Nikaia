@@ -249,6 +249,20 @@ pub struct Decision {
     /// analysis *found* the crossing rather than failing to rule one out - a
     /// `spawn` is a crossing, not a mystery.
     pub fallback: Option<Fallback>,
+    /// Every place a second handle on this allocation is made, in the words a
+    /// user would be told ([ADR-040](../../../../docs/specification/adr/adr-040.md)
+    /// D5).
+    ///
+    /// D1 makes a handle duplicated where it is handed on **by value**, and there
+    /// is no method to call - so the place one step of the count is paid is
+    /// unwritten in the source. D5 asks for it to be readable somewhere, and this
+    /// is that somewhere: the count is already printed here, so what an extra
+    /// handle costs is printed beside it.
+    ///
+    /// **A borrow contributes nothing**, which is D1's own correction: lending the
+    /// inner value out hands no handle on, so there is nothing to duplicate and no
+    /// instruction to pay.
+    pub duplications: Vec<String>,
 }
 
 impl Decision {
@@ -446,6 +460,18 @@ pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger) -> String {
                 "             nothing crosses a thread with it, so the count is lowered\n",
             ),
         }
+        // ADR-040 D5: a handle is duplicated where it is handed on by value, and
+        // the source does not say so - one step of the count is paid there. So the
+        // places are named beside the count, which is the output D5 asks for.
+        match decision.duplications.as_slice() {
+            [] => out
+                .push_str("             one handle, so the count is never stepped (ADR-040 D1)\n"),
+            sites => {
+                for site in sites {
+                    out.push_str(&format!("             duplicated: {site}\n"));
+                }
+            }
+        }
     }
 
     let atomic = sharing
@@ -506,6 +532,10 @@ struct Analysis<'a> {
     parent: Vec<usize>,
     /// What forced a slot's class to be atomic.
     forced: Vec<(String, String, Option<Fallback>)>,
+    /// Where a second handle on a slot's allocation is made
+    /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D5): the slot
+    /// key, and what a reader is told about the place.
+    duplicated: Vec<(String, String)>,
 }
 
 struct Handle {
@@ -531,6 +561,7 @@ impl<'a> Analysis<'a> {
             index: BTreeMap::new(),
             parent: Vec::new(),
             forced: Vec::new(),
+            duplicated: Vec::new(),
         }
     }
 
@@ -597,6 +628,25 @@ impl<'a> Analysis<'a> {
         let key = slot(function, value);
         self.id(&key);
         self.forced.push((key, why, fallback));
+    }
+
+    /// A second handle on this slot's allocation is made here
+    /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D1).
+    ///
+    /// **Only where the handle is handed on by value.** A borrow duplicates
+    /// nothing - that is D1's own correction, and what it decides is whether a
+    /// function that only *uses* a shared value touches the count. So a
+    /// `&Shared[T]` parameter never reaches here.
+    ///
+    /// Recorded rather than acted on: which count a class gets is decided by where
+    /// the value **crosses** and not by how many handles there are, so this
+    /// changes no verdict. It is what `--sharing` prints beside the count, because
+    /// D1 leaves the place the atomic instruction is paid unwritten in the source
+    /// (D5).
+    fn duplicates(&mut self, function: &str, value: &str, site: String) {
+        let key = slot(function, value);
+        self.id(&key);
+        self.duplicated.push((key, site));
     }
 
     fn function(&mut self, item: &Item, target: Option<&str>) {
@@ -965,6 +1015,17 @@ impl<'a> Analysis<'a> {
             // Part II 11.2: a task runs on a thread of its own.
             Expr::Spawn { body, .. } => {
                 for name in send::names_used(self.parsed, body) {
+                    // ADR-040 D1's second half: a task that uses a handle takes one
+                    // of its own, so the name outside the task stays usable.
+                    if scope.get(&name).is_some_and(by_value_shared) {
+                        self.duplicates(
+                            function,
+                            &name,
+                            "used by a `spawn` body, which takes a handle of its own \
+                             (Part II 11.2)"
+                                .to_string(),
+                        );
+                    }
                     self.reached(
                         function,
                         &name,
@@ -1138,13 +1199,37 @@ impl<'a> Analysis<'a> {
                         self.reached(function, &name, &scope.clone(), &why, Some(kind));
                     }
                 }
+                // A handle read out of a **field** is a handle handed on by value
+                // as surely as a named one is: `keep(pool.db)` gives the callee an
+                // owner. The field has a slot, so it joins the parameter's class
+                // exactly as a name would - without which the field's class was
+                // left unjoined and could disagree with the parameter's about
+                // which count it is, which is the fail-open direction
+                // `docs/rc-or-arc.md` §8 warns about.
+                if let Some((key, params)) = &described {
+                    if let Some((param, param_ty)) = params.get(at) {
+                        if by_value_shared(param_ty) {
+                            if let Some(source) = self.slot_of(function, arg, scope) {
+                                let (key, param) = (key.clone(), param.clone());
+                                let (at, name) = split_slot(&source);
+                                self.duplicates(&at, &name, handed_to(&key, &param));
+                                self.join(&source, &slot(&key, &param));
+                            }
+                        }
+                    }
+                }
                 self.expr(function, arg, scope);
                 continue;
             };
             match (&described, callee) {
                 (Some((key, params)), _) => match params.get(at) {
-                    Some((param, _)) => {
+                    Some((param, param_ty)) => {
                         let (key, param) = (key.clone(), param.clone());
+                        // ADR-040 D1: a handle handed on **by value** is
+                        // duplicated; one the callee only borrows is not.
+                        if by_value_shared(param_ty) {
+                            self.duplicates(function, &handle, handed_to(&key, &param));
+                        }
                         self.join(&slot(function, &handle), &slot(&key, &param));
                     }
                     // More arguments than the contract has parameters: nothing
@@ -1224,6 +1309,18 @@ impl<'a> Analysis<'a> {
             }
         }
 
+        // Where the second handles are made, gathered per slot before the answer is
+        // read off. A duplication is a fact about a **slot** and not about a class:
+        // two handles on one allocation are handed on in different places, and a
+        // reader wants the place beside the name they wrote.
+        let mut duplicated: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (key, site) in std::mem::take(&mut self.duplicated) {
+            let sites = duplicated.entry(key).or_default();
+            if !sites.contains(&site) {
+                sites.push(site);
+            }
+        }
+
         let keys: Vec<String> = self.handles.keys().cloned().collect();
         let mut decisions = Vec::new();
         let mut counts: BTreeMap<String, Count> = BTreeMap::new();
@@ -1258,6 +1355,7 @@ impl<'a> Analysis<'a> {
                     count,
                     why,
                     fallback,
+                    duplications: duplicated.get(&key).cloned().unwrap_or_default(),
                 });
             }
         }
@@ -1315,6 +1413,16 @@ fn published(key: &str, at: &str) -> String {
              them may cross a thread with it"
         ),
     }
+}
+
+/// The sentence a duplication at a call gets.
+///
+/// No line number: an `Expr` carries no span in this AST, which is the same limit
+/// `check::Checked::fallible_methods` records about a method call. The callee and
+/// the position it takes the handle in are what there is to say, and they are
+/// enough to find the line.
+fn handed_to(key: &str, param: &str) -> String {
+    format!("handed to `{key}` as `{param}`, which takes a handle of its own")
 }
 
 /// The sentence a call nothing describes gets.

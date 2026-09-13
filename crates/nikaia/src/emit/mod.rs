@@ -2945,7 +2945,8 @@ impl<'p> Emitter<'p> {
                     out.push("::<Vec<_>>");
                 }
                 out.push("(");
-                self.args(out, args, depth, flow)?;
+                let takes = self.takes_a_handle(self.text(*method));
+                self.args(out, args, &takes, depth, flow)?;
                 self.dsl_parameters(out, self.text(*method), args.len(), config, depth, flow)?;
                 out.push(")");
 
@@ -3208,14 +3209,15 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 out.push(&format!("{text}!(\"{{}}\", "));
-                self.args(out, args, depth, flow)?;
+                self.args(out, args, &[], depth, flow)?;
                 out.push(")");
                 return Ok(());
             }
 
             if self.structs.contains(name) {
                 out.push(&format!("{text}::new("));
-                self.args(out, args, depth, flow)?;
+                let takes = self.takes_a_handle(&format!("{text}::new"));
+                self.args(out, args, &takes, depth, flow)?;
                 out.push(")");
                 return Ok(());
             }
@@ -3223,7 +3225,8 @@ impl<'p> Emitter<'p> {
 
         self.expr(out, func, depth, flow)?;
         out.push("(");
-        self.args(out, args, depth, flow)?;
+        let takes = self.takes_a_handle_at(func);
+        self.args(out, args, &takes, depth, flow)?;
 
         if let Expr::Variable(name) = func {
             self.dsl_parameters(out, self.text(*name), args.len(), config, depth, flow)?;
@@ -3511,14 +3514,104 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
-    fn args(&self, out: &mut Out, args: &[Expr], depth: usize, flow: Flow<'_>) -> Result<()> {
+    fn args(
+        &self,
+        out: &mut Out,
+        args: &[Expr],
+        // Which positional parameters of the callee take a **handle** on a shared
+        // value by value, where a ledger describes the callee. Empty where nothing
+        // does or nothing is known, which is almost every call.
+        takes_a_handle: &[bool],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 out.push(", ");
             }
+            // ADR-040 D1: a handle on a shared value is **duplicated, never
+            // moved**, where it is handed on by value. There is no method for a
+            // programmer to call, so this is where the step is written - and
+            // unconditionally, not only where the name is used again (D2): a line
+            // further down may not decide what a line further up does to a
+            // cleanup point.
+            //
+            // Only where the argument **names** a handle. A temporary - a call
+            // that hands one back - has no block of its own to die at the end of,
+            // so there is no second owner and nothing to duplicate.
+            let duplicate = takes_a_handle.get(i).copied().unwrap_or(false)
+                && matches!(arg, Expr::Variable(_) | Expr::Field { .. });
             self.expr(out, arg, depth, flow)?;
+            if duplicate {
+                // `.clone()` and not `Rc::clone(&x)`: it is right under either
+                // count, so it cannot disagree with the type the position was
+                // lowered to. `Rc<T>` and `Arc<T>` implement `Clone` themselves,
+                // so this steps the count and never copies `T`.
+                out.push(".clone()");
+            }
         }
         Ok(())
+    }
+
+    /// Which of a callee's positional parameters take a handle on a shared value
+    /// **by value**, where a ledger describes the callee.
+    ///
+    /// Resolved the way `contracts::sharing::Analysis::parameters` resolves it -
+    /// this program's own ledger first, then `std`'s, by name and then by suffix
+    /// (ADR-011 D2) - so that the duplication written here and the duplication
+    /// `--sharing` names are the same call's.
+    ///
+    /// A `&Shared[T]` parameter answers **no**, which is ADR-040 D1's correction:
+    /// lending the inner value out hands no handle on.
+    fn takes_a_handle(&self, callee: &str) -> Vec<bool> {
+        let suffix = format!("::{callee}");
+        let contract = [&self.own_contracts, &self.library]
+            .into_iter()
+            .find_map(|ledger| {
+                ledger.functions.get(callee).or_else(|| {
+                    ledger
+                        .functions
+                        .iter()
+                        .find(|(key, _)| key.ends_with(&suffix))
+                        .map(|(_, contract)| contract)
+                })
+            });
+        contract
+            .and_then(|contract| contract.signature.as_ref())
+            .map(|signature| {
+                signature
+                    .arguments()
+                    .iter()
+                    .map(|(_, ty)| {
+                        matches!(
+                            ty,
+                            crate::contracts::ty::Ty::Named { name, view: false, .. }
+                                if name == SHARED
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The same, for the callee a `Call` names.
+    fn takes_a_handle_at(&self, func: &Expr) -> Vec<bool> {
+        let name = match func {
+            Expr::Variable(name) => self.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| self.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => return Vec::new(),
+        };
+        // Part I 4.2's anonymous constructor is reached as `Type(…)` and recorded
+        // as `Type::new`, which is the one place the call's spelling and the
+        // ledger's key differ.
+        match self.structs.iter().any(|s| self.text(*s) == name) {
+            true => self.takes_a_handle(&format!("{name}::new")),
+            false => self.takes_a_handle(&name),
+        }
     }
 
     /// `dsl Measurements from data` - the whole of what a user writes to run a

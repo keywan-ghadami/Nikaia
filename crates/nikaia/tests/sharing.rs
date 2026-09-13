@@ -43,6 +43,20 @@ fn decisions(source: &str) -> Vec<sharing::Decision> {
     sharing::analyse(&parsed, &own, &library)
 }
 
+/// One value's answer, by the function it is written in and the name the source
+/// gives it.
+///
+/// Two functions may name a handle the same thing - a caller's `db` and the
+/// parameter it is handed to - and then the pair is what picks one out.
+fn one_in(source: &str, function: &str, value: &str) -> sharing::Decision {
+    let found = decisions(source);
+    found
+        .iter()
+        .find(|d| d.function == function && d.value == value)
+        .unwrap_or_else(|| panic!("no decision for `{function}::{value}` in {found:#?}"))
+        .clone()
+}
+
 /// One value's answer, by the name the source gives it.
 fn one(source: &str, value: &str) -> sharing::Decision {
     let found = decisions(source);
@@ -829,4 +843,101 @@ fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
         Ty::Fn { params } => params.iter().any(carries_a_handle),
         Ty::Unknown | Ty::Var { .. } => false,
     }
+}
+
+// --- where the second handle is made (ADR-040 D1 and D5) ---------------------
+
+/// A handle handed to a function that **keeps** it is duplicated, and the place
+/// is named.
+///
+/// [ADR-040](../../../docs/specification/adr/adr-040.md) D1 leaves the place one
+/// step of the count is paid unwritten in the source - there is no method to
+/// call - so D5 asks for it beside the count, which is what this analysis feeds
+/// `--sharing`.
+#[test]
+fn a_handle_handed_on_by_value_is_a_duplication_site() {
+    let decision = one_in(
+        "fn behalte(db: Shared[i64]) { }\n\
+         fn main() { let db: Shared[i64] = 1\n behalte(db) }",
+        "main",
+        "db",
+    );
+    assert_eq!(
+        decision.duplications,
+        vec!["handed to `behalte` as `db`, which takes a handle of its own".to_string()],
+        "{decision:#?}"
+    );
+}
+
+/// **A borrow duplicates nothing**, which is D1's own correction and the half
+/// most easily got wrong: a `&Shared[T]` parameter hands no handle on.
+#[test]
+fn a_borrowed_handle_is_not_a_duplication_site() {
+    let decision = one_in(
+        "fn schau(db: &Shared[i64]) { }\n\
+         fn main() { let db: Shared[i64] = 1\n schau(&db) }",
+        "main",
+        "db",
+    );
+    assert!(
+        decision.duplications.is_empty(),
+        "lending the inner value out touches no count: {decision:#?}"
+    );
+}
+
+/// A task takes a handle of its own, so the name outside it stays usable
+/// (D1's second half).
+#[test]
+fn a_task_that_uses_a_handle_is_a_duplication_site() {
+    let decision = one(
+        "fn main() { let db: Shared[i64] = 1\n spawn({ println(f\"{db}\") }) }",
+        "db",
+    );
+    assert!(
+        decision
+            .duplications
+            .iter()
+            .any(|site| site.contains("`spawn` body")),
+        "{decision:#?}"
+    );
+    // And it is still a crossing, which is a separate question from how many
+    // handles there are: the duplication changes no verdict.
+    assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
+}
+
+/// Two handovers to the same callee are one site, because the report is read:
+/// the same sentence twice says nothing the once did not.
+#[test]
+fn the_same_handover_is_named_once() {
+    let decision = one_in(
+        "fn behalte(db: Shared[i64]) { }\n\
+         fn main() { let db: Shared[i64] = 1\n behalte(db)\n behalte(db) }",
+        "main",
+        "db",
+    );
+    assert_eq!(decision.duplications.len(), 1, "{decision:#?}");
+}
+
+/// A handle read out of a **field** and handed on by value joins the callee's
+/// class, exactly as a named one does.
+///
+/// Without the join the field's class and the parameter's could disagree about
+/// which count they are, and the emitted Rust would then hand an `Rc` where an
+/// `Arc` is wanted - a `rustc` error about a file nobody wrote, which is what
+/// Part III C.1 forbids.
+#[test]
+fn a_handle_taken_out_of_a_field_joins_what_it_is_handed_to() {
+    let source = "struct Halter { db: Shared[i64] }\n\
+         fn kreuze(db: Shared[i64]) { spawn({ println(f\"{db}\") }) }\n\
+         fn main() { let h = Halter { db: 1 }\n kreuze(h.db) }";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let sharing = sharing::analyse_program(&parsed, &own, &library);
+    assert_eq!(
+        sharing.count_of("<field>", "Halter.db"),
+        Count::Atomic,
+        "the crossing in `kreuze` has to reach the field it was handed out of: {:#?}",
+        sharing.counts
+    );
 }
