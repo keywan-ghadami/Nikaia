@@ -373,8 +373,11 @@ and was also carrying open work. One list.
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal
-readiness — and **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are
-untouched**. The order that record gives is unchanged: a socket layer that keeps
+readiness — and [ADR-055](specification/adr/adr-055.md) has since put an executor
+on top of them at `user_parallelism = no`, so a task can pause and another can
+run. **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are untouched**, and
+the executor does not change that: what is missing is not somewhere for a
+handler to run, it is a socket to run it for. The order that record gives is unchanged: a socket layer that keeps
 registrations rather than answering one readiness question at a time, then a
 minimal HTTP/1.1 server on it, then the parsing moved into Nikaia, then `rustls`,
 then HTTP/2. The first step is the blocker; `worker::poll_one` builds a poller per

@@ -314,11 +314,15 @@ string can be mistaken for an answer.
 Two things are not in the source and are not omissions. Which runtime this is: the switch
 chooses the executor and the same text is the program at either setting
 ([ADR-011](docs/specification/adr/adr-011.md) D4). And where it pauses: a handler does I/O, so a
-call that waits looks like a call (Part II, 11.1).
+call that waits looks like a call (Part II, 11.1) — the emitted Rust is an `async fn` with an
+`.await` at that call, decided by what the ledger already knows and **built**
+([ADR-055](docs/specification/adr/adr-055.md) D1, D2).
 
 > **Status:** `std::http` is not built ([ADR-038](docs/specification/adr/adr-038.md) D1) — this
-> is what the specification says a server is, not something you can run today. The programs in
-> [`examples/`](examples/) are the ones that run.
+> is what the specification says a server is, not something you can run today. What *is* built
+> underneath it: the runtime, the executor at `user_parallelism = no`, and `spawn`
+> ([ADR-055](docs/specification/adr/adr-055.md) §6); what is missing is the socket layer and the
+> HTTP/1.1 parser above them. The programs in [`examples/`](examples/) are the ones that run.
 
 Bigger, more revealing programs live in [`examples/`](examples/): the One Billion Row
 Challenge, a four-function calculator, a web access log summarised, an INI file with comments, a
