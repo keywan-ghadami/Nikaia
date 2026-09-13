@@ -1,6 +1,7 @@
 # Open decisions — the questions that need the owner
 
-Six questions that work cannot settle. Each one says what is blocked, what the
+Six entries. One is answered and kept here until its record exists;
+the rest are questions that work cannot settle. Each one says what is blocked, what the
 options are, **what I would do**, and what either direction costs — because a
 question without a recommendation is work handed back rather than a decision
 asked for.
@@ -14,35 +15,65 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. Does `use pool` bring the names in, or does everything stay qualified?
+## 1. What `use pool` does — **answered**
 
-**Blocked by it:** the shape of the fix for [`open-work.md`](open-work.md) §1.1 —
-a module can hand out functions and not types today.
+**The answer.** `use pool` makes a module reachable and does nothing else. Every
+name from it is written with its prefix, at every use:
 
-Part I 9.1 says a module is reached through its name, and the call side already
-works that way: `pool::make()`. What is missing is the same for a type — a
-qualified name that resolves to the same type, and a struct literal that tolerates
-a prefix, `pool::Conn(id: 1)`.
+```nika
+use pool
 
-The question is whether `use pool` does anything beyond making the module
-reachable. Two answers:
+fn handle(c: pool::Conn) -> i64 {
+    let d: pool::Conn = pool::make()
+    return c.id + d.id
+}
+```
 
-* **Qualified only.** `use pool` makes the module visible and nothing else; every
-  name from it is written `pool::…` at every use.
-* **Qualified plus import.** `use pool` also brings the public names in, so
-  `Conn(id: 1)` works, perhaps with a `use pool::{Conn}` form for choosing.
+Four forms, and the answer for each:
 
-**I would keep it qualified only**, and add the two missing pieces without an
-import form. The reason is the one thing qualification buys: in a file that
-imports names, a reader has to know every import to know what a name means, and a
-second import can change the meaning of a line that did not change. That is the
-cost this language avoids in return for four characters. `f"{c.id}"` is short
-anyway because the prefix is on the *type*, not on every use of the value.
+* **`use pool`** — takes the module's file name. Kept, and it is the whole of it.
+* **`use pool as p`** — an alias, so `p::Conn` reads at every use site. **Added.**
+  It is what makes the decision bearable for a module called
+  `request_handling`, and the property that matters survives it: a prefix still
+  stands at every use, declared once and visibly at the top.
+* **`use pool::*`** — everything the module makes public, without naming it.
+  **Refused, and not left open.** A name added to `pool` later changes what an
+  unchanged line in another file means, which is the one thing a reader cannot
+  defend against.
+* **`use pool::{Conn, Pool}`**, with `as` on a single name — **not decided, and
+  deliberately not refused.** See below.
 
-**What it costs either way:** nothing in the compiler differs much — the
-resolution change is the same either way, and an import form is a second lookup
-table. The cost is on the reader, which is why it is a decision and not a
-preference.
+**Why the selected form stays open rather than being settled with the rest.** The
+argument against importing is about the **blanket** form and does not reach the
+selected one: a braced list says by name what comes in, a name added to the module
+later changes nothing, and two lists that name the same thing are a compile error
+rather than a silent change of meaning. It is a real candidate, and the reason not
+to take it today is a different one — **direction**. Adding it later breaks no
+program, because everything written with a prefix stays valid. Removing it later
+breaks every program that used it. Between a choice that can be reversed and one
+that cannot, and with no evidence yet from a program of any size, the reversible
+one is taken first.
+
+**What this does not answer, and it is the larger question.** There is no
+**re-export**: no way for a module to offer a name that another module declares.
+Today that is invisible, because a program is one package and its author knows
+their own file layout. It stops being invisible the day a library is published:
+without it, a library's *internal file layout is its public surface*, and moving a
+declaration from one file to another — housekeeping — breaks every consumer. That
+belongs with §6 and is recorded there.
+
+**What it costs, stated rather than implied.** Every use of a foreign name is
+longer by a prefix, and the prefix lands in the places this language already asks
+for a type: a signature, and the annotated `let` that is the only place sharing
+begins — `let db: Shared[pool::Connection] = …`. What is bought is that a reader
+of any line knows where every name in it comes from without consulting the top of
+the file, and that no edit elsewhere can change what a line already written means.
+
+**And it does not block the repair.** [`open-work.md`](open-work.md) §1.1 needs the
+same two pieces under either answer — a qualified type name that resolves to the
+same type, and a struct literal that tolerates a prefix. Only the import form
+depended on this, and it is not being built. The repair can proceed; the alias is
+the one addition this answer brings with it.
 
 ---
 
@@ -184,6 +215,15 @@ takes the destination rather than the switch, so that both answers stay
 switch-independent. It is a correct rule and it should stay. But it currently
 protects a situation nothing can construct: there are no Nikaia libraries, because
 there is no way to depend on one.
+
+**And a second half that §1 handed over.** There is no **re-export**: no way for a
+module to offer a name that another module declares. A library is many files, and
+without it the consumer must name the file a declaration happens to sit in — so the
+library's *internal layout is its public surface*, and moving a declaration between
+files breaks every consumer. A library that cannot curate what it offers has no
+stable surface to offer. Whatever answer (a), (b) or (c) gets, this comes with it:
+it is not an ergonomic form like §1's braced import, it is the difference between a
+library having a front door and not having one.
 
 Three answers:
 

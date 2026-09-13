@@ -78,8 +78,12 @@ split one.
 two types (ADR-011 D2's name-for-name rule, applied to a type rather than to a
 function), and the struct-literal form has to tolerate a qualified name. The
 second is parser work; the first is one place in `check`. See
-[`open-decisions.md`](open-decisions.md) §1 for the one question in it — whether
-`use pool` should also bring the names in.
+[`open-decisions.md`](open-decisions.md) §1, now answered: `use pool` makes a
+module reachable and nothing more, `use pool as p` is added, `use pool::*` is
+refused, and a braced selected form stays open because adding it later breaks
+nothing. So the scope of this repair is the two pieces above and the alias — no
+import form is being built, and the answer changed nothing else about what is
+needed here.
 
 And the parser half is not the whole of it: once a qualified struct literal
 parses, **visibility decides whether it is allowed**. A struct whose fields are
