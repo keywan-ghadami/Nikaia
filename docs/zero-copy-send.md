@@ -92,97 +92,129 @@ the disagreement is itself a finding:
 
 ---
 
-## 2. The numbers
+## 2. The numbers, and which of them are real
 
-Median of seven, µs per request. First run.
+Machine CPU, µs per request. **Five runs**, all on the same box: the first two
+while it was busy with this repository's own builds, then one pinned to two
+cores with `taskset`, then two on a quiet box. The first run is kept in the
+table because it is the one the first draft of
+[ADR-058](specification/adr/adr-058.md) argued from, and finding out that it was
+the outlier is the point of this section.
 
 ### Named at startup
 
-| | 4 KiB | 64 KiB | 1 MiB |
-| :--- | ---: | ---: | ---: |
-| `read_each` | 39.5 | 65.0 | 860 |
-| `cached` | 22.5 | 51.5 | 760 |
-| `mapped` | **19.0** | **45.5** | 780 |
-| `sendfile` | 18.0 | 50.0 | **650** |
-| `splice` | 73.5 | 88.0 | 1010 |
+| 4 KiB | busy | 2 cores | quiet | quiet | quiet |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `read_each` | 39.5 | 16.5 | 22.5 | 22.5 | 21.5 |
+| `cached` | 22.5 | 8.5 | 12.0 | 11.5 | 12.0 |
+| `mapped` | 19.0 | 13.5 | 13.5 | 11.5 | 10.5 |
+| `sendfile` | 18.0 | 10.5 | 9.5 | 12.0 | 12.0 |
+| `splice` | 73.5 | 58.0 | 54.0 | 52.5 | 52.0 |
+
+| 64 KiB | busy | 2 cores | quiet | quiet | quiet |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `read_each` | 65.0 | 38.5 | 37.0 | 37.5 | 40.5 |
+| `cached` | 51.5 | 31.5 | 31.0 | 33.0 | 29.5 |
+| `mapped` | 45.5 | 31.5 | 29.0 | 34.0 | 32.0 |
+| `sendfile` | **50.0** | **22.0** | **21.5** | **25.5** | **24.5** |
+| `splice` | 88.0 | 51.5 | 56.0 | 58.0 | 59.5 |
+
+| 1 MiB | busy | 2 cores | quiet | quiet | quiet |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `read_each` | 860 | 575 | 580 | 570 | 615 |
+| `cached` | 760 | 470 | 460 | 460 | 505 |
+| `mapped` | 780 | 420 | 465 | 460 | 450 |
+| `sendfile` | 650 | 375 | 445 | 405 | 440 |
+| `splice` | **1010** | **400** | **435** | **445** | **485** |
 
 ### Named by the request
 
-| | 4 KiB | 64 KiB | 1 MiB |
-| :--- | ---: | ---: | ---: |
-| `read_named` | 30.5 | 65.5 | 925 |
-| `mapped_named` | 76.0 | 124.0 | 715 |
-| `sendfile_named` | **28.0** | **49.5** | 800 |
-| `mapped_kept` | **13.5** | **46.0** | **635** |
+| 4 KiB | busy | 2 cores | quiet | quiet | quiet |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `read_named` | 30.5 | 18.0 | 22.5 | 21.5 | 15.5 |
+| `mapped_named` | 76.0 | 43.5 | 45.0 | 42.5 | 28.0 |
+| `sendfile_named` | 28.0 | 16.5 | 14.0 | 18.5 | 14.5 |
+| `mapped_kept` | 13.5 | 12.5 | 10.5 | 12.5 | 9.5 |
 
-### 2.1 The second run, and which rows moved
+| 64 KiB | busy | 2 cores | quiet | quiet | quiet |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `read_named` | 65.5 | 38.0 | 39.5 | 40.0 | 40.0 |
+| `mapped_named` | 124.0 | 67.0 | 72.0 | 72.0 | 66.0 |
+| `sendfile_named` | 49.5 | 30.5 | 28.5 | 30.0 | 34.0 |
+| `mapped_kept` | 46.0 | 31.0 | 31.0 | 32.0 | 30.5 |
 
-The whole block was run twice. Every ordering above reproduced except the
-megabyte row of the second family, where three of the four vehicles are within
-each other's spread and `mapped_named` moved from 715 to 940:
+| 1 MiB | busy | 2 cores | quiet | quiet | quiet |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `read_named` | 925 | 585 | 555 | 545 | 605 |
+| `mapped_named` | 715 | 495 | 455 | 470 | 490 |
+| `sendfile_named` | 800 | 425 | 440 | 460 | 480 |
+| `mapped_kept` | 635 | 455 | 485 | 465 | 515 |
 
-| named by the request, 1 MiB | run 1 | run 2 |
-| :--- | ---: | ---: |
-| `read_named` | 925 | 805 |
-| `mapped_named` | 715 | 940 |
-| `sendfile_named` | 800 | 845 |
-| `mapped_kept` | **635** | **720** |
+### 2.1 What reproduced, and what was one busy afternoon
 
-So **no claim below rests on the megabyte row of the second family** beyond
-`mapped_kept` winning it, which both runs agree on. What reproduced exactly is
-everything at 4 KiB and 64 KiB, and it is where the findings are.
+**Every absolute travels badly and the busy run travels worst.** The same
+binary on the same four cores reports 39.5 µs and 21.5 µs for the same
+vehicle. Nothing below is stated in microseconds that is not also stated as an
+ordering.
 
-## 3. What they say — a page known at startup
+Reproduced in **all five** runs:
 
-**The criticism was right about the read.** 39.5 µs against 19.0 at 4 KiB: more
-than half of what answering a small request cost was opening the file, copying
-it into the process and validating it as UTF-8 — work that produces the same
-bytes every time. At 64 KiB it is 65.0 against 45.5 and at a megabyte 860
-against 780: the read's share shrinks as the payload grows, which is what a
-fixed per-request cost has to do.
+* `read_each` / `read_named` is the worst vehicle at every size in both
+  families — the read is real and it is the largest single item at 4 KiB;
+* **`mmap` per request is 2–3× worse than plainly reading** below a megabyte,
+  and it is the worst vehicle in its family there;
+* a **kept mapping** is the best vehicle at 4 KiB when the request names the
+  file, by roughly 2× over the best that keeps nothing;
+* `sendfile` is **never worse than reading**, in either family, at any size;
+* `splice`'s *thread* column is flat (14–21 µs) at every size while its machine
+  column is not — the instrument, not the mechanism.
 
-**And wrong about what to do instead.** `sendfile` removes the copy that
-`mapped` still pays, and at 4 KiB that is worth nothing: 18.0 against 19.0,
-inside the spread. At 64 KiB it *loses* — 50.0 against 45.5. It wins at a
-megabyte, 650 against 780, by 17 %. There is no copy worth a syscall's
-bookkeeping at four kilobytes, which is why
-[ADR-058](specification/adr/adr-058.md) D3 puts the choice inside `std` with a
-size an operator can pin, and not in the language where a program's author would
-have to guess it.
+**Retired by the re-runs** — each of these was true in the busy run only, and
+each was in the first draft of [ADR-058](specification/adr/adr-058.md):
 
-**`mapped` is `cached` without the heap**, and slightly ahead of it at every
-size. Neither number is the reason to prefer it: the mapping does not hold a
-second copy of a file the page cache already has, and that is a memory property
-this bench does not measure and a server with a thousand pages would feel.
+* *"`sendfile` loses at 64 KiB."* One run of five. In the other four it is the
+  best vehicle in its family there, by 20–30 %.
+* *"The crossover is near a megabyte."* There is no crossover to find on a quiet
+  box: `sendfile` is at or ahead of the mapping from 64 KiB up, and the three
+  vehicles are within each other's spread below that.
+* *"`splice` is the worst vehicle at every size."* At a megabyte it is mid-field
+  in four runs of five, ahead of `read_each` in all four. It stays worst below a
+  megabyte.
+* *"A kept mapping wins at every size."* It wins at 4 KiB and ties at 64 KiB;
+  at a megabyte three runs put `sendfile` ahead of it.
 
-## 3.1 What they say — a file the request names
+## 3. What they say
 
-This is the program the first family cannot speak for, and three things separate
-them.
+**The criticism was right about the read, and that is the one finding no re-run
+touched.** `read_each` is worst at every size in every run, and at 4 KiB it is
+roughly twice the next vehicle. Opening a file, copying it into the process and
+validating it as UTF-8 — to produce the same bytes as last time — is the largest
+single item in answering a small request. That is what the README's example did.
 
-**Keeping the mapping is worth more than any mechanism.** `mapped_kept` — a
-table of mappings made once, looked up by path — is **13.5 µs** at 4 KiB where
-the best vehicle that keeps nothing is 28.0, and it wins at every size in both
-runs. A file server's real answer is a cache, and the interesting decision is
-therefore not `sendfile` versus `read`: it is what `std` may keep, how it is
-bounded, and when it is invalidated.
+**`mmap` per request is the trap, and it is the second finding that held.** 2–3×
+worse than plainly reading, below a megabyte, in all five runs. A mapping is a
+page-table edit, an address-space reservation and, on unmapping, an
+invalidation the other cores have to hear about; four kilobytes of payload
+amortises none of it. An implementation of `http::File` that mapped per request
+would be the slowest option at the sizes servers send most, while looking like
+the zero-copy one.
 
-**Mapping per request is the trap, and it is the obvious reading of §3.** "Map
-it, don't read it" is right when the mapping is made once and **wrong by 2.5×**
-when it is not: `mapped_named` costs 76.0 µs at 4 KiB against `read_named`'s
-30.5, and 124.0 against 65.5 at 64 KiB. A mapping is a page-table edit, an
-address-space reservation and — on unmapping — an invalidation the other cores
-have to hear about; none of that is amortised by four kilobytes of payload. An
-implementation of `http::File` that mapped per request would be the slowest
-option at the sizes servers send most, while looking like the zero-copy one.
+**Keeping the mapping is worth more than choosing a mechanism, at small sizes.**
+13.5, 12.5, 10.5, 12.5, 9.5 µs against the best keeping-nothing vehicle's 28.0,
+16.5, 14.0, 18.5, 14.5 at 4 KiB. It stops being true as the payload grows: at
+64 KiB it ties `sendfile`, and at a megabyte three runs of five put `sendfile`
+ahead. A cache is a small-request optimisation, which is the right shape — a
+megabyte spends its time in the transfer either way.
 
-**Among vehicles that may keep nothing, `sendfile` is the answer.** 28.0 against
-`read_named`'s 30.5 at 4 KiB and 49.5 against 65.5 at 64 KiB, in both runs — and
-it is the only one of the three whose cost does not include a copy into the
-process, so it is the one that does not scale its memory with the number of
-requests in flight. That is what an unbounded set of files — a download route
-over user uploads, where a cache would be a liability rather than a hot set —
-actually needs.
+**And `sendfile` is not the thing the first draft said it was.** It is never
+worse than reading, anywhere, and from 64 KiB up it is the best or joint-best
+vehicle in both families on a quiet box. What killed the "it loses below a
+megabyte" story was re-running it: that claim rested on one afternoon when the
+box was building this repository at the same time.
+
+**But it does not follow that `sendfile` is simply the answer**, and §5 is why:
+the two servers most people deploy ship it **off** by default, for reasons this
+bench is structurally unable to see.
 
 ## 4. What this does not measure, and one confound
 
@@ -216,9 +248,92 @@ does not price, and
 [ADR-058](specification/adr/adr-058.md) D8 is where they are decided rather than
 assumed.
 
+**Nothing here is under memory pressure, and the cache is warm** — which is the
+caveat §5's prior art turns into the important one. `sendfile` on a *cold* page
+cache blocks in the kernel while the disk is read, and this bench never once
+paid that: every file was written seconds earlier on a box with 15 GB of RAM.
+nginx needed `aio`, `SF_NODISKIO` and a thread pool to stop that blocking a
+worker, and `sendfile_max_chunk` to stop one connection holding one while it
+happens. A single connection with a fast reader cannot show either.
+
 **And the absolutes travel badly.** This is a shared 4-vCPU VM; `docs/runtime-cost.md`
 §6 records the same binary's numbers moving 1.4–1.9× between days on this
 machine class. What reproduced across runs here is the *ordering* and the
 *ratios* — `read_each` worst at small sizes, `mapped` and `cached` together,
 `sendfile` behind them until the megabyte and ahead after, `splice` last — and
 those are what [ADR-058](specification/adr/adr-058.md) rests on.
+
+---
+
+## 5. What the servers people actually deploy decided
+
+A number from one virtual machine is a weak reason for a language rule, and the
+re-runs in §2.1 are the demonstration. So: four servers with two decades of
+production between them, and what each of them concluded about the same choice.
+
+**Apache httpd ships `sendfile` off.** `EnableSendfile` defaults to **Off** since
+2.4, having defaulted to On in 2.2 — a server that had the optimisation on by
+default turned it off. `EnableMMAP` carries its own warning: a mapped file that
+another NFS client truncates gives the serving process a **bus error** on the
+next access, so the documentation's recommendation for an NFS-mounted directory
+is to turn *both* off.
+
+**nginx ships `sendfile` off too**, and its interesting directive is not the
+on/off one. `sendfile_max_chunk` exists "to avoid cases when nginx spins in
+`sendfile()` for a long time when network connection is faster than disk
+subsystem" — a **fairness** knob, not a throughput one, and its default was
+changed to 2 MB in 1.21.4. With `aio` off, `sendfile` blocks the worker on disk
+I/O; the answer was `SF_NODISKIO`, then a thread pool. `TCP_NOPUSH`/`TCP_CORK`
+are enabled only when sendfile is used, and `SSL_sendfile()` needs OpenSSL 3.0
+built with kTLS.
+
+**HAProxy makes kernel splicing opt-in** — `option splice-request`,
+`splice-response`, `splice-auto` — with the note that kernels between 2.6.25 and
+2.6.28 forwarded *corrupted data*. Pipes exist only for splicing, are allocated
+dynamically, and fall back to an ordinary copy when there are none.
+
+**lighttpd makes the mechanism a configuration value outright**:
+`server.network-backend` is `sendfile`, `writev` or `write`, with the advice
+that sendfile suits small files and writev many large ones.
+
+**Three things follow, and they are worth more than §2's table.**
+
+*It is a knob everywhere.* Not one of these four picks a mechanism at build time
+or exposes it in what an application writes. Every one of them chose: the
+application says "this file answers this request", the server decides how, and
+an operator may overrule it on the machine it runs on.
+
+*The defaults moved, and they moved toward off.* Apache's went from On to Off
+between two major versions. That is a project with far more evidence than this
+one concluding that the safe default and the fast default are not the same
+default.
+
+*What turns them off is correctness, not speed.* NFS, a truncated mapping, a
+kernel that corrupts spliced bytes, a worker blocked on a cold cache, one
+connection starving the others. Every reason in that list is invisible to a
+benchmark of one warm connection on loopback — which is to say, invisible to
+§2's table.
+
+### 5.1 Where each of those comes from
+
+* [`ngx_http_core_module`](https://nginx.org/en/docs/http/ngx_http_core_module.html)
+  — `sendfile`, `sendfile_max_chunk`, `aio`, `directio`, and that `TCP_NOPUSH` /
+  `TCP_CORK` are enabled only with sendfile.
+* [Changed default value of `sendfile_max_chunk` to 2m](https://mailman.nginx.org/pipermail/nginx-devel/2021-October/014478.html)
+  and [Simplified `sendfile(SF_NODISKIO)` usage](https://mailman.nginx.org/pipermail/nginx-devel/2021-December/014687.html)
+  — the fairness knob and the non-blocking flag, in the commits that changed them.
+* [Thread pools boost performance 9x](https://www.nginx.com/blog/thread-pools-boost-performance-9x/)
+  — why a blocking read had to leave the worker at all.
+* [`ngx_http_ssl_module`](https://nginx.org/en/docs/http/ngx_http_ssl_module.html)
+  — `SSL_sendfile()` needs OpenSSL 3.0 built with kTLS.
+* [Apache httpd `core`: `EnableSendfile`, `EnableMMAP`](https://httpd.apache.org/docs/2.4/mod/core.html)
+  — the defaults, and the NFS bus-error warning.
+* [Upgrading to 2.4 from 2.2](https://httpd.apache.org/docs/current/upgrading.html)
+  — where `EnableSendfile` went from On to Off.
+* [Apache performance tuning](https://httpd.apache.org/docs/2.4/misc/perf-tuning.html)
+  — the recommendation to turn both off for an NFS-mounted directory.
+* [HAProxy configuration manual](https://docs.haproxy.org/1.8/configuration.html)
+  — `option splice-request` / `splice-response` / `splice-auto`, the corrupting
+  kernels, `maxpipes` and the fallback to a plain copy.
+* [lighttpd `server.network-backend`](https://redmine.lighttpd.net/projects/lighttpd/wiki/server_network-backendDetails)
+  — the mechanism as a configuration value.
