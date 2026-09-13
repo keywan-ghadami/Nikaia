@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-Six entries. Three are answered, and their records now exist —
+Six entries. Four are answered; three have their records —
 [ADR-046](specification/adr/adr-046.md), [ADR-047](specification/adr/adr-047.md)
 and [ADR-048](specification/adr/adr-048.md); §2 and §6's language half are built,
 and each entry says what is left. They stay here until the owner drops them. The
@@ -194,26 +194,32 @@ that the list of types is the list of types.
 
 ---
 
-## 3. Is `fn { … }`'s automatic `a`, `b`, `c` withdrawn, and when?
+## 3. `fn { … }`'s automatic `a`, `b`, `c` — **withdrawn**
 
-**Blocked by it:** nothing, which is exactly why it should be answered now rather
-than when something is.
+Refused, not warned about, and not announced for a later release.
 
-[ADR-041](specification/adr/adr-041.md) made named lambda arguments the normal
-form and carried the automatic naming as experimental, with `NK1114` naming the
-mechanical rewrite where a body reaches for one of the three letters. That record
-says explicitly that whether the form is eventually withdrawn **is not decided**.
+**What goes with it.** The form, the rule underneath it, and the warning that made
+the rule visible. How many arguments such a lambda takes is read off *which of the
+three names its body mentions*, so a local called `a` inside one is not a local but
+an argument. [ADR-041](specification/adr/adr-041.md) made that visible with
+`NK1114`; visible is not the same as good, and the rule stays true for exactly as
+long as the form exists.
 
-**I would withdraw it in the next release** and say so in Part I 5.3 now, so that
-no new code is written against it. The argument is the one ADR-041 already made:
-how many arguments such a lambda takes is read off *which of the three names its
-body mentions*, so a local called `a` is not a local but an argument. The warning
-makes that visible; it does not make it good. Every site in `examples/` is already
-rewritten, so the cost of withdrawal is a deprecation window and nothing else.
+**Why refused rather than announced.** Announcing a withdrawal a release ahead is
+the procedure for a language with code in the world. There is no release and no
+Nikaia outside this repository, so the deprecation window protects nobody. What it
+would do is keep the rule alive for the length of the window, and keep the warning
+code alive with it.
 
-**What the other direction costs:** carrying two spellings indefinitely means the
-rule above stays true indefinitely, and any future change to the automatic rule
-breaks whatever came to rely on it.
+**Scope.** Seven sites still reach for one of the three — `examples/1brc.nika`,
+`examples/access-log.nika` and `examples/k-nucleotide.nika`, in two idioms: folding
+into a map entry, and a sort key. They are rewritten with named arguments as part
+of this, since after it they no longer compile. `NK1114` and the arity-from-body
+mechanism are removed rather than left unreachable; `emit::implicit_params`, which
+the warning shared with the emitter, goes with them.
+
+**What it costs.** A named argument where a letter used to do. That is the whole
+of it.
 
 ---
 
