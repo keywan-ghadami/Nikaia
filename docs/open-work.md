@@ -189,32 +189,25 @@ should find out from the list that its `seq` and its switch are on their way out
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.5. A package's own package dependencies are not resolved
+### 2.5. A package reached under two names is two types to the checker
 
-[ADR-047](specification/adr/adr-047.md) D2 is built one level deep: a program
-depends on a package by path, and a package that declares Nikaia dependencies **of
-its own** is refused rather than resolved.
+[ADR-053](specification/adr/adr-053.md) is built: a package is its own crate, a
+library may depend on a library, and a program cannot reach past what it declared.
+**One thing it decided is not built.** D2 says a package reached through two
+parents is one crate, and Cargo makes that true — the hand-built shape in that
+record's §3 passes a value from one to the other and it is accepted.
 
-What is missing is the **resolution**, not the visibility rule: transitive
-dependencies are not visible either way (D2 rule 2), so the refusal states the rule
-correctly and declines the graph.
+The checker in front of Cargo does not agree. The ledger names a type by the
+manifest key it was reached **through**, so a program that depends on a package as
+`deep`, and on a library that depends on the same package as `c`, is told its
+`deep::Id` is not the `c::Id` the library's function takes. Both are the same Rust
+type; only the name this compiler gave it differs.
 
-**And the graph is a decision, not just work** — which is what looking at it this
-session established. Every package becomes a `mod` at the one crate root, named by
-the manifest key of whoever depends on it. So if A names B as `b` and B names C as
-`c`, the root carries `mod b` and `mod c`, and:
-
-* A could write `c::thing()` with no `use c`, and the ledger would answer — which
-  breaks rule 2 silently. Closing that means making
-  [ADR-046](specification/adr/adr-046.md) D4 a check on **qualified names** and
-  not only on `use` lines.
-* If A also depends on a *different* package under the name `c`, two packages want
-  one `mod c`. Refusing it names B's internals to A, which rule 2 says A should
-  not see; not refusing it is two types of one name.
-
-Either answer needs a naming scheme keyed on package identity rather than on the
-consumer's word — which is the registry-shaped question ADR-002 D1 §5 declines.
-So this waits on a decision and not on an afternoon.
+It is a refusal and not a wrong answer, and it needs a diamond to meet: one level
+of dependencies is named entirely by the program's own words. The fix is for a
+type's identity in the ledger to be the package's **canonical path** — which is
+what `packages_of` already computes and what D2 means by identity — rather than
+the word a consumer happened to write.
 
 ---
 

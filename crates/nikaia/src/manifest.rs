@@ -29,7 +29,7 @@ use crate::refused;
 /// Absent outside a project, which is not an error: a single `.nika` file
 /// compiles with the built-in defaults and the flags, and littering a manifest
 /// into someone's directory to make that work would be the wrong trade.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Manifest {
     build: BTreeMap<String, String>,
     package: BTreeMap<String, toml::Value>,

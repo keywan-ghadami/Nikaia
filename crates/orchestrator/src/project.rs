@@ -51,11 +51,30 @@ pub struct Profile {
     pub panic: Option<String>,
 }
 
-/// A `Cargo.toml` to be written, and the one binary it builds.
+/// Which target a generated crate carries. The entry package is the binary; a
+/// package it depends on is a library beside it
+/// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrateKind {
+    Bin,
+    Lib,
+}
+
+/// One member's `Cargo.toml` to be written, and the one target it builds.
+///
+/// A member, always: a build emits a workspace even where the program depends
+/// on no Nikaia package at all
+/// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1), because one
+/// shape that is always taken is worth more than a second one taken rarely.
+/// So nothing here writes a profile - profiles are the root's, and a member
+/// that declared one would be ignored with a warning.
 #[derive(Debug, Clone)]
 pub struct CargoProject {
     pub package: Package,
-    /// The binary's name, and the file Cargo is told is its crate root - which
+    /// Binary or library: the entry package is the program, everything it
+    /// reaches is a library beside it.
+    pub kind: CrateKind,
+    /// The target's name, and the file Cargo is told is its crate root - which
     /// may carry any extension at all. Cargo does not require `.rs` there, and
     /// that is what lets the wrapper below get a look at it.
     pub bin_name: String,
@@ -63,28 +82,28 @@ pub struct CargoProject {
     /// Rendered verbatim. A native Rust dependency passes through unchanged
     /// (D1), which means this map holds exactly what the author wrote.
     pub dependencies: BTreeMap<String, toml::Value>,
-    /// Which Cargo profile [`Profile`] is written under - `dev` for a build
-    /// that is not asked to be otherwise.
-    pub profile_name: String,
-    pub profile: Profile,
 }
 
 impl CargoProject {
-    /// The manifest text. Generated, so it says so: a file a build wrote is one
-    /// a person will find in a diff and wonder about.
+    /// The member's manifest text. Generated, so it says so: a file a build
+    /// wrote is one a person will find in a diff and wonder about.
     pub fn render(&self) -> String {
         let mut out = String::new();
         out.push_str(
             "# GENERATED from `nikaia.toml`. Do not edit - it is rewritten by every build.\n\
-             # Native Rust dependencies pass through unchanged (ADR-002 D1); the profile\n\
-             # below carries the codegen table and the machine's panic strategy.\n\n",
+             # Native Rust dependencies pass through unchanged (ADR-002 D1); a Nikaia one\n\
+             # is the crate generated beside this, under this crate's own name for it\n\
+             # (ADR-053 D2). The profile is the workspace root's.\n\n",
         );
         out.push_str("[package]\n");
         out.push_str(&format!("name = {}\n", string(&self.package.name)));
         out.push_str(&format!("version = {}\n", string(&self.package.version)));
         out.push_str(&format!("edition = {}\n", string(&self.package.edition)));
 
-        out.push_str("\n[[bin]]\n");
+        match self.kind {
+            CrateKind::Bin => out.push_str("\n[[bin]]\n"),
+            CrateKind::Lib => out.push_str("\n[lib]\n"),
+        }
         out.push_str(&format!("name = {}\n", string(&self.bin_name)));
         out.push_str(&format!(
             "path = {}\n",
@@ -96,16 +115,78 @@ impl CargoProject {
             out.push_str(&format!("{} = {value}\n", key(name)));
         }
 
+        out
+    }
+
+    /// Writes the manifest into `dir`, and returns its path.
+    pub fn write_to(&self, dir: &Path) -> Result<PathBuf> {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("creating the build directory {}", dir.display()))?;
+        let path = dir.join("Cargo.toml");
+        write_if_changed(&path, &self.render())?;
+        Ok(path)
+    }
+}
+
+/// A generated Cargo **workspace**: one member crate per Nikaia package
+/// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1).
+///
+/// The root is virtual - it carries no package of its own, only the members and
+/// the profile. That is what makes D4 expressible: the overflow checks are on
+/// for each Nikaia crate **by name** and off for `"*"`, so a library of this
+/// language gets them and a foreign crate does not. While everything was one
+/// crate that came for free; here it is generated, and getting it wrong is a
+/// library computing silently wrong numbers while its caller aborts.
+#[derive(Debug, Clone)]
+pub struct Workspace {
+    /// Directory name under the build directory, and the manifest for it. The
+    /// entry package is first.
+    pub members: Vec<(String, CargoProject)>,
+    pub profile_name: String,
+    pub profile: Profile,
+}
+
+impl Workspace {
+    /// The root manifest's text.
+    pub fn render(&self) -> String {
+        let mut out = String::new();
+        out.push_str(
+            "# GENERATED from `nikaia.toml`. Do not edit - it is rewritten by every build.\n\
+             # One member per Nikaia package (ADR-053 D1); the profile is the root's,\n\
+             # because a member's would be ignored.\n\n",
+        );
+        out.push_str("[workspace]\n");
+        out.push_str("resolver = \"2\"\n");
+        out.push_str("members = [");
+        for (at, (dir, _)) in self.members.iter().enumerate() {
+            if at > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&string(dir));
+        }
+        out.push_str("]\n");
+        if let Some((dir, _)) = self.members.first() {
+            // So that `cargo build` and `cargo run` mean the program rather
+            // than the program and every library under it.
+            out.push_str(&format!("default-members = [{}]\n", string(dir)));
+        }
+
         // **The overflow check is not in `Profile`, and that is the point.**
         // `Profile` holds what the build switches and the codegen table decide;
-        // an overflow aborting is what the language *means*
-        // (ADR-043 D1), so it is written unconditionally and there is no key
-        // that turns it off. Which is also why the emitted code says `a + b`
-        // rather than calling a checked helper per operation (D6): the
-        // arithmetic is the same either way, and a reader comparing the two
-        // languages should find `+` where they wrote `+`.
+        // an overflow aborting is what the language *means* (ADR-043 D1), so it
+        // is written from the two rules below and there is no key that turns it
+        // off. Which is also why the emitted code says `a + b` rather than
+        // calling a checked helper per operation (D6): the arithmetic is the
+        // same either way, and a reader comparing the two languages should find
+        // `+` where they wrote `+`.
+        //
+        // **Off here, and on per Nikaia crate below.** A hash function in a Rust
+        // crate wraps on purpose; with the check on it would abort, and it is
+        // not our code to be right or wrong about. So the default is the foreign
+        // one - `"*"` would reach the members too - and each crate of this
+        // language is named back onto the program's side.
         out.push_str(&format!("\n[profile.{}]\n", self.profile_name));
-        out.push_str("overflow-checks = true\n");
+        out.push_str("overflow-checks = false\n");
         if let Some(opt) = &self.profile.opt_level {
             out.push_str(&format!("opt-level = {opt}\n"));
         }
@@ -116,28 +197,26 @@ impl CargoProject {
             out.push_str(&format!("panic = {}\n", string(panic)));
         }
 
-        // **And off for every dependency**, which is not a loophole but the
-        // other half of the same rule (ADR-043 D6). A hash function in a Rust
-        // crate wraps on purpose; with the check on it would abort, and it is
-        // not our code to be right or wrong about. The rule reaches the program
-        // this compiler emits and stops at the crate boundary.
-        out.push_str(&format!(
-            "\n[profile.{}.package.\"*\"]\noverflow-checks = false\n",
-            self.profile_name
-        ));
-
-        // The generated package is its own workspace. Without this, a project
-        // that happens to sit under someone else's `Cargo.toml` would be read
-        // as a member of it and fail for a reason that has nothing to do with
-        // the program being built.
-        out.push_str("\n[workspace]\n");
+        // **ADR-043 D1 reaches every crate of this language** (ADR-053 D4). A
+        // Nikaia dependency is part of the program, not a foreign package, so
+        // an overflow in it aborts exactly as one in the program does.
+        for (_, member) in &self.members {
+            out.push_str(&format!(
+                "\n[profile.{}.package.{}]\noverflow-checks = true\n",
+                self.profile_name,
+                key(&member.package.name)
+            ));
+        }
         out
     }
 
-    /// Writes the manifest into `dir`, and returns its path.
+    /// Writes the root manifest and every member's, and returns the root's path.
     pub fn write_to(&self, dir: &Path) -> Result<PathBuf> {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("creating the build directory {}", dir.display()))?;
+        for (name, member) in &self.members {
+            member.write_to(&dir.join(name))?;
+        }
         let path = dir.join("Cargo.toml");
         write_if_changed(&path, &self.render())?;
         Ok(path)
@@ -525,9 +604,33 @@ mod tests {
                 version: "0.1.0".into(),
                 edition: "2021".into(),
             },
+            kind: CrateKind::Bin,
             bin_name: "hyper-core".into(),
             bin_path: PathBuf::from("/p/src/main.nika"),
             dependencies,
+        }
+    }
+
+    fn library(name: &str) -> CargoProject {
+        CargoProject {
+            package: Package {
+                name: name.into(),
+                version: "0.1.0".into(),
+                edition: "2021".into(),
+            },
+            kind: CrateKind::Lib,
+            bin_name: name.replace('-', "_"),
+            bin_path: PathBuf::from(format!("/p/{name}/src/main.nika")),
+            dependencies: BTreeMap::new(),
+        }
+    }
+
+    fn workspace() -> Workspace {
+        Workspace {
+            members: vec![
+                ("hyper-core".to_string(), project()),
+                ("maths".to_string(), library("maths")),
+            ],
             profile_name: "dev".into(),
             profile: Profile {
                 opt_level: Some(toml::Value::Integer(3)),
@@ -550,26 +653,73 @@ mod tests {
             Some("1.5")
         );
         assert_eq!(parsed["bin"][0]["path"].as_str(), Some("/p/src/main.nika"));
+
+        // **A member writes no profile** (ADR-053 D1): the root's is the one
+        // Cargo reads, and one written here would be ignored with a warning -
+        // which is a build telling somebody their overflow setting did nothing.
+        assert!(
+            parsed.get("profile").is_none(),
+            "a member's profile is the root's:\n{text}"
+        );
+        assert!(
+            parsed.get("workspace").is_none(),
+            "and the workspace is the root's too:\n{text}"
+        );
+    }
+
+    /// A package a program depends on is a **library** crate beside it
+    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1), so the two
+    /// differ in exactly one place: the target table.
+    #[test]
+    fn a_dependency_is_a_library_and_the_entry_is_a_binary() {
+        let program: toml::Value = toml::from_str(&project().render()).expect("parses");
+        let library: toml::Value = toml::from_str(&library("maths").render()).expect("parses");
+
+        assert!(program.get("bin").is_some() && program.get("lib").is_none());
+        assert!(library.get("lib").is_some() && library.get("bin").is_none());
+    }
+
+    /// The workspace root: the members, the profile, and
+    /// [ADR-043](../../../docs/specification/adr/adr-043.md) D6 written out per
+    /// crate ([ADR-053](../../../docs/specification/adr/adr-053.md) D4).
+    #[test]
+    fn the_workspace_root_carries_the_profile_and_the_overflow_checks() {
+        let text = workspace().render();
+        let parsed: toml::Value = toml::from_str(&text).expect("the root manifest parses");
+
+        assert_eq!(
+            parsed["workspace"]["members"]
+                .as_array()
+                .map(|m| m.iter().filter_map(toml::Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["hyper-core", "maths"])
+        );
+        assert_eq!(
+            parsed["workspace"]["default-members"][0].as_str(),
+            Some("hyper-core"),
+            "`cargo build` means the program, not the program and every library \
+             under it:\n{text}"
+        );
+
         assert_eq!(parsed["profile"]["dev"]["opt-level"].as_integer(), Some(3));
         assert_eq!(parsed["profile"]["dev"]["lto"].as_bool(), Some(true));
         assert_eq!(parsed["profile"]["dev"]["panic"].as_str(), Some("unwind"));
 
-        // ADR-043 D6: on for the program and off for every dependency, and
-        // neither of them is a key anybody may set. Asserted here as well as
-        // end to end in `crates/nikaia/tests/overflow.rs`, because this is
-        // where the text is written and that is where it is felt.
+        // ADR-043 D6 in the shape D4 gives it: off by default, because `"*"`
+        // would reach the members too, and on by name for every crate of this
+        // language. Neither is a key anybody may set. Asserted here as well as
+        // end to end in `crates/nikaia/tests/overflow.rs`, because this is where
+        // the text is written and that is where it is felt.
         assert_eq!(
             parsed["profile"]["dev"]["overflow-checks"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            parsed["profile"]["dev"]["package"]["*"]["overflow-checks"].as_bool(),
             Some(false)
         );
-        assert!(
-            parsed.get("workspace").is_some(),
-            "the generated package owns its own workspace:\n{text}"
-        );
+        for crate_name in ["hyper-core", "maths"] {
+            assert_eq!(
+                parsed["profile"]["dev"]["package"][crate_name]["overflow-checks"].as_bool(),
+                Some(true),
+                "`{crate_name}` is this language's code:\n{text}"
+            );
+        }
     }
 
     /// Cargo's freshness is mtime against mtime, so an unconditional write is a

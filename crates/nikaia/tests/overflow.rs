@@ -123,6 +123,12 @@ fn an_overflow_aborts_where_the_check_is_on() {
 /// program, and **off for every dependency**. A hash function in a Rust crate
 /// wraps on purpose and is not our code to be right or wrong about, so the rule
 /// reaches the program this compiler emits and stops at the crate boundary.
+///
+/// Which way round the two are written follows from
+/// [ADR-053](../../../docs/specification/adr/adr-053.md) D4: a build emits a
+/// workspace, and a default of "on" with an exception for `"*"` would reach the
+/// members too. So the default is the foreign answer and each crate of this
+/// language is named back onto the program's side.
 #[test]
 fn the_generated_manifest_checks_the_program_and_not_its_dependencies() {
     let dir = common::scratch_dir("overflow-manifest");
@@ -160,31 +166,36 @@ fn the_generated_manifest_checks_the_program_and_not_its_dependencies() {
 
     assert_eq!(
         table["overflow-checks"].as_bool(),
-        Some(true),
-        "`[profile.{name}]` must check the program:\n{text}"
+        Some(false),
+        "`[profile.{name}]` must not check a foreign crate:\n{text}"
     );
     assert_eq!(
-        table["package"]["*"]["overflow-checks"].as_bool(),
-        Some(false),
-        "`[profile.{name}.package.\"*\"]` must not check a dependency:\n{text}"
+        table["package"]["ovf"]["overflow-checks"].as_bool(),
+        Some(true),
+        "`[profile.{name}.package.ovf]` must check the program:\n{text}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The generated `Cargo.toml`, wherever the build put it.
+/// The generated workspace root's `Cargo.toml` - the one that carries the
+/// profile ([ADR-053](../../../docs/specification/adr/adr-053.md) D1). A member's
+/// is one directory further down and carries none, so the shallowest wins.
 fn find_manifest(under: &Path) -> Option<std::path::PathBuf> {
-    let mut stack = vec![under.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    let mut stack = vec![(0usize, under.to_path_buf())];
+    let mut best: Option<(usize, std::path::PathBuf)> = None;
+    while let Some((depth, dir)) = stack.pop() {
         for entry in std::fs::read_dir(&dir).ok()?.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
-            } else if path.file_name().is_some_and(|n| n == "Cargo.toml") {
-                return Some(path);
+                stack.push((depth + 1, path));
+            } else if path.file_name().is_some_and(|n| n == "Cargo.toml")
+                && best.as_ref().is_none_or(|(at, _)| depth < *at)
+            {
+                best = Some((depth, path));
             }
         }
     }
-    None
+    best.map(|(_, path)| path)
 }
 
 /// **3. The seam.** A `nikaia build` of an overflowing program, run, aborts.

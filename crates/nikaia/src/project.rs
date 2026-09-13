@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
 use orchestrator::project::{
-    record_extra_dependencies, resolved_versions, write_if_changed, Cargo, CargoProject,
-    Invocation, Package, Profile,
+    record_extra_dependencies, resolved_versions, write_if_changed, Cargo, CargoProject, CrateKind,
+    Invocation, Package, Profile, Workspace,
 };
 
 use crate::contracts::{sync, Ledger, STD};
@@ -213,13 +213,14 @@ pub struct Lowered {
 ///   and anything else puts two answers to the parallelism question in one
 ///   build.
 ///
-/// **rule 2** — transitive dependencies are not visible — is kept twice: a
-/// dependency's `use` lines are checked against nothing
-/// (`modules::collect_with`), and a dependency that declares Nikaia
-/// dependencies of its own is refused here rather than flattened, because
-/// flattening is what makes a library's surface everything it happens to use.
-/// **rule 5** is `cargo_project` above: such a package declares nothing to
-/// Cargo, because it is this program.
+/// **rule 2** — transitive dependencies are not visible — is no longer checked
+/// anywhere, because it is structural
+/// ([ADR-053](../../docs/specification/adr/adr-053.md) D3): a package is
+/// generated as its own crate naming only its own dependencies, so a name from
+/// two levels down does not resolve and no rule of ours has to say so.
+/// **rule 5** is the generated workspace's profile (D4): every Nikaia crate is
+/// named on the program's side of the overflow checks, beside the exception
+/// that turns them off for every foreign package.
 pub fn packages_of(
     manifest: &Manifest,
     root: &Path,
@@ -245,33 +246,17 @@ pub fn packages_of(
         }
         seen.insert(root.clone(), name.clone());
 
-        let manifest = Manifest::read(&root.join("nikaia.toml"))?;
-        let transitive: Vec<&String> = manifest
-            .dependencies()
-            .iter()
-            .filter(|(_, value)| !matches!(value, Dependency::Rust(_)))
-            .map(|(name, _)| name)
-            .collect();
-        if !transitive.is_empty() {
-            refuse!(
-                "`{name}` depends on Nikaia packages of its own ({}), and a package's \
-                 own packages are not resolved yet.\n\
-                 Transitive dependencies are not visible either way (ADR-047 D2), so \
-                 what is missing is the resolution and not the visibility - depend on \
-                 them directly for now.",
-                transitive
-                    .iter()
-                    .map(|n| format!("`{n}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
+        // **A package's own packages are resolved, not refused**
+        // (ADR-053 D1): it is generated as its own crate, so they are its
+        // dependencies and not ours. Read here only to fail early where one is
+        // not there.
+        let dependency = Manifest::read(&root.join("nikaia.toml"))?;
         // `announce`, because this resolution runs more than once per build - the
         // driver, and the `rustc` wrapper Cargo calls for the build and again for
         // a run - and a note a reader meets three times reads as three problems.
         // The driver is the one that reports (ADR-005 D7's shape: the work happens
         // where it happens, the saying happens once).
-        if announce && manifest.has_build_section() {
+        if announce && dependency.has_build_section() {
             eprintln!(
                 "note: `{}`'s own `[build]` is ignored: a package is built with the \
                  settings of the program that uses it (ADR-047 D2).",
@@ -282,9 +267,138 @@ pub fn packages_of(
         out.push(modules::Dependency {
             name: name.clone(),
             root,
+            // **Its own keys**, so its `use` lines are read the way its own
+            // build would read them (ADR-053 D3).
+            reachable: dependency.dependencies().keys().cloned().collect(),
         });
     }
     Ok(out)
+}
+
+/// One package of a build, and everything needed to generate a crate for it
+/// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+#[derive(Debug, Clone)]
+pub struct Member {
+    /// The Cargo package name - the `[package] name` of its own `nikaia.toml`.
+    /// Its **identity** is `root`; this is what the profile rows and the
+    /// renaming form below name it by.
+    pub name: String,
+    /// The canonical package directory. Two manifest keys resolving here are
+    /// one crate, which is [ADR-047](../../docs/specification/adr/adr-047.md)
+    /// D2 rule 3 holding because Cargo already works that way (D2).
+    pub root: PathBuf,
+    pub manifest: Manifest,
+    /// The `.nika` file Cargo is told is the crate root. `src/main.nika` where
+    /// there is one; a library needs none, so the first source beside it stands
+    /// in - the wrapper walks up from whatever it is handed, so any file of the
+    /// package finds the same manifest.
+    pub entry: PathBuf,
+    /// Its **own** packages, under its **own** manifest keys.
+    pub dependencies: Vec<modules::Dependency>,
+}
+
+/// Every package of this build, the entry first
+/// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+///
+/// Breadth-first from the entry, so a diamond is visited once and the order is
+/// the same on every machine. A package already seen is the same crate: the key
+/// under which it was reached is the *depending* crate's business (D2), and
+/// nothing here is named by it.
+pub fn members_of(entry_manifest: &Manifest, entry_root: &Path) -> Result<Vec<Member>> {
+    let mut out: Vec<Member> = Vec::new();
+    let mut seen: BTreeMap<PathBuf, usize> = BTreeMap::new();
+    let mut queue: Vec<(Manifest, PathBuf)> = vec![(entry_manifest.clone(), canonical(entry_root))];
+
+    while let Some((manifest, root)) = queue.first().cloned() {
+        queue.remove(0);
+        if seen.contains_key(&root) {
+            continue;
+        }
+
+        let name = manifest
+            .package_name()
+            .ok_or_else(|| {
+                refused!(
+                    "{}/nikaia.toml has no `[package] name`, and Cargo needs one to \
+                     name the crate (Part III 13.3)",
+                    root.display()
+                )
+            })?
+            .to_string();
+
+        // A crate name is a package's identity in the generated workspace, and
+        // two of them would be two answers to which crate the profile rows and
+        // the renaming form below mean. The canonical path is the identity, so
+        // this is only ever two *different* packages wanting one name.
+        if let Some(first) = out.iter().find(|m| m.name == name) {
+            refuse!(
+                "two packages are both named `{name}`: {} and {}.\n\
+                 Each package is generated as its own crate (ADR-053 D1) and a crate is \
+                 named by its `[package] name`, so give one of them a name of its own - \
+                 the key a `use` line writes is set by whoever depends on it and does not \
+                 have to change.",
+                first.root.display(),
+                root.display()
+            );
+        }
+
+        // Announced only for the entry: this walk reads every manifest of the
+        // build, and a note about an ignored `[build]` is about the package
+        // that carries it, said once.
+        let dependencies = packages_of(&manifest, &root, out.is_empty())?;
+        for dependency in &dependencies {
+            let manifest = Manifest::read(&dependency.root.join("nikaia.toml"))?;
+            queue.push((manifest, canonical(&dependency.root)));
+        }
+
+        seen.insert(root.clone(), out.len());
+        out.push(Member {
+            name,
+            entry: crate_root_of(&root)?,
+            root,
+            manifest,
+            dependencies,
+        });
+    }
+    Ok(out)
+}
+
+/// `path`, resolved where the filesystem lets us. The same fallback
+/// `packages_of` uses, so the two agree about when two keys are one package.
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The `.nika` file handed to Cargo as a package's crate root.
+///
+/// `src/main.nika` where there is one. A library has none - what a package
+/// offers is its public surface (`modules::package_at`) - and Cargo still needs
+/// a path that exists, so the first source beside it stands in. Which file it
+/// is changes nothing: the wrapper walks up from it to the same `nikaia.toml`,
+/// and `package_at` reads the whole directory either way.
+fn crate_root_of(root: &Path) -> Result<PathBuf> {
+    let entry = root.join(ENTRY);
+    if entry.is_file() {
+        return Ok(entry);
+    }
+
+    let src = root.join("src");
+    let mut beside: Vec<PathBuf> = std::fs::read_dir(&src)
+        .with_context(|| format!("cannot read {}", src.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == EXTENSION))
+        .collect();
+    beside.sort();
+
+    beside.into_iter().next().ok_or_else(|| {
+        refused!(
+            "{} has no `.nika` sources.\n\
+             A package is a directory with a `src/` in it (Part III 13.1), and a package \
+             with nothing in it is nothing to build.",
+            src.display()
+        )
+    })
 }
 
 pub fn lower(
@@ -859,23 +973,24 @@ impl Project {
         packages_of(&self.manifest, &self.root, true)
     }
 
-    /// `nikaia.toml` translated (ADR-002 D1).
-    ///
-    /// `rust` is the program as this build lowered it, and it decides which of
-    /// the compiler's own runtime crates the generated package declares - a
-    /// program that names none of them depends on nothing and builds in a
-    /// second.
-    pub fn cargo_project(&self, rust: &str) -> Result<CargoProject> {
-        let name = self.manifest.package_name().ok_or_else(|| {
-            refused!(
-                "{}/nikaia.toml has no `[package] name`, and Cargo needs one to \
-                 name the binary (Part III 13.3)",
-                self.root.display()
-            )
-        })?;
+    /// Every package of this build, the entry first - see [`members_of`].
+    pub fn members(&self) -> Result<Vec<Member>> {
+        members_of(&self.manifest, &self.root)
+    }
 
+    /// One member's `nikaia.toml` translated (ADR-002 D1).
+    ///
+    /// `rust` is that package as this build lowered it, and it decides which of
+    /// the compiler's own runtime crates the generated crate declares - a
+    /// package that names none of them depends on nothing and builds in a
+    /// second.
+    ///
+    /// `kind` is what puts the entry package's `fn main` in a binary and every
+    /// package under it in a library beside it
+    /// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+    fn cargo_member(&self, member: &Member, rust: &str, kind: CrateKind) -> Result<CargoProject> {
         let mut dependencies = runtime_dependencies(rust)?;
-        for (dependency, value) in self.manifest.dependencies() {
+        for (dependency, value) in member.manifest.dependencies() {
             match value {
                 // The whole point of D1: whatever the author wrote reaches
                 // Cargo, and Cargo resolves and links it as it would for any
@@ -883,18 +998,26 @@ impl Project {
                 Dependency::Rust(value) => {
                     dependencies.insert(dependency.clone(), value.clone());
                 }
-                // Nothing decides what this means yet. A registry, a name
-                // space and a distribution format are all undecided, and
-                // guessing at one here would be inventing the answer in the
-                // place it is hardest to review.
-                // **A Nikaia dependency is part of the program, not a foreign
-                // package** (ADR-047 D2 rule 5), so it declares nothing to Cargo:
-                // its files are read into the same crate, and ADR-043's overflow
-                // checks reach it because it *is* the program. Without that it
-                // would land on the foreign side by accident - which is where a
-                // dependency mechanically appears - and a library would compute
-                // silently wrong numbers while its caller aborted.
-                Dependency::Path(_) => {}
+                // **Cargo's renaming form** (ADR-053 D2): the package is named
+                // by its identity, the key is the name *this* crate uses for
+                // it. So two packages that both want the key `c` are in two
+                // different crates and never meet, and one package reached
+                // through two parents is one crate - which is ADR-047 D2 rule 3
+                // holding because Cargo already works that way.
+                Dependency::Path(path) => {
+                    let root = canonical(&member.root.join(path));
+                    let named = self.crate_named(&root)?;
+                    let mut table = toml::value::Table::new();
+                    table.insert("package".to_string(), toml::Value::String(named.clone()));
+                    // Beside this member, under the generated build directory:
+                    // every crate of the build is written there, one directory
+                    // each, named by the same name.
+                    table.insert(
+                        "path".to_string(),
+                        toml::Value::String(format!("../{named}")),
+                    );
+                    dependencies.insert(dependency.clone(), toml::Value::Table(table));
+                }
                 // A registry, a name space and a distribution format are all
                 // undecided, and guessing at one here would be inventing the
                 // answer in the place it is hardest to review
@@ -912,17 +1035,45 @@ impl Project {
             }
         }
 
-        let codegen = self.manifest.codegen_for(&self.settings.target);
         Ok(CargoProject {
             package: Package {
-                name: name.to_string(),
-                version: self.manifest.package_version().to_string(),
+                name: member.name.clone(),
+                version: member.manifest.package_version().to_string(),
                 // What the emitter writes, and what the tests compile it as.
                 edition: "2021".to_string(),
             },
-            bin_name: name.to_string(),
-            bin_path: self.entry(),
+            kind,
+            // A `[lib] name` has to be an identifier; a package name does not.
+            // Cargo does this same replacement for a lib it names itself.
+            bin_name: match kind {
+                CrateKind::Bin => member.name.clone(),
+                CrateKind::Lib => member.name.replace('-', "_"),
+            },
+            bin_path: member.entry.clone(),
             dependencies,
+        })
+    }
+
+    /// The generated workspace: one crate per Nikaia package
+    /// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+    ///
+    /// `rust` is each member as this build lowered it, in `members`' order.
+    pub fn cargo_workspace(&self, members: &[Member], rust: &[String]) -> Result<Workspace> {
+        let mut out = Vec::new();
+        for (at, member) in members.iter().enumerate() {
+            // The entry package is the program; everything it reaches is a
+            // library beside it.
+            let kind = match at {
+                0 => CrateKind::Bin,
+                _ => CrateKind::Lib,
+            };
+            let rust = rust.get(at).map(String::as_str).unwrap_or("");
+            out.push((member.name.clone(), self.cargo_member(member, rust, kind)?));
+        }
+
+        let codegen = self.manifest.codegen_for(&self.settings.target);
+        Ok(Workspace {
+            members: out,
             // One profile, because a Nikaia build has no dev/release division
             // to map onto: `[build.<target>]` is the project's single statement
             // about output size and speed, and `dev` is the profile Cargo uses
@@ -934,6 +1085,22 @@ impl Project {
                 panic: Some(self.settings.panic_strategy().to_string()),
             },
         })
+    }
+
+    /// What the package at `root` is called as a crate - its own `[package]
+    /// name`, which is what every other crate of the build names it by (D2).
+    fn crate_named(&self, root: &Path) -> Result<String> {
+        let manifest = Manifest::read(&root.join("nikaia.toml"))?;
+        Ok(manifest
+            .package_name()
+            .ok_or_else(|| {
+                refused!(
+                    "{}/nikaia.toml has no `[package] name`, and Cargo needs one to \
+                     name the crate (Part III 13.3)",
+                    root.display()
+                )
+            })?
+            .to_string())
     }
 
     /// What this build asked the code generator for, as the compiled-`std` cache
@@ -981,18 +1148,43 @@ impl Project {
         // asked is cheaper than reshaping the build for a flag nobody usually
         // passes.
         if want.asked() {
-            explain(&modules::Program::read(&entry)?, &self.settings, want)?;
+            let program = modules::Program::read_with(&entry, &self.packages()?)?;
+            explain(&program, &self.settings, want)?;
         }
 
-        // The packages this project depends on, resolved before anything is read:
-        // a dependency that is not there, or two names for one path, is a
+        // Every package of this build, resolved before anything is read: a
+        // dependency that is not there, or two names for one path, is a
         // statement about the project and should not wait for a lowering.
-        let packages = self.packages()?;
-        let lowered = lower(&entry, &self.settings, no_cache, &packages)?;
-        write_ledger(&self.ledger_path(), &lowered.ledger, locked)?;
+        let members = self.members()?;
+
+        // **Every member is lowered here**, for the reason the doc comment
+        // above gives for the entry: the checks and the diagnostics are the
+        // compiler's own output rather than something buried in a `cargo`
+        // subprocess. Each is lowered again inside the wrapper and each of
+        // those is a cache hit, so a package is compiled once however many
+        // crates now ask about it.
+        let mut rust: Vec<String> = Vec::with_capacity(members.len());
+        let mut entry_ledger = None;
+        for member in &members {
+            let lowered = lower(
+                &member.entry,
+                &self.settings,
+                no_cache,
+                &member.dependencies,
+            )?;
+            if entry_ledger.is_none() {
+                entry_ledger = Some(lowered.ledger);
+            }
+            rust.push(lowered.rust);
+        }
+        // One ledger, in the project root (Part III 13.5): it is the program's
+        // record, and a library's own is written when that library is built.
+        if let Some(ledger) = entry_ledger {
+            write_ledger(&self.ledger_path(), &ledger, locked)?;
+        }
 
         let manifest = self
-            .cargo_project(&lowered.rust)?
+            .cargo_workspace(&members, &rust)?
             .write_to(&self.build_dir())?;
 
         let mut env = self.settings.as_env();
@@ -1102,7 +1294,10 @@ impl Project {
             return Ok(());
         }
 
-        let program = modules::Program::read(&self.entry())?;
+        // **With the packages**, or a `use` line would be read against an empty
+        // set and the translation of somebody else's error would be a refusal of
+        // a program that is fine.
+        let program = modules::Program::read_with(&self.entry(), &self.packages()?)?;
         let lowered = program.emit_ordered(self.settings.build, self.settings.ordering)?;
         let sources: Vec<&str> = program.sources();
         let paths: Vec<String> = program

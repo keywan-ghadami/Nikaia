@@ -487,11 +487,11 @@ name rule at all, so declaring one is refused by the checker as `NK1119`.
 
 ---
 
-## 8. How does a package name the packages it depends on? — **answered** ([ADR-053](specification/adr/adr-053.md); not built)
+## 8. How does a package name the packages it depends on? — **answered and built** ([ADR-053](specification/adr/adr-053.md))
 
-**Blocked by it:** [`open-work.md`](open-work.md) §2.7 — a package that declares
-Nikaia dependencies of its own is refused rather than resolved, so a library that
-uses a library does not exist. That is the second step of every real library.
+**What was blocked by it:** a package that declared Nikaia dependencies of its own
+was refused rather than resolved, so a library that used a library did not exist.
+That is the second step of every real library.
 
 [ADR-047](adr-047.md) D2 gave a package a path dependency, and it is built one level
 deep. What stops the next level is not the visibility rule — rule 2 already says a
@@ -553,3 +553,12 @@ check that was written for `use` lines; (b) is the cheapest to emit and breaks a
 rule that was decided this week. Neither removes the question — they answer it with
 machinery this project would then own, where (c) answers it with machinery it
 already leans on.
+
+**Built.** A build emits a workspace — always, including for a program that
+depends on nothing — with one member crate per package. A library that uses a
+library works; a program that reaches past what it declared is refused by Rust's
+own resolution, reported against the line that wrote it; and the overflow checks
+name each crate of this language on the program's side. One thing the answer
+claimed is not built and is written down in [`open-work.md`](open-work.md) §2.5:
+Cargo unifies a package reached under two different keys, and the ledger in front
+of it still names a type by the key it was reached through.

@@ -70,6 +70,12 @@ pub struct Dependency {
     pub name: String,
     /// The package's own directory - the one its `src/` is in.
     pub root: PathBuf,
+    /// The names **it** may reach - its own manifest keys. Its files are read
+    /// here so that this program's checks know its public surface, and they are
+    /// checked as it would check them
+    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D3): a package
+    /// that depends on a package is a package, not a rule broken.
+    pub reachable: BTreeSet<String>,
 }
 
 /// Every file of the package the entry belongs to, entry first.
@@ -99,6 +105,16 @@ pub fn collect_with(entry: &Path, dependencies: &[Dependency]) -> Result<Vec<Uni
     let names: BTreeSet<String> = dependencies.iter().map(|d| d.name.clone()).collect();
     let mut units = package_at(entry, None, &names)?;
 
+    // **Read, and not emitted** ([ADR-053](../../../docs/specification/adr/adr-053.md)
+    // D1). A dependency is its own crate now, so its files are Cargo's to
+    // compile - but its *surface* is this program's to check against, and a
+    // package's surface is what its files declare. So they arrive here tagged
+    // with the name this program reaches them by, the ledger and the checks see
+    // them, and `Program::emit` writes none of them.
+    //
+    // **And its own `use` lines are checked against its own manifest keys**,
+    // not against nothing: a package that depends on a package is a package
+    // (D3), and the level below it is its business rather than a rule it broke.
     for dependency in dependencies {
         let src = dependency.root.join(SRC);
         if !src.is_dir() {
@@ -109,14 +125,10 @@ pub fn collect_with(entry: &Path, dependencies: &[Dependency]) -> Result<Vec<Uni
                 src.display()
             )));
         }
-        // **Its own `use` lines are checked against nothing.** D2 rule 2:
-        // transitive dependencies are not visible, so a package that names one is
-        // refused rather than silently handed ours - otherwise a library's surface
-        // is everything it happens to use.
         units.extend(package_at(
             &src.join(ENTRY),
             Some(&dependency.name),
-            &BTreeSet::new(),
+            &dependency.reachable,
         )?);
     }
     Ok(units)
@@ -459,8 +471,18 @@ impl Program {
         rust.push('\n');
 
         let mut map = SourceMap::default();
-        let mut open: Option<&str> = None;
         for (at, unit) in self.units.iter().enumerate() {
+            // **A dependency's files are read and not written** (ADR-053 D1).
+            // They are here so the ledger and the checks know what the package
+            // offers; the crate that offers it is generated beside this one, and
+            // a qualified name needs no help from us - `c::thing()` is emitted
+            // as written and Rust resolves `c` to the crate the manifest names.
+            //
+            // The index is still `self.units`', because a diagnostic about a
+            // dependency's file has to name that file.
+            if unit.package.is_some() {
+                continue;
+            }
             let body = crate::emit::emit_module_body_ordered(
                 ordering,
                 &unit.parsed,
@@ -472,28 +494,10 @@ impl Program {
                 at == 0,
             )?;
 
-            // The units arrive grouped by package (`collect_with`), so a `mod`
-            // opens where the name changes and closes where it changes again -
-            // and a package of several files is one `mod` rather than one each.
-            if open != unit.package.as_deref() {
-                if open.is_some() {
-                    rust.push_str("}\n\n");
-                }
-                if let Some(package) = unit.package.as_deref() {
-                    rust.push_str(&format!("pub mod {package} {{\n"));
-                    rust.push_str("#[allow(unused_imports)]\nuse super::*;\n");
-                }
-                open = unit.package.as_deref();
-            }
-
             map.extend(body.map.placed(rust.len(), at));
             rust.push_str(&body.rust);
             rust.push('\n');
         }
-        if open.is_some() {
-            rust.push_str("}\n");
-        }
-
         // **Last, because it names lines** (ADR-044 D1). Only where the program
         // has an entry point: the table is read by the hook `fn main` installs,
         // and a package with no `main` is a library whose consumer has one.

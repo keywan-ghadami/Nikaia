@@ -84,8 +84,14 @@ fn a_project_builds_runs_and_notices_an_edit() {
         said(&run)
     );
 
-    // The manifest Cargo was handed, and the ledger a build owes (13.5).
-    let generated = std::fs::read_to_string(dir.join("target/nikaia/build/Cargo.toml"))
+    // The manifests Cargo was handed, and the ledger a build owes (13.5). The
+    // root is the workspace and the package is a member of it, even where it is
+    // the only one (ADR-053 D1).
+    let root = std::fs::read_to_string(dir.join("target/nikaia/build/Cargo.toml"))
+        .expect("the workspace root is written");
+    assert!(root.contains("members = [\"greeter\"]"), "{root}");
+
+    let generated = std::fs::read_to_string(dir.join("target/nikaia/build/greeter/Cargo.toml"))
         .expect("the translated manifest is written");
     assert!(generated.contains("name = \"greeter\""), "{generated}");
     assert!(
@@ -378,10 +384,13 @@ fn the_manifest_becomes_a_cargo_manifest() {
     );
 
     let project = Project::open(&dir, None, None, None).expect("the project opens");
-    let rendered = project
-        .cargo_project("fn main() {}")
-        .expect("the manifest translates")
-        .render();
+    let members = project.members().expect("the packages resolve");
+    let workspace = project
+        .cargo_workspace(&members, &["fn main() {}".to_string()])
+        .expect("the manifest translates");
+
+    // The program's own crate: the package, and what it depends on.
+    let rendered = workspace.members[0].1.render();
     let parsed: toml::Value = toml::from_str(&rendered).expect("and is valid TOML");
 
     assert_eq!(parsed["package"]["name"].as_str(), Some("hyper-core"));
@@ -395,7 +404,11 @@ fn the_manifest_becomes_a_cargo_manifest() {
         "`type = \"rust\"` is Nikaia's word and Cargo would refuse it:\n{rendered}"
     );
 
-    // The codegen table of the *chosen* machine, and only that one.
+    // The codegen table of the *chosen* machine, and only that one - on the
+    // workspace root, which is where a profile Cargo reads has to be
+    // (ADR-053 D1).
+    let root = workspace.render();
+    let parsed: toml::Value = toml::from_str(&root).expect("the root is valid TOML");
     assert_eq!(parsed["profile"]["dev"]["opt-level"].as_integer(), Some(3));
     assert_eq!(parsed["profile"]["dev"]["lto"].as_bool(), Some(true));
     assert_eq!(
@@ -427,8 +440,9 @@ fn a_nikaia_package_is_refused_and_says_why() {
     );
 
     let project = Project::open(&dir, None, None, None).expect("the project opens");
+    let members = project.members().expect("the packages resolve");
     let error = project
-        .cargo_project("fn main() {}")
+        .cargo_workspace(&members, &["fn main() {}".to_string()])
         .expect_err("a Nikaia package has nowhere to come from");
     let text = format!("{error:#}");
     assert!(text.contains("http-server"), "{text}");
@@ -866,17 +880,63 @@ fn the_rules_that_come_with_a_path_dependency() {
     );
     std::fs::write(&manifest, &both).expect("back to one");
 
-    // Rule 2: transitive dependencies are not visible, so one that would need
-    // resolving is refused rather than flattened.
+    // Rule 2: transitive dependencies are not visible - and since
+    // [ADR-053](../../../docs/specification/adr/adr-053.md) D3 that is
+    // structural rather than a refusal. A package that depends on a package
+    // **builds**, because it is generated as its own crate naming its own
+    // dependencies; what the program cannot do is reach past `http` to what
+    // `http` depends on, and it cannot because that crate is not one of its own.
+    std::fs::create_dir_all(dir.join("deeper/src")).expect("the third package");
+    std::fs::write(
+        dir.join("deeper/nikaia.toml"),
+        "[package]\nname = \"deeper\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("its manifest");
+    std::fs::write(
+        dir.join("deeper/src/main.nika"),
+        "pub fn two() -> i64 {\n    return 2\n}\n",
+    )
+    .expect("its source");
     std::fs::write(
         dir.join("http/nikaia.toml"),
         "[package]\nname = \"http\"\nversion = \"0.1.0\"\n\n\
          [dependencies]\ndeeper = { path = \"../deeper\" }\n",
     )
     .expect("a transitive dependency");
+    std::fs::write(
+        dir.join("http/src/main.nika"),
+        "use deeper\n\npub fn ok() -> i64 {\n    return deeper::two()\n}\n",
+    )
+    .expect("the library uses it");
+    let ran = nikaia(&["run"], &app);
+    assert!(
+        ran.status.success(),
+        "a library that uses a library is a library: {}",
+        said(&ran)
+    );
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "2");
+
+    // …and the program still cannot name `deeper` itself.
+    let program = std::fs::read_to_string(app.join("src/main.nika")).expect("the program");
+    std::fs::write(
+        app.join("src/main.nika"),
+        "use http\n\nfn main() {\n    println(f\"{deeper::two()}\")\n}\n",
+    )
+    .expect("reaching past http");
     let ran = nikaia(&["build"], &app);
     assert!(!ran.status.success(), "{}", said(&ran));
-    assert!(said(&ran).contains("packages of its own"), "{}", said(&ran));
+    assert!(
+        said(&ran).contains("unresolved module or unlinked crate `deeper`"),
+        "a transitive package is not a dependency of this crate, so naming it \
+         does not resolve: {}",
+        said(&ran)
+    );
+    std::fs::write(app.join("src/main.nika"), &program).expect("back to the program");
+    std::fs::write(
+        dir.join("http/src/main.nika"),
+        "pub fn ok() -> i64 {\n    return 1\n}\n",
+    )
+    .expect("back to the library");
 
     // Rule 4: a dependency's own `[build]` is ignored, and the compiler says so -
     // a package is built with the settings of the program that uses it.
