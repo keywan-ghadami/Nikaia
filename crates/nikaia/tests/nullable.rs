@@ -765,12 +765,21 @@ fn main() {
 /// `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does
 /// not have.
 ///
-/// **Both directions, in one program, through one rule.** `.clone()` and
-/// `strip_prefix` are in no ledger, so both values are `?` to this checker — and
-/// one is a plain `String` while the other is **already** an `Option<&str>`.
-/// `.into()` is the wrap for the first and the identity for the second, which is
-/// the whole of why it needs no answer to a question the checker could not
-/// settle.
+/// **Both directions, in one program, through one rule.** Both values are `?` to
+/// this checker — and one is a plain `String` while the other is **already** an
+/// `Option<&str>`. `.into()` is the wrap for the first and the identity for the
+/// second, which is the whole of why it needs no answer to a question the
+/// checker could not settle.
+///
+/// **Fragile on purpose, and named as such**: the `?` comes from `.clone()` and
+/// `strip_prefix` being in no ledger, and every real `std` name is a candidate
+/// for being written down — two fixtures in this repository have already broken
+/// that way. The stable source would be
+/// [ADR-024](../../../docs/specification/adr/adr-024.md) D4's erased generic,
+/// which is an absence the **language** decides; it cannot be used until a
+/// generic function lowers with its `<T>` (`open-work.md` §1.1). Whoever writes
+/// `String::clone` down should move this fixture rather than delete it — what it
+/// measures is the rule, not the ledger.
 #[test]
 fn a_value_of_unknown_type_is_converted_rather_than_left_alone() {
     let printed = ran(

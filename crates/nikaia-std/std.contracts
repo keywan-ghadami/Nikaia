@@ -796,6 +796,37 @@ sync = true
 touches = []
 signature = "(&str) -> String"
 
+# Written down because the corpus asks for it - `line.to_uppercase()` in
+# `examples/k-nucleotide.nika` - and because it is sayable: a case fold hands
+# back an owned `String`, whatever it was given. It was the example a test used
+# for *"a signature nobody has written"*, which is a bad thing to hold a test
+# still with: every real `std` name is a candidate for being written, so a test
+# resting on one being absent breaks the day somebody writes it. That test rests
+# on ADR-024 D4's erasure now, which is an absence the language **decides**.
+[fn."str::to_uppercase"]
+pub = true
+sync = true
+touches = []
+signature = "(&str) -> String"
+
+[fn."str::to_lowercase"]
+pub = true
+sync = true
+touches = []
+signature = "(&str) -> String"
+
+[fn."String::to_uppercase"]
+pub = true
+sync = true
+touches = []
+signature = "(&String) -> String"
+
+[fn."String::to_lowercase"]
+pub = true
+sync = true
+touches = []
+signature = "(&String) -> String"
+
 [fn."str::trim"]
 pub = true
 sync = true

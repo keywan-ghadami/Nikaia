@@ -6,6 +6,8 @@
 //! corpus is the guard and the deliberately-wrong programs below are the proof
 //! that the guard is not passing because the checker is asleep.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nikaia::check::{self, Finding, Severity};
@@ -478,12 +480,17 @@ fn a_loop_over_something_that_cannot_fail_says_nothing() {
 /// together, which is what ADR-028 predicted it would look like.
 #[test]
 fn a_method_nobody_wrote_down_says_nothing() {
-    assert!(findings(
-        "fn main() {\n\
+    // **The name is `common::UNDESCRIBED_METHOD`'s**, which is where this
+    // repository keeps *"no ledger describes this"* — see the reason there. The
+    // three arguments are deliberate: an entry would catch the arity, and the
+    // point is that without one nothing is claimed at all.
+    assert!(findings(&format!(
+        "fn main() {{\n\
          \x20   let mut out = String::new()\n\
-         \x20   out.insert_str(0, \"a\", \"b\")\n\
-         }"
-    )
+         \x20   out.{}(0, \"a\", \"b\")\n\
+         }}",
+        common::UNDESCRIBED_METHOD
+    ))
     .is_empty());
 }
 
@@ -552,16 +559,31 @@ fn a_parameter_that_accepts_several_types_claims_none() {
 
 /// Both directions of the rule at once: an unknown on either side fits.
 ///
-/// **The example used to be `cli::args().nth(1)`**, and it stopped being one:
-/// that entry is written down now, so the value has a `String?` and handing it
-/// to an `i32` is an ordinary mismatch rather than a claim about nothing. A
-/// method no ledger describes is what this is about, and `String::to_uppercase`
-/// is one - so the test keeps testing the rule instead of the corpus.
+/// **It is held still by an absence the language decides**, and it took two
+/// goes to get there. The example was `cli::args().nth(1)`, which stopped being
+/// unwritten the day that entry was written; the replacement was
+/// `String::to_uppercase`, which lasted until somebody noticed it obviously has
+/// a type and wrote *that* down. Every real `std` name is a candidate for being
+/// written, so a test resting on one being absent is a test that breaks when the
+/// ledger does its job.
+///
+/// **A signature that says `?` is the stable source**, because it is *written*.
+/// `HashMap::keys` is `(&HashMap[?, ?]) -> ?` in `std.contracts` — the ledger
+/// declining to claim rather than nobody having got to it — so filling it is
+/// `open-decisions.md` §6's question and not routine work. If that question is
+/// ever answered, this fixture is meant to be revisited with it.
+///
+/// ADR-024 D4's erased generic would be the better source still — an absence the
+/// **language** decides — and it cannot be used yet: a generic function lowers
+/// without its `<T>` and does not compile at all (`open-work.md` §1.1).
 #[test]
-fn a_value_from_an_unwritten_signature_fits_anywhere() {
+fn a_value_from_a_signature_that_claims_nothing_fits_anywhere() {
     assert!(findings(
         "fn takes(a: i32) { }\n\
-         fn main() { let s = \"x\".to_string() takes(s.to_uppercase()) }"
+         fn main() {\n\
+         \x20   let counts: HashMap[&str, i64] = HashMap::new()\n\
+         \x20   takes(counts.keys())\n\
+         }"
     )
     .is_empty());
 }

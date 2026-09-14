@@ -5,6 +5,8 @@
 //! shipped ledger has not drifted from `std`'s Nikaia sources**, which is the
 //! half of "a package ships its ledger" that a reviewer cannot do by eye.
 
+mod common;
+
 use std::path::PathBuf;
 
 use nikaia::contracts::{Ledger, Sync, STD};
@@ -80,16 +82,22 @@ fn what_cannot_be_resolved_is_not_inferred_sync() {
 /// The receiver's type is what was missing, and the checker had it all along.
 #[test]
 fn a_method_call_is_resolved_through_the_receiver() {
-    let l = ledger(
-        "fn counted(s: String) -> i64 { return s.len() }\n\
-         fn shouty(s: String) -> String { return s.to_uppercase() }",
-    );
+    // **The unresolved half is `common::UNDESCRIBED_METHOD`**, and not a name
+    // written here: this fixture was `String::to_uppercase` until that entry was
+    // written, which is the fourth time a test in this repository rested on a
+    // `std` name being absent and broke when it stopped being. That constant is
+    // the one place to move it.
+    let l = ledger(&format!(
+        "fn counted(s: String) -> i64 {{ return s.len() }}\n\
+         fn mutated(s: String) {{ {} }}",
+        common::undescribed_call("s")
+    ));
 
     // `String::len` is in `std`'s ledger and says `sync`.
     assert_eq!(l.functions["counted"].sync, Sync::Inferred);
-    // `String::to_uppercase` is not, and an absent entry is the absence of an
-    // answer rather than permission to assume one.
-    assert_eq!(l.functions["shouty"].sync, Sync::No);
+    // The other is not, and an absent entry is the absence of an answer rather
+    // than permission to assume one.
+    assert_eq!(l.functions["mutated"].sync, Sync::No);
 }
 
 /// A higher-order method hands on whatever its lambda does (ADR-029).

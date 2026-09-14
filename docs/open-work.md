@@ -51,7 +51,36 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**This section is empty again.** Two entries arrived while
+### 1.1. A generic function lowers without its type parameters, and does not compile
+
+```nika
+fn hand[T](x: T) -> T { return x }
+```
+
+lowers to `fn hand(x: T) -> T { x }` — the `[T]` is read by the parser, erased by
+the checker ([ADR-024](specification/adr/adr-024.md) D4) and **dropped** by the
+emitter, which writes `{vis}{pausing}fn {name}({params}){ret}` and has no slot
+for one. So `rustc` answers *"cannot find type `T` in this scope"* about a file
+nobody wrote, with *"you might be missing a type parameter"* as the help — which
+is [Part III C.1](specification/30-nikaia-tooling.md)'s class exactly.
+
+*Why it is a defect and not the roadmap's unchecked "Generics" box:* that box is
+about generics **working** — bounds, inference, generic `impl`s — and this is
+about a program that passes every stage this compiler has and then fails in the
+language below. Either answer removes that: lower the parameters, or refuse the
+form with a sentence saying generics are not built. What may not stand is the
+third thing, which is what happens today.
+
+*What the smaller answer needs:* the `Item::Fn` already carries `generics`, and
+the header is one `format!`. Whether that is **enough** to make generics usable
+is the roadmap's question and not this entry's — this entry is only about the
+program not reaching `rustc` in that state.
+
+*Found by* a test looking for a stable source of `?`: D4's erasure is one the
+language *decides*, which makes it the right fixture, and it cannot be used until
+this is fixed.
+
+**This section was empty, and this put it back.** Two entries arrived while
 [ADR-066](specification/adr/adr-066.md) was being built — not caused by it, which
 is what writing programs against a construct does — and both left in the same
 session, each by being answered rather than ruled on. A member reached off a `T?`
