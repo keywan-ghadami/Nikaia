@@ -455,7 +455,7 @@ name that happens to be true.
 
 ## 3. Upkeep
 
-### 3.1. `cargo test --workspace --release` fails the project tests, and running them alone does not
+### 3.1. A whole-workspace test run once failed the project tests, and does not any more — **a suspicion, not a fact**
 
 ```text
 error: failed to run `rustc` to learn about target-specific information
@@ -464,25 +464,32 @@ error: failed to run `rustc` to learn about target-specific information
 ```
 
 Sixteen of the twenty-two tests in `crates/nikaia/tests/project.rs`, every one of
-them at the point where a nested `cargo` probes `rustc` **through this
-compiler's wrapper** (`project::wrapper_main`, where the invocation names no
-`.nika` source and is passed straight through). The stdout that reaches the
-error is the probe's own output cut off partway down the `--print` list.
+them at the point where a nested `cargo` probes `rustc` **through this compiler's
+wrapper** (`project::wrapper_main`, where the invocation names no `.nika` source
+and is passed straight through). The stdout that reaches the error is the probe's
+own output cut off partway down the `--print` list.
 
-*Evidence, and what it rules out:* measured on `origin/main` with nothing of
-this branch applied — 3 runs, 16 failures each. `cargo test -p nikaia --test
-project` on the same commit passes 22 of 22, four runs out of four. So it is
-**the concurrency of the whole-workspace run** rather than either the tests or
-the wrapper: what changes between the two is how many other `cargo` invocations
-are probing at the same time.
+**It does not reproduce, and this entry is marked as a suspicion for that
+reason** — the head of this file makes the difference load-bearing, and an entry
+that carried a reproduction yesterday and none today is a suspicion today. What
+it looked like at the time: `cargo test --workspace --release` failing 16 of 22
+on `origin/main` with nothing applied, three runs out of three, while `cargo test
+-p nikaia --test project` on the same commit passed 22 of 22 four times out of
+four. Under the same command since: **seven consecutive clean whole-workspace
+runs**, two of them with a full rebuild immediately before in the same
+invocation, which was the best hypothesis and is now ruled out.
 
-*What is not known:* whether the same happens in CI, whose machine and parallelism
-differ from this one, and which resource actually runs out. Written down rather
-than guessed at, because a gate that fails for a reason nobody has named is a
-gate people learn to re-run.
+*What is left, and it is a guess rather than a finding:* every failing run
+happened while this container was doing a great deal else, and every clean run
+since has not. Nothing measures that, so nothing here claims it.
 
-**Empty apart from the above**, which it has not been before, so what was here is
-worth naming: Part
+*Why it is kept at all:* if it comes back, this says what was already ruled out —
+it is not the tests, not the wrapper's own code path, and not a stale binary. It
+is worth one look and not a re-run, which is what an unnamed failing gate
+otherwise teaches people to do.
+
+**Otherwise empty**, which it has not been before, so what was here is worth
+naming: Part
 III 15.2 claimed the compiler *"reads the metadata of the Rust Crate"* and quoted
 an error about an `Rc<i32>` that nothing produces; the same section's type mapping
 stopped at three rows and had no entry for the type
