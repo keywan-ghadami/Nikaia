@@ -108,11 +108,10 @@ So, in order, and each says below why it sits where it does:
    [ADR-059](specification/adr/adr-059.md),
    [ADR-064](specification/adr/adr-064.md)), and Part II 12.2's counter runs at
    both settings — so a program that spawns has something it may share, and this
-   item stopped being about representation. What is left is every **refusal** the
-   section states and nothing raises, plus the one thing that needs deciding
-   rather than doing: **a write across several locks has no door**, which ADR-059
-   D1 named as it closed. Independent of the sequence above, so it can be taken
-   beside it.
+   item stopped being about representation. [ADR-065](specification/adr/adr-065.md)
+   then gave the transfer its door, so **nothing here needs deciding any more**:
+   what is left is every **refusal** the section states and nothing raises.
+   Independent of the sequence above, so it can be taken beside it.
 3. **A server to bind to, and the `postgres` block.** Its own project rather than a
    step of this one.
 4. **Supervision.** Last because nothing else waits on it.
@@ -295,12 +294,6 @@ constructor and its single spelling. **Part II 12.2's counter compiles and runs 
 both settings.** So the type is no longer what anything here waits on — what is
 left is the section's own rules, every one of which is a refusal nothing raises:
 
-* **A write across several locks has no door.** `access_all` reads and `update`
-  writes one, so Chapter 12's own transfer — take from one account, give to the
-  other, under both locks — is not writable. A consequence of ADR-059 D1 and
-  named by it rather than discovered later: what such a door is called, and
-  whether it hands a value back per lock, wants deciding. Part II 12.2 carries a
-  status note saying the transfer is not writable today.
 * the **lock-touching** derived property (ADR-039 D3, D7): no function carries it,
   so nothing tells a spawned body from a scope's;
 * the **re-entrancy check as a build switch** (ADR-039 D8), which the cache key

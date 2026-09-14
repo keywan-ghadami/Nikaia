@@ -3458,6 +3458,26 @@ impl<'p> Emitter<'p> {
         if let Expr::Variable(name) = func {
             let text = self.text(*name);
 
+            // **A door over several locks**
+            // ([ADR-065](../../../docs/specification/adr/adr-065.md)): the locks
+            // go in by reference and the block becomes the last argument, which
+            // is what the trailing-lambda rule already made of it. The ordered
+            // acquisition is `std`'s, because it is about addresses at run time
+            // and not about anything this compiler can see.
+            if let Some(door) = crate::check::MultiLock::named(text) {
+                if let Some((block, locks)) = args.split_last() {
+                    out.push(&format!("nikaia_std::lock::{}(", door.written()));
+                    for lock in locks {
+                        out.push("&");
+                        self.expr(out, lock, depth, flow)?;
+                        out.push(", ");
+                    }
+                    self.expr(out, block, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
+                }
+            }
+
             // **A hull you can observe, you write**
             // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
             // `Shared(x)`, `SharedMut(x)` and `Locked(x)` are the three, and each

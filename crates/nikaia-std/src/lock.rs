@@ -336,3 +336,237 @@ mod tests {
             .unwrap_or("")
     }
 }
+
+/// One lock, whichever shape it got — what a door over **several** of them needs
+/// ([ADR-065](../../../docs/specification/adr/adr-065.md)).
+///
+/// A door over two locks cannot be written against `Local` or `Crossing` by name:
+/// which shape a value gets is decided per value, so one program can hold both,
+/// and the two values a transfer names need not have got the same answer. What
+/// the door needs of each is the same three things whichever shape it is, and
+/// this says which three.
+pub trait Door {
+    /// What the lock holds.
+    type Held;
+
+    /// **Where this lock stands in the one order everybody takes them in.**
+    ///
+    /// Its address. Two threads that both want A and B take them in the same
+    /// order because they compute the same two numbers, which is what makes a
+    /// cycle impossible rather than unlikely (Part II, 12.3).
+    fn ordering(&self) -> usize;
+
+    /// Read in place, the way `access` does.
+    fn reading<R>(&self, f: impl FnOnce(&Self::Held) -> R) -> R;
+
+    /// Take the value out and put one back, the way `update` does — and hand a
+    /// result outward, which is what lets two of these nest.
+    fn taking<R>(&self, f: impl FnOnce(Self::Held) -> (Self::Held, R)) -> R;
+}
+
+impl<T> Door for Local<T> {
+    type Held = T;
+
+    fn ordering(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    #[track_caller]
+    fn reading<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        self.read(f)
+    }
+
+    #[track_caller]
+    fn taking<R>(&self, f: impl FnOnce(T) -> (T, R)) -> R {
+        let old = match self.inner.try_borrow_mut() {
+            Ok(mut held) => held.take().unwrap_or_else(|| emptied()),
+            Err(_) => reentered(),
+        };
+        let (new, out) = f(old);
+        match self.inner.try_borrow_mut() {
+            Ok(mut held) => *held = Some(new),
+            Err(_) => reentered(),
+        }
+        out
+    }
+}
+
+impl<T> Door for Crossing<T> {
+    type Held = T;
+
+    fn ordering(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    #[track_caller]
+    fn reading<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        self.access(f)
+    }
+
+    #[track_caller]
+    fn taking<R>(&self, f: impl FnOnce(T) -> (T, R)) -> R {
+        self.hold(|slot| {
+            let old = slot.take().unwrap_or_else(|| emptied());
+            let (new, out) = f(old);
+            *slot = Some(new);
+            out
+        })
+    }
+}
+
+/// **A handle on a lock is a lock**, so a door takes one without being told which
+/// it was given ([ADR-065](../../../docs/specification/adr/adr-065.md) D1).
+///
+/// `SharedMut[T]` is a count around a lock and `Locked[T]` is the lock in a
+/// field; the door is written once and both reach it. The **order** delegates to
+/// the lock inside rather than to the handle, because two handles on one
+/// allocation must compute the same number or the order they promise is not one.
+impl<D: Door> Door for std::rc::Rc<D> {
+    type Held = D::Held;
+
+    fn ordering(&self) -> usize {
+        (**self).ordering()
+    }
+
+    #[track_caller]
+    fn reading<R>(&self, f: impl FnOnce(&Self::Held) -> R) -> R {
+        (**self).reading(f)
+    }
+
+    #[track_caller]
+    fn taking<R>(&self, f: impl FnOnce(Self::Held) -> (Self::Held, R)) -> R {
+        (**self).taking(f)
+    }
+}
+
+impl<D: Door> Door for std::sync::Arc<D> {
+    type Held = D::Held;
+
+    fn ordering(&self) -> usize {
+        (**self).ordering()
+    }
+
+    #[track_caller]
+    fn reading<R>(&self, f: impl FnOnce(&Self::Held) -> R) -> R {
+        (**self).reading(f)
+    }
+
+    #[track_caller]
+    fn taking<R>(&self, f: impl FnOnce(Self::Held) -> (Self::Held, R)) -> R {
+        (**self).taking(f)
+    }
+}
+
+/// **Both locks read, both held at once, and taken in one global order**
+/// (Part II 12.3, [ADR-065](../../../docs/specification/adr/adr-065.md) D2).
+///
+/// The order is by address and not by the order they are written, which is the
+/// whole point: `access_all(a, b)` in one task and `access_all(b, a)` in another
+/// take them the same way round, so there is no cycle to deadlock in. Nesting
+/// them by hand is what the language refuses (Part II, 12.3).
+#[track_caller]
+pub fn access_all<A, B, R>(a: &A, b: &B, f: impl FnOnce(&A::Held, &B::Held) -> R) -> R
+where
+    A: Door,
+    B: Door,
+{
+    match a.ordering() <= b.ordering() {
+        true => a.reading(|x| b.reading(|y| f(x, y))),
+        false => b.reading(|y| a.reading(|x| f(x, y))),
+    }
+}
+
+/// **Both locks written, one new value each**
+/// ([ADR-065](../../../docs/specification/adr/adr-065.md) D2).
+///
+/// `update`'s rule, widened: the old values go in by value and the new ones come
+/// back as a pair, so no lambda is handed anything it may change and nothing sees
+/// either lock between the two writes. The same address order as above.
+#[track_caller]
+pub fn update_all<A, B>(a: &A, b: &B, f: impl FnOnce(A::Held, B::Held) -> (A::Held, B::Held))
+where
+    A: Door,
+    B: Door,
+{
+    match a.ordering() <= b.ordering() {
+        true => a.taking(|x| {
+            let held = b.taking(|y| {
+                let (x, y) = f(x, y);
+                (y, x)
+            });
+            (held, ())
+        }),
+        false => b.taking(|y| {
+            let held = a.taking(|x| {
+                let (x, y) = f(x, y);
+                (x, y)
+            });
+            (held, ())
+        }),
+    }
+}
+
+#[cfg(test)]
+mod doors {
+    use super::*;
+
+    /// Chapter 12's own transfer, which the language could not write before
+    /// ([ADR-065](../../../docs/specification/adr/adr-065.md)).
+    #[test]
+    fn a_transfer_moves_between_two_locks() {
+        let a = Local::new(100i64);
+        let b = Local::new(5i64);
+        update_all(&a, &b, |from, to| (from - 30, to + 30));
+        assert_eq!(a.get(), 70);
+        assert_eq!(b.get(), 35);
+    }
+
+    /// **The order is the addresses', not the arguments'**, which is what makes
+    /// two tasks that name them the other way round safe.
+    #[test]
+    fn the_two_orders_are_the_same_order() {
+        let a = Crossing::new(1i64);
+        let b = Crossing::new(2i64);
+        assert_eq!(access_all(&a, &b, |x, y| *x * 10 + *y), 12);
+        assert_eq!(access_all(&b, &a, |y, x| *x * 10 + *y), 12);
+    }
+
+    /// And two threads doing the transfer both ways round neither deadlock nor
+    /// lose a penny, which is the property `access_all` exists for.
+    ///
+    /// **Deliberately short.** A deadlock is a hang whatever the count, and the
+    /// total is exact at any of them - so the number is chosen to prove the
+    /// property without loading the machine, because two timing-sensitive I/O
+    /// tests share this binary and a stress test beside them is a flake they did
+    /// not have.
+    #[test]
+    fn two_threads_transferring_both_ways_keep_the_total() {
+        let a = std::sync::Arc::new(Crossing::new(1_000i64));
+        let b = std::sync::Arc::new(Crossing::new(1_000i64));
+        let (one, two) = (std::sync::Arc::clone(&a), std::sync::Arc::clone(&b));
+        let left = std::thread::spawn(move || {
+            for _ in 0..400 {
+                update_all(&*one, &*two, |x, y| (x - 1, y + 1));
+            }
+        });
+        let (one, two) = (std::sync::Arc::clone(&a), std::sync::Arc::clone(&b));
+        let right = std::thread::spawn(move || {
+            for _ in 0..400 {
+                update_all(&*two, &*one, |y, x| (y - 1, x + 1));
+            }
+        });
+        left.join().expect("the left task");
+        right.join().expect("the right task");
+        assert_eq!(a.get() + b.get(), 2_000, "nothing is created or lost");
+    }
+
+    /// A lock of one type beside a lock of another, which is the case a door
+    /// written against one shape could not have.
+    #[test]
+    fn the_two_locks_need_not_hold_the_same_type() {
+        let name = Local::new("kasse".to_string());
+        let count = Local::new(3i64);
+        let said = access_all(&name, &count, |n, c| format!("{n} {c}"));
+        assert_eq!(said, "kasse 3");
+    }
+}

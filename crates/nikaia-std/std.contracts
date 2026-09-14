@@ -702,6 +702,25 @@ pub = true
 sync = "from(f)"
 signature = "(&SharedMut[$T], f: fn($T))"
 
+# **The two doors over several locks** (Part II 12.3, ADR-065). They take the
+# locks and then the block, and the acquisition order is by address so that two
+# tasks naming the same two locks the other way round still take them alike.
+#
+# **No `signature`, and that is the decision rather than a gap** (ADR-065 D1).
+# This ledger's type language binds `$T` from a receiver (ADR-031); a door over
+# several locks has none, the locks hold different types, and how many there are
+# is open. So the compiler types these itself, the way it types `SharedMut(0)`.
+# What the ledger *can* say is the `sync` column, and that is the half a caller
+# needs: an acquisition adds no pausing of its own, so the block decides - the
+# same shape `access` has, for the same reason (ADR-029 D3).
+[fn."access_all"]
+pub = true
+sync = "from(f)"
+
+[fn."update_all"]
+pub = true
+sync = "from(f)"
+
 [fn."Vec::sort_by_key"]
 pub = true
 sync = "from(f)"

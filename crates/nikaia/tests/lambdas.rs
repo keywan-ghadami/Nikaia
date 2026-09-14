@@ -10,7 +10,7 @@
 //! error, which is why these are compiled and not only compared as text.
 //!
 //! **The stand-ins.** A trailing lambda's callee is usually something `std`
-//! does not have yet - a lock's `access`, `access_all`, `task::scope`. ADR-028
+//! does not have yet - a lock's `access`, `both_of`, `task::scope`. ADR-028
 //! D5 keeps an entry out of `std` until a program asks for it, so each test
 //! that needs one prepends the Rust it stands for. What is under test is the
 //! grammar and the lowering: that the emitted call is a well-formed Rust call
@@ -113,17 +113,21 @@ fn a_lock_is_accessed_through_a_named_trailing_lambda() {
     );
 }
 
-/// Part II 12.3's `access_all`: a free call with arguments **and** a trailing
-/// lambda that names two parameters.
+/// A free call with arguments **and** a trailing lambda that names two
+/// parameters — the shape Part II 12.3's `access_all` is written in.
 ///
-/// The free-call equivalent of the `"." name args lambda` rule, and the one
-/// that needed the lambda to reach a path as well as a method: `access_all` is
-/// a plain function, so nothing before the lambda is a method call at all.
+/// The free-call equivalent of the `"." name args lambda` rule, and the one that
+/// needed the lambda to reach a path as well as a method: nothing before the
+/// lambda is a method call at all. The callee here is a made-up `both_of` and
+/// not the real door, because this is a test of the **grammar** - `access_all`
+/// is typed and lowered by the compiler now
+/// ([ADR-065](../../../docs/specification/adr/adr-065.md)), so using its name
+/// would test that instead.
 #[test]
 fn a_free_call_takes_arguments_and_a_named_trailing_lambda() {
     let rust = compiled(
         "lambda-access-all",
-        "fn access_all<R>(\n\
+        "fn both_of<R>(\n\
          \x20   mut a: Account,\n\
          \x20   mut b: Account,\n\
          \x20   body: impl FnOnce(&mut Account, &mut Account) -> R,\n\
@@ -133,7 +137,7 @@ fn a_free_call_takes_arguments_and_a_named_trailing_lambda() {
         "struct Account { balance: i64 }\n\
          \n\
          fn transfer(account_a: Account, account_b: Account) {\n\
-         \x20   access_all(account_a, account_b) fn(a, b) {\n\
+         \x20   both_of(account_a, account_b) fn(a, b) {\n\
          \x20       let amount = 100\n\
          \x20       a.balance -= amount\n\
          \x20       b.balance += amount\n\
@@ -141,7 +145,7 @@ fn a_free_call_takes_arguments_and_a_named_trailing_lambda() {
          }\n",
     );
     assert!(
-        rust.contains("access_all(account_a, account_b, |a, b| {"),
+        rust.contains("both_of(account_a, account_b, |a, b| {"),
         "{rust}"
     );
 }

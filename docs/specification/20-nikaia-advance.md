@@ -680,23 +680,38 @@ let account_b = SharedMut(Account(…))
 // }
 
 // Atomic Locking (Deadlock Proof)
-// The runtime sorts A and B internally and locks them safely.
-// We use a trailing lambda block explicitly here.
+// The runtime sorts A and B by address and takes them in that order, so this
+// and `access_all(account_b, account_a)` in another task take them alike.
 access_all(account_a, account_b) fn(a, b) {
     // Both are read in place, and neither may be changed here (ADR-059 D1).
     a.balance + b.balance
 }
+
+// And the transfer, which is a write on both: the old values go in, and the
+// block hands back **one new value per lock** ([ADR-065](adr/adr-065.md) D2).
+update_all(account_a, account_b) fn(von, nach) {
+    return (von - 30, nach + 30)
+}
 ```
 
-> **Status: a transfer between two accounts has no door.** `access_all` reads
-> several locks at once, because [ADR-059](adr/adr-059.md) D1 made `access` a
-> read and the same reading applies to it; `update` writes **one**. So the
-> balancing half of the example above — take from one, give to the other, under
-> both locks — is not writable today. That is a consequence of D1 and not an
-> oversight of it, and it is on
-> [`open-work.md`](../open-work.md) rather than answered here: what a write
-> across several locks is called, and whether it hands back a value per lock, is
-> the kind of question this page should not invent in a footnote.
+**`update_all` is `update`'s rule widened, not a second rule.** No block in this
+language is handed something it may change, nothing sees either lock between the
+two writes, and the block stays a pure function of what it was given — which is
+what leaves the door open to an implementation that *retries* instead of locking.
+
+> **Status: built** ([ADR-065](adr/adr-065.md)). Both doors run at both settings,
+> and two tasks transferring in opposite directions neither deadlock nor lose
+> anything. **Two locks at a time**: two are put in order by one comparison, and
+> three need a different mechanism — a door handed one lock, or a block that does
+> not name one value per lock, is refused as `NK1124`. Neither name is a keyword:
+> the grammar has taken this shape since the trailing lambda, and what was missing
+> was somebody to type it.
+
+> **Status: the transfer has a door, and it is `update_all`**
+> ([ADR-065](adr/adr-065.md)). `access_all` reads several locks at once, because
+> [ADR-059](adr/adr-059.md) D1 made `access` a read and the same reading applies
+> to it; `update` writes one; `update_all` writes several and hands back one new
+> value each. 12.3 writes both.
 
 **How the compiler sees a chain.** A nesting written one line inside the other is visible where it stands; a chain is not — your block calls a function of yours, which calls another, and the third one opens a lock. So every function carries a second derived property beside `sync` (12.1): **does it touch a lock.** It is inferred over the same call graph, never written by hand, and inside a blocking door (`update`, `access`, `access_all`) a call to anything that carries it is refused. That is what catches chains and self-calls, and it is what makes the rule above complete rather than only local ([ADR-039](adr/adr-039.md) D3).
 

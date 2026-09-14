@@ -675,3 +675,92 @@ fn main() {
         );
     }
 }
+// --- a door over several locks (ADR-065) -------------------------------------
+
+/// **Chapter 12's own transfer**, which the language could not write.
+///
+/// `access_all` read and `update_all` did not exist, so taking from one account
+/// and giving to the other under both locks had no door
+/// ([ADR-059](../../../docs/specification/adr/adr-059.md) D1 named the gap as it
+/// made it). It runs now, and the block hands back **one new value per lock** —
+/// `update`'s rule widened rather than a second rule
+/// ([ADR-065](../../../docs/specification/adr/adr-065.md) D2).
+const TRANSFER: &str = "\
+fn main() {
+    let konto_a = SharedMut(100)
+    let konto_b = SharedMut(5)
+    update_all(konto_a, konto_b) fn(von, nach) {
+        return (von - 30, nach + 30)
+    }
+    access_all(konto_a, konto_b) fn(a, b) {
+        println(f\"{a} {b}\")
+    }
+}
+";
+
+#[test]
+fn a_transfer_between_two_locks_runs_at_both_settings() {
+    for setting in ["no", "yes"] {
+        let (printed, rust) = run(
+            &format!("two-locks-{setting}"),
+            TRANSFER,
+            &["--user-parallelism", setting],
+        );
+        assert_eq!(printed.trim(), "70 35", "at `{setting}`");
+        // The locks go in by reference and the block is the last argument -
+        // which is what the trailing-lambda rule already made of it.
+        assert!(
+            rust.contains("nikaia_std::lock::update_all(&konto_a, &konto_b, |von, nach|"),
+            "at `{setting}`:\n{rust}"
+        );
+    }
+}
+
+/// **A door over several locks takes locks**, and says so in this language's
+/// words rather than handing `rustc` a program about a trait bound.
+///
+/// A number is the case worth testing: a literal carries no type on purpose
+/// (Part I 2.4), and reading that absence as *"might be a lock"* is what used to
+/// send this to the backend.
+#[test]
+fn a_door_over_several_locks_refuses_what_is_not_one() {
+    let refused = |source: &str| -> String {
+        let dir = common::scratch_dir("two-locks-refused");
+        let input = dir.join("main.nika");
+        std::fs::write(&input, source).expect("the source");
+        let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .args(["--input", input.to_str().expect("utf-8 path")])
+            .args([
+                "--output",
+                dir.join("main.rs").to_str().expect("utf-8 path"),
+            ])
+            .args(["--no-cache"])
+            .env("NIKAIA_CACHE_DIR", dir.join("cache"))
+            .output()
+            .expect("the compiler runs");
+        assert!(!run.status.success(), "it must be refused");
+        let said = String::from_utf8_lossy(&run.stderr).into_owned();
+        let _ = std::fs::remove_dir_all(&dir);
+        said
+    };
+
+    let said = refused(
+        "fn main() {\n    let a = SharedMut(1)\n    let n = 5\n\
+         \x20   access_all(a, n) fn(x, y) { println(f\"{x} {y}\") }\n}",
+    );
+    assert!(said.contains("NK1124"), "{said}");
+    assert!(said.contains("takes locks"), "{said}");
+
+    // One lock is not several, and the block names one value per lock.
+    let alone = refused(
+        "fn main() {\n    let a = SharedMut(1)\n\
+         \x20   access_all(a) fn(x) { println(f\"{x}\") }\n}",
+    );
+    assert!(alone.contains("at least two"), "{alone}");
+
+    let short = refused(
+        "fn main() {\n    let a = SharedMut(1)\n    let b = SharedMut(2)\n\
+         \x20   access_all(a, b) fn(x) { println(f\"{x}\") }\n}",
+    );
+    assert!(short.contains("one value per lock"), "{short}");
+}

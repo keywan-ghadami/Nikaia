@@ -2042,6 +2042,120 @@ impl<'a> Checker<'a> {
     }
 
     /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`, `write(p, d; append: true)`.
+    /// A door over several locks: `access_all` reads them, `update_all` writes
+    /// them ([ADR-065](../../docs/specification/adr/adr-065.md)).
+    ///
+    /// **It is typed here and not in the ledger**, for the reason the hull
+    /// constructors are: a signature binds its type variables from the
+    /// **receiver** (ADR-031), and a door over several locks has none - the
+    /// locks are arguments, they hold different types, and how many there are is
+    /// open. What a written signature cannot say, this says.
+    ///
+    /// `access_all` hands each value as a **view**, the way `access` does;
+    /// `update_all` hands each in **by value** and takes a new one back per lock
+    /// (D2). Both refuse anything that is not a lock, because a door that let a
+    /// plain value through would be a door about nothing.
+    fn locks(&mut self, door: MultiLock, args: &[Expr], span: &Span) -> Ty {
+        let Some((last, locks)) = args.split_last() else {
+            self.no_door(door, "it takes the locks and then the block", span);
+            return Ty::Unknown;
+        };
+        let Expr::Closure { params, body } = last else {
+            self.no_door(door, "the block comes last: `fn(a, b) { … }`", span);
+            return Ty::Unknown;
+        };
+        if locks.len() < 2 {
+            self.no_door(door, "it is for **several** locks: name at least two", span);
+            return Ty::Unknown;
+        }
+
+        let mut held = Vec::with_capacity(locks.len());
+        for lock in locks {
+            let found = self.expr(lock, span);
+            match locked_content_of(&found) {
+                Some(inside) => held.push(match (door, &inside) {
+                    // A view of what it holds, the way `access` hands one over.
+                    (MultiLock::Reading, Ty::Named { name, args, .. }) => Ty::Named {
+                        name: name.clone(),
+                        args: args.clone(),
+                        view: true,
+                    },
+                    (MultiLock::Reading, _) => inside,
+                    (MultiLock::Writing, _) => inside,
+                }),
+                // Nothing written down says this is a lock. A type nothing
+                // describes is not claimed about at all (Part III, C.4) - but a
+                // **number** is not such a type: a literal carries no type on
+                // purpose (Part I 2.4), and reading that absence as "might be a
+                // lock" would hand `rustc` a program about a trait bound.
+                None if found.is_unknown() && !self.is_a_number(lock) => held.push(Ty::Unknown),
+                None => {
+                    self.checked.findings.push(Finding {
+                        severity: Severity::Error,
+                        span: span.clone(),
+                        code: "NK1124",
+                        message: format!(
+                            "`{}` takes locks, and this is a `{}`",
+                            door.written(),
+                            found.text()
+                        ),
+                        notes: vec![
+                            "a door over several locks is what keeps them in one order, and \
+                             there is nothing to order about a value that is not one \
+                             (Part II, 12.3)"
+                                .to_string(),
+                        ],
+                        help: Some(format!(
+                            "name `{SHARED_MUT}[T]` values, or `{LOCKED}[T]` fields"
+                        )),
+                    });
+                    held.push(Ty::Unknown);
+                }
+            }
+        }
+        if !params.is_empty() && params.len() != locks.len() {
+            self.no_door(
+                door,
+                "the block names one value per lock, in the order they are written",
+                span,
+            );
+        }
+        self.lambda(params, body, &held);
+        match door {
+            // What a lambda hands back is not written down (ADR-029 D1).
+            MultiLock::Reading => Ty::Unknown,
+            MultiLock::Writing => Ty::Tuple(Vec::new()),
+        }
+    }
+
+    /// Whether an expression is certainly a number, where its *type* says
+    /// nothing.
+    ///
+    /// A literal has no type of its own (Part I 2.4), and neither has the name a
+    /// bare `let` binds one to - but the constant fold watched both, so the
+    /// absence of a type is not the absence of knowledge here.
+    fn is_a_number(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::LitInt(_) | Expr::LitFloat(_) => true,
+            Expr::Variable(name) => self
+                .local(self.parsed.text(*name))
+                .is_some_and(|(_, constant)| constant.is_some()),
+            _ => false,
+        }
+    }
+
+    /// The one message shape for a door written wrong.
+    fn no_door(&mut self, door: MultiLock, wanted: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1124",
+            message: format!("`{}` is written `{}`", door.written(), door.shape()),
+            notes: vec![wanted.to_string()],
+            help: None,
+        });
+    }
+
     /// `Shared(x)`, `SharedMut(x)` and `Locked(x)` make a hull
     /// ([ADR-064](../../docs/specification/adr/adr-064.md) D2).
     ///
@@ -2147,6 +2261,16 @@ impl<'a> Checker<'a> {
     }
 
     fn call(&mut self, func: &Expr, args: &[Expr], config: &[ast::ConfigArg], span: &Span) -> Ty {
+        // **A door over several locks types its own lambda**
+        // ([ADR-065](../../docs/specification/adr/adr-065.md) D1), and it has to
+        // be answered before the arguments are walked: what the lambda is handed
+        // comes from what the *locks* hold, so the locks are typed first and the
+        // lambda after. Every other call can walk its arguments in one pass.
+        if let Expr::Variable(name) = func {
+            if let Some(door) = MultiLock::named(self.parsed.text(*name)) {
+                return self.locks(door, args, span);
+            }
+        }
         let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
         let passed: Vec<(String, Ty)> = config
             .iter()
@@ -3300,6 +3424,59 @@ const SHARED_MUT: &str = "SharedMut";
 /// word stands where it happens.
 fn is_hull(name: &str) -> bool {
     matches!(name, SHARED | SHARED_MUT | LOCKED)
+}
+
+/// The two doors that take **several** locks at once
+/// ([ADR-065](../../../docs/specification/adr/adr-065.md)).
+///
+/// They are not ledger entries and not grammar: the parser already takes
+/// `access_all(a, b) fn(x, y) { … }` as an ordinary call with a trailing lambda
+/// (Part I 5.3), and what is missing is only somebody to type it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiLock {
+    /// `access_all` - every lock read in place, none of them changed.
+    Reading,
+    /// `update_all` - every lock written, one new value each.
+    Writing,
+}
+
+impl MultiLock {
+    /// The name a program writes, or `None` for anything else.
+    pub fn named(name: &str) -> Option<MultiLock> {
+        match name {
+            "access_all" => Some(MultiLock::Reading),
+            "update_all" => Some(MultiLock::Writing),
+            _ => None,
+        }
+    }
+
+    pub fn written(self) -> &'static str {
+        match self {
+            MultiLock::Reading => "access_all",
+            MultiLock::Writing => "update_all",
+        }
+    }
+
+    fn shape(self) -> &'static str {
+        match self {
+            MultiLock::Reading => "access_all(a, b) fn(x, y) { … }",
+            MultiLock::Writing => "update_all(a, b) fn(x, y) { … }",
+        }
+    }
+}
+
+/// What a lock holds, where the type says it is one.
+///
+/// `SharedMut[T]` is a count around a lock and `Locked[T]` is the lock on its
+/// own; both hold a `T` and a door over several takes either.
+fn locked_content_of(ty: &Ty) -> Option<Ty> {
+    let Ty::Named { name, args, .. } = ty else {
+        return None;
+    };
+    if name != SHARED_MUT && name != LOCKED {
+        return None;
+    }
+    args.first().cloned()
 }
 
 /// Whether a value **is** a handle on a shared one, held by value.

@@ -366,6 +366,22 @@ fn a_detached_lambda_may_not_use_from() {
         let Some(parameter) = contract.sync.from() else {
             continue;
         };
+        // **The doors over several locks are the compiler's to type**
+        // ([ADR-065](../../../docs/specification/adr/adr-065.md) D1), so they
+        // carry the `sync` column and no signature - which is the one thing the
+        // ledger can say about them and the one thing it cannot. What this guard
+        // proves for the others is proved for these by `check::Checker::locks`,
+        // which requires the block to be the **last argument** and a lambda
+        // written there: immediate by construction, never stored and never
+        // spawned. The exemption is asked of the mechanism rather than of a
+        // copied list, so it cannot grow without the mechanism growing.
+        if nikaia::check::MultiLock::named(name).is_some() {
+            assert!(
+                contract.signature.is_none(),
+                "`{name}` is typed by the compiler, so a signature here would be a second answer"
+            );
+            continue;
+        }
         let signature = contract
             .signature
             .as_ref()
