@@ -246,10 +246,25 @@ is there now**: `touches` is inferred over the call graph since
 what it reaches instead of *"nobody said"*, and *"touches nothing, and it is
 known"* is very nearly *"repeating it is unobservable"*.
 
-**What is left is to say that the two are the same thing**, and to check the one
-place they might not be: a repetition can observe anything the vocabulary does not
-name. It names `file`, `stdout`, `stderr`, `args` and `lock` — not a clock, and
-`std` has none yet, so that is a thing to remember rather than a gap.
+**What is left is to say that the two are the same thing** — and one asymmetry
+that has to be written down first, because it is not obvious and it changes how
+carefully a `std` entry has to be read.
+
+**An empty touch set means different things to the two consumers.** To
+`contracts::order` it is a **speed**: a function that reaches nothing may overlap
+with anything, and an entry that forgets a resource buys an overlap it should not
+have. To a repetition it would be a **permission**: repeat me freely, and an entry
+that forgets a resource loses an effect. Same mistake, and the second consumer
+pays more for it. Whoever takes this on should say so where a `std` entry is
+written, not only where it is read.
+
+**And the clock is the example.** A repetition can observe anything the vocabulary
+does not name; the vocabulary names `file`, `stdout`, `stderr`, `args` and `lock`.
+It does not name a clock — and `std` has no function that reads one, so the rule
+that a word waits until a program asks for it keeps it out, exactly as it kept
+`lock` out until yesterday. `touch.rs` carries the note for the day it changes,
+including what to write: `clock read`, because two calls conflict over nothing and
+neither changes anything.
 
 **And the contradiction it uncovered is settled.** Part II said a `sync` function
 *"will never do I/O"*; `std.contracts` had `println` as `sync = true`, and the

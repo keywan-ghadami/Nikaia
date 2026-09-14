@@ -57,6 +57,22 @@ use anyhow::{anyhow, Result};
 /// touch set means *it changes the resource*, and reading a stream consumes
 /// it: two `io::read_to_string()` calls do not both get the bytes, so the
 /// read/read rule that lets two file reads overlap would be exactly wrong.
+///
+/// **And the clock, which is the one that is asked about before it is needed.**
+/// `std` has no function that reads one - `Instant::now` appears in the runtime's
+/// own executor and nowhere a program can reach - so the rule above keeps it out,
+/// and the rule is the same one that let `lock` in the day the doors existed.
+///
+/// What to write when the day comes: **`clock read`**, and the read is right,
+/// because two calls genuinely conflict over nothing and neither changes
+/// anything - the opposite of `stdin`, whose read is a write. The reason it is
+/// worth a paragraph anyway is the **second consumer**
+/// ([ADR-067](../../../../docs/specification/adr/adr-067.md) §3): to
+/// `contracts::order` an empty touch set is a *speed*, and to a repetition it
+/// would be a *permission*. A clock left out of an entry would read as "repeat me
+/// freely" and the repetition would see a different time. Naming it at all is
+/// enough to stop that - any named resource makes the set non-empty - which is
+/// why the note is here and not a special case somewhere.
 /// | `lock` | **a** lock, never which one | `get`, `set`, `access`, `update`, and the two doors over several |
 ///
 /// **`lock` joined the list the day the doors existed**
