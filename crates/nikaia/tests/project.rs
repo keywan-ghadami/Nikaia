@@ -671,6 +671,77 @@ fn the_explain_modes_reach_a_project_build() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **A package reached through two parents is one package**, and so its types
+/// are one type ([ADR-053](../../../docs/specification/adr/adr-053.md) D2).
+///
+/// The diamond: the program depends on `deep` directly, and on a library that
+/// depends on **the same directory** under its own key `c`. Cargo has always
+/// made this one crate — D2 rests on that — but the checker in front of it named
+/// a type by the manifest key it was reached *through*, so the program was told
+/// its `deep::Id` was not the `c::Id` the library takes. One type, refused for
+/// having two spellings, with a help line asking for what was already written.
+///
+/// The library's key is deliberately a word the program never writes, because
+/// that is the case that has to work: whose word wins cannot be "whoever was
+/// read first". It is the program's, here, and the package's `[package] name`
+/// where the program does not name it either.
+///
+/// Run and not only built: the value is made in one package and read in another,
+/// so if the two types were ever really two, the generated Rust would say so.
+#[test]
+fn a_package_reached_through_two_parents_is_one_package() {
+    let dir = common::scratch_dir("project-diamond");
+    for at in ["app/src", "lib/src", "deep/src"] {
+        std::fs::create_dir_all(dir.join(at)).expect("the packages");
+    }
+    std::fs::write(
+        dir.join("app/nikaia.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\ndeep = { path = \"../deep\" }\nlib = { path = \"../lib\" }\n",
+    )
+    .expect("the program's manifest");
+    std::fs::write(
+        dir.join("lib/nikaia.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\nc = { path = \"../deep\" }\n",
+    )
+    .expect("the library's manifest, with its own word for the same directory");
+    std::fs::write(
+        dir.join("deep/nikaia.toml"),
+        "[package]\nname = \"deep\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("the shared package's manifest");
+
+    std::fs::write(
+        dir.join("deep/src/main.nika"),
+        "pub struct Id {\n    pub value: i64\n}\n\n\
+         pub fn make(v: i64) -> Id {\n    return Id(value: v)\n}\n",
+    )
+    .expect("the shared package");
+    std::fs::write(
+        dir.join("lib/src/main.nika"),
+        "use c\n\npub fn show(id: c::Id) -> i64 {\n    return id.value\n}\n",
+    )
+    .expect("the library");
+    std::fs::write(
+        dir.join("app/src/main.nika"),
+        "use deep\nuse lib\n\nfn main() {\n\
+         \x20   let id = deep::make(7)\n\
+         \x20   println(f\"{lib::show(id)}\")\n}\n",
+    )
+    .expect("the program");
+
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(
+        ran.status.success(),
+        "a package reached through two parents is one package (ADR-053 D2): {}",
+        said(&ran)
+    );
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "7");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A project and a package it depends on by path.
 fn a_program_and_a_package(purpose: &str, dependency: &str, files: &[(&str, &str)]) -> PathBuf {
     let dir = common::scratch_dir(purpose);

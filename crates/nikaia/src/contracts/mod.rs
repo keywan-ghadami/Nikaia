@@ -509,10 +509,52 @@ impl Ledger {
     /// written. They are one type with two spellings, and this is the only place
     /// that knows both the module and what it declares.
     pub fn absorb(&mut self, module: Option<&str>, other: Ledger) {
+        self.absorb_renaming(module, &std::collections::BTreeMap::new(), other)
+    }
+
+    /// The same, for a package that writes **its own** word for a package this
+    /// build has a word for too
+    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D2).
+    ///
+    /// Qualifying is about the names a package declares; this is about the names
+    /// it *reaches*, and they are the half that used to come out wrong. A library
+    /// that depends on the same directory a program depends on writes its own
+    /// manifest key in its signatures — `c::Id` where the program wrote
+    /// `deep::Id` — and the checker, having only the two spellings, called them
+    /// two types. They are one package, so they are one type, and `renames` is
+    /// the translation `project::renames_in` computed from the directories.
+    ///
+    /// Applied **after** qualifying and not instead of it: a name the package
+    /// declares itself is its own and is never renamed, because `qualify` has
+    /// already put this package's word in front of it.
+    pub fn absorb_renaming(
+        &mut self,
+        module: Option<&str>,
+        renames: &std::collections::BTreeMap<String, String>,
+        other: Ledger,
+    ) {
         let declared: std::collections::BTreeSet<String> = other.types.keys().cloned().collect();
-        let qualify = |ty: &ty::Ty| match module {
-            Some(module) => ty::qualify(ty, module, &declared),
-            None => ty.clone(),
+        // **This package's own word for itself is never renamed.** Qualifying has
+        // just put `module::` in front of every type this package declares, and a
+        // package may perfectly well key one of its dependencies with the word a
+        // consumer happens to use for the package itself. Dropping that key here
+        // is cheaper than asking every call site to know about it, and it costs
+        // nothing: a name this package declares is this package's whatever
+        // anybody else calls that word.
+        let renames: std::collections::BTreeMap<String, String> = renames
+            .iter()
+            .filter(|(from, _)| Some(from.as_str()) != module)
+            .map(|(from, to)| (from.clone(), to.clone()))
+            .collect();
+        let qualify = |ty: &ty::Ty| {
+            let ty = match module {
+                Some(module) => ty::qualify(ty, module, &declared),
+                None => ty.clone(),
+            };
+            match renames.is_empty() {
+                true => ty,
+                false => ty::renamed(&ty, &renames),
+            }
         };
         for (name, mut contract) in other.functions {
             if let Some(signature) = contract.signature.as_mut() {

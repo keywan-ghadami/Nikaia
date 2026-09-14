@@ -43,6 +43,11 @@ pub struct Unit {
     /// field stays because a package that arrives by path will fill it in
     /// (ADR-047 D2), and that is the same qualification one level up.
     pub package: Option<String>,
+    /// The package names **inside this file** that are another word for a
+    /// package this build already has a word for - see
+    /// [`Dependency::renames`]. Empty for every file of the program itself,
+    /// whose words are this build's by definition.
+    pub renames: BTreeMap<String, String>,
     pub path: PathBuf,
     pub source: String,
     pub parsed: Parsed,
@@ -76,6 +81,14 @@ pub struct Dependency {
     /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D3): a package
     /// that depends on a package is a package, not a rule broken.
     pub reachable: BTreeSet<String>,
+    /// How **its** package keys are read in this build: its own word for a
+    /// package, mapped to the one word this build uses for that directory
+    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D2, and
+    /// `project::renames_in` computes it).
+    ///
+    /// Empty for a dependency that depends on nothing, which is most of them,
+    /// and empty for every key it already spells the way this build does.
+    pub renames: BTreeMap<String, String>,
 }
 
 /// Every file of the package the entry belongs to, entry first.
@@ -103,7 +116,7 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
 /// (Part III, 13.1).
 pub fn collect_with(entry: &Path, dependencies: &[Dependency]) -> Result<Vec<Unit>> {
     let names: BTreeSet<String> = dependencies.iter().map(|d| d.name.clone()).collect();
-    let mut units = package_at(entry, None, &names)?;
+    let mut units = package_at(entry, None, &names, &BTreeMap::new())?;
 
     // **Read, and not emitted** ([ADR-053](../../../docs/specification/adr/adr-053.md)
     // D1). A dependency is its own crate now, so its files are Cargo's to
@@ -129,6 +142,7 @@ pub fn collect_with(entry: &Path, dependencies: &[Dependency]) -> Result<Vec<Uni
             &src.join(ENTRY),
             Some(&dependency.name),
             &dependency.reachable,
+            &dependency.renames,
         )?);
     }
     Ok(units)
@@ -140,6 +154,7 @@ fn package_at(
     entry: &Path,
     package: Option<&str>,
     reachable: &BTreeSet<String>,
+    renames: &BTreeMap<String, String>,
 ) -> Result<Vec<Unit>> {
     let base = entry
         .parent()
@@ -159,11 +174,11 @@ fn package_at(
     // A library needs no `main.nika`: what a package offers is its public
     // surface, and an entry point is what a *program* has.
     let mut units = match entry.is_file() {
-        true => vec![read_unit(entry, package, reachable)?],
+        true => vec![read_unit(entry, package, reachable, renames)?],
         false => Vec::new(),
     };
     for path in beside {
-        units.push(read_unit(&path, package, reachable)?);
+        units.push(read_unit(&path, package, reachable, renames)?);
     }
     one_namespace(&units)?;
     Ok(units)
@@ -181,10 +196,20 @@ const ENTRY: &str = "main.nika";
 /// ten. A package is a directory **of a project**, which is what a `nikaia.toml`
 /// declares.
 pub fn collect_one(entry: &Path) -> Result<Vec<Unit>> {
-    Ok(vec![read_unit(entry, None, &BTreeSet::new())?])
+    Ok(vec![read_unit(
+        entry,
+        None,
+        &BTreeSet::new(),
+        &BTreeMap::new(),
+    )?])
 }
 
-fn read_unit(path: &Path, package: Option<&str>, reachable: &BTreeSet<String>) -> Result<Unit> {
+fn read_unit(
+    path: &Path,
+    package: Option<&str>,
+    reachable: &BTreeSet<String>,
+    renames: &BTreeMap<String, String>,
+) -> Result<Unit> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     // `with_context` and not `anyhow!("{e}")`: formatting the error into a string
@@ -194,6 +219,7 @@ fn read_unit(path: &Path, package: Option<&str>, reachable: &BTreeSet<String>) -
     check_imports(&parsed, path, reachable)?;
     Ok(Unit {
         package: package.map(str::to_string),
+        renames: renames.clone(),
         path: path.to_path_buf(),
         source,
         parsed,
@@ -390,12 +416,15 @@ impl Program {
         let mut at = 0;
         while at < units.len() {
             let package = units[at].package.clone();
+            // Every file of a package was read with the same table, so taking it
+            // from the first is taking it from the package.
+            let renames = units[at].renames.clone();
             let mut own = crate::contracts::Ledger::empty();
             while at < units.len() && units[at].package == package {
                 own.absorb(None, crate::contracts::Ledger::infer(&units[at].parsed));
                 at += 1;
             }
-            contracts.absorb(package.as_deref(), own);
+            contracts.absorb_renaming(package.as_deref(), &renames, own);
         }
 
         Ok(Program { units, contracts })

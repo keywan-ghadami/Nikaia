@@ -105,11 +105,9 @@ So, in order, and each says below why it sits where it does:
    thing in it that needs deciding rather than doing is what `access` hands its
    lambda, because Part II 12.2's own idiom does not compile as written.
    Independent of the sequence above, so it can be taken beside it.
-3. **The diamond in the checker.** Small, self-contained, waits on nothing. It is
-   the only entry here that one afternoon closes.
-4. **A server to bind to, and the `postgres` block.** Its own project rather than a
+3. **A server to bind to, and the `postgres` block.** Its own project rather than a
    step of this one.
-5. **Supervision.** Last because nothing else waits on it.
+4. **Supervision.** Last because nothing else waits on it.
 
 ### 2.1. A literal no use constrains still takes an `i32`, and `let big = 3000000000` is refused
 
@@ -297,27 +295,7 @@ them. What is left:
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.8. A package reached under two names is two types to the checker
-
-[ADR-053](specification/adr/adr-053.md) is built: a package is its own crate, a
-library may depend on a library, and a program cannot reach past what it declared.
-**One thing it decided is not built.** D2 says a package reached through two
-parents is one crate, and Cargo makes that true — the hand-built shape in that
-record's §3 passes a value from one to the other and it is accepted.
-
-The checker in front of Cargo does not agree. The ledger names a type by the
-manifest key it was reached **through**, so a program that depends on a package as
-`deep`, and on a library that depends on the same package as `c`, is told its
-`deep::Id` is not the `c::Id` the library's function takes. Both are the same Rust
-type; only the name this compiler gave it differs.
-
-It is a refusal and not a wrong answer, and it needs a diamond to meet: one level
-of dependencies is named entirely by the program's own words. The fix is for a
-type's identity in the ledger to be the package's **canonical path** — which is
-what `packages_of` already computes and what D2 means by identity — rather than
-the word a consumer happened to write.
-
-### 2.9. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.8. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -335,7 +313,7 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.10. There is no HTTP server, and three records now wait on it
+### 2.9. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal

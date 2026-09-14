@@ -552,6 +552,46 @@ pub fn qualify(ty: &Ty, module: &str, declared: &std::collections::BTreeSet<Stri
     }
 }
 
+/// A type named through one package's word for another package, renamed to the
+/// word this build uses ([ADR-053](../../../docs/specification/adr/adr-053.md)
+/// D2).
+///
+/// Only the **prefix** is touched, and only where the map has it: `c::Id`
+/// becomes `deep::Id` where `c` and `deep` are two manifest keys for one
+/// directory, and every other name is handed back exactly as it came. A name
+/// with no `::` in it names nothing outside its package and is never a
+/// candidate.
+pub fn renamed(ty: &Ty, renames: &std::collections::BTreeMap<String, String>) -> Ty {
+    match ty {
+        Ty::Named { name, args, view } => Ty::Named {
+            // A `&` in front is a view's spelling and belongs to the type rather
+            // than to the package, so it is put back where it was.
+            name: match name.strip_prefix('&') {
+                Some(rest) => format!("&{}", rename_path(rest, renames)),
+                None => rename_path(name, renames),
+            },
+            args: args.iter().map(|a| renamed(a, renames)).collect(),
+            view: *view,
+        },
+        Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| renamed(p, renames)).collect()),
+        Ty::Fn { params } => Ty::Fn {
+            params: params.iter().map(|p| renamed(p, renames)).collect(),
+        },
+        Ty::Nullable(inner) => Ty::Nullable(Box::new(renamed(inner, renames))),
+        other => other.clone(),
+    }
+}
+
+fn rename_path(name: &str, renames: &std::collections::BTreeMap<String, String>) -> String {
+    match name.split_once("::") {
+        Some((package, rest)) => match renames.get(package) {
+            Some(ours) => format!("{ours}::{rest}"),
+            None => name.to_string(),
+        },
+        None => name.to_string(),
+    }
+}
+
 pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty {
     match ty {
         Ty::Var { name, view } => match bound.get(name) {

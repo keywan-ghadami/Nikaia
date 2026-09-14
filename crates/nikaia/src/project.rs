@@ -208,6 +208,18 @@ pub fn packages_of(
     let mut out: Vec<modules::Dependency> = Vec::new();
     let mut seen: BTreeMap<PathBuf, String> = BTreeMap::new();
 
+    // **What this build calls each package**, before any of them is read, so
+    // that a package reached twice is renamed to one name rather than to
+    // whichever of the two was resolved first
+    // ([ADR-053](../../docs/specification/adr/adr-053.md) D2).
+    let mut here: BTreeMap<PathBuf, String> = BTreeMap::new();
+    for (name, value) in manifest.dependencies() {
+        if let Dependency::Path(path) = value {
+            let at = root.join(path);
+            here.insert(at.canonicalize().unwrap_or(at), name.clone());
+        }
+    }
+
     for (name, value) in manifest.dependencies() {
         let Dependency::Path(path) = value else {
             continue;
@@ -245,11 +257,59 @@ pub fn packages_of(
 
         out.push(modules::Dependency {
             name: name.clone(),
+            renames: renames_in(&dependency, &root, &here)?,
             root,
             // **Its own keys**, so its `use` lines are read the way its own
             // build would read them (ADR-053 D3).
             reachable: dependency.dependencies().keys().cloned().collect(),
         });
+    }
+    Ok(out)
+}
+
+/// How a dependency's **own** package names are read in this build
+/// ([ADR-053](../../docs/specification/adr/adr-053.md) D2: a package reached
+/// through two parents is one package).
+///
+/// A library writes its own manifest keys in its own signatures, and those keys
+/// are its author's choice rather than this program's. So a program that depends
+/// on `deep` directly, and on a library that depends on the same directory as
+/// `c`, was told its `deep::Id` was not the `c::Id` that library takes - one
+/// type, refused for having two spellings, which is the one thing D2 says it is
+/// not. The types are identical in the generated Rust; only the name this
+/// compiler gave them differed.
+///
+/// So the identity is the **package**, and this is the translation into the word
+/// this build uses for it: the program's own key where the program names it too,
+/// and otherwise the package's `[package] name`, which `members_of` has already
+/// refused to let two packages share. Either way it is a function of the
+/// directory and not of who asked.
+///
+/// One level deep, because one level is what is read: a dependency's own
+/// dependencies are its crate's business (D3), and nothing below it is in this
+/// program's ledger to be renamed.
+fn renames_in(
+    dependency: &Manifest,
+    dependency_root: &Path,
+    here: &BTreeMap<PathBuf, String>,
+) -> Result<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    for (key, value) in dependency.dependencies() {
+        let Dependency::Path(path) = value else {
+            continue;
+        };
+        let at = dependency_root.join(path);
+        let at = at.canonicalize().unwrap_or(at);
+        let canonical = match here.get(&at) {
+            Some(ours) => ours.clone(),
+            None => Manifest::read(&at.join("nikaia.toml"))?
+                .package_name()
+                .map(str::to_string)
+                .unwrap_or_else(|| key.clone()),
+        };
+        if &canonical != key {
+            out.insert(key.clone(), canonical);
+        }
     }
     Ok(out)
 }
