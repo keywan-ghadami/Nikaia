@@ -1200,14 +1200,16 @@ Some modules are only available, or behave restrictively, depending on the machi
 > `user-pool` (13.3b). The refusal at `no` is the overlap's vehicle degrading
 > rather than a diagnostic ([ADR-033](adr/adr-033.md) §8.2b).
 >
-> **`spawn` is built at `no`** ([ADR-055](adr/adr-055.md) §6 steps 1–4): a
+> **`spawn` is built at both settings** ([ADR-055](adr/adr-055.md) §6): a
 > pausing function is an `async fn`, a file read suspends rather than blocking
-> its thread, the one place a program parks is the executor, and a task
-> interleaves in it. So "no vehicle for anything **you** wrote to run on" is
-> about a *thread* and not about a task — nothing of yours runs concurrently at
-> `no`, and interleaved is not concurrent. What this switch still decides and
-> does not yet deliver is the `yes` executor, where a spawned future has to be
-> `Send`. `task::scope` is not built.
+> its thread, and the one place a program parks is the executor. At `no` a task
+> interleaves in it, so "no vehicle for anything **you** wrote to run on" is
+> about a *thread* and not about a task — nothing of yours runs concurrently
+> there, and interleaved is not concurrent. At `yes` a task goes to a pool of
+> futures over the `user-pool` worker count and does run on a thread of its own.
+> What this switch decides and this compiler does not yet **say** is §2 D6's
+> `Send`: a task holding something that may not cross a thread is refused by the
+> backend rather than here. `task::scope` is not built.
 
 **`std::db` (Universal SQL)**
 Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.

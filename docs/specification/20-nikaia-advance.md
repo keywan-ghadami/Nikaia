@@ -408,7 +408,7 @@ The `spawn` function is defined with the `@detached` attribute. This triggers **
 > reaching it ([ADR-040](adr/adr-040.md) §4), and now one does.
 
 #### What a task may take with it
-A task runs on a thread of its own, so **everything it uses has to be able to cross a thread**. The compiler checks that structurally, with no syntax to write and no annotation to forget ([ADR-005](adr/adr-005.md) §1 Group B): a type built out of plain data, and a struct or collection of those, may cross. So does a value that counts its owners: whether a `Shared[T]` may cross is answered by **what it holds**, never by which count it got — the count follows the answer ([ADR-037](adr/adr-037.md) D7), and where the value reaches a task it is the one a second thread may safely touch. **And so does a lock**, into a task of your own: at `yes` a real operating-system lock is underneath and several threads are what it is for, at `no` the task is interleaved on the same thread and nothing crosses at all — two reasons, one answer ([ADR-045](adr/adr-045.md) D2). A `SharedMut[T]` may therefore be used by a task, and a struct holding one is no worse than the field. What a lock may **not** go to is code nothing written down describes ([ADR-045](adr/adr-045.md) D3, Part III 15.2): there the caller opens the lock and hands over the value inside it, so the called code sees an ordinary value and no lock at all.
+A task runs on a thread of its own at `yes`, so **everything it uses has to be able to cross a thread**. The compiler checks that structurally, with no syntax to write and no annotation to forget ([ADR-005](adr/adr-005.md) §1 Group B): a type built out of plain data, and a struct or collection of those, may cross. So does a value that counts its owners: whether a `Shared[T]` may cross is answered by **what it holds**, never by which count it got — the count follows the answer ([ADR-037](adr/adr-037.md) D7), and where the value reaches a task it is the one a second thread may safely touch. **And so does a lock**, into a task of your own: at `yes` a real operating-system lock is underneath and several threads are what it is for, at `no` the task is interleaved on the same thread and nothing crosses at all — two reasons, one answer ([ADR-045](adr/adr-045.md) D2). A `SharedMut[T]` may therefore be used by a task, and a struct holding one is no worse than the field. What a lock may **not** go to is code nothing written down describes ([ADR-045](adr/adr-045.md) D3, Part III 15.2): there the caller opens the lock and hands over the value inside it, so the called code sees an ordinary value and no lock at all.
 
 The answer is **the same at both settings**, so that a library written at one cannot turn out un-compilable where it is used. The question is asked of a value **and a destination**, and each destination gets one switch-independent answer; what the setting changes is only whether this build performs the crossing: at `no` nothing you wrote runs concurrently, so the task does not run and the refusal is a lint rather than an error. The diagnostic is `NK2501`, worked through in Part III C.5.
 
@@ -451,10 +451,17 @@ fn main() {
 > back is whatever the body's last statement was, and a body that can fail
 > hands back a value that says so, exactly as any other function does.
 >
-> What is not built is the *thread* the `yes` column describes: a task that
-> moves between threads must be `Send` (that record's §2 D6), and the
-> multi-threaded executor is the `yes` half of its §6 step 1. Every task today
-> interleaves on the one thread.
+> **The `yes` column is built too**, so *"at `yes` it represents a running
+> thread"* is a sentence about programs: a task goes to a pool of futures over
+> the `user-pool` worker count, and four tasks of the same size take 1.58 s at
+> `no` against 0.65 s at `yes` on four cores. `.join()` is the same two lines at
+> either setting, which is what the *uniform API* claims.
+>
+> What is not built is D6's `Send` as a refusal of **this** compiler's: the
+> pool's starter asks for it, so a task holding something that may not cross is
+> refused in the backend's words about the generated file (Part III, C.1). The
+> structural check of the section above runs on what a task *captures*; what it
+> has never been asked about is what a body holds **across a pause**.
 
 ---
 

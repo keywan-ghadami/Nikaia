@@ -1829,11 +1829,16 @@ the duplication of 6.2 serves, so there is no error and no `.clone()` to write
 > spelling now says so rather than parsing. A lambda that **names** an argument
 > is refused as `NK2103`: a task is handed nothing.
 >
-> What is not built is the *multi-threaded* half. At `user_parallelism = yes` a
-> task would move between threads, so its future must be `Send`
-> ([ADR-055](adr/adr-055.md) §2 D6) — and that executor is the `yes` half of
-> that record's §6 step 1, which is unbuilt. Every task today interleaves on the
-> one thread, which is what Part II 11.2 promises at `no`.
+> **The multi-threaded half is built too.** At `user_parallelism = yes` a task
+> goes to a pool of futures over the `user-pool` worker count and runs on a
+> thread of its own; at `no` every task interleaves on the one thread, which is
+> what Part II 11.2 promises there. The same two lines mean the same thing at
+> both, which is that section's *uniform API*.
+>
+> What is not built is the **refusal**. Because a task moves between threads at
+> `yes`, its future must be `Send` ([ADR-055](adr/adr-055.md) §2 D6) — and one
+> that is not is refused by the backend, about the generated file, rather than
+> here about the program (Part III, C.1).
 
 ### 8.4. The Runtime Sidecar Model
 While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.

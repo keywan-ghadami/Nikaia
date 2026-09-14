@@ -148,3 +148,65 @@ fn a_count_in_the_manifest_gets_the_same_answer_as_a_count_on_the_cli() {
         "the reason belongs to the switch, not to the parser: {stderr}"
     );
 }
+
+/// **A switch changed in the manifest rebuilds the program** (ADR-021 D5).
+///
+/// It did not, and that is the whole of this test. A build switch is not a
+/// source, so nothing Cargo watches changes when one does — and the lowering
+/// happens inside the `rustc` wrapper, which Cargo runs only for a package it
+/// already thinks is stale. So flipping `user-parallelism` left the package
+/// fresh, the binary at the **old** setting, and nothing said so: the cache had
+/// the switch as a dimension and nothing ever got as far as asking it.
+///
+/// The same family as the two freshness traps the project build already
+/// carries, and it takes the same answer: the driver writes the resolved
+/// switches to a file before `cargo` runs, and the wrapper puts that file into
+/// the dependency file beside the `.nika` sources. A switch that changed is an
+/// input that changed.
+///
+/// **Flipped four times**, because the first flip worked by accident before the
+/// fix — Cargo had something else to rebuild — and only going back caught it.
+#[test]
+fn a_switch_changed_in_the_manifest_rebuilds_the_program() {
+    let dir = common::scratch_dir("manifest-switch-rebuild");
+    std::fs::create_dir_all(dir.join("src")).expect("src");
+    std::fs::write(
+        dir.join("src/main.nika"),
+        "fn work() -> i64 { return 1 }\n\
+         fn main() { let t = spawn fn { work() } println(f\"{t.join()}\") }\n",
+    )
+    .expect("the source");
+
+    let generated = dir.join("target/nikaia/gen/switched/switched.rs");
+    for want in ["no", "yes", "no", "yes"] {
+        std::fs::write(
+            dir.join("nikaia.toml"),
+            format!(
+                "[package]\nname = \"switched\"\nversion = \"0.1.0\"\n\n\
+                 [build]\nuser-parallelism = \"{want}\"\n"
+            ),
+        )
+        .expect("the manifest");
+
+        let ran = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .args(["build", "--project"])
+            .arg(&dir)
+            .env("NIKAIA_CACHE_DIR", dir.join("cache"))
+            .output()
+            .expect("the nikaia binary runs");
+        assert!(
+            ran.status.success(),
+            "`{want}`: {}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+
+        let rust = std::fs::read_to_string(&generated).expect("the generated Rust");
+        let on_the_pool = rust.contains("start_on_pool");
+        assert_eq!(
+            on_the_pool,
+            want == "yes",
+            "the manifest says `{want}` and the program was built the other way"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

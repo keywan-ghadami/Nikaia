@@ -94,6 +94,16 @@ fn waker_for(alarm: Arc<Alarm>) -> Waker {
     unsafe { Waker::from_raw(raw) }
 }
 
+/// How long this thread waits on the bell before looking again, while the pool
+/// is carrying tasks.
+///
+/// **A safety net rather than a schedule.** Everything that could make `main`
+/// runnable rings the bell, so the usual wake has no delay; the bound is there
+/// because `main` is not the thread driving the I/O in that case, and a wait
+/// with no bound on a bell somebody else is responsible for ringing is one
+/// mistake away from a hang.
+const SLICE: std::time::Duration = std::time::Duration::from_millis(20);
+
 /// One started task and the alarm that says it is ready.
 struct Queued {
     task: Task,
@@ -109,13 +119,41 @@ thread_local! {
     static STARTED: RefCell<VecDeque<Queued>> = const { RefCell::new(VecDeque::new()) };
 }
 
-/// Start a task. It runs whether or not anybody joins it (D5).
+/// Start a task on **this** thread's queue. It runs whether or not anybody
+/// joins it (D5).
+///
+/// `user_parallelism = no`'s half, and the one the emitter names there. A task
+/// started here is polled by the `block_on` on this thread and by nothing else,
+/// which is why it needs no `Send`: nothing it holds ever crosses.
 pub fn start(future: impl Future<Output = ()> + 'static) {
     let queued = Queued {
         task: Box::pin(future),
         alarm: Alarm::woken(),
     };
     STARTED.with(|started| started.borrow_mut().push_back(queued));
+}
+
+/// Start a task on the **pool**, where another thread may pick it up
+/// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 1's `yes`
+/// half).
+///
+/// The `Send` bound is §2 D6, and it is here rather than on [`start`] because
+/// the two are different lowerings of one Nikaia line: the emitter writes this
+/// one at `user_parallelism = yes` and that one at `no`, so a program at the
+/// default is never asked for a property its setting does not need
+/// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1 is the same
+/// shape — at one user thread a `Shared` is a plain count, and it could not be
+/// if every task had to be `Send`).
+///
+/// **A program built at `yes` that reaches here with no pool** is a program
+/// whose runtime was started as `Sequential`, which a generated `main` cannot
+/// do — the same switch writes both lines. A test harness can, so the task runs
+/// on this thread rather than being dropped.
+pub fn start_on_pool(future: impl Future<Output = ()> + Send + 'static) {
+    match crate::rt::handle().user_pool() {
+        Some(pool) => pool.start_task(future),
+        None => start(future),
+    }
 }
 
 /// Drive `future` to its value, running every started task in between.
@@ -191,7 +229,16 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
 
         // **`main` is done and so is every task it started.** The one place
         // this returns without a word.
-        let waiting = STARTED.with(|started| started.borrow().len());
+        //
+        // *Every* task: at `user_parallelism = yes` a `spawn` goes to the pool
+        // rather than to this queue, and D5's *"a task nobody joins still
+        // runs"* is the same promise there. So the drain below waits for both,
+        // and the number it reports is both.
+        let on_the_pool = crate::rt::handle()
+            .user_pool()
+            .map(|pool| pool.live())
+            .unwrap_or(0);
+        let waiting = STARTED.with(|started| started.borrow().len()) + on_the_pool;
         if outcome.is_some() {
             if waiting == 0 {
                 return outcome.take().expect("checked just above");
@@ -247,6 +294,29 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // a worker that never answers must not become a program that never
         // exits (D5).
         let left = draining_since.map(|since| deadline.saturating_sub(since.elapsed()));
+        // **At `yes`, with tasks on the pool, this thread waits on the bell and
+        // not in the I/O**, because the pool's pilot has the I/O and exactly
+        // one thread may. On the completion path that is not a preference: a
+        // thread inside `io_uring_enter` is woken by the kernel alone, so a
+        // task filling the slot `main` is joining would never reach it. Every
+        // wake that matters rings the bell — a completion, a `Slot` filled, a
+        // task finishing — so this is the same wait through one door.
+        //
+        // With **no** live pool task there is no pilot, and `main` is the only
+        // thread that can drive the I/O, so it takes the park itself. Nothing
+        // can add a task in between: at `yes` a `spawn` is written by `main`
+        // or by a task, and here there is neither running.
+        if on_the_pool > 0 {
+            if crate::rt::io::wait_for_bell(generation, Some(left.unwrap_or(SLICE).min(SLICE))) {
+                alarm.ring();
+                STARTED.with(|started| {
+                    for queued in started.borrow().iter() {
+                        queued.alarm.ring();
+                    }
+                });
+            }
+            continue;
+        }
         if crate::rt::io::park_for(generation, left) {
             // **The I/O moved, so everything gets another turn.** Which task
             // was waiting for *this* completion is not something the executor
@@ -317,6 +387,16 @@ impl<T> Slot<T> {
         if let Some(waker) = waiting {
             waker.wake();
         }
+        // **And the bell, for the thread that is not on this one.** At
+        // `user_parallelism = yes` a task fills its slot on a pool thread while
+        // whoever joined it waits on the main one, and the waker above rings an
+        // alarm nobody is reading — the wait is on the bell. Ringing it here is
+        // what makes `.join()` a suspension point across a thread and not only
+        // across a task.
+        //
+        // At `no` this is a counter and a `notify_all` nobody is waiting on,
+        // which costs a lock the program was already going to take.
+        crate::rt::ring_the_bell();
     }
 
     fn take(&self, context: &mut Context<'_>) -> Poll<T> {

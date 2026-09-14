@@ -31,6 +31,16 @@ fn lower(source: &str) -> String {
         .rust
 }
 
+/// Lower at a given `user_parallelism`, which is the one build switch a `spawn`
+/// reads.
+fn lower_at(source: &str, user_parallelism: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let build = emit::Build::parse("x86_64-linux", user_parallelism).expect("a known switch");
+    emit::emit_program(&parsed, build)
+        .expect("the source lowers")
+        .rust
+}
+
 /// Lower, compile and run, and hand back what it printed.
 fn run(purpose: &str, source: &str) -> String {
     let dir = common::scratch_dir(purpose);
@@ -410,4 +420,33 @@ fn nothing_a_task_needs_is_written_in_nikaia() {
     }
     assert!(findings(source).is_empty(), "{:?}", findings(source));
     assert_eq!(run("tasks-no-words", source).trim(), "1");
+}
+
+/// **Which executor a `spawn` goes to is the switch's one reach into a task**
+/// ([ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 1,
+/// [ADR-037](../../../docs/specification/adr/adr-037.md) D2).
+///
+/// One Nikaia line and two lowerings. At `user_parallelism = yes` a task may be
+/// polled on a thread that did not start it, so its future has to be `Send` (§2
+/// D6) and the pool's starter is what asks for that; at `no` it may not, so it
+/// does not — and asking there would refuse a task holding the plain count
+/// [ADR-061](../../../docs/specification/adr/adr-061.md) D1 gives a `Shared` at
+/// one user thread.
+#[test]
+fn the_switch_decides_which_executor_a_task_is_started_on() {
+    let source = "fn work() -> i64 { return 1 }\n\
+                  fn main() { let t = spawn fn { work() } println(f\"{t.join()}\") }";
+
+    let at_no = lower_at(source, "no");
+    assert!(
+        at_no.contains("TaskHandle::start(async move"),
+        "one thread, so no `Send` is asked for: {at_no}"
+    );
+    assert!(!at_no.contains("start_on_pool"), "{at_no}");
+
+    let at_yes = lower_at(source, "yes");
+    assert!(
+        at_yes.contains("TaskHandle::start_on_pool(async move"),
+        "a thread of its own, so the future must be `Send`: {at_yes}"
+    );
 }

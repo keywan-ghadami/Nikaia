@@ -91,14 +91,17 @@ So, in order, and each says below why it sits where it does:
    sharpest form — and for a long time it looked like one step rather than five,
    because a pause was a thread that blocked and nothing said so.
 
-   **All five steps are built at `user_parallelism = no`, which is the default**:
-   the single-threaded executor, `async fn` with `.await` off the ledger, `std`'s
-   own pausing entries — a file operation suspends rather than blocking its
-   thread — `spawn` itself, with `TaskHandle`, `.join()` and `NK2101`, and
-   `overlap { … }` with `NK2104`. What is left is the **thread**: step 1's `yes`
-   executor, where a spawned future has to be `Send`. So this item is no longer
-   the one the others wait on — what waits on a thread waits on that one half,
-   and the rest of the list can be taken in its own order.
+   **All five steps are built, at both settings**: the executor — one thread at
+   `no` and a pool of futures at `yes` — `async fn` with `.await` off the
+   ledger, `std`'s own pausing entries so a file operation suspends rather than
+   blocking its thread, `spawn` itself with `TaskHandle`, `.join()` and
+   `NK2101`, and `overlap { … }` with `NK2104`. **This item no longer blocks
+   anything**, and nothing in the list waits on a thread any more.
+
+   What is left of it is one refusal rather than one mechanism: §2 D6's `Send`
+   is asked for by the pool's starter, so a task holding something that may not
+   cross is refused by `rustc` about the generated file rather than by this
+   compiler about the program. §2.2 below.
 2. **A surface to reach `Locked[T]` through.** The other half of the same story:
    a program that spawns needs something it may share.
    [ADR-057](specification/adr/adr-057.md) decided what the type **is** and
@@ -125,35 +128,42 @@ something. This is where a reader goes to learn what crossing means, so a stale
 explanation here is worth more than its size — and it is where the bridge D1
 reserved would first be missed, if it is missed at all.
 
-### 2.2. The `yes` executor, and what still needs a thread
+### 2.2. A task that may not cross a thread is refused by `rustc`, not by this compiler
 
-**`spawn` lowers.** It was the largest single unblocking in this file and the
-reason [ADR-055](specification/adr/adr-055.md) exists; all five steps of that
-record's §6 are built at `user_parallelism = no`, which is the default. A task is a future
-the executor owns, `.join()` is a suspension point, two tasks reading two files
-are both in flight before either finishes, and `NK2101` is raised — so Part II
-11.2's *"interleaved on the same thread"* is a sentence about programs now rather
-than about a lowering nobody had written.
+[ADR-055](specification/adr/adr-055.md) §2 D6's third sharp edge, and the last
+thing that record decided which the compiler does not do.
 
-**And [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }` is built**,
-which was step 5 — so what is left of that record is one half of one step.
+**The mechanism is built.** `spawn` lowers at both settings; at
+`user_parallelism = yes` a task goes to `rt::pool`, a queue of futures over the
+same worker count, and four tasks of the same size take 1.58 s at `no` against
+0.65 s at `yes` on four cores. Part II 12.2's counter runs on more than one core,
+and [ADR-045](specification/adr/adr-045.md) D2's lock in a task waits on the
+lock's **type** rather than on an executor.
 
-**What is left is the thread.** Step 1's `yes` half: `rayon`'s pool is a
-work-stealing pool for *closures*, not an executor for futures, so the
-multi-threaded half is a second executor over the same worker count rather than a
-use of that one — and it is the step where a spawned future has to be `Send` (§2
-D6), which is the structural check [ADR-005](specification/adr/adr-005.md) §1
-Group B already runs on what a task *captures*, now also asked of everything the
-body holds across a pause.
+**What is missing is the diagnostic.** The pool's starter asks for `Send`,
+because a task may be polled on a thread that did not start it — so a task
+holding something that may not cross is refused where it should be, in the
+backend's words about the generated file, which [Part III C.1](specification/30-nikaia-tooling.md)
+calls a bug in this compiler.
 
-So these are checked and still cannot run, and every one of them is the same
-missing thread:
+*What it needs:* the structural check [ADR-005](specification/adr/adr-005.md) §1
+Group B already runs on what a task **captures**
+([`contracts::send`](../crates/nikaia/src/contracts/send.rs), `NK2501` and
+`NK2502`). What it has never been asked about is what a body holds **across a
+pause** — a value bound inside the task, still live at an `.await` further down.
+The checker knows where the suspension points are (`Checked::pausing_methods` and
+the ledger's `sync` column), so the input exists and what is owed is the liveness
+question between the two.
 
-* **Part II 12.2's counter**, the program `user_parallelism = yes` exists to
-  serve. Its `spawn` runs today; what it cannot do is run on two cores.
-* [ADR-045](specification/adr/adr-045.md) D2 — a lock may go into a task. The
-  *task* exists now; the lock is not a type the backend can build - the entry on
-  `SharedMut[T]` and `Locked[T]` below.
+*Why it is here and not in §1:* nothing is miscompiled and no correct program is
+refused. It is a message in the wrong words, which is the same class as every
+entry this file has closed by moving a refusal from `rustc` into the compiler.
+
+*Evidence that it is narrow today:* a `Shared[T]` at `yes` is an atomic count
+([ADR-061](specification/adr/adr-061.md) D1), a view and a number are `Send`, and
+`Locked[T]` is not a type the backend builds — so the shapes that would hit it
+are mostly ones a program cannot write yet. That is the reason to build it
+**before** they can: a refusal costs nothing before programs exist.
 
 **And [ADR-040](specification/adr/adr-040.md) D1's task half is closed rather
 than waiting:** the analysis names a `spawn` body's handle as a duplication site,
@@ -248,7 +258,9 @@ and not wired to standard input.
 which is what it saw before, so no program behaves differently. What is missing
 is only that the thread is **held** rather than given up for the duration of
 `for line in io::lines()` — which nothing can observe until something else wants
-the thread, and that is a task on a second one - the `yes` executor entry above.
+the thread. Something can now: at `user_parallelism = yes` a task is on a thread
+of its own, so a `main` blocked in `io::lines()` is a thread the pool could have
+had.
 
 *What it needs:* `Op::Readiness` against standard input's descriptor, and a
 `Lines` whose step is a future. The second half is the larger one and is a

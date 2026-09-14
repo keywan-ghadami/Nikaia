@@ -960,6 +960,32 @@ impl Project {
         self.root.join("target").join("nikaia").join("gen")
     }
 
+    /// **The switches, as a file Cargo can see** (ADR-021 D5).
+    ///
+    /// A build switch is not a source, so nothing Cargo watches changes when
+    /// one does — and the lowering happens inside the `rustc` wrapper, which
+    /// Cargo runs only for a package it thinks is stale. So flipping
+    /// `user-parallelism` in `nikaia.toml` left the package fresh and the
+    /// binary at the **old** setting, silently: the cache had the switch as a
+    /// dimension (D5) and nothing ever got as far as asking it.
+    ///
+    /// This is the third member of the same family as the two freshness traps
+    /// the project build already carries, and it takes the same answer: give
+    /// Cargo a file. The driver writes the resolved switches here before
+    /// `cargo` runs, and the wrapper puts it into the dependency file beside
+    /// the `.nika` sources — so a switch that changed is an input that changed.
+    ///
+    /// Under `target/` and outside [`Self::build_dir`], for [`Self::gen_dir`]'s
+    /// reason: a file *inside* the path package would make it dirty on every
+    /// build rather than on a changed one.
+    pub fn switches_path(&self) -> PathBuf {
+        self.root
+            .join("target")
+            .join("nikaia")
+            .join("gen")
+            .join("switches")
+    }
+
     /// The ledger, in the project root (Part III 13.5).
     pub fn ledger_path(&self) -> PathBuf {
         self.root.join("nikaia.contracts")
@@ -1179,6 +1205,20 @@ impl Project {
         if let Some(ledger) = entry_ledger {
             write_ledger(&self.ledger_path(), &ledger, locked)?;
         }
+
+        // **Before `cargo`**, and written only when it differs, so an
+        // unchanged switch does not dirty the package every build. What is in
+        // it is what the cache keys on, so the two cannot disagree about which
+        // switches decide an artifact.
+        let switches = self.switches_path();
+        if let Some(dir) = switches.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let choices = self.settings.choices();
+        write_if_changed(
+            &switches,
+            &format!("{}\n{}\n", choices.build, choices.backend),
+        )?;
 
         let manifest = self
             .cargo_workspace(&members, &rust)?
@@ -1526,12 +1566,35 @@ pub fn wrapper_main() -> Result<i32> {
     // Cargo believes the dependency file `rustc` wrote, and `rustc` only saw
     // the generated Rust. Without this an edit to a `.nika` source leaves the
     // package fresh and the binary stale.
+    //
+    // **And the switches, for the same reason one step further out**
+    // (`Project::switches_path`): a build switch is not a source, so nothing
+    // Cargo watches changes when one does — and this wrapper is only run for a
+    // package Cargo already thinks is stale. Without the file in here, flipping
+    // `user-parallelism` left the program running at the setting it was built
+    // at, and said nothing.
     if code == 0 {
         if let Some(dep_info) = invocation.dep_info() {
-            record_extra_dependencies(&dep_info, &lowered.sources)?;
+            let mut inputs = lowered.sources.clone();
+            if let Some(switches) = switches_beside(&gen_dir) {
+                inputs.push(switches);
+            }
+            record_extra_dependencies(&dep_info, &inputs)?;
         }
     }
     Ok(code)
+}
+
+/// The switches file the driver wrote, where there is one.
+///
+/// The wrapper is told the generated-source directory and nothing else
+/// (`GEN_DIR_VAR` is the one channel), and the file sits in it — so this is a
+/// lookup rather than a second answer to where it lives. Absent means the
+/// wrapper was run by hand rather than by a project build, and then there is no
+/// switch anybody could flip between two runs.
+fn switches_beside(gen_dir: &Path) -> Option<PathBuf> {
+    let path = gen_dir.join("switches");
+    path.is_file().then_some(path)
 }
 
 /// Record one invocation, if anybody asked. A trace that cannot be written is

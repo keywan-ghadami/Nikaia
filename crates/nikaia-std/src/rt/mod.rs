@@ -52,6 +52,7 @@
 pub mod config;
 /// The executor (ADR-055 D3): what drives a program that can pause.
 pub mod exec;
+pub mod pool;
 pub mod worker;
 
 #[cfg(target_os = "linux")]
@@ -107,12 +108,17 @@ pub struct Runtime {
     workers: worker::Workers,
     #[cfg(target_os = "linux")]
     ring: Option<Mutex<uring::Ring>>,
-    /// The pool for user code, at `user_parallelism = yes` and not otherwise.
+    /// The executor for user tasks, at `user_parallelism = yes` and not
+    /// otherwise.
     ///
     /// `None` at `Sequential` is not an optimisation. It is ADR-037 D2 as a
     /// thread count: there is no vehicle, so nothing the user wrote *can* run
     /// concurrently, whatever a later mistake in the emitter asks for.
-    user_pool: Option<rayon::ThreadPool>,
+    ///
+    /// **Not `rayon`'s pool**, which is what stood here while the vehicle was a
+    /// closure pair: a pool of closures cannot hold a future that pauses
+    /// ([`pool`] says why at length). The worker count is the same one.
+    user_pool: Option<std::sync::Arc<pool::Pool>>,
 }
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -245,13 +251,7 @@ impl Runtime {
 
         let user_pool = match user_code {
             UserCode::Sequential => None,
-            UserCode::Concurrent => rayon::ThreadPoolBuilder::new()
-                // `0` is rayon's own "as many as the machine has", which is
-                // the default D5 documents and is not a count somebody typed.
-                .num_threads(config.user_pool)
-                .thread_name(|n| format!("nikaia-user-{n}"))
-                .build()
-                .ok(),
+            UserCode::Concurrent => Some(pool::Pool::start(config.user_pool)),
         };
 
         Runtime {
@@ -280,8 +280,9 @@ impl Runtime {
         self.user_code
     }
 
-    /// The pool for user code, which exists only at `user_parallelism = yes`.
-    pub fn user_pool(&self) -> Option<&rayon::ThreadPool> {
+    /// The executor for user tasks, which exists only at
+    /// `user_parallelism = yes`.
+    pub fn user_pool(&self) -> Option<&std::sync::Arc<pool::Pool>> {
         self.user_pool.as_ref()
     }
 
@@ -299,7 +300,7 @@ impl Runtime {
             self.config.io_method.as_str(),
             self.files.as_str(),
             match self.user_pool.as_ref() {
-                Some(pool) => pool.current_num_threads().to_string(),
+                Some(pool) => pool.threads().to_string(),
                 None => "none".to_string(),
             },
             self.config.cleanup_deadline,
@@ -667,6 +668,49 @@ pub mod io {
     /// poll so that [`park`] cannot wait for a ring that has already been rung.
     pub fn generation() -> u64 {
         *super::FINISHED.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// **Wait for the bell**, which is what a thread that is *not* driving the
+    /// I/O has to wait on.
+    ///
+    /// At `user_parallelism = yes` the pool's pilot owns the I/O park
+    /// ([`crate::rt::pool`] says why exactly one thread may), so the main
+    /// thread cannot take it — and on the completion path it must not try:
+    /// a thread inside `io_uring_enter` is woken by the kernel and by nothing
+    /// else, so a task on another thread filling the slot `main` is joining
+    /// would never reach it.
+    ///
+    /// What everything that could wake `main` has in common is that it rings
+    /// this bell: an I/O worker after an operation, the pilot after a
+    /// completion, a `Slot` being filled, a task finishing. So this is the one
+    /// wait, and `false` means the bound ran out with nothing having moved.
+    pub fn wait_for_bell(since: u64, limit: Option<std::time::Duration>) -> bool {
+        let mut count = super::FINISHED.lock().unwrap_or_else(|e| e.into_inner());
+        match limit {
+            None => {
+                while *count <= since {
+                    count = super::BELL.wait(count).unwrap_or_else(|e| e.into_inner());
+                }
+                true
+            }
+            Some(limit) => {
+                let until = std::time::Instant::now() + limit;
+                while *count <= since {
+                    let left = until.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        return false;
+                    }
+                    let (held, timed_out) = super::BELL
+                        .wait_timeout(count, left)
+                        .unwrap_or_else(|e| e.into_inner());
+                    count = held;
+                    if timed_out.timed_out() && *count <= since {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
     }
 
     /// **Wait for the I/O to move**, and nothing else. The executor's park hook.

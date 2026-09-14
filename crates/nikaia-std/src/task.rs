@@ -56,6 +56,32 @@ impl<T: 'static> TaskHandle<T> {
         });
         TaskHandle { slot }
     }
+}
+
+impl<T: Send + 'static> TaskHandle<T> {
+    /// The same, on the **pool**, where another thread may pick the task up
+    /// ([ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 1's `yes`
+    /// half, [ADR-037](../../../docs/specification/adr/adr-037.md) D2).
+    ///
+    /// **Two functions and not one with a bound**, because the bound is the
+    /// difference and it belongs to the build rather than to the language. The
+    /// emitter writes this line at `user_parallelism = yes` and [`start`] at
+    /// `no`, from one Nikaia `spawn` — so a program at the default is never
+    /// asked for a `Send` its setting does not need, which is what keeps
+    /// [ADR-061](../../../docs/specification/adr/adr-061.md) D1's plain count
+    /// reachable from inside a task.
+    ///
+    /// [`start`]: TaskHandle::start
+    pub fn start_on_pool(
+        body: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> TaskHandle<T> {
+        let slot = crate::rt::exec::Slot::empty();
+        let filling = slot.clone();
+        crate::rt::exec::start_on_pool(async move {
+            filling.fill(body.await);
+        });
+        TaskHandle { slot }
+    }
 
     /// The task's value, once it has one. **A suspension point**, not a wait.
     pub async fn join(self) -> T {

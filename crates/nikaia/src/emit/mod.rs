@@ -3305,7 +3305,7 @@ impl<'p> Emitter<'p> {
             //
             //   * an `async` **block** and not a closure, because the body may
             //     pause and Rust has no stable `async` closure - the same
-            //     reason `task::interleave` takes futures (§6 step 3);
+            //     reason every vehicle in `task` takes futures (§6 step 3);
             //   * `move`, which is Part I 8.3's implicit move: the captures go
             //     with the task because it may outlive the function that
             //     started it, and `NK2101` is what stands in front of that for
@@ -3322,7 +3322,18 @@ impl<'p> Emitter<'p> {
                 let Expr::Closure { body, .. } = body.as_ref() else {
                     return Err(refused!("`spawn` takes a lambda: write `spawn fn {{ … }}`"));
                 };
-                out.push("nikaia_std::task::TaskHandle::start(async move ");
+                // **And which of the two starters**, which is the one place
+                // `user_parallelism` reaches a `spawn` (ADR-037 D2). At `yes` a
+                // task may be polled on a thread that did not start it, so its
+                // future has to be `Send` (§2 D6); at `no` it may not, so it
+                // does not - and asking for `Send` there would refuse a task
+                // holding the plain count ADR-061 D1 gives a `Shared` at one
+                // user thread. One Nikaia line, two lowerings, and the switch
+                // is what chooses.
+                match self.build.overlaps_user_code() {
+                    true => out.push("nikaia_std::task::TaskHandle::start_on_pool(async move "),
+                    false => out.push("nikaia_std::task::TaskHandle::start(async move "),
+                }
                 // `Flow::PLAIN`, like any other lambda body: a `return` inside
                 // the task leaves the task, and a failure in it is the task's.
                 // `in_lambda` is deliberately **not** set - the body is a
