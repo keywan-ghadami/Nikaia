@@ -251,6 +251,18 @@ pub enum Expr {
     /// placeholder for a word that is still the owner's to pick.
     Seq(Block),
 
+    /// Part I 8.1.2: `overlap { … }` - **each statement in the block is a
+    /// branch**, the block starts every branch and waits for all of them, and
+    /// its value is the tuple of their results in written order
+    /// ([ADR-050](../../../docs/specification/adr/adr-050.md) D2).
+    ///
+    /// A `Block` and not a `Vec<Expr>`, because a branch is a *statement* in the
+    /// source and the one thing that makes it a branch is standing here. What a
+    /// branch may be is narrower than what a statement may be, and that is the
+    /// checker's to say rather than the grammar's: `let` inside an `overlap`
+    /// would bind a name the block's own value already carries.
+    Overlap(Block),
+
     // Kap 3.2: if cond { ... } else { ... }
     If {
         cond: Box<Expr>,

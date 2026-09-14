@@ -706,6 +706,25 @@ pub mod io {
     /// which tells the executor that waiting would be waiting forever - and a
     /// hang is the worst way to report a defect (§6 step 1).
     pub fn park(since: u64) -> bool {
+        park_for(since, None)
+    }
+
+    /// The same, giving up after `limit` if one is given.
+    ///
+    /// **The drain at the end of a program is what wants a bound**
+    /// ([ADR-006](../../../../docs/specification/adr/adr-006.md) D5): the
+    /// executor waits for the tasks nobody joined, and a task that never
+    /// finishes must not become a program that never exits.
+    ///
+    /// **Honest limit, and it is D5's own.** The timer here is checked *between*
+    /// parks rather than driven independently, because a single-threaded
+    /// executor has no second thread to drive one from — so a park already
+    /// entered runs to its own end. On the fallback that end is bounded, because
+    /// the wait takes the remaining time; on the completion path it is the
+    /// kernel posting the completion for work it has already accepted. What D5
+    /// names as the thing a deadline cannot cover — FFI that blocks the thread
+    /// rather than pausing — is unchanged by this.
+    pub fn park_for(since: u64, limit: Option<std::time::Duration>) -> bool {
         let runtime = handle();
         match runtime.files() {
             #[cfg(target_os = "linux")]
@@ -719,10 +738,31 @@ pub mod io {
                     return false;
                 }
                 let mut count = super::FINISHED.lock().unwrap_or_else(|e| e.into_inner());
-                while *count <= since {
-                    count = super::BELL.wait(count).unwrap_or_else(|e| e.into_inner());
+                match limit {
+                    None => {
+                        while *count <= since {
+                            count = super::BELL.wait(count).unwrap_or_else(|e| e.into_inner());
+                        }
+                        true
+                    }
+                    Some(limit) => {
+                        let until = std::time::Instant::now() + limit;
+                        while *count <= since {
+                            let left = until.saturating_duration_since(std::time::Instant::now());
+                            if left.is_zero() {
+                                return false;
+                            }
+                            let (held, timed_out) = super::BELL
+                                .wait_timeout(count, left)
+                                .unwrap_or_else(|e| e.into_inner());
+                            count = held;
+                            if timed_out.timed_out() && *count <= since {
+                                return false;
+                            }
+                        }
+                        true
+                    }
                 }
-                true
             }
         }
     }

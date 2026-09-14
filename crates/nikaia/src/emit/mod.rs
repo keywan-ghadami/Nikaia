@@ -45,6 +45,18 @@ use crate::refused;
 /// of its own.
 const PAIR: &str = "__nikaia_pair_";
 
+/// One branch of an `overlap { … }`, where the schedule and the written order
+/// differ and the results have to be put back (ADR-050 D2, D6).
+const BRANCH: &str = "__nikaia_branch_";
+
+/// How many branches an `overlap` block may have.
+///
+/// `std` writes one vehicle per arity, because the branches have different types
+/// and a tuple of futures is what that means in the language below. Eight is
+/// what is written; a block with more is refused **with its reason** rather than
+/// miscompiled, which is the only thing a limit owes a reader.
+const MOST_BRANCHES: usize = 8;
+
 /// The machine a program is built for (ADR-037 D1).
 ///
 /// It decides what `std` can offer and what a panic does. It decides nothing
@@ -3425,6 +3437,10 @@ impl<'p> Emitter<'p> {
             // the statements are already written in, and what it withdraws is
             // this compiler's permission to change that.
             Expr::Seq(block) => self.block(out, block, depth, flow.in_seq(), Tail::Value)?,
+
+            // **Part I 8.1.2: every branch in flight, and the value is their
+            // results in written order** (ADR-050 D2).
+            Expr::Overlap(block) => self.overlap(out, block, depth, flow)?,
             // An `if` in *expression* position - `let x = if c { a } else { b }`
             // - hands its branch's value to whoever asked for it, so a `return`
             // in a branch is the function's and stays one.
@@ -4013,6 +4029,205 @@ impl<'p> Emitter<'p> {
             self.expr(out, &argument.value, depth, flow)?;
         }
         out.push(" }");
+        Ok(())
+    }
+
+    /// Whether a branch of an `overlap` can fail out of itself
+    /// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5).
+    ///
+    /// **The guarded half of a `catch` does not count**, which is the whole
+    /// reason this is its own walk rather than [`visit_expr`]: D5 says
+    /// per-branch handling is a `catch` inside the branch, so a branch that
+    /// catches its own failure hands back a value and fails nothing. The
+    /// handler *is* walked — a `throw` in one leaves the branch like any other
+    /// failure.
+    fn branch_can_fail(&self, value: &Expr, flow: Flow<'_>) -> bool {
+        match value {
+            Expr::Call { func, args, config } => {
+                self.can_fail(func)
+                    || args.iter().any(|a| self.branch_can_fail(a, flow))
+                    || config.iter().any(|a| self.branch_can_fail(&a.value, flow))
+            }
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                config,
+            } => {
+                self.method_can_fail(flow, *method)
+                    || self.branch_can_fail(receiver, flow)
+                    || args.iter().any(|a| self.branch_can_fail(a, flow))
+                    || config.iter().any(|a| self.branch_can_fail(&a.value, flow))
+            }
+            // The guarded half is handled here; the handler is not.
+            Expr::TryCatch { handler, .. } => handler.stmts.iter().any(
+                |stmt| matches!(&stmt.node, Stmt::Expr(value) if self.branch_can_fail(value, flow)),
+            ),
+            Expr::Throw(_) => true,
+            // A `dsl … from …` propagates on its own (Kap 7.1).
+            Expr::DslFrom { .. } => true,
+            Expr::Try(inner) | Expr::Unary { expr: inner, .. } => self.branch_can_fail(inner, flow),
+            Expr::Binary { lhs, rhs, .. } => {
+                self.branch_can_fail(lhs, flow) || self.branch_can_fail(rhs, flow)
+            }
+            Expr::Coalesce { value, fallback } => {
+                self.branch_can_fail(value, flow) || self.branch_can_fail(fallback, flow)
+            }
+            Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
+                self.branch_can_fail(base, flow)
+            }
+            Expr::Index { base, index } => {
+                self.branch_can_fail(base, flow) || self.branch_can_fail(index, flow)
+            }
+            _ => false,
+        }
+    }
+
+    /// **`overlap { … }`** — Part I 8.1.2,
+    /// [ADR-050](../../../docs/specification/adr/adr-050.md) D2 and D6.
+    ///
+    /// Each statement is a branch, each branch becomes an `async` block, and
+    /// `task::overlap<n>` polls all of them in one pass. An `async` **block** and
+    /// not a closure, for the reason a task's body is one: a branch may pause,
+    /// and Rust has no stable `async` closure. No `move`, because D4 says
+    /// nothing outlives the block — a branch borrows what is around it exactly
+    /// as an ordinary statement does, and that is what makes the form lighter
+    /// than two `spawn`s.
+    ///
+    /// **D6 is the argument order.** *"A branch is started up to its first
+    /// suspension point before any branch that cannot suspend is run"* — so the
+    /// branches that can pause are handed over first, and the join polls in the
+    /// order it is given. Which those are is the ledger's `sync` column, read
+    /// the same way [`Emitter::group_half_pauses`] reads it for ADR-033's pairs.
+    ///
+    /// **And the value goes back into written order**, because D2 says it is the
+    /// tuple in written order and the reordering above is a schedule. Where the
+    /// two differ the tuple is rebuilt, which costs a move per branch and is
+    /// visible in the emitted Rust as the permutation it is.
+    fn overlap(&self, out: &mut Out, block: &Block, depth: usize, flow: Flow<'_>) -> Result<()> {
+        if block.stmts.len() < 2 {
+            return Err(refused!(
+                "an `overlap` block needs at least two branches; one statement has \
+                 nothing to overlap with (Part I, 8.1.2)"
+            ));
+        }
+        if block.stmts.len() > MOST_BRANCHES {
+            return Err(refused!(
+                "an `overlap` block of {} branches is more than this compiler builds \
+                 ({MOST_BRANCHES}); `std` has one vehicle per arity (ADR-050 D2)",
+                block.stmts.len()
+            ));
+        }
+
+        // D6: the branches that can pause, in written order among themselves,
+        // then the ones that cannot. `sort_by_key` is stable, so written order
+        // survives inside each half - which is what makes the schedule
+        // reproducible rather than merely correct.
+        let mut order: Vec<usize> = (0..block.stmts.len()).collect();
+        order.sort_by_key(|&at| !self.group_half_pauses(&block.stmts[at], flow));
+
+        // **D5: a branch whose failure is uncaught fails the block, and the
+        // first in written order wins.** The `?`s below are written in written
+        // order, and `?` returns at the first `Err` - so the rule is the
+        // language below's own control flow rather than a comparison this
+        // compiler makes. Per-branch handling is a `catch` inside the branch,
+        // which `branch_can_fail` does not count.
+        //
+        // All or none: a branch that cannot fail is wrapped in `Ok` too, so the
+        // vehicle sees one shape and the `?`s line up. The error type is named
+        // rather than inferred, because an `async` block with a `?` in it and
+        // nothing to infer from is *"type annotations needed"* about a file
+        // nobody wrote (Part III, C.1).
+        let fallible = flow.throws
+            && block.stmts.iter().any(|stmt| match &stmt.node {
+                Stmt::Expr(value) => self.branch_can_fail(value, flow.at(stmt.span.start)),
+                _ => false,
+            });
+
+        let pad = "    ".repeat(depth);
+        let inner = "    ".repeat(depth + 1);
+        let reordered = order.iter().enumerate().any(|(at, &from)| at != from);
+        let bound = reordered || fallible;
+
+        if bound {
+            out.push("{\n");
+            out.push(&inner);
+            out.push(&format!(
+                "// ADR-050 D6: started in this order, answered in the written one.\n{inner}"
+            ));
+            out.push("let (");
+            for (at, _) in order.iter().enumerate() {
+                if at > 0 {
+                    out.push(", ");
+                }
+                out.push(&format!("{BRANCH}{at}"));
+            }
+            out.push(") = ");
+        }
+
+        out.push(&format!(
+            "nikaia_std::task::overlap{}(\n",
+            block.stmts.len()
+        ));
+        let body = "    ".repeat(depth + 1 + usize::from(bound));
+        for &from in &order {
+            let stmt = &block.stmts[from];
+            out.push(&body);
+            out.push("async { ");
+            // A branch's own statement, as an expression. `Flow::PLAIN` for the
+            // reason a lambda's body gets it: a `return` inside a branch would
+            // leave the branch, and `catch` is how D5 says a branch handles its
+            // own failure.
+            let inside = Flow {
+                statement: stmt.span.start,
+                throws: fallible,
+                origin: flow.origin,
+                ..Flow::PLAIN
+            };
+            match &stmt.node {
+                Stmt::Expr(value) => {
+                    if fallible {
+                        out.push("Ok::<_, Box<dyn std::error::Error>>(");
+                    }
+                    out.from(&stmt.span, |out| self.expr(out, value, depth + 1, inside))?;
+                    if fallible {
+                        out.push(")");
+                    }
+                }
+                _ => {
+                    return Err(refused!(
+                        "a branch of an `overlap` is an expression (Part I, 8.1.2)"
+                    ))
+                }
+            }
+            out.push(" },\n");
+        }
+        out.push(&"    ".repeat(depth + usize::from(bound)));
+        out.push(")");
+
+        if bound {
+            out.push(&format!(".await;\n{inner}("));
+            // Written order out of start order: branch `written` was handed
+            // over at `order.iter().position(…)`, so that is the name it came
+            // back under. Where nothing was reordered the two are the same, and
+            // this still writes the tuple out because the `?`s hang off it.
+            for written in 0..block.stmts.len() {
+                if written > 0 {
+                    out.push(", ");
+                }
+                let at = order
+                    .iter()
+                    .position(|&from| from == written)
+                    .expect("every branch is handed over exactly once");
+                out.push(&format!("{BRANCH}{at}"));
+                if fallible {
+                    out.push("?");
+                }
+            }
+            out.push(&format!(")\n{pad}}}"));
+        } else {
+            out.push(".await");
+        }
         Ok(())
     }
 
@@ -5057,7 +5272,7 @@ fn count_word(n: usize) -> String {
 fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match expr {
-        Expr::Block(block) | Expr::Seq(block) => visit_block(block, f),
+        Expr::Block(block) | Expr::Seq(block) | Expr::Overlap(block) => visit_block(block, f),
         Expr::If {
             cond,
             then_branch,

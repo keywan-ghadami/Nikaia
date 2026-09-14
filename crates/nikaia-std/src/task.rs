@@ -153,6 +153,73 @@ where
     .await
 }
 
+/// **Every branch of an `overlap { … }`, all of them in flight**
+/// (Part I 8.1.2, [ADR-050](../../../docs/specification/adr/adr-050.md) D2).
+///
+/// One arity per macro expansion, because the branches have different types and
+/// a tuple of futures is what that means in the language below. The emitter
+/// writes `task::overlap3(a, b, c).await` and the arity is how many statements
+/// the block had.
+///
+/// **Flat and not nested, which is D6.** `interleave(a, interleave(b, c))` polls
+/// `a` to completion before `b` is ever started, so a block holding a
+/// computation and two reads would cost their sum — the naive order D6 names and
+/// refuses. Polling every branch in one pass costs `max` instead: a branch that
+/// suspends returns `Pending` at its first suspension point and the next branch
+/// is started at once.
+///
+/// **The order it polls in is the order it is given**, and the emitter hands the
+/// branches over with the ones that can pause first — which is D6's rule, read
+/// off the ledger's `sync` column. The results go back into written order at the
+/// call, so this never has to know about it.
+///
+/// **A failure is the caller's**, not this function's: a branch that can fail
+/// hands back a `Result` like any other value, and D5's "the first in written
+/// order wins" is the emitter's `?` on the tuple rather than a rule here.
+macro_rules! overlapping {
+    ($name:ident, $($branch:ident : $result:ident),+) => {
+        // One parameter per branch is what an arity *is*, so the argument count
+        // is the point rather than a smell: `overlap8` takes eight branches
+        // because a block of eight has eight.
+        #[allow(non_snake_case, clippy::too_many_arguments)]
+        pub async fn $name<$($branch, $result),+>($($branch: $branch),+) -> ($($result),+)
+        where
+            $($branch: std::future::Future<Output = $result>),+
+        {
+            $(let mut $branch = Box::pin($branch);)+
+            $(let mut $result: Option<$result> = None;)+
+
+            std::future::poll_fn(move |context| {
+                $(
+                    if $result.is_none() {
+                        if let std::task::Poll::Ready(value) = $branch.as_mut().poll(context) {
+                            $result = Some(value);
+                        }
+                    }
+                )+
+                if $($result.is_some())&&+ {
+                    return std::task::Poll::Ready((
+                        $($result.take().expect("checked just above")),+
+                    ));
+                }
+                // No waker is rung, for the reason `interleave` gives: what a
+                // branch waits for is the I/O, and the executor is the only
+                // thing on this thread that parks.
+                std::task::Poll::Pending
+            })
+            .await
+        }
+    };
+}
+
+overlapping!(overlap2, A: RA, B: RB);
+overlapping!(overlap3, A: RA, B: RB, C: RC);
+overlapping!(overlap4, A: RA, B: RB, C: RC, D: RD);
+overlapping!(overlap5, A: RA, B: RB, C: RC, D: RD, E: RE);
+overlapping!(overlap6, A: RA, B: RB, C: RC, D: RD, E: RE, F: RF);
+overlapping!(overlap7, A: RA, B: RB, C: RC, D: RD, E: RE, F: RF, G: RG);
+overlapping!(overlap8, A: RA, B: RB, C: RC, D: RD, E: RE, F: RF, G: RG, H: RH);
+
 /// Two file reads the **compiler** put together, both in flight where that is
 /// free (ADR-033 D10).
 ///

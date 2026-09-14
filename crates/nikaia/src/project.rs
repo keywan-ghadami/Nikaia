@@ -604,18 +604,26 @@ pub fn check(
             plural(aliases)
         ));
     }
-    // `NK21xx` is tasks and capture: what a `spawn` took with it. Counted on its
-    // own because the way out is a third one - a value to clone before the task
-    // is built - and because the tally has to say what it counted: `NK2101` in
-    // the line below would have read "a place that can fail without saying so",
-    // which is a different rule.
-    let tasks = count("NK21");
-    if tasks > 0 {
+    // `NK21xx` is running things at once, and its two rules want two lines: what
+    // a `spawn` took with it is a value to clone, and an `overlap` whose
+    // branches meet is a block to take apart. Counted apart from the line below
+    // for the reason they are counted at all - the tally has to say what it
+    // counted, and "a place that can fail without saying so" is neither of them.
+    let moved = count("NK2101");
+    if moved > 0 {
         refused.push(format!(
-            "{tasks} value{} a task took with it",
-            plural(tasks)
+            "{moved} value{} a task took with it",
+            plural(moved)
         ));
     }
+    let together = count("NK2104");
+    if together > 0 {
+        refused.push(format!(
+            "{together} branch{} that cannot run beside the others",
+            if together == 1 { "" } else { "es" }
+        ));
+    }
+    let tasks = count("NK21");
     let rules = findings.len() - types - crossings - aliases - tasks;
     if rules > 0 {
         refused.push(format!(

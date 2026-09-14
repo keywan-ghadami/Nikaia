@@ -1416,6 +1416,33 @@ impl<'a> Checker<'a> {
             // about what any of them mean or what it hands back.
             Expr::Block(block) | Expr::Seq(block) => self.block(block),
 
+            // **Part I 8.1.2: each statement is a branch, and the block's value
+            // is the tuple of their results in written order**
+            // ([ADR-050](../../docs/specification/adr/adr-050.md) D2).
+            //
+            // Walked here rather than through the `Block` arm above, because a
+            // block hands back its *last* statement and this hands back all of
+            // them. The scope frame is the block's own, so a name a branch binds
+            // does not leak - and `branches_meet_on_nothing` is what refuses one
+            // that binds at all, since the block's value already carries it.
+            Expr::Overlap(block) => {
+                self.scope.push(Vec::new());
+                let parts: Vec<Ty> = block
+                    .stmts
+                    .iter()
+                    .map(|stmt| match &stmt.node {
+                        Stmt::Expr(value) => self.expr(value, &stmt.span),
+                        other => {
+                            self.stmt(other, &stmt.span);
+                            Ty::Unknown
+                        }
+                    })
+                    .collect();
+                self.scope.pop();
+                self.branches_meet_on_nothing(block, span);
+                Ty::Tuple(parts)
+            }
+
             Expr::If {
                 cond,
                 then_branch,
@@ -2515,6 +2542,88 @@ impl<'a> Checker<'a> {
                 )),
             });
         }
+    }
+
+    /// **`NK2104`: two branches of an `overlap` meet on something**
+    /// ([ADR-050](../../docs/specification/adr/adr-050.md) D3).
+    ///
+    /// **This is [ADR-033](../../docs/specification/adr/adr-033.md)'s analysis
+    /// used the other way round**, and it is the return on machinery built for
+    /// an inference that D1 withdraws. The touch sets no longer decide *whether
+    /// the compiler may* overlap two statements; they decide *whether the
+    /// programmer was right* to say so. Every mainstream form for "run these
+    /// together" takes the programmer's word for the independence — here the
+    /// claim is checked against what the ledger records each call touching.
+    ///
+    /// **A branch this compiler cannot account for is not refused.** `verdict`
+    /// answers `NotAccountedFor` where a statement performs nothing it can
+    /// name, and reading that as "they meet" would refuse a correct program on
+    /// an absence (Part III, C.4) — which is the same polarity every other
+    /// answer in this compiler takes about a thing nobody wrote down.
+    fn branches_meet_on_nothing(&mut self, block: &Block, span: &Span) {
+        use crate::contracts::order;
+
+        // A branch that **binds** is refused on its own: the block's value
+        // already carries every branch's result, so `let x = …` inside one
+        // would name a thing that leaves by two doors (D2).
+        for stmt in &block.stmts {
+            if let Stmt::Let { name, .. } = &stmt.node {
+                let name = self.parsed.text(*name).to_string();
+                self.checked.findings.push(Finding {
+                    code: "NK2104",
+                    severity: Severity::Error,
+                    span: stmt.span.clone(),
+                    message: format!("a branch of an `overlap` binds `{name}`"),
+                    notes: vec![
+                        "each statement in the block is a branch, and the block's value is \
+                         the tuple of their results in written order (Part I, 8.1.2)"
+                            .to_string(),
+                    ],
+                    help: Some(format!(
+                        "take the value from the block instead: \
+                         `let ({name}, …) = overlap {{ … }}`"
+                    )),
+                });
+            }
+        }
+
+        let operations: Vec<Option<order::Operation>> = block
+            .stmts
+            .iter()
+            .map(|stmt| order::operation(self.parsed, &stmt.node, self.own, self.library))
+            .collect();
+
+        for (i, earlier) in operations.iter().enumerate() {
+            for (j, later) in operations.iter().enumerate().skip(i + 1) {
+                let (Some(earlier), Some(later)) = (earlier, later) else {
+                    continue;
+                };
+                let verdict = order::verdict(earlier, later);
+                if verdict.is_overlap() {
+                    continue;
+                }
+                self.checked.findings.push(Finding {
+                    code: "NK2104",
+                    severity: Severity::Error,
+                    span: block.stmts[j].span.clone(),
+                    message: "these two branches cannot run together".to_string(),
+                    notes: vec![
+                        format!("{} (Part I, 8.1.2)", verdict.why()),
+                        "`overlap` says the branches have no order between them, and two \
+                         that meet on something do"
+                            .to_string(),
+                    ],
+                    help: Some(
+                        "if you meant them in order, write them as ordinary statements".to_string(),
+                    ),
+                });
+                // One finding per branch: a branch that meets two others has
+                // one thing wrong with it, and three messages about it is the
+                // same mistake told three times.
+                break;
+            }
+        }
+        let _ = span;
     }
 
     /// `NK2103`: a `spawn`'s lambda names an argument, and a task is handed

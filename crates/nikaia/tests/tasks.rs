@@ -312,6 +312,88 @@ fn a_task_is_an_async_block_and_never_a_closure() {
     assert!(!rust.contains("start(|| "), "{rust}");
 }
 
+/// **A task that never finishes is abandoned at the deadline**
+/// ([ADR-006](../../../docs/specification/adr/adr-006.md) D5), rather than
+/// becoming a program that never exits.
+///
+/// Holding `main`'s value until the queue empties is what makes
+/// [ADR-055](../../../docs/specification/adr/adr-055.md) D5's *"a task nobody
+/// joins still runs"* true; this is the other half of it. D5 already named both
+/// the bound and its key — *"waits for parked cleanups **and detached tasks**,
+/// bounded by `cleanup-deadline`"* — so nothing here is a new rule.
+///
+/// **End to end and in its own process**, because the runtime is one per
+/// process and the default deadline is 30 seconds: the program gets a
+/// `nikaia-runtime.toml` naming a short one. The task loops on a read, which is
+/// a real suspension point since §6 step 3 — a loop that never pauses could not
+/// be abandoned by any deadline, because a task that never yields never gives
+/// the executor the thread back, which is what `user_parallelism = no` means.
+#[test]
+fn a_task_that_never_finishes_is_abandoned_at_the_deadline() {
+    let dir = common::scratch_dir("tasks-drain-deadline");
+    std::fs::write(dir.join("eins.txt"), "eins").expect("write");
+    std::fs::write(
+        dir.join("nikaia-runtime.toml"),
+        "cleanup-deadline = \"300ms\"\n",
+    )
+    .expect("the runtime configuration");
+
+    let rust = lower(
+        "use std::fs\n\
+         \n\
+         fn forever() {\n\
+         \x20   while true {\n\
+         \x20       let text = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+         \x20       if text.len() < 0 { return }\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   spawn fn { forever() }\n\
+         \x20   println(\"main is done\")\n\
+         }",
+    );
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let started = std::time::Instant::now();
+    let ran = Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    let took = started.elapsed();
+
+    // **That it ends at all is the claim.** The bound is 300 ms and the margin
+    // is generous on purpose: timing a wall clock tightly is how a suite becomes
+    // flaky, and a loop with no end would not finish in any of it.
+    assert!(
+        took < std::time::Duration::from_secs(20),
+        "the drain did not end: {took:?}"
+    );
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+
+    let printed = String::from_utf8_lossy(&ran.stdout);
+    assert!(printed.contains("main is done"), "{printed}");
+
+    // And it says what it abandoned rather than exiting quietly (D5).
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(said.contains("cleanup deadline"), "{said}");
+    assert!(said.contains("background task"), "{said}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The `.nika` sources in this repository stay free of the runtime's words.
 ///
 /// `runtime.rs` holds this for `examples/`; here it is about the one construct

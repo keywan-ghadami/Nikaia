@@ -139,6 +139,12 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
     // would be a future in a queue nobody polls again. So the value waits until
     // the queue is empty, and until then this loop is the tasks' turn.
     let mut outcome: Option<T> = None;
+    // **The drain's deadline** ([ADR-006](../../../../docs/specification/adr/adr-006.md)
+    // D5), started when `main`'s value arrives and not before: what it bounds is
+    // the wait for the tasks nobody joined, and `main` itself may legitimately
+    // run for as long as it likes.
+    let deadline = crate::rt::handle().config().cleanup_deadline;
+    let mut draining_since: Option<std::time::Instant> = None;
     let alarm = Alarm::woken();
     let waker = waker_for(alarm.clone());
     let mut context = Context::from_waker(&waker);
@@ -184,11 +190,30 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         });
 
         // **`main` is done and so is every task it started.** The one place
-        // this returns.
+        // this returns without a word.
         let waiting = STARTED.with(|started| started.borrow().len());
-        if waiting == 0 {
-            if let Some(value) = outcome.take() {
-                return value;
+        if outcome.is_some() {
+            if waiting == 0 {
+                return outcome.take().expect("checked just above");
+            }
+            // **D5's drain, bounded.** `"0"` disables draining, which is that
+            // decision's own word for it - so a program configured that way
+            // leaves the moment `main` is done and its unjoined tasks do not
+            // finish. Otherwise the clock starts here.
+            if deadline.is_zero() {
+                return outcome.take().expect("checked just above");
+            }
+            let since = *draining_since.get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() >= deadline {
+                // D5: the remainder are abandoned, and the program says so
+                // rather than exiting quietly. A task has no name to give, so
+                // what is named is how many and what the bound was.
+                eprintln!(
+                    "nikaia: {waiting} background task(s) did not finish within the \
+                     {}s cleanup deadline and were abandoned",
+                    deadline.as_secs_f64()
+                );
+                return outcome.take().expect("checked just above");
             }
         }
 
@@ -218,7 +243,11 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // `generation` was read at the top of this round, before anything was
         // polled - so a completion that arrived while the tasks were being
         // polled is already accounted for and this returns immediately.
-        if crate::rt::io::park(generation) {
+        // While draining, the park takes what is left of the deadline with it:
+        // a worker that never answers must not become a program that never
+        // exits (D5).
+        let left = draining_since.map(|since| deadline.saturating_sub(since.elapsed()));
+        if crate::rt::io::park_for(generation, left) {
             // **The I/O moved, so everything gets another turn.** Which task
             // was waiting for *this* completion is not something the executor
             // knows: an I/O future stores no waker, because the executor is the
@@ -522,5 +551,35 @@ mod io_tests {
         }
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod drain_tests {
+    use super::*;
+    use std::rc::Rc;
+
+    // **The bound itself is tested end to end**, in `crates/nikaia/tests/tasks.rs`:
+    // it needs a `cleanup-deadline` short enough to wait out, the runtime is one
+    // per process, and this suite shares a process with eighty other tests. What
+    // is here is the half that must not break when the bound is added.
+
+    /// **A task that does finish is waited for**, which is the case the bound
+    /// must not break.
+    #[test]
+    fn a_task_that_finishes_is_still_waited_for() {
+        let done = Rc::new(RefCell::new(false));
+        let inside = done.clone();
+        block_on(async move {
+            start(async move {
+                Yield::once().await;
+                Yield::once().await;
+                *inside.borrow_mut() = true;
+            });
+        });
+        assert!(
+            *done.borrow(),
+            "the drain returned before the task finished"
+        );
     }
 }

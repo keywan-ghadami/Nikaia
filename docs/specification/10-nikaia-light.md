@@ -1777,16 +1777,27 @@ because the waiting is not your code. Computation beside I/O overlaps at every
 setting; only computation beside computation needs `yes`. That is 1.2's rule — you
 choose `how`, never `what`.
 
-> **Status:** not built — `overlap` does not parse. **What it was waiting on
-> is.** [ADR-050](adr/adr-050.md) §5 ordered the runtime binding first, then
-> this, then the removal of 8.1.1's automatic half, `seq { … }` and the
-> `ordering` switch; the binding is built ([ADR-055](adr/adr-055.md) §6 steps
-> 1–4), so this is the next item of that order rather than a blocked one. Two
-> pieces it can lean on now: a vehicle that takes **futures** rather than
-> closures, which is what D6's *"a branch is started up to its first suspension
-> point"* needs and what the emitter already chooses for a pausing pair; and
-> `spawn` itself, for a branch that is more than a pair. Building more special
-> cases is still not the way in — that is how the automatic half got narrow.
+> **Status:** built ([ADR-050](adr/adr-050.md) D2–D6,
+> [ADR-055](adr/adr-055.md) §6 step 5). `overlap { … }` parses, every branch is
+> in flight at once, the block's value is their results in written order, a
+> branch that **binds** or that **meets** another is refused as `NK2104`, and an
+> uncaught failure fails the block with the first in written order winning.
+>
+> **D6 is visible in the emitted Rust**, which is where it has to be: the
+> branches that can pause are handed to the vehicle first, and the tuple is put
+> back into written order afterwards with a comment naming the record. A block
+> whose branches are all of one kind pays for no permutation.
+>
+> **What is not built is the removal below it.** [ADR-050](adr/adr-050.md) §5
+> ordered this before the withdrawal of 8.1.1's automatic half, `seq { … }` and
+> the `ordering` switch, and that withdrawal is the next item.
+>
+> **And the destructuring `let` this section's own example writes is not built
+> either.** `let (user, rights, prefs) = overlap { … }` does not parse: `let`
+> takes one name. Part II 12.5's `let (tx, rx) = channel::bounded(100)` writes
+> the same form, so it is a gap this construct met rather than one it made —
+> `docs/open-work.md` carries it. An `overlap` is reached by its tuple today:
+> `let r = overlap { … }`, then `r.0`.
 
 ### 8.2. Spawning Tasks
 To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the

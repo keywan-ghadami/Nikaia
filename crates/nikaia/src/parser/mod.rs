@@ -1379,6 +1379,7 @@ grammar! {
           // taken for shorthand fields - or as a variable followed by a block
           // of its own, which is the trap the `while` rule records.
           | s:seq_expr -> { s }
+          | o:overlap_expr -> { o }
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
@@ -1785,6 +1786,13 @@ grammar! {
         // spec sections that name it.
         rule seq_expr -> Expr =
             KW_SEQ b:block -> { Expr::Seq(b) }
+
+        // Part I 8.1.2: `overlap { … }`, where each statement is a branch
+        // (ADR-050 D2). The same shape `seq` has, and deliberately so - both are
+        // a keyword and a block, and the difference is entirely in what they
+        // mean.
+        rule overlap_expr -> Expr =
+            KW_OVERLAP b:block -> { Expr::Overlap(b) }
 
         rule struct_lit -> Expr =
             name:type_name "{" fields:field_inits "}" -> {

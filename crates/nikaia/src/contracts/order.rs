@@ -1035,7 +1035,7 @@ fn diverts(stmts: &[crate::ast::Spanned<Stmt>]) -> bool {
 fn holds_throw(expr: &Expr) -> bool {
     match expr {
         Expr::Throw(_) => true,
-        Expr::Block(block) | Expr::Seq(block) => diverts(&block.stmts),
+        Expr::Block(block) | Expr::Seq(block) | Expr::Overlap(block) => diverts(&block.stmts),
         Expr::If {
             then_branch,
             else_branch,
@@ -1137,9 +1137,10 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
                 }
             }
         }
-        Expr::Block(block) | Expr::Seq(block) | Expr::Closure { body: block, .. } => {
-            names_in_block(parsed, block, out)
-        }
+        Expr::Block(block)
+        | Expr::Seq(block)
+        | Expr::Overlap(block)
+        | Expr::Closure { body: block, .. } => names_in_block(parsed, block, out),
         Expr::If {
             cond,
             then_branch,

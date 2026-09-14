@@ -107,8 +107,9 @@ So, in order, and each says below why it sits where it does:
    Independent of the sequence above, so it can be taken beside it.
 3. **The automatic reordering, `seq` and the `ordering` switch out.** After
    `overlap` and not before — removing the automatic half first would leave the
-   language with no way to ask for overlap at all. The removal is the second
-   principle's case: free today, breaking once programs exist.
+   language with no way to ask for overlap at all. **`overlap` is built now**, so
+   this is the next thing to take. The removal is the second principle's case:
+   free today, breaking once programs exist.
 4. **The diamond in the checker.** Small, self-contained, waits on nothing. It is
    the only entry here that one afternoon closes.
 5. **A server to bind to, and the `postgres` block.** Its own project rather than a
@@ -138,12 +139,15 @@ A value an `i32` cannot hold has no second answer a use could ask for, because
 ### 2.2. The `yes` executor, and what still needs a thread
 
 **`spawn` lowers.** It was the largest single unblocking in this file and the
-reason [ADR-055](specification/adr/adr-055.md) exists; steps 1–4 of that record's
-§6 are built at `user_parallelism = no`, which is the default. A task is a future
+reason [ADR-055](specification/adr/adr-055.md) exists; all five steps of that
+record's §6 are built at `user_parallelism = no`, which is the default. A task is a future
 the executor owns, `.join()` is a suspension point, two tasks reading two files
 are both in flight before either finishes, and `NK2101` is raised — so Part II
 11.2's *"interleaved on the same thread"* is a sentence about programs now rather
 than about a lowering nobody had written.
+
+**And [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }` is built**,
+which was step 5 — so what is left of that record is one half of one step.
 
 **What is left is the thread.** Step 1's `yes` half: `rayon`'s pool is a
 work-stealing pool for *closures*, not an executor for futures, so the
@@ -161,10 +165,6 @@ missing thread:
 * [ADR-045](specification/adr/adr-045.md) D2 — a lock may go into a task. The
   *task* exists now; the lock is not a type the backend can build - the entry on
   `SharedMut[T]` and `Locked[T]` below.
-* [ADR-050](specification/adr/adr-050.md) D2's `overlap { … }` — step 5, which
-  that record's own §5 ordered after `spawn`. The vehicle a pausing group needs
-  exists (`task::interleave`), so what is left is the construct and not the
-  machinery under it.
 
 **And [ADR-040](specification/adr/adr-040.md) D1's task half is closed rather
 than waiting:** the analysis names a `spawn` body's handle as a duplication site,
@@ -215,7 +215,33 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.4. Standard input is `async` and does not suspend
+### 2.4. `let` takes one name, and the specification writes it taking several
+
+```nika
+let (user, rights, prefs) = overlap { … }          // Part I 8.1.2
+let (tx, rx) = channel::bounded(100)               // Part II 12.5
+```
+
+Neither parses. `let` takes **one** name, and a destructuring `let` is a form the
+specification uses twice, for two different constructs, and defines nowhere —
+Part I 2.1 introduces `let` with a name and says nothing about a pattern.
+
+*Evidence:* both lines above, in the specification. `overlap { … }` met this
+rather than made it: the construct is built and is reached by its tuple in the
+meantime (`let r = overlap { … }`, then `r.0`), which works and reads worse than
+what the page promises.
+
+*What it needs:* a flat tuple of names is all either site writes, so that is the
+whole of the work — `Stmt::Let`'s single `Ident` becomes several, and the twenty
+places that read it are made to look. Nesting and `_` are written nowhere and
+should be **refused with a sentence** rather than quietly accepted, which is this
+compiler's rule for a form nobody decided.
+
+*What it is not:* a pattern language. `match` has patterns already and this is
+not them; what the two sites need is destructuring a tuple whose arity is known,
+and a bigger answer would be a decision rather than this repair.
+
+### 2.5. Standard input is `async` and does not suspend
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -242,35 +268,6 @@ s.next().await` in the language below, and Rust has no stable trait for one. The
 parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` — a
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
-
-### 2.5. A task that never finishes hangs the program, and no deadline bounds it
-
-[ADR-055](specification/adr/adr-055.md) D5 says *"a task nobody joins still
-runs"*, which Part I 8.2's own example needs — it keeps no handle. So `block_on`
-holds `main`'s value until the started queue is empty rather than returning the
-moment `main` is ready.
-
-**A task that never completes therefore never lets the program exit.** Before
-this it would have been dropped at exit and the program would have finished;
-now it is waited for, without a bound.
-
-*Evidence: none.* No program in the repository has one, and the shape needs a
-task that neither finishes nor fails — a loop with a suspension point in it and
-no exit. It is written down because the *change* is real and the direction it
-changed in is the one that hangs, which Part III A.2's own reasoning calls the
-worst way to report anything.
-
-**What is not the answer:** dropping the task at exit, which is the behaviour D5
-rejects. The shape that fits is [ADR-006](specification/adr/adr-006.md) D5's
-drain, which already exists for resources: a bounded wait, `cleanup-deadline`
-from the runtime configuration (Part III 13.3), and a **report** naming what did
-not finish. That deadline is applied in `Started::finish()`, which runs *after*
-`block_on` has returned — so the wait that needs bounding is the one place it
-does not reach.
-
-*What it needs:* the deadline read where the drain happens, and a message in
-Nikaia's words naming the tasks still running. Neither is a decision; the
-mechanism and the configuration key both exist.
 
 ### 2.6. `Locked[T]` has a shape and a surface, and a write across two locks has neither
 

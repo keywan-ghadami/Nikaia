@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Added (`overlap { … }`, and the compiler checks the claim)
+
+- **[ADR-050](docs/specification/adr/adr-050.md) D2–D6, which is [ADR-055](docs/specification/adr/adr-055.md) §6's fifth and last step.** Each statement in the block is a branch, every branch is in flight at once, and the block's value is their results **in written order**. It needed less from the async work than the order suggested: what it wanted was a vehicle that takes *futures* rather than closures — the same thing step 3 needed for an overlapped pair — and `std` grew one per arity beside `task::interleave`.
+- **D3 is the part no other language has, and it is the return on machinery [ADR-033](docs/specification/adr/adr-033.md) built for an inference D1 withdraws.** The touch sets no longer decide whether the compiler *may* overlap two statements; they decide whether the programmer was *right* to say so. Each branch is reduced to an `Operation`, every pair is asked for a `verdict`, and a pair that is not `Overlap` is refused as **`NK2104`** in that verdict's own words — *"both reach stdout, and one writes it"*, which is D3's own example. A branch this compiler cannot **account for** is not refused: reading an absence as "they meet" would refuse a correct program on nothing ([Part III C.4](docs/specification/30-nikaia-tooling.md)).
+- **A branch that binds is refused by the same code**, because the block's value already carries every branch's result, so a `let` inside one would name a thing that leaves by two doors.
+- **D6 is the argument order, which is what makes it cheap.** *"A branch is started up to its first suspension point before any branch that cannot suspend is run"* — `std` has one `overlap<n>` per arity that polls every branch in one pass in the order it is given, and the emitter hands over the branches that can pause first, read off the ledger's `sync` column. Nested binary joins would have made the naive order structural: `interleave(a, interleave(b, c))` polls `a` to completion before `b` is started, which is the sum D6 names and refuses. The results go back into written order at the call under a comment naming the record, and a block whose branches are all of one kind pays for no permutation.
+- **D5 is the language below's own control flow.** Where any branch can fail out of itself, every branch is wrapped in `Ok` and each element of the tuple takes a `?` **in written order** — and `?` returns at the first `Err`, so *"the first in written order wins"* is not a comparison this compiler makes. A `catch` inside a branch handles that branch and is not counted. The error type is written rather than inferred, because an `async` block with a `?` and nothing to infer from is *"type annotations needed"* about a file nobody wrote.
+- **D4 is a line of generated code rather than a claim**: a branch is an `async` block and not an `async move` one, so nothing is moved in and a branch borrows what is around it exactly as an ordinary statement does. That is what makes the form lighter than two `spawn`s.
+- **One limit, with its reason in the refusal.** Eight arities are written, because the branches have different types and a tuple of futures is what that means below; a block with more is refused naming the limit rather than miscompiled, and a block of one is refused because it has nothing to overlap with.
+- The error corpus gained `overlap` in seven "also possible here" lines, which is the whole of its diff: the word is an expression now.
+
+### Fixed (a task that never finishes no longer hangs the program)
+
+> This one was introduced and fixed inside this release, and the two entries it
+> had are one: the drain that makes a task nobody joins still run is what made a
+> task that never finishes hold the program, and the bound is what it had been
+> missing.
+
+- Holding `main`'s value until the started queue empties is what makes ADR-055 D5's *"a task nobody joins still runs"* true, and it meant a task that never completes never let the program exit. **[ADR-006](docs/specification/adr/adr-006.md) D5 already covered this** — *"waits for parked cleanups **and detached tasks**, bounded by `cleanup-deadline`"* — so nothing here is a new rule, only the half of an old one that had never been built.
+- The clock starts when `main`'s value arrives and not before, because what the deadline bounds is the wait for the tasks and `main` itself may run for as long as it likes. `"0"` disables draining, which is that decision's own word for it. On expiry the program says how many tasks it abandoned and what the bound was, rather than exiting quietly.
+- **The park takes the remaining time with it** while draining, so a worker that never answers cannot become a program that never exits. The honest limit is D5's own: the timer is checked *between* parks rather than driven independently, because a single-threaded executor has no second thread to drive one from.
+
+### Documented (what `overlap` met rather than made)
+
+- **`let` takes one name, and the specification writes it taking several.** Part I 8.1.2's own example is `let (user, rights, prefs) = overlap { … }` and Part II 12.5 writes `let (tx, rx) = channel::bounded(100)` — a form the specification uses twice, for two different constructs, and defines nowhere. An `overlap` is reached by its tuple in the meantime, which works and reads worse than what the page promises. In `docs/open-work.md` with both sites as its evidence.
+
 ### Decided, not built (`let big = 3000000000` compiles)
 
 - **It looks like a mistake and is not one**, which is the whole reason to change it ([ADR-060](docs/specification/adr/adr-060.md)). The line is refused today in the backend's words — *"literal out of range for `i32`"* — about a type the program never wrote. Nothing about it is wrong: the number is a number and the program has said nothing about its size.
@@ -38,11 +64,6 @@
 - **Part II 12.1 gained a note because `sync` changed job.** It was a claim the compiler checked and nothing acted on; it now decides whether a function is compiled as `async fn` or plain `fn`, which makes ADR-027's conservatism load-bearing and a regression in the inference a regression in the output. Measured: 22 `sync` against 17 that can pause, across `examples/`.
 - **Part II 12.7's `task::scope` note** says what it would now be built *on*, since the executor that owns tasks and the `spawn` that feeds it both exist — so what a scope adds is the waiting and the touch propagation, not a mechanism.
 - Part I 8.1.2's `overlap` note and Part III 13.3's `user_parallelism` note no longer say `spawn` is unbuilt.
-
-### Fixed (a task that never finishes now hangs the program, and it is written down)
-
-- Holding `main`'s value until the started queue empties is what makes [ADR-055](docs/specification/adr/adr-055.md) D5's *"a task nobody joins still runs"* true — and it means a task that never completes never lets the program exit, where before it was dropped at exit. **No corpus program has one**, and the entry in `docs/open-work.md` says so rather than claiming a reproduction.
-- What fits is [ADR-006](docs/specification/adr/adr-006.md) D5's drain, which already exists for resources: a bounded wait, `cleanup-deadline` from the runtime configuration, and a report naming what did not finish. That deadline is applied in `Started::finish()`, which runs *after* `block_on` returns — so the one wait that needs bounding is the one place it does not reach. Neither the mechanism nor the configuration key has to be invented.
 
 ### Changed (the roadmap and the open-decisions page catch up with the execution model)
 
