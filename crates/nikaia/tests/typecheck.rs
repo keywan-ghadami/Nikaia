@@ -570,7 +570,9 @@ fn a_parameter_that_accepts_several_types_claims_none() {
 /// **A signature that says `?` is the stable source**, because it is *written*.
 /// `HashMap::keys` is `(&HashMap[?, ?]) -> ?` in `std.contracts` — the ledger
 /// declining to claim rather than nobody having got to it — so filling it is
-/// `open-decisions.md` §6's question and not routine work. If that question is
+/// `open-decisions.md`'s question about whether the ledger's type language grows,
+/// and not routine work. (By subject rather than by number: entries leave that
+/// page as they are answered, and the ones below move up.) If that question is
 /// ever answered, this fixture is meant to be revisited with it.
 ///
 /// ADR-024 D4's erased generic would be the better source still — an absence the

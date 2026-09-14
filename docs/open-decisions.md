@@ -1,13 +1,17 @@
 # Open decisions — the questions that need the owner
 
-**Five entries, and every one of them is open.** Nothing answered lives here: an
+**Four entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
 the compiler does not do it yet, which needs work and not a ruling.
 
-The thirteen entries this file used to carry are gone that way, twelve to
-their records and one because it was never a question for the owner at all:
+The fourteen entries this file used to carry are gone that way, twelve to
+their records and two because they were never questions for the owner at all —
+the second being whether a word-sized shared value drops its lock, which is a
+**performance idea** and is documented as one in
+[`lock-free.md`](lock-free.md) §6: the measurement is done, nothing is
+half-built, and no program in the tree contends a lock:
 [ADR-046](specification/adr/adr-046.md) (`use` brings nothing in),
 [ADR-047](specification/adr/adr-047.md) (a package is a directory),
 [ADR-048](specification/adr/adr-048.md) (the numeric surface),
@@ -155,105 +159,10 @@ a project of its own.
 
 ---
 
-## 4. Does a word-sized shared value drop its lock?
-
-**Blocked by it:** nothing is half-built. The measurement is done
-([`lock-free.md`](lock-free.md)), so what is left is the ruling and then the work.
-
-[ADR-039](specification/adr/adr-039.md) §3 leaves a door open and promises
-nothing: `update` takes a pure function and is therefore **repeatable**, which is
-the route to an implementation that retries instead of locking — Clojure's `atom`
-and Haskell's `TVar` are that route. The numbers are now in, and they make the
-question narrow rather than large.
-
-**What the measurement says.** A compare-and-swap loop against the two shapes the
-compiler writes, uncontended, two runs:
-
-* against the **cheap** shape: **×6.5 to ×7.5**. It must never replace that one —
-  and that one is what every value gets at `user_parallelism = no`;
-* against the **crossing** shape: **×0.63 to ×0.67**, about 6 ns a door, and
-  several times that under contention where only the sign reproduces.
-
-So the shape of a yes is: **a third representation for a word-sized value that
-may cross a thread**, replacing the crossing shape and nothing else. `i32`,
-`i64`, `bool`, `char` — not "a small type": a two-number struct is small and has
-no atomic instruction.
-
-**The options.**
-
-* **Leave it.** Six nanoseconds a door on the values that cross, and the
-  contended case stays the expensive one it is. Nothing to build, nothing to
-  explain, and the door stays open because the block's shape keeps it open.
-* **Build it for `get` and `set` only.** Those need no repetition at all, so the
-  one thing that is missing below is not needed. It is the smaller half of the
-  win and all of the safety.
-* **Build it for `update` too**, which needs the thing below.
-
-**What it needs, and it is one derivation away now.** A block that may be
-**repeated**. `sync` says a block does not *wait*; it does not say it has no
-**effect**. Run, not argued:
-
-```nika
-let k = SharedMut(0)
-k.update fn(alt) {
-    println(f"ich laufe: {alt}")     // prints, today
-    return alt + 1
-}
-```
-
-So a retry would print twice. ADR-039 §3 calls the missing property *"an
-additional assurance which does not exist yet"*, and **the half that was missing
-is there now**: `touches` is inferred over the call graph since
-[ADR-067](specification/adr/adr-067.md) D2, so a user-written function answers
-what it reaches instead of *"nobody said"*, and *"touches nothing, and it is
-known"* is very nearly *"repeating it is unobservable"*.
-
-**What is left is to say that the two are the same thing** — and one asymmetry
-that has to be written down first, because it is not obvious and it changes how
-carefully a `std` entry has to be read.
-
-**An empty touch set means different things to the two consumers.** To
-`contracts::order` it is a **speed**: a function that reaches nothing may overlap
-with anything, and an entry that forgets a resource buys an overlap it should not
-have. To a repetition it would be a **permission**: repeat me freely, and an entry
-that forgets a resource loses an effect. Same mistake, and the second consumer
-pays more for it. Whoever takes this on should say so where a `std` entry is
-written, not only where it is read.
-
-**And the clock is the example.** A repetition can observe anything the vocabulary
-does not name; the vocabulary names `file`, `stdout`, `stderr`, `args` and `lock`.
-It does not name a clock — and `std` has no function that reads one, so the rule
-that a word waits until a program asks for it keeps it out, exactly as it kept
-`lock` out until yesterday. `touch.rs` carries the note for the day it changes,
-including what to write: `clock read`, because two calls conflict over nothing and
-neither changes anything.
-
-**And the contradiction it uncovered is settled.** Part II said a `sync` function
-*"will never do I/O"*; `std.contracts` had `println` as `sync = true`, and the
-program above is what that meant in practice.
-[ADR-067](specification/adr/adr-067.md) D1 gives the word **one** promise — it
-never pauses — and what a body reaches is the second column's to answer.
-
-**And one interaction, cheap to state and expensive to miss:** a value that
-appears in a door over several locks ([ADR-065](specification/adr/adr-065.md))
-cannot take the atomic shape — `update_all` holds both at once and a retry loop
-cannot be held. Such a value keeps a lock.
-
-**What I would do: the second, and not yet.** `get` and `set` are free of the open
-assurance and would take the win where it is safest. But nothing in the corpus
-contends a lock today, so the honest order is to leave it until a program does —
-and the reason to write the question down now is that the measurement is fresh and
-will not be repeated cheaply.
-
-**What it explicitly is not:** a switch. There is already a decision that there is
-no way to *ask* for the cheaper reference count — the remedy for a fallback is a
-contract, not a permission ([ADR-037](specification/adr/adr-037.md) D8). A third
-lock shape follows the same rule: the compiler takes it where it can prove the
-value qualifies, and `--sharing` says why not.
 
 ---
 
-## 5. Does the ledger's type language grow, so fewer values are `?`?
+## 4. Does the ledger's type language grow, so fewer values are `?`?
 
 **Blocked by it:** nothing is half-built. What it blocks is how often this
 compiler can answer at all — a cost that is paid everywhere and shows up nowhere

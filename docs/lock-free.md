@@ -135,3 +135,35 @@ choice is already made per value.
   thread may still be reading it, which is what a garbage collector does for
   Clojure and Haskell and what nothing does for us) is present but unused. That
   case is not what these numbers are about.
+
+## 6. What this is, and what it is not
+
+**It is a performance idea, and it is not a question waiting on the owner.** It
+was on [`open-decisions.md`](open-decisions.md) for a while and has been taken off
+deliberately, because that page is for questions whose answer somebody has to
+give before work can continue — and nothing is waiting on this one. The measured
+win is 6 ns a door on the values that cross a thread. Nothing is half-built, no
+record promises it, and no program is slower for its absence in a way anyone has
+shown.
+
+**The reason it has no urgency is worth stating, because it was found by looking
+rather than assumed.** No `.nika` file in this repository uses `spawn`, `Locked`,
+`Shared` or `SharedMut` — the concurrency half of the language is exercised by
+Rust test snippets only. And the one genuinely parallel program in `examples/`,
+the One Billion Row Challenge, shares nothing at all: `par_fold` splits the input,
+folds each piece into its own accumulator and merges them, which is why it has no
+lock to contend. That is the good pattern, and it is the pattern the language
+steers towards.
+
+So the question that decides this is not *"how much would the loop save"* — that
+is measured, above — but **"does a real program share a word-sized value across
+threads?"**. Writing a contending program to find out would be manufacturing the
+evidence; the honest route is to wait for a program that needs it. A server is the
+likeliest one, and `http` is now a package that can grow into it
+([ADR-069](specification/adr/adr-069.md)).
+
+**And a warning for whoever measures it there.** A web server will not settle this
+by throughput. A request costs tens of microseconds and a door costs six
+nanoseconds — four orders of magnitude apart, under a network stack. What a real
+server settles is the **shape** question above, by what its code has to do. The
+numbers are already here.
