@@ -227,11 +227,35 @@ no atomic instruction.
   win and all of the safety.
 * **Build it for `update` too**, which needs the thing below.
 
-**What it needs that does not exist.** A block that may be **repeated**. `sync`
-says a block does not *wait*; it does not say it has no **effect**, and a block
-that prints would print twice. ADR-039 §3 names that as *"an additional assurance
-which does not exist yet"*. So this question has a smaller one inside it: **what
-says a block may be run again, and who writes it down?**
+**What it needs that does not exist — and it is closer than it reads.** A block
+that may be **repeated**. `sync` says a block does not *wait*; it does not say it
+has no **effect**. Run, not argued:
+
+```nika
+let k = SharedMut(0)
+k.update fn(alt) {
+    println(f"ich laufe: {alt}")     // prints, today
+    return alt + 1
+}
+```
+
+So a retry would print twice. ADR-039 §3 calls the missing property *"an
+additional assurance which does not exist yet"*, and that is true of the
+**property**; the machinery under it is half built. `touches` is a second derived
+column ([ADR-033](specification/adr/adr-033.md)), `overlap { … }` already walks a
+block and accounts for what it reaches, and *"touches nothing"* is very nearly
+*"repeating it is unobservable"*. What is missing is that a **user-written**
+function carries `touches_known = false` — nobody said — so the walk stops at the
+first call out of the block. Arithmetic is fine; a helper is not, until user
+functions carry an inferred touch set.
+
+**And it uncovered a contradiction that is not this question's.** Part II 12.1
+says a `sync` function *"will never do I/O"* and *"cannot call standard functions
+(which might perform I/O)"*. `std.contracts` has `println` as `sync = true` with
+`touches = ["stdout write"]`, and the program above is what that means in
+practice. One word carries two promises and only one of them — *cannot pause* —
+is what the inference computes and what the lowering needs. Which of the two the
+word keeps is its own question, and it blocks this one.
 
 **And one interaction, cheap to state and expensive to miss:** a value that
 appears in a door over several locks ([ADR-065](specification/adr/adr-065.md))
