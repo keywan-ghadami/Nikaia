@@ -203,7 +203,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
-| — | nothing is claimed right now | |
+| 077 | the word is `comptime`, not `const` | `claude/mutex-boden-entscheidung-x291jd` |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
