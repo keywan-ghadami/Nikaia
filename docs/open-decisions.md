@@ -1,12 +1,12 @@
 # Open decisions — the questions that need the owner
 
-**Three entries, and every one of them is open.** Nothing answered lives here: an
+**Two entries, and both of them are open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
 the compiler does not do it yet, which needs work and not a ruling.
 
-The fifteen entries this file used to carry are gone that way, thirteen to
+The sixteen entries this file used to carry are gone that way, fourteen to
 their records and two because they were never questions for the owner at all —
 the second being whether a word-sized shared value drops its lock, which is a
 **performance idea** and is documented as one in
@@ -24,6 +24,10 @@ half-built, and no program in the tree contends a lock:
 question that stopped being one rather than getting an answer) and
 [ADR-060](specification/adr/adr-060.md) (a literal no use constrains takes the
 first type that holds it, which needed none of the inference it seemed to) and
+[ADR-074](specification/adr/adr-074.md) (what a program may do at compile
+time: a build-time body calls what is `sync` and touches at most the build's own
+parameters — two columns that already exist, so the restriction the question asked
+somebody to invent turned out to be maintained by the compiler) and
 [ADR-070](specification/adr/adr-070.md) (there is no unconditional loop
 keyword — `while true` is it, and Go is the precedent read carefully: it has no
 `while` at all, so what it shows is that *one* keyword is enough rather than that
@@ -61,46 +65,10 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. What may a program do at compile time?
-
-**Blocked by it:** compile-time I/O, and with it the **asset dimension of the
-build cache**, which is carried through `Key::build` and exercised by tests with
-no real producer behind it ([ADR-021](specification/adr/adr-021.md) D13).
-
-**Half of it is answered and this entry has shrunk to the other half.**
-[ADR-072](specification/adr/adr-072.md) decided where the bytes come from: a file
-a build reads is named three times — in the code, in an allowlist file, and in
-the invocation that puts the list in effect — and a build given no list reads
-nothing. That answers [ADR-026](specification/adr/adr-026.md) Q5 and the
-filesystem half of its Q6, and it decides nothing about what happens to the bytes
-afterwards.
-
-**This one is written down where it belongs.**
-[ADR-026](specification/adr/adr-026.md) is the record, its status is **Open**,
-and it holds the whole design space: two things already decided (I/O belongs to
-the compiler rather than to a sandbox; a path stays in the project root and `..`
-is refused rather than resolved), six questions as Q1–Q6, prior art, what was
-considered and rejected, and what answering it buys the cache.
-
-**What is left is Q4 — what is a program allowed to do in `const`?** Everything
-still open in that record is downstream of it: whether a sandbox is needed at all,
-what it would be, and what bounds a body's steps and its memory all read
-differently depending on how much a build-time body may reach. The reading
-question that used to sit beside it is gone.
-
-**What I would do:** answer Q4 alone, narrowly, and leave Q1–Q3 and Q5–Q6 where
-they are. A grammar's `action` blocks are arbitrary Nikaia, so evaluating one at
-build time means running user code at build time — and the cheap version of that
-is a restriction rather than a sandbox: name what a `const` body may call, and
-the question of confining it does not arise. ADR-026 §4 makes that case itself.
-
-**What it costs:** a narrow answer is a list in a record and a check in the
-compiler. A wide one is a sandbox, which that record's §6 already declines on
-the grounds that nothing in the language needs one yet.
 
 ---
 
-## 2. How is a package named by a version?
+## 1. How is a package named by a version?
 
 **Blocked by it:** every dependency that is not a path.
 `nikaia.toml` refuses `http-server = "1.2"` and says why — no record names a
@@ -146,7 +114,7 @@ a project of its own.
 
 ---
 
-## 3. Does the ledger's type language grow, so fewer values are `?`?
+## 2. Does the ledger's type language grow, so fewer values are `?`?
 
 **Blocked by it:** nothing is half-built. What it blocks is how often this
 compiler can answer at all — a cost that is paid everywhere and shows up nowhere
