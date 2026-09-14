@@ -116,11 +116,19 @@ These words mean one thing wherever they appear, so a name may not be one of the
 ([ADR-051](adr/adr-051.md) D1):
 
 ```text
-as      catch   dsl     else    enum    false   fn      for
-from    grammar if      impl    in      let     match   mut
-overlap pub     return  self    spawn   struct  sync    throw
-throws  true    use     while
+as      break   catch   continue  dsl     else    enum    false
+fn      for     from    grammar   if      impl    in      let
+loop    match   mut     null      overlap pub     return  self
+spawn   struct  sync    throw     throws  true    use     while
 ```
+
+**`break`, `continue` and `loop` are on the list and are not constructs**
+([ADR-071](adr/adr-071.md) D2). Reserving a word is not adding one: `break` and
+`continue` are questions the language has not answered — its loops are left by
+their condition or by `return` — and `loop` is one it has answered *no* to
+(3.3, [ADR-070](adr/adr-070.md) D1) and reserved anyway, because that no has a
+written condition for reopening and the word has to still be free on the day it
+does. It is the same move [ADR-050](adr/adr-050.md) D2 made for `overlap`.
 
 **`seq` has left the list**, which is the direction a reserved word may move
 without breaking anything: the construct is withdrawn

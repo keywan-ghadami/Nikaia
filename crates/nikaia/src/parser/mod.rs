@@ -133,10 +133,10 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 29] = [
-    "as", "catch", "dsl", "else", "enum", "false", "fn", "for", "from", "grammar", "if", "impl",
-    "in", "let", "match", "mut", "null", "overlap", "pub", "return", "self", "spawn", "struct",
-    "sync", "throw", "throws", "true", "use", "while",
+pub const RESERVED_WORDS: [&str; 32] = [
+    "as", "break", "catch", "continue", "dsl", "else", "enum", "false", "fn", "for", "from",
+    "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap", "pub",
+    "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use", "while",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -1640,7 +1640,9 @@ grammar! {
         // backend's `ident` accepts both, so they are covered by the same line.
         rule KW_AS = "as" not(ident)
         rule KW_BOUNDARY = "boundary" not(ident)
+        rule KW_BREAK = "break" not(ident)
         rule KW_CATCH = "catch" not(ident)
+        rule KW_CONTINUE = "continue" not(ident)
         rule KW_DSL = "dsl" not(ident)
         rule KW_ELSE = "else" not(ident)
         rule KW_ENUM = "enum" not(ident)
@@ -1654,6 +1656,7 @@ grammar! {
         rule KW_IMPL = "impl" not(ident)
         rule KW_IN = "in" not(ident)
         rule KW_LET = "let" not(ident)
+        rule KW_LOOP = "loop" not(ident)
         rule KW_MATCH = "match" not(ident)
         rule KW_MUT = "mut" not(ident)
         rule KW_NULL = "null" not(ident)
@@ -1697,15 +1700,17 @@ grammar! {
         //
         // Order does not matter: every alternative carries its own `not(ident)`
         // boundary, so `throw` does not match the start of `throws`.
-        // **Split in two** because the alternation the backend generates is a
+        // **Split in three** because the alternation the backend generates is a
         // tuple, and a tuple has a width the library implements `Alt` up to.
-        // Twenty-eight is over it. Nothing else distinguishes the halves.
+        // Twenty-eight was over it, which is what forced the first split;
+        // thirty-one is further over. Nothing else distinguishes the parts.
         //
         // **And every arm hands back a `0` that nothing reads**, which is not a
         // style choice either: an alternation with no action generates a unit
         // expression per arm, and `clippy::unused_unit` refuses the whole macro
         // expansion for it. A value is the smallest thing that is not a unit.
-        rule RESERVED -> u8 = w:RESERVED_A -> { w } | w:RESERVED_B -> { w }
+        rule RESERVED -> u8 =
+            w:RESERVED_A -> { w } | w:RESERVED_B -> { w } | w:RESERVED_C -> { w }
 
         rule RESERVED_A -> u8 =
             KW_AS -> { 0 }
@@ -1738,6 +1743,18 @@ grammar! {
           | KW_TRUE -> { 0 }
           | KW_USE -> { 0 }
           | KW_WHILE -> { 0 }
+
+        // **The three control-flow words nothing in the grammar uses**
+        // ([ADR-071](../../../../docs/specification/adr/adr-071.md)). They are
+        // here for the reason `overlap` was here before its construct existed:
+        // a word is free to reserve while no program uses it and breaks
+        // programs afterwards. A half of their own rather than two more arms on
+        // `RESERVED_B`, because the alternation's width is what forced the
+        // split in the first place and three is not worth testing the edge of.
+        rule RESERVED_C -> u8 =
+            KW_BREAK -> { 0 }
+          | KW_CONTINUE -> { 0 }
+          | KW_LOOP -> { 0 }
 
         // The compiler's identifier.
         //

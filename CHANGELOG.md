@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added (`break`, `continue` and `loop` are reserved)
+
+- **[ADR-071](docs/specification/adr/adr-071.md).** 29 reserved words become 32. [ADR-070](docs/specification/adr/adr-070.md) D2 found, while answering a different question, that **`break` and `continue` are not in the language at all** — not in the grammar, not in the parser, not on the list — so a loop is left by its condition going false or by a `return` that leaves the whole function. Whether they join the language is a question this does not answer; whether the words stay available as *names* has a deadline, and that is what is decided.
+- **The rule is [ADR-051](docs/specification/adr/adr-051.md) D1's and it is about timing rather than taste** — *reserving a word costs nothing before programs exist and breaks them afterwards, so the free moment is now* — already applied once by [ADR-050](docs/specification/adr/adr-050.md) D2, which reserved `overlap` while the grammar had no construct for it.
+- **`loop` is reserved although the language decided against the keyword**, which looks inconsistent and is not: [ADR-070](docs/specification/adr/adr-070.md) D2 wrote down the condition under which that no reopens — the day a `break` hands back a value — and the word has to still be free on that day. The polarity is settled by [ADR-050](docs/specification/adr/adr-050.md) D7, which un-reserved `seq` and recorded why that direction is free: reserving narrows what parses and un-reserving widens it, so **a reservation is reversible and its absence is not**.
+- **The grammar gets a third alternation rather than two more arms.** The reserved words are one rule split in two because the backend generates a tuple and a tuple has a width `Alt` is implemented up to; twenty-eight was over it, thirty-one is further over, and the width is what broke last time.
+- No program changes: none of the three appears as a name anywhere in the tree, every occurrence is in a comment about a loop. The parse error needed nothing — [ADR-051](docs/specification/adr/adr-051.md)'s note is read off the rendered message rather than off the list, so `let loop = 1` already answers *"`loop` is a reserved word, so it is not a name"*.
+- **Part I 2.1's table was missing `null`**, which the compiler has reserved all along. Checked mechanically this time: the table and `RESERVED_WORDS` now hold the same 32 words.
+
 ### Changed (no unconditional loop keyword)
 
 - **[ADR-070](docs/specification/adr/adr-070.md).** `while true { … }` is the unconditional loop and there is no second spelling for it. Part I 3.3 carries the sentence, so the absence is a decision rather than an omission, and `loop` is withdrawn from the roadmap.
