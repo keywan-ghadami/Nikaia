@@ -101,10 +101,11 @@ So, in order, and each says below why it sits where it does:
    and the rest of the list can be taken in its own order.
 2. **A surface to reach `Locked[T]` through.** The other half of the same story:
    a program that spawns needs something it may share.
-   [ADR-057](specification/adr/adr-057.md) decided what the type **is** and both
-   shapes are built, so what is left is mostly not the representation — the one
-   thing in it that needs deciding rather than doing is what `access` hands its
-   lambda, because Part II 12.2's own idiom does not compile as written.
+   [ADR-057](specification/adr/adr-057.md) decided what the type **is** and
+   [ADR-059](specification/adr/adr-059.md) what a program writes to reach one, and
+   both are built — so what is left here is work and not representation, with one
+   exception: **a write across several locks has no door**, which ADR-059 D1 named
+   as it closed. Chapter 12's own transfer is not writable until that is decided.
    Independent of the sequence above, so it can be taken beside it.
 3. **A server to bind to, and the `postgres` block.** Its own project rather than a
    step of this one.
