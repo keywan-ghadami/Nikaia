@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Decided (letting foreign code call in is a target, not a third value of the switch)
+
+- **[ADR-062](docs/specification/adr/adr-062.md), and nothing of it is built** — nothing of it *can* be: `extern "C"` is a parse error, `Target` has two values, and this repository has no notion of a linkable artifact. It is written down because it is the first direction that touches `user_parallelism` at its root, and a target added without it would answer the question by accident.
+- **What `extern "C"` brings back is not the representation problem.** A C signature names neither `Rc` nor `Arc` — it names a pointer and an integer — so [ADR-061](docs/specification/adr/adr-061.md) D1's question cannot even be posed there. What it brings back is that **the caller owns the threads**: an exported entry point may be called twice at once from threads no switch of ours bound. Python's GIL is not the guarantee it is remembered as — an extension may release it, and free-threaded CPython removes it.
+- **D1: so it is a property of the target.** The target already decides what is outside the program and what it does to us; `user_parallelism` bounds **your** code and cannot answer for a caller's without meaning two things at once, the second one silently.
+- **D2: one build, safe at its boundary.** The exported entry points and everything they reach take the safe shape; the rest keeps [ADR-037](docs/specification/adr/adr-037.md) D7's per-value answer. So a Nikaia library does **not** have to ship twice, and does not have to pay the atomic count on values that never leave its own call stack. An entry point is a root, seeded at the floor.
+- **D3: the checks need no change**, which is the payoff of [ADR-045](docs/specification/adr/adr-045.md) D1 — `contracts::send` asks nothing about the switch, so a library is already checked for the world it would enter. Only what is emitted moves, and only under the entry points.
+- Corrected while writing it: Part III 15.2's type-mapping table still said *"a `Shared[T]` that reaches a foreign call is an `Arc<T>`"*. Since [ADR-061](docs/specification/adr/adr-061.md) D1 it does not reach one at all — it is refused, and the way across is what is inside.
+
 ### Changed (at one user thread every count is plain, and a `Shared` stays in)
 
 - **The two halves of a shared, locked value disagreed** ([ADR-061](docs/specification/adr/adr-061.md)). [ADR-057](docs/specification/adr/adr-057.md) made the lock cheap at one user thread; [ADR-037](docs/specification/adr/adr-037.md) D6 kept the count atomic at both settings. What came out was `Arc<Local<i64>>` — an atomic count around a non-atomic lock, a shape that is right under no assumption: either the value can cross and both halves must bear it, or it cannot and neither needs to.

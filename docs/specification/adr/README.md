@@ -146,6 +146,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [037](adr-037.md) | Two switches: `target` names the machine, `user_parallelism` says whether the **user's** code may run concurrently — and the compiler's own threads are not the user's | Accepted | D1–D8, the emission included: a `Shared` value is lowered to `Rc` or `Arc` from the count D7 infers for it, so that inference has a real input; `wasm32-unknown` is refused rather than mis-emitted; §3's structural `Send` check is [005](adr-005.md) §5, and the switch reaches its severity and never its verdict |
+| [062](adr-062.md) | **A target that lets foreign code call in is a target**, not a third value of `user_parallelism`: that switch bounds *your* code and cannot answer for a caller's threads. So an exported entry point and everything it reaches take the safe shape, and the rest of the library keeps [037](adr-037.md) D7's per-value answer — one build, safe at its boundary, rather than two artifacts or the atomic count on everything. `extern "C"` brings back **not** the representation-in-a-signature problem ([061](adr-061.md) D1 — a C signature can name neither shape) but the ownership of threads; Python's GIL was never the guarantee it is remembered as | Accepted | **no** — and nothing can be: `extern "C"` is a parse error and this repository has no notion of a linkable artifact. The checks need no change at all, because [045](adr-045.md) D1 kept every verdict off the switch |
 
 ## What supersedes what
 
@@ -188,7 +189,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
-| 062 | a target that lets foreign code call in | this session |
+| — | nothing is claimed right now | |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.

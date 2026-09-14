@@ -51,7 +51,8 @@ the program never wrote**, which wanted a rule and not a list
 it by being answered rather than fixed: *"an out-of-range literal that nothing
 constrains is refused in Rust's words"* asked for an inference this compiler does
 not have, and turned out to need none
-([ADR-060](specification/adr/adr-060.md)) — it is §2's now, as work.
+([ADR-060](specification/adr/adr-060.md)), so it left as one rule in the emitter
+rather than as an entry below.
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
@@ -354,6 +355,25 @@ bench that decided it (`benches/sendfile/`) and the write-up
 ([`zero-copy-send.md`](zero-copy-send.md)); `send_file` beside the ring could have
 been built ahead of the server and deliberately was not, because D3's measurement
 makes it the mechanism that loses at the sizes a server sends most.
+
+### 2.10. There is no target that lets foreign code call in, and the record for one is written
+
+[ADR-062](specification/adr/adr-062.md). Nothing of it is built and nothing of it
+**can** be: `extern "C"` is a parse error (Part III 15.1), `Target` has two values,
+and this repository has no notion of a linkable artifact — no `cdylib`, no
+`staticlib`, no `.so`. So this entry is not in the ordered list above; it is not
+waiting its turn, it is waiting on scope
+([`project_status_and_roadmap.md`](project_status_and_roadmap.md)).
+
+*Why it is written down anyway:* it is the one direction that touches
+`user_parallelism` at its root. A target added without it answers "who owns the
+threads" by accident, and the answer is invisible — a caller's second thread and a
+plain reference count under it is a data race with nothing to see at the source.
+
+*What it needs, when something asks for it:* the analysis takes the exported entry
+points as roots seeded at the floor, the way it already seeds crossing roots. The
+checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
+off the switch, so a library is already checked for the world it would enter.
 
 ---
 

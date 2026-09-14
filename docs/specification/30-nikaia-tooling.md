@@ -564,6 +564,16 @@ fn raw_alloc() {
 > **refused** by `NK1117`, *"nothing declares `unsafe`"*: the example above does
 > not mean something other than what it says, it does not compile.
 
+> **And when it is built, it is a target.** Talking *to* C is what this section
+> writes; letting C talk *in* is the other direction, and it takes the threads
+> away from the program — an exported entry point may be called twice at once from
+> threads the caller owns, which `user_parallelism` never said yes to. That switch
+> bounds **your** code and cannot answer for a caller's, so the answer lives where
+> the answer to *"what is outside this program"* already lives
+> ([ADR-062](adr/adr-062.md) D1). Such a build is one artifact, safe at its
+> boundary: the entry points and everything they reach take the safe shape, the
+> rest of the library keeps the per-value answer.
+
 ### 15.2. Rust Integration (Deep Integration)
 Nikaia treats Rust Crates differently than C libraries. Because Rust has a strong type system, Nikaia can verify safety properties.
 
@@ -589,12 +599,14 @@ The rule reaches exactly as far as the Rust signature is true. A Rust API that d
 * Rust `Option<T>` -> Nikaia `T?` (Nullable)
 * Rust `Vec<T>` -> Nikaia `Vec[T]`, and `HashMap<K, V>` -> `HashMap[K, V]`
 * Rust `Rc<T>` **or** `Arc<T>` -> Nikaia `Shared[T]`. **One Nikaia type, two Rust
-  ones**, and which it becomes is the compiler's to decide from what the value
-  crosses ([ADR-045](adr/adr-045.md) §3): a `Shared[T]` that reaches a foreign
-  call is an `Arc<T>`, because a call whose body this compiler cannot see is a
-  call that may put what it is given on a thread of its own. That is the entry
-  this table was missing, and it is the one [ADR-045](adr/adr-045.md) §3's whole
-  argument turns on.
+  ones**, and which it becomes is the compiler's to decide per value
+  ([ADR-037](adr/adr-037.md) D7). So it is the one row of this table that does not
+  cross: a `Shared[T]` handed to a call whose body this compiler cannot see is
+  **refused**, because a Rust signature names one of the two shapes and this
+  program may be using the other one for that very value
+  ([ADR-061](adr/adr-061.md) D1 — the same refusal a lock gets, for the same
+  sentence). **The way across is what is inside**: a view or a copy. A foreign
+  library that means to keep the value clones it into a hull of its own anyway.
 
 **Thread Safety (Send/Sync)**
 Nikaia decides whether a value may cross into foreign code from the **Nikaia type

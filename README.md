@@ -411,7 +411,11 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 - [ ] **Runtime integration:** binding `tokio` (current-thread & thread-pool).
 - [ ] **Interop:** `extern "C"` in the compiler (Chapter 15 specifies it) and Python bindings —
       so a Nikaia core can be dropped into an existing stack as a hot loop, without anyone
-      having to migrate a codebase to find out whether it is worth it.
+      having to migrate a codebase to find out whether it is worth it. Letting foreign code
+      call *in* is a **target**, because the caller then owns the threads and
+      `user_parallelism` only ever bounded yours
+      ([ADR-062](docs/specification/adr/adr-062.md)): one artifact, safe at its boundary, and
+      the per-value answer kept inside. A Nikaia library does not ship twice.
 - [ ] **Prompt bundle:** a single-file specification digest for Claude Projects, Copilot
       instructions and system prompts, so a model can write correct Nikaia from context.
 - [ ] **Self-hosting:** the compiler compiles itself.
