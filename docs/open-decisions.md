@@ -24,7 +24,7 @@ half-built, and no program in the tree contends a lock:
 question that stopped being one rather than getting an answer) and
 [ADR-060](specification/adr/adr-060.md) (a literal no use constrains takes the
 first type that holds it, which needed none of the inference it seemed to) and
-[ADR-074](specification/adr/adr-074.md) (what a program may do at compile
+[ADR-075](specification/adr/adr-075.md) (what a program may do at compile
 time: a build-time body calls what is `sync` and touches at most the build's own
 parameters — two columns that already exist, so the restriction the question asked
 somebody to invent turned out to be maintained by the compiler) and

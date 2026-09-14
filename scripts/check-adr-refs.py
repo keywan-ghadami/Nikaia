@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""Every `ADR-0NN Dn` / `ADR-0NN §x` citation must point at a heading that exists.
+"""Every `ADR-0NN Dn` / `ADR-0NN §x` citation must point at a heading that exists,
+and every ADR number belongs to exactly one record.
 
 A decision is only citable if the number is stable, so a dangling `D7` is a
 defect in the same way a dangling link is. Run from the repository root; exits
 non-zero and lists what is dangling.
+
+**The second check is here because the first one missed a collision.** Two
+sessions claimed 074 on the same afternoon and the second overwrote the first
+record's file - every citation still resolved, because the file was still
+there and still had a `D1`. What the repository did notice, and nobody read,
+was the index: it carried **two rows for 074**, one per record. So that is what
+is checked - one index row per number, one file per number, and the file's own
+title agreeing with its name. A claim in the reserved table is a promise between
+people; this is the part a machine can keep.
 """
 
 import glob
@@ -24,6 +34,42 @@ SEARCH = [
     "README.md",
     "manifesto.md",
 ]
+
+
+def collisions():
+    """One record per number: one index row, one file, and a title that agrees.
+
+    Reported rather than raised, so a run says everything that is wrong at once.
+    """
+    wrong = []
+    index = open(f"{ADR_DIR}/README.md", encoding="utf-8").read()
+    # An index row opens with `| [0NN](adr-0NN.md) | <prose> |`. Two other tables
+    # in the same file open the same way and are **not** ownership: the reserved
+    # table's rows hold a bare number and no link, and the amendments table's
+    # second cell is another ADR rather than prose - which is what tells them
+    # apart here, and was found by this check firing on ADR-030's `narrows` row.
+    rows = [
+        num
+        for num, second in re.findall(
+            r"^\|\s*\[(\d{3})\]\(adr-\1\.md\)\s*\|([^|]*)\|", index, re.M
+        )
+        if not re.match(r"\s*\[\d{3}\]\(adr-\d{3}\.md\)", second)
+    ]
+    for num in sorted(set(rows)):
+        if rows.count(num) > 1:
+            wrong.append(f"ADR-{num}: {rows.count(num)} index rows")
+
+    for path in sorted(glob.glob(f"{ADR_DIR}/adr-*.md")):
+        num = re.search(r"adr-(\d{3})\.md$", path).group(1)
+        first = open(path, encoding="utf-8").readline()
+        said = re.match(r"#\s*ADR-(\d{3})\b", first.strip())
+        if not said:
+            wrong.append(f"{path}: the first line does not open `# ADR-{num}: …`")
+        elif said.group(1) != num:
+            wrong.append(f"{path}: titled ADR-{said.group(1)}")
+        if num not in rows:
+            wrong.append(f"ADR-{num}: a record with no index row")
+    return wrong
 
 
 def headings():
@@ -102,6 +148,7 @@ def main():
                 bad.append((adr, label, where, "no such section"))
 
     inverted = inversions()
+    collided = collisions()
 
     if bad:
         print(f"{len(bad)} dangling ADR citation(s):")
@@ -113,11 +160,19 @@ def main():
             print(f"  {path}:{line_no}: {text}")
         print("  A note holds nothing normative (docs/README.md). Link the file,")
         print("  or make the argument in the ADR.")
-    if bad or inverted:
+    if collided:
+        print(f"{len(collided)} ADR number(s) not owned by exactly one record:")
+        for line in collided:
+            print(f"  {line}")
+        print("  A number is taken when it is claimed in the index's reserved table,")
+        print("  and a record is written once. Two rows or a mismatched title means")
+        print("  two records are wearing one number - move the later one.")
+    if bad or inverted or collided:
         return 1
 
     print(f"all ADR citations resolve ({len(citations())} checked)")
     print("no ADR borrows authority from a note")
+    print(f"every ADR number belongs to one record ({len(headings())} checked)")
     return 0
 
 

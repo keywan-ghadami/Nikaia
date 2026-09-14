@@ -125,7 +125,7 @@ while
 
 **`const` is on the list for the opposite reason to the next three**: it is
 reserved *for* a construct that Part II 10.2 specifies and the parser does not yet
-have ([ADR-074](adr/adr-074.md) D1), rather than against the possibility of one.
+have ([ADR-073](adr/adr-073.md) D1), rather than against the possibility of one.
 
 **`break`, `continue` and `loop` are on the list and are not constructs**
 ([ADR-071](adr/adr-071.md) D2). Reserving a word is not adding one: `break` and
