@@ -2056,7 +2056,7 @@ Nikaia enforces strict encapsulation to prevent tight coupling between parts of 
     * Functions, Structs, Enums and Constants are visible inside the **package**
       that declares them — every file of that directory — and nowhere else. (The
       `const` declaration is decided and unbuilt: the word is reserved, what may
-      stand in its initialiser is staged — [ADR-074](adr/adr-074.md) D5.)
+      stand in its initialiser is staged — [ADR-073](adr/adr-073.md) D5.)
     * Struct fields are the same: visible throughout the package that declares
       the struct.
 
