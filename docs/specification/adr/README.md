@@ -186,7 +186,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
-| — | nothing is claimed right now | |
+| 060 | An un-annotated integer literal that no use constrains takes the first type that holds it | this session |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
