@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Five entries, and every one of them is open.** Nothing answered lives here: an
+**Six entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -288,3 +288,76 @@ no way to *ask* for the cheaper reference count — the remedy for a fallback is
 contract, not a permission ([ADR-037](specification/adr/adr-037.md) D8). A third
 lock shape follows the same rule: the compiler takes it where it can prove the
 value qualifies, and `--sharing` says why not.
+
+---
+
+## 6. Does the ledger's type language grow, so fewer values are `?`?
+
+**Blocked by it:** nothing is half-built. What it blocks is how often this
+compiler can answer at all — a cost that is paid everywhere and shows up nowhere
+as a failure, which is the kind this file exists to make visible (§4's own
+reason).
+
+**Measured first.** Across the fifteen `.nika` files in `examples/`,
+`tests/samples/` and `crates/nikaia-std/src/`, **51** method calls go unanswered.
+By immediate cause:
+
+| | calls | |
+| ---: | :--- | :--- |
+| 16 | the receiver's type **is** known and no entry describes the method | `Args::nth` (10), `String::push` (5), `Tally::map_or` (1) |
+| 35 | the receiver was **already** `?` | the cascade |
+
+And the cascade's roots: 24 a local or parameter, 6 a method call whose own
+result was `?`, 4 a field, 1 a free call.
+
+**The finding that makes this a question rather than a work item.** The roots are
+mostly **not** missing entries. `HashMap::keys` has one — and it says `-> ?`:
+
+```toml
+[fn."HashMap::keys"]
+signature = "(&HashMap[?, ?]) -> ?"
+```
+
+so one line costs a whole chain:
+
+```nika
+let mut names = totals.stations.keys().collect()   // keys → ?, so collect → ?
+names.sort()                                        // so names → ?, so sort → ?
+```
+
+Four unanswerable calls from one `?`. Of the ledger's **86** entries: 53 are
+fully written, **9** have a result of `?`, 22 carry a `?` among the parameters,
+and 2 have no signature at all.
+
+**Why those nine are `?`, and it is not an oversight.** `keys` hands back an
+**iterator**, and the ledger's type language has no word for one. Its variables
+bind from the receiver ([ADR-031](specification/adr/adr-031.md)), so `-> $K` is
+sayable and *"a sequence of `$K`, lazily"* is not. `collect` is the other half of
+the same gap: what it builds depends on the **target**, which no signature
+written against the receiver can name.
+
+**The options.**
+
+* **Leave it.** `?` is the absence of a claim and not a wrong answer
+  ([ADR-024](specification/adr/adr-024.md)), and everything downstream is built
+  to be conservative about it — which is why the corpus compiles and runs today.
+  The cost is silent: fewer refusals this compiler can make in its own words, and
+  positions like [ADR-068](specification/adr/adr-068.md)'s wrap having to work
+  without an answer.
+* **Give the ledger an iterator type**, so `keys`, `values` and `chars` can say
+  what they hand back and `collect` can be written against it. It is the change
+  with the leverage — six of the roots are exactly this — and it is a change to
+  the **type language**, which nothing else in the compiler has needed yet.
+* **Fill only what is sayable today**: `Args::nth`, `String::push`, and the
+  entries whose result is a concrete type. That closes 16 of the 51 and none of
+  the cascade, and it is worth doing either way.
+
+**What I would do: the third now, the second as a decision.** The third is
+ordinary ledger work with a measured payoff and no new machinery. The second is
+where the remaining two thirds are, and it is a question about what a contract
+can *say* — which is the owner's, not a thing to start building on a guess.
+
+**What it is not.** It is not [ADR-028](specification/adr/adr-028.md) D5 being
+wrong. An entry exists because a program asked for it, and every entry named here
+was asked for; what is at issue is whether the entries that exist may say more
+than they do.
