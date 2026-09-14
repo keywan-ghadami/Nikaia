@@ -578,6 +578,13 @@ languages", and it is the same bug at the other end of the block.
 Most loops cannot fail. A range, a list, a map: nothing is read, so nothing
 about them changes.
 
+**And there is no third form.** A loop that does not end on its own is written
+`while true { … }`; there is no `loop` keyword, and that is a decision rather than
+an omission ([ADR-070](adr/adr-070.md) D1). Go is the precedent, read carefully:
+it has no `while` at all and lets `for` carry every loop shape, so what it shows
+is that one keyword is enough — not that the unconditional loop is unnecessary.
+Nikaia picked the other word to be the general one.
+
 ### 3.4. Pattern Matching (`match`)
 The `match` expression compares a value against a series of patterns. It is similar to a "switch" statement in other languages but ensures that every possible case is handled.
 

@@ -1,12 +1,12 @@
 # Open decisions — the questions that need the owner
 
-**Four entries, and every one of them is open.** Nothing answered lives here: an
+**Three entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
 the compiler does not do it yet, which needs work and not a ruling.
 
-The fourteen entries this file used to carry are gone that way, twelve to
+The fifteen entries this file used to carry are gone that way, thirteen to
 their records and two because they were never questions for the owner at all —
 the second being whether a word-sized shared value drops its lock, which is a
 **performance idea** and is documented as one in
@@ -24,6 +24,10 @@ half-built, and no program in the tree contends a lock:
 question that stopped being one rather than getting an answer) and
 [ADR-060](specification/adr/adr-060.md) (a literal no use constrains takes the
 first type that holds it, which needed none of the inference it seemed to) and
+[ADR-070](specification/adr/adr-070.md) (there is no unconditional loop
+keyword — `while true` is it, and Go is the precedent read carefully: it has no
+`while` at all, so what it shows is that *one* keyword is enough rather than that
+the form is unnecessary) and
 [ADR-069](specification/adr/adr-069.md) (`http` leaves `std` and becomes a
 package — the entry that asked what `std::http` should contain, when the question
 underneath was whether it is in `std` at all, which the specification had been
@@ -54,39 +58,10 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. Is there an unconditional loop?
-
-**Blocked by it:** nothing is half-built, and that is why it is here rather than
-in `open-work.md` — there is nothing to build until this is answered.
-
-Part I 3.3 has `while` and `for` and no third form. `loop` has been on the
-roadmap since it was written and is **not in the specification**, so the
-compiler having no rule for it is correct rather than a gap. What a program
-writes today is `while true { … }`, which works.
-
-**Two ways out.**
-
-* **(a) Nothing. `while true` is the unconditional loop.** One fewer keyword,
-  and a reader of Part I 3.3 has the whole of control flow on one page.
-* **(b) `loop { … }`.** It says *"this does not end on its own"* at the top
-  rather than leaving a reader to notice that the condition is a constant, and
-  in a language that will eventually want a `break` with a value it is the form
-  that carries one.
-
-**What I would do: (a), until something asks for (b).** No program in the corpus
-writes `while true`, so the form nobody uses does not need a second spelling —
-and a keyword is the most expensive thing to add and the hardest to remove
-([ADR-051](specification/adr/adr-051.md) made every one of them a reserved
-word). (b) is the right answer the day a `break` hands back a value, because
-`while true { … }` with a value-carrying `break` reads as a lie.
-
-**What it costs:** (a) costs a line in Part I 3.3 saying so, so that the absence
-is a decision rather than an omission — which is the whole point of asking. (b)
-costs a keyword, a reserved word, and a grammar rule.
 
 ---
 
-## 2. What may a program do at compile time?
+## 1. What may a program do at compile time?
 
 **Blocked by it:** compile-time I/O, and with it the **asset dimension of the
 build cache**, which is carried through `Key::build` and exercised by tests with
@@ -116,7 +91,7 @@ the grounds that nothing in the language needs one yet.
 
 ---
 
-## 3. How is a package named by a version?
+## 2. How is a package named by a version?
 
 **Blocked by it:** every dependency that is not a path.
 `nikaia.toml` refuses `http-server = "1.2"` and says why — no record names a
@@ -162,7 +137,7 @@ a project of its own.
 
 ---
 
-## 4. Does the ledger's type language grow, so fewer values are `?`?
+## 3. Does the ledger's type language grow, so fewer values are `?`?
 
 **Blocked by it:** nothing is half-built. What it blocks is how often this
 compiler can answer at all — a cost that is paid everywhere and shows up nowhere

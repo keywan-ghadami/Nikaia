@@ -444,6 +444,38 @@ never do (Part III, C.4), so it wants the same polarity every other check here
 has: refuse only what is certainly wrong, and say nothing about a name it cannot
 account for.
 
+### 2.12. A loop that cannot end still has to be followed by a `return`
+
+*Reproduced:*
+
+```nika
+fn forever() -> i32 {
+    while true {
+        let x = 1
+    }
+}
+```
+
+```
+error[NK1104]: this function hands back `()`, and it declares `i32`
+```
+
+so a function that genuinely never returns — an accept loop, an event loop, a
+supervisor — has to end with a `return 0` that cannot be reached, and a reader of
+that line cannot tell dead code from a mistake.
+
+*Why it is work and not a question:*
+[ADR-070](specification/adr/adr-070.md) D3 decided it. It is also the one real
+cost of D1's *no second keyword*, which is why the two were settled together.
+
+*What it needs, and why it is small here and is not small in Rust:* a `while`
+whose condition is the literal `true` cannot be left except by `return`, because
+`break` and `continue` do not exist — not in the grammar, not in the parser, and
+not among the reserved words. So the analysis other languages need for this
+question is, here, one test on the condition. The polarity is the usual one: say
+*"cannot be reached"* only where the condition is the literal, never where it is a
+name that happens to be true.
+
 ---
 
 ## 3. Upkeep

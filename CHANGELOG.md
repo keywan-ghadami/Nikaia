@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed (no unconditional loop keyword)
+
+- **[ADR-070](docs/specification/adr/adr-070.md).** `while true { … }` is the unconditional loop and there is no second spelling for it. Part I 3.3 carries the sentence, so the absence is a decision rather than an omission, and `loop` is withdrawn from the roadmap.
+- **Go is the precedent, read carefully.** Go has no `while` **at all**: `for { … }` *is* its unconditional loop. So Go did not do without the form — it did without a *second keyword* for it, by letting one word carry all three shapes. That is the lesson, and this applies it with the other word as the general one.
+- **Rust's case for a `loop` keyword does not reach here.** `loop` earns its word twice in Rust — `break value` makes it an expression, and the checker knows it diverges. Neither half applies: **`break` and `continue` are not in the grammar, not in the parser, and not among the 29 reserved words**, so a loop is left by its condition or by `return` leaving the whole function, and there is no value for a `break` to carry. The day that changes is the day to reopen this, because `while true` with a value-carrying `break` reads as a lie.
+- **The divergence half is a checker improvement, not a keyword**, and it is the one real cost of saying no. Run rather than argued: `fn forever() -> i32 { while true { let x = 1 } }` is refused with *"this function hands back `()`, and it declares `i32`"*, so a function that genuinely never returns needs a `return` that cannot be reached. A `while` on the literal `true` cannot be left except by `return` — precisely because `break` does not exist — so the analysis is one test on the condition. It is on [`open-work.md`](docs/open-work.md) §2.12.
+- **Whether to *reserve* `loop`, `break` and `continue` is a separate call** and D4 does not make it: reserving is not adding, [ADR-051](docs/specification/adr/adr-051.md)'s rule says the free moment is before programs exist, and smuggling a language change into a record that says no to one would be the wrong place for it.
+
 ### Changed (`http` leaves `std`)
 
 - **[ADR-069](docs/specification/adr/adr-069.md).** The specification was answering one question two ways. The tooling chapter headed a section **`std::http`** and promised *"a production-ready HTTP/1.1 and HTTP/2 server and client"*; the first chapter uses **`http`** as its worked example of a *foreign* package — the passage that teaches how one package reaches another at all, `http = { path = "../http" }` — and [ADR-046](docs/specification/adr/adr-046.md) D2 reaches for `use http::server` as its example of *"a path that is not `std`'s"*. Nobody decided it and nobody noticed, because while there is no way to name a package by a version, *"in `std`"* and *"a package"* look identical from here: either way you cannot have it.

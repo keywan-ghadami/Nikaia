@@ -50,7 +50,7 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 
 *   [x] **Control Flow**: `if/else`, `while`, `for`, `match`, and ranges - all parse, all lower, all emitted.
     *   *`while` was the last one*, and it had been missing in the way that costs most: Part I 3.3 documents it with a worked example, the parser had no rule for it, and so `while n < 5 { … }` read as **three** statements - a variable called `while`, a comparison thrown away, a bare block - with no error at all. What a reader got was `rustc` complaining about `while;` in a file they had not written, which Part III C.1 calls a bug in this compiler.
-    *   *`loop`*: on this list since it was written and **not in the specification**. Part I 3.3 has `while` and `for` and nothing else. Whether the language wants an unconditional loop is a question to answer before implementing one.
+    *   *`loop`*: **withdrawn** ([ADR-070](specification/adr/adr-070.md) D1). `while true { … }` is the unconditional loop and there is no second spelling for it; Part I 3.3 says so, so the absence is a decision rather than an omission.
 *   [x] **Data Structures**: `struct` and `enum` definitions, both parsed and emitted.
     *   Structs take `@borrowed` and the input lifetime where a field is a view (ADR-011 D6); enums lower with their three variant shapes and five pattern shapes (G12), and `examples/json.nika` is a six-variant tree walked by a `match` the compiler checks for completeness.
 *   [x] **Methods & Impl Blocks** (ADR-013): `impl` blocks, receivers, the anonymous constructor, and the fold adapter that ADR-011 D2 deferred until the receivers were known.
