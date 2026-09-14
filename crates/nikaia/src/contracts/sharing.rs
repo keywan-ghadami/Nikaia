@@ -370,6 +370,30 @@ pub struct Sharing {
 }
 
 impl Sharing {
+    /// Every count plain, because nothing can cross
+    /// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D2).
+    ///
+    /// Applied to the finished answer rather than instead of computing it, so
+    /// that the **duplication** sites - which are about handing a handle on and
+    /// not about threads - are kept exactly as they were found, and so that one
+    /// run of this analysis is one code path at both settings.
+    fn all_plain(mut self) -> Sharing {
+        for decision in &mut self.decisions {
+            decision.count = Count::Plain;
+            decision.why = None;
+            decision.fallback = None;
+        }
+        for count in self.counts.values_mut() {
+            *count = Count::Plain;
+        }
+        for classes in self.summaries.values_mut() {
+            for class in classes.iter_mut() {
+                class.count = Count::Plain;
+            }
+        }
+        self
+    }
+
     /// The count one slot's class got, with the floor where nothing is known.
     ///
     /// `value` is the name the source gives it, `<result>` for what a function
@@ -384,7 +408,25 @@ impl Sharing {
 
 /// Every `Shared` value in a program, which count it would get, and the
 /// per-function summary.
-pub fn analyse_program(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Sharing {
+pub fn analyse_program(
+    parsed: &Parsed,
+    own: &Ledger,
+    library: &Ledger,
+    crossings_are_possible: bool,
+) -> Sharing {
+    // **Where nothing can cross, there is nothing to decide**
+    // ([ADR-061](../../../../docs/specification/adr/adr-061.md) D2). At
+    // `user_parallelism = no` one thread runs the user's code; the runtime's I/O
+    // thread carries none of it, a task interleaves on the same thread, and since
+    // D1 a `Shared` may not be handed to code this compiler cannot see - which
+    // was the last way out. So every count is plain, and the seven reasons to
+    // decline are reasons to decline *a proof about another thread*, which no
+    // longer has to be found.
+    //
+    // The **verdict** is untouched and stays switch-independent
+    // ([ADR-045](../../../../docs/specification/adr/adr-045.md) D1): a
+    // `Shared[Locked[i32]]` may go into a task of ours at either setting. This is
+    // about what is emitted, not about what is permitted.
     let mut analysis = Analysis::new(parsed, own, library);
     for item in &parsed.program.items {
         match &item.node {
@@ -428,12 +470,16 @@ pub fn analyse_program(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Shari
             _ => {}
         }
     }
-    analysis.decide()
+    let sharing = analysis.decide();
+    match crossings_are_possible {
+        true => sharing,
+        false => sharing.all_plain(),
+    }
 }
 
 /// Every `Shared` value in a program, and which count it would get.
 pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Decision> {
-    analyse_program(parsed, own, library).decisions
+    analyse_program(parsed, own, library, true).decisions
 }
 
 /// Fill in the `sharing` column of a ledger, from the bodies.
@@ -442,8 +488,14 @@ pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Decision>
 /// it needs every function to have a `signature` to resolve a callee's
 /// parameters against, and every type to have its `fields`. It reads nothing any
 /// of them wrote.
+/// **At the floor, whatever the switch says**, and that is the one place D2 does
+/// not reach ([ADR-061](../../../../docs/specification/adr/adr-061.md)). What
+/// this writes is a **contract** — a statement about a function's positions that
+/// a reader and a later build consult — and a contract that moved with a build
+/// switch would be the thing ADR-045 D1 refuses. What is emitted is the
+/// emitter's question and it asks it with the setting in hand.
 pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
-    let summaries = analyse_program(parsed, ledger, library).summaries;
+    let summaries = analyse_program(parsed, ledger, library, true).summaries;
     for (key, classes) in summaries {
         if let Some(contract) = ledger.functions.get_mut(&key) {
             contract.sharing = classes;
@@ -458,8 +510,13 @@ pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
 /// indented line per thing decided, then what it adds up to. It **explains a
 /// decision rather than changing one** (ADR-033 D9), which is what a person
 /// reads when they want the 9 ns back.
-pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger) -> String {
-    let sharing = analyse_program(parsed, own, library);
+pub fn report(
+    parsed: &Parsed,
+    own: &Ledger,
+    library: &Ledger,
+    crossings_are_possible: bool,
+) -> String {
+    let sharing = analyse_program(parsed, own, library, crossings_are_possible);
     if sharing.decisions.is_empty() {
         // "here" and not "in this program": a report is about one file, and a
         // package of several files is several of them (`project::explain`).

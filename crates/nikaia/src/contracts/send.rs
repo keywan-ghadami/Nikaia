@@ -88,7 +88,7 @@
 // not the other, this needs a second column; stating that here is cheaper than
 // discovering it.
 //
-// **[`LOCKS`] is that day, and the column it needed turned out to be the
+// **[`CHOSEN`] is that day, and the column it needed turned out to be the
 // destination** (ADR-045 §4 predicted this file would want two columns here). A
 // lock at `user_parallelism = no` may be moved to another thread and may not be
 // looked at from one, so on the move/look axis it does belong in one column and
@@ -152,7 +152,15 @@ const CONTAINERS: &[&str] = &[
 /// that writes one as an annotation reaches this verdict and then fails to emit.
 /// The verdict is still the thing worth having early - it is what a library's
 /// signature is written against.
-const LOCKS: &[&str] = &["Locked", "SharedMut"];
+/// **And `Shared` joined them**
+/// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1), for the
+/// sentence that was already the lock's reason: *a Rust library has one
+/// signature*. When [ADR-037](../../../../docs/specification/adr/adr-037.md) D6
+/// made the count atomic at both settings there was one representation to write
+/// down and nothing to refuse; D7's per-value inference brought the second one
+/// back, so a `Shared[Conn]` is an `Rc` for one value and an `Arc` for another
+/// **in the same program** - and no foreign signature can name both.
+const CHOSEN: &[&str] = &["Locked", "SharedMut", "Shared"];
 
 /// Where a value is going. The second half of the question this file answers
 /// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D1).
@@ -301,7 +309,7 @@ pub fn names_used(parsed: &Parsed, body: &Expr) -> BTreeSet<String> {
 /// one lock field is no more crossable than the lock itself.
 ///
 /// `into` is the destination (ADR-045 D1) and reaches exactly one row of the
-/// table, [`LOCKS`]. Every other answer is the same wherever the value is going,
+/// table, [`CHOSEN`]. Every other answer is the same wherever the value is going,
 /// which is why the parameter is threaded through the walk rather than asked
 /// before it: a lock four fields deep is still a lock.
 pub fn crossing(ty: &Ty, own: &Ledger, library: &Ledger, into: Destination) -> Crossing {
@@ -367,7 +375,7 @@ fn walk(
             // go, and it makes nothing crossable that was not. Into code nothing
             // describes it may not go at all - the conservative answer, taken at
             // both settings on purpose, and the sentence in `note` says so.
-            if LOCKS.contains(&name.as_str()) {
+            if CHOSEN.contains(&name.as_str()) {
                 return match (into, args.is_empty()) {
                     (Destination::Foreign, _) => Crossing::MayNot {
                         part: ty.text(),

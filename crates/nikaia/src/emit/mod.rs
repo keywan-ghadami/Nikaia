@@ -1126,8 +1126,13 @@ impl<'p> Emitter<'p> {
         // whole unit, because a count belongs to an allocation and a handle's
         // class may reach into another function.
         let library = std_ledger();
-        let shared =
-            crate::contracts::sharing::analyse_program(parsed, &own_contracts, &library).counts;
+        let shared = crate::contracts::sharing::analyse_program(
+            parsed,
+            &own_contracts,
+            &library,
+            build.user_parallelism == UserParallelism::Yes,
+        )
+        .counts;
 
         // ADR-055 D6, before `own_contracts` is moved into place.
         let reach = pausing_reach(parsed, &own_contracts);

@@ -394,7 +394,7 @@ fn the_report_says_when_there_is_nothing_to_choose() {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std ships a ledger");
-    let report = sharing::report(&parsed, &own, &library);
+    let report = sharing::report(&parsed, &own, &library, true);
     assert!(report.contains("nothing to choose"), "{report}");
 }
 
@@ -407,7 +407,7 @@ fn the_report_names_what_it_could_not_decide() {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std ships a ledger");
-    let report = sharing::report(&parsed, &own, &library);
+    let report = sharing::report(&parsed, &own, &library, true);
     assert!(report.contains("could not decide:"), "{report}");
     assert!(report.contains("1 plain, 1 atomic"), "{report}");
 }
@@ -743,7 +743,7 @@ fn every_fallback_is_enumerated_with_a_remedy() {
         "pub fn zaehle(counts: Shared[Vec[i64]]) -> i64 { counts.len() }\n\
          fn lokal(hits: Shared[i64]) -> i64 { 1 }",
     );
-    let report = sharing::report(&parsed, &own, &library);
+    let report = sharing::report(&parsed, &own, &library, true);
     for fallback in Fallback::ALL {
         assert!(
             report.contains(fallback.as_str()),
@@ -767,7 +767,7 @@ fn every_fallback_is_enumerated_with_a_remedy() {
 fn the_report_has_the_shape_the_other_explanations_have() {
     let (parsed, own, library) =
         ledgers("fn kreuze(hits: Shared[i64]) { spawn fn { println(f\"{hits}\") } }");
-    let report = sharing::report(&parsed, &own, &library);
+    let report = sharing::report(&parsed, &own, &library, true);
     assert!(report.starts_with("kreuze:\n"), "{report}");
     assert!(
         report.contains("    atomic  `hits` (Shared[i64])"),
@@ -940,7 +940,7 @@ fn a_handle_taken_out_of_a_field_joins_what_it_is_handed_to() {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std ships a ledger");
-    let sharing = sharing::analyse_program(&parsed, &own, &library);
+    let sharing = sharing::analyse_program(&parsed, &own, &library, true);
     assert_eq!(
         sharing.count_of("<field>", "Halter.db"),
         Count::Atomic,

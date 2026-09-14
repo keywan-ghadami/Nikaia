@@ -862,7 +862,12 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
         if want.sharing {
             print!(
                 "{}",
-                crate::contracts::sharing::report(&unit.parsed, &program.contracts, &library)
+                crate::contracts::sharing::report(
+                    &unit.parsed,
+                    &program.contracts,
+                    &library,
+                    settings.build.user_parallelism == crate::emit::UserParallelism::Yes,
+                )
             );
         }
         if want.trust {

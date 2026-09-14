@@ -529,13 +529,24 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
         ],
     );
 
+    // **What has to hold is that the two sides agree**, and since
+    // [ADR-061](../../../docs/specification/adr/adr-061.md) D2 they agree the
+    // other way round at one user thread: nothing can cross there, so every
+    // count in the whole build is plain and no file can disagree with another.
+    // At `yes` the floor is what makes them agree, which is what this was
+    // written for. Both settings, because one of them proving it is not the
+    // property.
     let program = Program::read(&entry).expect("the program reads");
-    let lowered = program.emit(Build::default()).expect("it lowers");
-    assert!(
-        !lowered.rust.contains("std::rc::Rc"),
-        "both sides of the field are the same count, and it is the atomic one:\n{}",
-        lowered.rust
-    );
+    for build in [Build::default(), Build::parallel()] {
+        let lowered = program.emit(build).expect("it lowers");
+        let plain = lowered.rust.contains("std::rc::Rc");
+        let atomic = lowered.rust.contains("std::sync::Arc");
+        assert!(
+            plain != atomic,
+            "both sides of the field are the same count:\n{}",
+            lowered.rust
+        );
+    }
     // And it runs, which is the only proof the two agreed.
     assert_eq!(run(&entry, Build::default()).trim(), "1");
     let _ = std::fs::remove_dir_all(dir);
@@ -578,13 +589,24 @@ fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
         ],
     );
 
+    // **What has to hold is that the two sides agree**, and since
+    // [ADR-061](../../../docs/specification/adr/adr-061.md) D2 they agree the
+    // other way round at one user thread: nothing can cross there, so every
+    // count in the whole build is plain and no file can disagree with another.
+    // At `yes` the floor is what makes them agree, which is what this was
+    // written for. Both settings, because one of them proving it is not the
+    // property.
     let program = Program::read(&entry).expect("the program reads");
-    let lowered = program.emit(Build::default()).expect("it lowers");
-    assert!(
-        !lowered.rust.contains("std::rc::Rc"),
-        "both sides of the call are the same count, and it is the atomic one:\n{}",
-        lowered.rust
-    );
+    for build in [Build::default(), Build::parallel()] {
+        let lowered = program.emit(build).expect("it lowers");
+        let plain = lowered.rust.contains("std::rc::Rc");
+        let atomic = lowered.rust.contains("std::sync::Arc");
+        assert!(
+            plain != atomic,
+            "both sides of the call are the same count:\n{}",
+            lowered.rust
+        );
+    }
     assert_eq!(run(&entry, Build::default()).trim(), "1");
     let _ = std::fs::remove_dir_all(dir);
 }

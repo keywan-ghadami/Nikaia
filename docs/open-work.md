@@ -109,7 +109,21 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 4. **Supervision.** Last because nothing else waits on it.
 
-### 2.1. The `yes` executor, and what still needs a thread
+### 2.1. `examples/foreign-runtime/` explains the boundary with a rule that is gone
+
+Four programs about handing values across the foreign boundary — `crossing`,
+`serve`, `shim`, `smuggled` — and their comments name the **per-build** expansion:
+*"what `Shared` lowers to at `user_parallelism = no`, namely an `Rc`"*. That is
+[ADR-037](specification/adr/adr-037.md) D3, which D6 replaced, and it is now wrong
+a second way: [ADR-061](specification/adr/adr-061.md) D1 refuses a `Shared` at a
+foreign destination outright.
+
+*What it needs:* somebody to read the four and say which still demonstrate
+something. This is where a reader goes to learn what crossing means, so a stale
+explanation here is worth more than its size — and it is where the bridge D1
+reserved would first be missed, if it is missed at all.
+
+### 2.2. The `yes` executor, and what still needs a thread
 
 **`spawn` lowers.** It was the largest single unblocking in this file and the
 reason [ADR-055](specification/adr/adr-055.md) exists; all five steps of that
@@ -145,7 +159,7 @@ than waiting:** the analysis names a `spawn` body's handle as a duplication site
 and used again afterwards is not refused, which `tasks.rs` says about a program
 that does it.
 
-### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
+### 2.3. A lambda that pauses is refused, and a recursive pausing method is not boxed
 
 Both are [ADR-055](specification/adr/adr-055.md) §6's remainder, and both are
 limits of this compiler rather than of the language — so they are here and not in
@@ -188,7 +202,7 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.3. `let` takes one name, and the specification writes it taking several
+### 2.4. `let` takes one name, and the specification writes it taking several
 
 ```nika
 let (user, rights, prefs) = overlap { … }          // Part I 8.1.2
@@ -214,7 +228,7 @@ compiler's rule for a form nobody decided.
 not them; what the two sites need is destructuring a tuple whose arity is known,
 and a bigger answer would be a decision rather than this repair.
 
-### 2.4. Standard input is `async` and does not suspend
+### 2.5. Standard input is `async` and does not suspend
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -242,7 +256,7 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.5. `Locked[T]` has a shape and a surface, and a write across two locks has neither
+### 2.6. `Locked[T]` has a shape and a surface, and a write across two locks has neither
 
 [ADR-057](specification/adr/adr-057.md) decided what `Locked[T]` **is** and
 [ADR-059](specification/adr/adr-059.md) what a program writes to reach one: four
@@ -269,13 +283,13 @@ them. What is left:
   charges only on the values that actually cross;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.6. Part II 12.8's supervision syntax
+### 2.7. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.8. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -293,7 +307,7 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.8. There is no HTTP server, and three records now wait on it
+### 2.9. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal

@@ -136,10 +136,17 @@ fn the_switches_agree_about_a_shared_value() {
     let (sequential, one) = run("shared-sequential", BORROWED, &["--user-parallelism", "no"]);
     let (parallel, two) = run("shared-parallel", BORROWED, &["--user-parallelism", "yes"]);
     assert_eq!(sequential, parallel, "the two builds print differently");
+    // **What may not move is the meaning, and it does not.** The count itself
+    // may: since [ADR-061](../../../docs/specification/adr/adr-061.md) D2 one
+    // user thread is a build where nothing can cross, so every count there is
+    // plain. This value is plain at both settings anyway - nothing crosses with
+    // it at either - which is why the two lowerings are still byte for byte the
+    // same about the count. The files are not identical and never were - the
+    // runtime line names the pool - so it is the count that is compared.
     assert_eq!(
         one.contains("std::rc::Rc<Connection>"),
         two.contains("std::rc::Rc<Connection>"),
-        "the count may not move with the switch (ADR-037 D6)\n--- no ---\n{one}\n--- yes ---\n{two}"
+        "--- no ---\n{one}\n--- yes ---\n{two}"
     );
 }
 
@@ -170,12 +177,23 @@ fn main() {
     serve(db)
 }
 ";
-    let (printed, rust) = run("shared-atomic", source, &[]);
+    // **At `yes`**, because that is where the fallback has anything to protect:
+    // at one user thread nothing can cross, so there is nothing for a caller in
+    // a unit this build cannot see to do with the value
+    // ([ADR-061](../../../docs/specification/adr/adr-061.md) D2) and the count
+    // is plain there whatever the signature says.
+    let (printed, rust) = run("shared-atomic", source, &["--user-parallelism", "yes"]);
     assert_eq!(printed.trim(), "serving localhost");
     assert!(
         rust.contains("std::sync::Arc<Connection>"),
         "a public signature is the one fallback no contract can lift:\n{rust}"
     );
+
+    // …and the same program at one user thread, which prints the same thing and
+    // pays nothing for a crossing that cannot happen.
+    let (printed, rust) = run("shared-atomic-no", source, &["--user-parallelism", "no"]);
+    assert_eq!(printed.trim(), "serving localhost");
+    assert!(rust.contains("std::rc::Rc<Connection>"), "{rust}");
 }
 
 /// A field whose declared type says the value is shared is the other place the
