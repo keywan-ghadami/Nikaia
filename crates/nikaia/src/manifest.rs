@@ -77,10 +77,29 @@ pub enum Dependency {
 /// otherwise, and saying so beats a switch that silently stayed at its default:
 /// `user_parallelism` with an underscore is the mistake this catches.
 ///
-/// The list is `target` and `user-parallelism` (ADR-037 D5), `ordering`
-/// ([ADR-033](../../../docs/specification/adr/adr-033.md) D8), and the one key
-/// that has **moved out** - see [`MOVED`].
-const KNOWN: &[&str] = &["target", "user-parallelism", "ordering", "cleanup-deadline"];
+/// The list is `target` and `user-parallelism` (ADR-037 D5), and the one key
+/// that has **moved out** - see [`MOVED`]. A key that is neither, and that this
+/// compiler once had, is in [`WITHDRAWN`]: refused, but in its own words rather
+/// than as a typo.
+const KNOWN: &[&str] = &["target", "user-parallelism", "cleanup-deadline"];
+
+/// The keys this compiler had and no longer has, with what to do instead.
+///
+/// Different from [`MOVED`] in the only way that matters to whoever wrote the
+/// key: a moved key still decides something, somewhere else, so the manifest
+/// keeps working and says where to look. A withdrawn key decides **nothing
+/// anywhere**, and a build that quietly ignored it would be a program behaving
+/// differently from the file that describes it.
+///
+/// `ordering` is [ADR-050](../../../docs/specification/adr/adr-050.md) D7. It
+/// existed to turn off the automatic reordering D1 withdrew, and a switch
+/// between two behaviours when there is one left is a question with no answer.
+const WITHDRAWN: &[(&str, &str)] = &[(
+    "ordering",
+    "statements run in the order they are written, so there is nothing left for it to turn off \
+     (ADR-050 D1 and D7). A program that wants two things to run together writes `overlap { … }`, \
+     and `--overlaps` says which branches did",
+)];
 
 /// The keys the manifest still accepts and the compiler no longer reads,
 /// with where each of them went.
@@ -167,6 +186,9 @@ impl Manifest {
             if let Some(sub) = value.as_table() {
                 manifest.codegen.insert(key.clone(), codegen(key, sub)?);
                 continue;
+            }
+            if let Some((_, why)) = WITHDRAWN.iter().find(|(gone, _)| *gone == key.as_str()) {
+                return Err(refused!("`{key}` in `[build]` is withdrawn: {why}"));
             }
             if !KNOWN.contains(&key.as_str()) {
                 return Err(refused!(
@@ -374,10 +396,10 @@ mod tests {
     #[test]
     fn a_per_target_table_is_not_a_switch() {
         let manifest = Manifest::parse(
-            "[build]\nordering = \"strict\"\n\n[build.x86_64-linux]\nopt-level = 3\nlto = true\n",
+            "[build]\nuser-parallelism = \"yes\"\n\n[build.x86_64-linux]\nopt-level = 3\nlto = true\n",
         )
         .expect("parses");
-        assert_eq!(manifest.setting("ordering", None, "effects"), "strict");
+        assert_eq!(manifest.setting("user-parallelism", None, "no"), "yes");
 
         let codegen = manifest.codegen_for("x86_64-linux");
         assert_eq!(codegen["opt-level"].as_integer(), Some(3));
@@ -471,8 +493,35 @@ mod tests {
     /// so an ordinary build prints no note at all.
     #[test]
     fn a_manifest_without_a_moved_key_has_nothing_to_say() {
-        let manifest = Manifest::parse("[build]\nordering = \"strict\"\n").expect("parses");
+        let manifest = Manifest::parse("[build]\ntarget = \"x86_64-linux\"\n").expect("parses");
         assert!(manifest.notes().is_empty());
+    }
+
+    /// A **withdrawn** key fails the build, and in its own words.
+    ///
+    /// The difference from the moved key above is the whole of why there are
+    /// two lists ([ADR-050](../../../docs/specification/adr/adr-050.md) D7):
+    /// `cleanup-deadline` still decides something somewhere else, so the
+    /// manifest keeps working and says where to look, while `ordering` decides
+    /// nothing anywhere — and a build that ignored it quietly would run a
+    /// program that differs from the file describing it.
+    ///
+    /// It is also not reported as a typo, which is what removing it from
+    /// `KNOWN` alone would have done: somebody who writes `ordering` meant it,
+    /// and "expected one of: …" answers a question they did not ask.
+    #[test]
+    fn a_withdrawn_key_is_refused_saying_what_replaced_it() {
+        let error = Manifest::parse("[build]\nordering = \"strict\"\n")
+            .expect_err("a withdrawn key fails the build");
+        let said = format!("{error:#}");
+        assert!(said.contains("`ordering`"), "{said}");
+        assert!(said.contains("withdrawn"), "{said}");
+        assert!(said.contains("ADR-050"), "{said}");
+        assert!(said.contains("overlap"), "the way out is named: {said}");
+        assert!(
+            !said.contains("expected one of"),
+            "not reported as a typo: {said}"
+        );
     }
 
     /// A bare `no` is TOML's boolean, and the reason it is wrong belongs to the

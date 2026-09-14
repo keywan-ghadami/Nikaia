@@ -95,7 +95,7 @@ the Result column; every other row is the original run.
 | `nikaia explain <code>`, `nikaia explain --tethers` | I 6.6, 7.1 | `error: unrecognized subcommand 'explain'` |
 | `nikaia build --with-asserts` | III 14.2 | no such flag |
 | `nikaia bench --history` | III 14.4 | no such command |
-| `--locked`, `--overlaps`, `--trust`, `--explain`, `--ordering`, `--no-cache`, `--target`, `--user-parallelism`, `--backend` | III 13.2, 13.5, I 8.1.1 | **built** |
+| `--locked`, `--overlaps`, `--trust`, `--explain`, `--no-cache`, `--target`, `--user-parallelism`, `--backend` | III 13.2, 13.5, I 8.1.2 | **built** |
 
 Note that `--explain` (read `rustc` JSON on stdin) and the `nikaia explain`
 *subcommand* of Part I are two different things; only the flag exists.

@@ -62,29 +62,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub struct Choices {
     pub build: String,
     pub backend: String,
-    /// ADR-033: how strictly the written order is taken.
-    ///
-    /// It changes the emitted Rust, so it is a dimension of the key. Leaving it
-    /// out would let a build with `--ordering strict` serve the overlapped
-    /// artifact a previous run recorded - a cache returning a program nobody
-    /// asked for, which is the failure this struct exists to make impossible.
-    pub ordering: String,
 }
 
 impl Choices {
     pub fn new(build: impl Into<String>, backend: impl Into<String>) -> Self {
-        Self::with_ordering(build, backend, "effects")
-    }
-
-    pub fn with_ordering(
-        build: impl Into<String>,
-        backend: impl Into<String>,
-        ordering: impl Into<String>,
-    ) -> Self {
         Self {
             build: build.into(),
             backend: backend.into(),
-            ordering: ordering.into(),
         }
     }
 }
@@ -223,7 +207,6 @@ impl Key {
         b.field("toolchain", toolchain);
         b.field("build", &choices.build);
         b.field("backend", &choices.backend);
-        b.field("ordering", &choices.ordering);
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same
@@ -267,8 +250,8 @@ impl Key {
     ///   of them can change a byte of the compiled `std`, and any of them would
     ///   turn the one shared entry into a per-project one - which is the entire
     ///   thing this cache exists to stop.
-    /// * **`ordering` and the lowering backend.** They change what a `.nika`
-    ///   file lowers to, and `std`'s Rust is not lowered by this build at all.
+    /// * **The lowering backend.** It changes what a `.nika` file lowers to,
+    ///   and `std`'s Rust is not lowered by this build at all.
     pub fn sysroot(compiler: &str, toolchain: &str, target: &str, codegen: &str) -> Self {
         let mut b = KeyBuilder::new(SYSROOT_DOMAIN);
         b.field("compiler", compiler);

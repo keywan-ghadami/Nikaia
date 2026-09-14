@@ -1259,9 +1259,7 @@ impl<'a> Analysis<'a> {
                 }
             }
             Expr::Closure { body, .. } => self.block(function, body, scope),
-            Expr::Block(block) | Expr::Seq(block) | Expr::Overlap(block) => {
-                self.block(function, block, scope)
-            }
+            Expr::Block(block) | Expr::Overlap(block) => self.block(function, block, scope),
             Expr::If {
                 cond,
                 then_branch,

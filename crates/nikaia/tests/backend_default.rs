@@ -165,8 +165,8 @@ fn the_explanations_answer_without_being_told_which_backend() {
     );
     let said = String::from_utf8_lossy(&overlaps.stdout);
     assert!(
-        said.contains("adjacent"),
-        "`--overlaps` must report on the pairs, not be silently dropped: {said}"
+        said.contains("`overlap { … }` block"),
+        "`--overlaps` must report on the blocks, not be silently dropped: {said}"
     );
 
     let trust = nikaia(&[

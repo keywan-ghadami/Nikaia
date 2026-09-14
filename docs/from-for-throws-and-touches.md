@@ -313,7 +313,7 @@ analysis reads the lambda. Before this change nothing in the repository said tha
 it must not; the refusal was a consequence of `walk`'s `_` arm. It is a named arm
 now, with the reason written where somebody will be standing, and a test —
 `a_lambdas_own_effects_are_not_in_the_statements_touch_set` in
-`crates/nikaia/tests/ordering.rs` — that holds it. With a bare lambda statement,
+`crates/nikaia/tests/touch_sets.rs` — that holds it. With a bare lambda statement,
 where no other limit fires first, the arm is visible:
 
 ```text

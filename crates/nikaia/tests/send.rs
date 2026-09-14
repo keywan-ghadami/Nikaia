@@ -427,19 +427,68 @@ fn probe_library() -> Ledger {
     .expect("the probe ledger parses")
 }
 
-fn report_against_probe(source: &str) -> String {
+/// What the first two statements of a function reduce to, and what the verdict
+/// says about them.
+///
+/// It used to be the `--overlaps` report's text, which asked the same question
+/// through a paragraph. [ADR-050](../../../docs/specification/adr/adr-050.md) D1
+/// withdrew the reordering and the report became one about `overlap { … }`
+/// blocks — so the verdict is asked directly here, which is what these tests
+/// were ever about: **crossing a thread is a reason two operations may not run
+/// together**, and that reason survives the construct that used to consume it.
+fn verdict_against_probe(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
-    // Every vehicle available: this file asks what the *program* allows, and a
-    // build caveat per pair would be noise in a test about crossing a thread.
-    order::report(&parsed, &own, &probe_library(), &|_| None)
+    let library = probe_library();
+    let body = parsed
+        .program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            nikaia::ast::Item::Fn { body, .. } => Some(body),
+            _ => None,
+        })
+        .expect("a function to read");
+
+    let pair: Vec<_> = body
+        .stmts
+        .iter()
+        .take(2)
+        .map(|stmt| order::accounted(&parsed, &stmt.node, &own, &library))
+        .collect();
+    match pair.as_slice() {
+        [order::Accounted::Operation(earlier), order::Accounted::Operation(later)] => {
+            let verdict = order::verdict(earlier, later);
+            let mark = if verdict.is_overlap() {
+                "together"
+            } else {
+                "in order"
+            };
+            format!(
+                "{mark}  {} / {} - {}",
+                earlier.callee,
+                later.callee,
+                verdict.why()
+            )
+        }
+        [refused, other] | [other, refused]
+            if !matches!(refused, order::Accounted::Operation(_)) =>
+        {
+            let named = match other {
+                order::Accounted::Operation(operation) => operation.callee.clone(),
+                _ => "…".to_string(),
+            };
+            format!("in order  {named} - {}", refused.why())
+        }
+        _ => "in order  … - nothing to compare".to_string(),
+    }
 }
 
 /// Two operations that meet on nothing overlap - the control, without which the
 /// test below would also pass against an analysis that refuses everything.
 #[test]
 fn two_crossable_operations_still_overlap() {
-    let report = report_against_probe(
+    let report = verdict_against_probe(
         "fn main() {\n\
              let a = probe::plain()\n\
              let b = probe::plain()\n\
@@ -461,7 +510,7 @@ fn two_crossable_operations_still_overlap() {
 /// result of a call is a seed there and may never be lowered to a plain count.
 #[test]
 fn a_pair_whose_result_is_a_shared_of_plain_data_overlaps() {
-    let report = report_against_probe(
+    let report = verdict_against_probe(
         "fn main() {\n\
              let a = probe::counted()\n\
              let b = probe::counted()\n\
@@ -489,7 +538,7 @@ fn an_operation_whose_result_nothing_permits_keeps_its_place() {
                       let b = probe::opaque()\n\
                       println(f\"{a} {b}\")\n\
                   }";
-    let report = report_against_probe(source);
+    let report = verdict_against_probe(source);
     assert!(!report.contains("together"), "{report}");
     assert!(
         report.contains("would have to cross a thread"),
@@ -513,7 +562,7 @@ fn an_operation_whose_result_nothing_permits_keeps_its_place() {
 /// foreign code is still refused (`a_lock_does_not_go_into_code_nothing_describes`).
 #[test]
 fn a_result_that_holds_a_lock_overlaps() {
-    let report = report_against_probe(
+    let report = verdict_against_probe(
         "fn main() {\n\
              let a = probe::held()\n\
              let b = probe::held()\n\

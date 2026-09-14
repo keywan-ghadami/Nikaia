@@ -24,6 +24,10 @@ never **what**.
 These are the things to choose. They are named rather than counted: the count
 has been wrong twice — once by leaving `ordering` out and once by leaving the
 re-entrancy check out — and a number nobody maintains reads as a promise.
+`ordering` was the third and is **withdrawn**
+([ADR-050](adr/adr-050.md) D7): statements run in the order they are written,
+so there is nothing left for it to switch, and a program that wants overlap
+writes `overlap { … }` (8.1.2).
 
 #### `target` — which machine
 A 64-core server has threads and unwinds a stack when something goes wrong;
@@ -55,29 +59,6 @@ of what your program prints. The rule is:
 > The compiler may use as many threads as the machine has, for as long as no
 > code **you** wrote runs concurrently.
 
-#### `ordering` — how strictly is the written order taken?
-Two operations that touch nothing in common may overlap, because the order
-between them is not something a program can observe (Chapter 8.1.1).
-
-* `effects` (the default) — the order is kept wherever it is observable, and
-  only there.
-* `strict` — the written order, always; the analysis is not applied.
-
-`strict` is not a development aid to be removed later. It is the escape for a
-program whose author does not want this, and for ruling out a bug in the
-analysis in the field. A semantic default that cannot be switched off is a
-decision imposed rather than offered ([ADR-033](adr/adr-033.md) D8).
-
-> **Status: this switch is on its way out.**
-> [ADR-050](adr/adr-050.md) D1 and D7 withdraw the reordering, so there is
-> nothing for `ordering` to switch: statements run in the order they are written,
-> and a program that wants overlap writes `overlap { … }` (8.1.2). **Two escapes
-> were an admission** — that the analysis can be incomplete, and that the
-> correction is by hand — and a feature that changes what a program means, resting
-> on that, is the shape of a defect source rather than of a guarantee.
->
-> It goes **after** `overlap` is built, not before (ADR-050 §5), and the count of
-> switches in this section returns to the two above.
 
 #### the re-entrancy check — should a broken rule be noticed?
 Taking a lock while a lock is held is refused when you compile (Part II, 12.3).
@@ -137,9 +118,15 @@ These words mean one thing wherever they appear, so a name may not be one of the
 ```text
 as      catch   dsl     else    enum    false   fn      for
 from    grammar if      impl    in      let     match   mut
-overlap pub     return  self    seq     spawn   struct  sync
-throw   throws  true    use     while
+overlap pub     return  self    spawn   struct  sync    throw
+throws  true    use     while
 ```
+
+**`seq` has left the list**, which is the direction a reserved word may move
+without breaking anything: the construct is withdrawn
+([ADR-050](adr/adr-050.md) D7), so the word means nothing and is an ordinary
+name again. Reserving one narrows what parses and un-reserving one widens it,
+so this direction costs no program anything.
 
 Three things about the list, because each of them is a question a reader will
 have:
@@ -479,9 +466,8 @@ let result = {
 
 A block's last line is the **block's** value; `return` is the **function's**. So
 a `return` written at the end of a block that is itself a value — a `match` arm
-(3.4), an `if` branch whose value is taken (3.2), a `catch` handler (7.1), a
-`seq` block (8.1.1) — leaves the enclosing function rather than handing that
-block a value. The one block that is its own function is a lambda, whose
+(3.4), an `if` branch whose value is taken (3.2), a `catch` handler (7.1) —
+leaves the enclosing function rather than handing that block a value. The one block that is its own function is a lambda, whose
 `return` leaves the lambda (5.3).
 
 ### 3.2. Conditional Logic (if / else)
@@ -1648,96 +1634,28 @@ Within one task the order is exactly the order you wrote: `let a = fs::read("x")
 > Of the three ways to make a task, `spawn` is built (8.2); `par_iter` and
 > `task::scope` are not.
 
-### 8.1.1. Order Is Kept Where It Can Be Seen
+### 8.1.1. Statement Order Is the Written Order
 
-> **Status — this section is on its way out.**
-> [ADR-050](adr/adr-050.md) D1 and D7 withdraw the reordering, `seq { … }` and
-> the `ordering` switch: **statements run in the order they are written**, and a
-> program that wants overlap writes `overlap { … }` and has it checked (8.1.2).
-> Three packages were coherent and this was the worst of them — unpredictable
-> wins, and no recourse where they do not arrive.
+Two statements run in the order you wrote them, whether or not they touch
+anything in common. No analysis stands between the source and the schedule, and
+a program that wants two things to run together says so (8.1.2).
+
+> **This section used to say the opposite**, and the withdrawal is
+> [ADR-050](adr/adr-050.md) D1. Operations that met on nothing were *unordered*
+> by the compiler, with `seq { … }` to force an order the analysis could not see
+> and an `ordering` switch to turn the whole thing off.
 >
-> **Nothing is removed yet, and that is deliberate**: the removal is step three of
-> ADR-050 §5's order, after the runtime binding and `overlap` itself, because taking the
-> automatic half away before there is a way to *ask* would leave the language with
-> neither. Until then this section describes what the compiler does, and the
-> paragraph below is what it does. Built today: a **run of adjacent
-> statements of any length** whose calls reach different resources overlaps — a `let` or a bare
-> expression statement, and a value built out of literals and calls rather than being one call;
-> `seq { … }`; the resources a file, standard output, standard error and the program's arguments;
-> `--overlaps` explains every pair; the `ordering` key is read from `nikaia.toml`, and
-> `--ordering strict` restores the written order everywhere. Not built: a **method call**, whose
-> contract depends on the type of its receiver; an argument that is not a literal; a `let` with a
-> written type; a call with options; standard input, a socket and a lock as resources — nothing
-> asks for one yet, so all three of them count as touching everything; and nothing infers what a
-> function of your own touches, so every one of those counts as touching everything too.
+> **Two escapes are an admission** — that the analysis can be incomplete, and
+> that the correction is by hand, after the fact, by somebody who noticed. A rule
+> that changes what a program means, resting on an analysis admitted to be
+> incomplete and corrected manually, is the shape of a defect source rather than
+> of a guarantee; against it stood an optimisation whose reach nobody was able to
+> state. So the rule goes, and `seq { … }` and the switch go with it (D7).
 >
-> **And which of them your build performs depends on `user_parallelism` (1.2).** A pair of **file
-> reads** overlaps at either setting: the operations are the standard library's, nothing you wrote
-> is in flight twice, and no promise of `no` is touched ([ADR-033](adr/adr-033.md) D10). Everything
-> else above needs `user-parallelism = "yes"`, because running it means running two pieces of *your*
-> code at once — at `no` the analysis still answers, and `--overlaps` marks such a pair `would`
-> rather than `together`. Two writes in flight, and a run of three reads rather than two, are not
-> built at `no` yet: a run of three overlaps its first two and leaves the third where you wrote it.
-
-Two lines that never meet have no reason to wait for one another:
-
-```nika
-let a = fs::read("x")       // 40 ms
-let b = fs::read("y")       // 40 ms
-return a.len() + b.len()    // 40 ms, not 80
-```
-
-Every operation is known by **what it touches** — not merely "it does I/O", but *which file, which socket, which lock*. From that comes one rule:
-
-> **Two operations whose touch sets are disjoint have no order between them. Everything else keeps the order it was written in.**
-
-You write nothing for this. The default is the fast path, and the cases below are what keep it from being a surprise:
-
-* **The obvious stays obvious.** `println("a")` then `println("b")` prints `a` before `b` — both touch standard output, so they are ordered. Not a special case; the rule already says it. A `println` and an `eprintln` are ordered too: two handles, and one destination as soon as anybody runs the program with `2>&1`, so the compiler does not treat them as separate things.
-* **It is a run, not a pair.** Three lines that all meet on nothing run as one group, not as two and then one. Every one of them has to meet *every* other on nothing, and not merely the line next to it — `read("a")`, `read("b")`, `write("a")` is a group of the first two, because the third meets the first.
-* **What is not known is ordered.** An operation whose touches the compiler cannot determine counts as touching everything, and stays exactly where you put it. A program built against libraries that say nothing behaves precisely as it does today, and gets faster only as contracts get written. A resource named in a word this compiler does not know — a library built for a newer toolchain — reads the same way: the operation touches everything, and nothing is assumed.
-* **Nothing is run on speculation.** `if x { lies(a) } else { lies(b) }` starts one of them. Overlapping only ever applies to work that was certainly going to happen.
-* **Errors keep their order.** If two overlapped operations both fail, the failure you see is the one written first — never the one that lost a race.
-
-**When you need an order the compiler cannot see** — two calls to different addresses of the same service, say — say so:
-
-```nika
-seq {
-    benachrichtige(kunde)
-    protokolliere(vorgang)
-}
-```
-
-Inside the block the statements run in the order you wrote them, whatever their touch sets say, and that holds for anything written inside it — a nested block, an `if`, a loop. The block itself keeps its own place as well: you have just said the compiler cannot see what the order is for, so it does not move the block either. It changes nothing else: a `seq` block is a block, so it is an expression and has a value like any other (3.1).
-
-> **The keyword is `seq`, and it is settled** ([ADR-033](adr/adr-033.md) D7). It was written down
-> as a placeholder — it has to read as *"in this order, whatever you think"* — and kept, because a
-> second round of naming a block almost nobody writes buys nothing. A program written today does
-> not have to be renamed.
-
-That is the trade the rule is built on: the common path is the fast and safe one and costs nothing to write, and the exception costs a line and is visible where it matters.
-
-**There will be a way to say "run these together anyway", and 8.1.2 is it**
-([ADR-050](adr/adr-050.md) D2). Until this section's automatic half goes, the one
-refusal where you might want it — a `catch` that leaves the function, which makes
-everything after it conditional — has a clearer form already:
-
-```nika
-// Kept in order: if the first fails, the second would never have run.
-let k = lade_kunde(id) catch { return Seite::leer() }
-let e = hole_empfehlungen()  catch { … }
-
-// Runs together, and reads better: the failure and the decision to stop are
-// two different things.
-let k = lade_kunde(id) catch { Kunde::unbekannt() }
-let e = hole_empfehlungen()  catch { Empfehlungen::leer() }
-if k.ist_unbekannt() { return Seite::leer() }
-```
-
-**When you want to know why two things did not run together, ask:** `nikaia --input x.nika --overlaps` prints every adjacent pair, which of them run together, and for the rest the reason and — where there is one — what to write instead. A pair marked `would` is one your program allows and this build has no way to run: the line names the switch, because "they did not run together" without a reason is exactly what this flag exists to prevent. It changes nothing about the program; it explains a decision, the way `--trust` does for where a program's bytes came from.
-
-The whole thing can be turned off for a project with `ordering = "strict"` in `nikaia.toml` (Part III, 13.3), which restores the written order everywhere.
+> **What the analysis was is kept**, because D3 gives it a better use: the touch
+> sets are what check an `overlap` block's claim that its branches meet on
+> nothing. Checking a claim is a stronger use of them than making one, and
+> `--overlaps` is now a report about the blocks a program writes.
 
 ### 8.1.2. Asking for Overlap: `overlap { … }`
 
@@ -1788,9 +1706,9 @@ choose `how`, never `what`.
 > back into written order afterwards with a comment naming the record. A block
 > whose branches are all of one kind pays for no permutation.
 >
-> **What is not built is the removal below it.** [ADR-050](adr/adr-050.md) §5
-> ordered this before the withdrawal of 8.1.1's automatic half, `seq { … }` and
-> the `ordering` switch, and that withdrawal is the next item.
+> **And the withdrawal it was ordered before is done too** — 8.1.1's automatic
+> half, `seq { … }` and the `ordering` switch are gone (D1, D7), so this is the
+> one way a program asks for overlap.
 >
 > **And the destructuring `let` this section's own example writes is not built
 > either.** `let (user, rights, prefs) = overlap { … }` does not parse: `let`

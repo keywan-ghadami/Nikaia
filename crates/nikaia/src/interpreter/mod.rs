@@ -112,7 +112,7 @@ impl Interpreter {
             // which is the only order this interpreter has ever had (ADR-033
             // D7): nothing here overlaps anything, so `seq` asks for what it
             // already does.
-            Expr::Block(b) | Expr::Seq(b) => self.eval_block(b),
+            Expr::Block(b) => self.eval_block(b),
             Expr::Dsl { target, .. } => {
                 println!(
                     "[Nikaia Runtime] DSL Block '{}' (Skipped)",

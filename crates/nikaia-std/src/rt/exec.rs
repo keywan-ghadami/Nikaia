@@ -467,8 +467,10 @@ mod io_tests {
     /// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 3).
     ///
     /// The claim step 3 adds to step 1's: a suspension point is no longer only
-    /// `Yield`, it is a `std` read - so `task::interleave` over two reads is
-    /// Part II 11.2's sentence about something a program actually writes.
+    /// `Yield`, it is a `std` read - so `task::overlap2` over two reads is
+    /// Part II 11.2's sentence about something a program actually writes, and
+    /// `overlap { … }` is how a program writes it
+    /// ([ADR-050](../../../../docs/specification/adr/adr-050.md) D2).
     ///
     /// It reads two files and checks both answers. What makes it a test of the
     /// *interleaving* rather than of reading twice is that neither half is
@@ -483,7 +485,7 @@ mod io_tests {
         std::fs::write(&one, "eins").expect("write");
         std::fs::write(&two, "zweizwei").expect("write");
 
-        let (a, b) = super::block_on(crate::task::interleave(
+        let (a, b) = super::block_on(crate::task::overlap2(
             crate::fs::read_to_string(&one),
             crate::fs::read_to_string(&two),
         ));

@@ -177,55 +177,70 @@ fn one_binary_runs_on_both_mechanisms_and_prints_the_same_thing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **ADR-033 D10, end to end.** The overlapped pair at
-/// `user_parallelism = no` prints what the sequential program printed and
-/// writes the same file - on whichever mechanism this machine has.
+/// **[ADR-050](../../../docs/specification/adr/adr-050.md) D2, end to end: an
+/// `overlap` prints what the sequential program printed.**
 ///
-/// The claim D10 rests on is that putting two reads in flight changes what a
-/// pair *costs* and never what it *means*, and the only way to know is to run
-/// both programs. `READS_AND_WRITES` is the right shape for it: the two reads
-/// are a pair, and everything after them depends on both, so a difference would
-/// show in the output and in `drei.txt` rather than only in a timing.
+/// The claim the whole construct rests on is that putting two reads in flight
+/// changes what they *cost* and never what they *mean* (Part I 1.2), and the
+/// only way to know is to run both programs on every mechanism this machine
+/// has. `READS_AND_WRITES` is the right shape: the two reads are the pair, and
+/// everything after them depends on both, so a difference would show in the
+/// output and in `drei.txt` rather than only in a timing.
+///
+/// **It used to compare the compiler's own choice against `--ordering strict`.**
+/// D1 withdrew that choice and D7 withdrew the switch, so the comparison is
+/// between the two programs a *programmer* writes — which is the comparison
+/// that was always the interesting one.
+const READS_OVERLAPPED: &str = "use std::fs\n\
+     \n\
+     fn main() throws {\n\
+     \x20   let r = overlap {\n\
+     \x20       fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+     \x20       fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+     \x20   }\n\
+     \x20   println(f\"{r.0.len()} {r.1.len()}\")\n\
+     \x20   fs::write(\"drei.txt\", f\"{r.0}{r.1}\") catch { return }\n\
+     \x20   let back = fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
+     \x20   println(f\"{back.len()}\")\n\
+     }";
+
 #[test]
-fn the_overlapped_pair_prints_what_the_sequential_program_printed() {
-    let effects = common::scratch_dir("runtime-overlap-effects");
-    let overlapped = lower(&effects, READS_AND_WRITES, &[]);
+fn an_overlap_prints_what_the_sequential_program_printed() {
+    let together = common::scratch_dir("runtime-overlap-together");
+    let overlapped = lower(&together, READS_OVERLAPPED, &[]);
     assert!(
-        overlapped.contains("task::read_pair("),
-        "the pair must overlap at `user_parallelism = no`:\n{overlapped}"
-    );
-    assert!(
-        !overlapped.contains("task::both"),
-        "…and not on a thread carrying the program's own code:\n{overlapped}"
+        overlapped.contains("task::overlap2("),
+        "the branches must be in flight at once:\n{overlapped}"
     );
 
-    let strict = common::scratch_dir("runtime-overlap-strict");
-    let sequential = lower(&strict, READS_AND_WRITES, &["--ordering", "strict"]);
+    let in_order = common::scratch_dir("runtime-overlap-in-order");
+    let sequential = lower(&in_order, READS_AND_WRITES, &[]);
     assert!(
-        !sequential.contains("task::read_pair("),
-        "`--ordering strict` is still the escape:\n{sequential}"
+        !sequential.contains("task::overlap"),
+        "a program that did not ask must not overlap (ADR-050 D1):\n{sequential}"
     );
 
-    let overlapped = build(&effects, READS_AND_WRITES, &[]);
-    let sequential = build(&strict, READS_AND_WRITES, &["--ordering", "strict"]);
+    let overlapped = build(&together, READS_OVERLAPPED, &[]);
+    let sequential = build(&in_order, READS_AND_WRITES, &[]);
     for config in [
         None,
         Some("io-method = \"blocking\"\nio-workers = 2\n"),
         Some("io-method = \"blocking\"\nio-workers = 1\n"),
     ] {
-        let at = effects.join("run");
+        let at = together.join("run");
         let (one, _) = run(&overlapped, &at, config);
-        let (other, _) = run(&sequential, &strict.join("run"), config);
+        let (other, _) = run(&sequential, &in_order.join("run"), config);
         assert_eq!(one, other, "the overlapped program printed something else");
         assert_eq!(
             std::fs::read_to_string(at.join("drei.txt")).expect("the written file"),
-            std::fs::read_to_string(strict.join("run").join("drei.txt")).expect("the written file"),
+            std::fs::read_to_string(in_order.join("run").join("drei.txt"))
+                .expect("the written file"),
             "…or wrote a different file"
         );
     }
 
-    std::fs::remove_dir_all(&effects).ok();
-    std::fs::remove_dir_all(&strict).ok();
+    std::fs::remove_dir_all(&together).ok();
+    std::fs::remove_dir_all(&in_order).ok();
 }
 
 /// D4, on the emitted Rust: `fn main` starts the runtime, the program's own

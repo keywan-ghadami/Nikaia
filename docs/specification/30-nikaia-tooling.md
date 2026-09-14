@@ -160,17 +160,15 @@ user-parallelism = "no"
 # the machine it runs on, and a build-time key cannot be tuned by the operator.
 # A manifest that still carries it compiles, and says where it went.
 
-# How strictly the written order of two operations is taken (ADR-033, Part I 8.1.1).
-#   "effects" (default) - two operations that touch disjoint resources may
-#       overlap; everything else keeps the order it was written in.
-#   "strict"            - the written order, always. The analysis is not applied.
-# Not an aid to be removed later: it is the escape for a project that does not
-# want this, and the way to rule the analysis out when chasing a bug in the field.
-# **On its way out with the analysis it switches** (ADR-050 D1, D7): statements will
-# run in the order they are written and a program will ask for overlap with
-# `overlap { … }`, which leaves nothing for this key to decide. It goes after
-# `overlap` is built, not before (ADR-050 §5).
-ordering = "effects"
+# `ordering` was here and is **withdrawn** (ADR-050 D1, D7): statements run in
+# the order they are written, so there is nothing left for it to switch, and a
+# program that wants overlap writes `overlap { … }` (Part I 8.1.2). A manifest
+# that still carries the key **fails the build**, saying it is withdrawn and
+# what replaced it - and not as a misspelling, because whoever wrote it meant
+# it. That is the difference from the moved key above: a key that decides
+# something somewhere else keeps working and says where to look, and a key that
+# decides nothing anywhere may not be ignored quietly, or the program would
+# differ from the file describing it.
 
 # Does the compiled program still notice a lock taken while a lock is held
 # (ADR-039 D8)?
@@ -182,8 +180,8 @@ ordering = "effects"
 # program the refusal accepts behaves the same at both settings - the switch
 # decides only whether a violation would be *noticed*, which is why turning it
 # off changes nothing a correct program means. Not a development aid to be
-# removed later: it is a guarantee that can be declined, the same escape
-# `ordering` is (ADR-033 D8).
+# removed later: it is a guarantee that can be declined - the one such escape
+# this file still has, now that `ordering` is withdrawn.
 reentrancy-check = "on"
 
 [dependencies]
@@ -216,8 +214,9 @@ opt-level = 3       # Maximize throughput
 lto = true          # Link Time Optimization
 ```
 
-> **Status:** `target`, `user-parallelism` and `ordering` are read, and so is the
-> moved `cleanup-deadline`, which compiles with a note saying where it went. A
+> **Status:** `target` and `user-parallelism` are read, and so is the moved
+> `cleanup-deadline`, which compiles with a note saying where it went.
+> `ordering` is refused in the words above. A
 > `path` dependency is read, one level deep: a package that declares Nikaia
 > dependencies **of its own** is refused rather than resolved, and what is missing
 > there is the resolution and not the visibility rule — transitive dependencies
@@ -1041,13 +1040,12 @@ not here yet; `lines` and `bytes` are gone for a reason of their own, below.
 >   ([ADR-033](adr/adr-033.md) §8.4, ADR-038 §4.3).
 > * `map` is **not** on it, and will not be: it hands back pages the operating
 >   system owns, and there is no transfer for a completion queue to report.
-> * What is **not** built is the state machine this paragraph describes. Stage 0
->   emits a direct call, and the call blocks the calling thread while the kernel
->   works — so the program's meaning is what this section says, and its
->   concurrency is not yet. Two operations that meet on nothing *can* be put in
->   flight together, and the compiler does not yet lower a statement pair onto
->   that: at `user_parallelism = no`, `ordering = "effects"` still degrades to
->   `strict` ([ADR-033](adr/adr-033.md) §8.2b).
+> * **The state machine this paragraph describes is built**
+>   ([ADR-055](adr/adr-055.md) §6): a read is a slot the caller polls rather than
+>   a call that blocks its thread, and the executor runs something else while it
+>   is in flight. What puts two of them in flight is a program writing
+>   `overlap { … }` (Part I 8.1.2) or a `spawn`, and no longer the compiler
+>   choosing — [ADR-050](adr/adr-050.md) D1 withdrew that choice.
 
 `read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 

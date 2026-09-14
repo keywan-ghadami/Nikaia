@@ -375,36 +375,6 @@ pub mod io {
         (first, second)
     }
 
-    /// Two reads the **compiler** put together: both in flight where that is
-    /// free, and in the order they were written where it is not.
-    ///
-    /// [`read_both`] is the function a program asks for and it overlaps
-    /// whatever the mechanism costs. This one is what a statement pair is
-    /// lowered onto ([ADR-033](../../../../docs/specification/adr/adr-033.md)
-    /// D10), and the asymmetry is the decision rather than an oversight:
-    ///
-    /// * on the **completion path** the kernel performs both reads, one
-    ///   `io_uring_enter` collects them, and the pair costs **nothing
-    ///   measurable** - −0.25 µs, which is a saved syscall inside the noise
-    ///   ([ADR-038](../../../../docs/specification/adr/adr-038.md) §4.3);
-    /// * on the **fallback** a pair is a message to a parked worker, and
-    ///   parking and unparking a thread costs ~38 µs however early it was
-    ///   started. That is the fixed per-pair tax ADR-033 §8.2 measured and
-    ///   called a pessimisation, and the compiler cannot know whether the
-    ///   payload will earn it back.
-    ///
-    /// So an overlap the program did not ask for is taken only where it is
-    /// free. Either way the two reads are answered in the order they were
-    /// asked for and the program prints the same bytes - the choice changes
-    /// what a pair *costs* and never what it *means*.
-    pub fn read_pair(a: &Path, b: &Path) -> (Result<Vec<u8>>, Result<Vec<u8>>) {
-        off_the_io_thread();
-        match handle().files() {
-            Files::Completion => read_both(a, b),
-            Files::Blocking => (read(a), read(b)),
-        }
-    }
-
     /// Every path, all of them in flight at once. The one place the mechanism
     /// is chosen.
     fn read_all(paths: &[&Path]) -> Vec<Result<Vec<u8>>> {
@@ -948,11 +918,11 @@ mod tests {
             // Through the public surface, which is what a lowered program
             // reaches: the runtime it finds is the process's, and this asserts
             // the answer rather than which runtime answered.
-            let (first, second) = io::read_pair(&a, &b);
+            let (first, second) = io::read_both(&a, &b);
             assert_eq!(first.expect("the first read"), b"eins", "{method:?}");
             assert_eq!(second.expect("the second read"), b"zwei zwei", "{method:?}");
             // …and a missing file fails in its own half, not in the other's.
-            let (missing, there) = io::read_pair(&dir.join("nicht-da"), &a);
+            let (missing, there) = io::read_both(&dir.join("nicht-da"), &a);
             assert!(missing.is_err(), "{method:?}");
             assert_eq!(
                 there.expect("the file that is there"),

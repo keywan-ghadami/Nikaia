@@ -101,7 +101,8 @@ pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
 /// performs it where it does not. Which one is invisible from here and
 /// invisible from a `.nika` file - that is what "one `std` surface" means, and
 /// it is why the next change of mechanism is a `std` change rather than a
-/// compiler change (ADR-033 §8.4 gave the same reason for `task::both`).
+/// compiler change (ADR-033 §8.4 gave the same reason for the overlap
+/// vehicle).
 pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
     text(read(path).await?)
 }
@@ -133,7 +134,7 @@ pub(crate) fn text(bytes: Vec<u8>) -> Result<String, std::io::Error> {
 ///
 /// ADR-033 §8.5's prediction, as a function: two operations that meet on
 /// nothing and do not wait for each other, with **no thread started or woken
-/// for the pair** - the cost §8.4 measured at ~46 µs for `task::both` and
+/// for the pair** - the cost §8.4 measured at ~46 µs for a pair on the pool and
 /// could not remove with any user-space vehicle.
 ///
 /// It is available at `user_parallelism = no`, and that is not a loophole: the
@@ -141,13 +142,14 @@ pub(crate) fn text(bytes: Vec<u8>) -> Result<String, std::io::Error> {
 /// concurrently ([ADR-037](../../../docs/specification/adr/adr-037.md) D2,
 /// [ADR-016](../../../docs/specification/adr/adr-016.md) D3).
 ///
-/// **This is the function a program asks for, and it always overlaps** - on
-/// the completion path for nothing, and on the blocking fallback for the
-/// ~38 µs a worker's wake-up costs, which above a quarter megabyte a pair it
-/// earns back (ADR-038 §4.3). What the *compiler* lowers a statement pair onto
-/// is [`crate::task::read_pair`], and it is a different function for exactly
-/// that reason: an overlap nobody asked for may not cost anything
-/// (ADR-033 D10).
+/// **It always overlaps**, because a program asked for it - on the completion
+/// path for nothing, and on the blocking fallback for the ~38 µs a worker's
+/// wake-up costs, which above a quarter megabyte a pair it earns back
+/// (ADR-038 §4.3). There used to be a quieter twin for the pairs the
+/// *compiler* put together, which overlapped only where that was free; the
+/// automatic grouping is withdrawn ([ADR-050](../../../docs/specification/adr/adr-050.md)
+/// D1) and the twin went with it, so this is the only pair vehicle left and
+/// every use of it is a written one.
 pub fn read_both(
     a: impl AsRef<Path>,
     b: impl AsRef<Path>,

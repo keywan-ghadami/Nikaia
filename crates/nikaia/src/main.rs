@@ -82,17 +82,6 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub locked: bool,
 
-    /// How strictly the written order of two statements is taken (ADR-033).
-    ///
-    /// `effects` (the default) lets two operations that touch disjoint
-    /// resources overlap; `strict` keeps the written order everywhere and does
-    /// not apply the analysis.
-    ///
-    /// Overrides `nikaia.toml`'s `[build] ordering` (D8); the default is
-    /// `effects` where neither says.
-    #[arg(long, global = true)]
-    pub ordering: Option<String>,
-
     /// Lower from scratch, ignoring the build cache (ADR-021).
     ///
     /// The cache is **on**: reusing an unchanged lowering is the difference in
@@ -193,7 +182,7 @@ fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &st
     // The same switches the build used, or the map would point into a file this
     // run did not emit - which is why they are resolved once and passed in.
     let parsed = parser::parse_to_ast(source)?;
-    let lowered = emit::emit_program_ordered(&parsed, settings.build, settings.ordering)?;
+    let lowered = emit::emit_program(&parsed, settings.build)?;
 
     let mut rustc_json = String::new();
     std::io::stdin().read_to_string(&mut rustc_json)?;
@@ -319,7 +308,6 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         &start,
         args.target.as_deref(),
         args.user_parallelism.as_deref(),
-        args.ordering.as_deref(),
     )?;
     project.drive(
         subcommand,
@@ -360,7 +348,6 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
         &manifest,
         args.target.as_deref(),
         args.user_parallelism.as_deref(),
-        args.ordering.as_deref(),
     )?;
     if let Some(missing) = settings.build.target.unbuildable() {
         refuse!(

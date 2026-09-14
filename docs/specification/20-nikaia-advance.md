@@ -634,7 +634,7 @@ error[NK2201]: cannot wait for I/O while holding locked data
 
 This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. Re-entering the *same* lock through a chain of calls is not an edge case left to the runtime either — 12.3 refuses that when you compile, and at every setting. The runtime checks described above keep their place for a different reason: the reentrancy check is now **self-control of that refusal rather than error handling.** No input can make it fire; if it ever fires, the compiler has a hole rather than the program having a bug. That is why it is a switch you can decline (Part I, 1.2) and why poisoning on several threads is left as it is ([ADR-039](adr/adr-039.md) D2, D8).
 
-**And a lock is a resource, so two doors onto the same lock keep their order — where both of them write.** Part I 8.1.1 says that two operations whose touch sets are disjoint have no order between them, and a lock is one of the things a touch set can name. **`get` and `access` are reads; `set` and `update` are writes** ([ADR-059](adr/adr-059.md) D3). Two reads of one resource are unordered ([ADR-033](adr/adr-033.md) D2), so two `get`s — or two `access`es — on one lock may run in either order, while any two of the two writing forms are ordered by the same rule that orders two `println`s rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3, [ADR-039](adr/adr-039.md) D10). Two doors onto *different* locks meet on nothing and need not wait for each other.
+**And a lock is a resource, so two doors onto the same lock keep their order — where both of them write.** Two operations whose touch sets are disjoint have no order between them *inside an `overlap { … }`* (Part I 8.1.2), and a lock is one of the things a touch set can name. **`get` and `access` are reads; `set` and `update` are writes** ([ADR-059](adr/adr-059.md) D3). Two reads of one resource are unordered ([ADR-033](adr/adr-033.md) D2), so two `get`s — or two `access`es — on one lock may run in either order, while any two of the two writing forms are ordered by the same rule that orders two `println`s rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3, [ADR-039](adr/adr-039.md) D10). Two doors onto *different* locks meet on nothing and need not wait for each other.
 
 > **Status.** The compiler does not yet know a lock as a named resource — no entry in any ledger
 > claims one, because nothing in the corpus has asked for one
@@ -646,7 +646,7 @@ This turns the old advice "don't sleep while holding a lock" from a best practic
 > and not something to rely on: the moment anything else in the pair is described, the contract is
 > what has to say it.
 
-Where you need an order between two locks, or between a lock and something else, that the touch sets cannot see, `seq { … }` (Part I 8.1.1) is how a program says so.
+Where two doors would meet on something the touch sets cannot see, the answer is to write them as ordinary statements rather than as branches of an `overlap`: statement order is the written order (Part I 8.1.1), so nothing has to be said at all.
 
 ### 12.3. Deadlock Prevention: Atomic Composition
 The classic cause of deadlocks is inconsistent locking order (Thread 1 locks A then B; Thread 2 locks B then A).

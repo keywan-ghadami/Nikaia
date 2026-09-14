@@ -32,7 +32,7 @@ use orchestrator::project::{
 };
 
 use crate::contracts::{sync, Ledger, STD};
-use crate::emit::{Build, Ordering, Target};
+use crate::emit::{Build, Target};
 use crate::manifest::{Dependency, Manifest};
 use crate::sysroot::{Codegen, Sysroot};
 use crate::{check, diagnostics, modules, refuse, refused};
@@ -50,7 +50,6 @@ pub const ENTRY: &str = "src/main.nika";
 pub const WRAPPER_MARKER: &str = "NIKAIA_RUSTC_WRAPPER";
 const TARGET_VAR: &str = "NIKAIA_BUILD_TARGET";
 const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
-const ORDERING_VAR: &str = "NIKAIA_ORDERING";
 const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 
@@ -73,10 +72,8 @@ pub const TRACE_VAR: &str = "NIKAIA_WRAPPER_TRACE";
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub build: Build,
-    pub ordering: Ordering,
     pub target: String,
     pub user_parallelism: String,
-    pub ordering_word: String,
 }
 
 impl Settings {
@@ -86,7 +83,6 @@ impl Settings {
         manifest: &Manifest,
         target: Option<&str>,
         user_parallelism: Option<&str>,
-        ordering: Option<&str>,
     ) -> Result<Settings> {
         let target = manifest
             .setting("target", target, "x86_64-linux")
@@ -94,16 +90,10 @@ impl Settings {
         let user_parallelism = manifest
             .setting("user-parallelism", user_parallelism, "no")
             .to_string();
-        let ordering_word = manifest
-            .setting("ordering", ordering, "effects")
-            .to_string();
-
         Ok(Settings {
             build: Build::parse(&target, &user_parallelism)?,
-            ordering: Ordering::parse(&ordering_word)?,
             target,
             user_parallelism,
-            ordering_word,
         })
     }
 
@@ -118,10 +108,6 @@ impl Settings {
                 PARALLELISM_VAR.to_string(),
                 OsString::from(&self.user_parallelism),
             ),
-            (
-                ORDERING_VAR.to_string(),
-                OsString::from(&self.ordering_word),
-            ),
         ]
     }
 
@@ -132,13 +118,10 @@ impl Settings {
             |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
         let target = word(TARGET_VAR, "x86_64-linux");
         let user_parallelism = word(PARALLELISM_VAR, "no");
-        let ordering_word = word(ORDERING_VAR, "effects");
         Ok(Settings {
             build: Build::parse(&target, &user_parallelism)?,
-            ordering: Ordering::parse(&ordering_word)?,
             target,
             user_parallelism,
-            ordering_word,
         })
     }
 
@@ -153,11 +136,7 @@ impl Settings {
     /// backend caches, the literal here becomes that backend's name and the two
     /// cannot collide.
     pub fn choices(&self) -> Choices {
-        Choices::with_ordering(
-            format!("{}/{}", self.target, self.user_parallelism),
-            "rust",
-            &self.ordering_word,
-        )
+        Choices::new(format!("{}/{}", self.target, self.user_parallelism), "rust")
     }
 
     /// What a panic does on this machine (ADR-037 D1), in Cargo's vocabulary.
@@ -478,7 +457,7 @@ pub fn lower(
                 )?;
             }
 
-            let lowered = program.emit_ordered(settings.build, settings.ordering)?;
+            let lowered = program.emit(settings.build)?;
             let ledger = program.contracts.render();
 
             if let Some(cache) = &mut cache {
@@ -801,9 +780,6 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
     let several = program.units.len() > 1;
 
-    if want.overlaps {
-        overlaps_preamble(settings);
-    }
     for unit in &program.units {
         if several {
             println!("--- {}", unit.path.display());
@@ -811,11 +787,15 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
         if want.overlaps {
             print!(
                 "{}",
-                crate::contracts::order::report(
+                crate::contracts::order::overlap_report(
                     &unit.parsed,
                     &program.contracts,
                     &library,
-                    &overlaps_here(settings)
+                    &crate::emit::branch_starts_first(
+                        &unit.parsed,
+                        settings.build,
+                        &program.contracts,
+                    ),
                 )
             );
         }
@@ -838,73 +818,6 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
     Ok(())
 }
 
-/// The note `--overlaps` prints once, before the pairs.
-///
-/// The report answers "may these two overlap", which is a question about the
-/// program. Whether anything then *does* overlap is a question about the build -
-/// and since ADR-033 D10 the answer differs from pair to pair, because the two
-/// vehicles are gated by different switches. So the build's half travels *into*
-/// the report, one answer per pair, and only what is true of the whole run stands
-/// here.
-pub fn overlaps_preamble(settings: &Settings) {
-    if settings.ordering != Ordering::Effects {
-        println!(
-            "note: `ordering = {}` keeps the written order, so nothing below overlaps in this build.",
-            settings.ordering_word
-        );
-    } else if !settings.build.overlaps_user_code() {
-        println!(
-            "note: `--user-parallelism {}` keeps every piece of your own code on one thread. \
-             A pair `std` can put in flight itself still overlaps (ADR-033 D10); a pair that \
-             would need two threads of your own is marked `would` below.",
-            settings.user_parallelism
-        );
-    }
-}
-
-/// Why a pair that may overlap does not, in **this** build (ADR-033 D10).
-///
-/// `None` is "this build has that vehicle". A reason names the switch that
-/// decided it, because a report that said only "these two did not run together"
-/// is the trap D9's refusals exist to keep open to a question.
-///
-/// The two vehicles answer to **different switches**, which is the whole of what
-/// D10 changed here: a completion pair needs only `std`'s runtime, and
-/// `task::both` needs permission to run two pieces of the program's own code at
-/// once.
-pub fn overlaps_here(
-    settings: &Settings,
-) -> impl Fn(crate::contracts::order::Vehicle) -> Option<String> + '_ {
-    use crate::contracts::order::Vehicle;
-
-    move |vehicle| {
-        if settings.ordering != Ordering::Effects {
-            return Some(format!(
-                "`ordering = {}` keeps the written order",
-                settings.ordering_word
-            ));
-        }
-        match vehicle {
-            Vehicle::Completion if settings.build.overlaps_operations() => None,
-            Vehicle::Completion => Some(format!(
-                "`--target {}` has no runtime to put two operations in flight",
-                settings.target
-            )),
-            Vehicle::UserClosures if settings.build.overlaps_user_code() => None,
-            Vehicle::UserClosures if !settings.build.target.has_threads() => Some(format!(
-                "running them together puts two pieces of your own code on two threads, and \
-                 `--target {}` has none",
-                settings.target
-            )),
-            Vehicle::UserClosures => Some(format!(
-                "running them together puts two pieces of your own code on two threads, which \
-                 `--user-parallelism {}` forbids",
-                settings.user_parallelism
-            )),
-        }
-    }
-}
-
 /// A project: its root, its manifest, and the switches this build resolved.
 #[derive(Debug)]
 pub struct Project {
@@ -923,7 +836,6 @@ impl Project {
         start: &Path,
         target: Option<&str>,
         user_parallelism: Option<&str>,
-        ordering: Option<&str>,
     ) -> Result<Project> {
         // `Layout::resolve` searches from an input file's *parent*, so it is
         // handed the manifest's own path: the search then starts at `start`
@@ -947,7 +859,7 @@ impl Project {
         for note in manifest.notes() {
             eprintln!("note: {note}");
         }
-        let settings = Settings::resolve(&manifest, target, user_parallelism, ordering)?;
+        let settings = Settings::resolve(&manifest, target, user_parallelism)?;
         if let Some(missing) = settings.build.target.unbuildable() {
             refuse!(
                 "cannot build for `{}` yet: {missing}",
@@ -1318,7 +1230,7 @@ impl Project {
         // set and the translation of somebody else's error would be a refusal of
         // a program that is fine.
         let program = modules::Program::read_with(&self.entry(), &self.packages()?)?;
-        let lowered = program.emit_ordered(self.settings.build, self.settings.ordering)?;
+        let lowered = program.emit(self.settings.build)?;
         let sources: Vec<&str> = program.sources();
         let paths: Vec<String> = program
             .units
@@ -1669,10 +1581,10 @@ mod tests {
     /// Cargo profile (ADR-002 D1).
     #[test]
     fn the_machine_decides_the_panic_strategy() {
-        let native = Settings::resolve(&Manifest::default(), None, None, None).expect("resolves");
+        let native = Settings::resolve(&Manifest::default(), None, None).expect("resolves");
         assert_eq!(native.panic_strategy(), "unwind");
 
-        let wasm = Settings::resolve(&Manifest::default(), Some("wasm32-unknown"), None, None)
+        let wasm = Settings::resolve(&Manifest::default(), Some("wasm32-unknown"), None)
             .expect("resolves");
         assert_eq!(
             wasm.panic_strategy(),

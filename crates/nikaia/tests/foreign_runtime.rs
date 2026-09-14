@@ -23,7 +23,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nikaia::contracts::{order, Ledger, STD};
-use nikaia::emit::{self, Build, Ordering};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -75,18 +74,56 @@ fn a_call_into_a_foreign_crate_orders_against_everything() {
 
     let library = Ledger::parse(STD).expect("std ships a ledger");
     let own = Ledger::infer(&parsed);
-    // A build with every vehicle in it, because the claim under test is about
-    // the program: which switch gates which vehicle is ADR-033 D10's business
-    // and not this record's.
-    let report = order::report(&parsed, &own, &library, &|_| None);
+    // **Every adjacent pair, asked directly.** It used to go through the
+    // `--overlaps` report; ADR-050 D1 withdrew the reordering that report was
+    // about, and the claim under test is the verdict rather than the schedule -
+    // a foreign call reaches everything, so no pair holding one may overlap.
+    let mut lines = Vec::new();
+    for pair in parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            nikaia::ast::Item::Fn { body, .. } => Some(body),
+            _ => None,
+        })
+    {
+        for two in pair.stmts.windows(2) {
+            let earlier = order::accounted(&parsed, &two[0].node, &own, &library);
+            let later = order::accounted(&parsed, &two[1].node, &own, &library);
+            let line = match (&earlier, &later) {
+                (order::Accounted::Operation(a), order::Accounted::Operation(b)) => {
+                    let verdict = order::verdict(a, b);
+                    let mark = if verdict.is_overlap() {
+                        "together"
+                    } else {
+                        "in order"
+                    };
+                    format!("{mark}  {} / {} - {}", a.callee, b.callee, verdict.why())
+                }
+                (refused, other) | (other, refused)
+                    if !matches!(refused, order::Accounted::Operation(_)) =>
+                {
+                    let named = match other {
+                        order::Accounted::Operation(operation) => operation.callee.clone(),
+                        _ => "…".to_string(),
+                    };
+                    format!("in order  {named} - {}", refused.why())
+                }
+                _ => continue,
+            };
+            lines.push(line);
+        }
+    }
+    let report = lines.join("\n");
 
     // The control: two reads of two files meet on nothing and run together.
-    // Without it, "everything is in order" would also be true of a build that
-    // had overlapping switched off, and the test would prove nothing.
+    // Without it, "everything is in order" would also be true of an analysis
+    // that refuses everything, and the test would prove nothing.
     assert!(
         report.contains("together  fs::read_to_string / fs::read_to_string"),
         "the control pair must overlap, or this test cannot tell D4 from a \
-         disabled analysis:\n{report}"
+         broken analysis:\n{report}"
     );
 
     // Every pair with a foreign call in it, and the reason must be D4's.
@@ -107,36 +144,6 @@ fn a_call_into_a_foreign_crate_orders_against_everything() {
         report.matches("hyper_shim::serve_once").count() >= 4,
         "the probe is supposed to put a foreign call in four pairs:\n{report}"
     );
-
-    // And the emitter agrees with the report: exactly the control overlaps. The
-    // control is two reads, so the vehicle is the runtime's completion pair and
-    // not `task::both` (ADR-033 D10) - which also means this program overlaps at
-    // `user_parallelism = no`, where it did not before.
-    for build in [Build::parallel(), Build::default()] {
-        let rust = emit::emit_program_ordered(&parsed, build, Ordering::Effects)
-            .expect("it lowers")
-            .rust;
-        assert_eq!(
-            rust.matches("task::read_pair(").count(),
-            1,
-            "one overlap in the emitted Rust, and it is the control's ({build:?}):\n{rust}"
-        );
-        assert!(
-            !rust.contains("task::both"),
-            "two reads need no thread of the program's ({build:?}):\n{rust}"
-        );
-        let control = rust
-            .split_once("fn control()")
-            .expect("the control function is emitted")
-            .1;
-        let control = control
-            .split_once("\nfn ")
-            .map_or(control, |(body, _)| body);
-        assert!(
-            control.contains("task::read_pair("),
-            "the one overlap is inside `control` ({build:?}):\n{rust}"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------

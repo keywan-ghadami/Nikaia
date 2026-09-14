@@ -448,15 +448,6 @@ impl Program {
     /// the entry is the file that may declare `main` and a reader opens the
     /// generated file at the top.
     pub fn emit(&self, build: crate::emit::Build) -> Result<crate::emit::Lowered> {
-        self.emit_ordered(build, crate::emit::Ordering::default())
-    }
-
-    /// The same, saying how strictly the written order is taken (ADR-033).
-    pub fn emit_ordered(
-        &self,
-        build: crate::emit::Build,
-        ordering: crate::emit::Ordering,
-    ) -> Result<crate::emit::Lowered> {
         use crate::emit::{Lowered, Needs, SourceMap};
 
         let trust = crate::contracts::trust::analyse(&self.units[0].parsed, &std_ledger());
@@ -483,8 +474,7 @@ impl Program {
             if unit.package.is_some() {
                 continue;
             }
-            let body = crate::emit::emit_module_body_ordered(
-                ordering,
+            let body = crate::emit::emit_module_body_at(
                 &unit.parsed,
                 build,
                 trust.provenance,

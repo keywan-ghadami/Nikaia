@@ -213,7 +213,7 @@ fn a_machine_the_toolchain_cannot_build_for_is_refused() {
         HELLO,
     );
 
-    let error = Project::open(&dir, None, None, None).expect_err("wasm is not buildable yet");
+    let error = Project::open(&dir, None, None).expect_err("wasm is not buildable yet");
     let text = format!("{error:#}");
     assert!(text.contains("wasm32-unknown"), "{text}");
     assert!(
@@ -383,7 +383,7 @@ fn the_manifest_becomes_a_cargo_manifest() {
         HELLO,
     );
 
-    let project = Project::open(&dir, None, None, None).expect("the project opens");
+    let project = Project::open(&dir, None, None).expect("the project opens");
     let members = project.members().expect("the packages resolve");
     let workspace = project
         .cargo_workspace(&members, &["fn main() {}".to_string()])
@@ -439,7 +439,7 @@ fn a_nikaia_package_is_refused_and_says_why() {
         HELLO,
     );
 
-    let project = Project::open(&dir, None, None, None).expect("the project opens");
+    let project = Project::open(&dir, None, None).expect("the project opens");
     let members = project.members().expect("the packages resolve");
     let error = project
         .cargo_workspace(&members, &["fn main() {}".to_string()])
@@ -464,7 +464,7 @@ fn a_nikaia_package_is_refused_and_says_why() {
 #[test]
 fn a_directory_without_a_manifest_is_not_a_project() {
     let dir = common::scratch_dir("project-none");
-    let error = Project::open(&dir, None, None, None).expect_err("no manifest, no project");
+    let error = Project::open(&dir, None, None).expect_err("no manifest, no project");
     let text = format!("{error:#}");
     assert!(text.contains("nikaia.toml"), "{text}");
     assert!(

@@ -1414,7 +1414,7 @@ impl<'a> Checker<'a> {
             // A `seq` block is a block for every purpose but one: what it says
             // is about the *order* its statements run in (ADR-033 D7), not
             // about what any of them mean or what it hands back.
-            Expr::Block(block) | Expr::Seq(block) => self.block(block),
+            Expr::Block(block) => self.block(block),
 
             // **Part I 8.1.2: each statement is a branch, and the block's value
             // is the tuple of their results in written order**

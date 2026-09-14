@@ -85,19 +85,19 @@ So, in order, and each says below why it sits where it does:
    ([ADR-055](specification/adr/adr-055.md)). Everything about tasks is inside
    this one item and in the order that record's §6 gives: the executor, then
    `async`/`.await` off the ledger's `sync` column, then `std`'s own pausing
-   entries, then `spawn`, then `overlap { … }`. Five records are checked and
-   cannot run until it is done, which is the first principle above in its
-   sharpest form — and until this session it looked like one step rather than
-   five, because a pause was a thread that blocked and nothing said so.
+   entries, then `spawn`, then `overlap { … }`. Five records were checked and
+   could not run until it was done, which is the first principle above in its
+   sharpest form — and for a long time it looked like one step rather than five,
+   because a pause was a thread that blocked and nothing said so.
 
-   **Steps 1–4 are built at `user_parallelism = no`, which is the default**: the
-   single-threaded executor, `async fn` with `.await` off the ledger, `std`'s own
-   pausing entries — a file operation suspends rather than blocking its thread —
-   and `spawn` itself, with `TaskHandle`, `.join()` and `NK2101`. What is left is
-   the **thread**: step 1's `yes` executor, where a spawned future has to be
-   `Send`, and step 5's `overlap { … }`. So this item is no longer the one the
-   others wait on — what waits on a thread waits on its `yes` half, and the rest
-   of the list can be taken in its own order.
+   **All five steps are built at `user_parallelism = no`, which is the default**:
+   the single-threaded executor, `async fn` with `.await` off the ledger, `std`'s
+   own pausing entries — a file operation suspends rather than blocking its
+   thread — `spawn` itself, with `TaskHandle`, `.join()` and `NK2101`, and
+   `overlap { … }` with `NK2104`. What is left is the **thread**: step 1's `yes`
+   executor, where a spawned future has to be `Send`. So this item is no longer
+   the one the others wait on — what waits on a thread waits on that one half,
+   and the rest of the list can be taken in its own order.
 2. **A surface to reach `Locked[T]` through.** The other half of the same story:
    a program that spawns needs something it may share.
    [ADR-057](specification/adr/adr-057.md) decided what the type **is** and both
@@ -105,16 +105,11 @@ So, in order, and each says below why it sits where it does:
    thing in it that needs deciding rather than doing is what `access` hands its
    lambda, because Part II 12.2's own idiom does not compile as written.
    Independent of the sequence above, so it can be taken beside it.
-3. **The automatic reordering, `seq` and the `ordering` switch out.** After
-   `overlap` and not before — removing the automatic half first would leave the
-   language with no way to ask for overlap at all. **`overlap` is built now**, so
-   this is the next thing to take. The removal is the second principle's case:
-   free today, breaking once programs exist.
-4. **The diamond in the checker.** Small, self-contained, waits on nothing. It is
+3. **The diamond in the checker.** Small, self-contained, waits on nothing. It is
    the only entry here that one afternoon closes.
-5. **A server to bind to, and the `postgres` block.** Its own project rather than a
+4. **A server to bind to, and the `postgres` block.** Its own project rather than a
    step of this one.
-6. **Supervision.** Last because nothing else waits on it.
+5. **Supervision.** Last because nothing else waits on it.
 
 ### 2.1. A literal no use constrains still takes an `i32`, and `let big = 3000000000` is refused
 
@@ -296,24 +291,13 @@ them. What is left:
   charges only on the values that actually cross;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.7. The automatic reordering, `seq` and the `ordering` switch are still here
-
-[ADR-050](specification/adr/adr-050.md) D1 and D7 withdraw all three, and its §5 says
-**not yet**: the removal is step three, after the runtime binding and `overlap`.
-Removing them before there is a way to *ask* for overlap would leave the language
-with neither, which is worse than either end state.
-
-So this entry is not work to pick up — it is the thing that must not be picked up
-early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
-should find out from the list that its `seq` and its switch are on their way out.
-
-### 2.8. Part II 12.8's supervision syntax
+### 2.7. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.9. A package reached under two names is two types to the checker
+### 2.8. A package reached under two names is two types to the checker
 
 [ADR-053](specification/adr/adr-053.md) is built: a package is its own crate, a
 library may depend on a library, and a program cannot reach past what it declared.
@@ -333,7 +317,7 @@ type's identity in the ledger to be the package's **canonical path** — which i
 what `packages_of` already computes and what D2 means by identity — rather than
 the word a consumer happened to write.
 
-### 2.10. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.9. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -351,7 +335,7 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.11. There is no HTTP server, and three records now wait on it
+### 2.10. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal

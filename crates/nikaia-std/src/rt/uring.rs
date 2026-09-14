@@ -96,7 +96,7 @@ struct Job {
     ///
     /// So freeing it there dropped the buffer the kernel had already filled and
     /// the read came back as somebody else's bytes. Found by
-    /// `ordering.rs`'s `a_group_of_four_compiles_and_runs`, which printed
+    /// a test that compiled and ran a group of four operations, which printed
     /// `ccc leer` for `zwei vier`.
     ///
     /// [`Ring::abandon`] is what clears it, from the handle's own `Drop` - so a

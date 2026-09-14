@@ -1,35 +1,35 @@
 //! The build switches come from `nikaia.toml`, and a flag overrides them
-//! (ADR-037 D5, [ADR-033](../../../docs/specification/adr/adr-033.md) D8).
+//! (ADR-037 D5).
 //!
 //! `manifest.rs`'s own unit tests hold the precedence rule. What is checked
 //! here is the half those cannot see: that the resolved value actually reaches
-//! the emitter, so a committed `ordering = "strict"` is a property of the
+//! the emitter, so a committed `user-parallelism = "yes"` is a property of the
 //! project and not a comment in a file nothing reads.
+//!
+//! **There are two switches again** ([ADR-050](../../../docs/specification/adr/adr-050.md)
+//! D7): `ordering` went with the reordering it turned off, and Part I 1.2's
+//! *"there are exactly two things to choose"* is true once more, having been
+//! three.
 
 mod common;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The word in the emitted Rust that says the pair was overlapped.
+/// What the emitted Rust says when `user_parallelism = yes` reached the emitter.
 ///
-/// `task::interleave` and not `task::both` since
-/// [ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 3: a
-/// `fs::write` can pause, and the pool vehicle takes closures, which cannot
-/// hold an `.await`. What the tests below claim is that the **switch reached the
-/// emitter** - which vehicle it chose is ADR-033 D10's question and is asserted
-/// in `ordering.rs`.
-const OVERLAPPED: &str = "task::interleave";
+/// [ADR-038](../../../docs/specification/adr/adr-038.md) D4: the generated
+/// `fn main` starts the runtime and tells it what this build allows, so the
+/// switch is one word in one line of the output.
+///
+/// It used to be the presence of an overlapped pair, which stopped being a
+/// marker when [ADR-050](../../../docs/specification/adr/adr-050.md) D1
+/// withdrew the reordering — and this is the better one anyway: it names the
+/// switch rather than a consequence two records away from it.
+const AT_YES: &str = "UserCode::Concurrent";
 
-/// A project directory: a manifest, and a source with two **writes** that meet
-/// on nothing and therefore overlap wherever the analysis is allowed to run.
-///
-/// Writes and not reads, because what is under test here is whether a switch
-/// reaches the emitter - and a pair of *reads* overlaps at both settings of
-/// `user_parallelism` now, on a vehicle that carries no code of the program's
-/// ([ADR-033](../../../docs/specification/adr/adr-033.md) D10). A pair of
-/// writes has only the pool's vehicle - there is no completion pair for a write
-/// - so it is the shape that can still tell the two settings apart.
+/// A project directory: a manifest, and a source plain enough that what the
+/// emitted Rust differs by is the switch and nothing else.
 fn project(purpose: &str, manifest: &str) -> PathBuf {
     let dir = common::scratch_dir(purpose);
     std::fs::write(
@@ -77,7 +77,7 @@ fn lower(dir: &Path, flags: &[&str]) -> String {
 fn the_manifest_decides_the_switches() {
     let dir = project("manifest-decides", "[build]\nuser-parallelism = \"yes\"\n");
     assert!(
-        lower(&dir, &[]).contains(OVERLAPPED),
+        lower(&dir, &[]).contains(AT_YES),
         "the manifest's `yes` did not reach the emitter"
     );
 
@@ -85,7 +85,7 @@ fn the_manifest_decides_the_switches() {
     // hold for a program that overlaps whatever anyone writes.
     let plain = project("manifest-absent", "");
     assert!(
-        !lower(&plain, &[]).contains(OVERLAPPED),
+        !lower(&plain, &[]).contains(AT_YES),
         "a project with no `[build]` table must stay at `user_parallelism = no`"
     );
 }
@@ -96,38 +96,14 @@ fn the_manifest_decides_the_switches() {
 fn a_flag_overrides_a_committed_switch() {
     let parallel = project("flag-over-yes", "[build]\nuser-parallelism = \"yes\"\n");
     assert!(
-        !lower(&parallel, &["--user-parallelism", "no"]).contains(OVERLAPPED),
+        !lower(&parallel, &["--user-parallelism", "no"]).contains(AT_YES),
         "`--user-parallelism no` did not override the manifest"
     );
 
     let sequential = project("flag-over-no", "[build]\nuser-parallelism = \"no\"\n");
     assert!(
-        lower(&sequential, &["--user-parallelism", "yes"]).contains(OVERLAPPED),
+        lower(&sequential, &["--user-parallelism", "yes"]).contains(AT_YES),
         "`--user-parallelism yes` did not override the manifest"
-    );
-}
-
-/// `ordering` is the other switch that lived only on the CLI. It is the escape
-/// for a project that does not want the analysis, so it has to be committable.
-#[test]
-fn ordering_is_a_project_setting_too() {
-    let dir = project(
-        "manifest-ordering",
-        "[build]\nuser-parallelism = \"yes\"\nordering = \"strict\"\n",
-    );
-    let strict = lower(&dir, &[]);
-    assert!(
-        !strict.contains(OVERLAPPED),
-        "the manifest's `strict` did not reach the emitter"
-    );
-    assert_eq!(
-        strict,
-        lower(&dir, &["--ordering", "strict"]),
-        "and it is the same program the flag produces"
-    );
-    assert!(
-        lower(&dir, &["--ordering", "effects"]).contains(OVERLAPPED),
-        "`--ordering effects` did not override the manifest"
     );
 }
 

@@ -215,7 +215,7 @@ impl Accounted {
     }
 }
 
-fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Accounted {
+pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Accounted {
     // Two shapes, and the second is ADR-033 §8.3's first item: an operation
     // the ledger can account for is not always bound to a name. `println(x)`,
     // `out.push(y)` and `fs::write(p, d)` are statements a program is mostly
@@ -626,16 +626,6 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             }
             out.methods.push(parsed.text(*method).to_string());
         }
-        // A `seq` block states the order of the statements **inside** it
-        // (ADR-033 D7) and says nothing about the statement next to it. So the
-        // block as a whole is refused, which is the fail-closed answer and the
-        // only one D7 decides: a reader who writes `seq` has said the compiler
-        // cannot see what the order is for, and a compiler that then moved the
-        // block itself would be answering a question it was just told it could
-        // not answer.
-        Expr::Seq(_) => out.refuse(Accounted::Opaque(
-            "a `seq` block, whose order the program states itself",
-        )),
 
         // A lambda. It would fall to the arm below anyway; it is named here
         // because this is the one shape where the fail-closed answer differs
@@ -671,142 +661,6 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // Everything with its own control flow: what runs inside it is decided
         // while it runs, and D5 allows only operations that certainly run.
         _ => out.refuse(Accounted::Opaque("something with its own control flow")),
-    }
-}
-
-/// What would have to carry an overlap, where one is allowed.
-///
-/// **Still a question about the program** (ADR-033 §8.2b's category
-/// distinction), which is why it is answered here: *whether* two operations may
-/// overlap and *what kind of thing would have to run them* are both read off
-/// the statements. Whether this build *has* that thing is the emitter's
-/// question, and no switch reaches this file to answer it.
-///
-/// The distinction is ADR-033 D10's, and it is the one `user_parallelism` was
-/// always about: one of these puts code the program wrote in flight twice and
-/// the other does not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Vehicle {
-    /// `std` performs both operations and `std` does the waiting: two reads
-    /// handed to the runtime, which is already running. **No thread carries
-    /// anything the user wrote**, so this is legitimate at
-    /// `user_parallelism = no` as well - and it costs nothing measurable
-    /// (ADR-038 §4.3).
-    Completion,
-    /// Each statement goes into a closure that runs somewhere else, so two
-    /// pieces of the program's own code are in flight at once. Only
-    /// `user_parallelism = yes` permits that (ADR-037 D2), and it costs a
-    /// thread wake-up per pair (ADR-033 §8.4).
-    UserClosures,
-}
-
-/// The `std` file reads `std` can put in flight by itself, as a **closed** list.
-///
-/// Closed for `contracts::touch::KINDS`' reason: a name this compiler guessed
-/// at would buy an overlap rather than fail to buy one. An entry here is a
-/// promise that `nikaia_std::task::read_pair` performs exactly what the call
-/// performs, so it is two names and not a pattern, and adding a third is a
-/// `std` function and a measurement rather than a line here.
-///
-/// `fs::write` is deliberately absent: the runtime has no pair vehicle for two
-/// writes, and ADR-038 §4.3 measured a pair of *reads*.
-const IN_FLIGHT_READS: [&str; 2] = ["fs::read", "fs::read_to_string"];
-
-/// One statement that is exactly one `std` file read, where it is one.
-///
-/// Everything the emitter needs to write the pair, and nothing it would have to
-/// find out for itself: two places deciding what a statement is are two rules
-/// waiting to disagree (ADR-033 §6's own reason for one helper).
-#[derive(Debug, Clone)]
-pub struct InFlightRead<'a> {
-    /// The ledger key, which is one of [`IN_FLIGHT_READS`].
-    pub callee: String,
-    /// The path it reads, which is a literal - the same restriction the rest of
-    /// this analysis makes, and here it is also what makes the argument safe to
-    /// write into a call the emitter assembles.
-    pub path: &'a Expr,
-    /// Its `catch` handler, where it has one. It cannot divert ([`accounted`]
-    /// refuses that), and it runs where it was written: after both reads have
-    /// been collected, on the one thread the program has.
-    pub handler: Option<&'a crate::ast::Block>,
-}
-
-/// Whether this statement is a `std` file read the runtime can put in flight.
-///
-/// Asked only about a statement [`operation`] has already accounted for - this
-/// adds the *shape* question on top of the touch-set one, and answers `None`
-/// for every shape it is not certain of.
-///
-/// **The callee has to be `std`'s own.** A program that defines its own
-/// `fs::read` is answered `None`, because the lowering performs
-/// `nikaia_std`'s read and not whatever that name resolves to - which is D4's
-/// polarity applied to a name rather than to an effect.
-pub fn in_flight_read<'a>(
-    parsed: &Parsed,
-    stmt: &'a Stmt,
-    own: &Ledger,
-    library: &Ledger,
-) -> Option<InFlightRead<'a>> {
-    let value = match stmt {
-        Stmt::Let {
-            ty: None, value, ..
-        }
-        | Stmt::Expr(value) => value,
-        _ => return None,
-    };
-    let (call, handler) = match value {
-        Expr::TryCatch { handler, .. } if diverts(&handler.stmts) => return None,
-        Expr::TryCatch { expr, handler } => (&**expr, Some(handler)),
-        other => (other, None),
-    };
-    let Expr::Call { args, config, .. } = call else {
-        return None;
-    };
-    if !config.is_empty() || args.len() != 1 {
-        return None;
-    }
-    // A literal, for the same reason the touch sets need one: a path this
-    // compiler cannot read is a file it cannot name (D4), and a path it can is
-    // a value it can write into the call it assembles.
-    if !matches!(args[0], Expr::LitStr(_)) {
-        return None;
-    }
-    let callee = callee_of(parsed, call)?;
-    if own.lookup(&callee).is_some() {
-        return None;
-    }
-    let (key, _) = library.lookup(&callee)?;
-    if !IN_FLIGHT_READS.contains(&key.as_str()) {
-        return None;
-    }
-    Some(InFlightRead {
-        callee: key,
-        path: &args[0],
-        handler,
-    })
-}
-
-/// What an overlap of `stmts` would have to be carried by.
-///
-/// [`Vehicle::Completion`] for a **pair** of `std` file reads, and
-/// [`Vehicle::UserClosures`] for everything else. A pair and not a longer run:
-/// the runtime's pair vehicle takes two paths, and a run of three is
-/// `task::both` nested - ADR-033 D10 names an n-ary completion run as not
-/// built rather than as decided against.
-pub fn vehicle(
-    parsed: &Parsed,
-    stmts: &[Spanned<Stmt>],
-    own: &Ledger,
-    library: &Ledger,
-) -> Vehicle {
-    if stmts.len() == 2
-        && stmts
-            .iter()
-            .all(|stmt| in_flight_read(parsed, &stmt.node, own, library).is_some())
-    {
-        Vehicle::Completion
-    } else {
-        Vehicle::UserClosures
     }
 }
 
@@ -1035,7 +889,7 @@ fn diverts(stmts: &[crate::ast::Spanned<Stmt>]) -> bool {
 fn holds_throw(expr: &Expr) -> bool {
     match expr {
         Expr::Throw(_) => true,
-        Expr::Block(block) | Expr::Seq(block) | Expr::Overlap(block) => diverts(&block.stmts),
+        Expr::Block(block) | Expr::Overlap(block) => diverts(&block.stmts),
         Expr::If {
             then_branch,
             else_branch,
@@ -1137,10 +991,9 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
                 }
             }
         }
-        Expr::Block(block)
-        | Expr::Seq(block)
-        | Expr::Overlap(block)
-        | Expr::Closure { body: block, .. } => names_in_block(parsed, block, out),
+        Expr::Block(block) | Expr::Overlap(block) | Expr::Closure { body: block, .. } => {
+            names_in_block(parsed, block, out)
+        }
         Expr::If {
             cond,
             then_branch,
@@ -1246,49 +1099,45 @@ fn words_in(text: &str, out: &mut BTreeSet<String>) {
     }
 }
 
-/// What a build answers about a vehicle: `None` where it has one, and otherwise
-/// the reason it has not, in the build's own words.
+/// **Every `overlap { … }` block in a program, and what it was allowed**
+/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D3).
 ///
-/// A function and not a switch, because no switch may reach this file
-/// (ADR-033 §8.2b). The caller knows `--user-parallelism`, `--target` and
-/// `--ordering`; this file knows which vehicle a pair would need, and the
-/// report is the two halves put together - per pair, which is the whole of what
-/// D10 changed about it.
-pub type Carries<'a> = &'a dyn Fn(Vehicle) -> Option<String>;
-
-/// Every adjacent pair in a program, and what was decided about it (ADR-033 D9).
+/// The answer to *"did these branches actually run together"*, which is the
+/// question a language without an `allow_parallel` owes its user. Nothing prints
+/// it on its own: it is asked for (`--overlaps`), because a compiler that
+/// volunteered a paragraph per block would be noise in exactly the programs that
+/// are fine.
 ///
-/// The answer to "why did these two not run together", which is the question a
-/// language without an `allow_parallel` owes its user. Nothing prints it on its
-/// own: it is asked for (`--overlaps`), because a compiler that volunteered a
-/// paragraph per pair would be noise in exactly the programs that are fine.
-///
-/// **Three answers and not two** (ADR-033 D10). `together` is a pair that
-/// overlaps *in this build*; `would` is one the program allows and this build
-/// has no vehicle for, with `carries` naming the switch that decided it; and
-/// `in order` is the program's own refusal. Before D10 the build's half was one
-/// note at the top, and at `user_parallelism = no` that note became a
-/// half-truth the moment some pairs overlapped and others did not.
-pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger, carries: Carries<'_>) -> String {
+/// **It used to be a report about pairs the compiler chose**, and D1 withdrew
+/// that choice — statements run in the order they are written. So the report is
+/// about the blocks the *programmer* wrote, and what it has to say is the thing
+/// the source does not show: **which branches are started first** (D6). A block
+/// whose branches meet on anything never reaches here, because `NK2104` refused
+/// the program.
+pub fn overlap_report(
+    parsed: &Parsed,
+    own: &Ledger,
+    library: &Ledger,
+    pauses: Pauses<'_>,
+) -> String {
     let mut out = String::new();
-
     for item in &parsed.program.items {
         match &item.node {
             Item::Fn { .. } => {
-                function_report(parsed, &item.node, None, own, library, carries, &mut out)
+                block_report(parsed, &item.node, None, own, library, pauses, &mut out)
             }
             Item::Impl {
                 target, methods, ..
             } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
-                    function_report(
+                    block_report(
                         parsed,
                         &method.node,
                         Some(&target),
                         own,
                         library,
-                        carries,
+                        pauses,
                         &mut out,
                     );
                 }
@@ -1296,29 +1145,30 @@ pub fn report(parsed: &Parsed, own: &Ledger, library: &Ledger, carries: Carries<
             _ => {}
         }
     }
-
     if out.is_empty() {
-        out.push_str("no two adjacent statements in this program were compared.\n");
+        out.push_str("this program writes no `overlap { … }` block.\n");
     }
     out
 }
 
-fn function_report(
+/// Whether a branch can pause, which is what decides the starting order (D6).
+///
+/// A function and not a lookup here, because no switch and no build setting may
+/// reach this file (ADR-033 §8.2b): the answer is the *emitter's*, read off the
+/// ledger's `sync` column and the checker's answers about method calls, and no
+/// analysis in this file may reach for either.
+pub type Pauses<'a> = &'a dyn Fn(&Spanned<Stmt>) -> bool;
+
+fn block_report(
     parsed: &Parsed,
     item: &Item,
     target: Option<&str>,
     own: &Ledger,
     library: &Ledger,
-    carries: Carries<'_>,
+    pauses: Pauses<'_>,
     out: &mut String,
 ) {
-    let Item::Fn {
-        name,
-        body,
-        ret_type,
-        ..
-    } = item
-    else {
+    let Item::Fn { name, body, .. } = item else {
         return;
     };
     let own_name = match name {
@@ -1330,77 +1180,36 @@ fn function_report(
         None => own_name,
     };
 
-    // The last statement of a value-returning body is the value (Kap 3.1). It
-    // is reported, because a reader asking why two lines did not run together
-    // deserves an answer for every pair - but the answer is its own, and
-    // neither statement's fault.
-    let value_at = ret_type
-        .as_ref()
-        .and_then(|_| body.stmts.len().checked_sub(1));
+    let mut blocks = Vec::new();
+    crate::emit::visit_block(body, &mut |expr| {
+        if let Expr::Overlap(block) = expr {
+            blocks.push(block.clone());
+        }
+    });
 
-    let mut lines = Vec::new();
-    for (at, pair) in body.stmts.windows(2).enumerate() {
-        let earlier = accounted(parsed, &pair[0].node, own, library);
-        let later = accounted(parsed, &pair[1].node, own, library);
-
-        if value_at == Some(at + 1) {
-            let named = match (&earlier, &later) {
-                (Accounted::Operation(earlier), Accounted::Operation(later)) => {
-                    format!("{} / {}", earlier.callee, later.callee)
-                }
+    for block in &blocks {
+        let mut lines = Vec::new();
+        for stmt in &block.stmts {
+            let named = match accounted(parsed, &stmt.node, own, library) {
+                Accounted::Operation(operation) => operation.callee,
                 _ => "…".to_string(),
             };
-            lines.push(format!(
-                "    {:9} {named} - the second is what this function hands back, and a pair \
-                 hands back a tuple",
-                "in order"
-            ));
+            // D6's two halves, said as they happen: a branch that can pause is
+            // started first and gives the thread up at its first suspension
+            // point; one that cannot runs while the others are in flight.
+            let when = match pauses(stmt) {
+                true => "started first",
+                false => "runs while they wait",
+            };
+            lines.push(format!("    {when:22} {named}"));
+        }
+        if lines.is_empty() {
             continue;
         }
-
-        let (mark, what, why) = match (&earlier, &later) {
-            (Accounted::Operation(earlier), Accounted::Operation(later)) => {
-                let verdict = verdict(earlier, later);
-                let named = format!("{} / {}", earlier.callee, later.callee);
-                // The program allows it; now the build. A pair that needs a
-                // vehicle this build has not is neither `together` - it does not
-                // run together - nor `in order` for a reason of the program's,
-                // and saying either would be the half-truth D10 removed.
-                match (
-                    verdict.is_overlap(),
-                    carries(vehicle(parsed, pair, own, library)),
-                ) {
-                    (true, None) => ("together", named, verdict.why()),
-                    (true, Some(why)) => ("would", named, format!("{}, but {why}", verdict.why())),
-                    (false, _) => ("in order", named, verdict.why()),
-                }
-            }
-            // One of the two could not be reduced at all, and *that* reason is
-            // the one worth printing: it is the one a reader can usually act on.
-            (
-                refused @ (Accounted::NotAnOperation
-                | Accounted::Opaque(_)
-                | Accounted::DivertingHandler
-                | Accounted::UncaughtFailure(_)
-                | Accounted::NoTouches(_)
-                | Accounted::UnknownResource { .. }
-                | Accounted::MayNotCross { .. }
-                | Accounted::NonLiteralArgument(_)),
-                other,
-            )
-            | (other @ Accounted::Operation(_), refused) => {
-                let named = match other {
-                    Accounted::Operation(operation) => operation.callee.clone(),
-                    _ => "…".to_string(),
-                };
-                ("in order", named, refused.why())
-            }
-        };
-        lines.push(format!("    {mark:9} {what} - {why}"));
-    }
-
-    if !lines.is_empty() {
-        out.push_str(&format!("{key}:\n"));
+        out.push_str(&format!(
+            "{key}: an `overlap` of {} branches, which meet on nothing\n",
+            block.stmts.len()
+        ));
         for line in lines {
             out.push_str(&line);
             out.push('\n');

@@ -133,10 +133,10 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 30] = [
+pub const RESERVED_WORDS: [&str; 29] = [
     "as", "catch", "dsl", "else", "enum", "false", "fn", "for", "from", "grammar", "if", "impl",
-    "in", "let", "match", "mut", "null", "overlap", "pub", "return", "self", "seq", "spawn",
-    "struct", "sync", "throw", "throws", "true", "use", "while",
+    "in", "let", "match", "mut", "null", "overlap", "pub", "return", "self", "spawn", "struct",
+    "sync", "throw", "throws", "true", "use", "while",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -1378,7 +1378,6 @@ grammar! {
           // otherwise be read as a struct literal called `seq` - its statements
           // taken for shorthand fields - or as a variable followed by a block
           // of its own, which is the trap the `while` rule records.
-          | s:seq_expr -> { s }
           | o:overlap_expr -> { o }
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
@@ -1641,7 +1640,6 @@ grammar! {
         rule KW_RETURN = "return" not(ident)
         rule KW_RULE = "rule" not(ident)
         rule KW_SELF = "self" not(ident)
-        rule KW_SEQ = "seq" not(ident)
         rule KW_SPAWN = "spawn" not(ident)
         rule KW_STRUCT = "struct" not(ident)
         rule KW_SYNC = "sync" not(ident)
@@ -1709,7 +1707,6 @@ grammar! {
           | KW_OVERLAP -> { 0 }
           | KW_PUB -> { 0 }
           | KW_RETURN -> { 0 }
-          | KW_SEQ -> { 0 }
           | KW_SPAWN -> { 0 }
           | KW_STRUCT -> { 0 }
           | KW_SYNC -> { 0 }
@@ -1780,12 +1777,6 @@ grammar! {
         // in, whatever their touch sets say - which is why it is a block and
         // not an attribute on a statement: what it constrains is a *sequence*.
         //
-        // The keyword is provisional (D7). It has to read as "in this order,
-        // whatever you think", and `seq` is a placeholder for a word chosen
-        // later; changing it is this rule, the AST variant's doc, and the two
-        // spec sections that name it.
-        rule seq_expr -> Expr =
-            KW_SEQ b:block -> { Expr::Seq(b) }
 
         // Part I 8.1.2: `overlap { … }`, where each statement is a branch
         // (ADR-050 D2). The same shape `seq` has, and deliberately so - both are

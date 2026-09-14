@@ -147,10 +147,12 @@ fn a_return_in_an_if_used_as_a_value_leaves_the_function() {
 /// block is a `let` bound to nothing, which rustc says so about. That is the one
 /// emission in this file whose *verdict* changes, and it changes from "compiles,
 /// and is a different program" to an honest complaint about dead code.
+///
+/// It used to check `seq { … }` beside the bare block, because the two were the
+/// same shape with different meanings. `seq` is withdrawn
+/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D7) and the bare block
+/// is the shape that remains.
 const BLOCK_AS_VALUE: &str = "fn pick() -> i64 {\n\
-     \x20   let x = seq {\n\
-     \x20       return 1\n\
-     \x20   }\n\
      \x20   let y = {\n\
      \x20       return 2\n\
      \x20   }\n\
@@ -160,7 +162,6 @@ const BLOCK_AS_VALUE: &str = "fn pick() -> i64 {\n\
 #[test]
 fn a_return_in_a_block_used_as_a_value_leaves_the_function() {
     let rust = lowered(BLOCK_AS_VALUE);
-    assert!(rust.contains("let x = { return 1; };"), "{rust}");
     assert!(rust.contains("let y = { return 2; };"), "{rust}");
 }
 

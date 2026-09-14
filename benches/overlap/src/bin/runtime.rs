@@ -11,8 +11,8 @@
 //!
 //! | shape | what it is |
 //! |---|---|
-//! | `seq` | one read, then the other, both through `std::fs` - the baseline |
-//! | `join` | `nikaia_std::task::both`, which is `rayon::join`: §8.4's vehicle |
+//! | `seq` | one read, then the other - the baseline, and what a program that writes no `overlap` gets |
+//! | `join` | `rayon::join`: §8.4's vehicle, which `std` no longer has |
 //! | `both` | `nikaia_std::fs::read_both`: both in flight on the pre-started runtime |
 //!
 //! The number that answers D4 is **`join - seq` against `both - seq`**: what
@@ -29,12 +29,12 @@
 //! every repeat is printed, because a single number without its spread is not
 //! a measurement (`benches/overlap/README.md`).
 
-use nikaia_std::{fs, rt, task};
+use nikaia_std::{fs, rt};
 
 const A: &str = "eins.txt";
 const B: &str = "zwei.txt";
 
-/// One read, then the other. What `--ordering strict` emits.
+/// One read, then the other. What the emitter writes for two statements.
 ///
 /// **Driven rather than called**, since
 /// [ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 2: a read is
@@ -52,12 +52,17 @@ fn sequential() -> usize {
 
 /// ADR-033 §8.4's vehicle: two closures on the pool, one wake-up per pair.
 ///
-/// The reads here are the runtime's **synchronous** surface, because a closure
-/// on a pool cannot await: this shape is the one the pool serves, and a pool
-/// worker that is going to block is what §8.4 priced. `sequential` above is the
-/// shape the emitter writes today.
+/// **`std` no longer has this**, and the number is why: a pool takes closures,
+/// a closure cannot `.await`, and the wake-up it costs is what
+/// [ADR-050](../../../../docs/specification/adr/adr-050.md) D2's vehicle had to
+/// avoid. `rayon::join` is called here directly so the comparison ADR-038 D4
+/// rests on stays reproducible after the vehicle went.
+///
+/// The reads are the runtime's **synchronous** surface, because a closure on a
+/// pool cannot await: this shape is the one the pool serves, and a pool worker
+/// that is going to block is what §8.4 priced.
 fn joined() -> usize {
-    let (a, b) = task::both(
+    let (a, b) = rayon::join(
         || rt::io::read(A.as_ref()).unwrap_or_default(),
         || rt::io::read(B.as_ref()).unwrap_or_default(),
     );
