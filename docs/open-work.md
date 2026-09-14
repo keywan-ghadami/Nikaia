@@ -455,7 +455,34 @@ name that happens to be true.
 
 ## 3. Upkeep
 
-**Empty**, which it has not been before, so what was here is worth naming: Part
+### 3.1. `cargo test --workspace --release` fails the project tests, and running them alone does not
+
+```text
+error: failed to run `rustc` to learn about target-specific information
+  process didn't exit successfully: `target/release/nikaia …/rustc - --crate-name ___
+  --print=file-names … --print=cfg` (exit status: 1)
+```
+
+Sixteen of the twenty-two tests in `crates/nikaia/tests/project.rs`, every one of
+them at the point where a nested `cargo` probes `rustc` **through this
+compiler's wrapper** (`project::wrapper_main`, where the invocation names no
+`.nika` source and is passed straight through). The stdout that reaches the
+error is the probe's own output cut off partway down the `--print` list.
+
+*Evidence, and what it rules out:* measured on `origin/main` with nothing of
+this branch applied — 3 runs, 16 failures each. `cargo test -p nikaia --test
+project` on the same commit passes 22 of 22, four runs out of four. So it is
+**the concurrency of the whole-workspace run** rather than either the tests or
+the wrapper: what changes between the two is how many other `cargo` invocations
+are probing at the same time.
+
+*What is not known:* whether the same happens in CI, whose machine and parallelism
+differ from this one, and which resource actually runs out. Written down rather
+than guessed at, because a gate that fails for a reason nobody has named is a
+gate people learn to re-run.
+
+**Empty apart from the above**, which it has not been before, so what was here is
+worth naming: Part
 III 15.2 claimed the compiler *"reads the metadata of the Rust Crate"* and quoted
 an error about an `Rc<i32>` that nothing produces; the same section's type mapping
 stopped at three rows and had no entry for the type

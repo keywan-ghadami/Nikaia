@@ -135,9 +135,8 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// so the list and the rule cannot drift apart in silence.
 pub const RESERVED_WORDS: [&str; 33] = [
     "as", "break", "catch", "const", "continue", "dsl", "else", "enum", "false", "fn", "for",
-    "from", "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap",
-    "pub", "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use",
-    "while",
+    "from", "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap", "pub",
+    "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use", "while",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
