@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed (the README promised an `Rc` the compiler does not give)
+
+- **"At `user_parallelism = no` it compiles to `Rc`"** has been false since [ADR-037](docs/specification/adr/adr-037.md) D6 made the atomic count the **floor at both settings**, with the plain one an optimisation `contracts::sharing` applies **per value** where it proves nothing crosses. Measured while checking something else: at `no`, a value the analysis cannot follow comes out an `Arc`, exactly as D6 says it should. The page promised the old per-build expansion, which is the shape that record replaced.
+- The same sentence carried "single-threaded event loop", the phrase corrected one entry above, and Part II 12.7's soundness note said "the single-threaded runtime owns all task state" — the runtime is not single-threaded, the thread your code runs on is. Both now say what they mean.
+- Left alone deliberately: `docs/rc-or-arc.md`'s quotation of the old sentence, which is *evidence* in a finding about that very divergence rather than a claim, and the benchmark row labels, where "single-threaded" names a measured case.
+
 ### Changed (the README stops saying "single-threaded", because the process is not)
 
 - **`no` was described as a "single-threaded event loop"**, which is a statement about the *process* — and the process has at least two OS threads. The runtime starts named I/O workers (`nikaia-io-0`, …) whatever the switch says, and its own test asserts *"one I/O thread always"*. The claim below it — two pieces of your code are never in flight together — was always true, and the word above it was not.
