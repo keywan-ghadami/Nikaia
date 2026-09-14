@@ -686,6 +686,18 @@ fn std_ledger() -> crate::contracts::Ledger {
     crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default()
 }
 
+/// `<'a, T>`, or nothing at all where there is nothing to declare.
+///
+/// One place, because three positions write one - a `fn`, a `struct` and the
+/// `impl` over it - and a list that is empty has to be written as the empty
+/// string rather than as `<>`, which is not Rust.
+fn angled(parts: &[String]) -> String {
+    match parts.is_empty() {
+        true => String::new(),
+        false => format!("<{}>", parts.join(", ")),
+    }
+}
+
 struct Emitter<'p> {
     parsed: &'p Parsed,
     build: Build,
@@ -1508,6 +1520,7 @@ impl<'p> Emitter<'p> {
             }
             Item::Struct {
                 name,
+                generics,
                 fields,
                 is_public,
                 is_borrowed,
@@ -1521,11 +1534,14 @@ impl<'p> Emitter<'p> {
                 }
                 out.push("#[derive(Debug, Clone)]\n");
                 let vis = if *is_public { "pub " } else { "" };
-                let params = if self.borrowing.contains(name) {
-                    format!("<{INPUT_LIFETIME}>")
-                } else {
-                    String::new()
-                };
+                // The input lifetime first and the type parameters after it,
+                // which is the order Rust wants them in (ADR-074 D3).
+                let mut parts: Vec<String> = Vec::new();
+                if self.borrowing.contains(name) {
+                    parts.push(INPUT_LIFETIME.to_string());
+                }
+                parts.extend(generics.iter().map(|g| self.text(g.name).to_string()));
+                let params = angled(&parts);
                 out.push(&format!("{vis}struct {}{params} {{\n", self.text(*name)));
                 for field in fields {
                     // Public, because the actions that build this struct are
@@ -1577,9 +1593,36 @@ impl<'p> Emitter<'p> {
                     return self.error_impl(out, &target_name, &params, methods, lifetimes);
                 }
 
+                // `impl Stack[T]` declares `T` and writes `Stack<T>`; the
+                // lifetime, where the type carries one, stands in front of it
+                // (ADR-074 D4). The target's arguments are written as the
+                // source wrote them, so `impl Stack[i64]` stays `Stack<i64>`
+                // and declares nothing.
+                let declared = crate::contracts::declared_types(self.parsed);
+                let generics = crate::contracts::impl_parameters(self.parsed, target, &declared);
+                let mut head_parts: Vec<String> = Vec::new();
+                if borrows {
+                    head_parts.push(INPUT_LIFETIME.to_string());
+                }
+                head_parts.extend(generics.iter().cloned());
+                let declares = angled(&head_parts);
+                let mut target_parts: Vec<String> = Vec::new();
+                if borrows {
+                    target_parts.push(INPUT_LIFETIME.to_string());
+                }
+                target_parts.extend(
+                    target
+                        .generics
+                        .iter()
+                        .map(|g| self.ty(g, Lifetimes::ELIDED)),
+                );
+                let applied = angled(&target_parts);
                 let head = match trait_name {
-                    Some(t) => format!("impl{params} {} for {target_name}{params}", self.text(*t)),
-                    None => format!("impl{params} {target_name}{params}"),
+                    Some(t) => format!(
+                        "impl{declares} {} for {target_name}{applied}",
+                        self.text(*t)
+                    ),
+                    None => format!("impl{declares} {target_name}{applied}"),
                 };
                 out.push(&format!("{head} {{\n"));
                 for method in methods {
@@ -1679,6 +1722,7 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         let Item::Fn {
             name,
+            generics,
             receiver,
             args,
             config,
@@ -1759,8 +1803,20 @@ impl<'p> Emitter<'p> {
         // written once and pays no heap traffic per statement.
         let dsl = spread.as_ref().map(|name| {
             params.push(format!("{}: {DSL_PARAMETER}", self.text(*name)));
-            format!("<{DSL_PARAMETER}>")
+            DSL_PARAMETER.to_string()
         });
+
+        // **`fn hand[T](x: T)` is `fn hand<T>(x: T)`**
+        // ([ADR-074](../../docs/specification/adr/adr-074.md) D3). The `[T]` was
+        // read by the parser and then fell out here, because this position had
+        // no slot for one - so a program that passed every stage of this
+        // compiler asked `rustc` about a type nobody had declared, which is
+        // Part III C.1's class exactly.
+        let declared: Vec<String> = generics
+            .iter()
+            .map(|g| self.text(g.name).to_string())
+            .chain(dsl.clone())
+            .collect();
 
         // Kap 7.1: `throws` becomes a `Result` in the emitted Rust, over
         // `Box<dyn Error>` because Nikaia's own error types are not lowered
@@ -1830,7 +1886,7 @@ impl<'p> Emitter<'p> {
         let pausing = if self.pauses(&key) { "async " } else { "" };
         out.push(&format!(
             "{vis}{pausing}fn {emitted}{}({}){ret} ",
-            dsl.unwrap_or_default(),
+            angled(&declared),
             params.join(", ")
         ));
         self.function_body(out, body, depth, *throws, ret_type.is_some(), &key)?;

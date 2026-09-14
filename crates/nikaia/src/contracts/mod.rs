@@ -616,6 +616,7 @@ impl Ledger {
         };
 
         let borrowing = borrowing_structs(parsed);
+        let declared = declared_types(parsed);
 
         for item in &parsed.program.items {
             match &item.node {
@@ -629,11 +630,8 @@ impl Ledger {
                 } => {
                     // `impl Stack[T]` puts `T` in scope for every method in it,
                     // so it is a name that stands for a type there too.
-                    let outer: BTreeSet<String> = target
-                        .generics
-                        .iter()
-                        .filter(|g| g.generics.is_empty() && !g.is_tuple)
-                        .map(|g| parsed.text(g.name).to_string())
+                    let outer: BTreeSet<String> = impl_parameters(parsed, target, &declared)
+                        .into_iter()
                         .collect();
                     let target = parsed.text(target.name).to_string();
                     for method in methods {
@@ -663,7 +661,7 @@ impl Ledger {
                         .iter()
                         .map(|f| FieldContract {
                             name: parsed.text(f.name).to_string(),
-                            ty: ty::Ty::from_ast(parsed, &f.ty).erase(&parameters),
+                            ty: ty::Ty::from_ast(parsed, &f.ty).parameterise(&parameters),
                             public: f.is_public,
                         })
                         .collect();
@@ -734,8 +732,11 @@ impl Ledger {
         };
 
         // A generic parameter is a name that stands for a type rather than
-        // being one. The ledger records `?` for it, because `?` is what a
-        // caller actually knows.
+        // being one. The ledger records it as a **variable** (`$T`), so a call
+        // site binds it from what it passes and reads the result off the same
+        // signature - the machinery ADR-031 built for a library's `$V`, now
+        // pointed at a Nikaia function's own parameters
+        // ([ADR-074](../../../docs/specification/adr/adr-074.md) D2).
         let mut parameters = outer.clone();
         parameters.extend(generics.iter().map(|g| parsed.text(g.name).to_string()));
 
@@ -773,7 +774,7 @@ impl Ledger {
         params.extend(args.iter().map(|a| {
             (
                 parsed.text(a.name).to_string(),
-                ty::Ty::from_ast(parsed, &a.ty).erase(&parameters),
+                ty::Ty::from_ast(parsed, &a.ty).parameterise(&parameters),
             )
         }));
 
@@ -810,13 +811,13 @@ impl Ledger {
                         .iter()
                         .map(|c| ConfigContract {
                             name: parsed.text(c.name).to_string(),
-                            ty: ty::Ty::from_ast(parsed, &c.ty).erase(&parameters),
+                            ty: ty::Ty::from_ast(parsed, &c.ty).parameterise(&parameters),
                             default: literal_text(parsed, &c.default),
                         })
                         .collect(),
                     result: ret_type
                         .as_ref()
-                        .map(|t| ty::Ty::from_ast(parsed, t).erase(&parameters)),
+                        .map(|t| ty::Ty::from_ast(parsed, t).parameterise(&parameters)),
                 }),
                 borrows,
                 // `sharing::infer` reads the bodies afterwards, for the same
@@ -1359,5 +1360,59 @@ fn string_list(value: &str, at: usize) -> Result<Vec<String>> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| unquote(s, at))
+        .collect()
+}
+
+/// The types Part I 2.2 offers, by name.
+///
+/// Here rather than beside a diagnostic because two questions read it: whether
+/// `as` names a type this language has ([ADR-054](../../../docs/specification/adr/adr-054.md)
+/// D1), and whether an `impl`'s type argument is a parameter or a type.
+const OFFERED: &[&str] = &[
+    "i32", "i64", "u8", "f64", "bool", "char", "String", "str", "Self",
+];
+
+/// Every type name this file declares.
+pub fn declared_types(parsed: &Parsed) -> BTreeSet<String> {
+    parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                Some(parsed.text(*name).to_string())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The type parameters an `impl` head declares, in the order it writes them.
+///
+/// `impl Stack[T]` is `impl<T> Stack<T>` and `impl Stack[i64]` is
+/// `impl Stack<i64>`, and what tells them apart is whether the slot names a
+/// type: a bare name that is neither one of Part I 2.2's types nor one this
+/// file declares stands for a type rather than being one
+/// ([ADR-074](../../../docs/specification/adr/adr-074.md) D4).
+///
+/// **The `impl` has no parameter list of its own**, and that is the decision
+/// rather than a gap: Part I 4.6 writes `struct Box[T]` and nothing writes
+/// `impl[T]`, so a second list would be a spelling the specification does not
+/// have. The rule above reads the one list that is written.
+///
+/// One function, called by the ledger and by the emitter, so the names a
+/// method's signature is recorded with are the names its `impl` head declares -
+/// two rules here would be one silent disagreement.
+pub fn impl_parameters(
+    parsed: &Parsed,
+    target: &crate::ast::Type,
+    declared: &BTreeSet<String>,
+) -> Vec<String> {
+    target
+        .generics
+        .iter()
+        .filter(|g| g.generics.is_empty() && !g.is_tuple && !g.is_view && !g.is_nullable)
+        .map(|g| parsed.text(g.name).to_string())
+        .filter(|name| !OFFERED.contains(&name.as_str()) && !declared.contains(name))
         .collect()
 }

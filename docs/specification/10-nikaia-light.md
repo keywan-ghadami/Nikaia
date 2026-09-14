@@ -125,7 +125,7 @@ while
 
 **`const` is on the list for the opposite reason to the next three**: it is
 reserved *for* a construct that Part II 10.2 specifies and the parser does not yet
-have ([ADR-073](adr/adr-073.md) D1), rather than against the possibility of one.
+have ([ADR-074](adr/adr-074.md) D1), rather than against the possibility of one.
 
 **`break`, `continue` and `loop` are on the list and are not constructs**
 ([ADR-071](adr/adr-071.md) D2). Reserving a word is not adding one: `break` and
@@ -847,7 +847,40 @@ To avoid writing the same code for different data types, Nikaia uses **Generics*
 struct Box[T] {
     item: T,
 }
+
+impl Box[T] {
+    fn get(self) -> T {
+        return self.item
+    }
+}
+
+fn hand[T](x: T) -> T {
+    return x
+}
 ```
+
+A parameter is written, never guessed, and it means two things depending on
+where you stand. **Inside the body it is a type**: `x` is a `T` and a `T` is not
+an `i64`, because the body did not pick what `T` is — its caller did. **At the
+call it is filled in from what you pass**: `hand(n)` where `n` is an `i64` hands
+back an `i64`, and `Box { item: n }` is a `Box[i64]`.
+
+That is also why a `T` on its own has no members. Nothing has said which types
+`T` may be, so nothing can say what one can do:
+
+```nika
+fn shout[T](x: T) -> String {
+    return x.to_uppercase()   // error[NK1126]: `T` stands for a type the caller
+}                             // picks, and nothing says it has a method
+                              // `to_uppercase`
+```
+
+> **Status:** the parameter, the call that fills it in, and `NK1126` are built,
+> for a `fn`, a `struct` and the `impl` over it. **A bound — `[T: Summarize]` —
+> is not**, and cannot be until 4.7's `trait` declaration is: a bound names a
+> trait, and a trait can currently be implemented but not declared. Until then a
+> generic body may move and pass its value and nothing else
+> ([ADR-074](adr/adr-074.md)). A generic `enum` is not read.
 
 ### 4.7. Traits (Defining Behavior)
 A **Trait** defines a set of behaviors (methods) that different types can share.
@@ -2023,7 +2056,7 @@ Nikaia enforces strict encapsulation to prevent tight coupling between parts of 
     * Functions, Structs, Enums and Constants are visible inside the **package**
       that declares them — every file of that directory — and nowhere else. (The
       `const` declaration is decided and unbuilt: the word is reserved, what may
-      stand in its initialiser is staged — [ADR-073](adr/adr-073.md) D5.)
+      stand in its initialiser is staged — [ADR-074](adr/adr-074.md) D5.)
     * Struct fields are the same: visible throughout the package that declares
       the struct.
 

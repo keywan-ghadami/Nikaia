@@ -45,67 +45,25 @@ name any type the language below has** - which is what `repeat(indent as usize)`
 turned out to be, rather than the one open parameter it had been filed as
 ([ADR-054](specification/adr/adr-054.md)) - and **a relayed message naming a type
 the program never wrote**, which wanted a rule and not a list
-([ADR-056](specification/adr/adr-056.md)).
+([ADR-056](specification/adr/adr-056.md)), and **a generic function that lowered
+without its type parameters** - which turned out to be three defects behind one
+reproduction, because writing the `<T>` closes only the first of them
+([ADR-074](specification/adr/adr-074.md)).
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. A generic function lowers without its type parameters, and does not compile
-
-```nika
-fn hand[T](x: T) -> T { return x }
-```
-
-lowers to `fn hand(x: T) -> T { x }` — the `[T]` is read by the parser, erased by
-the checker ([ADR-024](specification/adr/adr-024.md) D4) and **dropped** by the
-emitter, which writes `{vis}{pausing}fn {name}({params}){ret}` and has no slot
-for one. So `rustc` answers *"cannot find type `T` in this scope"* about a file
-nobody wrote, with *"you might be missing a type parameter"* as the help — which
-is [Part III C.1](specification/30-nikaia-tooling.md)'s class exactly.
-
-*Why it is a defect and not the roadmap's unchecked "Generics" box:* that box is
-about generics **working** — bounds, inference, generic `impl`s — and this is
-about a program that passes every stage this compiler has and then fails in the
-language below.
-
-*And lowering the parameters is **not** the answer*, which is worth writing down
-because it is the obvious one. Measured:
-
-```rust
-fn hand<T>(x: T) -> T { x }                       // compiles
-fn shout<T>(x: T) -> String { x.to_uppercase() }  // "no method named
-                                                  //  `to_uppercase` found for
-                                                  //  type parameter `T`"
-```
-
-The second needs a **bound**, and the checker cannot ask for one:
-[ADR-024](specification/adr/adr-024.md) D4 erases `T` to `?`, and `?` fits
-everything — so a body that uses its parameter type-checks clean and then fails
-in `rustc`. Writing the `<T>` therefore turns *"every generic fails"* into
-*"every generic whose body uses the parameter fails"*, which is the same Part III
-C.1 class one size smaller. It looks like progress and closes nothing.
-
-*What closes it:* **refusing the form with a sentence**, until the roadmap's box
-is taken. It costs nothing today — nothing in `examples/`, `tests/samples/` or
-`crates/nikaia-std/src/` writes a generic function or struct — and it is this
-section's own principle, stated at the head of §2: a refusal is free before
-programs exist and breaking afterwards. The alternative is to build generics
-properly, which is that box and not this entry.
-
-*Found by* a test looking for a stable source of `?`: D4's erasure is one the
-language *decides*, which makes it the right fixture, and it cannot be used until
-this is fixed.
-
-**This section was empty, and this put it back.** Two entries arrived while
-[ADR-066](specification/adr/adr-066.md) was being built — not caused by it, which
-is what writing programs against a construct does — and both left in the same
-session, each by being answered rather than ruled on. A member reached off a `T?`
-was emitted rather than refused, and what it needed was Part I 2.3 applied to a
-position that had escaped it (ADR-066 D6). A value this checker could not type
-got no `Some(…)` and no word, and what it needed was a wrap that is right in
-both directions rather than a decision about which one it is
-([ADR-068](specification/adr/adr-068.md)).
+**This section is empty again**, and the last entry to leave it is worth a
+sentence, because it left the opposite way from how it was filed. It was filed
+as *"refuse the form until the roadmap's box is taken"*, on this section's own
+principle that a refusal is free before programs exist. What it got instead was
+the box — and the measurement is why: the entry's own note said writing the
+`<T>` would close only a third of the hole, which is true, and the other two
+thirds turned out to be one `bind` per call and one diagnostic rather than a
+type system ([ADR-074](specification/adr/adr-074.md)). The refusal that shipped
+is `NK1126`, and it refuses a *body that uses its parameter* rather than the
+whole form - which is the smallest true refusal rather than the safest one.
 
 ## 2. Decided and unbuilt
 

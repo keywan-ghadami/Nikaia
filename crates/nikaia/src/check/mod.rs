@@ -281,6 +281,9 @@ pub fn check_program(
         enums: BTreeMap::new(),
         scope: Vec::new(),
         expected: None,
+        type_parameters: BTreeSet::new(),
+        struct_parameters: BTreeMap::new(),
+        enclosing: BTreeSet::new(),
         throwing: false,
         caught: false,
         current: None,
@@ -475,6 +478,25 @@ struct Checker<'a> {
     scope: Vec<Vec<Local>>,
     /// What the function being walked declared it hands back.
     expected: Option<Ty>,
+    /// The type parameters in scope where the body being walked stands - the
+    /// function's own `[T]` and the `[T]` of the `impl` around it.
+    ///
+    /// A name in here is a **type** while the body is walked and a **variable**
+    /// at every call site ([ADR-074](../../docs/specification/adr/adr-074.md)
+    /// D1). Empty everywhere else, which is every function written today.
+    type_parameters: BTreeSet<String>,
+    /// Every generic struct declared here, with its parameters in **declaration
+    /// order** - which is what makes a type argument's position mean something.
+    ///
+    /// Absent for a struct with no parameters, which is every struct written
+    /// today, so the two questions below cost a failed lookup and nothing else.
+    struct_parameters: BTreeMap<String, Vec<String>>,
+    /// The `[T]` of the `impl` whose methods are being walked, on its own.
+    ///
+    /// Separate from the field above because `function` rebuilds that one per
+    /// method and has to start from what the `impl` put in scope rather than
+    /// from nothing.
+    enclosing: BTreeSet<String>,
     /// Whether it declared `throws` - which is what says a failure may leave
     /// it, whether the failing call was written or implicit (ADR-025 D1).
     throwing: bool,
@@ -554,10 +576,15 @@ impl<'a> Checker<'a> {
                     fields,
                     ..
                 } => {
-                    let parameters: BTreeSet<String> = generics
+                    // In **declaration order**, because that is what a type
+                    // argument's position means: `Pair[i64]`'s `i64` is the
+                    // first parameter and nothing else says which
+                    // ([ADR-074](../../docs/specification/adr/adr-074.md) D2).
+                    let order: Vec<String> = generics
                         .iter()
                         .map(|g| self.parsed.text(g.name).to_string())
                         .collect();
+                    let parameters: BTreeSet<String> = order.iter().cloned().collect();
                     for f in fields {
                         let name = self.parsed.text(f.name).to_string();
                         self.not_self(&name, &f.span, "a field");
@@ -566,12 +593,15 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|f| FieldContract {
                             name: self.parsed.text(f.name).to_string(),
-                            ty: self.declared(&f.ty, &f.span).erase(&parameters),
+                            ty: self.declared(&f.ty, &f.span).parameterise(&parameters),
                             public: f.is_public,
                         })
                         .collect();
-                    self.structs
-                        .insert(self.parsed.text(*name).to_string(), fields);
+                    let own = self.parsed.text(*name).to_string();
+                    if !order.is_empty() {
+                        self.struct_parameters.insert(own.clone(), order);
+                    }
+                    self.structs.insert(own, fields);
                 }
                 Item::Enum { name, variants, .. } => {
                     let variants = variants
@@ -593,10 +623,21 @@ impl<'a> Checker<'a> {
                 Item::Impl {
                     target, methods, ..
                 } => {
+                    // `impl Stack[T]` puts `T` in scope for every method in it,
+                    // exactly as the ledger reads it (`Ledger::of`), so a method
+                    // body sees the same names its signature was recorded with -
+                    // one rule, called from both (`contracts::impl_parameters`).
+                    let declared = crate::contracts::declared_types(self.parsed);
+                    let outer: BTreeSet<String> =
+                        crate::contracts::impl_parameters(self.parsed, target, &declared)
+                            .into_iter()
+                            .collect();
                     let target = self.parsed.text(target.name).to_string();
                     for method in methods {
+                        self.enclosing = outer.clone();
                         self.function(&method.node, Some(&target));
                     }
+                    self.enclosing = BTreeSet::new();
                 }
                 // A test and a bench are code, and nothing about them is
                 // exempt from the language's rules (Part III, 14.1 and 13.4).
@@ -699,13 +740,24 @@ impl<'a> Checker<'a> {
         };
         let outer_current = self.current.replace(key);
 
-        let mut parameters: BTreeSet<String> = generics
-            .iter()
-            .map(|g| self.parsed.text(g.name).to_string())
-            .collect();
+        // **Inside its own body a type parameter is a type**
+        // ([ADR-074](../../docs/specification/adr/adr-074.md) D1). `T` is not a
+        // hole here: the caller picked it, this body did not, and a body that
+        // put an `i64` where its caller's `T` is wanted would be wrong. So the
+        // name stays a name and `fits` compares it, which is what lets `NK1126`
+        // below say that nothing describes what a `T` can do. Only at a *call*
+        // is it a variable (`bindings`), and that is the whole of the split.
+        let mut declared: BTreeSet<String> = self.enclosing.clone();
+        declared.extend(
+            generics
+                .iter()
+                .map(|g| self.parsed.text(g.name).to_string()),
+        );
         // `Self` stands for the type the `impl` is on, and nothing here
-        // resolves it - so it is a name that stands for a type, like `T`.
-        parameters.insert("Self".to_string());
+        // resolves it. Unlike `T` it is bound by no call site either, so it
+        // stays erased: a comparison against it could only be a false positive.
+        let parameters: BTreeSet<String> = ["Self".to_string()].into_iter().collect();
+        let outer_declared = std::mem::replace(&mut self.type_parameters, declared);
 
         let mut frame: Vec<Local> = Vec::new();
         if let Some(receiver) = receiver {
@@ -768,6 +820,7 @@ impl<'a> Checker<'a> {
 
         self.expected = outer;
         self.throwing = outer_throwing;
+        self.type_parameters = outer_declared;
         self.current = outer_current;
     }
 
@@ -966,6 +1019,61 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK1126`: a member reached on a type parameter, which has no bound.**
+    ///
+    /// `fn shout[T](x: T) -> String { return x.to_uppercase() }` is the program.
+    /// It has a `T`, the `T` has no bound, and a value of it can therefore be
+    /// moved and passed and nothing else - so `to_uppercase` is not a member of
+    /// it, in the same way that it is not a member of an `i64`.
+    ///
+    /// **This is the refusal that makes writing the `<T>` worth anything**
+    /// ([ADR-074](../../docs/specification/adr/adr-074.md) D5). Emitting the
+    /// parameter without it turns *"every generic function fails in `rustc`"*
+    /// into *"every generic function whose body uses its parameter fails in
+    /// `rustc`"* - the same [Part III C.1](../../docs/specification/30-nikaia-tooling.md)
+    /// class one size smaller, because the message is still `rustc`'s, about a
+    /// file nobody wrote, saying `T` in the current scope.
+    ///
+    /// Why it is not a warning: the alternative is a program this compiler
+    /// accepts and the backend refuses, which is the state the whole of
+    /// Part III C is about. And why it says *"no bound"* rather than *"no such
+    /// method"*: the method may well exist on every type the caller will ever
+    /// pass, and what is missing is the sentence that says so.
+    fn nothing_says_what_a_parameter_can_do(
+        &mut self,
+        parameter: &str,
+        member: Reached<'_>,
+        span: &Span,
+    ) {
+        if !self.type_parameters.contains(parameter) {
+            return;
+        }
+        let (what, name) = match member {
+            Reached::Field(name) => ("field", name),
+            Reached::Method(name) => ("method", name),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1126",
+            message: format!(
+                "`{parameter}` stands for a type the caller picks, and nothing says it has a \
+                 {what} `{name}`"
+            ),
+            notes: vec![
+                "a type parameter with no bound can be moved and passed and nothing \
+                 else, because every type the caller may pick has to answer for what \
+                 the body does (Part I, 4.6)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write the type the value actually has, or take `{parameter}` out and \
+                 declare the parameter as that type - a bound that says which types \
+                 `{parameter}` may be is not built yet"
+            )),
+        });
+    }
+
     /// **What a method call is**, asked of a receiver whose type is already in
     /// hand.
     ///
@@ -995,6 +1103,13 @@ impl<'a> Checker<'a> {
         let Some((key, contract)) = self.method(&key) else {
             // The type is known and no ledger describes this method of
             // it - `HashMap::entry` until something writes it down.
+            // Unless the type is a **parameter**, where nothing will ever
+            // describe it and saying so now is the whole of `NK1126`.
+            self.nothing_says_what_a_parameter_can_do(
+                name,
+                Reached::Method(self.parsed.text(method)),
+                span,
+            );
             args.iter().for_each(|a| {
                 self.expr(a, span);
             });
@@ -1045,6 +1160,13 @@ impl<'a> Checker<'a> {
             &[],
             span,
         );
+        // The receiver first (ADR-031), then whatever the arguments can still
+        // say (ADR-074 D2) - `or_insert` on a map that bound `$V` already has
+        // its answer, and `bind` does not overwrite one.
+        let mut bound = bound;
+        for (name, ty) in from_arguments(contract, &found) {
+            bound.entry(name).or_insert(ty);
+        }
         ty::substitute(&result, &bound)
     }
 
@@ -1718,13 +1840,22 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 };
                 let Some(fields) = self.fields_of(ty) else {
+                    // `NK1126` where the type is a parameter: nothing will ever
+                    // describe `T`, so a field on one is refused here rather
+                    // than by `rustc` about the generated file.
+                    let ty = ty.clone();
+                    self.nothing_says_what_a_parameter_can_do(&ty, Reached::Field(&field), span);
                     return Ty::Unknown;
                 };
                 match fields.iter().find(|f| f.name == field) {
                     Some(found) => {
                         let (ty, declared) = (ty.clone(), found.clone());
                         self.field_is_reachable(&ty, &declared, span);
-                        declared.ty
+                        // `Pair[i64].first` is an `i64`: the receiver's own
+                        // arguments bind the declaration's parameters, exactly
+                        // as a method's receiver binds its signature's
+                        // (ADR-031, and ADR-074 D2 for a `.nika` declaration).
+                        ty::substitute(&declared.ty, &self.arguments_of(&on))
                     }
                     None => {
                         let ty = ty.clone();
@@ -1780,6 +1911,12 @@ impl<'a> Checker<'a> {
                 // `http::Request` (ADR-046 D3).
                 let name = self.parsed.unaliased(self.parsed.text(*name));
                 let declared = self.fields_of(&name);
+                // **What a generic struct's literal binds**
+                // ([ADR-074](../../docs/specification/adr/adr-074.md) D2).
+                // `Pair { first: 1, second: 2 }` is a `Pair[i64]` and nothing
+                // else says so: the declaration writes `first: $T` and the
+                // value is an `i64`, which is one `bind` per field.
+                let mut bound: BTreeMap<String, Ty> = BTreeMap::new();
                 for init in fields {
                     let field = self.parsed.text(init.name).to_string();
                     // `Reading { name, temp }` is shorthand for `name: name`.
@@ -1791,6 +1928,7 @@ impl<'a> Checker<'a> {
                     match declared.iter().find(|f| f.name == field) {
                         Some(found_field) => {
                             let want = found_field.ty.clone();
+                            ty::bind(&want, &found, &mut bound);
                             let owner = name.clone();
                             self.field_is_reachable(&name, found_field, span);
                             // **No longer a constructor either**
@@ -1825,7 +1963,20 @@ impl<'a> Checker<'a> {
                         None => self.no_such_field(&name, &field, declared, span),
                     }
                 }
-                Ty::named(name)
+                match self.struct_parameters.get(&name) {
+                    Some(order) => {
+                        let args = order
+                            .iter()
+                            .map(|p| bound.get(p).cloned().unwrap_or(Ty::Unknown))
+                            .collect();
+                        Ty::Named {
+                            name,
+                            args,
+                            view: false,
+                        }
+                    }
+                    None => Ty::named(name),
+                }
             }
 
             // A lambda's arguments are the ones it names (ADR-049). There is
@@ -2510,7 +2661,17 @@ impl<'a> Checker<'a> {
             .filter(|_| !name.ends_with("::new"))
             .map(Ty::named);
         let result = self.arguments(&key, &name, contract, args, &found, &passed, span);
-        constructed.unwrap_or(result)
+        // **What the arguments tell the signature**
+        // ([ADR-074](../../docs/specification/adr/adr-074.md) D2). A free
+        // function has no receiver, so ADR-031's binding had nothing to work
+        // from and `hand(7)` handed back `?`; the same `bind` pointed at the
+        // parameters answers `i64`. After `arguments` rather than before it,
+        // because a variable fits everything and the check is therefore the
+        // same either way round - while the *types* are not: a lambda's
+        // parameters are typed from the signature (ADR-029), so the signature
+        // has to reach them unsubstituted.
+        let bound = from_arguments(contract, &found);
+        constructed.unwrap_or_else(|| ty::substitute(&result, &bound))
     }
 
     /// The count and the types of what a call passes, against what it takes.
@@ -3466,6 +3627,27 @@ impl<'a> Checker<'a> {
     }
 
     /// The fields of a type, when something knows them.
+    /// What a value's own type arguments bind its declaration's parameters to.
+    ///
+    /// `Pair[i64]` against `struct Pair[T]` gives `T = i64`, positionally,
+    /// because a type argument's position is the only thing that says which
+    /// parameter it fills. Empty for every type that declares none, which is
+    /// every type written today.
+    fn arguments_of(&self, on: &Ty) -> BTreeMap<String, Ty> {
+        let Ty::Named { name, args, .. } = on else {
+            return BTreeMap::new();
+        };
+        let Some(order) = self.struct_parameters.get(name) else {
+            return BTreeMap::new();
+        };
+        order
+            .iter()
+            .cloned()
+            .zip(args.iter().cloned())
+            .filter(|(_, arg)| !arg.is_unknown())
+            .collect()
+    }
+
     fn fields_of(&self, name: &str) -> Option<Vec<FieldContract>> {
         if let Some(fields) = self.structs.get(name) {
             return Some(fields.clone()).filter(|f: &Vec<_>| !f.is_empty());
@@ -3896,6 +4078,30 @@ fn bindings(contract: &FnContract, receiver: &Ty) -> BTreeMap<String, Ty> {
         if name == "self" {
             ty::bind(pattern, receiver, &mut bound);
         }
+    }
+    bound
+}
+
+/// What the **arguments** bind this signature's variables to.
+///
+/// ADR-031 bound from the receiver only, and said so on purpose: binding from
+/// arguments is where a signature language grows into a unification algorithm.
+/// [ADR-074](../../../docs/specification/adr/adr-074.md) D2 takes that step and
+/// keeps it one step. This is the same `ty::bind` against one pattern per
+/// argument - a structural walk, no queue, no fixpoint, no occurs check -
+/// because a type parameter is **written** rather than inferred, so there is
+/// never a variable on the right-hand side to solve for.
+///
+/// A mismatch binds nothing, exactly as the receiver's does: the question is
+/// what a caller can *tell* the signature, and `substitute` turns what it could
+/// not tell into `?`.
+fn from_arguments(contract: &FnContract, found: &[Ty]) -> BTreeMap<String, Ty> {
+    let mut bound = BTreeMap::new();
+    let Some(signature) = &contract.signature else {
+        return bound;
+    };
+    for ((_, pattern), actual) in signature.arguments().iter().zip(found) {
+        ty::bind(pattern, actual, &mut bound);
     }
     bound
 }

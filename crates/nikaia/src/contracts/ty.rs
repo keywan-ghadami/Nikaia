@@ -268,6 +268,53 @@ impl Ty {
         }
     }
 
+    /// The same type with every name in `parameters` turned into a variable a
+    /// call site binds.
+    ///
+    /// This is [`Self::erase`]'s sibling and the difference between them is the
+    /// whole of [ADR-074]: a name that stands for a type is recorded as a
+    /// **variable** rather than as the absence of a claim, so `fn hand[T](x: T)
+    /// -> T` tells a caller that what comes back is what went in. `erase` stays
+    /// for `Self`, which is a name for the type an `impl` is on and is bound by
+    /// nothing a call site passes.
+    ///
+    /// `Ty::Var`'s safety argument is unchanged and is what makes this legal:
+    /// a variable is bound and replaced, or it becomes `Unknown`. It never
+    /// survives into a comparison, so no caller is ever told that `i64` is not
+    /// `T` - which is the false positive [ADR-024] D4 erased generics to avoid.
+    ///
+    /// [ADR-024]: ../../../docs/specification/adr/adr-024.md
+    /// [ADR-074]: ../../../docs/specification/adr/adr-074.md
+    pub fn parameterise(&self, parameters: &BTreeSet<String>) -> Ty {
+        match self {
+            Ty::Unknown => Ty::Unknown,
+            Ty::Tuple(parts) => {
+                Ty::Tuple(parts.iter().map(|p| p.parameterise(parameters)).collect())
+            }
+            Ty::Fn { params } => Ty::Fn {
+                params: params.iter().map(|p| p.parameterise(parameters)).collect(),
+            },
+            Ty::Var { name, view } => Ty::Var {
+                name: name.clone(),
+                view: *view,
+            },
+            Ty::Nullable(inner) => Ty::Nullable(Box::new(inner.parameterise(parameters))),
+            Ty::Named { name, args, view } => {
+                if args.is_empty() && parameters.contains(name) {
+                    return Ty::Var {
+                        name: name.clone(),
+                        view: *view,
+                    };
+                }
+                Ty::Named {
+                    name: name.clone(),
+                    args: args.iter().map(|a| a.parameterise(parameters)).collect(),
+                    view: *view,
+                }
+            }
+        }
+    }
+
     /// The type a `.nika` declaration names.
     pub fn from_ast(parsed: &Parsed, ty: &ast::Type) -> Ty {
         if ty.is_tuple {
