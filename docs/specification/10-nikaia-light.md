@@ -124,8 +124,9 @@ while
 ```
 
 **`const` is on the list for the opposite reason to the next three**: it is
-reserved *for* a construct that Part II 10.2 specifies and the parser does not yet
-have ([ADR-073](adr/adr-073.md) D1), rather than against the possibility of one.
+reserved *for* a construct rather than against the possibility of one
+([ADR-073](adr/adr-073.md) D1) — and since it is a statement inside a function
+body, the word is doing the job it was reserved for (Part II, 10.2).
 
 **`break`, `continue` and `loop` are on the list and are not constructs**
 ([ADR-071](adr/adr-071.md) D2). Reserving a word is not adding one: `break` and
@@ -2054,9 +2055,10 @@ Nikaia enforces strict encapsulation to prevent tight coupling between parts of 
 
 1.  **Private to its package, by default:**
     * Functions, Structs, Enums and Constants are visible inside the **package**
-      that declares them — every file of that directory — and nowhere else. (The
-      `const` declaration is decided and unbuilt: the word is reserved, what may
-      stand in its initialiser is staged — [ADR-073](adr/adr-073.md) D5.)
+      that declares them — every file of that directory — and nowhere else. (A
+      `const` at **item level** is decided and unbuilt: inside a function body it
+      is a statement today, and `pub const` at the top of a file has nowhere to
+      stand yet — [ADR-073](adr/adr-073.md) D2.)
     * Struct fields are the same: visible throughout the package that declares
       the struct.
 

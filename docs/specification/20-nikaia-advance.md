@@ -65,12 +65,19 @@ fn parse_input(input: String) throws {
 }
 ```
 
-> **Status:** **B is built and A is not.** `const` is a reserved word since
-> [ADR-073](adr/adr-073.md) D1 and is not yet a declaration: at item level it is a
-> parse error, and inside a function body `const X = 1` parses as two statements
-> and is then refused by `NK1117`, *"nothing declares `const`"*. So the
-> compile-time half of dual-mode parsing has no syntax to be written in, and a
-> `dsl … from …` runs at runtime wherever it stands.
+> **Status:** **B is built and A is half.** `const` is a **declaration inside a
+> function body** ([ADR-073](adr/adr-073.md) D2): it parses, its initialiser is
+> evaluated while the program is built, and what reaches the language below is the
+> value rather than the expression — `const LIMIT = 4 * 1024` arrives as `4096`.
+> At **item level** it is still a parse error, so a constant at the top of a file
+> has nowhere to stand yet.
+>
+> What the initialiser may hold is D5's first stage: an integer — a literal,
+> arithmetic over literals and over other constants — and `true` or `false`. **A
+> call is not in it**, so the `dsl … from "…"` above still has nothing to stand in
+> and runs at runtime wherever it is written. A `const` this compiler cannot
+> evaluate is `NK1127` rather than a value computed later, which is D3's demand
+> doing its one job.
 >
 > **What the declaration will mean is decided** ([ADR-073](adr/adr-073.md)): it
 > stands where an item stands and inside a body, its type may be written and does

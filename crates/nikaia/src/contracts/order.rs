@@ -889,7 +889,9 @@ fn callee_of(parsed: &Parsed, expr: &Expr) -> Option<String> {
 fn diverts(stmts: &[crate::ast::Spanned<Stmt>]) -> bool {
     stmts.iter().any(|stmt| match &stmt.node {
         Stmt::Return(_) => true,
-        Stmt::Expr(expr) | Stmt::Let { value: expr, .. } => holds_throw(expr),
+        Stmt::Expr(expr) | Stmt::Let { value: expr, .. } | Stmt::Const { value: expr, .. } => {
+            holds_throw(expr)
+        }
         Stmt::Assign { value, .. } => holds_throw(value),
         Stmt::For { body, .. } | Stmt::While { body, .. } => diverts(&body.stmts),
     })
@@ -1087,7 +1089,9 @@ pub(super) fn names_in_block(
 ) {
     for stmt in &block.stmts {
         match &stmt.node {
-            Stmt::Let { value, .. } | Stmt::Expr(value) => names_in(parsed, value, out),
+            Stmt::Let { value, .. } | Stmt::Const { value, .. } | Stmt::Expr(value) => {
+                names_in(parsed, value, out)
+            }
             Stmt::Assign { target, value, .. } => {
                 names_in(parsed, target, out);
                 names_in(parsed, value, out);

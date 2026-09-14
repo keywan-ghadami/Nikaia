@@ -121,6 +121,24 @@ pub enum Item {
     Grammar(GrammarDef),
 
     // Kap 9.2: use std::fs
+    /// Kap 9.2 / Part II 10.2: `const MAX = 1000`, at the top of a file.
+    ///
+    /// **The keyword is a demand rather than an ability**
+    /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D3). The compiler
+    /// folds constants already, so what this adds is that the fold *has* to
+    /// succeed: a `let` may fold, a `const` must, and says so where it cannot.
+    /// What may stand in the initialiser is staged (D5), and the stage that is
+    /// built is the shared fold plus a literal of another kind.
+    Const {
+        name: Ident,
+        /// Written or inferred, the way a `let`'s is (D4).
+        ty: Option<Type>,
+        value: Expr,
+        /// `pub const`, which is Part I 9.2's existing rule for Constants
+        /// rather than a new one.
+        public: bool,
+    },
+
     Import {
         path: Vec<Ident>,
         /// `use http as h` - what this file calls the package
@@ -144,6 +162,16 @@ pub enum Stmt {
         name: Ident,
         mutable: bool,
         ty: Option<Type>, // Type Inference macht dies optional
+        value: Expr,
+    },
+
+    /// `const LIMIT = 4 * 1024`, inside a body
+    /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D2). Scoped like a
+    /// `let` and evaluated like the item form: the difference between the two is
+    /// where the name is visible, never what may stand to the right of the `=`.
+    Const {
+        name: Ident,
+        ty: Option<Type>,
         value: Expr,
     },
 

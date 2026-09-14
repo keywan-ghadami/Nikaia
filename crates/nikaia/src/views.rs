@@ -524,7 +524,7 @@ impl Scanner<'_> {
         for (i, stmt) in block.stmts.iter().enumerate() {
             let returning = tail && i == last;
             match &stmt.node {
-                Stmt::Let { name, value, .. } => {
+                Stmt::Let { name, value, .. } | Stmt::Const { name, value, .. } => {
                     if self.mentions(value) {
                         self.carriers.insert(self.parsed.text(*name).to_string());
                     }
@@ -787,7 +787,7 @@ fn each_block(block: &Block, f: &mut impl FnMut(&Expr)) {
 /// The expressions a statement holds.
 fn stmt_exprs(stmt: &Stmt) -> Vec<&Expr> {
     match stmt {
-        Stmt::Let { value, .. } => vec![value],
+        Stmt::Let { value, .. } | Stmt::Const { value, .. } => vec![value],
         Stmt::Expr(expr) | Stmt::Return(Some(expr)) => vec![expr],
         Stmt::Assign { target, value, .. } => vec![target, value],
         Stmt::For { iter, .. } => vec![iter],

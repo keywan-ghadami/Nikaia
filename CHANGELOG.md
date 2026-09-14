@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added (`const` is a declaration, inside a body)
+
+- **[ADR-073](docs/specification/adr/adr-073.md) D2's body form is built**: `const LIMIT = 4 * 1024` parses, is evaluated while the program is built, and reaches the language below as `const LIMIT: i32 = 4096;` — **the arithmetic does not survive**, which is the visible half of D3. Six tests cover it, one of which compiles and runs the program rather than reading the emitted file.
+- **What the keyword adds is a demand, not arithmetic.** The compiler folded constants long before this ([ADR-063](docs/specification/adr/adr-063.md)), so the new part is that the fold *has* to succeed: **a `let` may fold; a `const` must, and says so where it cannot** — `NK1127`, whose help names the way out, `let`, for a value that was never a constant. Refused rather than computed later, because a guarantee that silently degrades into *it happened to be cheap* is worse than one that is absent.
+- **The checker hands the emitter both the type and the value**, and the second half is the one that is easy to miss: Rust's `const` takes a type and this emitter has none ([ADR-028](docs/specification/adr/adr-028.md)) — but it also has no **scope**, and folding `const PAIR = PAGE * 2` means knowing what `PAGE` is. Without the value travelling with the type, a constant built out of another would reach Rust unfolded and D3's demand would be `rustc`'s to keep. A test covers exactly that shape.
+- What the initialiser may hold is D5's first stage: an integer — a literal, arithmetic over literals and over other constants — and `true` or `false`. A call is the second stage, so `dsl … from "…"` still has nothing to stand in.
+- **Item level is not built** and is on [`open-work.md`](docs/open-work.md) §2.14 with what it needs: a scope frame under every function, which the checker does not have because its scope is a stack pushed per function. No decision is missing — the evaluator, the refusal and the type spelling are the body form's.
+- The error corpus moved by **two lines**: `return` now appears in the *also possible here* list of two parse errors, because the statement rule gained an alternative. Strictly more informative, and regenerated rather than hand-edited.
+
 ### Fixed (two records were wearing one number, and the checker now says so)
 
 - **ADR-074 was claimed twice on the same afternoon and the second record overwrote the first.** The generics record — *a type parameter is a type inside its own body and a variable at every call site* — landed at 17:53; the build-time-body record was written over the same file at 19:14. The generics record is **restored from its own commit, unchanged**, and keeps 074, because it was there first. The build-time-body record is now [ADR-075](docs/specification/adr/adr-075.md), and every citation of it was moved with it. Part I 2.1's sentence about `const` had also drifted to 074 and points at [ADR-073](docs/specification/adr/adr-073.md) D1 again, which is where the word is reserved.

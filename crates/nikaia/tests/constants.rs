@@ -1,0 +1,149 @@
+//! **`const`** — Part II 10.2,
+//! [ADR-073](../../../docs/specification/adr/adr-073.md).
+//!
+//! The keyword's whole content is a **demand** rather than an ability (D3). The
+//! compiler folded constants before this existed — a `let` bound to `2 * 3` is
+//! folded twice on the way through ([ADR-063](../../../docs/specification/adr/adr-063.md))
+//! — so what `const` adds is that the fold *has* to succeed, and that a program
+//! which cannot be folded is refused rather than quietly computed while it runs.
+//!
+//! That is what these tests are about, in both directions: what reaches the
+//! language below is the **folded value**, and what does not fold reaches the
+//! reader as `NK1127`.
+
+mod common;
+
+use nikaia::check::{self, Finding};
+use nikaia::contracts::{Ledger, STD};
+use nikaia::emit;
+use nikaia::parser::parse_to_ast;
+use std::process::Command;
+
+fn findings(source: &str) -> Vec<Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    check::check(&parsed, &own, &library).findings
+}
+
+fn lower(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit::emit_program(&parsed, Default::default())
+        .expect("the source lowers")
+        .rust
+}
+
+fn run(purpose: &str, source: &str) -> String {
+    let dir = common::scratch_dir(purpose);
+    let rust = lower(source);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "a `const` did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run it");
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let out = String::from_utf8_lossy(&ran.stdout).to_string();
+    std::fs::remove_dir_all(&dir).ok();
+    out
+}
+
+const FOUR: &str = "fn main() {\n\
+     \x20   const LIMIT = 4 * 1024\n\
+     \x20   const BIG = 3000000000\n\
+     \x20   const WIDE: i64 = 7\n\
+     \x20   const ON = true\n\
+     \x20   println(f\"{LIMIT} {BIG} {WIDE} {ON}\")\n\
+     }";
+
+/// **The arithmetic does not survive into the program**, which is the visible
+/// half of D3: a reader of the generated file can see that `4 * 1024` was done
+/// while the program was built.
+#[test]
+fn what_reaches_the_language_below_is_the_folded_value() {
+    let rust = lower(FOUR);
+    assert!(rust.contains("const LIMIT: i32 = 4096;"), "{rust}");
+    assert!(
+        !rust.contains("4 * 1024"),
+        "the multiplication survived:\n{rust}"
+    );
+}
+
+/// The type is written where the program wrote one and inferred where it did
+/// not (D4) — and a constant no `i32` holds takes the next type that does,
+/// which is [ADR-063](../../../docs/specification/adr/adr-063.md)'s widening
+/// reaching a second position rather than a rule of its own.
+#[test]
+fn the_type_is_written_or_the_first_one_that_holds_it() {
+    let rust = lower(FOUR);
+    for want in [
+        "const BIG: i64 = 3000000000;",
+        "const WIDE: i64 = 7;",
+        "const ON: bool = true;",
+    ] {
+        assert!(rust.contains(want), "missing `{want}`:\n{rust}");
+    }
+}
+
+/// And it runs, which is the part no amount of reading the emitted file
+/// replaces.
+#[test]
+fn a_program_with_constants_compiles_and_prints_them() {
+    assert_eq!(run("const-four", FOUR).trim(), "4096 3000000000 7 true");
+}
+
+/// **What does not fold is refused, not computed later** (D3, D5). The way out
+/// is in the message, and it is `let`: the program may well want the value
+/// computed while it runs, and then it was never a constant.
+#[test]
+fn a_constant_this_compiler_cannot_evaluate_is_refused_by_name() {
+    let found = findings("fn main() { const GREET = \"hallo\" println(f\"{GREET}\") }");
+    let refused: Vec<&Finding> = found.iter().filter(|f| f.code == "NK1127").collect();
+    assert_eq!(refused.len(), 1, "{found:#?}");
+    let said = &refused[0];
+    assert!(
+        said.message.contains("cannot evaluate `GREET`"),
+        "{said:#?}"
+    );
+    assert!(
+        said.help
+            .as_deref()
+            .unwrap_or_default()
+            .contains("let GREET"),
+        "the way out is named: {said:#?}"
+    );
+}
+
+/// A constant reached **through another constant** folds, which is what makes
+/// the fold's lookup worth having here: `constant_of` asks the scope, and a
+/// `const` puts its value there the way an immutable `let` does.
+#[test]
+fn a_constant_may_be_built_out_of_another() {
+    let rust = lower(
+        "fn main() {\n\
+         \x20   const PAGE = 4096\n\
+         \x20   const PAIR = PAGE * 2\n\
+         \x20   println(f\"{PAIR}\")\n\
+         }",
+    );
+    assert!(rust.contains("const PAIR: i32 = 8192;"), "{rust}");
+}
+
+/// **No `mut`** (D6): a constant is a value rather than a place, so the grammar
+/// has nothing for a second assignment to reach. It does not parse at all,
+/// which is the cheapest place to say so.
+#[test]
+fn a_constant_cannot_be_mutable() {
+    assert!(parse_to_ast("fn main() { const mut X = 1 }").is_err());
+}

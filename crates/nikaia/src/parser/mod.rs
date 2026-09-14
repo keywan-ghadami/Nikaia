@@ -1005,7 +1005,8 @@ grammar! {
             stmts:stmt* -> { stmts }
 
         rule stmt -> Spanned<Stmt> # "statement" @=
-            l:let_stmt -> { Spanned::new(l, _span) }
+            c:const_stmt -> { Spanned::new(c, _span) }
+          | l:let_stmt -> { Spanned::new(l, _span) }
           | r:return_stmt -> { Spanned::new(r, _span) }
           | t:throw_stmt -> { Spanned::new(t, _span) }
           | w:while_stmt -> { Spanned::new(w, _span) }
@@ -1027,6 +1028,22 @@ grammar! {
             }
 
         rule kw_mut -> () = KW_MUT -> { () }
+
+        // Part II 10.2: `const LIMIT = 4 * 1024`, and the same form at item
+        // level. **No `mut`**, which is not an omission
+        // ([ADR-073](../../../../docs/specification/adr/adr-073.md) D6): a
+        // constant is a value rather than a place, so there is nothing for a
+        // second assignment to reach.
+        rule const_stmt -> Stmt =
+            KW_CONST
+            name:NAME
+            ty:type_annotation?
+            "="
+            val:expr
+            ";"?
+            -> {
+                Stmt::Const { name, ty, value: val }
+            }
 
         rule let_stmt -> Stmt =
             KW_LET

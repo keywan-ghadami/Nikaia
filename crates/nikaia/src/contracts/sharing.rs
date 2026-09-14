@@ -1015,6 +1015,15 @@ impl<'a> Analysis<'a> {
                 }
                 self.expr(function, value, scope);
             }
+            // **A `const` never holds a handle**
+            // ([ADR-073](../../../docs/specification/adr/adr-073.md) D3): its
+            // value is what the fold came to, and the fold evaluates literals
+            // and arithmetic over them - a hull is made by a call, which D5
+            // does not admit into an initialiser yet. So there is no count to
+            // record and no second handle to find. The day D5's second stage
+            // lands, this arm is where the question is asked again.
+            Stmt::Const { .. } => {}
+
             Stmt::Assign { target, value, .. } => {
                 // `a = b` makes `a` a handle on `b`'s allocation - and `a` may
                 // be a field of a struct as easily as a name.

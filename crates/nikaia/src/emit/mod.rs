@@ -787,6 +787,17 @@ struct Emitter<'p> {
     /// (`check::Checked::nullable_sites`,
     /// [ADR-068](../../../docs/specification/adr/adr-068.md)).
     nullable_sites: std::collections::BTreeMap<usize, crate::check::Wrap>,
+    /// What each `const` is written as below - its type and its value - by the
+    /// byte its statement starts at (`check::Checked::constants`,
+    /// [ADR-073](../../docs/specification/adr/adr-073.md) D3, D4).
+    ///
+    /// Here for the reason every table beside it is: this has neither types nor
+    /// a scope ([ADR-028](../../docs/specification/adr/adr-028.md)), and a
+    /// `const` needs both - a type because Rust's `const` takes one, and a
+    /// scope because `const PAIR = PAGE * 2` folds only for something that
+    /// knows what `PAGE` is. A statement with no entry never arrives, because
+    /// the checker refused it as `NK1127` first.
+    constants: std::collections::BTreeMap<usize, (String, String)>,
     /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
     /// therefore flatten (`check::Checked::flattened_reaches`).
     flattened_reaches: std::collections::BTreeSet<(usize, String)>,
@@ -1243,6 +1254,7 @@ impl<'p> Emitter<'p> {
             narrowing_casts: propagation.narrowing,
             shared,
             nullable_sites: propagation.nullable,
+            constants: propagation.constants,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
             nullable_args: propagation.nullable_in_args,
@@ -2808,6 +2820,26 @@ impl<'p> Emitter<'p> {
                 out.push(after);
                 out.push(";");
             }
+            // **The folded value is what is written**, not the expression that
+            // folded ([ADR-073](../../docs/specification/adr/adr-073.md) D3).
+            // That is the visible half of the demand: `const LIMIT = 4 * 1024`
+            // reaches the language below as `4096`, so a reader of the generated
+            // file can see that the arithmetic did not survive into the program.
+            //
+            // The type comes from the checker, because Rust's `const` takes one
+            // and this has no types (ADR-028). A `const` with no entry there was
+            // refused as `NK1127` and never arrives.
+            Stmt::Const { name, .. } => {
+                let bound = self.text(*name);
+                let Some((below, written)) = self.constants.get(&span.start).cloned() else {
+                    return Err(refused!(
+                        "`{bound}` has nothing to write, which `NK1127` reports - \
+                         so this statement should not have reached the emitter"
+                    ));
+                };
+                out.push(&format!("const {bound}: {below} = {written};"));
+            }
+
             Stmt::Assign { target, op, value } => {
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
                 self.expr(out, target, depth, flow)?;
@@ -5050,7 +5082,7 @@ pub fn branch_starts_first<'p>(
 pub(crate) fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
     for stmt in &block.stmts {
         match &stmt.node {
-            Stmt::Let { value, .. } => visit_expr(value, f),
+            Stmt::Let { value, .. } | Stmt::Const { value, .. } => visit_expr(value, f),
             Stmt::Assign { target, value, .. } => {
                 visit_expr(target, f);
                 visit_expr(value, f);

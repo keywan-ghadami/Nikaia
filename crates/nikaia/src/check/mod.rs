@@ -115,6 +115,22 @@ pub struct MethodCalls {
 pub struct Checked {
     /// Every mistake it is sure about.
     pub findings: Vec<Finding>,
+    /// What each `const` is written as below - its type and its **value** - by
+    /// the byte its statement starts at
+    /// ([ADR-073](../../docs/specification/adr/adr-073.md) D3, D4).
+    ///
+    /// The same arrangement as `fallible_methods` and for the same reason, said
+    /// twice over. The **type** may be left out and Rust's `const` demands one,
+    /// so somebody has to infer it, and the emitter has no types
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)). The **value** is
+    /// here for the sharper half of the same reason: folding `PAGE * 2` means
+    /// knowing what `PAGE` is, which is a scope - and the emitter has none of
+    /// those either, so a constant built out of another would reach the
+    /// language below unfolded and D3's demand would be `rustc`'s to keep.
+    ///
+    /// Both are spelled in the language below, so the emitter writes the pair
+    /// and decides nothing.
+    pub constants: BTreeMap<usize, (String, String)>,
     /// The `for` statements whose **step can fail** (ADR-025 D1), by the byte
     /// the statement starts at.
     ///
@@ -415,6 +431,8 @@ pub struct Propagation {
     pub nullable_in_args: BTreeMap<(usize, String, usize), Wrap>,
     /// [`Checked::task_handles`].
     pub task_handles: BTreeSet<(usize, String)>,
+    /// [`Checked::constants`].
+    pub constants: BTreeMap<usize, (String, String)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -448,6 +466,26 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         nullable_in_fields: checked.nullable_fields,
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
+        constants: checked.constants,
+    }
+}
+
+/// How a `const`'s type is spelled in the language below, where this compiler
+/// can spell it ([ADR-073](../../docs/specification/adr/adr-073.md) D5).
+///
+/// **A short list on purpose.** Rust's `const` takes a type and no inference,
+/// so a Nikaia type this cannot name is a `const` this cannot write - and
+/// `None` here becomes `NK1127` rather than a guess. The list grows with D5's
+/// stages: a `String` is missing because Rust has no `const String`, and what
+/// a literal string would become - a `&'static str` - is a different type from
+/// the one Part I gives it, which is a decision rather than a mapping.
+fn rust_constant_type(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Named { name, args, view } if args.is_empty() && !*view => match name.as_str() {
+            "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" => Some(name.clone()),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -1521,6 +1559,87 @@ impl<'a> Checker<'a> {
                     true => None,
                 };
                 self.bind_with(name, bound, constant);
+                Ty::Tuple(Vec::new())
+            }
+
+            // **`const` is a `let` that has to fold**
+            // ([ADR-073](../../docs/specification/adr/adr-073.md) D3). The fold
+            // is the one [ADR-063](../../docs/specification/adr/adr-063.md)
+            // already shares, so nothing new evaluates anything: what this arm
+            // adds is the refusal where it comes back empty, and the type the
+            // emitter will need (D4).
+            //
+            // **Refused by name rather than run at program time** (D5). Falling
+            // back would break the promise the word is for, and quietly - the
+            // program would still work and the guarantee would be gone.
+            Stmt::Const { name, ty, value } => {
+                let found = self.expr(value, span);
+                let bound = self.parsed.text(*name).to_string();
+                self.not_self(&bound, span, "a `const`");
+                let want = ty.as_ref().map(|ty| self.declared(ty, span));
+                if let Some(want) = &want {
+                    self.constant_fits(value, Some(want), span);
+                    self.expect(&found, want, span.clone(), "const", |found, want| {
+                        format!("this is `{found}`, and the `const` says `{want}`")
+                    });
+                } else {
+                    self.constant_fits(value, None, span);
+                }
+
+                // What the emitter writes, spelled in the language below. An
+                // integer takes the type its declaration pinned, and otherwise
+                // the first one that holds it - Part I 2.4's rule, applied here
+                // because Rust's `const` will not take the absence.
+                let folded = self.constant_of(value);
+                let below = match (&want, &folded, value) {
+                    (Some(want), _, _) => rust_constant_type(want),
+                    (None, Some(folded), _) => Some(match &folded.pinned {
+                        Some(pinned) => pinned.clone(),
+                        None => match i32::try_from(folded.value) {
+                            Ok(_) => "i32".to_string(),
+                            Err(_) => "i64".to_string(),
+                        },
+                    }),
+                    (None, None, Expr::LitBool(_)) => Some("bool".to_string()),
+                    _ => None,
+                };
+
+                // The value, spelled below. An integer is what the fold came
+                // to; `true` and `false` are themselves.
+                let written = match (&folded, value) {
+                    (Some(folded), _) => Some(folded.value.to_string()),
+                    (None, Expr::LitBool(yes)) => Some(yes.to_string()),
+                    _ => None,
+                };
+                match (&below, &written) {
+                    (Some(below), Some(written)) => {
+                        self.checked
+                            .constants
+                            .insert(span.start, (below.clone(), written.clone()));
+                    }
+                    _ => self.checked.findings.push(Finding {
+                        code: "NK1127",
+                        severity: Severity::Error,
+                        span: span.clone(),
+                        message: format!("this compiler cannot evaluate `{bound}` while it builds"),
+                        notes: vec![
+                            "a `const` is a `let` that *must* fold, so one that cannot is \
+                             refused rather than computed while the program runs (Part II, 10.2)"
+                                .to_string(),
+                            "what it evaluates today is an integer - a literal, arithmetic \
+                             over literals and over other constants - and `true` or `false`. \
+                             A call is not in it yet"
+                                .to_string(),
+                        ],
+                        help: Some(format!(
+                            "write `let {bound} = …` if it is meant to be computed while the \
+                             program runs"
+                        )),
+                    }),
+                }
+
+                let held = want.unwrap_or(found);
+                self.bind_with(bound, held, folded.map(|c| c.value));
                 Ty::Tuple(Vec::new())
             }
 
