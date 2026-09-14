@@ -67,14 +67,31 @@ is [Part III C.1](specification/30-nikaia-tooling.md)'s class exactly.
 *Why it is a defect and not the roadmap's unchecked "Generics" box:* that box is
 about generics **working** — bounds, inference, generic `impl`s — and this is
 about a program that passes every stage this compiler has and then fails in the
-language below. Either answer removes that: lower the parameters, or refuse the
-form with a sentence saying generics are not built. What may not stand is the
-third thing, which is what happens today.
+language below.
 
-*What the smaller answer needs:* the `Item::Fn` already carries `generics`, and
-the header is one `format!`. Whether that is **enough** to make generics usable
-is the roadmap's question and not this entry's — this entry is only about the
-program not reaching `rustc` in that state.
+*And lowering the parameters is **not** the answer*, which is worth writing down
+because it is the obvious one. Measured:
+
+```rust
+fn hand<T>(x: T) -> T { x }                       // compiles
+fn shout<T>(x: T) -> String { x.to_uppercase() }  // "no method named
+                                                  //  `to_uppercase` found for
+                                                  //  type parameter `T`"
+```
+
+The second needs a **bound**, and the checker cannot ask for one:
+[ADR-024](specification/adr/adr-024.md) D4 erases `T` to `?`, and `?` fits
+everything — so a body that uses its parameter type-checks clean and then fails
+in `rustc`. Writing the `<T>` therefore turns *"every generic fails"* into
+*"every generic whose body uses the parameter fails"*, which is the same Part III
+C.1 class one size smaller. It looks like progress and closes nothing.
+
+*What closes it:* **refusing the form with a sentence**, until the roadmap's box
+is taken. It costs nothing today — nothing in `examples/`, `tests/samples/` or
+`crates/nikaia-std/src/` writes a generic function or struct — and it is this
+section's own principle, stated at the head of §2: a refusal is free before
+programs exist and breaking afterwards. The alternative is to build generics
+properly, which is that box and not this entry.
 
 *Found by* a test looking for a stable source of `?`: D4's erasure is one the
 language *decides*, which makes it the right fixture, and it cannot be used until
