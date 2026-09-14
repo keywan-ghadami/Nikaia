@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Four entries, and every one of them is open.** Nothing answered lives here: an
+**Five entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -190,3 +190,62 @@ writing that down is cheaper than discovering it when somebody builds to it.
 
 **A note on order rather than a recommendation.** The path check needs no answer
 here and closes a security hole; it can be built while this stays open.
+
+---
+
+## 5. Does a word-sized shared value drop its lock?
+
+**Blocked by it:** nothing is half-built. The measurement is done
+([`lock-free.md`](lock-free.md)), so what is left is the ruling and then the work.
+
+[ADR-039](specification/adr/adr-039.md) §3 leaves a door open and promises
+nothing: `update` takes a pure function and is therefore **repeatable**, which is
+the route to an implementation that retries instead of locking — Clojure's `atom`
+and Haskell's `TVar` are that route. The numbers are now in, and they make the
+question narrow rather than large.
+
+**What the measurement says.** A compare-and-swap loop against the two shapes the
+compiler writes, uncontended, two runs:
+
+* against the **cheap** shape: **×6.5 to ×7.5**. It must never replace that one —
+  and that one is what every value gets at `user_parallelism = no`;
+* against the **crossing** shape: **×0.63 to ×0.67**, about 6 ns a door, and
+  several times that under contention where only the sign reproduces.
+
+So the shape of a yes is: **a third representation for a word-sized value that
+may cross a thread**, replacing the crossing shape and nothing else. `i32`,
+`i64`, `bool`, `char` — not "a small type": a two-number struct is small and has
+no atomic instruction.
+
+**The options.**
+
+* **Leave it.** Six nanoseconds a door on the values that cross, and the
+  contended case stays the expensive one it is. Nothing to build, nothing to
+  explain, and the door stays open because the block's shape keeps it open.
+* **Build it for `get` and `set` only.** Those need no repetition at all, so the
+  one thing that is missing below is not needed. It is the smaller half of the
+  win and all of the safety.
+* **Build it for `update` too**, which needs the thing below.
+
+**What it needs that does not exist.** A block that may be **repeated**. `sync`
+says a block does not *wait*; it does not say it has no **effect**, and a block
+that prints would print twice. ADR-039 §3 names that as *"an additional assurance
+which does not exist yet"*. So this question has a smaller one inside it: **what
+says a block may be run again, and who writes it down?**
+
+**And one interaction, cheap to state and expensive to miss:** a value that
+appears in a door over several locks ([ADR-065](specification/adr/adr-065.md))
+cannot take the atomic shape — `update_all` holds both at once and a retry loop
+cannot be held. Such a value keeps a lock.
+
+**What I would do: the second, and not yet.** `get` and `set` are free of the open
+assurance and would take the win where it is safest. But nothing in the corpus
+contends a lock today, so the honest order is to leave it until a program does —
+and the reason to write the question down now is that the measurement is fresh and
+will not be repeated cheaply.
+
+**What it explicitly is not:** a switch. There is already a decision that there is
+no way to *ask* for the cheaper reference count — the remedy for a fallback is a
+contract, not a permission ([ADR-037](specification/adr/adr-037.md) D8). A third
+lock shape follows the same rule: the compiler takes it where it can prove the
+value qualifies, and `--sharing` says why not.

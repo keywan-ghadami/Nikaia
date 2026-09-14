@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed (the crossing lock cost 63.5 ns a door where it should cost 17)
+
+- **Found by measuring something else** ([`lock-free.md`](docs/lock-free.md) §3). The question was whether a compare-and-swap loop is worth building; the first table said the shipped crossing lock costs **63.5 ns** where [ADR-057](docs/specification/adr/adr-057.md) §4 measures its owner check at **+2.0 ns**. Either the record was wrong or the implementation was not the thing the record measured. It was the second.
+- **Three things per door that did not need doing:** the owner mark was a **second `Mutex`**, taken and released before the acquisition and taken again after — three mutex acquisitions per door; who is asking was a **SipHash of the thread id on every call**; and the mark was written **before** the acquisition, so while one task waited the mark said *its* name although another held the lock.
+- **That last one is a correctness point, not a cost:** the mark did not name the holder. It is an `AtomicU64` written **under** the guard now, so it does — and still **read** before the acquisition, because once that blocks there is nothing left to report to, and a racing read says nothing about *our own* re-entry, which is the only thing it answers.
+- Measured on the same box within the hour: **63.5 → 17.3 ns, ×3.7**, on every locked value in every program that may cross a thread. A hand-written equivalent now ties with the shipped one (×0.96, ×1.08), which is what says the fix is the fix.
+
+### Added (what a lock-free shape would buy, measured)
+
+- **[`lock-free.md`](docs/lock-free.md) and `benches/lockfree`**, against the door [ADR-039](docs/specification/adr/adr-039.md) §3 left open: `update` takes a pure function and is therefore repeatable, which is the route Clojure's `atom` and Haskell's `TVar` took.
+- **The loop must not replace the cheap shape:** ×6.5 to ×7.5 against it, and that is the shape *every* value gets at `user_parallelism = no`. A borrow flag is one non-atomic write; a compare-and-swap is a locked instruction.
+- **Against the crossing shape it wins by ×0.63–0.67** — about 6 ns a door — and by several times that under contention, where the sign reproduces and the number does not. **Before the fix above the same comparison read ×0.18**, which would have been an argument; it was an argument about a defect.
+- Recognising the operation would buy about as much again: `fetch_add` is ×0.54–0.57 of the loop. So the answer, if it is taken, is narrow: a third representation for a **word-sized** value that may cross a thread, replacing the crossing shape and never the cheap one.
+- The bench depends on `nikaia-std` **on purpose**, which is the opposite of `benches/lockfloor`'s choice and for the same reason: those two shapes are what the emitter writes now, so measuring anything else would measure a shape no program gets.
+
 ### Added (a door over several locks, and Chapter 12's transfer runs)
 
 - **[ADR-065](docs/specification/adr/adr-065.md).** Part II 12.3 writes the transfer between two accounts as *the* worked example of composed locking, and the language could not express it: `access_all` reads and `update` writes **one**. Measured before deciding, and worse than a missing door — a program that wrote `access_all(a, b)` was refused by the rule that **protects** locks: *"nothing written down describes `access_all` … a lock may not go into code nothing written down describes"*. The language's own multi-lock door tripped its own foreign-call refusal.

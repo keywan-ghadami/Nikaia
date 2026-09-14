@@ -21,6 +21,7 @@
 //! compute rather than by somebody else's waiting.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// The one message, so re-entering reads the same whichever shape a value got.
@@ -145,17 +146,27 @@ pub struct Crossing<T> {
     /// `Option` for the reason [`Local`]'s is
     /// ([ADR-059](../../../docs/specification/adr/adr-059.md) D2).
     inner: Mutex<Option<T>>,
-    /// Which task holds it, or `None`. Read before the acquisition and written
-    /// after it, which is why a re-entry is seen *before* the acquisition blocks:
-    /// once it blocks there is nothing left to report to.
-    held_by: Mutex<Option<u64>>,
+    /// Which task holds it, or `0` for nobody.
+    ///
+    /// **An atomic and not a second `Mutex`**, which is a correctness point
+    /// before it is a cost: the mark is written *under* the guard, so it names
+    /// the task that actually holds the lock rather than one that hopes to. It is
+    /// **read** before the acquisition, because once that blocks there is nothing
+    /// left to report to - and a read that races tells us nothing about *our own*
+    /// re-entry, which is the only thing this answers, because only we ever write
+    /// our own id here.
+    ///
+    /// Measured: as a `Mutex<Option<u64>>` written before the acquisition, one
+    /// door cost three mutex acquisitions and 63.5 ns; this is 17.2
+    /// (`benches/lockfree`).
+    held_by: AtomicU64,
 }
 
 impl<T> Crossing<T> {
     pub fn new(value: T) -> Self {
         Self {
             inner: Mutex::new(Some(value)),
-            held_by: Mutex::new(None),
+            held_by: AtomicU64::new(NOBODY),
         }
     }
 
@@ -199,12 +210,11 @@ impl<T> Crossing<T> {
     #[track_caller]
     fn hold<R>(&self, f: impl FnOnce(&mut Option<T>) -> R) -> R {
         let me = current_task();
-        {
-            let mut held = self.held_by.lock().unwrap_or_else(|e| e.into_inner());
-            if *held == Some(me) {
-                reentered();
-            }
-            *held = Some(me);
+        // **Read before the acquisition**, because once that blocks there is
+        // nothing left to report to - which is the whole reason this shape
+        // carries a mark at all.
+        if self.held_by.load(Ordering::Relaxed) == me {
+            reentered();
         }
 
         // **Poisoning is kept.** Part III Appendix A.2's `yes` row says a
@@ -212,12 +222,13 @@ impl<T> Crossing<T> {
         // what a half-finished task left behind, and that is a property of the
         // mutex rather than something written here - so the guard is taken
         // without clearing the poison.
-        let result = {
-            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            f(&mut guard)
-        };
-
-        *self.held_by.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        // **Written under the guard**, so the mark names the holder rather than
+        // a hopeful: before, it was set before the acquisition, and while one
+        // task waited the mark said *its* name although another held the lock.
+        self.held_by.store(me, Ordering::Relaxed);
+        let result = f(&mut guard);
+        self.held_by.store(NOBODY, Ordering::Relaxed);
         result
     }
 }
@@ -230,10 +241,25 @@ impl<T> Crossing<T> {
 /// moved at ([ADR-005](../../../docs/specification/adr/adr-005.md) D6). When a
 /// task identity exists this is the one line that changes.
 fn current_task() -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::thread::current().id().hash(&mut hasher);
-    hasher.finish()
+    WHO.with(|who| *who)
+}
+
+/// Nobody holds it. `WHO` never answers this, so the two can never be confused.
+const NOBODY: u64 = 0;
+
+thread_local! {
+    /// **Computed once per thread**, because it used to be a SipHash of the
+    /// thread id on every single door - measured at a large share of what a door
+    /// cost (`benches/lockfree`).
+    ///
+    /// `| 1` so it is never [`NOBODY`]: the hash is opaque and one value of it
+    /// would otherwise mean "unheld".
+    static WHO: u64 = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::thread::current().id().hash(&mut hasher);
+        hasher.finish() | 1
+    };
 }
 
 #[cfg(test)]
