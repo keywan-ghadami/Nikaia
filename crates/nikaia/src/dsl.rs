@@ -211,6 +211,15 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
             args,
             config,
             ..
+        }
+        // Kap 5.1's zone reaches a `?.m()` for the same reason it reaches a
+        // `.m()`: a `?.` decides whether the call happens, never what a call is
+        // ([ADR-066](../../docs/specification/adr/adr-066.md)).
+        | Expr::SafeMethod {
+            receiver,
+            args,
+            config,
+            ..
         } => (
             config,
             std::iter::once(&**receiver).chain(args.iter()).collect(),
@@ -371,7 +380,7 @@ fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
 fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match expr {
-        Expr::MethodCall { receiver, args, .. } => {
+        Expr::MethodCall { receiver, args, .. } | Expr::SafeMethod { receiver, args, .. } => {
             visit_expr(receiver, f);
             args.iter().for_each(|a| visit_expr(a, f));
         }

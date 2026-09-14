@@ -63,6 +63,56 @@ fn compiled(purpose: &str, source: &str) -> String {
     rust
 }
 
+/// Lower, compile the result as a **binary**, run it, and hand back what it
+/// printed.
+///
+/// [`compiled`] settles whether the Rust is well typed, which is enough for a
+/// wrap in the right place. Short-circuiting is not that kind of question: a
+/// `?.` that reached through a `null` and a `?.` that did not both compile, and
+/// the only thing that tells them apart is what the program prints.
+fn ran(purpose: &str, source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let found = check::check(&parsed, &own, &library).findings;
+    assert!(
+        found.is_empty(),
+        "{purpose} is a correct program and the checker says otherwise: {found:#?}"
+    );
+
+    let rust = lowered(source);
+    let dir = common::scratch_dir(purpose);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let ran = std::process::Command::new(&binary)
+        .current_dir(&dir)
+        .output()
+        .expect("run the program");
+    assert!(
+        ran.status.success(),
+        "{purpose} failed: {}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    printed
+}
+
+/// What the checker says about `source`.
+fn findings(source: &str) -> Vec<check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    check::check(&parsed, &own, &library).findings
+}
+
 /// **Part I 2.3's example, both lines.**
 ///
 /// `&str?` is an `Option<&str>` and `null` is `None`. The `?` is peeled before
@@ -420,29 +470,215 @@ fn main() {
     );
 }
 
-/// **`?.` onto a method is refused with a sentence**, because Part I 3.5 writes
-/// only the field and a form the specification does not name is not this
-/// compiler's to add.
+/// **`?.` reaches a method**, because Part I 3.5 says it reaches a *member* and
+/// a method is one ([ADR-066](../../../docs/specification/adr/adr-066.md)).
 ///
-/// It used to be *"expected expression; found unexpected token `)`"* — the `()`
-/// read as an empty parenthesised expression after the reach had already
-/// matched.
+/// It used to be refused with a sentence, on the reading that the section's
+/// example writes a field. The word the section actually uses is "member", and
+/// the owner settled which reading is the language's.
+///
+/// Three things at once, and each is a way the call is a **call** and not a
+/// field: the arguments reach it, the receiver is reached exactly once, and
+/// short-circuiting still answers `null`.
 #[test]
-fn a_safe_reach_onto_a_method_says_what_the_language_has() {
-    let message = format!(
-        "{:#}",
-        parse_to_ast(
-            "\
+fn a_safe_reach_calls_a_method_and_short_circuits() {
+    let printed = ran(
+        "safe-method",
+        "\
 struct User { name: String }
-fn find(id: i64) -> User? { return null }
-fn main() { let g = find(1)?.greet() }
-"
-        )
-        .expect_err("refused")
+
+impl User {
+    fn greet(&self, greeting: &str) -> String {
+        return f\"{greeting}, {self.name}\"
+    }
+}
+
+fn find(id: i64) -> User? {
+    if id > 0 {
+        return User { name: \"Ada\".to_string() }
+    }
+    return null
+}
+
+fn main() {
+    let here = find(1)?.greet(\"Hallo\") ?? \"nobody\".to_string()
+    let gone = find(0)?.greet(\"Hallo\") ?? \"nobody\".to_string()
+    println(f\"{here} | {gone}\")
+}
+",
     );
-    assert!(message.contains("reaches a field"), "{message}");
-    assert!(message.contains("Part I, 3.5"), "{message}");
-    // Every refusal names a way out (Part III C.2), and here there are two.
-    assert!(message.contains("??"), "{message}");
-    assert!(message.contains("match"), "{message}");
+    assert_eq!(printed.trim(), "Hallo, Ada | nobody");
+}
+
+/// **A `match` and not the field's `map`**, and the reason is what a method can
+/// do that a field cannot: pause and fail.
+///
+/// Inside a closure an `.await` does not compile and a `?` has nowhere to go, so
+/// `map` would have bought a form that works for the easy half of the language
+/// and refuses the rest. The reach is written out instead, which is the one
+/// shape that lets the call be whatever a call is — and this program has a
+/// method that is **both** fallible and pausing, inside the reach.
+#[test]
+fn a_reached_method_may_pause_and_may_fail() {
+    let printed = ran(
+        "safe-method-throws",
+        "\
+use std::fs
+
+struct Store { root: String }
+
+impl Store {
+    fn read(&self, path: &str) -> String throws {
+        return fs::read_to_string(path)
+    }
+}
+
+fn open(yes: bool) -> Store? {
+    if yes {
+        return Store { root: \".\".to_string() }
+    }
+    return null
+}
+
+fn main() throws {
+    fs::write(\"note.txt\", \"hallo\")
+    let text = open(true)?.read(\"note.txt\") ?? \"\".to_string()
+    let none = open(false)?.read(\"note.txt\") ?? \"missing\".to_string()
+    println(f\"{text} | {none}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "hallo | missing");
+}
+
+/// **A method whose own result is a `T?` flattens**, exactly as a field of that
+/// shape does (ADR-052 D6, which this extends rather than changes).
+///
+/// Without it `a?.b()?.c` would reach through a nullable of a nullable, and the
+/// program would not compile at all — so a result that comes back is what says
+/// the flattening happened.
+#[test]
+fn a_reached_method_that_answers_a_nullable_does_not_nest() {
+    let printed = ran(
+        "safe-method-flatten",
+        "\
+struct User { name: String }
+
+fn long_enough(name: String) -> String? {
+    if name.len() > 3 {
+        return name
+    }
+    return null
+}
+
+impl User {
+    fn nickname(&self) -> String? {
+        return long_enough(self.name.clone())
+    }
+}
+
+fn find(name: &str) -> User? {
+    return User { name: name.to_string() }
+}
+
+fn main() {
+    let long = find(\"Alexandra\")?.nickname() ?? \"none\".to_string()
+    let short = find(\"Ada\")?.nickname() ?? \"none\".to_string()
+    println(f\"{long} | {short}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "Alexandra | none");
+}
+
+/// **`?.` onto a method of something that cannot be absent is `NK1121`**, the
+/// same refusal the field gets — and the way out is spelled as a *call*, which
+/// is the one place the two members differ.
+#[test]
+fn a_reached_method_on_a_plain_value_is_refused_in_the_spelling_it_was_written() {
+    let found = findings(
+        "\
+struct U { name: String }
+impl U { fn n(&self) -> i64 { return 1 } }
+fn main() {
+    let u = U { name: \"a\".to_string() }
+    let x = u?.n()
+}
+",
+    );
+    let one = found
+        .iter()
+        .find(|f| f.code == "NK1121")
+        .expect("a reach through a plain value is refused");
+    assert!(one.message.contains("`U`"), "{:?}", one.message);
+    let help = one.help.clone().unwrap_or_default();
+    assert!(help.contains(".n(…)"), "a call, not a field: {help}");
+    assert!(
+        one.notes.iter().any(|n| n.contains("the method")),
+        "{:?}",
+        one.notes
+    );
+}
+
+/// **`??` chains**, which it did not
+/// ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+///
+/// `a ?? b ?? c` was a parse error naming the *second* `??`, in a language whose
+/// page says the operator provides a fallback and nowhere says a value may have
+/// only one. The tail was parsed at a precedence *below* the rule itself, so it
+/// could not hold another one.
+///
+/// **Right-associative**: `a ?? (b ?? c)`, which is what the types ask for — the
+/// last fallback is the plain value that ends the chain and every `??` before it
+/// takes the `T?` on its left.
+#[test]
+fn a_chain_of_fallbacks_takes_the_first_one_that_has_a_value() {
+    let printed = ran(
+        "coalesce-chain",
+        "\
+fn a() -> String? { return null }
+fn b() -> String? { return null }
+fn c() -> String? { return \"third\".to_string() }
+
+fn main() {
+    let none = a() ?? b() ?? \"last\".to_string()
+    let third = a() ?? b() ?? c() ?? \"last\".to_string()
+    println(f\"{none} | {third}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "last | third");
+}
+
+/// **The two operators of 3.5, in one expression.**
+///
+/// A reach that answers `null` falls through to the next one, and the chain ends
+/// in the plain value — which is the shape the section's own prose describes and
+/// neither half could carry on its own before this.
+#[test]
+fn a_reach_that_answers_null_falls_through_to_the_next_fallback() {
+    let printed = ran(
+        "coalesce-and-reach",
+        "\
+struct User { name: String }
+
+impl User {
+    fn greet(&self) -> String { return f\"hi, {self.name}\" }
+}
+
+fn find(id: i64) -> User? {
+    if id > 0 {
+        return User { name: \"Ada\".to_string() }
+    }
+    return null
+}
+
+fn main() {
+    let found = find(0)?.greet() ?? find(1)?.greet() ?? \"nobody\".to_string()
+    let neither = find(0)?.greet() ?? find(0)?.greet() ?? \"nobody\".to_string()
+    println(f\"{found} | {neither}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "hi, Ada | nobody");
 }

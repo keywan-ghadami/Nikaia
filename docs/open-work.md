@@ -47,16 +47,72 @@ turned out to be, rather than the one open parameter it had been filed as
 the program never wrote**, which wanted a rule and not a list
 ([ADR-056](specification/adr/adr-056.md)).
 
-**And this section is empty**, which it has not been before. The last entry left
-it by being answered rather than fixed: *"an out-of-range literal that nothing
-constrains is refused in Rust's words"* asked for an inference this compiler does
-not have, and turned out to need none
-([ADR-060](specification/adr/adr-060.md)), so it left as one rule in the emitter
-rather than as an entry below.
-
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
+
+**This section was empty**, and two entries put it back — both found while
+building [ADR-066](specification/adr/adr-066.md) and neither caused by it, which
+is what writing programs against a construct does.
+
+### 1.1. A `return` in an `impl` method does not get its `Some(…)`
+
+[ADR-052](specification/adr/adr-052.md) D4 says the compiler writes the wrap, and
+the checker says where: an annotated `let`, an assignment, and a **`return`**
+against a declared result. It does the first two everywhere and the third only in
+a **free function**.
+
+```nika
+struct U { name: String }
+
+impl U {
+    fn nick(&self) -> String? {
+        return self.name.clone()      // no `Some(…)`, and the program does not compile
+    }
+}
+
+fn plain() -> String? {
+    return "x".to_string()            // `Some("x".to_string())`, as D4 says
+}
+```
+
+*Evidence:* the emitted Rust of exactly that file — `async fn nick(&self) ->
+Option<String> { self.name.clone() }` beside `fn plain() -> Option<String> {
+Some("x".to_string()) }`. The signature is right in both and the body only in
+one.
+
+*Why it is a defect and not a limit:* the refusal a reader gets is `rustc`'s
+about the generated file — *"expected enum `Option<String>`, found struct
+`String`"*, with `try wrapping the expression in `Some`` about a type the program
+never wrote ([Part III C.1](specification/30-nikaia-tooling.md)). And the way out
+is not writable: `Some(…)` is not a form Nikaia has.
+
+*What it needs:* wherever the checker reads a function's declared result to
+decide a `return`'s wrap, the same reading for a method — an `impl` body's result
+is on the method and the walk is not finding it. It is one place, and
+`nullable.rs` has the shape of the test already.
+
+### 1.2. A plain `.` after a `?.` does not short-circuit, and emits Rust that does not parse
+
+A `?.` short-circuits the **rest of its chain** in every language that has one.
+Here it stops at its own member, and what follows is applied to the `T?`:
+
+```nika
+let n = find(1)?.name.len() ?? 0
+```
+
+*Evidence:* the emitted Rust is
+`find(1).map(|it| it.name).len() as i64.unwrap_or_else(…)` — `.len()` called on
+an `Option<String>`, and `as i64.unwrap_or_else` is not Rust at all. So the
+reader gets a syntax error about a file they did not write, which is the worst
+form of the C.1 class.
+
+*What it needs a decision about first*, which is why it is here with its evidence
+rather than as work: whether `a?.b.c` means `a?.b?.c` — the short-circuiting
+reading every other language has — or whether the second `.` is refused and the
+program must write the second `?.`. [ADR-066](specification/adr/adr-066.md) §4
+names it and does not settle it. Either answer removes the emitted nonsense; they
+differ in whether a correct-looking program keeps working.
 
 
 ## 2. Decided and unbuilt

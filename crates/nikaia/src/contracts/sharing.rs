@@ -1094,7 +1094,7 @@ impl<'a> Analysis<'a> {
                 Some(name) if is_hull(name) => true,
                 other => self.hands_back_a_plain_value(other),
             },
-            Expr::MethodCall { method, .. } => {
+            Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
                 self.hands_back_a_plain_value(Some(self.parsed.text(*method)))
             }
             _ => false,
@@ -1135,7 +1135,7 @@ impl<'a> Analysis<'a> {
                 Some(path) => format!("`{path}` hands it back"),
                 None => "a call hands it back".to_string(),
             },
-            Expr::MethodCall { method, .. } => {
+            Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
                 format!("`{}` hands it back", self.parsed.text(*method))
             }
             Expr::Field { name, .. } => {
@@ -1279,6 +1279,15 @@ impl<'a> Analysis<'a> {
                 self.expr(function, func, scope);
             }
             Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                config,
+            }
+            // **A handle handed to a `?.m()` is handed over.** Whether the call
+            // happens does not change where the value would go if it did, and
+            // this analysis may not miss a place it could (ADR-040 D1).
+            | Expr::SafeMethod {
                 receiver,
                 method,
                 args,

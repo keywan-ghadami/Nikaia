@@ -611,15 +611,21 @@ match step.0 {
 ### 3.5. Null Safety Operators
 Accessing members of a Nullable Type requires handling the potential `null` case.
 
-* **Safe Navigation (`?.`):** Accesses a member only if the receiver is not null. If it is null, the expression short-circuits to `null`.
-* **Null Coalescing (`??`):** Provides a fallback value when an expression evaluates to `null`.
+* **Safe Navigation (`?.`):** Accesses a member only if the receiver is not null. If it is null, the expression short-circuits to `null`. A **field** and a **method** are both members, and a method call takes its arguments there as it does anywhere ([ADR-066](adr/adr-066.md) D1).
+* **Null Coalescing (`??`):** Provides a fallback value when an expression evaluates to `null`. More than one may be written: `a ?? b ?? c` takes the first that has a value (D4).
 
 ```nika
 // If find_user returns null, 'name' becomes null.
 let name = repo.find_user(id)?.full_name
 
+// A method is a member, so it is reached the same way.
+let greeting = repo.find_user(id)?.greet("Hallo")
+
 // If 'name' is null, "Guest" is assigned.
 let display_name = name ?? "Guest"
+
+// And a fallback may have a fallback.
+let shown = nickname ?? name ?? "Guest"
 ```
 
 > **Status:** `??` is built, and 2.3's `T?` is what it operates on
@@ -644,10 +650,18 @@ let display_name = name ?? "Guest"
 > note that explained it, which used to name the machinery instead of the
 > operator ([ADR-052](adr/adr-052.md) D8).
 >
-> **`?.` onto a *method* is refused**, with a sentence: this section writes a
-> field, and a form the specification does not name is not the compiler's to add.
-> The way out it names is taking the value with `??`, or a `match` where there is
-> no fallback to give.
+> **`?.` reaches a method too**, because the sentence above says *member* and a
+> method is one ([ADR-066](adr/adr-066.md)): `find(1)?.greet("Hallo")` calls it
+> only where there is something to call it on, arguments reach it, and the result
+> is a `T?` like any other reach. It flattens for the same reason a field does,
+> where the method's own result is already a `T?`.
+>
+> It lowers to a `match` and not to `map`, which is the one place the two members
+> differ: a method may **pause** and may **fail**, and a closure is where neither
+> can happen.
+>
+> **And `??` chains**: `a ?? b ?? c` takes the first that has a value. It used to
+> be a parse error naming the second `??` (D4).
 
 ---
 

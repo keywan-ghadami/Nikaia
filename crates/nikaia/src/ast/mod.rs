@@ -347,6 +347,28 @@ pub enum Expr {
         name: Ident,
     },
 
+    /// Kap 3.5: `x?.m(args)` - safe navigation onto a **method**.
+    ///
+    /// Part I 3.5 says `?.` accesses a *member*, and a method is one
+    /// ([ADR-066](../../../docs/specification/adr/adr-066.md)): the receiver is
+    /// a `T?`, the call happens only where there is something to call it on,
+    /// and the whole expression is a `U?` where `U` is what the method hands
+    /// back.
+    ///
+    /// A separate variant and not a flag on [`Expr::MethodCall`], for
+    /// [`Expr::SafeField`]'s reason: every analysis has to say what it does
+    /// with a call that may not happen, and a flag is the shape that lets one
+    /// forget.
+    SafeMethod {
+        receiver: Box<Expr>,
+        method: Ident,
+        args: Vec<Expr>,
+        /// Kap 5.1's deferred parameters, exactly as [`Expr::MethodCall`]
+        /// carries them: a `?.` changes whether the call happens, never what a
+        /// call is.
+        config: Vec<ConfigArg>,
+    },
+
     // Kap 7.1: expr?
     Try(Box<Expr>),
 

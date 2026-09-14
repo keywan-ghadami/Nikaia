@@ -484,6 +484,13 @@ struct Out {
     map: SourceMap,
 }
 
+/// The name a `?.m()`'s reached value is bound to inside the `match`.
+///
+/// Prefixed like every other name this emitter invents, so it can never be one
+/// a program wrote: `__nikaia_` is reserved by the same rule that reserves the
+/// branch names an `overlap` uses.
+const REACHED: &str = "__nikaia_it";
+
 impl Out {
     fn push(&mut self, text: &str) {
         self.buf.push_str(text);
@@ -2683,7 +2690,9 @@ impl<'p> Emitter<'p> {
         let mut pauses = false;
         visit_expr(value, &mut |expr| match expr {
             Expr::Call { func, .. } => pauses |= self.pausing_key(func).is_some(),
-            Expr::MethodCall { method, .. } => pauses |= self.method_pauses(flow, *method),
+            Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
+                pauses |= self.method_pauses(flow, *method)
+            }
             _ => {}
         });
         pauses
@@ -2963,76 +2972,53 @@ impl<'p> Emitter<'p> {
                 method,
                 args,
                 config,
+            } => self.method_call(out, Some(receiver), *method, args, config, depth, flow)?,
+            // Part I 3.5 onto a **method**
+            // ([ADR-066](../../../docs/specification/adr/adr-066.md)): the call
+            // happens only where there is something to call it on.
+            //
+            // **A `match` and not the field's `map`**, and the difference is the
+            // difference between a field and a method. A field access can
+            // neither pause nor fail, so a closure is somewhere it can happen; a
+            // method call may do both, and inside a closure an `.await` does not
+            // compile and a `?` has nowhere to go. So the reach is written out,
+            // which is the one shape that lets the call be whatever a call is.
+            //
+            // `None => None` and not `.map(…)`'s implicit one, for the flattened
+            // case: where the method's own result is a `T?`, the `Some` arm
+            // hands it back as it is and the reach does not nest.
+            Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                config,
             } => {
-                // **`x.truncating_i32()` is Rust's `as`** (ADR-043 D7): the
-                // operation the name says. It is a name and not the operator
-                // because keeping the low digits is said rather than assumed,
-                // exactly as wrapping is (D2) - and since D4 made `as i32`
-                // checked, this is the only way left to ask for truncation.
-                //
-                // Bare, and parenthesised by whoever needs it: `as` sits between
-                // the unary operators and the binary ones in Rust's precedence
-                // while a method call sits above all of them, so
-                // `-x.truncating_i32()` and `x.truncating_i32().abs()` both need
-                // the conversion to happen first. [`Emitter::emits_as_cast`] is
-                // where that is decided, for the same reason a written `as`
-                // decides it there - **a parenthesis nobody needs is a warning
-                // about the generated file** (`let n = (big as i32);` is
-                // "unnecessary parentheses around assigned value"), and Part III
-                // C.1 says a reader must not meet one.
-                if let Some(into) = truncating(self.text(*method)) {
-                    self.nested(out, receiver, u8::MAX, depth, flow)?;
-                    out.push(&format!(" as {into}"));
-                    return Ok(());
-                }
-                // **`len` hands back an `i64`** (ADR-048 D1), and Rust's hands
-                // back a `usize`. Parenthesised where it has to be and nowhere
-                // else, exactly as the conversion above is.
-                //
-                // A name and not a rule, because what it encodes is a fact about
-                // *Rust's* library rather than about this language: four entries
-                // in `std.contracts` return a length, `len` is what all four are
-                // called, and `the_four_lengths_are_i64` in `tests/contracts.rs`
-                // is what keeps the two from drifting apart.
-                let length = is_length(self.text(*method), args);
+                let name = self.text(*method).to_string();
+                let flattens = self
+                    .flattened_reaches
+                    .contains(&(flow.statement, name.clone()));
+                out.push("match ");
                 self.postfix_base(out, receiver, depth, flow)?;
-                out.push(&format!(".{}", self.text(*method)));
-                // Nikaia's `collect` builds a List; Rust's needs to be told
-                // what to build, and with no types here that is `Vec<_>`.
-                if self.text(*method) == "collect" && args.is_empty() {
-                    out.push("::<Vec<_>>");
+                out.push(&format!(
+                    " {{
+{}",
+                    "    ".repeat(depth + 1)
+                ));
+                out.push(&format!("Some({REACHED}) => "));
+                if !flattens {
+                    out.push("Some(");
                 }
-                out.push("(");
-                let takes = self.takes_a_handle(self.text(*method));
-                self.args(out, self.text(*method), args, &takes, depth, flow)?;
-                self.dsl_parameters(out, self.text(*method), args.len(), config, depth, flow)?;
-                out.push(")");
-
-                // ADR-023 D8, the method half. The same three conditions the
-                // call by name is given in `call` below, and the same rule -
-                // only the last question is asked of a different source,
-                // because the emitter cannot ask it itself. The enclosing
-                // function must be `throws`, or there is nowhere for the `?` to
-                // go, and `NK2605` has already refused the program where it is
-                // not. The call must not be the guarded half of a `catch`,
-                // which wants the `Result`. And the callee must be one the
-                // checker established can fail.
-                // ADR-055 D2, the method half, and **before the `?`** for the
-                // reason `call` gives: the future is what can fail, so it has
-                // to be driven before there is a `Result` to propagate.
-                if self.method_pauses(flow, *method) {
-                    if flow.in_lambda {
-                        return Err(pausing_in_a_lambda(self.text(*method)));
-                    }
-                    out.push(".await");
+                self.method_call(out, None, *method, args, config, depth + 1, flow)?;
+                if !flattens {
+                    out.push(")");
                 }
-
-                if flow.throws && !flow.caught && self.method_can_fail(flow, *method) {
-                    out.push("?");
-                }
-                if length {
-                    out.push(" as i64");
-                }
+                out.push(&format!(
+                    ",
+{}None => None,
+{}}}",
+                    "    ".repeat(depth + 1),
+                    "    ".repeat(depth)
+                ));
             }
             Expr::Match { value, arms } => {
                 out.push("match ");
@@ -3629,6 +3615,14 @@ impl<'p> Emitter<'p> {
                 method,
                 args,
                 config,
+            }
+            // A call that may not happen may still fail when it does, so the
+            // branch it is in can fail.
+            | Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                config,
             } => {
                 self.method_can_fail(flow, *method)
                     || self.branch_can_fail(receiver, flow)
@@ -4092,6 +4086,129 @@ impl<'p> Emitter<'p> {
         }
         Ok(())
     }
+    /// **A method call, for both of the ways a program may write one.**
+    ///
+    /// `x.m(…)` and `x?.m(…)` differ in *whether* the call happens and in
+    /// nothing else ([ADR-066](../../../../docs/specification/adr/adr-066.md)),
+    /// so what a call lowers to is written once: the truncating conversion, the
+    /// `len` that becomes an `i64`, `collect`'s turbofish, the arguments, Kap
+    /// 5.1's deferred parameters, ADR-055 D2's `.await` and ADR-023 D8's `?`.
+    ///
+    /// `receiver` is `None` for the safe form, where the receiver is the name
+    /// the enclosing `match` already bound - so the call is written on
+    /// [`REACHED`] rather than on an expression, and the value is reached
+    /// exactly once whatever the receiver cost to produce.
+    ///
+    /// Eight arguments, and each is a part of the call this has to write: the
+    /// receiver, the name, the positional arguments, Kap 5.1's zone, and the
+    /// three the emitter carries everywhere (`out`, `depth`, `flow`). Splitting
+    /// them into a struct would name a shape the AST already has.
+    #[allow(clippy::too_many_arguments)]
+    fn method_call(
+        &self,
+        out: &mut Out,
+        receiver: Option<&Expr>,
+        method: Symbol,
+        args: &[Expr],
+        config: &[crate::ast::ConfigArg],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        // **`x.truncating_i32()` is Rust's `as`** (ADR-043 D7): the
+        // operation the name says. It is a name and not the operator
+        // because keeping the low digits is said rather than assumed,
+        // exactly as wrapping is (D2) - and since D4 made `as i32`
+        // checked, this is the only way left to ask for truncation.
+        //
+        // Bare, and parenthesised by whoever needs it: `as` sits between
+        // the unary operators and the binary ones in Rust's precedence
+        // while a method call sits above all of them, so
+        // `-x.truncating_i32()` and `x.truncating_i32().abs()` both need
+        // the conversion to happen first. [`Emitter::emits_as_cast`] is
+        // where that is decided, for the same reason a written `as`
+        // decides it there - **a parenthesis nobody needs is a warning
+        // about the generated file** (`let n = (big as i32);` is
+        // "unnecessary parentheses around assigned value"), and Part III
+        // C.1 says a reader must not meet one.
+        if let Some(into) = truncating(self.text(method)) {
+            self.receiver(out, receiver, depth, flow, true)?;
+            out.push(&format!(" as {into}"));
+            return Ok(());
+        }
+        // **`len` hands back an `i64`** (ADR-048 D1), and Rust's hands
+        // back a `usize`. Parenthesised where it has to be and nowhere
+        // else, exactly as the conversion above is.
+        //
+        // A name and not a rule, because what it encodes is a fact about
+        // *Rust's* library rather than about this language: four entries
+        // in `std.contracts` return a length, `len` is what all four are
+        // called, and `the_four_lengths_are_i64` in `tests/contracts.rs`
+        // is what keeps the two from drifting apart.
+        let length = is_length(self.text(method), args);
+        self.receiver(out, receiver, depth, flow, false)?;
+        out.push(&format!(".{}", self.text(method)));
+        // Nikaia's `collect` builds a List; Rust's needs to be told
+        // what to build, and with no types here that is `Vec<_>`.
+        if self.text(method) == "collect" && args.is_empty() {
+            out.push("::<Vec<_>>");
+        }
+        out.push("(");
+        let takes = self.takes_a_handle(self.text(method));
+        self.args(out, self.text(method), args, &takes, depth, flow)?;
+        self.dsl_parameters(out, self.text(method), args.len(), config, depth, flow)?;
+        out.push(")");
+
+        // ADR-023 D8, the method half. The same three conditions the
+        // call by name is given in `call` below, and the same rule -
+        // only the last question is asked of a different source,
+        // because the emitter cannot ask it itself. The enclosing
+        // function must be `throws`, or there is nowhere for the `?` to
+        // go, and `NK2605` has already refused the program where it is
+        // not. The call must not be the guarded half of a `catch`,
+        // which wants the `Result`. And the callee must be one the
+        // checker established can fail.
+        // ADR-055 D2, the method half, and **before the `?`** for the
+        // reason `call` gives: the future is what can fail, so it has
+        // to be driven before there is a `Result` to propagate.
+        if self.method_pauses(flow, method) {
+            if flow.in_lambda {
+                return Err(pausing_in_a_lambda(self.text(method)));
+            }
+            out.push(".await");
+        }
+
+        if flow.throws && !flow.caught && self.method_can_fail(flow, method) {
+            out.push("?");
+        }
+        if length {
+            out.push(" as i64");
+        }
+        Ok(())
+    }
+
+    /// The receiver of a [`Emitter::method_call`]: the expression, or the name
+    /// a `?.` already bound.
+    ///
+    /// `tight` is for the one caller that needs the conversion to bind tighter
+    /// than everything around it - `x.truncating_i32()` is Rust's `as`, which
+    /// sits below the unary operators in its precedence.
+    fn receiver(
+        &self,
+        out: &mut Out,
+        receiver: Option<&Expr>,
+        depth: usize,
+        flow: Flow<'_>,
+        tight: bool,
+    ) -> Result<()> {
+        match (receiver, tight) {
+            (Some(expr), true) => self.nested(out, expr, u8::MAX, depth, flow),
+            (Some(expr), false) => self.postfix_base(out, expr, depth, flow),
+            (None, _) => {
+                out.push(REACHED);
+                Ok(())
+            }
+        }
+    }
 
     /// The thing a `.` or a `[` is applied to, parenthesised where it binds
     /// looser than the postfix does.
@@ -4110,6 +4227,8 @@ impl<'p> Emitter<'p> {
                     | Expr::Range { .. }
                     | Expr::If { .. }
                     | Expr::Match { .. }
+                    // It lowers to a `match`, so it needs what a `match` needs.
+                    | Expr::SafeMethod { .. }
                     | Expr::Block(_)
                     | Expr::Closure { .. }
                     | Expr::TryCatch { .. }
@@ -4778,7 +4897,9 @@ fn pausing_reach(
                 }
                 _ => {}
             },
-            Expr::MethodCall { method, .. } => note(parsed.text(*method)),
+            Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
+                note(parsed.text(*method))
+            }
             _ => {}
         });
         out
@@ -4910,7 +5031,7 @@ fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_expr(func, f);
             args.iter().for_each(|a| visit_expr(a, f));
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        Expr::MethodCall { receiver, args, .. } | Expr::SafeMethod { receiver, args, .. } => {
             visit_expr(receiver, f);
             args.iter().for_each(|a| visit_expr(a, f));
         }

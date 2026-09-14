@@ -222,6 +222,9 @@ pub enum Postfix {
     /// Part I 3.5: `?.name`, which reaches the field only if the receiver holds
     /// something.
     SafeField(Symbol),
+    /// Part I 3.5 again, onto a **method**: the call happens only if the
+    /// receiver holds something ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+    SafeMethod(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Index(Box<ast::Expr>),
 }
@@ -264,6 +267,12 @@ pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
         Postfix::SafeField(name) => ast::Expr::SafeField {
             base: Box::new(recv),
             name,
+        },
+        Postfix::SafeMethod(method, args, config) => ast::Expr::SafeMethod {
+            receiver: Box::new(recv),
+            method,
+            args,
+            config,
         },
         Postfix::Method(method, args, config) => ast::Expr::MethodCall {
             receiver: Box::new(recv),
@@ -1115,8 +1124,20 @@ grammar! {
                 }
             }
 
+        // **Right-associative**, so `a ?? b ?? c` is `a ?? (b ?? c)`
+        // ([ADR-066](../../../docs/specification/adr/adr-066.md)). It used to
+        // be `or_expr`, which is *below* this rule in the precedence chain and
+        // therefore cannot hold a second `??` - so a chain was a parse error
+        // naming the second one, in a language whose page says `??` provides a
+        // fallback and never says a value may have only one.
+        //
+        // The direction is what the types ask for: the last fallback is the
+        // plain value that ends the chain, and every `??` before it takes the
+        // `T?` on its left. Left-associative would work too, since coalescing
+        // is associative - and this is the reading every language with the
+        // operator has, which is worth more than a coin toss.
         rule coalesce_tail -> Expr =
-            "??" e:or_expr -> { e }
+            "??" e:coalesce_expr -> { e }
 
         // Kap 5.2/5.3: a lambda, with its arguments named or implicit.
         rule closure_expr -> Expr =
@@ -1272,22 +1293,24 @@ grammar! {
           // `a ? . b` is not safe navigation, and `a ?? b` is the coalescing
           // operator, which this cannot begin to match.
           //
-          // There is no arm for `?.m()`: a call postfix follows this one, so
-          // `x?.m()` parses as a call *of* the reach, and the checker says what
-          // is wrong with a sentence rather than a parse error.
-          // **A method is not a field**, and Part I 3.5 writes only the field.
-          // Before the field arm and consuming the `(`, because a `fail` is
-          // high priority and *not* fatal: it has to get further than the
-          // alternative or the field arm's reading wins and the `()` fails as
-          // an empty parenthesised expression, which is what a reader used to
-          // get.
-          | "?." SEGMENT "(" fail(
-                "`?.` reaches a field of a value that may be absent \
-                 (Part I, 3.5), and a method is not a field. To call one, take \
-                 the value first: `let u = maybe ?? fallback` and then \
-                 `u.method()`, or `match` on it where there is no fallback to \
-                 give"
-            ) -> { Postfix::SafeField(_state.intern("")) }
+          // **And onto a method**, in the same three shapes the plain `.` has
+          // and for the same reason: Part I 3.5 says `?.` reaches a *member*,
+          // and a method is one ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+          // Each of these must be tried before the bare-field arm below, or
+          // that one matches the name and leaves the `(` to fail as an empty
+          // parenthesised expression - which is what a reader used to get.
+          | "?." name:SEGMENT args:call_arg_list lambda:trailing_lambda -> {
+                let (mut positional, config) = args;
+                positional.push(lambda);
+                Postfix::SafeMethod(name, positional, config)
+            }
+          | "?." name:SEGMENT lambda:trailing_lambda -> {
+                Postfix::SafeMethod(name, vec![lambda], Vec::new())
+            }
+          | "?." name:SEGMENT args:call_arg_list -> {
+                let (args, config) = args;
+                Postfix::SafeMethod(name, args, config)
+            }
           | "?." name:SEGMENT -> { Postfix::SafeField(name) }
           | "[" index:expr "]" -> {
                 Postfix::Index(Box::new(index))

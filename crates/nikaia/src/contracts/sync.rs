@@ -402,7 +402,7 @@ pub(super) fn reached(
             _ => return Some(Reached::Opaque(None)),
         },
         // Answered by the type checker rather than here (ADR-028).
-        Expr::MethodCall { .. } => return Some(Reached::Method),
+        Expr::MethodCall { .. } | Expr::SafeMethod { .. } => return Some(Reached::Method),
         // Starts a task, or runs a grammar whose actions are arbitrary Nikaia.
         // Neither is pure computation this compiler can see the end of.
         Expr::Spawn { .. } | Expr::Dsl { .. } | Expr::DslFrom { .. } => {
@@ -540,6 +540,12 @@ fn visit_expr_blocks(expr: &Expr, f: &mut impl FnMut(&Block)) {
             args,
             config,
             ..
+        }
+        | Expr::SafeMethod {
+            receiver,
+            args,
+            config,
+            ..
         } => {
             visit_expr_blocks(receiver, f);
             args.iter().for_each(|a| visit_expr_blocks(a, f));
@@ -594,6 +600,12 @@ fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)) {
             config.iter().for_each(|c| visit_expr(parsed, &c.value, f));
         }
         Expr::MethodCall {
+            receiver,
+            args,
+            config,
+            ..
+        }
+        | Expr::SafeMethod {
             receiver,
             args,
             config,

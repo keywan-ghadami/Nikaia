@@ -56,7 +56,8 @@ the Result column; every other row is the original run.
 | `null` | I 2.3, 3.5 | **built** ([ADR-052](specification/adr/adr-052.md)): a reserved word, lowering to `None` |
 | `String?`, `&str?` | I 2.3 | **built**: `Option<String>`, `Option<&str>` — and the `Some(…)` where a plain value stands in a nullable slot is the compiler's to write |
 | `a?.b` | I 3.5 | **built** ([ADR-052](specification/adr/adr-052.md) D6): `map` over a plain field, `and_then` over one that is itself a `T?` |
-| `a?.m()` | — | refused with a sentence: this section writes a field, and a form the specification does not name is not the compiler's to add ([ADR-052](specification/adr/adr-052.md) §4) |
+| `a?.m()` | I 3.5 | **built** ([ADR-066](specification/adr/adr-066.md) D1): the section's word is *member* and a method is one. A `match` and not the field's `map`, because a method may pause and may fail |
+| `a ?? b ?? c` | I 3.5 | **built** ([ADR-066](specification/adr/adr-066.md) D4): right-associative. It used to be a parse error naming the second `??` |
 | `a ?? 1` | I 3.5 | **built**: `a.unwrap_or_else(\|\| 1.into())` |
 | `f(a??)` (postfix unwrap) | — [ADR-018](specification/adr/adr-018.md) D3 and III 17.1 write one; **I 3.5 does not define it** | parse error: *expected expression; found `)`* — see [`open-work.md`](open-work.md) §3.7 |
 | `Conn(id: 1)` (same file) | I 4.2 | **built** |

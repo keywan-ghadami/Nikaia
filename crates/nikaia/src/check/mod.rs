@@ -493,6 +493,17 @@ struct Checker<'a> {
     checked: Checked,
 }
 
+/// **What a `?.` reaches**, which Part I 3.5 calls a *member*
+/// ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+///
+/// The two spellings are one operator, and the only place the difference has to
+/// be said out loud is the refusal: a reader who wrote a call is owed `.m(…)`
+/// as the way out and not `.m`.
+enum Reached<'a> {
+    Field(&'a str),
+    Method(&'a str),
+}
+
 impl<'a> Checker<'a> {
     // --- the shape of a program ---------------------------------------------
 
@@ -848,23 +859,112 @@ impl<'a> Checker<'a> {
     /// **Only where the receiver's type is known.** A receiver this checker
     /// could not work out says nothing: refusing there would refuse a correct
     /// program, which is the one thing it may never do (Part III, C.4).
-    fn reaches_through_a_plain_value(&mut self, on: &Ty, field: &str, span: &Span) {
+    ///
+    /// `member` is the field or the method, and `Member` says which: the way out
+    /// is the plain `.`, and a reader is owed it in the spelling they wrote
+    /// ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+    fn reaches_through_a_plain_value(&mut self, on: &Ty, member: Reached<'_>, span: &Span) {
         if on.is_unknown() {
             return;
         }
+        let (what, plain) = match member {
+            Reached::Field(name) => ("field", format!(".{name}")),
+            Reached::Method(name) => ("method", format!(".{name}(…)")),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1121",
             message: format!("`?.` reaches through a `{on}`, which cannot be absent"),
-            notes: vec![
-                "`?.` exists for a nullable type - it reaches the field only where there \
+            notes: vec![format!(
+                "`?.` exists for a nullable type - it reaches the {what} only where there \
                  is something to reach it on, and answers `null` otherwise (Part I, 3.5). \
                  A type that is not `T?` always has a value"
-                    .to_string(),
-            ],
-            help: Some(format!("write `.{field}`")),
+            )],
+            help: Some(format!("write `{plain}`")),
         });
+    }
+
+    /// **What a method call is**, asked of a receiver whose type is already in
+    /// hand.
+    ///
+    /// One function and not two, because there are two ways to write the call
+    /// and only one thing a call *is*: `x.m()` and `x?.m()` differ in whether
+    /// the call happens, never in what it throws, whether it pauses, what its
+    /// arguments have to be, or what the receiver's type binds in its signature
+    /// ([ADR-066](../../../docs/specification/adr/adr-066.md)). Two copies of
+    /// these rules would be that many chances for the two spellings to drift.
+    ///
+    /// `on` is the receiver's type - for a `?.` the type **inside** the `T?`,
+    /// which is the whole of what that operator changes here.
+    fn call_on(&mut self, on: Ty, method: Ident, args: &[Expr], span: &Span) -> Ty {
+        let Ty::Named { name, .. } = &on else {
+            // The receiver's type is not known, so neither is what this
+            // calls. Recorded, because "I could not find out" is an
+            // answer somebody downstream has to act on.
+            args.iter().for_each(|a| {
+                self.expr(a, span);
+            });
+            self.reached_method(None);
+            self.method_propagates(method, false, span);
+            self.method_pauses(method, false, span);
+            return Ty::Unknown;
+        };
+        let key = format!("{name}::{}", self.parsed.text(method));
+        let Some((key, contract)) = self.method(&key) else {
+            // The type is known and no ledger describes this method of
+            // it - `HashMap::entry` until something writes it down.
+            args.iter().for_each(|a| {
+                self.expr(a, span);
+            });
+            self.reached_method(None);
+            self.method_pauses(method, false, span);
+            self.method_propagates(method, false, span);
+            return Ty::Unknown;
+        };
+        self.reached_method(Some(&key));
+        // ADR-023 D8: the failure leaves at the call, and the emitter
+        // is what writes that. Recorded whether or not the function
+        // around it declares `throws` - where it does not, `NK2605`
+        // below refuses the program and nothing is emitted at all.
+        self.method_propagates(method, !contract.throws.is_empty(), span);
+        // ADR-055 D2, the method half. Either ledger since §6 step 3
+        // made `std`'s own pausing entries `async fn`: before it, a
+        // `std` entry blocked its thread and awaiting one would have
+        // been awaiting a value rather than a future.
+        self.method_pauses(method, !contract.sync.is_sync(), span);
+        // A method call is a written call, so the rule reaches it too
+        // (`NK2605`) - and here the receiver's type was known and a
+        // ledger described the method, which is the only case this
+        // compiler can answer at all.
+        self.may_fail_here(&key, contract, span);
+
+        // What the receiver's own type tells the signature (ADR-031).
+        // `HashMap[&str, Stats]` against `&HashMap[$K, $V]` binds `$V`
+        // to `Stats`, so `-> Entry[$V]` is an `Entry[Stats]` and the
+        // next call in the chain has something to bind from in turn.
+        let bound = bindings(contract, &on);
+
+        // The arguments are walked **after** the contract is in hand,
+        // which is what lets a lambda's parameters have types (ADR-029).
+        // The old order walked them first and could not: `a` in
+        // `.and_modify fn { a.add(t) }` is named nowhere and typed by
+        // nothing but the callee's signature.
+        let expected: Vec<Ty> = expected_arguments(contract)
+            .iter()
+            .map(|ty| ty::substitute(ty, &bound))
+            .collect();
+        let found = self.arguments_given(args, &expected, span);
+        let result = self.arguments(
+            &key,
+            self.parsed.text(method),
+            contract,
+            args,
+            &found,
+            &[],
+            span,
+        );
+        ty::substitute(&result, &bound)
     }
 
     /// Part I 2.2: **`as` names a type this language offers**
@@ -1466,73 +1566,51 @@ impl<'a> Checker<'a> {
                     self.expr(&a.value, span);
                 });
                 let on = self.expr(receiver, span);
-                let Ty::Named { name, .. } = &on else {
-                    // The receiver's type is not known, so neither is what this
-                    // calls. Recorded, because "I could not find out" is an
-                    // answer somebody downstream has to act on.
+                self.call_on(on, *method, args, span)
+            }
+
+            // Part I 3.5: `x?.m(…)`. The receiver must be a `T?`, the call
+            // happens only where there is something to call it on, and the
+            // result is flattened for [`Expr::SafeField`]'s reason - a method
+            // that hands back a `T?` would otherwise give a nullable of a
+            // nullable ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+            Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                config,
+            } => {
+                config.iter().for_each(|a| {
+                    self.expr(&a.value, span);
+                });
+                let on = self.expr(receiver, span);
+                let name = self.parsed.text(*method).to_string();
+                let Ty::Nullable(inner) = on else {
+                    self.reaches_through_a_plain_value(&on, Reached::Method(&name), span);
+                    // The arguments are still walked: a mistake inside one is
+                    // a mistake whatever is wrong with the receiver, and a
+                    // reader owed two messages should get two.
                     args.iter().for_each(|a| {
                         self.expr(a, span);
                     });
-                    self.reached_method(None);
-                    self.method_propagates(*method, false, span);
-                    self.method_pauses(*method, false, span);
                     return Ty::Unknown;
                 };
-                let key = format!("{name}::{}", self.parsed.text(*method));
-                let Some((key, contract)) = self.method(&key) else {
-                    // The type is known and no ledger describes this method of
-                    // it - `HashMap::entry` until something writes it down.
-                    args.iter().for_each(|a| {
-                        self.expr(a, span);
-                    });
-                    self.reached_method(None);
-                    self.method_pauses(*method, false, span);
-                    self.method_propagates(*method, false, span);
-                    return Ty::Unknown;
-                };
-                self.reached_method(Some(&key));
-                // ADR-023 D8: the failure leaves at the call, and the emitter
-                // is what writes that. Recorded whether or not the function
-                // around it declares `throws` - where it does not, `NK2605`
-                // below refuses the program and nothing is emitted at all.
-                self.method_propagates(*method, !contract.throws.is_empty(), span);
-                // ADR-055 D2, the method half. Either ledger since §6 step 3
-                // made `std`'s own pausing entries `async fn`: before it, a
-                // `std` entry blocked its thread and awaiting one would have
-                // been awaiting a value rather than a future.
-                self.method_pauses(*method, !contract.sync.is_sync(), span);
-                // A method call is a written call, so the rule reaches it too
-                // (`NK2605`) - and here the receiver's type was known and a
-                // ledger described the method, which is the only case this
-                // compiler can answer at all.
-                self.may_fail_here(&key, contract, span);
-
-                // What the receiver's own type tells the signature (ADR-031).
-                // `HashMap[&str, Stats]` against `&HashMap[$K, $V]` binds `$V`
-                // to `Stats`, so `-> Entry[$V]` is an `Entry[Stats]` and the
-                // next call in the chain has something to bind from in turn.
-                let bound = bindings(contract, &on);
-
-                // The arguments are walked **after** the contract is in hand,
-                // which is what lets a lambda's parameters have types (ADR-029).
-                // The old order walked them first and could not: `a` in
-                // `.and_modify fn { a.add(t) }` is named nowhere and typed by
-                // nothing but the callee's signature.
-                let expected: Vec<Ty> = expected_arguments(contract)
-                    .iter()
-                    .map(|ty| ty::substitute(ty, &bound))
-                    .collect();
-                let found = self.arguments_given(args, &expected, span);
-                let result = self.arguments(
-                    &key,
-                    self.parsed.text(*method),
-                    contract,
-                    args,
-                    &found,
-                    &[],
-                    span,
-                );
-                ty::substitute(&result, &bound)
+                // **The same call, on the value inside.** Everything a method
+                // call is checked for - what it may throw, whether it pauses,
+                // what its arguments have to be, what the receiver's own type
+                // binds - is unchanged by the reach: a `?.` decides *whether*
+                // the call happens and never *what* a call is.
+                match self.call_on(*inner, *method, args, span) {
+                    // The `and_then` case, recorded by name for the emitter
+                    // exactly as a nullable field is (ADR-028: the emitter has
+                    // no types and this is a question about one).
+                    Ty::Nullable(result) => {
+                        self.checked.flattened_reaches.insert((span.start, name));
+                        Ty::Nullable(result)
+                    }
+                    Ty::Unknown => Ty::Unknown,
+                    plain => Ty::Nullable(Box::new(plain)),
+                }
             }
 
             Expr::Field { base, name } => {
@@ -1565,7 +1643,7 @@ impl<'a> Checker<'a> {
                 let on = self.expr(base, span);
                 let field = self.parsed.text(*name).to_string();
                 let Ty::Nullable(inner) = &on else {
-                    self.reaches_through_a_plain_value(&on, &field, span);
+                    self.reaches_through_a_plain_value(&on, Reached::Field(&field), span);
                     return Ty::Unknown;
                 };
                 let Ty::Named { name: ty, .. } = inner.as_ref() else {
@@ -1993,7 +2071,9 @@ impl<'a> Checker<'a> {
                 self.lookup(name).is_some() || self.resolve(name).is_some()
             }
             Expr::Field { base, .. } => self.names_something_here(base),
-            Expr::MethodCall { receiver, .. } => self.names_something_here(receiver),
+            Expr::MethodCall { receiver, .. } | Expr::SafeMethod { receiver, .. } => {
+                self.names_something_here(receiver)
+            }
             Expr::Call { func, args, .. } => {
                 self.names_something_here(func) || args.iter().any(|a| self.names_something_here(a))
             }

@@ -617,6 +617,16 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             method,
             args,
             config,
+        }
+        // **A `?.m()` is accounted for exactly as a `.m()` is.** What this walk
+        // answers is what an operation *may* touch, and a call that may not
+        // happen may touch everything one that does would - an
+        // over-approximation is the direction D4 requires.
+        | Expr::SafeMethod {
+            receiver,
+            method,
+            args,
+            config,
         } => {
             walk(parsed, receiver, out);
             // Kap 5.1's options are values like any other, and a call this
@@ -948,6 +958,16 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             config.iter().for_each(|c| names_in(parsed, &c.value, out));
         }
         Expr::MethodCall {
+            receiver,
+            args,
+            method,
+            config,
+        }
+        // **A `?.m()` reads every name a `.m()` does.** Whether the call
+        // happens is a question about the receiver's value; which names it
+        // *reads* is the same question either way, and this analysis may never
+        // miss one (D9's first row).
+        | Expr::SafeMethod {
             receiver,
             args,
             method,

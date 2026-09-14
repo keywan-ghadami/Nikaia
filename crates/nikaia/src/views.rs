@@ -604,6 +604,15 @@ impl Scanner<'_> {
                 args,
                 config,
                 ..
+            }
+            // A store that may not happen is still a store: what this asks is
+            // *where the view could end up*, and a `?.` changes only whether it
+            // gets there.
+            | Expr::SafeMethod {
+                receiver,
+                args,
+                config,
+                ..
             } => {
                 let handed_over = args.iter().any(|a| self.mentions(a))
                     || config.iter().any(|c| self.mentions(&c.value));
@@ -707,7 +716,9 @@ impl Scanner<'_> {
                 Root::Subject => Root::SubjectField(*name),
                 other => other,
             },
-            Expr::MethodCall { receiver, .. } => self.root(receiver),
+            Expr::MethodCall { receiver, .. } | Expr::SafeMethod { receiver, .. } => {
+                self.root(receiver)
+            }
             Expr::Index { base, .. } => self.root(base),
             Expr::Try(inner) => self.root(inner),
             _ => Root::Elsewhere,
@@ -793,6 +804,14 @@ fn stmt_exprs(stmt: &Stmt) -> Vec<&Expr> {
 fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e Block>) {
     match expr {
         Expr::MethodCall {
+            receiver,
+            args,
+            config,
+            ..
+        }
+        // The same parts: a `?.m()` holds a receiver, its arguments and its
+        // config zone, and a view inside any of them is a view.
+        | Expr::SafeMethod {
             receiver,
             args,
             config,
