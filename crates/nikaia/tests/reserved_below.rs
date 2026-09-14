@@ -28,9 +28,17 @@ use nikaia::parser::parse_to_ast;
 /// an entry.
 const RESERVED_BELOW: &[&str] = &[
     "abstract", "async", "await", "become", "box", "do", "dyn", "extern", "final", "macro", "mod",
-    "move", "override", "priv", "ref", "static", "trait", "try", "type", "typeof", "unsafe",
-    "unsized", "virtual", "where", "yield",
+    "move", "override", "priv", "ref", "static", "try", "type", "typeof", "unsafe", "unsized",
+    "virtual", "where", "yield",
 ];
+
+/// The one word that has left the sweep since: `trait` is a reserved word of
+/// **this** language now ([ADR-078](../../../docs/specification/adr/adr-078.md)),
+/// so no program can put it in a name position and the escape can never fire for
+/// it. It stays in the emitter's list on purpose — that list says what the
+/// language *below* reserves, which is still true of it, and un-reserving here is
+/// the free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
+const RESERVED_HERE_TOO: &[&str] = &["trait"];
 
 /// The words Rust takes as identifiers, which must therefore **not** be escaped.
 ///
@@ -246,6 +254,22 @@ fn every_declaring_position_asks() {
         assert!(
             found.iter().any(|f| f.code == "NK1128"),
             "{what} called `crate` has to be refused: {found:#?}"
+        );
+    }
+}
+
+/// A word this language reserves cannot reach a name position at all, so the
+/// escape is unreachable rather than wrong.
+#[test]
+fn a_word_this_language_reserves_never_reaches_the_escape() {
+    for word in RESERVED_HERE_TOO {
+        assert!(
+            nikaia::parser::RESERVED_WORDS.contains(word),
+            "`{word}` is reserved here"
+        );
+        assert!(
+            parse_to_ast(&every_position(word)).is_err(),
+            "so a program cannot put `{word}` in a name position"
         );
     }
 }

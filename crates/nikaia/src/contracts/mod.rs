@@ -682,8 +682,7 @@ impl Ledger {
                 } => {
                     let own = parsed.text(*name).to_string();
                     for method in methods {
-                        let (key, contract) =
-                            trait_method(parsed, &own, &method.node, *is_public);
+                        let (key, contract) = trait_method(parsed, &own, &method.node, *is_public);
                         ledger.functions.insert(key, contract);
                     }
                     ledger.traits.insert(

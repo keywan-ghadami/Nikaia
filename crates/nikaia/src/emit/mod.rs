@@ -1805,11 +1805,7 @@ impl<'p> Emitter<'p> {
         } else {
             String::new()
         };
-        let generics: Vec<String> = method
-            .generics
-            .iter()
-            .map(|g| self.bounded(g))
-            .collect();
+        let generics: Vec<String> = method.generics.iter().map(|g| self.bounded(g)).collect();
         out.push(&format!(
             "fn {}{}({}){ret};\n",
             self.name(method.name),
@@ -1826,8 +1822,11 @@ impl<'p> Emitter<'p> {
         match param.bounds.is_empty() {
             true => name.into_owned(),
             false => {
-                let bounds: Vec<String> =
-                    param.bounds.iter().map(|b| self.name(*b).into_owned()).collect();
+                let bounds: Vec<String> = param
+                    .bounds
+                    .iter()
+                    .map(|b| self.name(*b).into_owned())
+                    .collect();
                 format!("{name}: {}", bounds.join(" + "))
             }
         }

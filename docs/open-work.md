@@ -54,8 +54,91 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**Empty again**, and the entry that just left is worth a sentence for what the
-fix cost to get right. It was filed as *escape it, one rule at one place*, and
+### 1.1. A trait whose method pauses lowers to a signature the `impl` does not match
+
+*Reproduced:*
+
+```nika
+trait Loader {
+    fn load(&self) -> String throws
+}
+
+impl Loader for File {
+    fn load(&self) -> String throws {
+        return fs::read_to_string(self.path)
+    }
+}
+```
+
+The declaration lowers to `fn load(&self) -> Result<…>;` and the `impl` to
+`async fn load(&self) -> Result<…>`, so the language below answers
+
+```text
+error[E0053]: method `load` has an incompatible type for trait
+```
+
+about a file nobody wrote, which is
+[Part III C.1](specification/30-nikaia-tooling.md)'s class.
+
+*Why it is here rather than in [ADR-078](specification/adr/adr-078.md):* that
+record's D4 asserts `sync` for a declaration, and had to — `No` would have made
+**every** bound's call an `.await`, so `fn shout[T: Summarize]` came out `async`
+and awaited a `String`. Asserting it is right for every trait whose methods do
+not pause, which is every trait anybody has written so far, and wrong for one
+whose method does. D4 says exactly that and points here.
+
+*What it needs, and the choice is real:* `async fn` in a trait is what the
+declaration would have to write, which Rust has had since 1.75 — so the
+mechanism exists below and the question is what this compiler should do with a
+declaration whose *implementations* may disagree about pausing. Either the
+declaration gets a word that says a method may pause, and the ledger reads it
+instead of asserting; or an `impl` whose body pauses is refused where the trait
+did not say so. The second is smaller and is the direction every other entry
+here has taken; the first is what the specification would need if a trait is ever
+to describe I/O.
+
+*Found by* writing Part I 4.7's own program, and it was visible before it was
+reproduced: the emitter's own comment said so while `NK1129` was still in the
+plan.
+
+### 1.2. `&str + String` is accepted here and refused below
+
+*Reproduced:*
+
+```nika
+let s = "Ada".to_string()
+let out = "User: " + s
+```
+
+lowers to `let out = "User: " + s;` and `rustc` answers
+
+```text
+error[E0369]: cannot add `String` to `&str`
+```
+
+*Why it matters more than it looks:* **Part I 4.7 writes this line.** Its
+`impl Summarize for User` is `return "User: " + self.username`, so the page's own
+example does not compile even now that the trait around it does — the trait test
+fixture had to interpolate instead, which is the wrong way round for a
+specification.
+
+*What it needs, and it is a decision rather than a repair:* Rust's `+` on strings
+takes `String + &str` and nothing else, so one side of every concatenation has to
+be owned and the other borrowed. This language's `+` says neither. Either the
+emitter writes the conversion where the types say it is needed — which it can,
+since [ADR-028](specification/adr/adr-028.md) has the checker hand answers over
+by statement — or `+` on strings lowers to a `format!` and the asymmetry stops
+existing. The second is one rule rather than a table of four cases.
+
+*Found by* the same fixture, which is the fourth time this session that running
+one of the specification's own programs turned something up.
+
+**Two entries, both found by writing the specification's own programs**, which
+is now the fourth and fifth thing that method has turned up in this session: a
+trait whose method pauses (§1.1) and Part I 4.7's own `"User: " + self.username`
+(§1.2). Neither is a repair — each names a real choice, and each says what the
+two options cost. The entry that left just before them is worth a sentence for
+what its fix cost to get right. It was filed as *escape it, one rule at one place*, and
 the measurement behind that was wrong by three words: `crate`, `super` and `box`
 fail in the language below with a different message each, so a sweep keyed on one
 message missed them. The sweep that replaced it **compiles** every candidate in
@@ -459,67 +542,6 @@ not among the reserved words. So the analysis other languages need for this
 question is, here, one test on the condition. The polarity is the usual one: say
 *"cannot be reached"* only where the condition is the literal, never where it is a
 name that happens to be true.
-
-### 2.13. Part I 4.7's `trait` declaration is a parse error, and generics now wait on it
-
-*Reproduced:*
-
-```nika
-trait Summarize {
-    fn summary(&self) -> String
-}
-```
-
-```text
-t1.nika: Parse error:
-expected end of input; found unexpected token `trait` at line 1, column 1
-note: also possible here: `//`, `@borrowed`, `enum`, `fn`, `impl`, `pub`, `use`, item
-```
-
-Part I 4.7 writes that block as its own example and the section's Status note
-says so — but the note is the only place it is written down, and a Status note is
-not this list. So the item that the specification's own example needs has never
-been in the list that knows what each thing costs, which is how it went unranked.
-
-*Why it is now load-bearing rather than merely missing.*
-[ADR-074](specification/adr/adr-074.md) §4 names it as the prerequisite for a
-**bound**: `[T: Summarize]` names a trait, and a trait can currently be
-implemented and not declared. So generics are built up to the point where a
-generic body may move and pass its value and nothing else — `NK1126` says
-exactly that to the user — and the next thing that makes them worth having is
-this.
-
-*What it needs, in the order the pieces depend on each other:* the keyword
-reserved (it is not, §1.1's sweep found it as a name); the item in the grammar;
-the method signatures recorded in the ledger so a bound can be looked up; then
-`[T: Bound]` on a parameter, and the checker answering `NK1126` from what the
-bound gives instead of refusing. Four steps, and only the last is about generics.
-
-*What is already built and is the reason this is a step and not a project:*
-`impl Summarize for User` works, and the ledger already records what a method
-signature is. What is missing is a **declaration** to check an `impl` against and
-to name in a bound.
-
-### 2.14. A `comptime` binding at item level has nowhere to stand
-
-*Reproduced:* `comptime MAX = 1000` at the top of a file is a parse error; the same
-line inside a function body parses, folds and runs.
-
-*Why it is work and not a question:*
-[ADR-073](specification/adr/adr-073.md) D2 decided both places, and Part I 9.2
-already lists **Constants** among the items `pub` applies to - so the rule for a
-constant another package may read is written and the syntax for one is not.
-
-*What it needs, and why it is more than a grammar rule:* a name at item level is
-in scope for **every** function in the package, and this checker's scope is a
-stack pushed per function. So the item form needs a frame under all of them,
-filled before any body is walked - which is also where `pub` would be checked,
-since a constant reached from another package is [ADR-047](specification/adr/adr-047.md)
-D2's question rather than a new one. The emitter needs the same table it already
-reads for the body form, keyed the same way.
-
-*What it does **not** need:* any decision. The evaluator, the refusal and the
-type spelling are the body form's and are built.
 
 ---
 

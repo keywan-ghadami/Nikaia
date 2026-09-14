@@ -905,10 +905,31 @@ impl Summarize for User {
 }
 ```
 
-> **Status:** `impl Summarize for User` is built. **`trait Summarize { … }` is
-> not** — a trait declaration is a parse error at the keyword, so a trait can be
-> implemented but not declared, and the traits that can be implemented today are
-> the ones the standard library and the Rust side already name.
+A trait's methods are **signatures**: no body, because the declaration says what
+a type must have and the `impl` says what it does.
+
+Once a trait is declared, a type parameter can be **bound** by it — and that is
+what gives a generic body something it may do (4.6):
+
+```nika
+fn shout[T: Summarize](x: T) -> String {
+    return x.summary()     // `Summarize` says there is one
+}
+```
+
+The bound answers the whole call, not just whether it is allowed: how many
+arguments `summary` takes, what they have to be, what it hands back, and whether
+it can fail or pause all come from the declaration. Several bounds are written
+`[T: Named + Aged]`.
+
+> **Status:** the declaration, `[T: Bound]`, `[T: A + B]` and the lookup are
+> built ([ADR-078](adr/adr-078.md)). **Nothing yet checks an `impl` against the
+> trait it names** — a method with a different signature, or a missing one, is
+> refused by the language below rather than here. A **default body** has no
+> syntax, a trait is not a type (there is no `dyn` and no `fn f(x: Summarize)`),
+> and a trait cannot be named from another package. A trait whose method
+> genuinely **pauses** does not lower correctly, and `docs/open-work.md` carries
+> that with its reproduction.
 
 ---
 
