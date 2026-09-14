@@ -19,6 +19,11 @@
 - **`/docs/` was a 404 and the note index was published as raw Markdown.** `jekyll-readme-index` follows GitHub's rule that a `docs/README.md` is a candidate for the **root** index, and drops it when a root `README.md` has already won that slot — so `docs/README.md` became neither, and was copied out as a `.md` file. It is given a `permalink` of `/docs/` in the checkout, which is also what the menu's Notes section needed to point at.
 
 - **The layout scrolled sideways below 900px.** The menu and the content column were a flex row at every width, so a 264px sidebar beside a full-width column overflowed the viewport by 774px. Below the sidebar width they are ordinary block flow and stacked.
+### Fixed (the README promised an `Rc` the compiler does not give)
+
+- **"At `user_parallelism = no` it compiles to `Rc`"** has been false since [ADR-037](docs/specification/adr/adr-037.md) D6 made the atomic count the **floor at both settings**, with the plain one an optimisation `contracts::sharing` applies **per value** where it proves nothing crosses. Measured while checking something else: at `no`, a value the analysis cannot follow comes out an `Arc`, exactly as D6 says it should. The page promised the old per-build expansion, which is the shape that record replaced.
+- The same sentence carried "single-threaded event loop", the phrase corrected one entry above, and Part II 12.7's soundness note said "the single-threaded runtime owns all task state" — the runtime is not single-threaded, the thread your code runs on is. Both now say what they mean.
+- Left alone deliberately: `docs/rc-or-arc.md`'s quotation of the old sentence, which is *evidence* in a finding about that very divergence rather than a claim, and the benchmark row labels, where "single-threaded" names a measured case.
 
 ### Changed (the README stops saying "single-threaded", because the process is not)
 

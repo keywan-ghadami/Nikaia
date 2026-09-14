@@ -111,8 +111,11 @@ a struct, a task borrowing from its parent) get real language constructs instead
 → [ADR-005](docs/specification/adr/adr-005.md), [ADR-008](docs/specification/adr/adr-008.md)
 
 **3. One source, every runtime.**
-You write `Shared[T]`. At `user_parallelism = no` it compiles to `Rc` and a single-threaded
-event loop; above it, to `Arc` and a work-stealing thread pool. The same holds for `spawn`.
+You write `Shared[T]`. What it becomes underneath is the compiler's: the atomic reference count
+is the floor, and a value it can **prove** never crosses a thread gets the plain one instead —
+decided per value rather than per build ([ADR-037](docs/specification/adr/adr-037.md) D7). The
+lock in `Locked[T]` is decided the same way and off the same answer
+([ADR-057](docs/specification/adr/adr-057.md)), and so is where `spawn`'s tasks run.
 Your source file does not encode the deployment decision, so changing it is a line in
 `nikaia.toml`, not a refactor.
 

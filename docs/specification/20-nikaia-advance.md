@@ -819,7 +819,7 @@ error[NK2102]: tasks inside `task::scope` must be `sync` where they run in paral
            let result = handle.join()
 ```
 
-> **Design Note (Soundness):** Borrowing across *parallel, pausable* tasks is a known unsoundness trap — a cancelled scope cannot instantly stop a task mid-execution on another core, yet the borrowed variables are about to disappear. General-purpose async runtimes cannot offer a safe async scope for exactly this reason. Nikaia avoids the trap structurally: at `no` the single-threaded runtime owns all task state and tears scopes down synchronously (which additionally requires that task futures are exclusively runtime-owned and that the language exposes no way to leak a live scope — both are language-level guarantees); above `0` the `sync` restriction makes waiting deterministic. See [ADR-005](adr/adr-005.md), D5.
+> **Design Note (Soundness):** Borrowing across *parallel, pausable* tasks is a known unsoundness trap — a cancelled scope cannot instantly stop a task mid-execution on another core, yet the borrowed variables are about to disappear. General-purpose async runtimes cannot offer a safe async scope for exactly this reason. Nikaia avoids the trap structurally: at `no` the one thread your code runs on owns all task state and tears scopes down synchronously (which additionally requires that task futures are exclusively runtime-owned and that the language exposes no way to leak a live scope — both are language-level guarantees); above `0` the `sync` restriction makes waiting deterministic. See [ADR-005](adr/adr-005.md), D5.
 
 ### 12.8. Supervision Trees
 In complex systems, threads might crash (panic). A **Supervisor** monitors tasks. If a child task crashes, the supervisor can decide to:
