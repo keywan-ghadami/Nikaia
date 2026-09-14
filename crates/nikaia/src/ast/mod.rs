@@ -120,7 +120,7 @@ pub enum Item {
     // cannot check a frame or generate a fold driver from a string.
     Grammar(GrammarDef),
 
-    // Kap 9.2: use std::http
+    // Kap 9.2: use std::fs
     Import {
         path: Vec<Ident>,
         /// `use http as h` - what this file calls the package

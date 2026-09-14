@@ -307,7 +307,7 @@ that only works single-threaded.
 A HTTP server: two routes, one of which reads a query parameter.
 
 ```nika
-use std::http
+use http
 
 fn main() throws {
     http::Server::new()
@@ -335,9 +335,11 @@ call that waits looks like a call (Part II, 11.1) — the emitted Rust is an `as
 `.await` at that call, decided by what the ledger already knows and **built**
 ([ADR-055](docs/specification/adr/adr-055.md) D1, D2).
 
-> **Status:** `std::http` is not built ([ADR-038](docs/specification/adr/adr-038.md) D1) — this
-> is what the specification says a server is, not something you can run today. What *is* built
-> underneath it: the runtime, the executor at `user_parallelism = no`, and `spawn`
+> **Status:** `http` is not built, and it is **not part of `std`**
+> ([ADR-069](docs/specification/adr/adr-069.md) D1): it is a package reached by a path, so that
+> it can ripen at its own speed rather than the language's. This is what the specification says a
+> server is, not something you can run today. What *is* built underneath it: the runtime, the
+> executor at `user_parallelism = no`, and `spawn`
 > ([ADR-055](docs/specification/adr/adr-055.md) §6); what is missing is the socket layer and the
 > HTTP/1.1 parser above them. The programs in [`examples/`](examples/) are the ones that run.
 

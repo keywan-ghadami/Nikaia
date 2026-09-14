@@ -17,8 +17,12 @@
 // and its escaping, is done: `render` below lowers and runs. What is left is
 // [G6] alone, the request the handler cannot see - the chain in `main` reads
 // as it should since ADR-022 removed the `fn:` form that could not be chained.
+//
+// `http` is a package and not a module of `std` (ADR-069 D1), so when this file
+// compiles it will be a directory with a manifest naming it by path rather than
+// a single file. The spelling below is the one the first chapter teaches.
 
-use std::http
+use http
 use std::db::postgres
 use std::html
 

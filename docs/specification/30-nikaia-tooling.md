@@ -849,17 +849,21 @@ println(f"{count} rows")
 progress line rewritten in place — where a newline after every fragment would be wrong.
 `examples/json.nika` is the first program here that needs it.
 
-**`std::http`**
-A production-ready HTTP/1.1 and HTTP/2 server and client.
+**`http` — a package, not a module of `std`**
+An HTTP/1.1 and HTTP/2 server and client, aimed at production and not there yet.
 
-> **Status:** not built. The server is Nikaia's own rather than a binding to a
-> finished one, and HTTP/1.1 comes first ([ADR-038](adr/adr-038.md) D1, D6).
-> HTTP/2 is named here because it is intended, not because it exists.
+> **Status:** not built, and **not part of `std`**
+> ([ADR-069](adr/adr-069.md) D1). It is a package reached by a path —
+> `http = { path = "../http" }` — and it lives in `examples/` until its surface
+> stops moving, so that it can ripen at its own speed rather than the language's
+> (D4). The server is Nikaia's own rather than a binding to a finished one, and
+> HTTP/1.1 comes first ([ADR-038](adr/adr-038.md) D1, D6). HTTP/2 is named here
+> because it is intended, not because it exists.
 * **At `user_parallelism = no`:** Runs on a single-threaded Event Loop.
 * **At `yes`:** Runs on a multi-threaded Work-Stealing Executor.
 
 ```nika
-use std::http
+use http
 
 fn main() {
     // Starts a server on Port 8080.
@@ -921,7 +925,7 @@ machine's CPU for a 4 KiB page.
 entering the process. Its `Content-Type` follows the extension, and its length — and any failure
 to open it — are settled before the status line, because after the headers are written there is
 no status code left to send (D6). Whether that becomes `sendfile(2)`, a mapping, or an ordinary
-read is `std`'s to choose at run time and not the program's to name (D3), and it is unavailable
+read is the library's to choose at run time and not the program's to name (D3), and it is unavailable
 under TLS and under HTTP/2 (D5).
 
 **When the request names the file, the path is `Untrusted` and the compiler says so.** A
@@ -945,12 +949,12 @@ traversal bug is written, and `trusted: true` at the source is the other way to 
 the program that knows something the compiler does not, recorded in `nikaia.contracts` with its
 site.
 
-What `std` keeps between requests is bounded, dropped when the file's identity or modification
+What the library keeps between requests is bounded, dropped when the file's identity or modification
 time moves, and sized by the operator rather than the program ([ADR-058](adr/adr-058.md) D8). A
 page that must be held for certain is mapped by the program itself, outside the handler, which is
 the first example above.
 
-> **Status:** `std::http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes`
+> **Status:** `http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes`
 > row nor `http::File` exists, and neither does `fs::within` or D7's refusal — the provenance
 > analysis it would rest on does (`std::collections`, below, and `nikaia --trust`). `fs::map` and
 > `Bytes` exist.

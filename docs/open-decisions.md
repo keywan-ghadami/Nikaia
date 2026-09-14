@@ -1,13 +1,13 @@
 # Open decisions — the questions that need the owner
 
-**Six entries, and every one of them is open.** Nothing answered lives here: an
+**Five entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
 the compiler does not do it yet, which needs work and not a ruling.
 
-The twelve entries this file used to carry are gone that way, eleven to their
-records and one because it was never a question for the owner at all:
+The thirteen entries this file used to carry are gone that way, twelve to
+their records and one because it was never a question for the owner at all:
 [ADR-046](specification/adr/adr-046.md) (`use` brings nothing in),
 [ADR-047](specification/adr/adr-047.md) (a package is a directory),
 [ADR-048](specification/adr/adr-048.md) (the numeric surface),
@@ -20,6 +20,10 @@ records and one because it was never a question for the owner at all:
 question that stopped being one rather than getting an answer) and
 [ADR-060](specification/adr/adr-060.md) (a literal no use constrains takes the
 first type that holds it, which needed none of the inference it seemed to) and
+[ADR-069](specification/adr/adr-069.md) (`http` leaves `std` and becomes a
+package — the entry that asked what `std::http` should contain, when the question
+underneath was whether it is in `std` at all, which the specification had been
+answering both ways) and
 [ADR-063](specification/adr/adr-063.md) (and so does a sum of them — the option
 this file recommended, once it turned out that *leaving it* was not one, because
 what it left was the backend's own message on a Nikaia line). Each record
@@ -31,10 +35,11 @@ always the notes page.
 what either direction costs** — because a question without a recommendation is
 work handed back rather than a decision asked for.
 
-**What "blocked" means is broader than work, and narrower than everything.** §4
-blocks no work at all and belongs here anyway: it blocks *reading* an accepted
-record whose surface half cannot be evaluated, which is a cost that grows
-silently. What does *not* belong is a question nothing rests on — which SQLite
+**What "blocked" means is broader than work, and narrower than everything.** An
+entry may block no work at all and belong here anyway: `std::http` blocked
+*reading* an accepted record whose surface half could not be evaluated, which is
+a cost that grew silently until [ADR-069](specification/adr/adr-069.md) stopped
+it. What does *not* belong is a question nothing rests on — which SQLite
 binding `std::db` would use is undecided and blocks nothing, because `std::db`
 does not exist in any form. That is **scope**, and
 [`project_status_and_roadmap.md`](project_status_and_roadmap.md) holds it; scope
@@ -147,53 +152,10 @@ a project of its own.
 
 ---
 
-## 4. What **is** `std::http`?
-
-**Why it is here and not in the work list.** [ADR-058](specification/adr/adr-058.md)
-is accepted and none of it is built, which is ordinary; what is not ordinary is
-that four of its nine decisions describe a **surface nobody has chosen**. `http::File`
-is a type in an interface that does not exist. "A body may be a `Bytes` or a
-mapping" says what a handler may return. A bounded, invalidated table of mappings
-is the inside of a library there is no outside for. Each of those reads as settled
-and is not — the question they rest on has never been put.
-
-**What is *not* in question**, so the record is not reopened wholesale. Five of its
-decisions constrain whatever `std::http` turns out to be, and hold either way:
-
-* a path out of a request is `Untrusted` and may not reach the filesystem
-  unchecked — a statement about the provenance lattice and the filesystem, not
-  about a server, and the one piece buildable before a socket exists;
-* `std` chooses the mechanism and the program never does, with the operator able
-  to overrule — a principle, and the one four production servers arrived at
-  independently;
-* `splice` is not it; TLS turns the file path off as a property; whatever carries
-  the bytes pauses through the executor or is not `std`'s to call;
-* the length is settled before the status line — a fact about HTTP.
-
-**The question.** Not how a server is implemented, but what its surface *is*:
-
-* **What answers a request.** A handler returns the answer today
-  ([ADR-018](specification/adr/adr-018.md) D2), and the set of things it may
-  return is what ADR-058 D1 and D2 quietly extend. Is that set open, closed, or a
-  trait the program may implement?
-* **Who builds the server.** `http::Server::new().route(…).listen(…)` is the
-  README's shape and nothing decides it.
-* **Whether `std` ships it at all**, or whether an HTTP server is a package —
-  which is now a real alternative, since a package can depend on a package
-  ([ADR-053](specification/adr/adr-053.md)). `std` shipping a web server is a
-  choice most languages made once and regretted differently.
-
-**What is blocked by it:** nothing today, and that is the point. It blocks
-*reading* — an accepted record whose surface half cannot be evaluated, because
-what it would constrain has no shape yet. The order is the wrong way round, and
-writing that down is cheaper than discovering it when somebody builds to it.
-
-**A note on order rather than a recommendation.** The path check needs no answer
-here and closes a security hole; it can be built while this stays open.
 
 ---
 
-## 5. Does a word-sized shared value drop its lock?
+## 4. Does a word-sized shared value drop its lock?
 
 **Blocked by it:** nothing is half-built. The measurement is done
 ([`lock-free.md`](lock-free.md)), so what is left is the ruling and then the work.
@@ -291,7 +253,7 @@ value qualifies, and `--sharing` says why not.
 
 ---
 
-## 6. Does the ledger's type language grow, so fewer values are `?`?
+## 5. Does the ledger's type language grow, so fewer values are `?`?
 
 **Blocked by it:** nothing is half-built. What it blocks is how often this
 compiler can answer at all — a cost that is paid everywhere and shows up nowhere
