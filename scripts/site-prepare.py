@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""Write the pages and the menu the site needs and the repository does not have.
+
+Run on the runner's throwaway checkout, after `pages.yml` has fenced literal
+braces off from Liquid and before Jekyll builds. Nothing here changes a file in
+the repository, and nothing here restates documentation: every page it writes
+either quotes a program that exists or is a list of links to pages that exist.
+
+Four things:
+
+1. **A page per example program.** `examples/*.nika` are published as files, and
+   a browser asking for one gets a download rather than a page — no layout, no
+   menu, no highlighting. Each now has a page beside it that shows the program,
+   with the file itself still one link away.
+
+2. **A directory index where a directory of programs has no README.**
+   `examples/inventory/` is linked as a directory from the examples index and
+   had nothing to serve.
+
+3. **`_data/nav.json`, which is the menu.** Generated rather than written down,
+   because the site grows: sixty decision records today, and a menu nobody
+   maintains would be wrong by the next one. Each entry's label is that page's
+   own first heading, so a retitled page retitles itself in the menu.
+
+4. **A permalink on `docs/README.md`.** `jekyll-readme-index` follows GitHub's
+   rule that a `docs/README.md` is a candidate for the *root* index, and drops
+   it when a root `README.md` already won that slot — so `/docs/` was a 404 and
+   the note index was published as raw Markdown.
+
+Usage:
+    scripts/site-prepare.py [checkout-root]
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+RAW_OPEN = "<!-- {% raw %} -->"
+RAW_CLOSE = "<!-- {% endraw %} -->"
+
+FENCE = re.compile(r"^\s*(```|~~~)")
+HEADING = re.compile(r"^#\s+(.+?)\s*$")
+
+
+def first_heading(path):
+    """The page's own title: its first `# ` heading outside a code fence."""
+    in_fence = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        found = HEADING.match(line)
+        if found:
+            # `**bold**` and `` `code` `` are markup in a heading and noise in a
+            # menu; the words are the label.
+            return re.sub(r"[`*]", "", found.group(1)).strip()
+    return None
+
+
+def page_url(root, path):
+    """Where Jekyll will publish this Markdown file."""
+    relative = path.relative_to(root)
+    if path.name.lower() == "readme.md":
+        parent = relative.parent.as_posix()
+        return "/" if parent == "." else f"/{parent}/"
+    return "/" + relative.with_suffix(".html").as_posix()
+
+
+def write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def example_pages(root):
+    """One page per program, and an index for a directory that has no README."""
+    examples = root / "examples"
+    written = []
+    if not examples.is_dir():
+        return written
+
+    for program in sorted(examples.rglob("*.nika")):
+        page = program.with_suffix(".md")
+        name = program.name
+        title = program.relative_to(examples).as_posix()
+        # Relative, because the site is served under `/Nikaia` and a
+        # root-absolute link would leave it.
+        up = "../" * len(program.relative_to(examples).parts[:-1]) or "./"
+        # `{{` is how Nikaia writes a literal brace and `{` opens a hole in an
+        # `f"…"`, so a program is the last thing that may reach Liquid.
+        write(
+            page,
+            f"# {title}\n\n"
+            f"{RAW_OPEN}\n"
+            "```nika\n"
+            f"{program.read_text(encoding='utf-8').rstrip()}\n"
+            "```\n"
+            f"{RAW_CLOSE}\n\n"
+            f"[The file itself]({name}) · [all the examples]({up})\n",
+        )
+        written.append(page)
+
+    directories = {p.parent for p in examples.rglob("*.nika")}
+    for directory in sorted(directories):
+        if (directory / "README.md").exists() or directory == examples:
+            continue
+        programs = sorted(p.name for p in directory.glob("*.nika"))
+        listing = "\n".join(
+            f"- [{name}]({Path(name).with_suffix('.html')})" for name in programs
+        )
+        write(
+            directory / "README.md",
+            f"# {directory.relative_to(examples).as_posix()}/\n\n{listing}\n",
+        )
+
+    return written
+
+
+def relink_examples_index(root, written):
+    """The examples index links at the files; point it at the pages."""
+    index = root / "examples" / "README.md"
+    if not index.exists():
+        return
+    names = {p.with_suffix(".nika").name for p in written}
+    text = index.read_text(encoding="utf-8")
+
+    def swap(match):
+        target = match.group(1)
+        if target in names:
+            return "](" + target[: -len(".nika")] + ".html)"
+        return match.group(0)
+
+    index.write_text(re.sub(r"\]\(([^)/]+\.nika)\)", swap, text), encoding="utf-8")
+
+
+def docs_index_permalink(root):
+    readme = root / "docs" / "README.md"
+    if not readme.exists():
+        return
+    text = readme.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        return
+    readme.write_text("---\npermalink: /docs/\n---\n" + text, encoding="utf-8")
+
+
+def entry(root, path, title=None):
+    return {"title": title or first_heading(path) or path.stem, "url": page_url(root, path)}
+
+
+def menu(root):
+    spec = root / "docs" / "specification"
+    adr = spec / "adr"
+
+    notes = sorted(
+        p for p in (root / "docs").glob("*.md") if p.name.lower() != "readme.md"
+    )
+    records = sorted(
+        p for p in adr.glob("*.md") if p.name.lower() != "readme.md"
+    )
+    examples = sorted(
+        (root / "examples").rglob("*.md"),
+        key=lambda p: (p.parent.as_posix(), p.name.lower() != "readme.md", p.name),
+    )
+
+    sections = [
+        {
+            "title": "Nikaia",
+            "pages": [
+                # The README opens with a banner rather than a heading, so this
+                # is the one label that is not a page's own first line.
+                entry(root, root / "README.md", "Overview"),
+                entry(root, root / "manifesto.md"),
+                entry(root, root / "CHANGELOG.md", "Changelog"),
+            ],
+        },
+        {
+            "title": "Specification",
+            "pages": [entry(root, spec / "README.md")]
+            + [
+                entry(root, p)
+                for p in sorted(spec.glob("*.md"))
+                if p.name.lower() != "readme.md"
+            ],
+        },
+        {
+            "title": "Decisions",
+            "pages": [entry(root, adr / "README.md")] + [entry(root, p) for p in records],
+        },
+        {
+            "title": "Notes",
+            "pages": [entry(root, root / "docs" / "README.md")]
+            + [entry(root, p) for p in notes],
+        },
+        {
+            "title": "Examples",
+            "pages": [entry(root, p) for p in examples],
+        },
+    ]
+
+    for section in sections:
+        section["pages"] = [p for p in section["pages"] if p["title"]]
+    return sections
+
+
+def main():
+    root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+
+    written = example_pages(root)
+    relink_examples_index(root, written)
+    docs_index_permalink(root)
+
+    sections = menu(root)
+    write(root / "_data" / "nav.json", json.dumps(sections, indent=2) + "\n")
+
+    print(f"{len(written)} example pages")
+    for section in sections:
+        print(f"  {len(section['pages']):3}  {section['title']}")
+
+
+if __name__ == "__main__":
+    main()

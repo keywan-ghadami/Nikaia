@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added (the site has a menu, and every example program is a page on it)
+
+- **A menu on every page, generated rather than written down.** Five sections — Nikaia, Specification, Decisions, Notes, Examples — as a sidebar where there is room for one and a single `Menu` line above the text where there is not. `scripts/site-prepare.py` writes `_data/nav.json` on each build from the files themselves, and each entry's label is that page's own first heading: a page that is retitled retitles itself in the menu, and a decision record that is added appears in it. Sixty-one records are in there today; a list that had to be edited by hand would have been wrong before anyone noticed, which is the whole reason it is generated.
+
+- **It is `<details>` and nothing else** — no script decides what is open, so the menu works before the page has finished loading and with JavaScript switched off. The section being read ships open and the rest ship closed, which is what keeps a sidebar of sixty-one records readable. Two things script does add, and neither is load-bearing: the menu's own column scrolls to the page you are on, because the browser will not (on ADR-050 the entry is a long way down), and on a narrow screen the outer disclosure is closed, because there the menu is a control rather than a column. It ships **open**, so a reader with no script gets a menu rather than a line that will not expand.
+
+- **Every example program is a page now.** `examples/*.nika` were published as files, and a browser asking for one got a download: no layout, no menu, no highlighting, and the examples index linked at all eleven of them. There is a page beside each of the nineteen programs now — highlighted from the same grammar as everything else — the index links at those pages, and the file itself is still one link away from each. `examples/inventory/`, which the index has always linked as a directory, has an index instead of a 404.
+
+- 84 pages and 352 code blocks, up from 66 and 334.
+
+### Fixed (three things that were wrong on the published site)
+
+- **Every code block was double-spaced.** Shiki writes `<span class="line">…</span>` with a real newline between them, and under `white-space: pre` that newline is what ends the line — so the `display: block` the stylesheet also gave `.line` added a second one after every line. It was there from the first build of the themed site and read as though the source had blank lines in it.
+
+- **`/docs/` was a 404 and the note index was published as raw Markdown.** `jekyll-readme-index` follows GitHub's rule that a `docs/README.md` is a candidate for the **root** index, and drops it when a root `README.md` has already won that slot — so `docs/README.md` became neither, and was copied out as a `.md` file. It is given a `permalink` of `/docs/` in the checkout, which is also what the menu's Notes section needed to point at.
+
+- **The layout scrolled sideways below 900px.** The menu and the content column were a flex row at every width, so a 264px sidebar beside a full-width column overflowed the viewport by 774px. Below the sidebar width they are ordinary block flow and stacked.
+
 ### Changed (the README stops saying "single-threaded", because the process is not)
 
 - **`no` was described as a "single-threaded event loop"**, which is a statement about the *process* — and the process has at least two OS threads. The runtime starts named I/O workers (`nikaia-io-0`, …) whatever the switch says, and its own test asserts *"one I/O thread always"*. The claim below it — two pieces of your code are never in flight together — was always true, and the word above it was not.

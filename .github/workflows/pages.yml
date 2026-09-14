@@ -51,6 +51,16 @@ jobs:
               ' "$f" >"$f.pages" && mv "$f.pages" "$f"
             done
 
+      # The menu, and a page for every example program. Both are generated
+      # from the files themselves on each build, into this throwaway checkout
+      # and not into the repository — sixty decision records today and more
+      # next week, and a menu that had to be edited by hand would be wrong
+      # before anyone noticed. It runs after the fencing above, because one of
+      # the things it writes is YAML front matter, which has to be the first
+      # line of its file.
+      - name: Write the menu and the example pages
+        run: scripts/site-prepare.py
+
       # `enablement: true` turns Pages on for the repository if it is off,
       # so nobody has to click through Settings first.
       - name: Configure Pages

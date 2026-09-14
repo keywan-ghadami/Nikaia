@@ -58,7 +58,52 @@
       <button type="button" data-theme-choice="sepia">Sepia</button>
     </div>
 
-    <div class="container-lg px-3 my-5 markdown-body">
+    <div class="page">
+      <!--
+        The menu. Every entry comes from `_data/nav.json`, which
+        `scripts/site-prepare.py` writes from the files themselves on each
+        build: sixty decision records today and more next week, so a menu that
+        had to be edited by hand would be wrong before anyone noticed.
+
+        A `<details>` per section, open only on the section being read. That is
+        the whole mechanism — no script, so it works while the page is still
+        loading and with JavaScript switched off, and a keyboard reaches it the
+        way it reaches any disclosure.
+      -->
+      <nav class="site-nav" aria-label="Documentation">
+       <details class="site-nav-outer" open>
+        <!--
+          One line on a narrow screen, where the open section would otherwise
+          be the whole first screenful, and no control at all on a wide one,
+          where the stylesheet hides this summary and the sidebar is simply
+          there. It ships open, so that a reader with no script gets the menu
+          rather than a line that will not expand; `nav.js` closes it on the
+          widths where it is a control. The sections are nested inside it for
+          that reason and no other.
+        -->
+        <summary>Menu</summary>
+        <div class="site-nav-body">
+        {% for section in site.data.nav %}
+          {% assign here = false %}
+          {% for item in section.pages %}
+            {% if item.url == page.url %}{% assign here = true %}{% endif %}
+          {% endfor %}
+          <details class="site-nav-section"{% if here %} open{% endif %}>
+            <summary>{{ section.title | escape }}</summary>
+            <ul>
+              {% for item in section.pages %}
+                <li>
+                  <a href="{{ item.url | relative_url }}"{% if item.url == page.url %} aria-current="page"{% endif %}>{{ item.title | escape }}</a>
+                </li>
+              {% endfor %}
+            </ul>
+          </details>
+        {% endfor %}
+        </div>
+       </details>
+      </nav>
+
+      <div class="container-lg px-3 my-5 markdown-body">
       {% if site.title and site.title != page.title %}
       <h1><a href="{{ "/" | absolute_url }}">{{ site.title }}</a></h1>
       {% endif %}
@@ -70,8 +115,10 @@
         This site is open source. {% github_edit_link "Improve this page" %}.
       </div>
       {% endif %}
+      </div>
     </div>
     <script src="{{ "/assets/js/theme.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
+    <script src="{{ "/assets/js/nav.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/anchor-js/4.1.0/anchor.min.js" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg=" crossorigin="anonymous"></script>
     <script>anchors.add();</script>
   </body>
