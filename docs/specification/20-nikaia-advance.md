@@ -472,17 +472,22 @@ Because code at `user_parallelism = yes` runs on several physical CPU cores at o
 ### 12.1. The `sync` Keyword (CPU Constraints)
 Since everything in Nikaia is "Async by Default" (interruptible), we need a way to define code that **must not be interrupted** or moved between threads mid-execution.
 
-The `sync` keyword allows you to mark a function as a **pure CPU task**.
+The `sync` keyword marks a function that **never pauses**.
 * **Constraint:** A `sync` function can **only** call other `sync` functions.
-* **Prohibition:** It cannot call standard functions (which might perform I/O).
+* **What it is not:** it is not a promise that the function has no *effect*.
+  `println` is `sync` — it writes and returns, it never suspends — and so is a
+  panic hook, which must be `sync` and may block
+  ([ADR-006](adr/adr-006.md) D6). One word, one promise
+  ([ADR-067](adr/adr-067.md) D1): what a function **reaches** is a second
+  column and is answered by `touches` (13.5).
 
 This effectively creates two worlds: the flexible **Async World** (Default) and the strict **Sync World** (Computation).
 
 ```nika
-// 'sync' guarantees: I will never pause, I will never do I/O.
+// 'sync' guarantees one thing: I will never pause.
 fn calculate_physics(obj: Object) sync {
-    obj.x += obj.velocity 
-    // fs::read("log.txt") // Compiler Error: Forbidden I/O in sync context
+    obj.x += obj.velocity
+    // fs::read("log.txt") // Compiler Error: that call can pause, and this cannot
 }
 
 // Usage in Parallel Iterator
@@ -608,7 +613,7 @@ Holding a lock while the program pauses is dangerous *either way*: with threads 
 
 > **`update`, `access` and `access_all` require a lambda that is `sync` and touches no lock — at every setting.**
 
-A `sync` lambda (see 12.1) can never perform I/O and can never pause, and a lambda that touches no lock cannot take a second one (12.3). So while locked data is open, the program runs straight through: lock, compute, unlock. **`get` and `set` need no condition at all, and for a stronger reason: while the lock is open in either of them, no code of yours runs, so there is nothing that could fall due** ([ADR-039](adr/adr-039.md) D10). If you try to do I/O inside `access`, the compiler stops you with a plain explanation:
+A `sync` lambda (see 12.1) can never pause, and a lambda that touches no lock cannot take a second one (12.3). **Those are two conditions and not one** ([ADR-067](adr/adr-067.md) D1): `sync` answers the first, and what a body **reaches** — `touches`, the fourth derived column (13.5) — answers the second. A `println` inside a door fails the second and not the first: it never pauses, and it takes standard output's own lock while yours is open, which is a lock inside a lock. So while locked data is open, the program runs straight through: lock, compute, unlock. **`get` and `set` need no condition at all, and for a stronger reason: while the lock is open in either of them, no code of yours runs, so there is nothing that could fall due** ([ADR-039](adr/adr-039.md) D10). If you try to do I/O inside `access`, the compiler stops you with a plain explanation:
 
 ```nika
 let counter = SharedMut(0)

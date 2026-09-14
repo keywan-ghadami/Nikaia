@@ -697,6 +697,11 @@ impl Ledger {
         // `checked.methods`, because ADR-028's whole point is that there is one
         // answer to what `a.add(v)` goes to and both walks read it.
         throws::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
+        // **The fourth derived column** ([ADR-067](../../../docs/specification/adr/adr-067.md)
+        // D2), and the one that was specified without an inference. After
+        // `throws` for no reason but tidiness: it reads the same bodies through
+        // the same walk and needs nothing either of the two produced.
+        touch::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
         // ADR-037 D7: which count each `Shared` class gets. Last, because it
         // resolves a callee's parameters against the `signature` step 1 wrote
         // and a type's parts against its `fields`, and reads nothing the two
@@ -781,10 +786,13 @@ impl Ledger {
                 // touches this one, because an assertion is what `NK2202`
                 // exists to contradict.
                 sync: if *is_sync { Sync::Asserted } else { Sync::No },
-                // Nothing a `.nika` file declares reaches a resource this
-                // vocabulary can name yet: `fs` and `io` are `std`'s, and
-                // `std` writes its own down (ADR-033 §6). An empty list with
-                // `touches_known` false is "nobody said", which orders.
+                // What the *declaration* says, which is nothing: a `.nika`
+                // file has no syntax for a touch set, and there is no reason to
+                // give it one - what a body reaches is read off the body.
+                // `touch::infer` answers it afterwards, the way `sync` and
+                // `throws` are answered ([ADR-067](../../../docs/specification/adr/adr-067.md)
+                // D2). Until it has run, "nobody said" is the answer, and that
+                // orders against everything (ADR-033 D4).
                 touches: Vec::new(),
                 touches_known: false,
                 // The *declaration* says only that it can fail. Which errors

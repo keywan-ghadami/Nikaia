@@ -57,7 +57,22 @@ use anyhow::{anyhow, Result};
 /// touch set means *it changes the resource*, and reading a stream consumes
 /// it: two `io::read_to_string()` calls do not both get the bytes, so the
 /// read/read rule that lets two file reads overlap would be exactly wrong.
-pub const KINDS: &[&str] = &["file", "stdout", "stderr", "args"];
+/// | `lock` | **a** lock, never which one | `get`, `set`, `access`, `update`, and the two doors over several |
+///
+/// **`lock` joined the list the day the doors existed**
+/// ([ADR-067](../../../../docs/specification/adr/adr-067.md) D3). It was named in
+/// [ADR-033](../../../../docs/specification/adr/adr-033.md) D2's own table and
+/// kept out of this one under the rule the paragraph above states - a word waits
+/// until a program asks for it - and until [ADR-064](../../../../docs/specification/adr/adr-064.md)
+/// and [ADR-065](../../../../docs/specification/adr/adr-065.md) no program could.
+///
+/// **It names no parameter, and that is [ADR-039](../../../../docs/specification/adr/adr-039.md)
+/// D4's decision rather than a limit here**: the property says *a lock* and never
+/// *which* lock, because telling two handles apart would make whether a program
+/// compiles depend on whether that proof happened to succeed. Two `access`
+/// calls are two **reads** and do not conflict; two doors that write do, whether
+/// or not they are the same lock.
+pub const KINDS: &[&str] = &["file", "stdout", "stderr", "args", "lock"];
 
 /// Which kinds may turn out to be **one** resource however differently they are
 /// named.
@@ -384,5 +399,231 @@ mod tests {
         assert!(reached("file", Some("a.txt"), false).conflicts_with(&unknown));
         // Still not a conflict with another kind entirely.
         assert!(!unknown.conflicts_with(&reached("stdout", None, true)));
+    }
+}
+
+// --- what a body reaches (ADR-067 D2) ---------------------------------------
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::ast::Item;
+use crate::check::MethodCalls;
+// `Reached` is a name this file already has for something else, so the one
+// `sync` uses for a call site comes in as `Call`.
+use crate::contracts::sync::{reached, visit_stmt, visit_stmt_blocks, Reached as Call};
+use crate::contracts::Ledger;
+use crate::parser::Parsed;
+
+/// What one function's body reaches, before the fixpoint joins it up.
+#[derive(Default)]
+struct Reach {
+    /// Something it calls is not accounted for: a name no ledger knows, a
+    /// construct that runs something, or a described callee whose own touch set
+    /// is *"nobody said"*. The claim is off and no fixpoint brings it back.
+    unknown: bool,
+    /// What it reaches directly, through callees a library describes.
+    outside: BTreeSet<Touch>,
+    /// The functions in this unit it calls. Its claim holds only while theirs do.
+    calls: BTreeSet<String>,
+}
+
+/// Give every function in the ledger the `touches` its body earns
+/// ([ADR-067](../../../../docs/specification/adr/adr-067.md) D2).
+///
+/// **The fourth derived column, and the one that was specified without one.**
+/// `sync`, `throws` and `sharing` are each read off a body over the call graph;
+/// `touches` was written with the same fail-closed polarity
+/// ([ADR-033](../../../../docs/specification/adr/adr-033.md) D4) and only ever
+/// hand-written in `std`'s ledger — so every function a `.nika` file declared
+/// said *"nobody said"*, which means *"it touches everything"*. Safe, and
+/// useless: the walk stopped at the first call out of `std`.
+///
+/// The fixpoint is the greatest one, for `sync::infer`'s reason: start from
+/// "every function touches nothing", and take the claim away from anything that
+/// reaches one without it. Mutual recursion between two functions that touch
+/// nothing keeps the claim, which is right.
+///
+/// **A resource named by a parameter does not travel.** `fs::read` touches
+/// `file(path)`, and `path` is *its* parameter: a caller's argument may be a
+/// literal, or a parameter of its own under another name, and mapping one to the
+/// other is a piece of work of its own. Until it is done, a callee whose touch
+/// names a parameter leaves the caller unknown — conservative in the direction
+/// this column is conservative in.
+pub fn infer(
+    ledger: &mut Ledger,
+    parsed: &Parsed,
+    library: &Ledger,
+    resolved: &BTreeMap<String, MethodCalls>,
+) {
+    let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
+    for item in &parsed.program.items {
+        match &item.node {
+            Item::Fn { .. } => {
+                if let Some((name, reach)) =
+                    reach_of(parsed, &item.node, None, ledger, library, resolved)
+                {
+                    graph.insert(name, reach);
+                }
+            }
+            Item::Impl {
+                target, methods, ..
+            } => {
+                let target = parsed.text(target.name).to_string();
+                for method in methods {
+                    if let Some((name, reach)) = reach_of(
+                        parsed,
+                        &method.node,
+                        Some(&target),
+                        ledger,
+                        library,
+                        resolved,
+                    ) {
+                        graph.insert(name, reach);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Start optimistic, then take the claim away until nothing changes.
+    let mut known: BTreeMap<&str, bool> = graph
+        .iter()
+        .map(|(name, reach)| (name.as_str(), !reach.unknown))
+        .collect();
+    loop {
+        let mut changed = false;
+        for (name, reach) in &graph {
+            if !known[name.as_str()] {
+                continue;
+            }
+            let reaches_unknown = reach
+                .calls
+                .iter()
+                .any(|callee| !known.get(callee.as_str()).copied().unwrap_or(false));
+            if reaches_unknown {
+                known.insert(name.as_str(), false);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // And the set, once every claim that holds is settled. A union over the
+    // whole reachable graph rather than one step, because what a caller reaches
+    // is what everything it calls reaches.
+    for (name, holds) in &known {
+        if !holds {
+            continue;
+        }
+        let mut found: BTreeSet<Touch> = BTreeSet::new();
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut todo = vec![*name];
+        while let Some(here) = todo.pop() {
+            if !seen.insert(here) {
+                continue;
+            }
+            let Some(reach) = graph.get(here) else {
+                continue;
+            };
+            found.extend(reach.outside.iter().cloned());
+            todo.extend(reach.calls.iter().map(|c| c.as_str()));
+        }
+        if let Some(contract) = ledger.functions.get_mut(*name) {
+            // **Only where nobody said.** A hand-written entry is what its
+            // author wrote, the way `sync::infer` leaves an assertion alone.
+            if !contract.touches_known {
+                contract.touches = found.into_iter().collect();
+                contract.touches_known = true;
+            }
+        }
+    }
+}
+
+/// One function's reach, by the key the ledger records it under.
+fn reach_of(
+    parsed: &Parsed,
+    item: &Item,
+    target: Option<&str>,
+    own: &Ledger,
+    library: &Ledger,
+    resolved: &BTreeMap<String, MethodCalls>,
+) -> Option<(String, Reach)> {
+    let Item::Fn { name, body, .. } = item else {
+        return None;
+    };
+    let own_name = match name {
+        Some(name) => parsed.text(*name).to_string(),
+        None => "new".to_string(),
+    };
+    let key = match target {
+        Some(target) => format!("{target}::{own_name}"),
+        None => own_name,
+    };
+
+    let mut reach = Reach::default();
+    collect(parsed, body, own, library, &mut reach);
+
+    // The method calls the type checker resolved, which this walk cannot
+    // (ADR-028) - the same hand-over `sync::infer` takes.
+    if let Some(methods) = resolved.get(&key) {
+        reach.unknown |= methods.unresolved;
+        for callee in &methods.resolved {
+            if own.functions.contains_key(callee) {
+                reach.calls.insert(callee.clone());
+            } else {
+                absorb(library.functions.get(callee), &mut reach);
+            }
+        }
+    }
+
+    Some((key, reach))
+}
+
+fn collect(
+    parsed: &Parsed,
+    block: &crate::ast::Block,
+    own: &Ledger,
+    library: &Ledger,
+    reach: &mut Reach,
+) {
+    for stmt in &block.stmts {
+        visit_stmt(parsed, &stmt.node, &mut |expr| {
+            match reached(parsed, expr, own, library) {
+                Some(Call::Own(name)) => {
+                    reach.calls.insert(name);
+                }
+                Some(Call::Library { key, .. }) => absorb(library.functions.get(&key), reach),
+                // Answered per function by the type checker, merged in above.
+                Some(Call::Method) => {}
+                // A name nobody knows, or a construct that runs something.
+                Some(Call::Opaque(_)) => reach.unknown = true,
+                None => {}
+            }
+        });
+        visit_stmt_blocks(&stmt.node, &mut |inner| {
+            collect(parsed, inner, own, library, reach)
+        });
+    }
+}
+
+/// Take a described callee's touch set into a caller's, or give up.
+fn absorb(contract: Option<&crate::contracts::FnContract>, reach: &mut Reach) {
+    let Some(contract) = contract.filter(|c| c.touches_known) else {
+        reach.unknown = true;
+        return;
+    };
+    for touch in &contract.touches {
+        // A resource named by a **parameter** is named in the callee's words.
+        // Until a caller's argument can be mapped onto it, inheriting the name
+        // would be claiming something about the wrong resource.
+        match touch.parameter {
+            Some(_) => reach.unknown = true,
+            None => {
+                reach.outside.insert(touch.clone());
+            }
+        }
     }
 }

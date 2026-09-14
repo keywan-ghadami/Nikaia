@@ -117,12 +117,14 @@ choice is already made per value.
   not say it has no **effect** — run, not argued: a `println` inside an `update`
   compiles and prints today, so a retry would print twice.
   [ADR-039](specification/adr/adr-039.md) §3 calls the missing property *"an
-  additional assurance which does not exist yet"*, and the machinery under it is
-  half built: `touches` is a derived column already, `overlap { … }` walks a block
-  and accounts for what it reaches, and *"touches nothing"* is very nearly
-  *"repeating it is unobservable"*. What stops it is that a **user-written**
-  function carries `touches_known = false`. `get` and `set` need no repetition at
-  all and could take the shape first.
+  additional assurance which does not exist yet"*, and **half of it arrived while
+  this was being written**: `touches` is inferred over the call graph since
+  [ADR-067](specification/adr/adr-067.md) D2, so a user-written function answers
+  what it reaches, and a body that prints inside an `update` reports
+  `["lock write", "stdout write"]`. *"Touches nothing, and it is known"* is very
+  nearly *"repeating it is unobservable"*; what is left is to say that they are
+  the same thing. `get` and `set` need no repetition at all and could take the
+  shape first.
 * **Not a value in a door over several locks.** `update_all` holds both at once
   ([ADR-065](specification/adr/adr-065.md)), and a retry loop cannot be held. Such
   a value has to keep a lock.

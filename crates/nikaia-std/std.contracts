@@ -640,11 +640,13 @@ signature = "(&Vec[?])"
 # runs at all (ADR-039 D10).
 [fn."Locked::get"]
 pub = true
+touches = ["lock read"]
 sync = true
 signature = "(&Locked[$T]) -> $T"
 
 [fn."Locked::set"]
 pub = true
+touches = ["lock write"]
 sync = true
 signature = "(&Locked[$T], value: $T)"
 
@@ -652,6 +654,7 @@ signature = "(&Locked[$T], value: $T)"
 # door that answers a question about a large value without copying it.
 [fn."Locked::access"]
 pub = true
+touches = ["lock read"]
 sync = "from(f)"
 signature = "(&Locked[$T], f: fn(&$T)) -> ?"
 
@@ -661,6 +664,7 @@ signature = "(&Locked[$T], f: fn(&$T)) -> ?"
 # something it may change.
 [fn."Locked::update"]
 pub = true
+touches = ["lock write"]
 sync = "from(f)"
 # `fn($T)` and not `fn($T) -> $T`: this ledger's type language has no result on a
 # lambda, which is a limit of the ledger rather than of the door. What it is read
@@ -684,21 +688,25 @@ signature = "(&Locked[$T], f: fn($T))"
 # is (ADR-064 D2).
 [fn."SharedMut::get"]
 pub = true
+touches = ["lock read"]
 sync = true
 signature = "(&SharedMut[$T]) -> $T"
 
 [fn."SharedMut::set"]
 pub = true
+touches = ["lock write"]
 sync = true
 signature = "(&SharedMut[$T], value: $T)"
 
 [fn."SharedMut::access"]
 pub = true
+touches = ["lock read"]
 sync = "from(f)"
 signature = "(&SharedMut[$T], f: fn(&$T)) -> ?"
 
 [fn."SharedMut::update"]
 pub = true
+touches = ["lock write"]
 sync = "from(f)"
 signature = "(&SharedMut[$T], f: fn($T))"
 
@@ -715,10 +723,12 @@ signature = "(&SharedMut[$T], f: fn($T))"
 # same shape `access` has, for the same reason (ADR-029 D3).
 [fn."access_all"]
 pub = true
+touches = ["lock read"]
 sync = "from(f)"
 
 [fn."update_all"]
 pub = true
+touches = ["lock write"]
 sync = "from(f)"
 
 [fn."Vec::sort_by_key"]
@@ -765,9 +775,14 @@ signature = "(&str) -> &str"
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
+# `touches = []` is a **claim** and not a blank: it reaches nothing, so it orders
+# against nothing (ADR-033 D4). It is written here because this entry is checked
+# against the `.nika` source that produces it, and `touch::infer` reads that body
+# and answers the same ([ADR-067](adr-067) D2) - the two must agree.
 [fn."text::digit_value"]
 pub = true
 sync = true
+touches = []
 signature = "(c: char) -> i32"
 
 # What the program was started with, and the one type here that says it **may

@@ -227,9 +227,9 @@ no atomic instruction.
   win and all of the safety.
 * **Build it for `update` too**, which needs the thing below.
 
-**What it needs that does not exist — and it is closer than it reads.** A block
-that may be **repeated**. `sync` says a block does not *wait*; it does not say it
-has no **effect**. Run, not argued:
+**What it needs, and it is one derivation away now.** A block that may be
+**repeated**. `sync` says a block does not *wait*; it does not say it has no
+**effect**. Run, not argued:
 
 ```nika
 let k = SharedMut(0)
@@ -240,22 +240,22 @@ k.update fn(alt) {
 ```
 
 So a retry would print twice. ADR-039 §3 calls the missing property *"an
-additional assurance which does not exist yet"*, and that is true of the
-**property**; the machinery under it is half built. `touches` is a second derived
-column ([ADR-033](specification/adr/adr-033.md)), `overlap { … }` already walks a
-block and accounts for what it reaches, and *"touches nothing"* is very nearly
-*"repeating it is unobservable"*. What is missing is that a **user-written**
-function carries `touches_known = false` — nobody said — so the walk stops at the
-first call out of the block. Arithmetic is fine; a helper is not, until user
-functions carry an inferred touch set.
+additional assurance which does not exist yet"*, and **the half that was missing
+is there now**: `touches` is inferred over the call graph since
+[ADR-067](specification/adr/adr-067.md) D2, so a user-written function answers
+what it reaches instead of *"nobody said"*, and *"touches nothing, and it is
+known"* is very nearly *"repeating it is unobservable"*.
 
-**And it uncovered a contradiction that is not this question's.** Part II 12.1
-says a `sync` function *"will never do I/O"* and *"cannot call standard functions
-(which might perform I/O)"*. `std.contracts` has `println` as `sync = true` with
-`touches = ["stdout write"]`, and the program above is what that means in
-practice. One word carries two promises and only one of them — *cannot pause* —
-is what the inference computes and what the lowering needs. Which of the two the
-word keeps is its own question, and it blocks this one.
+**What is left is to say that the two are the same thing**, and to check the one
+place they might not be: a repetition can observe anything the vocabulary does not
+name. It names `file`, `stdout`, `stderr`, `args` and `lock` — not a clock, and
+`std` has none yet, so that is a thing to remember rather than a gap.
+
+**And the contradiction it uncovered is settled.** Part II said a `sync` function
+*"will never do I/O"*; `std.contracts` had `println` as `sync = true`, and the
+program above is what that meant in practice.
+[ADR-067](specification/adr/adr-067.md) D1 gives the word **one** promise — it
+never pauses — and what a body reaches is the second column's to answer.
 
 **And one interaction, cheap to state and expensive to miss:** a value that
 appears in a door over several locks ([ADR-065](specification/adr/adr-065.md))

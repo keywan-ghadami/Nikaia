@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed (`sync` means one thing, and `touches` gets the inference it was written for)
+
+- **[ADR-067](docs/specification/adr/adr-067.md), from a program rather than an argument.** A `println` inside an `update` compiles and prints — so `sync` does not forbid an effect, and worse: **`println` takes a lock**, so a print inside a door is a lock taken while a lock is held, which is the nesting [ADR-039](docs/specification/adr/adr-039.md) D2 refuses and the refusal is not built. Rust's stdout lock is re-entrant, which is why nothing has hung; it does not make the nesting sound.
+- **Part II said `sync` means more**, and the records disagree with the page while agreeing with each other: three of them use the word and every reason given is about **pausing** — including the panic hook, which *"must be `sync`"* because *"mid-panic there is no runtime to pause on"* and which **may block**. A property that permits blocking is not a pure CPU task. **D1: one word, one promise.** 12.1 and 12.2 say *never pauses* now and point at the second column for the rest.
+- Taking `println` out of `sync` was the other way, and it costs the panic hook — which must write a crash report — and makes every function that prints `async` for a suspension that does not happen.
+- **D2: `touches` is inferred from the body**, like `sync`, `throws` and `sharing`. It was the one of four specified with the fail-closed polarity and never filled, so every function a `.nika` file declared answered *"nobody said"* — which means *"it touches everything"*. Safe, and useless: the walk stopped at the first call out of `std`. A greatest fixpoint over the call graph, reusing the one call walk the checker and `sync` already share.
+- **D3: `lock` joins the vocabulary**, which [ADR-033](docs/specification/adr/adr-033.md) D2's table named and `touch.rs` kept out under its own rule — *a word waits until a program asks for it, "neither function exists"*. Both exist since yesterday, and a program asks. It names no parameter: the property says *a* lock and never *which*, which is D4's decision.
+- **One missing pass, three consumers.** The lock-inside-a-lock refusal now has its fact — a body that prints inside an `update` reports `["lock write", "stdout write"]`, the nesting written down; `overlap` can prove disjointness past a call into user code; and *"touches nothing, and it is known"* is very nearly *"repeating it is unobservable"*, which is what the lock-free route was waiting on.
+- **And no new promise was added to do it.** Neither `pure` nor `repeatable` is a word this language now has: `pure` is more than any of the three consumers need — a retry recomputes, so it wants no *effect* rather than the same answer — and a third promise beside `sync` and `touches` is how this went wrong the first time.
+- What does not travel yet: a resource named by a **parameter**. `fs::read` touches `file(path)` and `path` is *its* parameter, so a caller is left unknown until an argument can be mapped onto it.
+
 ### Fixed (the crossing lock cost 63.5 ns a door where it should cost 17)
 
 - **Found by measuring something else** ([`lock-free.md`](docs/lock-free.md) §3). The question was whether a compare-and-swap loop is worth building; the first table said the shipped crossing lock costs **63.5 ns** where [ADR-057](docs/specification/adr/adr-057.md) §4 measures its owner check at **+2.0 ns**. Either the record was wrong or the implementation was not the thing the record measured. It was the second.
