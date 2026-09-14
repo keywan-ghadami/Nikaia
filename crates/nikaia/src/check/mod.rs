@@ -885,6 +885,49 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **Part I 2.3: a `T?` is a type of its own, and `.` is not one of its
+    /// members** ([ADR-066](../../../docs/specification/adr/adr-066.md) D6).
+    ///
+    /// `NK1125`, and it is [`Checker::reaches_through_a_plain_value`] the other
+    /// way round: that one refuses a `?.` where there is nothing to reach
+    /// through, this one refuses a plain `.` where there is.
+    ///
+    /// **What the other languages do here is crash.** In a language where
+    /// `null` inhabits every reference type, `a?.b.c` guards `a` and leaves
+    /// `a.b` unguarded, so a `null` there is a `NullReferenceException` at run
+    /// time. This language has no such value to crash on: types are
+    /// non-nullable by default and `T?` is a **separate type**, so `.c` on one
+    /// is a member the type does not have — the same kind of mistake as `.c` on
+    /// an `i64`, and answerable where it is written.
+    ///
+    /// So the short-circuit is unchanged and is not what this is about: `?.`
+    /// still stops at its own member and still answers `null`. What changes is
+    /// that the *next* access is refused rather than emitted, which is what
+    /// `find(1)?.b.c` used to become —
+    /// `find(1).map(|it| it.b).c`, a field read off an `Option` (Part III C.1).
+    fn reaches_into_a_nullable(&mut self, on: &Ty, member: Reached<'_>, span: &Span) {
+        let (what, safe) = match member {
+            Reached::Field(name) => ("field", format!("?.{name}")),
+            Reached::Method(name) => ("method", format!("?.{name}(…)")),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1125",
+            message: format!("`{on}` may be absent, so it has no {what} to reach"),
+            notes: vec![
+                "a `T?` is a type of its own and not a `T` that might be missing \
+                 (Part I, 2.3), so a member of `T` is not a member of it - which is \
+                 why there is no null reference to fail on here"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `{safe}`, which answers `null` where there is nothing to reach \
+                 on - or end the chain with `??` and reach into the value it gives"
+            )),
+        });
+    }
+
     /// **What a method call is**, asked of a receiver whose type is already in
     /// hand.
     ///
@@ -1566,6 +1609,16 @@ impl<'a> Checker<'a> {
                     self.expr(&a.value, span);
                 });
                 let on = self.expr(receiver, span);
+                if let Ty::Nullable(_) = &on {
+                    let name = self.parsed.text(*method).to_string();
+                    self.reaches_into_a_nullable(&on, Reached::Method(&name), span);
+                    // The arguments are still walked: a mistake inside one is a
+                    // mistake whatever is wrong with the receiver.
+                    args.iter().for_each(|a| {
+                        self.expr(a, span);
+                    });
+                    return Ty::Unknown;
+                }
                 self.call_on(on, *method, args, span)
             }
 
@@ -1616,6 +1669,10 @@ impl<'a> Checker<'a> {
             Expr::Field { base, name } => {
                 let on = self.expr(base, span);
                 let field = self.parsed.text(*name).to_string();
+                if let Ty::Nullable(_) = &on {
+                    self.reaches_into_a_nullable(&on, Reached::Field(&field), span);
+                    return Ty::Unknown;
+                }
                 let Ty::Named { name: ty, .. } = &on else {
                     return Ty::Unknown;
                 };

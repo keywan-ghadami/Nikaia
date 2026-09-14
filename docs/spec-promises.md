@@ -58,6 +58,7 @@ the Result column; every other row is the original run.
 | `a?.b` | I 3.5 | **built** ([ADR-052](specification/adr/adr-052.md) D6): `map` over a plain field, `and_then` over one that is itself a `T?` |
 | `a?.m()` | I 3.5 | **built** ([ADR-066](specification/adr/adr-066.md) D1): the section's word is *member* and a method is one. A `match` and not the field's `map`, because a method may pause and may fail |
 | `a ?? b ?? c` | I 3.5 | **built** ([ADR-066](specification/adr/adr-066.md) D4): right-associative. It used to be a parse error naming the second `??` |
+| `a?.b.c` | I 2.3, 3.5 | **refused**, `NK1125` ([ADR-066](specification/adr/adr-066.md) D6): a `?.` guards its own member and no more, and a `T?` is a type of its own — so the unguarded `.c` is a member the type does not have. `a?.b?.c` is the program |
 | `a ?? 1` | I 3.5 | **built**: `a.unwrap_or_else(\|\| 1.into())` |
 | `f(a??)` (postfix unwrap) | — [ADR-018](specification/adr/adr-018.md) D3 and III 17.1 write one; **I 3.5 does not define it** | parse error: *expected expression; found `)`* — see [`open-work.md`](open-work.md) §3.7 |
 | `Conn(id: 1)` (same file) | I 4.2 | **built** |

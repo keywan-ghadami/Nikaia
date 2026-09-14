@@ -682,3 +682,75 @@ fn main() {
     );
     assert_eq!(printed.trim(), "hi, Ada | nobody");
 }
+
+/// **A plain `.` on a `T?` is refused**, and it is `NK1121` the other way round
+/// ([ADR-066](../../../docs/specification/adr/adr-066.md) D6).
+///
+/// `a?.b.c` guards `a` and nothing else — which is what safe navigation means in
+/// every language that has it, and was worth getting right rather than assuming.
+/// Where `null` inhabits every reference type, the unguarded `.c` is a crash at
+/// run time. Here it cannot be: types are non-nullable by default and `T?` is a
+/// **separate type** (Part I 2.3), so `.c` on one is a member the type does not
+/// have — answerable where it is written, like `.c` on an `i64`.
+///
+/// It used to be neither: `find(1)?.b.c` lowered to `find(1).map(…).c`, a field
+/// read off an `Option`, and the reader met `rustc` about a file nobody wrote.
+#[test]
+fn a_member_of_a_nullable_is_refused_with_the_guarded_form_as_the_way_out() {
+    let source = "\
+struct Inner { c: i64 }
+struct Outer { b: Inner }
+
+fn find(id: i64) -> Outer? {
+    if id > 0 { return Outer { b: Inner { c: 7 } } }
+    return null
+}
+
+fn main() {
+    let x = find(1)?.b.c
+}
+";
+    let found = findings(source);
+    let one = found
+        .iter()
+        .find(|f| f.code == "NK1125")
+        .unwrap_or_else(|| panic!("a member of a `T?` is refused: {found:#?}"));
+    assert!(one.message.contains("`Inner?`"), "{}", one.message);
+    let help = one.help.clone().unwrap_or_default();
+    assert!(
+        help.contains("?.c"),
+        "the guarded form is the way out: {help}"
+    );
+    assert!(help.contains("??"), "and so is ending the chain: {help}");
+}
+
+/// **And the guarded chain runs**, which is the other half of the same rule: the
+/// refusal above is only worth having if what it asks for works.
+///
+/// Three shapes, and the middle one is the point — `find(0)` answers `null` and
+/// the rest of the chain is never reached, which is the short-circuit. The third
+/// takes the value with `??` first and then reaches into it plainly, which is
+/// the refusal's second way out.
+#[test]
+fn a_guarded_chain_reaches_through_and_short_circuits() {
+    let printed = ran(
+        "nullable-chain",
+        "\
+struct Inner { c: i64 }
+struct Outer { b: Inner }
+
+fn find(id: i64) -> Outer? {
+    if id > 0 { return Outer { b: Inner { c: 7 } } }
+    return null
+}
+
+fn main() {
+    let there = find(1)?.b?.c ?? 0
+    let gone = find(0)?.b?.c ?? 0
+    let taken = (find(1) ?? Outer { b: Inner { c: 1 } }).b.c
+    println(f\"{there} {gone} {taken}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "7 0 7");
+}

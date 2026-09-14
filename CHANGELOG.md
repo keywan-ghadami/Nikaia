@@ -136,6 +136,13 @@
 - One level deep, because one level is what is read: what a dependency's own dependencies are called is that crate's business (D3), and nothing below the level `modules::collect_with` reads is in this program's ledger to be renamed.
 - The test runs rather than only builds — the value is made in one package and read in another, so two types that were really two would say so in the generated Rust — and the library's key is deliberately a word the program never writes. `open-work.md` is one entry shorter, and the order list one item.
 
+### Fixed (a member of a `T?` is refused where it is written, not where it runs)
+
+- **`NK1125`, and the correction that produced it was mine to make.** This was first written down as an open question — whether `a?.b.c` should mean `a?.b?.c` — on the claim that *"a `?.` short-circuits the rest of its chain in every language that has one"*. That claim conflates two things and the owner said so. The short-circuit decides whether what follows is **evaluated** when the guard fails; it never makes what follows safe. `a?.b.c` guards `a` and nothing else: absent `a` gives `null` and `.c` is never reached, while a present `a` with an absent `a.b` reaches `.c` with nothing to reach on.
+- **So there was nothing to decide.** In the languages the idiom comes from, that second case is a crash — a `TypeError`, a `NullReferenceException` — because `null` inhabits every reference type. **This language has no such value.** Types are non-nullable by default and `T?` is a *separate type* ([Part I 2.3](docs/specification/10-nikaia-light.md)), so `.c` on one is a member the type does not have: the same kind of mistake as `.c` on an `i64`, answerable where it is written.
+- **The hole was in both directions**, which is how narrow it was: `find(1)?.b.c` and a bare `maybe().c` — no `?.` anywhere — were equally unchecked, and both came out as a field read off an `Option` for `rustc` to refuse about a file nobody wrote.
+- It is `NK1121`'s mirror, and says so: that one refuses a `?.` where there is nothing to reach *through*, this one refuses a plain `.` where there is. The way out is the guarded form — `write \`?.c\`` — or `??` and then the plain `.`, and a test runs both. Nothing in the corpus was refused by it. [ADR-066](docs/specification/adr/adr-066.md) D6.
+
 ### Added (`?.` reaches a method, and `??` chains)
 
 - **Part I 3.5's own word is "member", and a method is one** ([ADR-066](docs/specification/adr/adr-066.md)). [ADR-052](docs/specification/adr/adr-052.md) built the field half and refused `?.m()` with a sentence, on the reading that the section's example writes a field; that record's §4 wrote down what the refusal rested on — *"whether the language should have it is the owner's question and not this record's"* — and the owner answered it. So this is a reading settled, not a form added: the section needs no new sentence, only a status note that stops saying no.
@@ -149,7 +156,7 @@
 ### Found (two defects, neither caused by the work that found them)
 
 - **A `return` in an `impl` method does not get its `Some(…)`.** ADR-052 D4 has the compiler write the wrap at an annotated `let`, an assignment and a `return`; it does the third only in a **free function**. The emitted Rust of one file says it plainly: `async fn nick(&self) -> Option<String> { self.name.clone() }` beside `fn plain() -> Option<String> { Some("x".to_string()) }` — the signature right in both, the body in one. The reader gets `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does not have. `open-work.md` §1.1.
-- **A plain `.` after a `?.` does not short-circuit**, and what comes out is not Rust: `find(1)?.name.len()` emits `find(1).map(…).len() as i64.unwrap_or_else(…)`. What it needs first is a decision — whether `a?.b.c` means `a?.b?.c`, as every other language with the operator has it, or whether the second `.` is refused — so it is recorded with its evidence rather than guessed at. `open-work.md` §1.2, and ADR-066 §4 names it without settling it.
+- **A member reached off a `T?` with a plain `.` was emitted rather than refused** — fixed in the same session, below.
 
 ### Added (a lock shared by four tasks, on four threads, counts every increment)
 

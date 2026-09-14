@@ -662,6 +662,15 @@ let shown = nickname ?? name ?? "Guest"
 >
 > **And `??` chains**: `a ?? b ?? c` takes the first that has a value. It used to
 > be a parse error naming the second `??` (D4).
+>
+> **A `?.` guards its own member and no more**, which is what safe navigation
+> means everywhere: if the receiver is absent the whole expression is `null` and
+> what follows is never reached, but a `.` written *after* the reach is reaching
+> into a `T?`. In a language where `null` inhabits every type that is a crash at
+> run time; here it is refused where it is written (`NK1125`, D6), because 2.3
+> makes `T?` a type of its own and a member of `T` is not a member of it. So
+> `a?.b.c` is refused and `a?.b?.c` is the program — every link that may be
+> absent says so.
 
 ---
 
