@@ -121,8 +121,14 @@ const PLAIN: &[&str] = &[
 /// because D3 expanded it from `user_parallelism` - a plain count at `no`, an
 /// atomic one at `yes` - and a verdict that may not consult the switch has to
 /// take the worse of the two settings for a type whose expansion moves with it.
-/// D6 stops the expansion moving: `Shared` is atomic at both settings, so it is
-/// a container like any other and is answered by what it holds.
+/// D6 stopped the expansion moving, which is what let it into this list. ADR-061
+/// D2 lets the expansion move again at `no` - every count is plain there - and
+/// the row stays, because what it moved to is the setting where **nothing
+/// crosses**: one thread of the user's, the runtime's own threads carrying no
+/// code they wrote, and D1 refusing a `Shared` to code nothing describes. So the
+/// verdict is answered by what the `Shared` holds at both settings, and at each
+/// of them the count underneath is one that suffices for what can actually
+/// happen there.
 ///
 /// Which is also why the single-column invariant in the module header matters
 /// here rather than being a note for later. An atomic count may cross only
@@ -538,8 +544,11 @@ mod tests {
     /// `Shared` is answered by what it holds, at either setting - ADR-037 D6,
     /// and the one row of the table step 1 moved.
     ///
-    /// The count is atomic at both settings now, so there is nothing for the
-    /// verdict to take the worse of and `Shared` is a container like `Vec`.
+    /// There is nothing for the verdict to take the worse of: at `yes` the count
+    /// is atomic wherever the analysis cannot prove nothing crosses, and at `no`
+    /// it is plain everywhere because nothing can (ADR-061 D2). Either way the
+    /// count suffices for what can happen at that setting, so `Shared` is a
+    /// container like `Vec`.
     #[test]
     fn a_shared_is_answered_by_what_it_holds() {
         assert_eq!(of("Shared[String]"), Crossing::May);

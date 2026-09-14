@@ -7,10 +7,14 @@
 //
 //     It may only ever take an atomic away.
 //
-// ADR-037 D6 makes the atomic count the **floor**: a `Shared` is atomic at both
-// settings of `user_parallelism`, which is what makes it crossable at all, and
-// what `contracts::send` now concludes about the type. This file is an
-// **optimisation** on top of that floor and nothing else. It may lower a
+// ADR-037 D6 made the atomic count the **floor**, and ADR-061 D2 lowered that
+// floor at `user_parallelism = no`, where nothing a user writes can cross and D1
+// closed the last way out of the program. So the floor is the atomic count at
+// `yes` and the plain one at `no`, and this file is an **optimisation** on top of
+// whichever floor the build has and nothing else. What does *not* move with the
+// switch is `contracts::send`'s verdict about the type, which is why a `Shared`
+// permitted into a task at `no` is still sound: there the task is interleaved on
+// the same thread and the crossing the verdict allows does not happen. It may lower a
 // particular value to a plain count where it *proves* that nothing crosses a
 // thread with it; where it cannot prove that, the answer stays atomic. It may
 // never add an atomic, and it may never make a program unsafe - which are the

@@ -361,8 +361,9 @@ fn the_verdict_is_the_same_at_both_settings() {
 /// Part II 12.2's counter, at both settings, which is the program D3's open
 /// question was wanted for.
 ///
-/// `Shared` no longer stands in front of it: the count is atomic at both
-/// settings, so the handle may cross. What is left is the **lock**, and this
+/// `Shared` no longer stands in front of it: into a task of ours the handle may
+/// cross at both settings - at `yes` under an atomic count, at `no` because
+/// nothing crosses there at all (ADR-061 D2). What is left is the **lock**, and this
 /// test says exactly what the compiler says about it today - nothing, because
 /// nothing written down describes `Locked`. Which of `RefCell` and `Mutex` it
 /// expands to is ADR-037 D3's second half and is not decided here, so this

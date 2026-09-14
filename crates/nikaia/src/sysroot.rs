@@ -179,17 +179,23 @@ impl Codegen {
 /// decided now (ADR-002 D4), and it is sound for exactly as long as **nothing
 /// switch-sensitive appears in `std`'s `.nika` files**.
 ///
-/// `Shared` was what would have broken it, and no longer is.
-/// [ADR-037](../../../docs/specification/adr/adr-037.md) D3 made it `Rc` at
-/// `user_parallelism = no` and `Arc` at `yes`, so a `Shared` in a `.nika` file
-/// here would have been lowered to `Rc` and handed to a program built at `yes` -
-/// a `std` that cannot cross a thread inside a program that may. **D6 took the
-/// representation off the switch**: there is one count, and which of the two a
-/// particular value gets is decided per value by `contracts::sharing`, which
-/// never reads `user_parallelism` (D4's note on the `sharing` column). So a
-/// `Shared` here lowers to the same bytes at both settings, and what would break
-/// this is anything else the emitter writes differently per switch. The
-/// constraint is checked rather than only written down:
+/// **`Shared` is what would break it**, and it has been on both sides of that
+/// sentence. [ADR-037](../../../docs/specification/adr/adr-037.md) D3 made it
+/// `Rc` at `user_parallelism = no` and `Arc` at `yes`; D6 took the
+/// representation off the switch and it was safe here for as long as that held;
+/// [ADR-061](../../../docs/specification/adr/adr-061.md) D2 put the **emission**
+/// back on it - at one user thread every count is the cheap one, because nothing
+/// can cross there and D1 closed the last way out of the program. So a `Shared`
+/// in a `.nika` file here would be lowered once with the cheap count and handed
+/// to a program built at `yes`: a `std` that cannot cross a thread inside a
+/// program that may.
+///
+/// What is *not* switch-sensitive is the **verdict** - whether a value may cross
+/// at all - which `contracts::send` answers from a type and a destination and
+/// never from the switch ([ADR-045](../../../docs/specification/adr/adr-045.md)
+/// D1). That is what keeps `std`'s *ledger* sound across builds; it is the
+/// lowered bytes this constraint is about. The constraint is checked rather than
+/// only written down:
 /// `tests/sysroot.rs::stds_nikaia_half_lowers_the_same_at_both_switches` lowers
 /// every module at both settings and requires the bytes to agree, so the day
 /// something switch-sensitive arrives it is a red build and not a miscompile.

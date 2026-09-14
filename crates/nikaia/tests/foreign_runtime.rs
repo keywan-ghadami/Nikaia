@@ -181,8 +181,11 @@ fn a_nikaia_program_serves_one_request_through_hyper() {
 /// It is refused, and **by whom depends on who can decide**. The structural
 /// `Send` check (ADR-005 §1 Group B, `NK2501`/`NK2502`) decides what is written
 /// down, and since [ADR-037](../../../docs/specification/adr/adr-037.md) D6 the
-/// records name no type it may refuse: `Shared` was the one, and D6 gives it a
-/// count that is atomic at both settings, so it is answered by what it holds.
+/// records name no type it may refuse **at this destination for this reason**:
+/// `Shared` was the one, and it is answered by what it holds. (It *is* refused
+/// at a foreign destination since
+/// [ADR-061](../../../docs/specification/adr/adr-061.md) D1, which is a
+/// different row and a different reason - a Rust library has one signature.)
 /// This program's value was never that case anyway - it is *borrowed from the
 /// foreign crate*, so its type has no ledger entry and the verdict is
 /// `Undecided`, which is not permission and not a refusal either

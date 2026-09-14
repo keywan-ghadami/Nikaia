@@ -53,9 +53,15 @@ fn the_committed_rust_is_what_this_compiler_lowers() {
 /// `std`'s Nikaia half is lowered once, at `Build::default()`, and linked into
 /// programs built at either setting of `user_parallelism`. That is sound only
 /// while nothing in those files lowers differently per switch - and `Shared` is
-/// exactly what would break it, since ADR-037 D3 makes it `Rc` at `no` and `Arc`
-/// at `yes`. The day one appears in a `.nika` file here, this test goes red
-/// instead of a program built at `yes` linking an `Rc`.
+/// exactly what would break it: ADR-061 D2 makes every count the cheap one at
+/// `no`, so a `Shared` here would be lowered once with a count that cannot cross
+/// a thread and linked into a program built at `yes`. The day one appears in a
+/// `.nika` file here, this test goes red instead of that program going quiet.
+///
+/// It is written as a comparison rather than as a search for `Shared`, so it
+/// catches whatever else the emitter comes to write per switch - which is the
+/// third answer this one type has had, and the reason the guard is a byte
+/// comparison and not a list of names.
 #[test]
 fn stds_nikaia_half_lowers_the_same_at_both_switches() {
     let sysroot = Sysroot::resolve();

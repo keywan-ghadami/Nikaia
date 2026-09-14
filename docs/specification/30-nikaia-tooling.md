@@ -92,11 +92,16 @@ was built from, which is why a build inside the repository needs no configuratio
 * **The constraint that makes the pre-lowering sound.** `std`'s Nikaia half is
   lowered at **one** setting of the build switches, so nothing in it may lower
   differently per switch, and the toolchain fails its own build rather than
-  letting such a file through. `Shared` was what that ruled out and no longer is:
-  its count is atomic at every setting ([ADR-037](adr/adr-037.md) D6), so it
-  lowers the same way in every build and `std` may write one. What the
-  constraint still rules out is `Locked`, whose implementation does follow the
-  switch (Part II, 12.2).
+  letting such a file through. **`Shared` is what that rules out**, and it has
+  been ruled out twice for two different reasons: [ADR-037](adr/adr-037.md) D3
+  made the count follow the switch directly, D6 took it off the switch, and
+  [ADR-061](adr/adr-061.md) D2 put the *emission* back on it — at one user thread
+  every count is the cheap one. So a `Shared` in a `.nika` file here would be
+  lowered once with the cheap count and handed to a program built at `yes`. It is
+  **checked and not only written down**: every module is lowered at both settings
+  and the bytes must agree, so the day one arrives it is a red build rather than a
+  miscompile. `Locked` is ruled out the same way and for the same reason
+  (Part II, 12.2).
 * **`std`'s ledger travels inside the compiler.** `std.contracts` (13.5) is part
   of the compiler rather than of the sysroot copy it is read from, because a
   ledger is not required to be stable across toolchain versions
@@ -651,15 +656,17 @@ Compiling with `nikaia build --target=wasm32-unknown` produces compact binaries:
 the runtime a `no` build starts is the I/O worker and nothing else
 ([ADR-038](adr/adr-038.md) D4), and no OS-level mutex is generated.
 
-> **Status:** the mutex half is true and the **atomic** half is not, and this
-> section used to claim both. A `Shared[T]`'s owner count is atomic at *both*
-> settings of `user_parallelism` ([ADR-037](adr/adr-037.md) D6): the switch bounds
-> what your code runs at once, and the count is touched by the runtime as well —
-> so making it depend on the switch would make a program's own data race with the
-> machinery under it. And [ADR-045](adr/adr-045.md) §3 measures a foreign call
-> forcing the atomic count whatever the setting, for the same reason C.5's rule
-> has: a call whose body this compiler cannot see may put what it is given on a
-> thread of its own. **Measured, not argued**: `benches/refcount` is what settled
+> **Status:** the mutex half is true, and the **atomic** half was written twice
+> the wrong way round. A `Shared[T]`'s owner count is chosen **per value**
+> ([ADR-037](adr/adr-037.md) D7), and at `user_parallelism = no` every one of them
+> is the cheap count ([ADR-061](adr/adr-061.md) D2): there is one thread of yours,
+> the runtime's own threads carry no code you wrote, and since D1 a `Shared` may
+> not leave the program into code nothing describes — so nothing can cross and
+> nothing needs the atomic one. What does *not* move with the switch is the
+> **verdict** ([ADR-045](adr/adr-045.md) D1): whether a value may cross is a
+> question about a type and a destination, and a call whose body this compiler
+> cannot see is refused a lock and a `Shared` at both settings alike.
+> **Measured, not argued**: `benches/refcount` is what settled
 > the cost, and it is small enough that one count per program is not the place to
 > win it back.
 
