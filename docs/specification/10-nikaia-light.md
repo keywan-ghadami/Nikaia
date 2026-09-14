@@ -385,18 +385,29 @@ let name = "Nikaia"  // Compiler knows this is a &str - a view of static text
 let count = 42       // an i32, because nothing here asks for anything else
 ```
 
-**A number takes the type its use asks for, and `i32` where nothing asks.** The
-literal is not the thing that decides:
+**A number takes the type its use asks for. Where nothing asks, it takes the
+first type that holds it** — `i32`, and `i64` where an `i32` is too small
+([ADR-060](adr/adr-060.md)):
 
 ```nika
-let n = 3000000000      // refused on its own: too large for an i32
-let m = 3000000000      // accepted, because the line below asks for an i64
+let count = 42          // an i32: nothing asks, and an i32 holds it
+let big = 3000000000    // an i64: nothing asks, and an i32 does not
+let m = 3000000000      // also an i64 - here because the line below asks
 println(f"{wide(m)}")   // fn wide(n: i64) -> i64
+let small = 42
+println(f"{wide(small)}")  // an i64 here: the use decides, and 42 holds in one
 ```
 
-> **Status:** the *rule* is built, and it is the language below that holds it — so
-> the refusal in the first line is `rustc`'s, in Rust's words about a type the
-> program did not write (`docs/open-work.md`, the out-of-range literal). This
+The use is asked first and the size second, which is why `small` may still become
+an `i64` and `big` never has to be annotated to be one. A number too large for
+an `i64` is refused, because nothing holds it.
+
+> **Status:** the *use* half is built, and it is the language below that holds
+> it. **The size half is decided and not built**
+> ([ADR-060](adr/adr-060.md), `docs/open-work.md`): `let big = 3000000000` is
+> still refused today, in `rustc`'s words about a type the program did not write,
+> and what is owed is one rule in the emitter — a literal whose value an `i32`
+> cannot hold is written out as an `i64`. This
 > compiler's own `NK1116`
 > answers the case where a type **stands beside** the literal — an annotated
 > `let`, a `return` against a declared result, an argument whose parameter says

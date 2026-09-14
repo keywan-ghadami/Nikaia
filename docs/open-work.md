@@ -47,52 +47,16 @@ turned out to be, rather than the one open parameter it had been filed as
 the program never wrote**, which wanted a rule and not a list
 ([ADR-056](specification/adr/adr-056.md)).
 
+**And this section is empty**, which it has not been before. The last entry left
+it by being answered rather than fixed: *"an out-of-range literal that nothing
+constrains is refused in Rust's words"* asked for an inference this compiler does
+not have, and turned out to need none
+([ADR-060](specification/adr/adr-060.md)) — it is §2's now, as work.
+
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. An out-of-range literal that nothing constrains is refused in Rust's words
-
-```nika
-let big = 3000000000
-```
-
-is *"literal out of range for `i32`"* — the right line, the backend's words, and a
-type the program never wrote. `NK1116` does not reach it: it answers where a type
-**stands beside** the literal, and here nothing does.
-
-**And it must not simply be widened to this case.** The same line is a *correct*
-program where a use asks for an `i64`:
-
-```nika
-let m = 3000000000
-println(f"{wide(m)}")   // fn wide(n: i64) -> i64
-```
-
-Rust's inference decides, and this checker has none — so refusing at the `let`
-would refuse that program, which is the one thing the checker may never do
-(Part III, C.4). Part I 2.4 now states the rule properly, which it did not.
-
-*What it needs:* enough inference to know that nothing else constrains the
-literal — or a decision that an un-annotated literal is an `i32` full stop, which
-would make the second program above a refusal and is not what the page says
-today.
-
-**The constant fold does not reach it, and that is worth stating** now that the
-fold exists ([ADR-043](specification/adr/adr-043.md) §4, which closed the *sum*
-of constants this list used to carry). The fold answers *what a constant
-expression comes to*; this entry is about *what type it has*, and those are
-different questions. So `let b = 3000000000 + 1` is the same one entry as `let big
-= 3000000000`: the fold evaluates both and neither has a type to be measured
-against, because a literal pins nothing. Only inference closes it.
-
-*Fixed on the way past:* the note `rustc` attaches to it — *"consider using the
-type `u32` instead"* — is dropped. It was kept once, checked, because it
-compiles; [ADR-048](specification/adr/adr-048.md) D2 is what changed, since the
-numeric surface is the one Part I 2.2 names and `u32` is deliberately not on it. A
-remedy that works is kept; one that leads out of the language is not.
-
----
 
 ## 2. Decided and unbuilt
 
@@ -151,7 +115,27 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 6. **Supervision.** Last because nothing else waits on it.
 
-### 2.1. The `yes` executor, and what still needs a thread
+### 2.1. A literal no use constrains still takes an `i32`, and `let big = 3000000000` is refused
+
+[ADR-060](specification/adr/adr-060.md) decided that such a literal takes the
+first type that holds it — `i32`, else `i64` — so that a line which looks like a
+mistake and is not one compiles. Part I 2.4 states the rule; the compiler does
+not do it, and `let big = 3000000000` is still refused in the backend's words
+about a type the program never wrote.
+
+*What it needs:* **one rule in the emitter**, and nothing else. Where an
+un-annotated integer literal's folded value does not hold in an `i32`, write it
+out as an `i64`. The fold is the one `NK1116` already reads
+([ADR-043](specification/adr/adr-043.md) D5) — over a literal, a folded immutable
+`let`, `+ - * / %` and a **negation**, which is why `-2147483648` is asked about
+its value and not about its digits.
+
+*What it explicitly does not need,* and this is D3's whole point: a use-site walk.
+A value an `i32` cannot hold has no second answer a use could ask for, because
+`i64` is the only other integer a program may write. A literal that *does* fit an
+`i32` is left exactly as it is emitted today, so nothing that compiles now stops.
+
+### 2.2. The `yes` executor, and what still needs a thread
 
 **`spawn` lowers.** It was the largest single unblocking in this file and the
 reason [ADR-055](specification/adr/adr-055.md) exists; steps 1–4 of that record's
@@ -188,7 +172,7 @@ than waiting:** the analysis names a `spawn` body's handle as a duplication site
 and used again afterwards is not refused, which `tasks.rs` says about a program
 that does it.
 
-### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
+### 2.3. A lambda that pauses is refused, and a recursive pausing method is not boxed
 
 Both are [ADR-055](specification/adr/adr-055.md) §6's remainder, and both are
 limits of this compiler rather than of the language — so they are here and not in
@@ -231,7 +215,7 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.3. Standard input is `async` and does not suspend
+### 2.4. Standard input is `async` and does not suspend
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -259,7 +243,7 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.4. A task that never finishes hangs the program, and no deadline bounds it
+### 2.5. A task that never finishes hangs the program, and no deadline bounds it
 
 [ADR-055](specification/adr/adr-055.md) D5 says *"a task nobody joins still
 runs"*, which Part I 8.2's own example needs — it keeps no handle. So `block_on`
@@ -288,7 +272,7 @@ does not reach.
 Nikaia's words naming the tasks still running. Neither is a decision; the
 mechanism and the configuration key both exist.
 
-### 2.5. `Locked[T]` has a shape and a surface, and a write across two locks has neither
+### 2.6. `Locked[T]` has a shape and a surface, and a write across two locks has neither
 
 [ADR-057](specification/adr/adr-057.md) decided what `Locked[T]` **is** and
 [ADR-059](specification/adr/adr-059.md) what a program writes to reach one: four
@@ -315,7 +299,7 @@ them. What is left:
   charges only on the values that actually cross;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.6. The automatic reordering, `seq` and the `ordering` switch are still here
+### 2.7. The automatic reordering, `seq` and the `ordering` switch are still here
 
 [ADR-050](specification/adr/adr-050.md) D1 and D7 withdraw all three, and its §5 says
 **not yet**: the removal is step three, after the runtime binding and `overlap`.
@@ -326,13 +310,13 @@ So this entry is not work to pick up — it is the thing that must not be picked
 early. It is here because a reader of [ADR-033](specification/adr/adr-033.md)
 should find out from the list that its `seq` and its switch are on their way out.
 
-### 2.7. Part II 12.8's supervision syntax
+### 2.8. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.8. A package reached under two names is two types to the checker
+### 2.9. A package reached under two names is two types to the checker
 
 [ADR-053](specification/adr/adr-053.md) is built: a package is its own crate, a
 library may depend on a library, and a program cannot reach past what it declared.
@@ -352,7 +336,7 @@ type's identity in the ledger to be the package's **canonical path** — which i
 what `packages_of` already computes and what D2 means by identity — rather than
 the word a consumer happened to write.
 
-### 2.9. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.10. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -370,7 +354,7 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.9. There is no HTTP server, and three records now wait on it
+### 2.11. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal

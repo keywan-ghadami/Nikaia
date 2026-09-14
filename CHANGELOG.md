@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Decided, not built (`let big = 3000000000` compiles)
+
+- **It looks like a mistake and is not one**, which is the whole reason to change it ([ADR-060](docs/specification/adr/adr-060.md)). The line is refused today in the backend's words — *"literal out of range for `i32`"* — about a type the program never wrote. Nothing about it is wrong: the number is a number and the program has said nothing about its size.
+- **What the field does:** Go and Swift give the default a size big enough; C, C# and Kotlin let the literal take the first type from a list that holds it; Java needs an `L` and Rust refuses. This language was in the smaller camp by inheritance rather than by choice.
+- **Kotlin's rule as a fallback rather than as the rule** (D1, D2). Where a use constrains the literal, the use decides, unchanged — `let small = 42` followed by a call taking an `i64` compiles today and keeps compiling. Where nothing asks, the literal takes the first type that holds it: `i32`, else `i64`. Kotlin taken whole would have cost the first half, and Part I 2.4's second example is exactly that program.
+- **And it needs none of the inference it seemed to** (D3), which is what made it worth doing now rather than later. The fear was a use-site walk over a binding's scope, which nothing else in this compiler needs. A value an `i32` cannot hold has no second answer a use could ask for — an integer literal is never an `f64`, `u8` is narrower, and there is no wider integer — so the rule is: fits an `i32`, change nothing; does not, emit an `i64`.
+- Part I 2.4 states the rule and carries a status note saying the size half is not built. `docs/open-work.md` §1 is **empty** for the first time: its last entry left by being answered rather than fixed.
+
 ### Changed (`access` reads, `update` writes, and no lambda is handed something mutable)
 
 - **A question that stopped being one** ([ADR-059](docs/specification/adr/adr-059.md)). `access`'s block mutated through its parameter, and a lambda's parameter has no spelling that says it may be — so the choice looked like "add a spelling" against "let mutability arrive invisibly from the callee's contract". Two facts, looked up: the rule that a reader sees `mut` is unbroken across every program in this repository, and the grammar's one place where a callee may change what it was handed is spelled — `&mut self`.

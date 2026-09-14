@@ -1,12 +1,12 @@
 # Open decisions — the questions that need the owner
 
-**Five entries, and every one of them is open.** Nothing answered lives here: an
+**Four entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
 the compiler does not do it yet, which needs work and not a ruling.
 
-The ten entries this file used to carry are gone that way, nine to their
+The eleven entries this file used to carry are gone that way, ten to their
 records and one because it was never a question for the owner at all:
 [ADR-046](specification/adr/adr-046.md) (`use` brings nothing in),
 [ADR-047](specification/adr/adr-047.md) (a package is a directory),
@@ -17,7 +17,9 @@ records and one because it was never a question for the owner at all:
 [ADR-053](specification/adr/adr-053.md) (a package is its own crate),
 [ADR-055](specification/adr/adr-055.md) (a task is a coroutine) and
 [ADR-059](specification/adr/adr-059.md) (`access` reads, `update` writes — the
-question that stopped being one rather than getting an answer). Each record
+question that stopped being one rather than getting an answer) and
+[ADR-060](specification/adr/adr-060.md) (a literal no use constrains takes the
+first type that holds it, which needed none of the inference it seemed to). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.
@@ -40,57 +42,7 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. Does an un-annotated integer literal have a type?
-
-**Blocked by it:** the one remaining entry in
-[`open-work.md`](open-work.md) §1 — an out-of-range literal that nothing
-constrains is refused in Rust's words.
-
-```nika
-let big = 3000000000
-```
-
-is *"literal out of range for `i32`"*: the right line, the backend's words, and a
-type the program never wrote, which is the class [Part III
-C.1](specification/30-nikaia-tooling.md) calls a bug in this compiler. `NK1116`
-does not reach it, and **must not simply be widened to it**, because the same
-line is a *correct* program where a use asks for an `i64`:
-
-```nika
-let m = 3000000000
-println(f"{wide(m)}")   // fn wide(n: i64) -> i64
-```
-
-Rust's inference decides that one and this checker has none, so refusing at the
-`let` would refuse a correct program — the one thing the checker may never do
-(C.4). Part I 2.4 states the rule that makes both lines legal.
-
-**Two ways out.**
-
-* **(a) An un-annotated literal is an `i32`, full stop.** The second program
-  above becomes a refusal, and the language gains a rule a reader can apply
-  without knowing what inference does. It is what the *first* program's error
-  message already assumes, which is why the message exists.
-* **(b) Enough inference to know that nothing else constrains the literal.** Both
-  programs stay legal and the first is refused in Nikaia's words. It is the
-  answer that costs nothing at the surface and the most underneath: a use-site
-  walk this checker does not have, for one rule.
-
-**What I would do: (b), and not soon.** (a) is a smaller compiler and a worse
-language: `let m = 3000000000` followed by `wide(m)` is what somebody writes, and
-Part I 2.4 says it works. The defect is a *message*, not an accepted wrong
-program — the literal never reached run time — so the cost of waiting is one
-poorly-worded error, and the cost of (a) is a program the page promises being
-refused. If the inference turns out not to be worth building, (a) is the
-fallback and Part I 2.4 is what has to change with it.
-
-**What it costs either way:** (a) is a paragraph in Part I 2.4 and a check that
-already exists; (b) is a use-site pass over a `let`'s scope, which nothing else
-in this compiler currently needs.
-
----
-
-## 2. Is there an unconditional loop?
+## 1. Is there an unconditional loop?
 
 **Blocked by it:** nothing is half-built, and that is why it is here rather than
 in `open-work.md` — there is nothing to build until this is answered.
@@ -122,7 +74,7 @@ costs a keyword, a reserved word, and a grammar rule.
 
 ---
 
-## 3. What may a program do at compile time?
+## 2. What may a program do at compile time?
 
 **Blocked by it:** compile-time I/O, and with it the **asset dimension of the
 build cache**, which is carried through `Key::build` and exercised by tests with
@@ -152,7 +104,7 @@ the grounds that nothing in the language needs one yet.
 
 ---
 
-## 4. How is a package named by a version?
+## 3. How is a package named by a version?
 
 **Blocked by it:** every dependency that is not a path.
 `nikaia.toml` refuses `http-server = "1.2"` and says why — no record names a
@@ -192,7 +144,7 @@ a project of its own.
 
 ---
 
-## 5. What **is** `std::http`?
+## 4. What **is** `std::http`?
 
 **Why it is here and not in the work list.** [ADR-058](specification/adr/adr-058.md)
 is accepted and none of it is built, which is ordinary; what is not ordinary is
