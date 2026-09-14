@@ -630,7 +630,7 @@ fn the_explain_modes_reach_a_project_build() {
         "project-explain",
         "[package]\nname = \"explained\"\nversion = \"0.1.0\"\n",
         "fn main() {\n    \
-             let c: Shared[Conn] = Conn(id: 1)\n    \
+             let c = Shared(Conn(id: 1))\n    \
              println(f\"{hold(c)}\")\n\
          }\n",
     );

@@ -226,25 +226,6 @@ pub struct Checked {
     /// resolved by position - a checked conversion on a widening one would be a
     /// `rustc` error about a file nobody wrote.
     pub narrowing_casts: BTreeMap<(usize, String), Narrowing>,
-    /// The places where a declared `Shared[T]` makes the **first handle** out
-    /// of a plain value (Part I 6.2), by the byte the statement starts at and
-    /// the name the sharing is written against.
-    ///
-    /// The third thing this module answers for the emitter, after
-    /// `fallible_loops` and `fallible_methods`, and for the reason said once
-    /// there: `let db: Shared[Connection] = connect(…)` needs the constructor
-    /// written around the value and `let b: Shared[Connection] = db` does not,
-    /// and telling those apart means knowing what `connect` and `db` are. The
-    /// emitter has no types (ADR-028), so the answer is computed here and handed
-    /// over; the emitter writes the `Rc::new` or the `Arc::new`.
-    ///
-    /// **Two shapes and no others**, which is Part I 6.2's own list: an
-    /// annotated `let`, keyed by the name it binds, and a struct literal's field
-    /// whose declared type says so, keyed `<struct>.<field>`. A call site is
-    /// deliberately absent - a call in which the word does not appear would move
-    /// the cleanup point silently, so it is `NK1115` instead
-    /// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1).
-    pub shared_sites: BTreeSet<(usize, String)>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -372,13 +353,6 @@ pub struct Propagation {
     pub methods: BTreeSet<(usize, String)>,
     /// [`Checked::pausing_methods`].
     pub pausing_methods: BTreeSet<(usize, String)>,
-    /// [`Checked::shared_sites`].
-    ///
-    /// Not about a failure travelling, and here anyway: it is the same
-    /// arrangement - an answer only a type checker can give, wanted by the
-    /// emitter - and it comes out of the same pass, so carrying it here costs
-    /// nothing and a second entry point would cost a whole type check.
-    pub shared: BTreeSet<(usize, String)>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
@@ -416,7 +390,6 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         loops: checked.fallible_loops,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
-        shared: checked.shared_sites,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
@@ -532,7 +505,7 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|f| FieldContract {
                             name: self.parsed.text(f.name).to_string(),
-                            ty: Ty::from_ast(self.parsed, &f.ty).erase(&parameters),
+                            ty: self.declared(&f.ty, &f.span).erase(&parameters),
                             public: f.is_public,
                         })
                         .collect();
@@ -687,7 +660,7 @@ impl<'a> Checker<'a> {
             self.not_self(&name, &arg.span, "a parameter");
             frame.push((
                 name,
-                Ty::from_ast(self.parsed, &arg.ty).erase(&parameters),
+                self.declared(&arg.ty, &arg.span).erase(&parameters),
                 None,
             ));
         }
@@ -700,6 +673,9 @@ impl<'a> Checker<'a> {
         for option in config {
             frame.push((
                 self.parsed.text(option.name).to_string(),
+                // Not `declared`: an option has no span of its own, and a
+                // caret on the wrong line is worse than no message. Its default
+                // is a literal (Part I 5.1), so a hull cannot stand here anyway.
                 Ty::from_ast(self.parsed, &option.ty).erase(&parameters),
                 None,
             ));
@@ -1195,24 +1171,17 @@ impl<'a> Checker<'a> {
                 self.not_self(&name, span, "a `let`");
                 let bound = match ty {
                     Some(ty) => {
-                        let want = Ty::from_ast(self.parsed, ty);
-                        // Part I 6.2: an annotated `let` is where the first
-                        // handle on a shared value is made. The annotation *is*
-                        // the constructor, so a plain value standing here is not
-                        // a mistake - it is the one line that makes one, and the
-                        // emitter is told where to write it.
+                        let want = self.declared(ty, span);
+                        // **The annotation is no longer the constructor**
+                        // ([ADR-064](../../docs/specification/adr/adr-064.md) D2):
+                        // a hull is made by a call, so a plain value standing here
+                        // is an ordinary mismatch - and `convert` is what names the
+                        // way out.
                         self.constant_fits(value, Some(&want), span);
                         self.wraps_into_nullable(&found, &want, value, span);
-                        match becomes_shared(&found, &want) {
-                            true => {
-                                self.checked.shared_sites.insert((span.start, name.clone()));
-                            }
-                            false => {
-                                self.expect(&found, &want, span.clone(), "let", |found, want| {
-                                    format!("this is `{found}`, and the `let` says `{want}`")
-                                });
-                            }
-                        }
+                        self.expect(&found, &want, span.clone(), "let", |found, want| {
+                            format!("this is `{found}`, and the `let` says `{want}`")
+                        });
                         want
                     }
                     None => {
@@ -1636,16 +1605,11 @@ impl<'a> Checker<'a> {
                             let want = found_field.ty.clone();
                             let owner = name.clone();
                             self.field_is_reachable(&name, found_field, span);
-                            // The second of Part I 6.2's two places: a field
-                            // whose declared type says the value is shared. The
-                            // shared type stands in the same line as the value,
-                            // which is the whole of what the rule asks.
-                            if becomes_shared(&found, &want) {
-                                self.checked
-                                    .shared_sites
-                                    .insert((span.start, format!("{owner}.{field}")));
-                                continue;
-                            }
+                            // **No longer a constructor either**
+                            // ([ADR-064](../../docs/specification/adr/adr-064.md)
+                            // D2). It was the second of the two positions, and the
+                            // two positions are what stopped being a list.
+                            let _ = &owner;
                             // Part I 2.3's fourth position: a plain value in a
                             // field the struct declares nullable. The same rule
                             // as the other three (`wraps_into_nullable`), keyed
@@ -1751,7 +1715,7 @@ impl<'a> Checker<'a> {
 
             Expr::Cast { expr, ty } => {
                 let from = self.expr(expr, span);
-                let into = Ty::from_ast(self.parsed, ty);
+                let into = self.declared(ty, span);
                 if let Ty::Named { name, .. } = &into {
                     if !OFFERED.contains(&name.as_str()) {
                         self.cast_names_a_foreign_type(name, span);
@@ -2066,6 +2030,109 @@ impl<'a> Checker<'a> {
     }
 
     /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`, `write(p, d; append: true)`.
+    /// `Shared(x)`, `SharedMut(x)` and `Locked(x)` make a hull
+    /// ([ADR-064](../../docs/specification/adr/adr-064.md) D2).
+    ///
+    /// **One argument, and the hull takes the type of what it is handed.** A
+    /// literal hands over `Unknown`, which is not a failure here: the hull is made
+    /// by a *call* in the emitted code too, so the language below gives the number
+    /// its type the way it gives one to any argument. That is the difference
+    /// between a constructor and an annotation, and it is why the annotation could
+    /// not answer `SharedMut(0)` at all.
+    /// A type **as it is written**, checked for the one spelling this language
+    /// does not have ([ADR-064](../../docs/specification/adr/adr-064.md) D3).
+    ///
+    /// `Shared[Locked[T]]` is what `SharedMut[T]` is, and two ways to write one
+    /// type is the thing the short name was given a name *instead* of
+    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D9). Worse than
+    /// untidy: the two are the same bytes below and two different types up here,
+    /// so a value of one would not fit the other while the emitted Rust could not
+    /// tell them apart.
+    ///
+    /// It runs at the positions a **program** writes a type, and the message
+    /// carries the replacement.
+    fn declared(&mut self, ty: &ast::Type, span: &Span) -> Ty {
+        self.spelling(ty, span);
+        Ty::from_ast(self.parsed, ty)
+    }
+
+    /// The walk under [`Checker::declared`], over a written type and everything
+    /// inside it.
+    fn spelling(&mut self, ty: &ast::Type, span: &Span) {
+        if self.parsed.text(ty.name) == SHARED {
+            if let Some(held) = ty.generics.first() {
+                if self.parsed.text(held.name) == LOCKED {
+                    let inside = held
+                        .generics
+                        .first()
+                        .map(|t| self.parsed.text(t.name).to_string())
+                        .unwrap_or_else(|| "T".to_string());
+                    self.checked.findings.push(Finding {
+                        severity: Severity::Error,
+                        span: span.clone(),
+                        code: "NK1123",
+                        message: format!(
+                            "a `{SHARED}` around a lock is what `{SHARED_MUT}[{inside}]` is called"
+                        ),
+                        notes: vec![format!(
+                            "the common case has the short name, and it is the only way to \
+                             write it - one type, one spelling (Part I, 6.2)"
+                        )],
+                        help: Some(format!("write `{SHARED_MUT}[{inside}]`")),
+                    });
+                }
+            }
+        }
+        for inner in &ty.generics {
+            self.spelling(inner, span);
+        }
+    }
+
+    fn hull(&mut self, name: &str, args: &[Expr], found: &[Ty], span: &Span) -> Ty {
+        if args.len() != 1 {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1101",
+                message: format!(
+                    "`{name}` takes the value to put in it, and {} were passed",
+                    args.len()
+                ),
+                notes: vec![format!(
+                    "`{name}[T]` is made from a `T`: `{name}(value)` (Part I, 6.2)"
+                )],
+                help: None,
+            });
+            return Ty::Unknown;
+        }
+        let held = found.first().cloned().unwrap_or(Ty::Unknown);
+        // A handle of a handle is two counts around one value and means nothing
+        // the one count does not: it is refused where the type says so, and a
+        // value nothing describes is not claimed about (C.4).
+        if let Ty::Named { name: inner, .. } = &held {
+            if is_hull(inner) {
+                self.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: span.clone(),
+                    code: "NK1123",
+                    message: format!("this is already a `{inner}`, so `{name}` has nothing to add"),
+                    notes: vec![
+                        "a handle is duplicated by being handed on, never by being wrapped \
+                         again (Part I, 6.2)"
+                            .to_string(),
+                    ],
+                    help: Some(format!("hand the `{inner}` on as it is")),
+                });
+                return held;
+            }
+        }
+        Ty::Named {
+            name: name.to_string(),
+            args: vec![held],
+            view: false,
+        }
+    }
+
     fn call(&mut self, func: &Expr, args: &[Expr], config: &[ast::ConfigArg], span: &Span) -> Ty {
         let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
         let passed: Vec<(String, Ty)> = config
@@ -2102,6 +2169,16 @@ impl<'a> Checker<'a> {
             if self.is_variant(ty, variant) {
                 return Ty::named(ty);
             }
+        }
+
+        // **A hull you can observe, you write**
+        // ([ADR-064](../../docs/specification/adr/adr-064.md) D2). The three hull
+        // types are made by a call, and it is this compiler's to type rather than
+        // the ledger's: the ledger binds `$T` from a **receiver** (ADR-031) and a
+        // constructor has none, so the type argument would have to come from what
+        // is handed in.
+        if is_hull(&name) {
+            return self.hull(&name, args, &found, span);
         }
 
         let Some((key, contract)) = self.resolve(&name) else {
@@ -2220,13 +2297,11 @@ impl<'a> Checker<'a> {
             if self.fits_through_deref(found, want) {
                 continue;
             }
-            // Part I 6.2: a plain value may become a shared one only where the
-            // shared type stands in the same line, and a call site is not such a
-            // place - a call in which the word does not appear would move the
-            // cleanup point silently, and at such a place there would be no
-            // saying whether the value was handed on or duplicated. So this is
-            // refused by a code of its own, whose message points at the line
-            // where the sharing belongs (ADR-040 D1, Part III C.3).
+            // A plain value where a hull is wanted. It is refused by a code of
+            // its own because the sentence is worth more than a type mismatch's:
+            // it names the hull and the value. **What the way out is changed**
+            // ([ADR-064](../../docs/specification/adr/adr-064.md) D2) - the word
+            // goes here, at the call, where it used to have to go somewhere else.
             if becomes_shared(found, want) {
                 let value = given.get(at).and_then(|arg| self.names_of(arg));
                 self.checked.findings.push(Finding {
@@ -2240,17 +2315,14 @@ impl<'a> Checker<'a> {
                         None => format!("`{key}` takes a shared value, and this is not one"),
                     },
                     notes: vec![format!("`{key}{}`", signature.text())],
-                    help: Some(match &value {
-                        Some(value) => format!(
-                            "write the sharing where it starts: `let {value}: {} = …` - or a \
-                             field whose declared type says so (Part I, 6.2)",
-                            want.text()
-                        ),
-                        None => format!(
-                            "write the sharing where the value starts - an annotated `let` that \
-                             says `{}`, or a field whose declared type does (Part I, 6.2)",
-                            want.text()
-                        ),
+                    help: Some(match (&value, want) {
+                        (Some(value), Ty::Named { name, .. }) => {
+                            format!("write `{name}({value})` - a hull you can see is one you write")
+                        }
+                        (None, Ty::Named { name, .. }) => {
+                            format!("write `{name}(…)` around it (Part I, 6.2)")
+                        }
+                        _ => format!("make it a `{}`", want.text()),
                     }),
                 });
                 continue;
@@ -3186,25 +3258,47 @@ const SHARED: &str = "Shared";
 /// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
 const LOCKED: &str = "Locked";
 
-/// Whether a plain value standing where `want` is wanted would be the **first
-/// handle** on a shared one.
+/// The shared mutable type: a value several parts own at once and any of them may
+/// change ([ADR-039](../../../docs/specification/adr/adr-039.md) D9).
 ///
-/// `want` is `Shared[T]` and `found` is the `T` it holds. That is the one shape
-/// Part I 6.2 gives the annotation: the shared type stands in the line, and the
-/// value beside it is what the handle is made of. `Shared::new` does not exist
-/// and must not, so the annotation is the constructor
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3).
+/// It is a **name this module carries whole**. Only the emitter expands it to the
+/// count around the lock, which is what keeps a spelling nobody wrote out of every
+/// message about the language's most common type
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
+const SHARED_MUT: &str = "SharedMut";
+
+/// The three types whose hull a program writes by calling their name
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
 ///
-/// **It never turns a refusal into an acceptance on its own.** Every caller asks
-/// it only after a direct comparison has already failed, and then either records
-/// the site (the two places 6.2 permits) or refuses with `NK1115` (everywhere
-/// else). A `Shared` already standing where a `Shared` is wanted never reaches
-/// here, so a handle is never wrapped twice.
+/// **A hull you cannot observe, the compiler writes; a hull you can observe, you
+/// write.** A `T?` costs nothing and hides nothing - the same value, possibly
+/// absent - so its `Some(…)` is written for you (ADR-052). These three change
+/// **when a value is cleaned up**, which Part I 6.2 says a program can see, so the
+/// word stands where it happens.
+fn is_hull(name: &str) -> bool {
+    matches!(name, SHARED | SHARED_MUT | LOCKED)
+}
+
+/// Whether a plain value stands where a **hull** is wanted - the shape whose
+/// message names the constructor.
+///
+/// `want` is `Shared[T]`, `SharedMut[T]` or `Locked[T]` and `found` is the `T` it
+/// would hold. It used to *permit* that at two positions, because the annotation
+/// was the constructor ([ADR-040](../../../docs/specification/adr/adr-040.md) §3).
+/// It permits nothing now
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2): a hull is made by a
+/// call, wherever a call may stand, and what this answers is only *which sentence
+/// to write* when one is missing.
+///
+/// That is the whole of why the positions stopped being a list. A literal could
+/// not be handled at all while the annotation was the constructor - it has no
+/// type of its own, so nothing knew the hull was wanted - and `SharedMut(0)`
+/// needs nobody to know.
 fn becomes_shared(found: &Ty, want: &Ty) -> bool {
     let Ty::Named { name, args, view } = want else {
         return false;
     };
-    if name != SHARED || *view {
+    if !is_hull(name) || *view {
         return false;
     }
     match args.as_slice() {
@@ -3247,13 +3341,9 @@ fn convert(found: &Ty, want: &Ty) -> String {
     // destination without a road, which is what made this look like a dead end.
     // It is not: there are two roads and this says both.
     if becomes_shared(found, want) {
-        return format!(
-            "sharing starts on a line that writes the type: either give it a \
-             `let x: {} = …` here and return that, or return the plain `{}` and \
-             let the caller write the type (Part I, 6.2)",
-            want.text(),
-            found.text()
-        );
+        if let Ty::Named { name, .. } = want {
+            return format!("write `{name}(…)` around it - a hull you can see is one you write");
+        }
     }
     let (found, want) = (found.text(), want.text());
     match (found.as_str(), want.as_str()) {

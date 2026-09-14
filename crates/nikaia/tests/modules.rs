@@ -521,7 +521,7 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
             (
                 "main.nika",
                 "fn main() {\n\
-                 \x20   let c: Shared[Conn] = Conn(id: 1)\n\
+                 \x20   let c = Shared(Conn(id: 1))\n\
                  \x20   let p = Pool(db: c)\n\
                  \x20   println(f\"{p.db.id}\")\n\
                  }\n",
@@ -582,7 +582,7 @@ fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
             (
                 "main.nika",
                 "fn main() {\n\
-                 \x20   let c: Shared[Conn] = Conn(id: 1)\n\
+                 \x20   let c = Shared(Conn(id: 1))\n\
                  \x20   println(f\"{hold(c)}\")\n\
                  }\n",
             ),

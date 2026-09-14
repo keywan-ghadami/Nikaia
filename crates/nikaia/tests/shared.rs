@@ -40,7 +40,7 @@ fn serve(db: &Connection) {
 }
 
 fn main() {
-    let db: Shared[Connection] = connect(\"localhost\".to_string())
+    let db = Shared(connect(\"localhost\".to_string()))
     serve(&db)
     serve(&db)
 }
@@ -106,15 +106,15 @@ fn run(purpose: &str, source: &str, flags: &[&str]) -> (String, String) {
 
 /// The whole of Part I 6.2's worked example, end to end.
 #[test]
-fn a_shared_value_is_made_by_writing_the_type_and_lent_out_by_a_view() {
+fn a_shared_value_is_made_by_calling_the_type_and_lent_out_by_a_view() {
     let (printed, rust) = run("shared-borrowed", BORROWED, &[]);
     assert_eq!(printed.trim(), "serving localhost\nserving localhost");
     // Nothing crosses a thread with it, so D7's optimisation applies: the plain
     // count. That is the base case ADR-037 §5 asks for - an analysis answering
     // `atomic` about everything would pass a test that only checked it ran.
     assert!(
-        rust.contains("std::rc::Rc<Connection>") && rust.contains("std::rc::Rc::new(connect("),
-        "the annotation is the constructor:\n{rust}"
+        rust.contains("std::rc::Rc::new(connect("),
+        "the call is the constructor (ADR-064 D2):\n{rust}"
     );
     // A borrow duplicates nothing (ADR-040 D1's correction). Two of them, and
     // not one step of the count.
@@ -173,7 +173,7 @@ pub fn serve(db: Shared[Connection]) {
 }
 
 fn main() {
-    let db: Shared[Connection] = connect(\"localhost\".to_string())
+    let db = Shared(connect(\"localhost\".to_string()))
     serve(db)
 }
 ";
@@ -199,7 +199,7 @@ fn main() {
 /// A field whose declared type says the value is shared is the other place the
 /// first handle is made (Part I 6.2).
 #[test]
-fn a_field_whose_declared_type_says_so_makes_a_handle() {
+fn a_hull_written_in_a_struct_literal_field_makes_a_handle() {
     let source = "\
 struct Connection {
     host: String
@@ -215,7 +215,7 @@ fn connect(host: String) -> Connection {
 }
 
 fn main() {
-    let pool = Pool { db: connect(\"localhost\".to_string()), size: 4 }
+    let pool = Pool { db: Shared(connect(\"localhost\".to_string())), size: 4 }
     println(f\"{pool.size} to {pool.db.host}\")
 }
 ";
@@ -236,10 +236,12 @@ fn main() {
 fn the_report_explains_a_real_program() {
     let printed = report(BORROWED);
     assert!(printed.starts_with("main:\n"), "{printed}");
-    assert!(
-        printed.contains("plain   `db` (Shared[Connection])"),
-        "{printed}"
-    );
+    // `(Shared)` and not `(Shared[Connection])`: since
+    // [ADR-064](../../../docs/specification/adr/adr-064.md) D2 the hull is made
+    // by a call and this line writes no annotation, so what the analysis knows
+    // about the slot is that it is a `Shared` - not what it holds. It needs no
+    // more than that to decide a count, and the report says what it knows.
+    assert!(printed.contains("plain   `db` (Shared)"), "{printed}");
     assert!(
         printed.contains("1 `Shared` value(s): 1 plain, 0 atomic"),
         "{printed}"
@@ -279,7 +281,7 @@ fn keep(db: Shared[Conn]) -> Pool {
 }
 
 fn main() {
-    let db: Shared[Conn] = connect(\"localhost\".to_string())
+    let db = Shared(connect(\"localhost\".to_string()))
     serve(&db)
     peek(&db)
     let pool = keep(db)
@@ -329,7 +331,7 @@ fn keep(db: Shared[Conn]) -> Pool {
 }
 
 fn main() {
-    let db: Shared[Conn] = connect(\"localhost\".to_string())
+    let db = Shared(connect(\"localhost\".to_string()))
     let pool = keep(db)
     let again = keep(pool.db)
     println(f\"{pool.db.host} {again.db.host}\")
@@ -366,7 +368,7 @@ fn keep(db: Shared[Conn]) -> Pool {
 }
 
 fn main() {
-    let db: Shared[Conn] = connect(\"localhost\".to_string())
+    let db = Shared(connect(\"localhost\".to_string()))
     serve(&db)
     let pool = keep(db)
     println(f\"{pool.db.host}\")
@@ -402,7 +404,7 @@ fn serve(db: &Conn) { }
 fn peek(db: &Shared[Conn]) { }
 
 fn main() {
-    let db: Shared[Conn] = connect(\"localhost\".to_string())
+    let db = Shared(connect(\"localhost\".to_string()))
     serve(&db)
     peek(&db)
 }
@@ -455,7 +457,7 @@ fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
          }\n\
          \n\
          fn connect(host: String) -> Shared[Connection] {\n    \
-             let c: Shared[Connection] = Connection { host: host }\n    \
+             let c = Shared(Connection { host: host })\n    \
              return c\n\
          }\n\
          \n\
@@ -472,4 +474,87 @@ fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
         1,
         "the `return` must not wrap a second time:\n{rust}"
     );
+}
+
+// --- the shared mutable type, end to end (ADR-064) ---------------------------
+
+/// Part II 12.2's counter, which is the program `user_parallelism` exists for.
+const COUNTER: &str = "\
+fn zaehle(counter: SharedMut[i64]) {
+    counter.update fn(alt) { alt + 1 }
+}
+
+fn main() {
+    let counter = SharedMut(0)
+    counter.set(5)
+    zaehle(counter)
+    println(f\"{counter.get()}\")
+}
+";
+
+/// **It compiles and runs, at both settings, for the first time.**
+///
+/// Three things had to be true at once and none of them was
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md)): `SharedMut` had to be
+/// a type rather than a name that went through into Rust untranslated; the hull
+/// had to be makeable around a **number**, which the annotation never could
+/// because a literal has no type of its own; and both ends of the value - the
+/// local and the parameter it is handed to - had to agree about the count.
+#[test]
+fn the_counter_of_part_ii_12_2_runs_at_both_settings() {
+    for setting in ["no", "yes"] {
+        let (printed, rust) = run(
+            &format!("sharedmut-{setting}"),
+            COUNTER,
+            &["--user-parallelism", setting],
+        );
+        assert_eq!(printed.trim(), "6", "at `{setting}`");
+
+        // One name above, two hulls below, and the pair that belongs to the
+        // setting - never one of each (ADR-061 D2, ADR-057 D3).
+        let (count, lock) = match setting {
+            "no" => ("std::rc::Rc", "lock::Local"),
+            _ => ("std::sync::Arc", "lock::Crossing"),
+        };
+        assert!(
+            rust.contains(&format!("{count}::new(nikaia_std::{lock}::new(")),
+            "the constructor writes both hulls at `{setting}`:\n{rust}"
+        );
+        assert!(
+            rust.contains(&format!(
+                "fn zaehle(counter: {count}<nikaia_std::{lock}<i64>>)"
+            )),
+            "and the parameter agrees with it at `{setting}`:\n{rust}"
+        );
+        // The handle is duplicated where it is handed on, not moved.
+        assert!(
+            rust.contains("zaehle(counter.clone())"),
+            "a handle handed on by value is duplicated (ADR-040 D1):\n{rust}"
+        );
+    }
+}
+
+/// **And the long spelling is not a second way to write it**
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D3), because two
+/// spellings of one type were the same bytes below and two types above.
+#[test]
+fn a_shared_around_a_lock_is_refused_and_names_the_short_form() {
+    let dir = common::scratch_dir("sharedmut-spelling");
+    let input = dir.join("main.nika");
+    std::fs::write(&input, "fn zaehle(counter: Shared[Locked[i64]]) { }").expect("the source");
+    let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["--input", input.to_str().expect("utf-8 path")])
+        .args([
+            "--output",
+            dir.join("main.rs").to_str().expect("utf-8 path"),
+        ])
+        .args(["--no-cache"])
+        .env("NIKAIA_CACHE_DIR", dir.join("cache"))
+        .output()
+        .expect("the compiler runs");
+    let said = String::from_utf8_lossy(&run.stderr).into_owned();
+    assert!(!run.status.success(), "it must be refused: {said}");
+    assert!(said.contains("NK1123"), "{said}");
+    assert!(said.contains("`SharedMut[i64]`"), "{said}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

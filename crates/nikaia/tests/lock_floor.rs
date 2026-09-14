@@ -31,10 +31,10 @@ use nikaia::contracts::{sync, Ledger, Sync, STD};
 use nikaia::parser::parse_to_ast;
 
 /// Part II 12.2's idiom, with a helper below it so the propagation is visible.
-const IDIOM: &str = "fn tally(counter: Shared[Locked[i32]]) {\n\
+const IDIOM: &str = "fn tally(counter: SharedMut[i32]) {\n\
                      \x20   counter.access fn { a += 1 }\n\
                      }\n\
-                     fn outer(counter: Shared[Locked[i32]]) {\n\
+                     fn outer(counter: SharedMut[i32]) {\n\
                      \x20   tally(counter)\n\
                      }";
 
@@ -48,7 +48,7 @@ const IDIOM: &str = "fn tally(counter: Shared[Locked[i32]]) {\n\
 /// a probe of both answers rather than a test of the decided one.
 fn with_access(sync_line: &str) -> Ledger {
     let text = format!(
-        "{}\n[fn.\"Locked::access\"]\npub = true\n{sync_line}signature = \"(&Locked[$T], f: fn(&$T))\"\n",
+        "{}\n[fn.\"SharedMut::access\"]\npub = true\n{sync_line}signature = \"(&SharedMut[$T], f: fn(&$T))\"\n",
         without_access(STD)
     );
     Ledger::parse(&text).expect("std's ledger plus one entry still parses")
@@ -60,7 +60,12 @@ fn without_access(text: &str) -> String {
     let mut skipping = false;
     for line in text.lines() {
         if line.starts_with('[') {
-            skipping = line.starts_with("[fn.\"Locked::access\"]");
+            // **Both doors**: the idiom writes `SharedMut` since
+            // [ADR-064](../../../docs/specification/adr/adr-064.md), and leaving
+            // the shipped entry for either standing would answer the question
+            // this probe is asking.
+            skipping = line.starts_with("[fn.\"Locked::access\"]")
+                || line.starts_with("[fn.\"SharedMut::access\"]");
         }
         if !skipping {
             out.push_str(line);
@@ -75,13 +80,25 @@ fn without_access(text: &str) -> String {
 fn sync_of(source: &str, library: &Ledger, resolved: bool) -> BTreeMap<String, Sync> {
     let parsed = parse_to_ast(source).expect("the source parses");
     let mut ledger = Ledger::infer(&parsed);
+    // **Back to what the declarations say**, before the hypothetical library is
+    // asked. `Ledger::infer` runs `sync::infer` itself, against the **shipped**
+    // ledger - and since [ADR-064](../../../docs/specification/adr/adr-064.md)
+    // that ledger describes `SharedMut::access`, so the shipped answer is already
+    // in here. `sync::infer` only ever raises a claim, never lowers one, so
+    // without this reset the second row of the table above could not be asked at
+    // all: the probe would measure the shipped entry and call it the variant's.
+    for contract in ledger.functions.values_mut() {
+        if contract.sync == Sync::Inferred {
+            contract.sync = Sync::No;
+        }
+    }
 
     let mut methods = BTreeMap::new();
     if resolved {
         for name in ["tally", "outer"] {
             let mut calls = MethodCalls::default();
             if name == "tally" {
-                calls.resolved.insert("Locked::access".to_string());
+                calls.resolved.insert("SharedMut::access".to_string());
             }
             methods.insert(name.to_string(), calls);
         }
@@ -95,17 +112,20 @@ fn sync_of(source: &str, library: &Ledger, resolved: bool) -> BTreeMap<String, S
         .collect()
 }
 
-/// Today, and for a reason that has nothing to do with the representation:
-/// `counter.access` is a method call on a type no ledger describes, so
-/// ADR-027 D2's polarity takes the claim away.
+/// **The baseline moved, and that is the finding**
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md)).
 ///
-/// This is the baseline every row below is read against. **Part II 12.2's own
-/// idiom is not `sync` today**, whatever `Locked` turns out to be.
+/// This used to assert that Part II 12.2's own idiom is *not* `sync`, for a
+/// reason that had nothing to do with the representation: `counter.access` was a
+/// method call on a type **no ledger described**, so ADR-027 D2's polarity took
+/// the claim away. `SharedMut` is described now - four doors of its own - so the
+/// idiom carries its claim, and the rows below measure a real difference rather
+/// than one that was hidden behind an absence.
 #[test]
-fn the_idiom_is_not_sync_today_because_nothing_can_resolve_access() {
-    let l = Ledger::infer(&parse_to_ast(IDIOM).expect("parses"));
-    assert_eq!(l.functions["tally"].sync, Sync::No);
-    assert_eq!(l.functions["outer"].sync, Sync::No);
+fn the_idiom_is_sync_now_that_the_ledger_describes_its_door() {
+    let answers = sync_of(IDIOM, &Ledger::parse(STD).expect("std's ledger"), true);
+    assert_eq!(answers["tally"], Sync::Inferred);
+    assert_eq!(answers["outer"], Sync::Inferred);
 }
 
 /// With an entry that says an acquisition adds no pausing of its own, the
@@ -129,10 +149,10 @@ fn a_non_pausing_acquisition_leaves_the_idiom_sync() {
 #[test]
 fn the_lambda_still_decides_under_from() {
     let source = "use std::fs\n\
-                  fn tally(counter: Shared[Locked[i32]]) {\n\
+                  fn tally(counter: SharedMut[i32]) {\n\
                       counter.access fn { fs::write(\"log\", \"x\") }\n\
                   }\n\
-                  fn outer(counter: Shared[Locked[i32]]) { tally(counter) }";
+                  fn outer(counter: SharedMut[i32]) { tally(counter) }";
     let answers = sync_of(source, &with_access("sync = \"from(f)\"\n"), true);
     assert_eq!(answers["tally"], Sync::No);
     assert_eq!(answers["outer"], Sync::No);
@@ -173,11 +193,14 @@ fn a_pausing_acquisition_costs_the_idiom_and_everything_above_it() {
 #[test]
 fn at_one_user_thread_a_lock_is_the_cheap_shape() {
     let rust = lowered(
-        "fn main() {\n    let n: i64 = 1\n    let c: Shared[Locked[i64]] = n\n}",
+        "fn main() {\n    let n: i64 = 1\n    let c = SharedMut(n)\n}",
         false,
     );
+    // The constructor is what writes the shape now
+    // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2), so the shape is
+    // read off the `::new` rather than off an annotation the line no longer needs.
     assert!(
-        rust.contains("nikaia_std::lock::Local<i64>"),
+        rust.contains("nikaia_std::lock::Local::new"),
         "the cheap shape:\n{rust}"
     );
     assert!(
@@ -198,7 +221,7 @@ fn at_several_threads_a_lock_follows_the_value() {
     let rust = lowered(
         "fn main() {\n\
         \x20   let n: i64 = 1\n\
-        \x20   let crossing: Shared[Locked[i64]] = n\n\
+        \x20   let crossing: SharedMut[i64] = n\n\
         \x20   let t = spawn fn { crossing.access fn { n } }\n\
          }",
         true,
@@ -221,7 +244,7 @@ fn at_several_threads_a_lock_follows_the_value() {
 #[test]
 fn the_annotation_allocates_the_lock_as_well_as_the_handle() {
     let rust = lowered(
-        "fn main() {\n    let n: i64 = 1\n    let c: Shared[Locked[i64]] = n\n}",
+        "fn main() {\n    let n: i64 = 1\n    let c = SharedMut(n)\n}",
         false,
     );
     assert!(

@@ -388,6 +388,27 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
+### 2.11. A type nothing declares goes into the language below untranslated
+
+*Reproduced:* `let counter: SharedMut[i64] = 0` used to emit `SharedMut<i64>` and
+come back as `rustc`'s *"cannot find type `SharedMut` in this scope"* — about a
+name the program did write and Part I 6.2 does promise.
+[ADR-064](specification/adr/adr-064.md) fixed that name by building it; **the
+class is untouched.** Every misspelled type takes the same route.
+
+*Why it is a defect and not a gap:* a **value** nothing declares has had `NK1117`
+since [ADR-051](specification/adr/adr-051.md) — *"nothing declares `q`"*. A type
+has nothing, so Part III C.1's rule holds for one half of the language's names and
+not the other.
+
+*What it needs, and the reason it is not free:* the set of names that count as
+declared — the writable types of Part I 2.2, the three hulls, `std`'s, this
+package's structs and enums, a function's type parameters, `Self`. Getting that
+set wrong refuses a **correct** program, which is the one thing the checker may
+never do (Part III, C.4), so it wants the same polarity every other check here
+has: refuse only what is certainly wrong, and say nothing about a name it cannot
+account for.
+
 ---
 
 ## 3. Upkeep

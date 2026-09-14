@@ -427,7 +427,7 @@ fn the_report_names_what_it_could_not_decide() {
 fn a_shared_that_came_out_of_a_call_is_atomic() {
     let decision = one(
         "fn zaehle() -> i64 {\n\
-             let counts: Shared[Vec[i64]] = beschaffe()\n\
+             let counts: Shared[i64] = beschaffe()\n\
              counts.len()\n\
          }",
         "counts",
@@ -865,7 +865,7 @@ fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
 fn a_handle_handed_on_by_value_is_a_duplication_site() {
     let decision = one_in(
         "fn behalte(db: Shared[i64]) { }\n\
-         fn main() { let db: Shared[i64] = 1\n behalte(db) }",
+         fn main() { let db = Shared(1)\n behalte(db) }",
         "main",
         "db",
     );
@@ -882,7 +882,7 @@ fn a_handle_handed_on_by_value_is_a_duplication_site() {
 fn a_borrowed_handle_is_not_a_duplication_site() {
     let decision = one_in(
         "fn schau(db: &Shared[i64]) { }\n\
-         fn main() { let db: Shared[i64] = 1\n schau(&db) }",
+         fn main() { let db = Shared(1)\n schau(&db) }",
         "main",
         "db",
     );
@@ -897,7 +897,7 @@ fn a_borrowed_handle_is_not_a_duplication_site() {
 #[test]
 fn a_task_that_uses_a_handle_is_a_duplication_site() {
     let decision = one(
-        "fn main() { let db: Shared[i64] = 1\n spawn fn { println(f\"{db}\") } }",
+        "fn main() { let db = Shared(1)\n spawn fn { println(f\"{db}\") } }",
         "db",
     );
     assert!(
@@ -918,7 +918,7 @@ fn a_task_that_uses_a_handle_is_a_duplication_site() {
 fn the_same_handover_is_named_once() {
     let decision = one_in(
         "fn behalte(db: Shared[i64]) { }\n\
-         fn main() { let db: Shared[i64] = 1\n behalte(db)\n behalte(db) }",
+         fn main() { let db = Shared(1)\n behalte(db)\n behalte(db) }",
         "main",
         "db",
     );

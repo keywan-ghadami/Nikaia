@@ -418,7 +418,7 @@ The answer is **the same at both settings**, so that a library written at one ca
 
 And the paragraph above decides whether a lock gets in there at all: it does. A task of your own is a destination the crossing verdict answers *may* at both settings, so a `SharedMut[T]` can be captured by a `spawn` and the counter of 12.2 is a program you can write ([ADR-045](adr/adr-045.md) D2). Two handles then mean two places at one lock, which is what a lock is for ([ADR-040](adr/adr-040.md) D1). A task may of course also build a lock of its own, and that shares nothing with anybody.
 
-> **Status:** not built, in both halves. No function carries the lock-touching property of 12.3, so nothing tells a spawned body from a scope's; and neither the lock nor `SharedMut[T]` is a type the backend can build (6.2), so the verdict above is checked and the program then fails to emit.
+> **Status:** the **types are built** ([ADR-064](adr/adr-064.md)) — the counter below compiles and runs at both settings, which it never did before. What is not built is the lock-touching property of 12.3: no function carries it, so nothing tells a spawned body from a scope's.
 
 #### Return Values & Handles
 `spawn` always returns a `TaskHandle`. At `yes` it represents a running thread; at `no` a scheduled event. Calling `.join()` on it works identically either way — which is what the *uniform API* below means.
@@ -567,7 +567,9 @@ assertion, checked as far as the compiler can see, and yours where it cannot.
 > its author wrote down.
 
 ### 12.2. The Dual Nature of the Lock
-To share data that changes, you use **`SharedMut[T]`**: several owners, one value, and the lock inside the type rather than in a second wrapper you write around it (Part I, 6.2). `Locked[T]` is the same lock on its own, for individually locked fields inside a shared structure ([ADR-039](adr/adr-039.md) D9). Everything in this section is about the lock, so it holds for both. Its implementation follows `user_parallelism`, providing "Zero Cost Abstraction" relative to the requirements.
+To share data that changes, you use **`SharedMut[T]`**: several owners, one value, and the lock inside the type rather than in a second wrapper you write around it (Part I, 6.2). You make one by calling it — `let counter = SharedMut(0)` — and there is **no second spelling**: `Shared[Locked[T]]` is refused and the message names this one ([ADR-064](adr/adr-064.md) D2, D3). `Locked[T]` is the same lock on its own, for individually locked fields inside a shared structure ([ADR-039](adr/adr-039.md) D9). Everything in this section is about the lock, so it holds for both.
+
+**The name says what you get, not what is underneath.** `SharedMut[T]` means *several own it and any of them may change it*; which shapes carry that is the compiler's, decided per value the way the owner count is ([ADR-064](adr/adr-064.md) D1). Below, it is a count around a lock, and the pair belongs to the setting.
 
 > **The counter below may go into a task of your own, and not into foreign code.** Neither half is about the owner count: which count a value gets is decided per value and follows this answer rather than making it ([ADR-037](adr/adr-037.md) D7, Part I 6.2). It is about the **lock**, which is what this section is about, and the answer depends on where the value is going ([ADR-045](adr/adr-045.md) D1). Into a task of your own: yes, at both settings — at `yes` because a real operating-system lock is underneath and several threads are what it is for, at `no` because the task is interleaved on the same thread and nothing crosses. Into code nothing written down describes: no, at both settings, and deliberately the worse answer — at `yes` it would in fact be safe, and it is refused anyway so that a library written at one setting stays usable at the other ([ADR-045](adr/adr-045.md) D3, Part III C.5).
 
@@ -609,7 +611,7 @@ Holding a lock while the program pauses is dangerous *either way*: with threads 
 A `sync` lambda (see 12.1) can never perform I/O and can never pause, and a lambda that touches no lock cannot take a second one (12.3). So while locked data is open, the program runs straight through: lock, compute, unlock. **`get` and `set` need no condition at all, and for a stronger reason: while the lock is open in either of them, no code of yours runs, so there is nothing that could fall due** ([ADR-039](adr/adr-039.md) D10). If you try to do I/O inside `access`, the compiler stops you with a plain explanation:
 
 ```nika
-let counter: SharedMut[i32] = ...
+let counter = SharedMut(0)
 
 // OK: pure computation
 counter.update fn(old) { old + 1 }
@@ -666,8 +668,8 @@ Instead of nesting `access` calls, Nikaia provides `access_all` to request multi
 * **Safety:** It is mathematically impossible to create a deadlock cycle between A and B if everyone uses `access_all(A, B)`, because everyone will implicitly lock "Lower Address first, Higher Address second".
 
 ```nika
-let account_a: SharedMut[Account] = ...
-let account_b: SharedMut[Account] = ...
+let account_a = SharedMut(Account(…))
+let account_b = SharedMut(Account(…))
 
 // ERROR: Manual Nesting is forbidden to prevent Deadlocks.
 // Taking one lock inside another is what creates the inconsistent order

@@ -142,11 +142,13 @@ const CONTAINERS: &[&str] = &[
 /// A lock: the one family whose answer depends on where the value is going
 /// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D2, D3).
 ///
-/// Both names, because Part II 12.2 has two spellings of the same thing and the
-/// question is about the lock in either: `SharedMut[T]` is a count around a lock
-/// and `Locked[T]` is the lock. The count plays no part here - it is the robust
-/// kind at both settings since [ADR-037](../../../../docs/specification/adr/adr-037.md)
-/// D6 - so the two answer alike.
+/// Both names, because the question is about the lock in either: `SharedMut[T]`
+/// is a count around a lock and `Locked[T]` is the lock on its own, for a field.
+/// They are **not two spellings of one type** - that was refused by
+/// [ADR-064](../../../../docs/specification/adr/adr-064.md) D3 - but they answer
+/// alike here, because what this asks about is what they have in common. The
+/// count plays no part: which one a value gets follows this answer rather than
+/// making it ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
 ///
 /// Into our own code a lock is answered **by what it holds**, like a container:
 /// a lock does not make its contents crossable, and Group B's transitivity is

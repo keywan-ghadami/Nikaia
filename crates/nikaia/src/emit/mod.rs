@@ -763,15 +763,6 @@ struct Emitter<'p> {
     /// both sides of it agree by construction. A slot this map does not have gets
     /// the atomic floor.
     shared: std::collections::BTreeMap<String, crate::contracts::sharing::Count>,
-    /// The places where a declared `Shared[T]` makes the **first handle** out of
-    /// a plain value, by the byte the statement starts at and the name the
-    /// sharing is written against (`check::Checked::shared_sites`).
-    ///
-    /// The annotation is the constructor (Part I 6.2), and this is where the
-    /// `Rc::new` or the `Arc::new` is written. It is the checker's answer because
-    /// telling `let db: Shared[C] = connect(…)` from `let b: Shared[C] = db`
-    /// means knowing what the value on the right is, and nothing here has types.
-    shared_sites: std::collections::BTreeSet<(usize, String)>,
     /// Part I 2.3: the statements where a plain value stands in a nullable slot
     /// and the `Some(…)` is this emitter's to write
     /// (`check::Checked::nullable_sites`).
@@ -870,6 +861,15 @@ const SHARED: &str = "Shared";
 /// Part I 6.3's lock, whose shape is decided per value
 /// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
 const LOCKED: &str = "Locked";
+
+/// The shared mutable type, which is **one name here and two hulls below**
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
+///
+/// It is a name the checker carries and only this module expands, which is the
+/// whole of D1: a name that resolved away early would put a spelling nobody wrote
+/// into every message about it ([ADR-039](../../../docs/specification/adr/adr-039.md)
+/// D9 named that as what one name buys).
+const SHARED_MUT: &str = "SharedMut";
 
 /// The slot a function's result is filed under, as `contracts::sharing` keys it.
 const SHARED_RESULT: &str = "<result>";
@@ -1005,6 +1005,17 @@ struct Flow<'a> {
     /// a block inside the lambda is still written inside the lambda. A function
     /// body starts a `Flow` of its own, which is the boundary it does not cross.
     in_lambda: bool,
+    /// The name the statement being emitted **binds**, where it binds one.
+    ///
+    /// It is here for the reason `function` is: the count a `Shared` was given is
+    /// keyed by the function and the name (`contracts::sharing`), and a hull
+    /// written by a **call** ([ADR-064](../../../docs/specification/adr/adr-064.md)
+    /// D2) has to look that up from inside an expression. An expression carries no
+    /// span and no name of its own.
+    ///
+    /// Empty where the statement binds nothing, which is the floor's case and
+    /// never a wrong answer - only a slower one.
+    bound: &'a str,
     /// What is being emitted is **inside a constant this pass decided to write
     /// in the wider type** ([ADR-063](../../../docs/specification/adr/adr-063.md)
     /// D1), so every integer literal in it carries the `i64` suffix.
@@ -1035,6 +1046,7 @@ impl Flow<'_> {
         statement: usize::MAX,
         function: "",
         in_lambda: false,
+        bound: "",
         widen: false,
         inferred: false,
     };
@@ -1050,6 +1062,14 @@ impl Flow<'_> {
     /// The same surroundings, for the statement that starts at this byte.
     fn at(self, statement: usize) -> Self {
         Flow { statement, ..self }
+    }
+
+    /// The same surroundings, for a statement that binds this name.
+    fn binding<'b>(self, bound: &'b str) -> Flow<'b>
+    where
+        Self: 'b,
+    {
+        Flow { bound, ..self }
     }
 
     /// The same surroundings, inside a constant written in the wider type.
@@ -1194,7 +1214,6 @@ impl<'p> Emitter<'p> {
             pausing_methods: propagation.pausing_methods,
             narrowing_casts: propagation.narrowing,
             shared,
-            shared_sites: propagation.shared,
             nullable_sites: propagation.nullable,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
@@ -1827,6 +1846,8 @@ impl<'p> Emitter<'p> {
             // A function body was not written inside whatever lambda the call
             // to it sits in: this is the one boundary the flag does not cross.
             in_lambda: false,
+            // A function body binds nothing until a statement in it does.
+            bound: "",
             // Both are decided per expression, so a body starts with neither.
             widen: false,
             inferred: false,
@@ -2383,22 +2404,19 @@ impl<'p> Emitter<'p> {
         }
     }
 
-    /// The lock a declared type asks to be allocated, if it asks for one
-    /// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
+    /// What `Shared(x)`, `SharedMut(x)` and `Locked(x)` allocate, outermost first
+    /// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
     ///
-    /// `Shared[Locked[T]]` and a bare `Locked[T]` both name one; anything deeper
-    /// is a container's element rather than this binding's hull, and a container
-    /// builds its own. The shape is the one `written_name` would write, so the
-    /// constructor and the annotation cannot disagree.
-    fn lock_hull(&self, ty: &Type, count: crate::contracts::sharing::Count) -> Option<String> {
-        let name = self.text(ty.name);
-        let inner = match name {
-            LOCKED => return Some(self.written_name(LOCKED, count)),
-            SHARED => ty.generics.first()?,
-            _ => return None,
-        };
-        match self.text(inner.name) {
-            LOCKED => Some(self.written_name(LOCKED, count)),
+    /// Two for the shared mutable type, because it is one name and two hulls; one
+    /// for the other two; `None` for a call that is not a hull's.
+    fn hull_new(&self, name: &str, count: crate::contracts::sharing::Count) -> Option<Vec<String>> {
+        match name {
+            SHARED => Some(vec![self.written_name(SHARED, count)]),
+            LOCKED => Some(vec![self.written_name(LOCKED, count)]),
+            SHARED_MUT => Some(vec![
+                self.written_name(SHARED, count),
+                self.written_name(LOCKED, count),
+            ]),
             _ => None,
         }
     }
@@ -2406,6 +2424,14 @@ impl<'p> Emitter<'p> {
     /// The count the analysis gave the `Shared` written at one position, with the
     /// atomic floor where it has no answer (ADR-037 D6).
     fn count_at(&self, function: &str, value: &str) -> crate::contracts::sharing::Count {
+        // **At one user thread every count is plain**
+        // ([ADR-061](../../../docs/specification/adr/adr-061.md) D2), including at
+        // a position the analysis has no entry for. Without this the *floor* would
+        // answer for such a position, and the floor is the atomic count - which at
+        // `no` is exactly what that switch exists not to pay.
+        if self.build.user_parallelism == UserParallelism::No {
+            return crate::contracts::sharing::Count::Plain;
+        }
         self.shared
             .get(&format!("{function}::{value}"))
             .copied()
@@ -2463,6 +2489,24 @@ impl<'p> Emitter<'p> {
         // lifetime comes from - the source never writes one (ADR-008).
         if ty.is_view {
             out.push_str(lifetimes.reference);
+        }
+        // **`SharedMut[T]` is one name and two hulls**
+        // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1). It is
+        // expanded here and nowhere earlier, so the checker, the ledger and every
+        // message keep the name the source wrote. The two hulls are the ones the
+        // count already decides - `written_name` answers for each.
+        if self.text(ty.name) == SHARED_MUT {
+            if let Some(held) = ty.generics.first() {
+                // `out` already carries the `&` of a view, so the expansion is
+                // pushed rather than returned on its own.
+                out.push_str(&format!(
+                    "{}<{}<{}>>",
+                    self.written_name(SHARED, count),
+                    self.written_name(LOCKED, count),
+                    self.ty_counted(held, lifetimes, count)
+                ));
+                return out;
+            }
         }
         out.push_str(&self.written_name(self.text(ty.name), count));
 
@@ -2665,52 +2709,30 @@ impl<'p> Emitter<'p> {
                 let mutable = if *mutable { "mut " } else { "" };
                 let bound = self.text(*name);
                 let count = self.count_at(flow.function, bound);
+                // A hull written by a call inside this value looks its count up
+                // by the name being bound (ADR-064 D2), and an expression has
+                // none of its own.
+                let flow = flow.binding(bound);
                 let annotation = match ty {
                     Some(ty) => format!(": {}", self.ty_counted(ty, Lifetimes::ELIDED, count)),
                     None => String::new(),
                 };
-                // Part I 6.2: the annotation **is** the constructor. Where the
-                // checker says this line makes the first handle on a shared value
-                // - the declared type says `Shared[T]` and the value beside it is
-                // a `T` - the count is allocated around the value here. There is
-                // no `Shared::new` in the language and must not be (ADR-040 §3),
-                // so this is the one place one is written.
-                let handle = self
-                    .shared_sites
-                    .contains(&(span.start, bound.to_string()))
-                    .then(|| crate::contracts::sharing::rust_name(count));
-                // Part I 2.3: a plain value standing in a nullable slot. The
-                // checker says where, because whether the value beside the `=`
-                // is *already* nullable is a question about types and this
-                // emitter has none (ADR-028).
+                // **The annotation is no longer the constructor**
+                // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2). What
+                // used to be allocated here, out of an answer the checker had to
+                // compute and hand over, is now written where it happens - and the
+                // two positions that could carry one stopped being a list.
+                //
+                // Part I 2.3: a plain value standing in a nullable slot. That hull
+                // stays the compiler's, because it is one a program cannot observe
+                // - the same value, possibly absent (ADR-064 D2's own line).
                 let wrap = self.nullable_sites.contains(&span.start);
-                // **And the lock is allocated on the same line, for the same
-                // reason** ([ADR-057](../../../docs/specification/adr/adr-057.md)):
-                // the annotation is the constructor, and `Shared[Locked[T]]`
-                // beside a `T` makes two hulls rather than one. There is no
-                // `Locked::new` in the language either.
-                let lock = ty
-                    .as_ref()
-                    .filter(|_| self.shared_sites.contains(&(span.start, bound.to_string())))
-                    .and_then(|ty| self.lock_hull(ty, count));
                 out.push(&format!("let {mutable}{bound}{annotation} = "));
-                if let Some(path) = handle {
-                    out.push(&format!("{path}::new("));
-                }
-                if let Some(path) = &lock {
-                    out.push(&format!("{path}::new("));
-                }
                 if wrap {
                     out.push("Some(");
                 }
                 self.expr(out, value, depth, flow)?;
                 if wrap {
-                    out.push(")");
-                }
-                if lock.is_some() {
-                    out.push(")");
-                }
-                if handle.is_some() {
                     out.push(")");
                 }
                 out.push(";");
@@ -3128,19 +3150,6 @@ impl<'p> Emitter<'p> {
                         out.push(", ");
                     }
                     out.push(self.text(field.name));
-                    // The second of Part I 6.2's two places where the first
-                    // handle is made: a field whose declared type says the value
-                    // is shared. The slot is the struct's field, which is what
-                    // `contracts::sharing` keys a field's count by.
-                    let slot = format!("{owner}.{}", self.text(field.name));
-                    let handle = self
-                        .shared_sites
-                        .contains(&(flow.statement, slot.clone()))
-                        .then(|| {
-                            crate::contracts::sharing::rust_name(
-                                self.count_at(SHARED_FIELDS, &slot),
-                            )
-                        });
                     // Part I 2.3: a plain value in a field the struct
                     // declares nullable. Keyed by the field's own name, because
                     // a struct literal has one of these per field and the
@@ -3150,9 +3159,6 @@ impl<'p> Emitter<'p> {
                         .contains(&(flow.statement, self.text(field.name).to_string()));
                     if let Some(value) = &field.value {
                         out.push(": ");
-                        if let Some(path) = handle {
-                            out.push(&format!("{path}::new("));
-                        }
                         if wrap {
                             out.push("Some(");
                         }
@@ -3160,22 +3166,12 @@ impl<'p> Emitter<'p> {
                         if wrap {
                             out.push(")");
                         }
-                        if handle.is_some() {
-                            out.push(")");
-                        }
-                    } else if handle.is_some() || wrap {
+                    } else if wrap {
                         // `Counter { db }` is the shorthand for `db: db`
-                        // (Part I 4.1), and a constructor has to be written
-                        // around the name - which means writing the pair out.
+                        // (Part I 4.1), and a wrapper has to be written around
+                        // the name - which means writing the pair out.
                         let name = self.text(field.name);
-                        let inner = match wrap {
-                            true => format!("Some({name})"),
-                            false => name.to_string(),
-                        };
-                        match handle {
-                            Some(path) => out.push(&format!(": {path}::new({inner})")),
-                            None => out.push(&format!(": {inner}")),
-                        }
+                        out.push(&format!(": Some({name})"));
                     }
                 }
                 out.push(" }");
@@ -3430,6 +3426,24 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         if let Expr::Variable(name) = func {
             let text = self.text(*name);
+
+            // **A hull you can observe, you write**
+            // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
+            // `Shared(x)`, `SharedMut(x)` and `Locked(x)` are the three, and each
+            // expands to the shape `written_name` would give the *type* - so the
+            // constructor and the annotation cannot disagree about a value.
+            if let [held] = args {
+                if let Some(hulls) = self.hull_new(text, self.count_at(flow.function, flow.bound)) {
+                    for path in &hulls {
+                        out.push(&format!("{path}::new("));
+                    }
+                    self.expr(out, held, depth, flow)?;
+                    for _ in &hulls {
+                        out.push(")");
+                    }
+                    return Ok(());
+                }
+            }
 
             // `println`, `print` and their `stderr` halves are macros in
             // Rust, and their argument is an interpolated string, which is a
@@ -4238,10 +4252,13 @@ impl<'p> Emitter<'p> {
                     .arguments()
                     .iter()
                     .map(|(_, ty)| {
+                        // `SharedMut[T]` is a count around a lock
+                        // ([ADR-064](../../../docs/specification/adr/adr-064.md)
+                        // D1), so a handle on one is handed on the same way.
                         matches!(
                             ty,
                             crate::contracts::ty::Ty::Named { name, view: false, .. }
-                                if name == SHARED
+                                if name == SHARED || name == SHARED_MUT
                         )
                     })
                     .collect()

@@ -1065,7 +1065,7 @@ ordinary view and never mentions sharing:
 ```nika
 fn serve(db: &Connection) { … }
 
-let db: Shared[Connection] = postgres::connect("…")
+let db = Shared(postgres::connect("…"))
 serve(&db)          // a view; no handle is made, and the count is untouched
 ```
 
@@ -1082,57 +1082,51 @@ sees a plain value and must obey the rule for a lock that is open — it may not
 pause, and it may not touch a lock of its own (Part II, 12.2).
 
 ```nika
-let db: SharedMut[Connection] = postgres::connect("…")
+let db = SharedMut(postgres::connect("…"))
 db.access fn(open) { serve(open) }    // `serve` must be `sync` and lock-free
 ```
 
-**How the first handle is made: by writing the type.** There is no constructor
-and no method.
+**How the first handle is made: you write it.** Each of the three shared types
+makes one by being **called with the value that goes in it**
+([ADR-064](adr/adr-064.md) D2):
 
 ```nika
-let db: Shared[Connection] = postgres::connect("…")
+let db = Shared(postgres::connect("…"))
+let counter = SharedMut(0)
+let frei = Locked(0)                    // a field's lock, one per field
 ```
 
-The language asks for sharing to be visible in the source because it changes when
-the value is cleaned up — and here it is, in the line where it starts.
-`Shared::new(…)` would write the same thing twice.
+**The rule behind it is one sentence, and it decides every hull in the
+language:**
 
-> **Sharing always starts on a line where you wrote the type yourself** — an
-> assignment with a type annotation, or a field with a declared type. Everywhere
-> else you receive what is already shared.
+> **A hull you cannot see, the compiler writes. A hull you can see, you write.**
 
-That sentence is the whole rule, and the two places it names are the only two. Not at a
-call site merely because a signature wants one. A call in which the word does not
-appear would otherwise move the cleanup point silently, and at such a place there
-would be no saying whether the value was handed on or duplicated — it would be
-both at once. So this is refused, and the message points at the line where the
-sharing belongs:
+A `T?` costs nothing and hides nothing — the same value, possibly absent — so the
+compiler puts a plain value into one for you (2.3). These three change **when the
+value is cleaned up**, and that is something your program can observe. So the word
+stands where it happens.
+
+**It stands wherever an expression may**, which is the whole of what that buys:
+
+```nika
+keep(Shared(connect(url)))                      // an argument
+let p = Pool { db: Shared(connect(url)) }       // a field of a literal
+fn connect(url: String) -> Shared[Connection] {
+    return Shared(Connection(url: url))         // a result
+}
+```
+
+Where a plain value stands and a shared one is wanted, the message says exactly
+that:
 
 ```text
 error[NK1115]: `serve` takes a shared value, and `db` is not one
-  help: write the sharing where it starts:
-        let db: Shared[Connection] = postgres::connect("…")
+  help: write `Shared(db)` - a hull you can see is one you write
 ```
 
-**A function that returns a shared value is the same rule, not an exception to
-it.** A signature line is not a line you wrote the type on, so the `return` is
-not where sharing may begin — which leaves two ways, and both are ordinary:
-
-```nika
-// Wrap inside, on a line of its own. The `return` then hands on a value that
-// is already shared, which is a plain return.
-fn connect(url: String) -> Shared[Connection] {
-    let c: Shared[Connection] = Connection(url: url)
-    return c
-}
-
-// Or - usually better - return a plain value and let the caller decide.
-fn connect(url: String) -> Connection { … }
-let db: Shared[Connection] = connect(url)
-```
-
-The second imposes sharing on nobody who does not want it. The first costs one
-line, and that line is where a reader sees the sharing begin.
+**Returning a shared value is no longer a special case**, and neither is a number:
+`SharedMut(0)` works because the hull is made by a call, and a call gives the
+number its type the way any other argument does.
 
 **This is the handle and nothing else.** Ordinary data — a string, a number, a
 struct of those — is still **moved** where it is handed on (8.3). An automatic
@@ -1151,13 +1145,18 @@ names each duplication site beside the count it printed for that value — the c
 of an extra handle stays something you can look up
 ([ADR-040](adr/adr-040.md) D5).
 
-> **Status:** `Shared[T]` is built. It is a type the compiler knows — `std`'s
-> ledger carries the entry, the backend lowers it to one of the two owner counts,
-> and the annotated `let` above really does make the first handle, as does a field
-> whose declared type says so. `serve(&db)` works through the `deref` entry and
-> nothing else ([ADR-042](adr/adr-042.md) D2), and the call that wants a shared
-> value and is given a plain one is refused by `NK1115` rather than wrapped
-> silently (Part III, C.3).
+> **Status:** all three are built. Each is a type the compiler knows, `std`'s
+> ledger carries their entries, and the constructors above really do make the
+> hulls — wherever an expression may stand. `serve(&db)` works through the `deref`
+> entry and nothing else ([ADR-042](adr/adr-042.md) D2), and the call that wants a
+> shared value and is given a plain one is refused by `NK1115`, whose way out is
+> the constructor (Part III, C.3).
+>
+> **`SharedMut[T]` is one name and two hulls**, and only the backend knows that
+> ([ADR-064](adr/adr-064.md) D1): what a message, a printed type or a ledger entry
+> says is the name you wrote. Which shapes it becomes is decided per value, the
+> same way the owner count is. **`Shared[Locked[T]]` is refused** and the message
+> names `SharedMut[T]`: one type, one spelling (`NK1123`).
 >
 > **`SharedMut[T]` and `Locked[T]` are not.** Writing either names a type that
 > does not exist, the backend has no lowering for one, and the four doors of 6.3

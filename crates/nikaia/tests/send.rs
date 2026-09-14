@@ -220,7 +220,7 @@ fn a_struct_that_holds_a_shared_crosses_into_a_task() {
 #[test]
 fn a_lock_goes_into_a_task_of_our_own() {
     let clean = crossings(
-        "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+        "fn zaehle(counter: SharedMut[i32]) {\n\
              spawn fn { println(f\"{counter}\") }\n\
          }",
     );
@@ -229,13 +229,12 @@ fn a_lock_goes_into_a_task_of_our_own() {
         "12.2's counter must be writable: {clean:#?}"
     );
 
-    let parsed =
-        parse_to_ast("fn zaehle(counter: Shared[Locked[i32]]) { }").expect("the source parses");
+    let parsed = parse_to_ast("fn zaehle(counter: SharedMut[i32]) { }").expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
     assert_eq!(
         send::crossing(
-            &Ty::parse("Shared[Locked[i32]]"),
+            &Ty::parse("SharedMut[i32]"),
             &own,
             &library,
             send::Destination::Ours
@@ -260,7 +259,7 @@ fn a_lock_goes_into_a_task_of_our_own() {
 #[test]
 fn a_lock_does_not_go_into_code_nothing_describes() {
     let found = crossings(
-        "fn ueber(counter: Shared[Locked[i32]]) {\n\
+        "fn ueber(counter: SharedMut[i32]) {\n\
              fremd::irgendwas(counter)\n\
          }",
     );
@@ -269,7 +268,9 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     assert_eq!(finding.code, "NK2502");
     assert!(finding.message.contains("`counter`"), "{}", finding.message);
     let notes = finding.notes.join(" ");
-    assert!(notes.contains("`Locked[i32]`"), "{notes}");
+    // The note names the type the source wrote, not what it expands to
+    // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
+    assert!(notes.contains("`SharedMut[i32]`"), "{notes}");
     assert!(notes.contains("deliberately"), "{notes}");
     let help = finding.help.as_deref().expect("a refusal has a way out");
     assert!(help.contains("open the lock"), "{help}");
@@ -277,7 +278,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     // And into a task of our own the same value is fine, which is the pair D1
     // added. Without this half the refusal above would read as the old rule.
     assert!(crossings(
-        "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+        "fn zaehle(counter: SharedMut[i32]) {\n\
              spawn fn { println(f\"{counter}\") }\n\
          }",
     )
@@ -342,7 +343,7 @@ fn the_verdict_is_the_same_at_both_settings() {
         "fn ueber(handle: Shared[String]) {\n\
              fremd::auf_einen_thread(handle)\n\
          }",
-        "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+        "fn zaehle(counter: SharedMut[i32]) {\n\
              spawn fn { println(f\"{counter}\") }\n\
          }",
     ] {
@@ -370,7 +371,7 @@ fn the_verdict_is_the_same_at_both_settings() {
 /// asserts the silence rather than a verdict about the lock.
 #[test]
 fn the_shared_half_of_part_ii_12_2s_counter_no_longer_refuses() {
-    let source = "fn zaehle(counter: Shared[Locked[i32]]) {\n\
+    let source = "fn zaehle(counter: SharedMut[i32]) {\n\
                       counter.access(fn(a) { a })\n\
                       spawn fn { println(f\"{counter}\") }\n\
                   }";
@@ -390,7 +391,7 @@ fn the_shared_half_of_part_ii_12_2s_counter_no_longer_refuses() {
 /// absent for so long without anything being unsound (`docs/foreign-runtime.md`
 /// §3.2).
 ///
-/// **`probe::held` hands back `Shared[Locked[i64]]` rather than `Shared[i64]`
+/// **`probe::held` hands back `SharedMut[i64]` rather than `Shared[i64]`
 /// since ADR-037 D6.** The overlapping analysis refuses anything but `May`, so
 /// what it needs here is a non-`May` answer and not specifically a refusal - and
 /// since D6 a `Shared` of plain data *is* `May`, which is a change to what this
@@ -411,7 +412,7 @@ fn probe_library() -> Ledger {
          pub = true\n\
          sync = true\n\
          touches = []\n\
-         signature = \"() -> Shared[Locked[i64]]\"\n\
+         signature = \"() -> SharedMut[i64]\"\n\
          \n\
          [fn.\"probe::counted\"]\n\
          pub = true\n\
@@ -553,7 +554,7 @@ fn an_operation_whose_result_nothing_permits_keeps_its_place() {
 /// **A result that holds a lock overlaps, which is ADR-045 D1 reaching the third
 /// call site.**
 ///
-/// `probe::held` hands back a `Shared[Locked[i64]]` and kept its place while the
+/// `probe::held` hands back a `SharedMut[i64]` and kept its place while the
 /// verdict took the worse of the two settings for a lock. The closure overlapping
 /// builds is this compiler's own, on this compiler's own thread, so it is the
 /// destination D2 is about and not a library we cannot read - and the pairs the

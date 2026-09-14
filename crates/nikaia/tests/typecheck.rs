@@ -939,30 +939,35 @@ fn a_view_of_a_view_is_the_view() {
 /// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3), which is why this
 /// is an acceptance rather than a conversion the checker suggests.
 #[test]
-fn an_annotated_let_makes_a_plain_value_shared() {
+fn a_call_on_the_type_makes_a_plain_value_shared() {
     assert!(
         findings(
             "struct Conn { host: String }\n\
              fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
-             fn main() { let db: Shared[Conn] = connect() }"
+             fn main() { let db = Shared(connect()) }"
         )
         .is_empty(),
-        "the annotated `let` is where the sharing starts"
+        "the call is where the sharing starts"
     );
 }
 
-/// …and a field whose declared type says so is the other place.
+/// …and it stands wherever an expression may, a struct literal's field included.
+///
+/// **That is the whole of what changed**
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2). There used to be
+/// two positions where a plain value could become a shared one, and they were a
+/// list somebody had to keep complete. A call needs no list.
 #[test]
-fn a_field_whose_declared_type_says_so_makes_a_handle() {
+fn the_constructor_stands_where_any_expression_may() {
     assert!(
         findings(
             "struct Conn { host: String }\n\
              struct Pool { db: Shared[Conn] }\n\
              fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
-             fn main() { let p = Pool { db: connect() } }"
+             fn main() { let p = Pool { db: Shared(connect()) } }"
         )
         .is_empty(),
-        "a field's declared type is where the sharing starts"
+        "a field takes one like anywhere else"
     );
 }
 
@@ -990,8 +995,8 @@ fn a_call_that_wants_a_shared_value_and_is_given_a_plain_one_is_refused() {
     .clone()
     .expect("Part III C.2: every diagnostic names a way out");
     assert!(
-        help.contains("let db: Shared[Conn] = "),
-        "it has to point at the line where the sharing belongs: {help}"
+        help.contains("Shared(db)"),
+        "the way out is the constructor, at the call (ADR-064 D2): {help}"
     );
 }
 
@@ -1004,7 +1009,7 @@ fn a_shared_value_fits_a_shared_parameter() {
             "struct Conn { host: String }\n\
              fn keep(db: Shared[Conn]) { }\n\
              fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
-             fn main() { let db: Shared[Conn] = connect()\n keep(db) }"
+             fn main() { let db = Shared(connect())\n keep(db) }"
         )
         .is_empty(),
         "a handle fits a parameter that takes one"
@@ -1022,7 +1027,7 @@ fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
             "struct Conn { host: String }\n\
              fn serve(db: &Conn) { }\n\
              fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
-             fn main() { let db: Shared[Conn] = connect()\n serve(&db) }"
+             fn main() { let db = Shared(connect())\n serve(&db) }"
         )
         .is_empty(),
         "a function that only uses the value takes an ordinary view"
@@ -1036,7 +1041,7 @@ fn a_shared_value_does_not_fit_a_view_of_just_anything() {
     let (code, message) = one("struct Conn { host: String }\n\
          fn count(n: &i64) { }\n\
          fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
-         fn main() { let db: Shared[Conn] = connect()\n count(&db) }");
+         fn main() { let db = Shared(connect())\n count(&db) }");
     assert_eq!(code, "NK1102");
     assert!(message.contains("&Shared[Conn]"), "{message}");
 }

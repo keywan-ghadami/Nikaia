@@ -547,9 +547,11 @@ signature = "(Entry[$V], f: fn()) -> &$V"
 
 # `Shared[T]` is the type several parts of a program own at once (Part I 6.2).
 # It is here rather than inferred for the reason the whole of this section is
-# here: what it expands to is Rust - one reference count, atomic at both
-# settings of `user_parallelism` (ADR-037 D6), with a plain one where
-# `contracts::sharing` proves the value never crosses a thread (D7).
+# here: what it expands to is Rust - a reference count chosen per value
+# (ADR-037 D7), the atomic one where the value may reach another thread and the
+# plain one where `contracts::sharing` proves it cannot. At
+# `user_parallelism = no` every one of them is plain, because nothing can cross
+# there (ADR-061 D2).
 #
 # **There is no constructor entry, and there must not be one.** The annotation
 # *is* the constructor: `let db: Shared[Connection] = connect(…)` makes the
@@ -664,6 +666,41 @@ sync = "from(f)"
 # lambda, which is a limit of the ledger rather than of the door. What it is read
 # for here is the arity and the `sync` column.
 signature = "(&Locked[$T], f: fn($T))"
+
+# `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-039 D9): a value
+# several parts own at once and any of them may change. **It is one name here and
+# two hulls below** (ADR-064 D1) - the count and the lock - and the name is what
+# the checker, this ledger and every message carry; only the emitter expands it.
+#
+# **The four doors are the same four**, so these entries are `Locked`'s with one
+# name changed. They are here rather than reached through a `deref` because there
+# is no `&` straight through a lock (Part I 6.2): you get in by opening it, and
+# then what the lambda sees is an ordinary view.
+#
+# There is no constructor entry for the same reason there is none for `Locked` or
+# `Shared`: this ledger's type language binds `$T` from the **receiver** (ADR-031),
+# and a constructor has none - the type argument would have to come from what is
+# handed in. So `SharedMut(0)` is the compiler's to type, the way `T?`'s `Some(…)`
+# is (ADR-064 D2).
+[fn."SharedMut::get"]
+pub = true
+sync = true
+signature = "(&SharedMut[$T]) -> $T"
+
+[fn."SharedMut::set"]
+pub = true
+sync = true
+signature = "(&SharedMut[$T], value: $T)"
+
+[fn."SharedMut::access"]
+pub = true
+sync = "from(f)"
+signature = "(&SharedMut[$T], f: fn(&$T)) -> ?"
+
+[fn."SharedMut::update"]
+pub = true
+sync = "from(f)"
+signature = "(&SharedMut[$T], f: fn($T))"
 
 [fn."Vec::sort_by_key"]
 pub = true

@@ -106,6 +106,13 @@ use super::{send, ty::Ty, Ledger};
 /// The type whose count this is about.
 const SHARED: &str = "Shared";
 
+/// The shared mutable type, which is a **count around a lock**
+/// ([ADR-064](../../../../docs/specification/adr/adr-064.md) D1) - so everything
+/// this file decides about a count, it decides about one of these too. It is one
+/// name up to the emitter, which is why it is matched by name here rather than
+/// being seen as the `Shared` it expands to.
+const SHARED_MUT: &str = "SharedMut";
+
 /// The name of the slot standing for what a function hands back.
 const RESULT: &str = "<result>";
 
@@ -957,6 +964,21 @@ impl<'a> Analysis<'a> {
                     // second of the three cases `docs/rc-or-arc.md` §5 names.
                     .or_else(|| match value {
                         Expr::StructLit { name, .. } => Some(Ty::named(self.parsed.text(*name))),
+                        // **A hull written by a call**
+                        // ([ADR-064](../../../../docs/specification/adr/adr-064.md)
+                        // D2): `let counter = SharedMut(0)` makes one here and
+                        // says so without an annotation. Without this case the
+                        // slot is not watched at all, and a position nothing
+                        // watched takes the floor - so the *constructor* would
+                        // come out atomic while the parameter it is handed to came
+                        // out plain, and the two ends of one value would disagree.
+                        Expr::Call { func, .. } => match func.as_ref() {
+                            Expr::Variable(name) => {
+                                let text = self.parsed.text(*name);
+                                is_hull(text).then(|| Ty::named(text))
+                            }
+                            _ => None,
+                        },
                         _ => None,
                     });
                 if let Some(ty) = ty {
@@ -1672,13 +1694,21 @@ fn split_slot(key: &str) -> (String, String) {
 /// either - a struct is carried by whatever holds it, which is D1's own scope
 /// note.
 fn by_value_shared(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, view: false, .. } if name == SHARED)
+    matches!(ty, Ty::Named { name, view: false, .. } if name == SHARED || name == SHARED_MUT)
+}
+
+/// The three types a program makes a hull of by calling their name
+/// ([ADR-064](../../../../docs/specification/adr/adr-064.md) D2).
+fn is_hull(name: &str) -> bool {
+    matches!(name, SHARED | SHARED_MUT | "Locked")
 }
 
 /// Whether a type is, or holds, a `Shared`.
 fn holds_shared(ty: &Ty) -> bool {
     match ty {
-        Ty::Named { name, args, .. } => name == SHARED || args.iter().any(holds_shared),
+        Ty::Named { name, args, .. } => {
+            name == SHARED || name == SHARED_MUT || args.iter().any(holds_shared)
+        }
         Ty::Tuple(parts) => parts.iter().any(holds_shared),
         _ => false,
     }
