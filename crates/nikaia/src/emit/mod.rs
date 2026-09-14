@@ -686,6 +686,53 @@ fn std_ledger() -> crate::contracts::Ledger {
     crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default()
 }
 
+/// The words the **language below** reserves and this one does not.
+///
+/// Measured rather than copied out of a reference, and measured **twice**: the
+/// first sweep read `rustc`'s *"found keyword"* at a `let` and came back with
+/// twenty-four, missing `crate`, `super` and `box` because those three fail
+/// there with a different message each (`E0532`, `E0433`, *"expected pattern"*).
+/// The sweep in `tests/reserved_below.rs` compiles every word in every position
+/// instead, which is what found them.
+///
+/// `gen` and `union` are deliberately **absent**: Rust takes those as
+/// identifiers, so escaping them would be a change nothing asked for.
+///
+/// `crate`, `super`, `self` and `Self` are absent for the opposite reason —
+/// **Rust forbids a raw identifier for exactly those four**, so there is no
+/// escape to write. They are refused instead (`NK1128`, and `NK1119` for
+/// `self`), which is [ADR-076](../../../docs/specification/adr/adr-076.md) D3.
+const RESERVED_BELOW: &[&str] = &[
+    "abstract", "async", "await", "become", "box", "do", "dyn", "extern", "final", "macro", "mod",
+    "move", "override", "priv", "ref", "static", "trait", "try", "type", "typeof", "unsafe",
+    "unsized", "virtual", "where", "yield",
+];
+
+/// A source name, written so the language below can read it.
+///
+/// **This is [ADR-011](../../../docs/specification/adr/adr-011.md) D2 paying one
+/// of its bills.** The emitter writes a name for a name and resolves nothing, so
+/// a Nikaia name that Rust happens to spell as a keyword went out verbatim and
+/// `rustc` answered *"expected identifier, found keyword `type`"* about a file
+/// nobody wrote, with *"escape `type` to use it as an identifier"* as the help —
+/// advice that means nothing in this language
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **Escaped rather than reserved**, which is
+/// [ADR-076](../../../docs/specification/adr/adr-076.md) D1: reserving these
+/// twenty-four words in Nikaia would let the backend decide what this language's
+/// vocabulary is, and `type` is the field name of every tagged record anybody
+/// has ever written.
+///
+/// Borrowed where nothing changes, which is every name in every program written
+/// today.
+fn escaped(name: &str) -> std::borrow::Cow<'_, str> {
+    match RESERVED_BELOW.contains(&name) {
+        true => std::borrow::Cow::Owned(format!("r#{name}")),
+        false => std::borrow::Cow::Borrowed(name),
+    }
+}
+
 /// `<'a, T>`, or nothing at all where there is nothing to declare.
 ///
 /// One place, because three positions write one - a `fn`, a `struct` and the
@@ -1283,6 +1330,18 @@ impl<'p> Emitter<'p> {
         self.parsed.text(sym)
     }
 
+    /// The same text, written so the language below can read it (`escaped`).
+    ///
+    /// Deliberately **not** folded into `text` above, although that would be one
+    /// line instead of every position below. `text` is also what the recorded
+    /// answers from the checker are keyed by — `pausing_methods`,
+    /// `fallible_methods`, `nullable_fields` are all keyed by the name the
+    /// *source* wrote — so escaping there would make every one of those lookups
+    /// miss, silently, on exactly the programs this is for.
+    fn name(&self, sym: Symbol) -> std::borrow::Cow<'_, str> {
+        escaped(self.text(sym))
+    }
+
     /// A module's items and nothing else - no preamble, no `mod` header.
     fn items_only(&self) -> Result<Lowered> {
         let mut out = Out::default();
@@ -1502,9 +1561,9 @@ impl<'p> Emitter<'p> {
                 } else {
                     String::new()
                 };
-                out.push(&format!("{vis}enum {}{params} {{\n", self.text(*name)));
+                out.push(&format!("{vis}enum {}{params} {{\n", self.name(*name)));
                 for variant in variants {
-                    let name = self.text(variant.name);
+                    let name = self.name(variant.name);
                     match &variant.fields {
                         VariantFields::Unit => out.push(&format!("    {name},\n")),
                         VariantFields::Tuple(types) => {
@@ -1518,7 +1577,7 @@ impl<'p> Emitter<'p> {
                                 .map(|f| {
                                     format!(
                                         "{}: {}",
-                                        self.text(f.name),
+                                        self.name(f.name),
                                         self.ty(&f.ty, Lifetimes::NAMED)
                                     )
                                 })
@@ -1554,7 +1613,7 @@ impl<'p> Emitter<'p> {
                 }
                 parts.extend(generics.iter().map(|g| self.text(g.name).to_string()));
                 let params = angled(&parts);
-                out.push(&format!("{vis}struct {}{params} {{\n", self.text(*name)));
+                out.push(&format!("{vis}struct {}{params} {{\n", self.name(*name)));
                 for field in fields {
                     // Public, because the actions that build this struct are
                     // generated into the grammar's own module.
@@ -1562,7 +1621,7 @@ impl<'p> Emitter<'p> {
                     out.push(&format!(
                         "    {}{}: {},\n",
                         if field.is_public { "pub " } else { "" },
-                        self.text(field.name),
+                        self.name(field.name),
                         self.ty_counted(
                             &field.ty,
                             Lifetimes::NAMED,
@@ -1789,9 +1848,14 @@ impl<'p> Emitter<'p> {
             false => lifetimes,
         };
         params.extend(args.iter().map(|a| {
+            // The **source** name is what a `Shared` position is counted by
+            // (`count_at`), and the **escaped** one is what is written: two uses
+            // of one name that must not be collapsed, or the lookup misses on
+            // exactly the programs the escape is for (ADR-076 D2).
             let name = self.text(a.name);
             format!(
-                "{name}: {}",
+                "{}: {}",
+                escaped(name),
                 self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name))
             )
         }));
@@ -1803,7 +1867,8 @@ impl<'p> Emitter<'p> {
         params.extend(config.iter().map(|c| {
             let name = self.text(c.name);
             format!(
-                "{name}: {}",
+                "{}: {}",
+                escaped(name),
                 self.ty_counted(&c.ty, how(c.name), self.count_at(&key, name))
             )
         }));
@@ -1889,7 +1954,7 @@ impl<'p> Emitter<'p> {
         let emitted = if depth == 0 && name == MAIN && self.user_main().is_some() {
             PROGRAM_MAIN.to_string()
         } else {
-            name.clone()
+            escaped(&name).into_owned()
         };
 
         // ADR-055 D1: a function that can pause is an `async fn`, and one the
@@ -2814,7 +2879,7 @@ impl<'p> Emitter<'p> {
                 // stays the compiler's, because it is one a program cannot observe
                 // - the same value, possibly absent (ADR-064 D2's own line).
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
-                out.push(&format!("let {mutable}{bound}{annotation} = "));
+                out.push(&format!("let {mutable}{}{annotation} = ", escaped(bound)));
                 out.push(before);
                 self.expr(out, value, depth, flow)?;
                 out.push(after);
@@ -2868,7 +2933,7 @@ impl<'p> Emitter<'p> {
             } => {
                 let names = bindings
                     .iter()
-                    .map(|b| self.text(*b))
+                    .map(|b| self.name(*b))
                     .collect::<Vec<_>>()
                     .join(", ");
                 if bindings.len() > 1 {
@@ -3025,7 +3090,7 @@ impl<'p> Emitter<'p> {
             // program `rustc` asks an annotation for, which is the honest
             // answer rather than one this compiler invented.
             Expr::LitNull => out.push("None"),
-            Expr::Variable(name) => out.push(self.text(*name)),
+            Expr::Variable(name) => out.push(&self.name(*name)),
             // ADR-017: the template is compiled where it is written. What comes
             // out is the string building a hand-written renderer would do, with
             // `html::Render` at every hole - which is what makes the escaping a
@@ -3144,7 +3209,7 @@ impl<'p> Emitter<'p> {
             }
             Expr::Field { base, name } => {
                 self.postfix_base(out, base, depth, flow)?;
-                out.push(&format!(".{}", self.text(*name)));
+                out.push(&format!(".{}", self.name(*name)));
             }
             // Part I 3.5: `x?.name` reaches the field only where there is
             // something to reach it on.
@@ -3241,7 +3306,7 @@ impl<'p> Emitter<'p> {
                     if i > 0 {
                         out.push(", ");
                     }
-                    out.push(self.text(field.name));
+                    out.push(&self.name(field.name));
                     // Part I 2.3: a plain value in a field the struct
                     // declares nullable. Keyed by the field's own name, because
                     // a struct literal has one of these per field and the
@@ -3260,7 +3325,7 @@ impl<'p> Emitter<'p> {
                         // `Counter { db }` is the shorthand for `db: db`
                         // (Part I 4.1), and a wrapper has to be written around
                         // the name - which means writing the pair out.
-                        let name = self.text(field.name);
+                        let name = self.name(field.name);
                         out.push(&format!(": Some({name})"));
                     }
                 }
@@ -3270,7 +3335,7 @@ impl<'p> Emitter<'p> {
             // read off the body, so `fn { … }` is `||`.
             Expr::Closure { params, body } => {
                 let params: Vec<String> =
-                    params.iter().map(|p| self.text(*p).to_string()).collect();
+                    params.iter().map(|p| self.name(*p).into_owned()).collect();
                 out.push(&format!("|{}| ", params.join(", ")));
                 // A lambda's `return` leaves the lambda, not the function
                 // around it, so it never carries the enclosing `Ok`. The

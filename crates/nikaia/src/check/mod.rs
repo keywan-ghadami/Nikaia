@@ -625,7 +625,7 @@ impl<'a> Checker<'a> {
                     let parameters: BTreeSet<String> = order.iter().cloned().collect();
                     for f in fields {
                         let name = self.parsed.text(f.name).to_string();
-                        self.not_self(&name, &f.span, "a field");
+                        self.nameable(&name, &f.span, "a field");
                     }
                     let fields: Vec<FieldContract> = fields
                         .iter()
@@ -636,12 +636,25 @@ impl<'a> Checker<'a> {
                         })
                         .collect();
                     let own = self.parsed.text(*name).to_string();
+                    // **An item's own name was never asked**, which `not_self`
+                    // did not have to be: `struct self` cannot parse, because
+                    // the receiver takes the word. `struct crate` parses fine
+                    // and went to the language below (ADR-076 D3).
+                    self.nameable(&own, &item.span, "a struct");
                     if !order.is_empty() {
                         self.struct_parameters.insert(own.clone(), order);
                     }
                     self.structs.insert(own, fields);
                 }
                 Item::Enum { name, variants, .. } => {
+                    self.nameable(&self.parsed.text(*name).to_string(), &item.span, "an enum");
+                    for v in variants {
+                        self.nameable(
+                            &self.parsed.text(v.name).to_string(),
+                            &item.span,
+                            "a variant",
+                        );
+                    }
                     let variants = variants
                         .iter()
                         .map(|v| self.parsed.text(v.name).to_string())
@@ -772,6 +785,13 @@ impl<'a> Checker<'a> {
             Some(name) => self.parsed.text(*name).to_string(),
             None => "new".to_string(),
         };
+        // A function's own name, for the reason the struct's is asked: `fn self`
+        // cannot parse and `fn crate` can (ADR-076 D3). The span is the body's
+        // first statement where there is one, which is the nearest this walk has
+        // - a declaration with a span of its own is `FnArg`'s and not the item's.
+        if let Some(span) = body.stmts.first().map(|s| s.span.clone()) {
+            self.nameable(&own_name.clone(), &span, "a function");
+        }
         let key = match target {
             Some(target) => format!("{target}::{own_name}"),
             None => own_name,
@@ -808,7 +828,7 @@ impl<'a> Checker<'a> {
         }
         for arg in args {
             let name = self.parsed.text(arg.name).to_string();
-            self.not_self(&name, &arg.span, "a parameter");
+            self.nameable(&name, &arg.span, "a parameter");
             frame.push((
                 name,
                 self.declared(&arg.ty, &arg.span).erase(&parameters),
@@ -1431,6 +1451,76 @@ impl<'a> Checker<'a> {
     /// **`NK1119`**, and it is the same C.1 case as the rest of the list: `let
     /// self = 3` lowered to `let self = 3;` and `rustc` refused the generated
     /// file with *"expected identifier, found keyword `self`"*.
+    /// The four words the **language below** reserves and cannot escape.
+    ///
+    /// [ADR-076](../../docs/specification/adr/adr-076.md) D1 escapes every other
+    /// one — `type` becomes `r#type` and the Nikaia name stays legal. These four
+    /// have no escape at all: *"`crate` cannot be a raw identifier"* is Rust's
+    /// own answer to `r#crate`, and the same for `super`, `self` and `Self`. So
+    /// the one rule has one forced exception, and it is the target's rather than
+    /// this language's.
+    ///
+    /// `self` is not here because it is already refused by `NK1119`, which says
+    /// more: it is a reserved word of *this* language, with a reason of its own.
+    const UNESCAPABLE_BELOW: &'static [&'static str] = &["crate", "super", "Self"];
+
+    /// Every question about whether a name may be one, in one place.
+    ///
+    /// Two rules with the same six call sites, kept together so that adding a
+    /// position adds it to both: `self` is this language's own reserved word
+    /// (`NK1119`) and `crate`, `super` and `Self` are the language below's
+    /// (`NK1128`).
+    fn nameable(&mut self, name: &str, span: &Span, what: &str) {
+        self.not_self(name, span, what);
+        self.not_unescapable(name, span, what);
+    }
+
+    /// **`NK1128`: a name the language below reserves and cannot escape.**
+    ///
+    /// `let crate = 3` used to lower to `let crate = 3;` and `rustc` answered
+    /// `E0532` about a module — about a file nobody wrote, which is
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s class.
+    /// Every other such word is escaped where it is written
+    /// ([ADR-076](../../docs/specification/adr/adr-076.md) D1); these three have
+    /// no escape, so a refusal here is the only thing left that is not a message
+    /// in the backend's words.
+    ///
+    /// Three words rather than twenty-seven, and that is the whole point of D1:
+    /// `type` is the field name of every tagged record anybody has written and
+    /// it stays available. `crate` and `super` name a module tree this language
+    /// does not have, and `Self` is already how it writes the type an `impl` is
+    /// on — so the vocabulary this costs is one nobody reaches for.
+    fn not_unescapable(&mut self, name: &str, span: &Span, what: &str) {
+        if !Self::UNESCAPABLE_BELOW.contains(&name) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1128",
+            message: format!(
+                "`{name}` is a name the language below reserves and cannot escape, \
+                 so {what} may not be called that"
+            ),
+            notes: vec![
+                "every other such name is written escaped and stays a name here - \
+                 a field called `type` is fine. `crate`, `super` and `Self` are the \
+                 three the language below refuses even escaped, which is why they are \
+                 the three refused here (ADR-076 D3)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "pick another name - `{}` is free, and so is anything else that is not \
+                 one of those three",
+                match name {
+                    "crate" => "package",
+                    "super" => "parent",
+                    _ => "own",
+                }
+            )),
+        });
+    }
+
     fn not_self(&mut self, name: &str, span: &Span, what: &str) {
         if name != "self" {
             return;
@@ -1524,7 +1614,7 @@ impl<'a> Checker<'a> {
             } => {
                 let found = self.expr(value, span);
                 let name = self.parsed.text(*name).to_string();
-                self.not_self(&name, span, "a `let`");
+                self.nameable(&name, span, "a `let`");
                 let bound = match ty {
                     Some(ty) => {
                         let want = self.declared(ty, span);
@@ -1575,7 +1665,7 @@ impl<'a> Checker<'a> {
             Stmt::Const { name, ty, value } => {
                 let found = self.expr(value, span);
                 let bound = self.parsed.text(*name).to_string();
-                self.not_self(&bound, span, "a `const`");
+                self.nameable(&bound, span, "a `const`");
                 let want = ty.as_ref().map(|ty| self.declared(ty, span));
                 if let Some(want) = &want {
                     self.constant_fits(value, Some(want), span);
@@ -1689,7 +1779,7 @@ impl<'a> Checker<'a> {
                     .map(|b| (self.parsed.text(*b).to_string(), element.clone(), None))
                     .collect();
                 for (name, _, _) in &frame {
-                    self.not_self(&name.clone(), span, "a `for` binding");
+                    self.nameable(&name.clone(), span, "a `for` binding");
                 }
                 self.scope.push(frame);
                 self.block(body);
@@ -2108,7 +2198,7 @@ impl<'a> Checker<'a> {
                     .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown, None))
                     .collect();
                 for (name, _, _) in &frame {
-                    self.not_self(&name.clone(), span, "a lambda's argument");
+                    self.nameable(&name.clone(), span, "a lambda's argument");
                 }
                 self.scope.push(frame);
                 self.block(body);
