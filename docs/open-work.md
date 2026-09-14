@@ -101,44 +101,106 @@ to describe I/O.
 reproduced: the emitter's own comment said so while `NK1129` was still in the
 plan.
 
-### 1.2. `&str + String` is accepted here and refused below
+### 1.2. Three of the four string concatenations are accepted here and refused below
 
-*Reproduced:*
+*Measured, all four shapes, with `s` and `s2` being `String`:*
+
+| written | what the language below says |
+|---|---|
+| `"a" + "b"` | `error[E0369]: cannot add &str to &str` |
+| `"a" + s` | `error[E0369]: cannot add String to &str` |
+| `s + "b"` | compiles |
+| `s + s2` | `error[E0308]: mismatched types` |
+
+So Rust's own rule — `String + &str` and nothing else — reaches the user
+unchanged, about a file nobody wrote, which is
+[Part III C.1](specification/30-nikaia-tooling.md)'s class. This language's `+`
+says nothing about which side is owned, and it should not have to.
+
+*And the checker gets it wrong first, which is the half worth noticing:*
+`"User: " + self.username` is typed as a `&str`, so a function declaring
+`-> String` is refused as `NK1104` — a **false** refusal, since that
+concatenation is a `String` in any reading a user would give it. That is the
+rarer and worse direction: [Part III C.4](specification/30-nikaia-tooling.md)
+says this compiler never refuses a correct program.
+
+*Where it was reaching the page:* Part I 4.7's `impl Summarize for User` wrote
+exactly `return "User: " + self.username`, and Part I 6's `spawn` example wrote
+`println(prefix + "System started")`. Both are interpolated now, and
+`crates/nikaia/tests/specification.rs` is what keeps them that way.
+
+*What it needs, and it is a decision rather than a repair:* either the emitter
+writes the conversion where the types say one is needed — which it can, since
+[ADR-028](specification/adr/adr-028.md) has the checker hand answers over by
+statement — or `+` on strings lowers to a `format!` and the asymmetry stops
+existing. The second is one rule rather than a table of four cases, and it fixes
+the checker's side too, because the result is then a `String` in every shape.
+
+### 1.3. Part I 4.5's map example does not compile, and the message names three spellings the program never wrote
+
+*Reproduced* — the page's own three lines:
 
 ```nika
-let s = "Ada".to_string()
-let out = "User: " + s
-```
+use std::collections::HashMap
 
-lowers to `let out = "User: " + s;` and `rustc` answers
+fn main() {
+    let mut scores = HashMap::new()
+    scores["Player1"] = 100
+}
+```
 
 ```text
-error[E0369]: cannot add `String` to `&str`
+error[E0282]: type annotations needed for
+              `HashMap<_, i32, BuildHasherDefault<FxHasher>>`
+   |         let mut scores = TrustedMap::default();
+help: consider giving `scores` an explicit type, where the type for type
+      parameter `K` is specified
 ```
 
-*Why it matters more than it looks:* **Part I 4.7 writes this line.** Its
-`impl Summarize for User` is `return "User: " + self.username`, so the page's own
-example does not compile even now that the trait around it does — the trait test
-fixture had to interpolate instead, which is the wrong way round for a
-specification.
+`TrustedMap`, `BuildHasherDefault<FxHasher>` and a type parameter `K`: three
+names this language does not have, in a message about a file nobody wrote. It is
+[Part III C.1](specification/30-nikaia-tooling.md) at its worst — not merely the
+backend's words, but the backend's words about this compiler's own internal
+spelling for a map ([ADR-034](specification/adr/adr-034.md)).
 
-*What it needs, and it is a decision rather than a repair:* Rust's `+` on strings
-takes `String + &str` and nothing else, so one side of every concatenation has to
-be owned and the other borrowed. This language's `+` says neither. Either the
-emitter writes the conversion where the types say it is needed — which it can,
-since [ADR-028](specification/adr/adr-028.md) has the checker hand answers over
-by statement — or `+` on strings lowers to a `format!` and the asymmetry stops
-existing. The second is one rule rather than a table of four cases.
+*Why the key type stays unknown:* the index goes through
+`nikaia_std::index::at("Player1")`, which is generic so that an integer index and
+a map key can share one spelling
+([ADR-048](specification/adr/adr-048.md) D1) — and a generic index fixes nothing
+about the map. So `HashMap::new()` binds no key type, which
+[ADR-031](specification/adr/adr-031.md) already names in its own words: *a map
+built by `HashMap::new()` says nothing about what it holds.*
 
-*Found by* the same fixture, which is the fourth time this session that running
-one of the specification's own programs turned something up.
+*What it needs:* the checker knows the key's type at the assignment — it typed
+`"Player1"` — and has a channel for handing an answer to the emitter by
+statement ([ADR-028](specification/adr/adr-028.md)). So the smallest fix is the
+one the architecture already has a shape for: record the key and value type at
+the `let` that builds the map, and write the annotation. Making `index::at`
+non-generic for a map is the alternative and it undoes what ADR-048 D1 bought.
 
-**Two entries, both found by writing the specification's own programs**, which
-is now the fourth and fifth thing that method has turned up in this session: a
-trait whose method pauses (§1.1) and Part I 4.7's own `"User: " + self.username`
-(§1.2). Neither is a repair — each names a real choice, and each says what the
-two options cost. The entry that left just before them is worth a sentence for
-what its fix cost to get right. It was filed as *escape it, one rule at one place*, and
+*Found by* the specification sweep's second half, which hands every block that
+lowers to `rustc` — the only half that finds this class, because the front end is
+perfectly happy with it.
+
+**Three entries, and all three were found the same way**: by running the
+programs the specification prints. That is a test now rather than a habit —
+`crates/nikaia/tests/specification.rs` takes every `nika` block in the three
+pages as far as it goes and hands the ones that lower to `rustc`, against two
+recorded baselines. Of **122 blocks, 52 are programs this compiler takes and 28
+of those compile below**; most of the rest name a `User` or a `postgres` the
+chapter around them declares, which is a fragment and not a defect — and the
+baselines are what tell the two apart without anybody re-deciding each time.
+
+The sweep also turned up two things that were on the **page** rather than in the
+compiler, both fixed: Part I 4.7's body was refused twice over, and three plain
+strings in Part I 7 held holes that
+[ADR-035](specification/adr/adr-035.md) D5 made into text. A page can be wrong in
+a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
+note turns out to apply to the code beside it just as much.
+
+None of the three below is a repair — each names a real choice and says what the
+options cost. The entry that left just before them is worth a sentence for what
+its fix cost to get right. It was filed as *escape it, one rule at one place*, and
 the measurement behind that was wrong by three words: `crate`, `super` and `box`
 fail in the language below with a different message each, so a sweep keyed on one
 message missed them. The sweep that replaced it **compiles** every candidate in
@@ -547,7 +609,7 @@ name that happens to be true.
 
 ## 3. Upkeep
 
-### 3.1. A whole-workspace test run once failed the project tests, and does not any more — **a suspicion, not a fact**
+### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect
 
 ```text
 error: failed to run `rustc` to learn about target-specific information
@@ -561,9 +623,9 @@ wrapper** (`project::wrapper_main`, where the invocation names no `.nika` source
 and is passed straight through). The stdout that reaches the error is the probe's
 own output cut off partway down the `--print` list.
 
-**It does not reproduce, and this entry is marked as a suspicion for that
-reason** — the head of this file makes the difference load-bearing, and an entry
-that carried a reproduction yesterday and none today is a suspicion today. What
+**It still does not reproduce on demand, so this stays a suspicion** — the head
+of this file makes the difference load-bearing. What it now has is a mechanism
+worth testing, which it did not before. What
 it looked like at the time: `cargo test --workspace --release` failing 16 of 22
 on `origin/main` with nothing applied, three runs out of three, while `cargo test
 -p nikaia --test project` on the same commit passed 22 of 22 four times out of
@@ -571,16 +633,34 @@ four. Under the same command since: **seven consecutive clean whole-workspace
 runs**, two of them with a full rebuild immediately before in the same
 invocation, which was the best hypothesis and is now ruled out.
 
-**Seen once more since, and it brought one new datum.** Two runs failed and two
-runs of the same command minutes later did not, on both the branch and a clean
-`origin/main`. What is new is *where* the probe's output stops: the first time
-after `off`, the second after `unpacked` — a **varying** offset, part-way down a
-list the wrapper only passes through. That points at output being cut off rather
-than at anything the wrapper decides, which is one more thing ruled out.
+**Seen twice more since, and the second time named a mechanism.** The failing
+runs are still not reproducible — the same command minutes later passes, on this
+branch and on a clean `origin/main` alike, three runs out of three each. What
+changed is what the failure *says*. The first two truncated the probe's output at
+a varying offset. The third showed `rustc` being handed, as **source**, text that
+is not source:
 
-*What is left, and it is a guess rather than a finding:* every failing run
-happened while this container was doing a great deal else, and every clean run
-since has not. Nothing measures that, so nothing here claims it.
+```text
+error: unknown start of token: `
+ --> <anon>:7:55
+  |
+7 |   = help: only literals are allowed as values for the `message`, `note`
+    |         and `label` options…
+```
+
+`<anon>` is **standard input**, which is where cargo puts the probe's source
+(`rustc - --print=…`), and that line is a `rustc` *diagnostic* rather than a
+program. So something other than the probe's own source was on the wrapper's
+stdin.
+
+*What that points at, and it is a hypothesis with evidence rather than a guess:*
+the wrapper passes an invocation it does not lower straight through
+(`project::wrapper_main`, the `source_path()` early return), so the child
+**inherits** stdin. Under `cargo test --workspace` many cargo instances probe at
+once and share one stdin; two readers on one pipe would take each other's bytes,
+which is exactly the shape of both symptoms — a truncated read and a read of
+somebody else's output. Nothing here has measured that, and the next step is to
+measure it rather than to change the wrapper on a story.
 
 *Why it is kept at all:* if it comes back, this says what was already ruled out —
 it is not the tests, not the wrapper's own code path, and not a stale binary. It

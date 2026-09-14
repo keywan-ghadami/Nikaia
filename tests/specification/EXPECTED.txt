@@ -1,0 +1,122 @@
+10-nikaia-light.md:101 lowered (a body)
+10-nikaia-light.md:109 lowered (a body)
+10-nikaia-light.md:241 refused (a body) [NK1117]
+10-nikaia-light.md:255 refused (a body) [NK1117]
+10-nikaia-light.md:268 refused (a body) [NK1117]
+10-nikaia-light.md:355 lowered (a body) [about-a-refusal]
+10-nikaia-light.md:401 lowered (a body)
+10-nikaia-light.md:410 lowered (a body)
+10-nikaia-light.md:426 lowered (a body)
+10-nikaia-light.md:434 refused (a body) [about-a-refusal NK1116]
+10-nikaia-light.md:467 lowered (a body) [sketch NK1111]
+10-nikaia-light.md:477 lowered (a body)
+10-nikaia-light.md:518 lowered (a body)
+10-nikaia-light.md:535 lowered (a body)
+10-nikaia-light.md:551 lowered (a body)
+10-nikaia-light.md:562 lowered (a body)
+10-nikaia-light.md:581 lowered (as written)
+10-nikaia-light.md:613 lowered (a body)
+10-nikaia-light.md:641 refused (a body) [NK1117]
+10-nikaia-light.md:654 refused (a body) [NK1117]
+10-nikaia-light.md:724 lowered (as written)
+10-nikaia-light.md:744 lowered (as written)
+10-nikaia-light.md:763 lowered (as written) [about-a-refusal]
+10-nikaia-light.md:784 lowered (as written)
+10-nikaia-light.md:796 lowered (as written)
+10-nikaia-light.md:814 fragment (as written)
+10-nikaia-light.md:822 refused (a body) [NK1117]
+10-nikaia-light.md:830 lowered (a body)
+10-nikaia-light.md:841 lowered (items, then a body)
+10-nikaia-light.md:855 lowered (as written)
+10-nikaia-light.md:880 refused (as written) [about-a-refusal NK1126]
+10-nikaia-light.md:897 lowered (as written)
+10-nikaia-light.md:915 lowered (as written)
+10-nikaia-light.md:954 fragment (as written) [about-a-refusal sketch]
+10-nikaia-light.md:987 fragment (as written)
+10-nikaia-light.md:1022 refused (a body) [NK1117]
+10-nikaia-light.md:1047 refused (a body) [NK1117]
+10-nikaia-light.md:1054 refused (a body) [NK1117]
+10-nikaia-light.md:1060 refused (a body) [NK1117]
+10-nikaia-light.md:1090 fragment (as written)
+10-nikaia-light.md:1109 lowered (a body) [about-a-refusal]
+10-nikaia-light.md:1183 fragment (as written) [sketch]
+10-nikaia-light.md:1202 lowered (a body) [sketch]
+10-nikaia-light.md:1211 lowered (a body) [sketch]
+10-nikaia-light.md:1229 fragment (as written)
+10-nikaia-light.md:1297 fragment (as written) [sketch]
+10-nikaia-light.md:1338 lowered (as written) [sketch]
+10-nikaia-light.md:1354 lowered (as written)
+10-nikaia-light.md:1416 refused (as written) [sketch NK2605]
+10-nikaia-light.md:1451 fragment (as written) [sketch]
+10-nikaia-light.md:1468 lowered (as written)
+10-nikaia-light.md:1479 fragment (as written) [sketch]
+10-nikaia-light.md:1511 lowered (a body)
+10-nikaia-light.md:1546 lowered (as written)
+10-nikaia-light.md:1560 lowered (as written)
+10-nikaia-light.md:1585 refused (a body) [NK1117]
+10-nikaia-light.md:1594 lowered (as written)
+10-nikaia-light.md:1636 lowered (a body)
+10-nikaia-light.md:1652 fragment (as written)
+10-nikaia-light.md:1690 refused (a body) [NK1117]
+10-nikaia-light.md:1724 fragment (as written)
+10-nikaia-light.md:1814 fragment (as written)
+10-nikaia-light.md:1872 lowered (a body)
+10-nikaia-light.md:1879 lowered (a body) [about-a-refusal]
+10-nikaia-light.md:1902 lowered (a body)
+10-nikaia-light.md:2002 lowered (as written)
+10-nikaia-light.md:2009 lowered (as written)
+10-nikaia-light.md:2025 lowered (as written)
+10-nikaia-light.md:2132 lowered (as written)
+20-nikaia-advance.md:23 lowered (as written)
+20-nikaia-advance.md:53 refused (a body) [NK1127]
+20-nikaia-advance.md:62 refused (as written)
+20-nikaia-advance.md:108 fragment (as written)
+20-nikaia-advance.md:155 fragment (as written)
+20-nikaia-advance.md:201 fragment (as written)
+20-nikaia-advance.md:224 lowered (as written) [sketch]
+20-nikaia-advance.md:297 fragment (as written)
+20-nikaia-advance.md:315 fragment (as written)
+20-nikaia-advance.md:330 fragment (as written)
+20-nikaia-advance.md:354 fragment (as written)
+20-nikaia-advance.md:361 refused (a body) [NK1117,NK2605]
+20-nikaia-advance.md:456 fragment (as written) [about-a-refusal sketch]
+20-nikaia-advance.md:514 refused (items, then a body) [about-a-refusal NK1117]
+20-nikaia-advance.md:533 lowered (as written)
+20-nikaia-advance.md:555 refused (a body) [NK1117]
+20-nikaia-advance.md:561 refused (a body) [NK1117,NK2605]
+20-nikaia-advance.md:646 lowered (a body) [about-a-refusal]
+20-nikaia-advance.md:704 fragment (as written) [about-a-refusal sketch]
+20-nikaia-advance.md:771 fragment (as written)
+20-nikaia-advance.md:791 fragment (as written)
+20-nikaia-advance.md:806 fragment (as written)
+20-nikaia-advance.md:825 fragment (as written)
+20-nikaia-advance.md:891 refused (a body) [NK1117]
+30-nikaia-tooling.md:299 lowered (as written)
+30-nikaia-tooling.md:455 refused (a body) [NK1117]
+30-nikaia-tooling.md:468 fragment (as written)
+30-nikaia-tooling.md:486 fragment (as written)
+30-nikaia-tooling.md:498 fragment (as written)
+30-nikaia-tooling.md:538 fragment (as written)
+30-nikaia-tooling.md:557 fragment (as written)
+30-nikaia-tooling.md:638 fragment (as written)
+30-nikaia-tooling.md:677 lowered (as written)
+30-nikaia-tooling.md:722 refused (as written)
+30-nikaia-tooling.md:780 fragment (as written)
+30-nikaia-tooling.md:789 lowered (as written) [about-a-refusal]
+30-nikaia-tooling.md:844 refused (a body) [NK1117]
+30-nikaia-tooling.md:866 lowered (as written)
+30-nikaia-tooling.md:883 fragment (as written)
+30-nikaia-tooling.md:910 lowered (as written)
+30-nikaia-tooling.md:935 refused (a body) [NK1117,NK2605]
+30-nikaia-tooling.md:975 fragment (as written)
+30-nikaia-tooling.md:998 lowered (as written)
+30-nikaia-tooling.md:1021 fragment (as written)
+30-nikaia-tooling.md:1040 fragment (as written)
+30-nikaia-tooling.md:1084 fragment (as written) [sketch]
+30-nikaia-tooling.md:1095 fragment (as written)
+30-nikaia-tooling.md:1102 fragment (as written)
+30-nikaia-tooling.md:1115 fragment (as written)
+30-nikaia-tooling.md:1129 fragment (as written)
+30-nikaia-tooling.md:1167 refused (a body) [NK1109,NK1117,NK2605]
+30-nikaia-tooling.md:1235 fragment (as written)
+30-nikaia-tooling.md:1320 fragment (as written)

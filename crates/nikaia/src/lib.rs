@@ -15,5 +15,6 @@ pub mod manifest;
 pub mod modules;
 pub mod parser;
 pub mod project;
+pub mod specbook;
 pub mod sysroot;
 pub mod views;

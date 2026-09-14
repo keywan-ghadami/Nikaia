@@ -900,7 +900,7 @@ trait Summarize {
 
 impl Summarize for User {
     fn summary(&self) -> String {
-        return "User: " + self.username
+        return f"User: {self.username}"
     }
 }
 ```
@@ -912,6 +912,10 @@ Once a trait is declared, a type parameter can be **bound** by it — and that i
 what gives a generic body something it may do (4.6):
 
 ```nika
+trait Summarize {
+    fn summary(&self) -> String
+}
+
 fn shout[T: Summarize](x: T) -> String {
     return x.summary()     // `Summarize` says there is one
 }
@@ -1562,9 +1566,9 @@ enum ConfigError {
 impl Error for ConfigError {
     fn message(&self) -> String {
         match self {
-            ConfigError::NotFound(p)   => "no config at {p}"
-            ConfigError::Unreadable(p) => "cannot read {p}"
-            ConfigError::BadSyntax { line, expected } => "line {line}: expected {expected}"
+            ConfigError::NotFound(p)   => f"no config at {p}"
+            ConfigError::Unreadable(p) => f"cannot read {p}"
+            ConfigError::BadSyntax { line, expected } => f"line {line}: expected {expected}"
         }
     }
 }
