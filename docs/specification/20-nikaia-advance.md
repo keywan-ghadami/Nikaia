@@ -65,11 +65,20 @@ fn parse_input(input: String) throws {
 }
 ```
 
-> **Status:** **B is built and A is not.** There is no `const` in the parser at
-> all — at item level it is a parse error, and inside a function body `const X =
-> 1` parses as two statements and is then refused by `NK1117`, *"nothing declares
-> `const`"*. So the compile-time half of dual-mode parsing has no syntax to be
-> written in, and a `dsl … from …` runs at runtime wherever it stands.
+> **Status:** **B is built and A is not.** `const` is a reserved word since
+> [ADR-073](adr/adr-073.md) D1 and is not yet a declaration: at item level it is a
+> parse error, and inside a function body `const X = 1` parses as two statements
+> and is then refused by `NK1117`, *"nothing declares `const`"*. So the
+> compile-time half of dual-mode parsing has no syntax to be written in, and a
+> `dsl … from …` runs at runtime wherever it stands.
+>
+> **What the declaration will mean is decided** ([ADR-073](adr/adr-073.md)): it
+> stands where an item stands and inside a body, its type may be written and does
+> not have to be, and — the part the keyword exists for — **a `let` may fold and a
+> `const` must**, saying so where it cannot, rather than quietly running at
+> program time instead. What may stand in the initialiser is staged: literals and
+> arithmetic over them first, a call and therefore the `from` above only once
+> [ADR-026](adr/adr-026.md) Q4 says what a build-time body may do.
 >
 > **And when it does have one, the file will have to be named three times**
 > ([ADR-072](adr/adr-072.md) D3): in the code, as the literal above; in an

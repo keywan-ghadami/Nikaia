@@ -133,10 +133,11 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 32] = [
-    "as", "break", "catch", "continue", "dsl", "else", "enum", "false", "fn", "for", "from",
-    "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap", "pub",
-    "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use", "while",
+pub const RESERVED_WORDS: [&str; 33] = [
+    "as", "break", "catch", "const", "continue", "dsl", "else", "enum", "false", "fn", "for",
+    "from", "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap",
+    "pub", "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use",
+    "while",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -1642,6 +1643,7 @@ grammar! {
         rule KW_BOUNDARY = "boundary" not(ident)
         rule KW_BREAK = "break" not(ident)
         rule KW_CATCH = "catch" not(ident)
+        rule KW_CONST = "const" not(ident)
         rule KW_CONTINUE = "continue" not(ident)
         rule KW_DSL = "dsl" not(ident)
         rule KW_ELSE = "else" not(ident)
@@ -1744,8 +1746,12 @@ grammar! {
           | KW_USE -> { 0 }
           | KW_WHILE -> { 0 }
 
-        // **The three control-flow words nothing in the grammar uses**
-        // ([ADR-071](../../../../docs/specification/adr/adr-071.md)). They are
+        // **The words nothing in the grammar uses yet**
+        // ([ADR-071](../../../../docs/specification/adr/adr-071.md) for the
+        // three control-flow ones,
+        // [ADR-073](../../../../docs/specification/adr/adr-073.md) D1 for
+        // `const`, which differs from them in being reserved *for* a construct
+        // rather than against the possibility of one). They are
         // here for the reason `overlap` was here before its construct existed:
         // a word is free to reserve while no program uses it and breaks
         // programs afterwards. A half of their own rather than two more arms on
@@ -1753,6 +1759,7 @@ grammar! {
         // split in the first place and three is not worth testing the edge of.
         rule RESERVED_C -> u8 =
             KW_BREAK -> { 0 }
+          | KW_CONST -> { 0 }
           | KW_CONTINUE -> { 0 }
           | KW_LOOP -> { 0 }
 

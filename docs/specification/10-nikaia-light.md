@@ -116,11 +116,16 @@ These words mean one thing wherever they appear, so a name may not be one of the
 ([ADR-051](adr/adr-051.md) D1):
 
 ```text
-as      break   catch   continue  dsl     else    enum    false
-fn      for     from    grammar   if      impl    in      let
-loop    match   mut     null      overlap pub     return  self
-spawn   struct  sync    throw     throws  true    use     while
+as      break   catch   const     continue dsl     else    enum
+false   fn      for     from      grammar  if      impl    in
+let     loop    match   mut       null     overlap pub     return
+self    spawn   struct  sync      throw    throws  true    use
+while
 ```
+
+**`const` is on the list for the opposite reason to the next three**: it is
+reserved *for* a construct that Part II 10.2 specifies and the parser does not yet
+have ([ADR-073](adr/adr-073.md) D1), rather than against the possibility of one.
 
 **`break`, `continue` and `loop` are on the list and are not constructs**
 ([ADR-071](adr/adr-071.md) D2). Reserving a word is not adding one: `break` and
@@ -2016,8 +2021,9 @@ Nikaia enforces strict encapsulation to prevent tight coupling between parts of 
 
 1.  **Private to its package, by default:**
     * Functions, Structs, Enums and Constants are visible inside the **package**
-      that declares them — every file of that directory — and nowhere else. (A
-      `const` declaration has no syntax yet — Part II, 10.2.)
+      that declares them — every file of that directory — and nowhere else. (The
+      `const` declaration is decided and unbuilt: the word is reserved, what may
+      stand in its initialiser is staged — [ADR-073](adr/adr-073.md) D5.)
     * Struct fields are the same: visible throughout the package that declares
       the struct.
 
