@@ -289,3 +289,44 @@ fn nothing_an_overlap_needs_is_written_in_nikaia() {
         assert!(!THREE_READS.contains(word), "`{word}` in a Nikaia program");
     }
 }
+
+/// **The report answers the question it is asked**, which it did not.
+///
+/// `--overlaps` exists because "the refusals are the compiler's own … that is
+/// only fair if the refusals can be asked about". It used to print *"which meet
+/// on nothing"* as a fixed header over every block, so a block the checker
+/// refuses on the next line was described as meeting on nothing - the one answer
+/// the tool must never give, because a reader consults it precisely when the
+/// checker has said no.
+///
+/// Two blocks, one of each kind, so a fix that hard-codes the other verdict
+/// fails here too.
+#[test]
+fn the_overlap_report_reads_the_verdicts_rather_than_asserting_them() {
+    use nikaia::contracts::order::overlap_report;
+
+    let report = |source: &str| {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        let own = Ledger::infer(&parsed);
+        let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+        let starts = emit::branch_starts_first(&parsed, Default::default(), &own);
+        overlap_report(&parsed, &own, &library, &starts)
+    };
+
+    let meets =
+        report("fn main() { let r = overlap {\n    println(\"a\")\n    println(\"b\")\n} }");
+    assert!(
+        meets.contains("may not run together") && meets.contains("both reach stdout"),
+        "a block the checker refuses is described as refused:\n{meets}"
+    );
+    assert!(
+        !meets.contains("which meet on nothing"),
+        "and not also as meeting on nothing:\n{meets}"
+    );
+
+    let free = report("fn main() { let r = overlap {\n    1\n    2\n} }");
+    assert!(
+        free.contains("which meet on nothing"),
+        "a block that does meet on nothing still says so:\n{free}"
+    );
+}

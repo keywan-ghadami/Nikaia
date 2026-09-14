@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed (the overlap report answered the question wrongly)
+
+- **`--overlaps` printed *"which meet on nothing"* as a fixed header over every block**, without consulting a single verdict — so a block the checker refuses on the very next line was described as meeting on nothing. That is the one answer this tool must never give: it exists because *"the refusals are the compiler's own … that is only fair if the refusals can be asked about"*, and a reader consults it precisely when the checker has said no. It now runs the same pairwise verdicts `check` runs and names the first refused pair and why — `branches 1 and 2 may not run together - both reach stdout, and one writes it`. The test covers both directions, so a fix that hard-codes the other verdict fails it too.
+
+### Added (the shipped ledger answers what it touches)
+
+- **Twenty-four `sync` entries in `std.contracts` had no touch answer** ([ADR-074](docs/specification/adr/adr-074.md) D2 needs one, `open-work.md` §2.13 listed them), and fail-closed that reads *"touches everything"* — `HashMap::new`, `HashMap::get`, `f64::sqrt`, `Vec::push`, `str::trim` among them. Twenty-three are `touches = []`: they compute over values the caller already holds and reach no resource in the vocabulary, which is what the file's own note beside the saturating-arithmetic entries already says about a pure computation.
+- **`fs::Mapped::deref` is the one that is not**, and it gets `touches = ["file read"]` with the reason beside it: a mapping is memory that *is* a file, so reading through it reads the file — and *which* file is the mapping's rather than a parameter the line could name. An unnamed read conflicts with every file touch, which is the safe direction; `[]` would have claimed an `fs::write` to the same file may be reordered across it.
+- Honest about what it changes today: **the ordering pass does not yet reduce a method call to a ledger key**, so these entries change no verdict for `"abc".len()` — measured by running the same program with and without them. They are what [ADR-074](docs/specification/adr/adr-074.md)'s build-time check will read, and `HashMap::new` is the one of the twenty-four the ordering pass can already use.
+
 ### Changed (what a program may do at compile time)
 
 - **[ADR-074](docs/specification/adr/adr-074.md)** answers [ADR-026](docs/specification/adr/adr-026.md) Q4, the question everything else in that record was downstream of — and it turned out to be answerable with **two columns that already exist**. Q4 asked somebody to invent a restriction; since [ADR-067](docs/specification/adr/adr-067.md), `sync` means exactly one thing and `touches` is inferred over the call graph, so the restriction is maintained by the compiler rather than by a list.

@@ -1208,6 +1208,35 @@ fn block_report(
     });
 
     for block in &blocks {
+        // **The header is read off the pairs rather than asserted.** It said
+        // *"which meet on nothing"* about every block, including one the checker
+        // refuses on the next line - and this report exists because *"the
+        // refusals are the compiler's own … that is only fair if the refusals
+        // can be asked about"*. A report that answers the question wrongly is
+        // worse than one that is not there.
+        //
+        // The first refused pair is the one named, for the reason `check` stops
+        // after one finding per branch: a block that meets on two things has one
+        // thing wrong with it.
+        let operations: Vec<Option<Operation>> = block
+            .stmts
+            .iter()
+            .map(|stmt| operation(parsed, &stmt.node, own, library))
+            .collect();
+        let mut refused: Option<(usize, usize, Verdict)> = None;
+        'pairs: for (i, earlier) in operations.iter().enumerate() {
+            for (j, later) in operations.iter().enumerate().skip(i + 1) {
+                let (Some(earlier), Some(later)) = (earlier, later) else {
+                    continue;
+                };
+                let seen = verdict(earlier, later);
+                if !seen.is_overlap() {
+                    refused = Some((i, j, seen));
+                    break 'pairs;
+                }
+            }
+        }
+
         let mut lines = Vec::new();
         for stmt in &block.stmts {
             let named = match accounted(parsed, &stmt.node, own, library) {
@@ -1226,10 +1255,20 @@ fn block_report(
         if lines.is_empty() {
             continue;
         }
-        out.push_str(&format!(
-            "{key}: an `overlap` of {} branches, which meet on nothing\n",
-            block.stmts.len()
-        ));
+        match &refused {
+            None => out.push_str(&format!(
+                "{key}: an `overlap` of {} branches, which meet on nothing\n",
+                block.stmts.len()
+            )),
+            Some((i, j, seen)) => out.push_str(&format!(
+                "{key}: an `overlap` of {} branches, and branches {} and {} may not \
+                 run together - {}\n",
+                block.stmts.len(),
+                i + 1,
+                j + 1,
+                seen.why()
+            )),
+        }
         for line in lines {
             out.push_str(&line);
             out.push('\n');

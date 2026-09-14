@@ -451,37 +451,6 @@ question is, here, one test on the condition. The polarity is the usual one: say
 *"cannot be reached"* only where the condition is the literal, never where it is a
 name that happens to be true.
 
-### 2.13. Twenty-four `sync` entries in the shipped ledger have no touch answer
-
-*Counted:* of `std`'s 74 entries marked `sync = true`, **24 say nothing about what
-they touch**, and the polarity is fail-closed
-([ADR-033](specification/adr/adr-033.md) D4), so each of them reads *"touches
-everything"*. Among them:
-
-```
-HashMap::new   HashMap::get   HashMap::keys   HashMap::len
-HashMap::entry   f64::sqrt   f64::abs   fs::Mapped::deref
-```
-
-*Why it is work and not a question:*
-[ADR-074](specification/adr/adr-074.md) D2 lets a build-time body call what is
-`sync` and touches at most the build's parameters — so under that rule **a
-`const` could not use a map**, which is what the feature is for. Nothing about
-that is a design decision: `HashMap::get` touches nothing, and saying so is one
-line.
-
-*Why the inference does not do it:*
-[ADR-067](specification/adr/adr-067.md) D2 walks Nikaia bodies over the call
-graph, and these entries are backed by Rust rather than by a `.nika` file — which
-is why `text::digit_value` got its `touches = []` from the inference and
-`HashMap::get` cannot.
-
-*The polarity to keep while writing them:* an entry that is unsure says nothing
-rather than `[]`. A wrong `[]` is the expensive direction — it buys an overlap
-that should not exist and, once a repetition pass exists, an effect that is lost
-([`open-decisions.md`](open-decisions.md)'s note on the two consumers of an empty
-set, now in [`lock-free.md`](lock-free.md) §6).
-
 ---
 
 ## 3. Upkeep

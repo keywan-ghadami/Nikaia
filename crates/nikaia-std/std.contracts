@@ -165,6 +165,11 @@ signature = "(path: ?) -> Mapped"
 [fn."fs::Mapped::deref"]
 pub = true
 sync = true
+# A mapping is memory that *is* a file, so reading through it reads the file -
+# and which file is the mapping's rather than a parameter this line could name.
+# An unnamed read conflicts with every file touch, which is the safe direction:
+# `[]` would claim an `fs::write` to the same file may be reordered across it.
+touches = ["file read"]
 returns = "borrows(self)"
 signature = "(&Mapped) -> &str"
 
@@ -273,11 +278,13 @@ signature = "(?, f: fn(?)) -> ?"
 [fn."f64::abs"]
 pub = true
 sync = true
+touches = []
 signature = "(f64) -> f64"
 
 [fn."f64::sqrt"]
 pub = true
 sync = true
+touches = []
 signature = "(f64) -> f64"
 
 # ## Arithmetic that does not abort (ADR-043 D2, D3)
@@ -509,6 +516,7 @@ signature = "(f64) -> i64"
 [fn."HashMap::entry"]
 pub = true
 sync = true
+touches = []
 signature = "(&HashMap[$K, $V], key: ?) -> Entry[$V]"
 
 # `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
@@ -527,26 +535,31 @@ signature = "(&HashMap[$K, $V], key: ?) -> Entry[$V]"
 [fn."HashMap::get"]
 pub = true
 sync = true
+touches = []
 signature = "(&HashMap[$K, $V], key: ?) -> $V?"
 
 [fn."HashMap::keys"]
 pub = true
 sync = true
+touches = []
 signature = "(&HashMap[?, ?]) -> ?"
 
 [fn."HashMap::len"]
 pub = true
 sync = true
+touches = []
 signature = "(&HashMap[?, ?]) -> i64"
 
 [fn."HashMap::new"]
 pub = true
 sync = true
+touches = []
 signature = "() -> HashMap[?, ?]"
 
 [fn."HashMap::values"]
 pub = true
 sync = true
+touches = []
 signature = "(&HashMap[?, ?]) -> ?"
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
@@ -561,6 +574,7 @@ signature = "(Entry[$V], f: fn(&$V)) -> Entry[$V]"
 [fn."Entry::or_insert"]
 pub = true
 sync = true
+touches = []
 signature = "(Entry[$V], value: ?) -> &$V"
 
 # Also runs its lambda, before it returns.
@@ -593,6 +607,7 @@ signature = "(Entry[$V], f: fn()) -> &$V"
 [fn."Shared::deref"]
 pub = true
 sync = true
+touches = []
 returns = "borrows(self)"
 signature = "(&Shared[$T]) -> &$T"
 
@@ -608,32 +623,38 @@ signature = "() -> String"
 [fn."String::chars"]
 pub = true
 sync = true
+touches = []
 returns = "borrows(self)"
 signature = "(&String) -> ?"
 
 [fn."String::len"]
 pub = true
 sync = true
+touches = []
 signature = "(&String) -> i64"
 
 [fn."String::push"]
 pub = true
 sync = true
+touches = []
 signature = "(&String, c: char)"
 
 [fn."String::push_str"]
 pub = true
 sync = true
+touches = []
 signature = "(&String, text: ?)"
 
 [fn."Vec::is_empty"]
 pub = true
 sync = true
+touches = []
 signature = "(&Vec[?]) -> bool"
 
 [fn."Vec::len"]
 pub = true
 sync = true
+touches = []
 signature = "(&Vec[?]) -> i64"
 
 [fn."Vec::new"]
@@ -645,11 +666,13 @@ signature = "() -> Vec[?]"
 [fn."Vec::push"]
 pub = true
 sync = true
+touches = []
 signature = "(&Vec[$T], value: ?)"
 
 [fn."Vec::sort"]
 pub = true
 sync = true
+touches = []
 signature = "(&Vec[?])"
 
 # Part II 12.2's four doors ([ADR-059](../../docs/specification/adr/adr-059.md)).
@@ -768,12 +791,14 @@ signature = "(&Vec[$T], f: fn(&$T)) -> ?"
 [fn."str::chars"]
 pub = true
 sync = true
+touches = []
 returns = "borrows(self)"
 signature = "(&str) -> ?"
 
 [fn."str::len"]
 pub = true
 sync = true
+touches = []
 signature = "(&str) -> i64"
 
 # `n` is the `i64` a program can hold, not the `usize` Rust counts in
@@ -783,11 +808,13 @@ signature = "(&str) -> i64"
 [fn."str::repeat"]
 pub = true
 sync = true
+touches = []
 signature = "(&str, n: i64) -> String"
 
 [fn."str::starts_with"]
 pub = true
 sync = true
+touches = []
 signature = "(&str, prefix: ?) -> bool"
 
 [fn."str::to_string"]
@@ -830,6 +857,7 @@ signature = "(&String) -> String"
 [fn."str::trim"]
 pub = true
 sync = true
+touches = []
 returns = "borrows(self)"
 signature = "(&str) -> &str"
 
