@@ -151,6 +151,28 @@ pub fn infer(
                     }
                 }
             }
+            // Kap 4.7: a trait's methods are in this unit's ledger, so a body
+            // that reaches one through a bound names a callee the graph has to
+            // know about ([ADR-078](../../../docs/specification/adr/adr-078.md)
+            // D4). A **leaf that is not blocked**: a declaration has no body,
+            // so it reaches nothing, and D4 asserts its `sync` because a plain
+            // `fn` is the only thing the emitter can write in a trait.
+            //
+            // Without this the callee was simply absent from `holds` and
+            // `unwrap_or(false)` read that as *pauses* - so `fn shout[T:
+            // Summarize]` came out `async` and awaited a `String`.
+            Item::Trait { name, methods, .. } => {
+                let own = parsed.text(*name).to_string();
+                for method in methods {
+                    graph.insert(
+                        format!("{own}::{}", parsed.text(method.node.name)),
+                        Reach {
+                            blocked: false,
+                            calls: BTreeSet::new(),
+                        },
+                    );
+                }
+            }
             _ => {}
         }
     }

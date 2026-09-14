@@ -1611,7 +1611,7 @@ impl<'p> Emitter<'p> {
                 if self.borrowing.contains(name) {
                     parts.push(INPUT_LIFETIME.to_string());
                 }
-                parts.extend(generics.iter().map(|g| self.text(g.name).to_string()));
+                parts.extend(generics.iter().map(|g| self.bounded(g)));
                 let params = angled(&parts);
                 out.push(&format!("{vis}struct {}{params} {{\n", self.name(*name)));
                 for field in fields {
@@ -1706,6 +1706,33 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
+            // Kap 4.7: `trait Summarize { … }` becomes the same trait below, and
+            // the method is a signature with a `;` where an `impl`'s has a body
+            // ([ADR-078](../../docs/specification/adr/adr-078.md) D1).
+            //
+            // **No method here is `async`.** The ledger's `sync` column decides
+            // that for a function (ADR-055 D1), and a declaration has no body
+            // for `sync::infer` to read - so ADR-078 D4 asserts `sync` for a
+            // trait's methods, which is the only answer this position can
+            // write: `async fn` in a trait is something the emitter has no way
+            // to ask for. What that costs is a trait whose method genuinely
+            // pauses, which `open-work.md` carries with its reproduction.
+            Item::Trait {
+                name,
+                methods,
+                is_public,
+            } => {
+                let vis = if *is_public { "pub " } else { "" };
+                out.push(&format!("{vis}trait {} {{\n", self.name(*name)));
+                for method in methods {
+                    out.from(&method.span, |out| {
+                        out.push("    ");
+                        self.trait_method(out, &method.node)
+                    })?;
+                }
+                out.push("}\n");
+                Ok(())
+            }
             Item::Import { path, alias } => {
                 // The names come in through `nikaia_std::prelude`, emitted once
                 // in the preamble; the import itself is kept as a comment so the
@@ -1728,6 +1755,81 @@ impl<'p> Emitter<'p> {
                 Ok(())
             }
             other => Err(refused!("cannot emit item yet: {other:?}")),
+        }
+    }
+
+    /// One method of a `trait`: a signature and a `;`.
+    ///
+    /// Deliberately **not** `function` with the body switched off. That one
+    /// reads the ledger for `sync`, for the `Shared` counts of each position and
+    /// for whether the call can fail, and every one of those answers is about a
+    /// *body* - which a declaration does not have. A second, smaller writer says
+    /// what a declaration is instead of what a definition happens to omit.
+    fn trait_method(&self, out: &mut Out, method: &crate::ast::TraitMethod) -> Result<()> {
+        let mut params: Vec<String> = Vec::new();
+        if let Some(receiver) = &method.receiver {
+            params.push(
+                match (receiver.is_ref, receiver.is_mut) {
+                    (true, true) => "&mut self",
+                    (true, false) => "&self",
+                    _ => "self",
+                }
+                .to_string(),
+            );
+        }
+        for arg in &method.args {
+            params.push(format!(
+                "{}: {}",
+                self.name(arg.name),
+                self.ty(&arg.ty, Lifetimes::ELIDED)
+            ));
+        }
+        // Kap 5.1: the language below has neither named arguments nor defaults,
+        // so an option is an ordinary parameter here too - the same rule a
+        // definition follows, because a caller fills in one list either way.
+        for option in &method.config {
+            params.push(format!(
+                "{}: {}",
+                self.name(option.name),
+                self.ty(&option.ty, Lifetimes::ELIDED)
+            ));
+        }
+        let returned = match &method.ret_type {
+            Some(ty) => self.ty(ty, Lifetimes::ELIDED),
+            None => "()".to_string(),
+        };
+        let ret = if method.throws {
+            format!(" -> Result<{returned}, Box<dyn std::error::Error>>")
+        } else if method.ret_type.is_some() {
+            format!(" -> {returned}")
+        } else {
+            String::new()
+        };
+        let generics: Vec<String> = method
+            .generics
+            .iter()
+            .map(|g| self.bounded(g))
+            .collect();
+        out.push(&format!(
+            "fn {}{}({}){ret};\n",
+            self.name(method.name),
+            angled(&generics),
+            params.join(", ")
+        ));
+        Ok(())
+    }
+
+    /// A type parameter with its bounds: `T`, or `T: Summarize + Clone`
+    /// ([ADR-078](../../docs/specification/adr/adr-078.md) D2).
+    fn bounded(&self, param: &crate::ast::GenericParam) -> String {
+        let name = self.name(param.name);
+        match param.bounds.is_empty() {
+            true => name.into_owned(),
+            false => {
+                let bounds: Vec<String> =
+                    param.bounds.iter().map(|b| self.name(*b).into_owned()).collect();
+                format!("{name}: {}", bounds.join(" + "))
+            }
         }
     }
 
@@ -1891,7 +1993,7 @@ impl<'p> Emitter<'p> {
         // Part III C.1's class exactly.
         let declared: Vec<String> = generics
             .iter()
-            .map(|g| self.text(g.name).to_string())
+            .map(|g| self.bounded(g))
             .chain(dsl.clone())
             .collect();
 

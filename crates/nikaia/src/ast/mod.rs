@@ -101,6 +101,19 @@ pub enum Item {
         methods: Vec<Spanned<Item>>, // Enthält Item::Fn
     },
 
+    // Kap 4.7: trait Summarize { fn summary(&self) -> String }
+    //
+    // **Signatures and nothing else.** A method here has no body, which is what
+    // makes it a declaration rather than an `impl` - and it is why this cannot
+    // reuse `Item::Fn`, whose `body` is not an `Option`. A default body is a
+    // separate decision and not this one
+    // ([ADR-078](../../../docs/specification/adr/adr-078.md) §4).
+    Trait {
+        name: Ident,
+        methods: Vec<Spanned<TraitMethod>>,
+        is_public: bool,
+    },
+
     // Part III, Kap 14.1: test "Name" { ... }
     Test {
         name: String,
@@ -131,7 +144,7 @@ pub enum Item {
     /// that is built is the shared fold plus a literal of another kind.
     ///
     /// **The word says *when*, not *whether it changes***
-    /// ([ADR-077](../../../docs/specification/adr/adr-077.md)): everything in
+    /// ([ADR-078](../../../docs/specification/adr/adr-078.md)): everything in
     /// this language is immutable unless it says `mut`, so `const` would have
     /// named a property every other binding already has.
     Comptime {
@@ -172,7 +185,7 @@ pub enum Stmt {
 
     /// `comptime LIMIT = 4 * 1024`, inside a body
     /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D2,
-    /// [ADR-077](../../../docs/specification/adr/adr-077.md) for the word).
+    /// [ADR-078](../../../docs/specification/adr/adr-078.md) for the word).
     /// Scoped like a `let` and evaluated like the item form: the difference
     /// between the two is where the name is visible, never what may stand to the
     /// right of the `=`.
@@ -522,7 +535,31 @@ pub enum MatchPattern {
 #[derive(Debug, Clone)]
 pub struct GenericParam {
     pub name: Ident,
-    // Constraints wie T: Drawable fehlen hier noch vereinfacht
+    /// Kap 4.7: `[T: Summarize]` - the traits a caller's type has to implement.
+    ///
+    /// Several are written `[T: A + B]`, which is why this is a list rather than
+    /// an `Option`. Empty for a parameter with no bound, which says that a body
+    /// may move and pass its value and nothing else
+    /// ([ADR-074](../../../docs/specification/adr/adr-074.md) D5's `NK1126`).
+    pub bounds: Vec<Ident>,
+}
+
+/// One method of a `trait` declaration: a signature, with no body (Kap 4.7).
+///
+/// A shape of its own rather than an `Item::Fn` with an empty block, because the
+/// difference between *"declares this method"* and *"this method does nothing"*
+/// is the whole of what a trait is - and a body that is absent cannot be
+/// accidentally emitted.
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    pub receiver: Option<Receiver>,
+    pub args: Vec<FnArg>,
+    pub config: Vec<ConfigParam>,
+    pub ret_type: Option<Type>,
+    pub is_sync: bool,
+    pub throws: bool,
 }
 
 #[derive(Debug, Clone)]

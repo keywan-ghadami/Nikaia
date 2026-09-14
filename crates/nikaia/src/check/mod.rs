@@ -297,9 +297,9 @@ pub fn check_program(
         enums: BTreeMap::new(),
         scope: Vec::new(),
         expected: None,
-        type_parameters: BTreeSet::new(),
+        type_parameters: BTreeMap::new(),
         struct_parameters: BTreeMap::new(),
-        enclosing: BTreeSet::new(),
+        enclosing: BTreeMap::new(),
         throwing: false,
         caught: false,
         current: None,
@@ -522,7 +522,7 @@ struct Checker<'a> {
     /// A name in here is a **type** while the body is walked and a **variable**
     /// at every call site ([ADR-074](../../docs/specification/adr/adr-074.md)
     /// D1). Empty everywhere else, which is every function written today.
-    type_parameters: BTreeSet<String>,
+    type_parameters: BTreeMap<String, Vec<String>>,
     /// Every generic struct declared here, with its parameters in **declaration
     /// order** - which is what makes a type argument's position mean something.
     ///
@@ -534,7 +534,7 @@ struct Checker<'a> {
     /// Separate from the field above because `function` rebuilds that one per
     /// method and has to start from what the `impl` put in scope rather than
     /// from nothing.
-    enclosing: BTreeSet<String>,
+    enclosing: BTreeMap<String, Vec<String>>,
     /// Whether it declared `throws` - which is what says a failure may leave
     /// it, whether the failing call was written or implicit (ADR-025 D1).
     throwing: bool,
@@ -680,16 +680,21 @@ impl<'a> Checker<'a> {
                     // body sees the same names its signature was recorded with -
                     // one rule, called from both (`contracts::impl_parameters`).
                     let declared = crate::contracts::declared_types(self.parsed);
-                    let outer: BTreeSet<String> =
+                    // An `impl`'s own parameters carry no bounds: the head
+                    // writes `impl Stack[T]` and there is nowhere in it for a
+                    // `: Summarize` to stand
+                    // ([ADR-078](../../docs/specification/adr/adr-078.md) §4).
+                    let outer: BTreeMap<String, Vec<String>> =
                         crate::contracts::impl_parameters(self.parsed, target, &declared)
                             .into_iter()
+                            .map(|name| (name, Vec::new()))
                             .collect();
                     let target = self.parsed.text(target.name).to_string();
                     for method in methods {
                         self.enclosing = outer.clone();
                         self.function(&method.node, Some(&target));
                     }
-                    self.enclosing = BTreeSet::new();
+                    self.enclosing = BTreeMap::new();
                 }
                 // A test and a bench are code, and nothing about them is
                 // exempt from the language's rules (Part III, 14.1 and 13.4).
@@ -806,12 +811,16 @@ impl<'a> Checker<'a> {
         // name stays a name and `fits` compares it, which is what lets `NK1126`
         // below say that nothing describes what a `T` can do. Only at a *call*
         // is it a variable (`bindings`), and that is the whole of the split.
-        let mut declared: BTreeSet<String> = self.enclosing.clone();
-        declared.extend(
-            generics
-                .iter()
-                .map(|g| self.parsed.text(g.name).to_string()),
-        );
+        let mut declared: BTreeMap<String, Vec<String>> = self.enclosing.clone();
+        declared.extend(generics.iter().map(|g| {
+            (
+                self.parsed.text(g.name).to_string(),
+                g.bounds
+                    .iter()
+                    .map(|b| self.parsed.text(*b).to_string())
+                    .collect(),
+            )
+        }));
         // `Self` stands for the type the `impl` is on, and nothing here
         // resolves it. Unlike `T` it is bound by no call site either, so it
         // stays erased: a comparison against it could only be a false positive.
@@ -1098,13 +1107,42 @@ impl<'a> Checker<'a> {
     /// Part III C is about. And why it says *"no bound"* rather than *"no such
     /// method"*: the method may well exist on every type the caller will ever
     /// pass, and what is missing is the sentence that says so.
+    /// The **bound** that answers a member reached on a type parameter, if one
+    /// does ([ADR-078](../../docs/specification/adr/adr-078.md) D3).
+    ///
+    /// `fn shout[T: Summarize](x: T)` and `x.summary()`: `T`'s bound names
+    /// `Summarize`, the trait declares `summary`, and the ledger records that
+    /// signature under `Summarize::summary` — the same key shape an `impl`'s
+    /// methods get, because a bound and a receiver ask one question. So this
+    /// hands back a **type to look the call up on**, and the whole of the rest
+    /// of a call is unchanged: arity, argument types, `sync`, `throws` and the
+    /// binding of the signature's variables all happen exactly as they do for a
+    /// receiver whose type was written down.
+    ///
+    /// The first bound that declares the member wins, and `[T: A + B]` where
+    /// both declare it is not a question this can answer — Rust's own answer is
+    /// that the call is ambiguous, and nothing here can write the
+    /// disambiguation. That is §4's, not this.
+    fn bound_that_answers(&self, parameter: &str, member: &str) -> Option<Ty> {
+        let bounds = self.type_parameters.get(parameter)?;
+        bounds
+            .iter()
+            .find(|bound| {
+                self.own
+                    .traits
+                    .get(bound.as_str())
+                    .is_some_and(|methods| methods.contains(member))
+            })
+            .map(Ty::named)
+    }
+
     fn nothing_says_what_a_parameter_can_do(
         &mut self,
         parameter: &str,
         member: Reached<'_>,
         span: &Span,
     ) {
-        if !self.type_parameters.contains(parameter) {
+        if !self.type_parameters.contains_key(parameter) {
             return;
         }
         let (what, name) = match member {
@@ -1162,6 +1200,15 @@ impl<'a> Checker<'a> {
         let Some((key, contract)) = self.method(&key) else {
             // The type is known and no ledger describes this method of
             // it - `HashMap::entry` until something writes it down.
+            // **A bound is looked up before anything is refused**
+            // ([ADR-078](../../docs/specification/adr/adr-078.md) D3): where
+            // `T: Summarize` and the trait declares this method, the call is
+            // asked again on the trait and everything about it - arity,
+            // argument types, `sync`, `throws` - is answered from the
+            // declaration, exactly as it would be from a written-down receiver.
+            if let Some(bound) = self.bound_that_answers(name, self.parsed.text(method)) {
+                return self.call_on(bound, method, args, span);
+            }
             // Unless the type is a **parameter**, where nothing will ever
             // describe it and saying so now is the whole of `NK1126`.
             self.nothing_says_what_a_parameter_can_do(

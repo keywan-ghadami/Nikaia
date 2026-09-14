@@ -133,10 +133,11 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 34] = [
+pub const RESERVED_WORDS: [&str; 35] = [
     "as", "break", "catch", "comptime", "const", "continue", "dsl", "else", "enum", "false", "fn",
     "for", "from", "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap",
-    "pub", "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use", "while",
+    "pub", "return", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true", "use",
+    "while",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -349,6 +350,7 @@ grammar! {
           | s:struct_item -> { Spanned::new(s, _span) }
           | e:enum_item -> { Spanned::new(e, _span) }
           | im:impl_item -> { Spanned::new(im, _span) }
+          | t:trait_item -> { Spanned::new(t, _span) }
           | u:use_item -> { Spanned::new(u, _span) }
           | i:fn_item -> { Spanned::new(i, _span) }
 
@@ -369,6 +371,44 @@ grammar! {
             }
 
         rule impl_for_target -> Type = KW_FOR t:type_ref -> { t }
+
+        // Kap 4.7: `trait Summarize { fn summary(&self) -> String }`.
+        //
+        // The methods are **signatures**, so the body's `{ … }` is absent and
+        // the rule stops at the return type. That is what tells this apart from
+        // an `impl` at the grammar level rather than at a later check
+        // ([ADR-078](../../../../docs/specification/adr/adr-078.md) D1).
+        rule trait_item -> Item =
+            vis:kw_pub?
+            KW_TRAIT
+            name:NAME
+            "{" methods:trait_method* "}"
+            -> {
+                Item::Trait { name, methods, is_public: vis.is_some() }
+            }
+
+        rule trait_method -> Spanned<TraitMethod> @=
+            KW_FN
+            name:NAME
+            generics:generic_list?
+            params:fn_params
+            sync_before:kw_sync?
+            throws_before:kw_throws?
+            ret:return_type_arrow?
+            sync_after:kw_sync?
+            throws_after:kw_throws?
+            -> {
+                Spanned::new(TraitMethod {
+                    name,
+                    generics: generics.unwrap_or_default(),
+                    receiver: params.receiver,
+                    args: params.args,
+                    config: params.config,
+                    ret_type: ret,
+                    is_sync: sync_before.is_some() || sync_after.is_some(),
+                    throws: throws_before.is_some() || throws_after.is_some(),
+                }, _span)
+            }
 
         rule impl_method -> Spanned<Item> @= f:fn_item -> { Spanned::new(f, _span) }
 
@@ -692,9 +732,20 @@ grammar! {
 
         rule generic_param_tail -> GenericParam = "," p:generic_param -> { p }
 
+        // Kap 4.7: `[T: Summarize]`, and `[T: A + B]` for several
+        // ([ADR-078](../../../../docs/specification/adr/adr-078.md) D2).
         rule generic_param -> GenericParam =
-            name:NAME
-            -> { GenericParam { name } }
+            name:NAME bounds:generic_bound?
+            -> { GenericParam { name, bounds: bounds.unwrap_or_default() } }
+
+        rule generic_bound -> Vec<Symbol> =
+            ":" head:NAME tail:generic_bound_tail* -> {
+                let mut bounds = vec![head];
+                bounds.extend(tail);
+                bounds
+            }
+
+        rule generic_bound_tail -> Symbol = "+" n:NAME -> { n }
 
         // `&str` is a view marker (Part II, 10.6), not a lifetime - the `&` is
         // recorded and the emitter decides what it becomes.
@@ -1690,6 +1741,7 @@ grammar! {
         rule KW_SYNC = "sync" not(ident)
         rule KW_THROW = "throw" not(ident)
         rule KW_THROWS = "throws" not(ident)
+        rule KW_TRAIT = "trait" not(ident)
         rule KW_TRUE = "true" not(ident)
         rule KW_UNCHECKED = "unchecked" not(ident)
         rule KW_USE = "use" not(ident)
@@ -1774,12 +1826,21 @@ grammar! {
         // programs afterwards. A half of their own rather than two more arms on
         // `RESERVED_B`, because the alternation's width is what forced the
         // split in the first place and three is not worth testing the edge of.
+        //
+        // **`trait` is the one here that has a construct**
+        // ([ADR-078](../../../../docs/specification/adr/adr-078.md) D1): it is in
+        // this half because `RESERVED_B` is where the width broke last time, not
+        // because nothing uses it. It is also the one word here that was found as
+        // a *name* rather than reserved on purpose — `let trait = 3` was a legal
+        // program that `rustc` refused about the generated file
+        // ([ADR-076](../../../../docs/specification/adr/adr-076.md) §1).
         rule RESERVED_C -> u8 =
             KW_BREAK -> { 0 }
           | KW_COMPTIME -> { 0 }
           | KW_CONST -> { 0 }
           | KW_CONTINUE -> { 0 }
           | KW_LOOP -> { 0 }
+          | KW_TRAIT -> { 0 }
 
         // The compiler's identifier.
         //

@@ -458,6 +458,20 @@ pub struct Ledger {
     pub inference: String,
     pub functions: BTreeMap<String, FnContract>,
     pub types: BTreeMap<String, TypeContract>,
+    /// Kap 4.7: every `trait` declared here, with the names of its methods.
+    ///
+    /// The **signatures** are in `functions`, keyed `Summarize::summary`, which
+    /// is where a bound looks one up. This map answers the other question a
+    /// bound asks first: *is `Summarize` a trait at all*
+    /// ([ADR-078](../../../docs/specification/adr/adr-078.md) D3). A name that
+    /// is not in here names no trait, and a bound on it is refused rather than
+    /// quietly believed.
+    ///
+    /// Not written to the ledger file yet, for the reason D3 gives: nothing
+    /// outside this unit can name one of these traits until a trait can be
+    /// `pub` *and* reached across a package, and that is a question about
+    /// modules rather than about traits.
+    pub traits: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Ledger {
@@ -584,6 +598,21 @@ impl Ledger {
             };
             self.types.insert(key, contract);
         }
+        // Kap 4.7: a trait's methods went into `functions` above, under
+        // `Summarize::summary`, and were qualified with the rest. This carries
+        // the **names**, which is what says `Summarize` is a trait at all
+        // ([ADR-078](../../../docs/specification/adr/adr-078.md) D3).
+        //
+        // Measured the hard way: without it a one-file program's bound resolved
+        // twice and failed the third time, because the program's ledger is
+        // absorbed from the unit's and this map was the one thing left behind.
+        for (name, methods) in other.traits {
+            let key = match module {
+                Some(module) => format!("{module}::{name}"),
+                None => name,
+            };
+            self.traits.insert(key, methods);
+        }
     }
 
     /// The contracts, and the type checker's pass that helped produce them.
@@ -639,6 +668,31 @@ impl Ledger {
                             ledger.function(parsed, &method.node, Some(&target), &outer);
                         ledger.functions.insert(name, contract);
                     }
+                }
+                // Kap 4.7: a trait's methods are recorded under the trait's own
+                // name - `Summarize::summary` - which is what lets a bound be
+                // looked up ([ADR-078](../../../docs/specification/adr/adr-078.md)
+                // D3). The same key shape an `impl`'s methods get, because a
+                // bound and a receiver ask the same question: what does a value
+                // of this thing have.
+                Item::Trait {
+                    name,
+                    methods,
+                    is_public,
+                } => {
+                    let own = parsed.text(*name).to_string();
+                    for method in methods {
+                        let (key, contract) =
+                            trait_method(parsed, &own, &method.node, *is_public);
+                        ledger.functions.insert(key, contract);
+                    }
+                    ledger.traits.insert(
+                        own,
+                        methods
+                            .iter()
+                            .map(|m| parsed.text(m.node.name).to_string())
+                            .collect(),
+                    );
                 }
                 Item::Struct {
                     name,
@@ -1151,6 +1205,76 @@ fn std_ledger() -> &'static Ledger {
 
 /// The receiver's type, as a caller sees it: the type the `impl` is for, with
 /// the `&` the receiver was written with.
+/// One method of a `trait`, as a contract a bound can be answered from.
+///
+/// A builder of its own rather than `Ledger::function` with the body ignored,
+/// for the reason the emitter has a second writer: that one records `borrows`,
+/// `sharing` and a `touches` set that later passes fill in **by reading the
+/// body**, and a declaration has none. What is here is what a declaration can
+/// say: whether it pauses, whether it can fail, and what its parameters and
+/// result are.
+///
+/// **`sync` is asserted, and that is a decision rather than a default**
+/// ([ADR-078](../../../docs/specification/adr/adr-078.md) D4). For a function the
+/// word says `Asserted`, its absence says `No`, and `sync::infer` then raises
+/// `No` to `Inferred` by reading the body. A declaration has no body, so `No`
+/// would stand — and `No` means *pauses*, which makes every call through a bound
+/// an `.await` and the emitted `async fn shout` await a `String`.
+///
+/// So the answer here is the only one this compiler can write: a trait's method
+/// is a plain `fn` below, because `async fn` in a trait is something the
+/// emitter has no way to ask for. What that costs is a trait whose method
+/// genuinely pauses, which is `open-work.md` §1.1 with its reproduction.
+fn trait_method(
+    parsed: &Parsed,
+    trait_name: &str,
+    method: &crate::ast::TraitMethod,
+    public: bool,
+) -> (String, FnContract) {
+    let mut params: Vec<(String, ty::Ty)> = Vec::new();
+    if let Some(receiver) = &method.receiver {
+        params.push((
+            "self".to_string(),
+            receiver_type(parsed, receiver, Some(trait_name)),
+        ));
+    }
+    params.extend(method.args.iter().map(|a| {
+        (
+            parsed.text(a.name).to_string(),
+            ty::Ty::from_ast(parsed, &a.ty),
+        )
+    }));
+    (
+        format!("{trait_name}::{}", parsed.text(method.name)),
+        FnContract {
+            public,
+            sync: Sync::Asserted,
+            throws: if method.throws {
+                vec![UNNAMED_ERROR.to_string()]
+            } else {
+                Vec::new()
+            },
+            signature: Some(Signature {
+                params,
+                config: method
+                    .config
+                    .iter()
+                    .map(|c| ConfigContract {
+                        name: parsed.text(c.name).to_string(),
+                        ty: ty::Ty::from_ast(parsed, &c.ty),
+                        default: literal_text(parsed, &c.default),
+                    })
+                    .collect(),
+                result: method
+                    .ret_type
+                    .as_ref()
+                    .map(|t| ty::Ty::from_ast(parsed, t)),
+            }),
+            ..Default::default()
+        },
+    )
+}
+
 fn receiver_type(parsed: &Parsed, receiver: &crate::ast::Receiver, target: Option<&str>) -> ty::Ty {
     let _ = parsed;
     let name = target.unwrap_or("Self");
