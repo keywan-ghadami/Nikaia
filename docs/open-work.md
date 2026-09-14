@@ -288,19 +288,20 @@ does not reach.
 Nikaia's words naming the tasks still running. Neither is a decision; the
 mechanism and the configuration key both exist.
 
-### 2.5. `Locked[T]` has a shape now, and no surface to reach it through
+### 2.5. `Locked[T]` has a shape and a surface, and a write across two locks has neither
 
-[ADR-057](specification/adr/adr-057.md) decided what `Locked[T]` **is**: the safe
-shape is the floor, at one user thread it is always the cheap one, and at several
-it follows the value — the answer the analysis that decides the reference count
-already gives. Both shapes are built, they report the same thing when a program
-re-enters one lock, and the emitter writes them. What is left is mostly not the
-representation:
+[ADR-057](specification/adr/adr-057.md) decided what `Locked[T]` **is** and
+[ADR-059](specification/adr/adr-059.md) what a program writes to reach one: four
+doors, `access` reading in place and `update` writing, so no lambda is handed
+something it may change. Both shapes carry all four and `std.contracts` describes
+them. What is left:
 
-* **What `access` hands its lambda.** Part II 12.2 writes
-  `counter.access fn(n) { n + 1 }` and `n` is a `&mut T` below, so the idiom does
-  not compile as written. A question about the surface, and the one thing here
-  that needs deciding rather than doing.
+* **A write across several locks has no door.** `access_all` reads and `update`
+  writes one, so Chapter 12's own transfer — take from one account, give to the
+  other, under both locks — is not writable. A consequence of ADR-059 D1 and
+  named by it rather than discovered later: what such a door is called, and
+  whether it hands a value back per lock, wants deciding. Part II 12.2 carries a
+  status note saying the transfer is not writable today.
 * **The analysis does not watch a `Shared[Locked[T]]` allocation**, so every such
   value takes the floor and the cheap shape never triggers at
   `user_parallelism = yes`. Conservative in the safe direction; the fix is the

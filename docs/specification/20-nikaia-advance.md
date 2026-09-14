@@ -582,13 +582,15 @@ A change to locked data has four shapes, and each has its own door. Only two of 
 | `kasse.get()` | taking a copy out | — |
 | `kasse.set(value)` | replacing; the value is computed outside | yes, outside |
 | `kasse.update fn(old) { old + 100 }` | new from old, small values | no |
-| `kasse.access fn(state) { … }` | in place, large values | no |
+| `kasse.access fn(state) { … }` | reading in place, large values | no |
 
 Each is shaped by what it is for:
 
 * **`set` needs no block** because arguments are evaluated before the call: whatever producing the new value costs, including waiting for I/O, is paid outside, and the lock is open for the duration of one store. `get` is the same in the other direction — one load.
-* **`update` is handed a copy and returns a copy.** No handle into the inside ever exists, so the question of whether a handle can outlive the block does not arise for that form at all.
-* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to append one — so it is the one door that hands your block the value where it lies.
+* **`update` is handed the old value and returns the new one.** No handle into the inside ever exists, so the question of whether a handle can outlive the block does not arise for that form at all. It is also **where locked data changes**, including a large value: `old` is an ordinary immutable parameter, and a new value made by changing the old one is written the way this language writes that everywhere — `let mut v = old`, then hand `v` back. That is a **move** and not a copy, so a list of ten thousand entries is not copied to append one ([ADR-059](adr/adr-059.md) D2).
+* **`access` is for reading in place** — it is the one door that hands your block the value where it lies, and it **may not change it**. Without it, asking that ten-thousand-entry list for its length would copy the list; with it, nothing is copied to answer a question about a large value (D1).
+
+**So no lambda in this language is handed something it may change**, and none needs a spelling that says it may be. A change to locked data is written in `update`, where the word is on the line that makes it.
 
 Two mistakes are refused at the doors. **Assigning to a `SharedMut` directly** is refused, and the message names `set`: the value lives behind a lock, so replacing it is a call and not an assignment. And **a `set` whose argument contains a `get` on the same container** is refused, and the message names `update`, which is the door for a new value computed from the old one. The second check is syntactic: it catches what people write on one line and not the same thing spread over two.
 
@@ -632,7 +634,7 @@ error[NK2201]: cannot wait for I/O while holding locked data
 
 This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. Re-entering the *same* lock through a chain of calls is not an edge case left to the runtime either — 12.3 refuses that when you compile, and at every setting. The runtime checks described above keep their place for a different reason: the reentrancy check is now **self-control of that refusal rather than error handling.** No input can make it fire; if it ever fires, the compiler has a hole rather than the program having a bug. That is why it is a switch you can decline (Part I, 1.2) and why poisoning on several threads is left as it is ([ADR-039](adr/adr-039.md) D2, D8).
 
-**And a lock is a resource, so two doors onto the same lock keep their order — where both of them write.** Part I 8.1.1 says that two operations whose touch sets are disjoint have no order between them, and a lock is one of the things a touch set can name. **`get` is a read; `set`, `update` and `access` are writes.** Two reads of one resource are unordered ([ADR-033](adr/adr-033.md) D2), so two `get`s on one lock may run in either order, while any two of the three writing forms are ordered by the same rule that orders two `println`s rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3, [ADR-039](adr/adr-039.md) D10). Two doors onto *different* locks meet on nothing and need not wait for each other.
+**And a lock is a resource, so two doors onto the same lock keep their order — where both of them write.** Part I 8.1.1 says that two operations whose touch sets are disjoint have no order between them, and a lock is one of the things a touch set can name. **`get` and `access` are reads; `set` and `update` are writes** ([ADR-059](adr/adr-059.md) D3). Two reads of one resource are unordered ([ADR-033](adr/adr-033.md) D2), so two `get`s — or two `access`es — on one lock may run in either order, while any two of the two writing forms are ordered by the same rule that orders two `println`s rather than by a rule of their own ([ADR-033](adr/adr-033.md) §3, [ADR-039](adr/adr-039.md) D10). Two doors onto *different* locks meet on nothing and need not wait for each other.
 
 > **Status.** The compiler does not yet know a lock as a named resource — no entry in any ledger
 > claims one, because nothing in the corpus has asked for one
@@ -662,21 +664,29 @@ let account_b: SharedMut[Account] = ...
 
 // ERROR: Manual Nesting is forbidden to prevent Deadlocks.
 // Taking one lock inside another is what creates the inconsistent order
-// this section is about — a single `access` (12.2) is of course fine.
+// this section is about — a single door (12.2) is of course fine.
 // account_a.access fn(from) {
-//     account_b.access fn(to) { to.balance += 100 }
+//     account_b.update fn(to) { … }
 // }
 
 // Atomic Locking (Deadlock Proof)
 // The runtime sorts A and B internally and locks them safely.
 // We use a trailing lambda block explicitly here.
 access_all(account_a, account_b) fn(a, b) {
-    // Both 'a' and 'b' are mutable guards here.
-    let amount = 100
-    a.balance -= amount
-    b.balance += amount
+    // Both are read in place, and neither may be changed here (ADR-059 D1).
+    a.balance + b.balance
 }
 ```
+
+> **Status: a transfer between two accounts has no door.** `access_all` reads
+> several locks at once, because [ADR-059](adr/adr-059.md) D1 made `access` a
+> read and the same reading applies to it; `update` writes **one**. So the
+> balancing half of the example above — take from one, give to the other, under
+> both locks — is not writable today. That is a consequence of D1 and not an
+> oversight of it, and it is on
+> [`open-work.md`](../open-work.md) rather than answered here: what a write
+> across several locks is called, and whether it hands back a value per lock, is
+> the kind of question this page should not invent in a footnote.
 
 **How the compiler sees a chain.** A nesting written one line inside the other is visible where it stands; a chain is not — your block calls a function of yours, which calls another, and the third one opens a lock. So every function carries a second derived property beside `sync` (12.1): **does it touch a lock.** It is inferred over the same call graph, never written by hand, and inside a blocking door (`update`, `access`, `access_all`) a call to anything that carries it is refused. That is what catches chains and self-calls, and it is what makes the rule above complete rather than only local ([ADR-039](adr/adr-039.md) D3).
 

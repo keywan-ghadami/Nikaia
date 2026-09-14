@@ -1,12 +1,12 @@
 # Open decisions — the questions that need the owner
 
-**Six entries, and every one of them is open.** Nothing answered lives here: an
+**Five entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
 the compiler does not do it yet, which needs work and not a ruling.
 
-The nine entries this file used to carry are gone that way, eight to their
+The ten entries this file used to carry are gone that way, nine to their
 records and one because it was never a question for the owner at all:
 [ADR-046](specification/adr/adr-046.md) (`use` brings nothing in),
 [ADR-047](specification/adr/adr-047.md) (a package is a directory),
@@ -14,8 +14,10 @@ records and one because it was never a question for the owner at all:
 [ADR-049](specification/adr/adr-049.md) (the automatic `a`, `b`, `c` withdrawn),
 [ADR-050](specification/adr/adr-050.md) (`overlap { … }`),
 [ADR-051](specification/adr/adr-051.md) (keywords are reserved),
-[ADR-053](specification/adr/adr-053.md) (a package is its own crate) and
-[ADR-055](specification/adr/adr-055.md) (a task is a coroutine). Each record
+[ADR-053](specification/adr/adr-053.md) (a package is its own crate),
+[ADR-055](specification/adr/adr-055.md) (a task is a coroutine) and
+[ADR-059](specification/adr/adr-059.md) (`access` reads, `update` writes — the
+question that stopped being one rather than getting an answer). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.
@@ -38,64 +40,7 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. What does `access` hand its lambda?
-
-**Blocked by it:** the surface of `Locked[T]` and `SharedMut[T]`.
-[ADR-057](specification/adr/adr-057.md) decided what the type **is** and built
-both shapes; what a program writes to reach one is this question, and it is the
-last thing between the lock and a program somebody can run.
-
-**The state.** [ADR-039](specification/adr/adr-039.md) D10 gives four doors, and
-two of them take a lambda:
-
-| door | for | what the lambda gets |
-| :--- | :--- | :--- |
-| `kasse.update fn(old) { old + 100 }` | new from old, small values | the value; the result replaces it |
-| `kasse.access fn(state) { … }` | in place, large values | **undecided** |
-
-`update` is settled by its own row: handed the old value, returns the new one,
-and `fn(old) { old + 100 }` is a lambda this language already has. `access` is
-not. Part II 12.2's own in-place example writes `to.balance += 100`, which
-mutates *through* the parameter — and a lambda's parameter has no spelling that
-says it may be mutated, so there is nothing for the compiler to read.
-
-**Three ways out.**
-
-* **(a) `access` hands a mutable reference, and a lambda may name one.** The
-  examples compile as written. It costs the language a new spelling in a
-  parameter list — `fn(mut state)` or `fn(&mut state)` — which is a change to
-  Part I 5.3's one lambda form, and 5.3 is the rule
-  [ADR-049](specification/adr/adr-049.md) was written to protect.
-* **(b) `access` hands a mutable reference and needs no spelling**, because the
-  callee's contract says the parameter is one — the same way
-  [ADR-029](specification/adr/adr-029.md) D1 already gives a lambda's parameters
-  their *types* from the signature rather than from the source. Nothing changes
-  in the grammar; what changes is that a lambda's parameter can be mutable
-  without the reader seeing it.
-* **(c) `access` goes, and `update` is the only lambda door.** A large value is
-  then updated by being handed back, which for a big struct is a move rather
-  than a mutation — and the row's own reason for existing ("in place, large
-  values") is exactly what that gives up.
-
-**What I would do: (b).** The precedent is already set and it is the one this
-language keeps citing — a lambda's parameters are described by the callee, not by
-the caller, because only the callee knows
-([ADR-029](specification/adr/adr-029.md) D1, [ADR-031](specification/adr/adr-031.md)).
-Mutability is the same kind of fact as the type, arrives from the same place, and
-adding a spelling for it in (a) buys a reader one word at the cost of a second
-lambda form across the whole language.
-
-**What it costs, and it is the real objection to (b):** `to.balance += 100`
-inside a lambda mutates something the line does not say is mutable, and this
-language's whole position on `mut` is that a reader can see it. The counter-case
-is that `access` is *named* `access` — a door whose purpose is mutating in
-place — so the mutation is in the construct rather than hidden by it. (a) is the
-answer if that is not enough, and it is not irreversible either way: a spelling
-can be added later without invalidating a lambda written without one.
-
----
-
-## 2. Does an un-annotated integer literal have a type?
+## 1. Does an un-annotated integer literal have a type?
 
 **Blocked by it:** the one remaining entry in
 [`open-work.md`](open-work.md) §1 — an out-of-range literal that nothing
@@ -145,7 +90,7 @@ in this compiler currently needs.
 
 ---
 
-## 3. Is there an unconditional loop?
+## 2. Is there an unconditional loop?
 
 **Blocked by it:** nothing is half-built, and that is why it is here rather than
 in `open-work.md` — there is nothing to build until this is answered.
@@ -177,7 +122,7 @@ costs a keyword, a reserved word, and a grammar rule.
 
 ---
 
-## 4. What may a program do at compile time?
+## 3. What may a program do at compile time?
 
 **Blocked by it:** compile-time I/O, and with it the **asset dimension of the
 build cache**, which is carried through `Key::build` and exercised by tests with
@@ -207,7 +152,7 @@ the grounds that nothing in the language needs one yet.
 
 ---
 
-## 5. How is a package named by a version?
+## 4. How is a package named by a version?
 
 **Blocked by it:** every dependency that is not a path.
 `nikaia.toml` refuses `http-server = "1.2"` and says why — no record names a
@@ -247,7 +192,7 @@ a project of its own.
 
 ---
 
-## 6. What **is** `std::http`?
+## 5. What **is** `std::http`?
 
 **Why it is here and not in the work list.** [ADR-058](specification/adr/adr-058.md)
 is accepted and none of it is built, which is ordinary; what is not ordinary is

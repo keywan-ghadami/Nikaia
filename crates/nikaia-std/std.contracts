@@ -621,21 +621,49 @@ pub = true
 sync = true
 signature = "(&Vec[?])"
 
-# Part II 12.2's lock, held for exactly one lambda
-# ([ADR-057](../../docs/specification/adr/adr-057.md)). Written down so the
-# checker can resolve it: without an entry a call to it is "a method nothing
-# describes", which costs the value its plain shape - and 12.2's own idiom
-# cannot be `sync`, which `docs/mutex-floor.md` §3.1 found before this existed.
+# Part II 12.2's four doors ([ADR-059](../../docs/specification/adr/adr-059.md)).
+# Written down so the checker can resolve them: without an entry a call is "a
+# method nothing describes", which costs the value its plain shape - and 12.2's
+# own idiom cannot be `sync`, which `docs/mutex-floor.md` §3.1 found before these
+# existed.
 #
-# `sync = "from(f)"` (ADR-029 D3): the lambda decides, which is the whole of
-# ADR-005 D6's rule - `access` itself never pauses, and what runs inside it is
-# the caller's own code. Waiting to acquire is not pausing: the rule is about a
-# suspension point while a lock is *held*, and the panic hook must be `sync` and
-# may block (Part I 7.2).
+# `sync = "from(f)"` (ADR-029 D3) on the two that take a lambda: the lambda
+# decides, which is the whole of ADR-005 D6's rule - the door itself never
+# pauses, and what runs inside it is the caller's own code. Waiting to acquire is
+# not pausing: the rule is about a suspension point while a lock is *held*, and
+# the panic hook must be `sync` and may block (Part I 7.2).
+#
+# `get` and `set` carry no `sync` line and need none, for a stronger reason than
+# the other two have: while the lock is open in either, no code of the user's
+# runs at all (ADR-039 D10).
+[fn."Locked::get"]
+pub = true
+sync = true
+signature = "(&Locked[$T]) -> $T"
+
+[fn."Locked::set"]
+pub = true
+sync = true
+signature = "(&Locked[$T], value: $T)"
+
+# **Reads in place and may not change what it is handed** (ADR-059 D1): the one
+# door that answers a question about a large value without copying it.
 [fn."Locked::access"]
 pub = true
 sync = "from(f)"
 signature = "(&Locked[$T], f: fn(&$T)) -> ?"
+
+# **Where locked data changes** (D2). The old value goes in by value and the new
+# one comes back, so no handle into the inside ever exists - and `old` is an
+# ordinary immutable parameter, which is why no lambda in this language is handed
+# something it may change.
+[fn."Locked::update"]
+pub = true
+sync = "from(f)"
+# `fn($T)` and not `fn($T) -> $T`: this ledger's type language has no result on a
+# lambda, which is a limit of the ledger rather than of the door. What it is read
+# for here is the arity and the `sync` column.
+signature = "(&Locked[$T], f: fn($T))"
 
 [fn."Vec::sort_by_key"]
 pub = true
