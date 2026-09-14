@@ -2086,10 +2086,11 @@ impl<'a> Checker<'a> {
                         message: format!(
                             "a `{SHARED}` around a lock is what `{SHARED_MUT}[{inside}]` is called"
                         ),
-                        notes: vec![format!(
-                            "the common case has the short name, and it is the only way to \
-                             write it - one type, one spelling (Part I, 6.2)"
-                        )],
+                        notes: vec![
+                            "the common case has the short name, and it is the only way \
+                                     to write it - one type, one spelling (Part I, 6.2)"
+                                .to_string(),
+                        ],
                         help: Some(format!("write `{SHARED_MUT}[{inside}]`")),
                     });
                 }

@@ -610,3 +610,68 @@ fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
         "a value a task takes is atomic in both hulls:\n{crossing}"
     );
 }
+
+/// **Four tasks on four threads, one lock, and the count is exact**
+/// ([ADR-045](../../../docs/specification/adr/adr-045.md) D2).
+///
+/// The one program neither half of this could run on its own, which is why it
+/// is here rather than beside either. The lock had to be a **type**
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md)) — it was an
+/// annotation that went into the language below untranslated — and a task had
+/// to be a **thread** ([ADR-055](../../../docs/specification/adr/adr-055.md) §6
+/// step 1's `yes` half), which it was not: every task interleaved on the one
+/// thread, so a lock in one was a lock nobody contended for.
+///
+/// D2's sentence is *"a lock may go into a task of your own, at both
+/// settings"*, and at `yes` that means what it sounds like: four threads, a
+/// real operating-system lock underneath, and 40 000 increments that add up.
+/// A count that came out short would be the lock failing to be one; at `no` the
+/// same program has to print the same number, which is the *uniform API* of
+/// Part II 11.2 applied to the thing hardest to keep uniform.
+#[test]
+fn a_lock_shared_by_four_tasks_counts_every_increment() {
+    const SHARED_COUNTER: &str = "\
+fn bump(counter: SharedMut[i64], times: i64) {
+    let mut i = 0
+    while i < times {
+        counter.update fn(old) { old + 1 }
+        i = i + 1
+    }
+}
+
+fn main() {
+    let counter = SharedMut(0)
+    let a = spawn fn { bump(counter, 2500) }
+    let b = spawn fn { bump(counter, 2500) }
+    let c = spawn fn { bump(counter, 2500) }
+    let d = spawn fn { bump(counter, 2500) }
+    a.join()
+    b.join()
+    c.join()
+    d.join()
+    println(f\"{counter.get()}\")
+}
+";
+
+    for setting in ["no", "yes"] {
+        let (printed, rust) = run(
+            &format!("lock-in-tasks-{setting}"),
+            SHARED_COUNTER,
+            &["--user-parallelism", setting],
+        );
+        assert_eq!(
+            printed.trim(),
+            "10000",
+            "`{setting}`: every increment has to be in the total"
+        );
+        // The lowering is what says the tasks are on threads at all: at `yes`
+        // the pool's starter, which is where the `Send` bound is, and at `no`
+        // the one-thread queue, which has none.
+        let on_the_pool = rust.contains("start_on_pool");
+        assert_eq!(
+            on_the_pool,
+            setting == "yes",
+            "`{setting}` picked the wrong executor:\n{rust}"
+        );
+    }
+}

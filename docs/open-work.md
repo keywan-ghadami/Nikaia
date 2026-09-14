@@ -136,12 +136,14 @@ reserved would first be missed, if it is missed at all.
 [ADR-055](specification/adr/adr-055.md) §2 D6's third sharp edge, and the last
 thing that record decided which the compiler does not do.
 
-**The mechanism is built.** `spawn` lowers at both settings; at
-`user_parallelism = yes` a task goes to `rt::pool`, a queue of futures over the
-same worker count, and four tasks of the same size take 1.58 s at `no` against
-0.65 s at `yes` on four cores. Part II 12.2's counter runs on more than one core,
-and [ADR-045](specification/adr/adr-045.md) D2's lock in a task waits on the
-lock's **type** rather than on an executor.
+**The mechanism is built, and so is everything it was waiting on.** `spawn`
+lowers at both settings; at `user_parallelism = yes` a task goes to `rt::pool`, a
+queue of futures over the same worker count, and four tasks of the same size take
+1.58 s at `no` against 0.65 s at `yes` on four cores. Part II 12.2's counter runs
+on more than one core, and since [ADR-064](specification/adr/adr-064.md) gave the
+lock its type, [ADR-045](specification/adr/adr-045.md) D2's lock in a task is a
+program: four tasks bumping one `SharedMut[i64]` on four threads print every
+increment (`a_lock_shared_by_four_tasks_counts_every_increment`).
 
 **What is missing is the diagnostic.** The pool's starter asks for `Send`,
 because a task may be polled on a thread that did not start it — so a task
@@ -162,11 +164,22 @@ question between the two.
 refused. It is a message in the wrong words, which is the same class as every
 entry this file has closed by moving a refusal from `rustc` into the compiler.
 
-*Evidence that it is narrow today:* a `Shared[T]` at `yes` is an atomic count
-([ADR-061](specification/adr/adr-061.md) D1), a view and a number are `Send`, and
-`Locked[T]` is not a type the backend builds — so the shapes that would hit it
-are mostly ones a program cannot write yet. That is the reason to build it
-**before** they can: a refusal costs nothing before programs exist.
+*Evidence, and it is that the gap is currently **unreachable** rather than
+narrow.* The two shapes that could carry a non-`Send` future are chosen per value
+by an inference that already sees the crossing, so at `yes` they come out
+crossing-safe wherever a task can reach them: a `Shared[Note]` bound inside a
+task body and held across a file read lowers to `std::sync::Arc`
+([ADR-037](specification/adr/adr-037.md) D7), and a `SharedMut[i64]` to
+`Arc<lock::Crossing<…>>` ([ADR-064](specification/adr/adr-064.md)). Both were
+compiled and run to check it. Everything else a program can write — a number, a
+`bool`, a `char`, a view, a struct of those — crosses anyway.
+
+So no program this compiler can lower produces a task future that is not `Send`,
+and **that is the reason to build the refusal now rather than a reason not to**:
+a refusal costs nothing before there are programs it would reject, and the same
+refusal added afterwards breaks them. What would reach it first is a type from
+outside this language — a foreign value bound inside a task body and still live
+at a suspension point, where `NK2501`'s capture check never looks.
 
 **And [ADR-040](specification/adr/adr-040.md) D1's task half is closed rather
 than waiting:** the analysis names a `spawn` body's handle as a duplication site,

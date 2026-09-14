@@ -111,6 +111,16 @@
 - One level deep, because one level is what is read: what a dependency's own dependencies are called is that crate's business (D3), and nothing below the level `modules::collect_with` reads is in this program's ledger to be renamed.
 - The test runs rather than only builds — the value is made in one package and read in another, so two types that were really two would say so in the generated Rust — and the library's key is deliberately a word the program never writes. `open-work.md` is one entry shorter, and the order list one item.
 
+### Added (a lock shared by four tasks, on four threads, counts every increment)
+
+- **[ADR-045](docs/specification/adr/adr-045.md) D2 was checked and unrunnable for two different reasons, and both are gone.** The lock was not a type the backend could lower, so a program writing one reached the crossing verdict and then failed to emit; and a task was not a thread, so a lock inside one was a lock nobody contended for. [ADR-064](docs/specification/adr/adr-064.md) gave the type its name and its constructor, [ADR-055](docs/specification/adr/adr-055.md) §6 step 1's `yes` half gave a task a thread — and the program neither half could run now runs: four tasks bumping one `SharedMut[i64]` 2 500 times each print **10 000**, and the same source prints the same number at `no`.
+- The test asserts the lowering too, because that is what says the tasks are on threads at all: the pool's starter at `yes`, where the `Send` bound is, and the one-thread queue at `no`, which has none.
+- **And the `Send` gap turns out to be unreachable rather than narrow**, which is worth writing down because it changes why it should be built. The two shapes that could carry a non-`Send` task future are chosen per value by an inference that already sees the crossing: a `Shared[Note]` bound inside a task body and held across a file read lowers to `std::sync::Arc`, and a `SharedMut[i64]` to `Arc<lock::Crossing<…>>`. Both were compiled and run to check it. So no program this compiler can lower produces one — which is the reason to add the refusal **now**, since it costs nothing before there is anything it would reject.
+
+### Fixed (a lint that was red on main)
+
+- `clippy::useless_format` on `NK1123`'s note. The gates are all six or none.
+
 ### Added (a task runs on a thread of its own, at `user_parallelism = yes`)
 
 - **[ADR-055](docs/specification/adr/adr-055.md) §6 step 1's second half, which is the last mechanism that record was waiting on.** Four tasks of the same size take **1.58 s** at `no` and **0.65 s** at `yes` on four cores. Part II 12.2's counter — the program the switch exists to serve — runs on more than one core now, and nothing in `open-work.md`'s order list waits on a thread any more.
