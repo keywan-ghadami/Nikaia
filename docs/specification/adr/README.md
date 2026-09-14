@@ -187,7 +187,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
-| — | nothing is claimed right now | |
+| 061 | A `Shared` does not go to code nothing describes, so at one user thread its count is plain | this session |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
