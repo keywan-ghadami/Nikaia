@@ -54,8 +54,66 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**This section is empty again**, and the last entry to leave it is worth a
-sentence, because it left the opposite way from how it was filed. It was filed
+### 1.1. A name the language below reserves goes into the generated file unescaped
+
+*Reproduced:*
+
+```nika
+fn main() {
+    let trait = 3
+    println(f"{trait}")
+}
+```
+
+lowers to `let trait = 3;` and `rustc` answers
+
+```text
+error: expected identifier, found keyword `trait`
+help: escape `trait` to use it as an identifier
+```
+
+about a file nobody wrote, with advice that means nothing in this language —
+[Part III C.1](specification/30-nikaia-tooling.md)'s class exactly.
+
+*Measured, because the instance is not the point:* **24 words**, swept by
+lowering `let W = 3` for every Rust keyword and reserved word this language does
+not reserve, and reading `rustc`'s own *"found keyword"* rather than its exit
+status (two controls that are ordinary names came back clean, which is what says
+the sweep measures the right thing):
+
+```text
+dyn extern mod move ref static trait type unsafe where async await
+abstract become do final macro override priv typeof unsized virtual yield try
+```
+
+`crate`, `super`, `box`, `gen` and `union` are **not** among them: Rust takes
+those as identifiers in this position. So it is the language below's list and not
+a guess about it.
+
+*And not only at a `let`.* A field, a parameter and a function's own name go the
+same way — `struct Row { type: i64 }`, `fn type_of(type: i64) -> i64 { type }`
+are both written out verbatim.
+
+*Why it is a defect and not a reservation question:* the obvious move is to
+reserve these 24 words in Nikaia, and it is the wrong one.
+[ADR-051](specification/adr/adr-051.md) D1's rule is about words **this**
+language needs; `type`, `move`, `ref` and `static` are perfectly good Nikaia
+names and forbidding them for a Rust reason would let the backend decide what
+Nikaia's vocabulary is. The cause is [ADR-011](specification/adr/adr-011.md) D2 —
+the emitter writes a name for a name — so the fix belongs where the name is
+written: one rule that escapes what the language below reserves (`r#trait`),
+which is [ADR-056](specification/adr/adr-056.md)'s *a rule and not a list* applied
+to the same boundary one position over. **This needs a record, and the record is
+one decision wide.**
+
+*Found by* Part I 4.7's own `trait Summarize { … }` not parsing, which is §2.13
+below. The keyword is not reserved *and* not a construct, and the second was
+already written down while the first was not.
+
+**One entry, found while answering what to do next**, and it arrived the way the
+last one did: a test — here a program from the specification's own page — reached
+for something and did not find it (§1.1). The entry that *left* this section is
+still worth a sentence, because it left the opposite way from how it was filed. It was filed
 as *"refuse the form until the roadmap's box is taken"*, on this section's own
 principle that a refusal is free before programs exist. What it got instead was
 the box — and the measurement is why: the entry's own note said writing the
@@ -450,6 +508,46 @@ not among the reserved words. So the analysis other languages need for this
 question is, here, one test on the condition. The polarity is the usual one: say
 *"cannot be reached"* only where the condition is the literal, never where it is a
 name that happens to be true.
+
+### 2.13. Part I 4.7's `trait` declaration is a parse error, and generics now wait on it
+
+*Reproduced:*
+
+```nika
+trait Summarize {
+    fn summary(&self) -> String
+}
+```
+
+```text
+t1.nika: Parse error:
+expected end of input; found unexpected token `trait` at line 1, column 1
+note: also possible here: `//`, `@borrowed`, `enum`, `fn`, `impl`, `pub`, `use`, item
+```
+
+Part I 4.7 writes that block as its own example and the section's Status note
+says so — but the note is the only place it is written down, and a Status note is
+not this list. So the item that the specification's own example needs has never
+been in the list that knows what each thing costs, which is how it went unranked.
+
+*Why it is now load-bearing rather than merely missing.*
+[ADR-074](specification/adr/adr-074.md) §4 names it as the prerequisite for a
+**bound**: `[T: Summarize]` names a trait, and a trait can currently be
+implemented and not declared. So generics are built up to the point where a
+generic body may move and pass its value and nothing else — `NK1126` says
+exactly that to the user — and the next thing that makes them worth having is
+this.
+
+*What it needs, in the order the pieces depend on each other:* the keyword
+reserved (it is not, §1.1's sweep found it as a name); the item in the grammar;
+the method signatures recorded in the ledger so a bound can be looked up; then
+`[T: Bound]` on a parameter, and the checker answering `NK1126` from what the
+bound gives instead of refusing. Four steps, and only the last is about generics.
+
+*What is already built and is the reason this is a step and not a project:*
+`impl Summarize for User` works, and the ledger already records what a method
+signature is. What is missing is a **declaration** to check an `impl` against and
+to name in a bound.
 
 ---
 
