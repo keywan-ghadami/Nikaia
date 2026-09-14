@@ -147,6 +147,19 @@
 - One level deep, because one level is what is read: what a dependency's own dependencies are called is that crate's business (D3), and nothing below the level `modules::collect_with` reads is in this program's ledger to be renamed.
 - The test runs rather than only builds — the value is made in one package and read in another, so two types that were really two would say so in the generated Rust — and the library's key is deliberately a word the program never writes. `open-work.md` is one entry shorter, and the order list one item.
 
+### Fixed (`HashMap::get` said a key is always there, and refused the program that asks whether it is)
+
+- **A wrong entry, not a thin one**, and the difference is what it cost. The ledger wrote `HashMap::get` as `-> $V` where Rust's hands back an `Option<&V>`. So `counts.get(k)?.n` — the honest Nikaia spelling — was refused as `NK1121`, *"reaches through a `Tally`, which cannot be absent"*, while `counts.get(k).map_or(0, …)` compiled by reaching Rust's `Option` surface through the hole. **The ledger refused the correct program and accepted the one this language has its own words for**, which is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s rule standing on its head.
+- `-> $V?` now, and both halves follow: `counts.get(k)?.n ?? 0` runs, and `.map_or` on the result is refused as `NK1125` with `?.` named as the way out — correct, since a method of `Option` is not a member of a `T?` in this language.
+- `examples/k-nucleotide.nika` is one line of Nikaia rather than one line of Rust: `counts.get(fragment)?.n ?? 0`. A comment says what it used to be and why.
+- **A test lost its example and kept its rule.** `a_value_from_an_unwritten_signature_fits_anywhere` used `cli::args().nth(1)` *as* the unwritten signature; that entry exists now, so it takes `String::to_uppercase` instead — and a second test holds the half the old example can no longer show: a signature that **is** written is measured against the parameter (`NK1102`).
+
+### Added (the ledger says what it can say: every known receiver now resolves)
+
+- **The 16 that were sayable today, filled** — `open-decisions.md` §6's first option, taken. `Args::nth` as `(&Args, at: i64) -> String?` (six example programs open with `cli::args().nth(1) ?? "…"`, and the `??` stood on a value of no type), `String::push` as `(&String, c: char)`, and `HashMap::get`'s correction above.
+- **Measured before and after, and the prediction held exactly.** Across the fifteen corpus `.nika` files: **51 → 35** unresolved method calls, and the *no-entry* bucket is **0** — every call whose receiver type is known now resolves. **None of the 35** went: the cascade is untouched, which is what §6 said these entries would and would not buy.
+- So the remaining number is now entirely one thing — a receiver that was already `?` — and §6's second option, an iterator type for the ledger, is where it lives. The measurement is repeated there.
+
 ### Measured (where this compiler cannot work a type out, and what it would cost to change)
 
 - **51 unanswered method calls across the fifteen `.nika` files** in `examples/`, `tests/samples/` and `crates/nikaia-std/src/`. **16** are a known receiver whose method no entry describes — `Args::nth` (10), `String::push` (5), `Tally::map_or` (1). The other **35** are a receiver that was **already** `?`: the cascade. Its roots are 24 a local or parameter, 6 a method call whose own result was `?`, 4 a field, 1 a free call.

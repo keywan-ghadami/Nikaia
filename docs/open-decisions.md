@@ -298,9 +298,10 @@ compiler can answer at all — a cost that is paid everywhere and shows up nowhe
 as a failure, which is the kind this file exists to make visible (§4's own
 reason).
 
-**Measured first.** Across the fifteen `.nika` files in `examples/`,
-`tests/samples/` and `crates/nikaia-std/src/`, **51** method calls go unanswered.
-By immediate cause:
+**Measured first, and then measured again after the cheap half was taken.**
+Across the fifteen `.nika` files in `examples/`, `tests/samples/` and
+`crates/nikaia-std/src/`, **51** method calls went unanswered. By immediate
+cause:
 
 | | calls | |
 | ---: | :--- | :--- |
@@ -309,6 +310,11 @@ By immediate cause:
 
 And the cascade's roots: 24 a local or parameter, 6 a method call whose own
 result was `?`, 4 a field, 1 a free call.
+
+**The third option below has since been taken**, and it bought exactly what it
+was predicted to: **51 → 35**, with the *no-entry* bucket at **0** — every call
+whose receiver type is known now resolves — and **not one** of the 35 gone. So
+what is left is one thing, and it is this question.
 
 **The finding that makes this a question rather than a work item.** The roots are
 mostly **not** missing entries. `HashMap::keys` has one — and it says `-> ?`:
@@ -350,12 +356,16 @@ written against the receiver can name.
   the **type language**, which nothing else in the compiler has needed yet.
 * **Fill only what is sayable today**: `Args::nth`, `String::push`, and the
   entries whose result is a concrete type. That closes 16 of the 51 and none of
-  the cascade, and it is worth doing either way.
+  the cascade, and it is worth doing either way. **Done** — and one of the three
+  turned out not to be a missing entry at all: `HashMap::get` claimed `-> $V`
+  where a key may not be there, which refused `counts.get(k)?.n` and accepted
+  `counts.get(k).map_or(…)`. A wrong entry costs more than a thin one.
 
-**What I would do: the third now, the second as a decision.** The third is
-ordinary ledger work with a measured payoff and no new machinery. The second is
-where the remaining two thirds are, and it is a question about what a contract
-can *say* — which is the owner's, not a thing to start building on a guess.
+**The third is done; the second is the decision.** The third was ordinary ledger
+work with a measured payoff and no new machinery, and it is finished. The second
+is where **all 35** of what is left now are, and it is a question about what a
+contract can *say* — which is the owner's, not a thing to start building on a
+guess.
 
 **What it is not.** It is not [ADR-028](specification/adr/adr-028.md) D5 being
 wrong. An entry exists because a program asked for it, and every entry named here

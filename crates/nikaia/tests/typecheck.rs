@@ -551,13 +551,28 @@ fn a_parameter_that_accepts_several_types_claims_none() {
 }
 
 /// Both directions of the rule at once: an unknown on either side fits.
+///
+/// **The example used to be `cli::args().nth(1)`**, and it stopped being one:
+/// that entry is written down now, so the value has a `String?` and handing it
+/// to an `i32` is an ordinary mismatch rather than a claim about nothing. A
+/// method no ledger describes is what this is about, and `String::to_uppercase`
+/// is one - so the test keeps testing the rule instead of the corpus.
 #[test]
 fn a_value_from_an_unwritten_signature_fits_anywhere() {
     assert!(findings(
         "fn takes(a: i32) { }\n\
-         fn main() { takes(cli::args().nth(1)) }"
+         fn main() { let s = \"x\".to_string() takes(s.to_uppercase()) }"
     )
     .is_empty());
+}
+
+/// **And a signature that *is* written is checked**, which is the other half of
+/// the same rule and what the example above stopped being able to show.
+#[test]
+fn a_value_from_a_written_signature_is_measured_against_the_parameter() {
+    let (code, _) = one("fn takes(a: i32) { }\n\
+         fn main() { takes(cli::args().nth(1)) }");
+    assert_eq!(code, "NK1102", "a `String?` is not an `i32`");
 }
 
 // --- the migration warning (ADR-035 D5) --------------------------------------
