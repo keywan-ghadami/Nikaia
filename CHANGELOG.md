@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed (the word is `comptime`)
+
+- **[ADR-077](docs/specification/adr/adr-077.md) amends [ADR-073](docs/specification/adr/adr-073.md) D1's spelling and nothing else.** `const` was taken without an argument because it is the word every neighbouring language uses, and it is wrong **here** for a reason only this language has: Part I 2.1 already makes every binding immutable unless it says `mut`, so a keyword meaning *this one does not change* distinguishes nothing. What the declaration promises is a **time** — evaluated while the program is built, refused if it cannot be — and `comptime` is what says that.
+- **Zig is the precedent and the mirror.** The language that made compile-time evaluation a first-class stage did not call it `const` either — and calls *its* immutable binding `const`, which is the opposite assignment, for a language whose default is the other way round.
+- **`const` stays reserved rather than released** (D2), on [ADR-050](docs/specification/adr/adr-050.md) D7's polarity: un-reserving is the free direction and reserving is not. It is the first thing a reader arriving from another language will type, and a reserved word can be given a message where a name cannot — `` `const` is a reserved word, so it is not a name ``. The list goes from 33 to 34: one keyword **more**, not one instead.
+- **The word does not travel downwards** (D3). What the emitter writes is Rust's `const`, because that is Rust's name for the same slot: `comptime LIMIT = 4 * 1024` arrives as `const LIMIT: i32 = 4096;`. The test that covers the lowering now says which word is on which side, so it does not read as an inconsistency.
+- Everything else [ADR-073](docs/specification/adr/adr-073.md) decided stands: where it may stand, the optional type, that the fold *must* succeed, what may be in the initialiser, and that it is a value rather than a place. `NK1127` keeps its number and changes one word.
+- Caught on the way: the reserved-word array had been re-wrapped by `cargo fmt` since it was last edited, so a replacement matched nothing and passed silently. The specification's table and `RESERVED_WORDS` are compared mechanically again — 34 against 34.
+
 ### Fixed (a name the language below reserves no longer reaches it unescaped)
 
 - **[ADR-076](docs/specification/adr/adr-076.md).** `let type = 3` lowered to `let type = 3;` and `rustc` answered *"expected identifier, found keyword `type`"* about a file nobody wrote, with *"escape `type` to use it as an identifier"* as the help — advice that means nothing in this language. [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class, and this compiler had it in **every** position a name can stand in: a local, a parameter, a field, a function's own name, a struct, an enum, a variant, a lambda's argument, a `for` binding.

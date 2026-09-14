@@ -1,10 +1,10 @@
-//! **`const`** — Part II 10.2,
+//! **`comptime`** — Part II 10.2,
 //! [ADR-073](../../../docs/specification/adr/adr-073.md).
 //!
 //! The keyword's whole content is a **demand** rather than an ability (D3). The
 //! compiler folded constants before this existed — a `let` bound to `2 * 3` is
 //! folded twice on the way through ([ADR-063](../../../docs/specification/adr/adr-063.md))
-//! — so what `const` adds is that the fold *has* to succeed, and that a program
+//! — so what `comptime` adds is that the fold *has* to succeed, and that a program
 //! which cannot be folded is refused rather than quietly computed while it runs.
 //!
 //! That is what these tests are about, in both directions: what reaches the
@@ -42,7 +42,7 @@ fn run(purpose: &str, source: &str) -> String {
     let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
     assert!(
         built.status.success(),
-        "a `const` did not compile:\n{}\n--- emitted ---\n{rust}",
+        "a `comptime` did not compile:\n{}\n--- emitted ---\n{rust}",
         String::from_utf8_lossy(&built.stderr)
     );
     let ran = Command::new(&binary)
@@ -60,16 +60,21 @@ fn run(purpose: &str, source: &str) -> String {
 }
 
 const FOUR: &str = "fn main() {\n\
-     \x20   const LIMIT = 4 * 1024\n\
-     \x20   const BIG = 3000000000\n\
-     \x20   const WIDE: i64 = 7\n\
-     \x20   const ON = true\n\
+     \x20   comptime LIMIT = 4 * 1024\n\
+     \x20   comptime BIG = 3000000000\n\
+     \x20   comptime WIDE: i64 = 7\n\
+     \x20   comptime ON = true\n\
      \x20   println(f\"{LIMIT} {BIG} {WIDE} {ON}\")\n\
      }";
 
 /// **The arithmetic does not survive into the program**, which is the visible
 /// half of D3: a reader of the generated file can see that `4 * 1024` was done
 /// while the program was built.
+///
+/// Note which word is on which side. Nikaia writes `comptime`, because the
+/// keyword says *when* rather than *whether it changes*
+/// ([ADR-077](../../../docs/specification/adr/adr-077.md)); the language below
+/// writes `const`, because that is Rust's word for the same slot.
 #[test]
 fn what_reaches_the_language_below_is_the_folded_value() {
     let rust = lower(FOUR);
@@ -99,16 +104,16 @@ fn the_type_is_written_or_the_first_one_that_holds_it() {
 /// And it runs, which is the part no amount of reading the emitted file
 /// replaces.
 #[test]
-fn a_program_with_constants_compiles_and_prints_them() {
-    assert_eq!(run("const-four", FOUR).trim(), "4096 3000000000 7 true");
+fn a_program_with_comptime_bindings_compiles_and_prints_them() {
+    assert_eq!(run("comptime-four", FOUR).trim(), "4096 3000000000 7 true");
 }
 
 /// **What does not fold is refused, not computed later** (D3, D5). The way out
 /// is in the message, and it is `let`: the program may well want the value
 /// computed while it runs, and then it was never a constant.
 #[test]
-fn a_constant_this_compiler_cannot_evaluate_is_refused_by_name() {
-    let found = findings("fn main() { const GREET = \"hallo\" println(f\"{GREET}\") }");
+fn a_comptime_binding_this_compiler_cannot_evaluate_is_refused_by_name() {
+    let found = findings("fn main() { comptime GREET = \"hallo\" println(f\"{GREET}\") }");
     let refused: Vec<&Finding> = found.iter().filter(|f| f.code == "NK1127").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
     let said = &refused[0];
@@ -127,13 +132,13 @@ fn a_constant_this_compiler_cannot_evaluate_is_refused_by_name() {
 
 /// A constant reached **through another constant** folds, which is what makes
 /// the fold's lookup worth having here: `constant_of` asks the scope, and a
-/// `const` puts its value there the way an immutable `let` does.
+/// `comptime` puts its value there the way an immutable `let` does.
 #[test]
-fn a_constant_may_be_built_out_of_another() {
+fn a_comptime_binding_may_be_built_out_of_another() {
     let rust = lower(
         "fn main() {\n\
-         \x20   const PAGE = 4096\n\
-         \x20   const PAIR = PAGE * 2\n\
+         \x20   comptime PAGE = 4096\n\
+         \x20   comptime PAIR = PAGE * 2\n\
          \x20   println(f\"{PAIR}\")\n\
          }",
     );
@@ -144,6 +149,6 @@ fn a_constant_may_be_built_out_of_another() {
 /// has nothing for a second assignment to reach. It does not parse at all,
 /// which is the cheapest place to say so.
 #[test]
-fn a_constant_cannot_be_mutable() {
-    assert!(parse_to_ast("fn main() { const mut X = 1 }").is_err());
+fn a_comptime_binding_cannot_be_mutable() {
+    assert!(parse_to_ast("fn main() { comptime mut X = 1 }").is_err());
 }

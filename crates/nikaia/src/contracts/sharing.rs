@@ -1022,7 +1022,7 @@ impl<'a> Analysis<'a> {
             // does not admit into an initialiser yet. So there is no count to
             // record and no second handle to find. The day D5's second stage
             // lands, this arm is where the question is asked again.
-            Stmt::Const { .. } => {}
+            Stmt::Comptime { .. } => {}
 
             Stmt::Assign { target, value, .. } => {
                 // `a = b` makes `a` a handle on `b`'s allocation - and `a` may

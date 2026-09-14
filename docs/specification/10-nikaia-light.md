@@ -116,17 +116,24 @@ These words mean one thing wherever they appear, so a name may not be one of the
 ([ADR-051](adr/adr-051.md) D1):
 
 ```text
-as      break   catch   const     continue dsl     else    enum
-false   fn      for     from      grammar  if      impl    in
-let     loop    match   mut       null     overlap pub     return
-self    spawn   struct  sync      throw    throws  true    use
-while
+as       break   catch   comptime  const    continue dsl     else
+enum     false   fn      for       from     grammar  if      impl
+in       let     loop    match     mut      null     overlap pub
+return   self    spawn   struct    sync     throw    throws  true
+use      while
 ```
 
-**`const` is on the list for the opposite reason to the next three**: it is
-reserved *for* a construct rather than against the possibility of one
-([ADR-073](adr/adr-073.md) D1) — and since it is a statement inside a function
-body, the word is doing the job it was reserved for (Part II, 10.2).
+**`comptime` is on the list for the opposite reason to the four after it**: it is
+reserved *for* a construct rather than against the possibility of one, and the
+construct exists — a statement inside a function body (Part II, 10.2).
+
+**`const` is reserved and is not that construct** ([ADR-077](adr/adr-077.md)).
+The word every neighbouring language uses would say *this one does not change*,
+and 2.1 already gives that to every binding that does not say `mut` — so it would
+distinguish nothing. What the declaration promises is a **time**, and `comptime`
+is what says so. `const` stays on the list rather than becoming an ordinary name,
+because it is the first thing a reader arriving from another language will type,
+and a reserved word can be given a message where a name cannot.
 
 **`break`, `continue` and `loop` are on the list and are not constructs**
 ([ADR-071](adr/adr-071.md) D2). Reserving a word is not adding one: `break` and
@@ -2056,9 +2063,10 @@ Nikaia enforces strict encapsulation to prevent tight coupling between parts of 
 1.  **Private to its package, by default:**
     * Functions, Structs, Enums and Constants are visible inside the **package**
       that declares them — every file of that directory — and nowhere else. (A
-      `const` at **item level** is decided and unbuilt: inside a function body it
-      is a statement today, and `pub const` at the top of a file has nowhere to
-      stand yet — [ADR-073](adr/adr-073.md) D2.)
+      `comptime` binding at **item level** is decided and unbuilt: inside a
+      function body it is a statement today, and `pub comptime` at the top of a
+      file has nowhere to stand yet — [ADR-073](adr/adr-073.md) D2,
+      [ADR-077](adr/adr-077.md) for the word.)
     * Struct fields are the same: visible throughout the package that declares
       the struct.
 

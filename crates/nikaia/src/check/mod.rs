@@ -115,7 +115,7 @@ pub struct MethodCalls {
 pub struct Checked {
     /// Every mistake it is sure about.
     pub findings: Vec<Finding>,
-    /// What each `const` is written as below - its type and its **value** - by
+    /// What each `comptime` is written as below - its type and its **value** - by
     /// the byte its statement starts at
     /// ([ADR-073](../../docs/specification/adr/adr-073.md) D3, D4).
     ///
@@ -130,7 +130,7 @@ pub struct Checked {
     ///
     /// Both are spelled in the language below, so the emitter writes the pair
     /// and decides nothing.
-    pub constants: BTreeMap<usize, (String, String)>,
+    pub comptime_values: BTreeMap<usize, (String, String)>,
     /// The `for` statements whose **step can fail** (ADR-025 D1), by the byte
     /// the statement starts at.
     ///
@@ -431,8 +431,8 @@ pub struct Propagation {
     pub nullable_in_args: BTreeMap<(usize, String, usize), Wrap>,
     /// [`Checked::task_handles`].
     pub task_handles: BTreeSet<(usize, String)>,
-    /// [`Checked::constants`].
-    pub constants: BTreeMap<usize, (String, String)>,
+    /// [`Checked::comptime_values`].
+    pub comptime_values: BTreeMap<usize, (String, String)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -466,15 +466,15 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         nullable_in_fields: checked.nullable_fields,
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
-        constants: checked.constants,
+        comptime_values: checked.comptime_values,
     }
 }
 
-/// How a `const`'s type is spelled in the language below, where this compiler
+/// How a `comptime`'s type is spelled in the language below, where this compiler
 /// can spell it ([ADR-073](../../docs/specification/adr/adr-073.md) D5).
 ///
 /// **A short list on purpose.** Rust's `const` takes a type and no inference,
-/// so a Nikaia type this cannot name is a `const` this cannot write - and
+/// so a Nikaia type this cannot name is a `comptime` this cannot write - and
 /// `None` here becomes `NK1127` rather than a guess. The list grows with D5's
 /// stages: a `String` is missing because Rust has no `const String`, and what
 /// a literal string would become - a `&'static str` - is a different type from
@@ -1653,7 +1653,7 @@ impl<'a> Checker<'a> {
                 Ty::Tuple(Vec::new())
             }
 
-            // **`const` is a `let` that has to fold**
+            // **`comptime` is a `let` that has to fold**
             // ([ADR-073](../../docs/specification/adr/adr-073.md) D3). The fold
             // is the one [ADR-063](../../docs/specification/adr/adr-063.md)
             // already shares, so nothing new evaluates anything: what this arm
@@ -1663,10 +1663,10 @@ impl<'a> Checker<'a> {
             // **Refused by name rather than run at program time** (D5). Falling
             // back would break the promise the word is for, and quietly - the
             // program would still work and the guarantee would be gone.
-            Stmt::Const { name, ty, value } => {
+            Stmt::Comptime { name, ty, value } => {
                 let found = self.expr(value, span);
                 let bound = self.parsed.text(*name).to_string();
-                self.nameable(&bound, span, "a `const`");
+                self.nameable(&bound, span, "a `comptime`");
                 let want = ty.as_ref().map(|ty| self.declared(ty, span));
                 if let Some(want) = &want {
                     self.constant_fits(value, Some(want), span);
@@ -1705,7 +1705,7 @@ impl<'a> Checker<'a> {
                 match (&below, &written) {
                     (Some(below), Some(written)) => {
                         self.checked
-                            .constants
+                            .comptime_values
                             .insert(span.start, (below.clone(), written.clone()));
                     }
                     _ => self.checked.findings.push(Finding {
@@ -1714,7 +1714,7 @@ impl<'a> Checker<'a> {
                         span: span.clone(),
                         message: format!("this compiler cannot evaluate `{bound}` while it builds"),
                         notes: vec![
-                            "a `const` is a `let` that *must* fold, so one that cannot is \
+                            "a `comptime` is a `let` that *must* fold, so one that cannot is \
                              refused rather than computed while the program runs (Part II, 10.2)"
                                 .to_string(),
                             "what it evaluates today is an integer - a literal, arithmetic \

@@ -52,7 +52,7 @@ Used in a `const`, the parser runs *during the build*. If the input is invalid, 
 ```nika
 // The compiler runs the Json grammar at build time.
 // If "config.json" is malformed, the build stops.
-const CONFIG: Json::Value = dsl Json from "config.json"
+comptime CONFIG: Json::Value = dsl Json from "config.json"
 ```
 
 **B. Dynamic Parsing (Runtime)**
@@ -65,19 +65,21 @@ fn parse_input(input: String) throws {
 }
 ```
 
-> **Status:** **B is built and A is half.** `const` is a **declaration inside a
-> function body** ([ADR-073](adr/adr-073.md) D2): it parses, its initialiser is
-> evaluated while the program is built, and what reaches the language below is the
-> value rather than the expression — `const LIMIT = 4 * 1024` arrives as `4096`.
-> At **item level** it is still a parse error, so a constant at the top of a file
-> has nowhere to stand yet.
+> **Status:** **B is built and A is half.** `comptime` is a **declaration inside a
+> function body** ([ADR-073](adr/adr-073.md) D2, and [ADR-077](adr/adr-077.md) for
+> the word — `const` would have named immutability, which 2.1 already gives every
+> binding): it parses, its initialiser is evaluated while the program is built,
+> and what reaches the language below is the value rather than the expression —
+> `comptime LIMIT = 4 * 1024` arrives as `const LIMIT: i32 = 4096;`, in Rust's
+> word for the same slot. At **item level** it is still a parse error, so the
+> example above has nowhere to stand yet.
 >
 > What the initialiser may hold is D5's first stage: an integer — a literal,
 > arithmetic over literals and over other constants — and `true` or `false`. **A
-> call is not in it**, so the `dsl … from "…"` above still has nothing to stand in
-> and runs at runtime wherever it is written. A `const` this compiler cannot
-> evaluate is `NK1127` rather than a value computed later, which is D3's demand
-> doing its one job.
+> call is not in it**, so the `dsl … from "…"` above still runs at runtime
+> wherever it is written. A `comptime` binding this compiler cannot evaluate is
+> `NK1127` rather than a value computed later, which is D3's demand doing its one
+> job.
 >
 > **What the declaration will mean is decided** ([ADR-073](adr/adr-073.md)): it
 > stands where an item stands and inside a body, its type may be written and does

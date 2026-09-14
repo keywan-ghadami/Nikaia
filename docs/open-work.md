@@ -500,9 +500,9 @@ bound gives instead of refusing. Four steps, and only the last is about generics
 signature is. What is missing is a **declaration** to check an `impl` against and
 to name in a bound.
 
-### 2.14. A `const` at item level has nowhere to stand
+### 2.14. A `comptime` binding at item level has nowhere to stand
 
-*Reproduced:* `const MAX = 1000` at the top of a file is a parse error; the same
+*Reproduced:* `comptime MAX = 1000` at the top of a file is a parse error; the same
 line inside a function body parses, folds and runs.
 
 *Why it is work and not a question:*

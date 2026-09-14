@@ -133,10 +133,10 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 33] = [
-    "as", "break", "catch", "const", "continue", "dsl", "else", "enum", "false", "fn", "for",
-    "from", "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap", "pub",
-    "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use", "while",
+pub const RESERVED_WORDS: [&str; 34] = [
+    "as", "break", "catch", "comptime", "const", "continue", "dsl", "else", "enum", "false", "fn",
+    "for", "from", "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap",
+    "pub", "return", "self", "spawn", "struct", "sync", "throw", "throws", "true", "use", "while",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -1005,7 +1005,7 @@ grammar! {
             stmts:stmt* -> { stmts }
 
         rule stmt -> Spanned<Stmt> # "statement" @=
-            c:const_stmt -> { Spanned::new(c, _span) }
+            c:comptime_stmt -> { Spanned::new(c, _span) }
           | l:let_stmt -> { Spanned::new(l, _span) }
           | r:return_stmt -> { Spanned::new(r, _span) }
           | t:throw_stmt -> { Spanned::new(t, _span) }
@@ -1029,20 +1029,20 @@ grammar! {
 
         rule kw_mut -> () = KW_MUT -> { () }
 
-        // Part II 10.2: `const LIMIT = 4 * 1024`, and the same form at item
+        // Part II 10.2: `comptime LIMIT = 4 * 1024`, and the same form at item
         // level. **No `mut`**, which is not an omission
         // ([ADR-073](../../../../docs/specification/adr/adr-073.md) D6): a
         // constant is a value rather than a place, so there is nothing for a
         // second assignment to reach.
-        rule const_stmt -> Stmt =
-            KW_CONST
+        rule comptime_stmt -> Stmt =
+            KW_COMPTIME
             name:NAME
             ty:type_annotation?
             "="
             val:expr
             ";"?
             -> {
-                Stmt::Const { name, ty, value: val }
+                Stmt::Comptime { name, ty, value: val }
             }
 
         rule let_stmt -> Stmt =
@@ -1659,6 +1659,7 @@ grammar! {
         rule KW_BOUNDARY = "boundary" not(ident)
         rule KW_BREAK = "break" not(ident)
         rule KW_CATCH = "catch" not(ident)
+        rule KW_COMPTIME = "comptime" not(ident)
         rule KW_CONST = "const" not(ident)
         rule KW_CONTINUE = "continue" not(ident)
         rule KW_DSL = "dsl" not(ident)
@@ -1775,6 +1776,7 @@ grammar! {
         // split in the first place and three is not worth testing the edge of.
         rule RESERVED_C -> u8 =
             KW_BREAK -> { 0 }
+          | KW_COMPTIME -> { 0 }
           | KW_CONST -> { 0 }
           | KW_CONTINUE -> { 0 }
           | KW_LOOP -> { 0 }

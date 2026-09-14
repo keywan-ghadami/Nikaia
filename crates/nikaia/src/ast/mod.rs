@@ -121,20 +121,25 @@ pub enum Item {
     Grammar(GrammarDef),
 
     // Kap 9.2: use std::fs
-    /// Kap 9.2 / Part II 10.2: `const MAX = 1000`, at the top of a file.
+    /// Kap 9.2 / Part II 10.2: `comptime MAX = 1000`, at the top of a file.
     ///
     /// **The keyword is a demand rather than an ability**
     /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D3). The compiler
     /// folds constants already, so what this adds is that the fold *has* to
-    /// succeed: a `let` may fold, a `const` must, and says so where it cannot.
-    /// What may stand in the initialiser is staged (D5), and the stage that is
-    /// built is the shared fold plus a literal of another kind.
-    Const {
+    /// succeed: a `let` may fold, a `comptime` must, and says so where it
+    /// cannot. What may stand in the initialiser is staged (D5), and the stage
+    /// that is built is the shared fold plus a literal of another kind.
+    ///
+    /// **The word says *when*, not *whether it changes***
+    /// ([ADR-077](../../../docs/specification/adr/adr-077.md)): everything in
+    /// this language is immutable unless it says `mut`, so `const` would have
+    /// named a property every other binding already has.
+    Comptime {
         name: Ident,
         /// Written or inferred, the way a `let`'s is (D4).
         ty: Option<Type>,
         value: Expr,
-        /// `pub const`, which is Part I 9.2's existing rule for Constants
+        /// `pub comptime`, which is Part I 9.2's existing rule for Constants
         /// rather than a new one.
         public: bool,
     },
@@ -165,11 +170,13 @@ pub enum Stmt {
         value: Expr,
     },
 
-    /// `const LIMIT = 4 * 1024`, inside a body
-    /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D2). Scoped like a
-    /// `let` and evaluated like the item form: the difference between the two is
-    /// where the name is visible, never what may stand to the right of the `=`.
-    Const {
+    /// `comptime LIMIT = 4 * 1024`, inside a body
+    /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D2,
+    /// [ADR-077](../../../docs/specification/adr/adr-077.md) for the word).
+    /// Scoped like a `let` and evaluated like the item form: the difference
+    /// between the two is where the name is visible, never what may stand to the
+    /// right of the `=`.
+    Comptime {
         name: Ident,
         ty: Option<Type>,
         value: Expr,

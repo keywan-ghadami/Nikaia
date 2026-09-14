@@ -352,7 +352,7 @@ fn bodies(item: &Item) -> Vec<&Block> {
 fn stmt_exprs(stmt: &Stmt) -> impl Iterator<Item = &Expr> {
     let mut found: Vec<&Expr> = Vec::new();
     match stmt {
-        Stmt::Let { value, .. } | Stmt::Const { value, .. } => found.push(value),
+        Stmt::Let { value, .. } | Stmt::Comptime { value, .. } => found.push(value),
         Stmt::Expr(expr) | Stmt::Return(Some(expr)) => found.push(expr),
         Stmt::Assign { target, value, .. } => {
             found.push(target);

@@ -494,7 +494,7 @@ pub(super) fn walk_calls(parsed: &Parsed, block: &Block, f: &mut impl FnMut(&str
 /// those are walked separately so that each keeps its own statement's span.
 pub(crate) fn visit_stmt(parsed: &Parsed, stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
     match stmt {
-        Stmt::Let { value, .. } | Stmt::Const { value, .. } => visit_expr(parsed, value, f),
+        Stmt::Let { value, .. } | Stmt::Comptime { value, .. } => visit_expr(parsed, value, f),
         Stmt::Assign { target, value, .. } => {
             visit_expr(parsed, target, f);
             visit_expr(parsed, value, f);
@@ -510,7 +510,7 @@ pub(crate) fn visit_stmt(parsed: &Parsed, stmt: &Stmt, f: &mut impl FnMut(&Expr)
 pub(crate) fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
     match stmt {
         Stmt::For { body, .. } | Stmt::While { body, .. } => f(body),
-        Stmt::Let { value, .. } | Stmt::Const { value, .. } | Stmt::Expr(value) => {
+        Stmt::Let { value, .. } | Stmt::Comptime { value, .. } | Stmt::Expr(value) => {
             visit_expr_blocks(value, f)
         }
         Stmt::Assign { target, value, .. } => {
