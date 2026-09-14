@@ -51,60 +51,15 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**This section was empty**, and one entry put it back — found while building
-[ADR-066](specification/adr/adr-066.md) and not caused by it, which is what
-writing programs against a construct does. A second went the same way and left
-again in the same session: a member reached off a `T?` was emitted rather than
-refused, and what it needed turned out to be Part I 2.3 applied to a position
-that had escaped it rather than a ruling ([ADR-066](specification/adr/adr-066.md)
-D6).
-
-### 1.1. A value this checker cannot type does not get its `Some(…)`
-
-[ADR-052](specification/adr/adr-052.md) D4 has the compiler write the wrap, and
-the checker say where. It writes it where it **knows** the value is not already a
-`T?` — its type says so, or it is a literal — and leaves everything else alone,
-because wrapping a value that is already nullable would make an
-`Option<Option<T>>`. That caution is right and the *silence* is what is wrong: a
-value whose type this checker could not work out gets no wrap and no word, and
-the program then fails in the language below.
-
-```nika
-impl U {
-    fn a(&self) -> String? { return self.name.clone() }   // no wrap
-    fn b(&self) -> String? { return "lit".to_string() }   // wrapped
-}
-
-fn c(u: &U) -> String? { return u.name.clone() }          // no wrap
-fn d() -> String? { return "lit".to_string() }            // wrapped
-```
-
-*Evidence:* `check::Checked::nullable_sites` holds **two** of those four
-`return`s — `b` and `d`. So it is not `impl` against free function, which is what
-this entry said when it was written: it is `.clone()`, which no ledger describes,
-so the value's type is `?` and the rule declines. `b` and `d` differ only in
-having a value whose type is known.
-
-*What the reader gets* is `rustc` about the generated file — *"expected enum
-`Option<String>`, found struct `String`"*, with *"try wrapping the expression in
-`Some`"* about a form Nikaia does not have
-([Part III C.1](specification/30-nikaia-tooling.md)).
-
-*What it needs, and the recommendation:* **`.into()` where the type is not
-known.** `x.into()` against a declared `Option<T>` is correct whether `x` is a
-`T` or already an `Option<T>` — Rust has `From<T> for Option<T>` and the identity
-`From<T> for T`, and both directions were compiled and run to check it. So the
-uncertainty the rule is conservative about stops needing an answer: where the
-checker knows, it keeps writing `Some(…)` and the generated Rust reads as it
-does today; where it does not, it writes the form that is right either way. It is
-the same trick the `??` lowering already uses (`unwrap_or_else(|| b.into())`),
-one position over.
-
-*What it is not:* growing the ledger until `clone` is in it. That is worth doing
-for its own sake ([ADR-028](specification/adr/adr-028.md) D5: an entry exists
-because a program asked for it) and it is **not** the fix — the next program
-reaches the same wall under a different name, because the hole is "a type this
-checker could not work out" and not "this one method".
+**This section is empty again.** Two entries arrived while
+[ADR-066](specification/adr/adr-066.md) was being built — not caused by it, which
+is what writing programs against a construct does — and both left in the same
+session, each by being answered rather than ruled on. A member reached off a `T?`
+was emitted rather than refused, and what it needed was Part I 2.3 applied to a
+position that had escaped it (ADR-066 D6). A value this checker could not type
+got no `Some(…)` and no word, and what it needed was a wrap that is right in
+both directions rather than a decision about which one it is
+([ADR-068](specification/adr/adr-068.md)).
 
 ## 2. Decided and unbuilt
 

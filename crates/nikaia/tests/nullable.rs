@@ -754,3 +754,78 @@ fn main() {
     );
     assert_eq!(printed.trim(), "7 0 7");
 }
+
+/// **A value this checker cannot type gets `.into()` and not `Some(…)`**
+/// ([ADR-068](../../../docs/specification/adr/adr-068.md)).
+///
+/// The rule used to write the constructor where it **knew** the value was a
+/// plain `T`, and stay silent otherwise — right about the risk, since wrapping a
+/// value that is already a `T?` makes an `Option<Option<T>>`, and wrong about
+/// what to do with it: the program then failed in the language below with
+/// `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does
+/// not have.
+///
+/// **Both directions, in one program, through one rule.** `.clone()` and
+/// `strip_prefix` are in no ledger, so both values are `?` to this checker — and
+/// one is a plain `String` while the other is **already** an `Option<&str>`.
+/// `.into()` is the wrap for the first and the identity for the second, which is
+/// the whole of why it needs no answer to a question the checker could not
+/// settle.
+#[test]
+fn a_value_of_unknown_type_is_converted_rather_than_left_alone() {
+    let printed = ran(
+        "nullable-into",
+        "\
+struct U { name: String }
+
+impl U {
+    fn copy(&self) -> String? { return self.name.clone() }
+    fn rest(&self) -> &str? { return self.name.strip_prefix(\"A\") }
+}
+
+fn main() {
+    let u = U { name: \"Ada\".to_string() }
+    let v = U { name: \"zzz\".to_string() }
+    println(f\"{u.copy() ?? \\\"none\\\".to_string()}\")
+    println(f\"{u.rest() ?? \\\"no prefix\\\"}\")
+    println(f\"{v.rest() ?? \\\"no prefix\\\"}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "Ada\nda\nno prefix");
+}
+
+/// **And a value it can type keeps the constructor**, which is what the second
+/// form is for: the generated Rust goes on saying `Some(…)` wherever the
+/// compiler knows enough to say it, so the conversion is what uncertainty
+/// costs rather than what every program pays.
+#[test]
+fn a_value_of_known_type_still_gets_the_constructor() {
+    let rust = lowered(
+        "\
+struct U { name: String }
+
+impl U {
+    fn known(&self) -> String? { return \"lit\".to_string() }
+    fn unknown(&self) -> String? { return self.name.clone() }
+}
+
+fn free() -> String? { return \"lit\".to_string() }
+",
+    );
+    assert!(
+        rust.contains("Some(\"lit\".to_string())"),
+        "a known type keeps the constructor:\n{rust}"
+    );
+    assert!(
+        rust.contains("self.name.clone().into()"),
+        "an unknown one takes the conversion:\n{rust}"
+    );
+    // Two of the three are `Some(…)`, so the conversion is the exception rather
+    // than the rule - the `impl` and the free function alike.
+    assert_eq!(
+        rust.matches("Some(\"lit\".to_string())").count(),
+        2,
+        "{rust}"
+    );
+}

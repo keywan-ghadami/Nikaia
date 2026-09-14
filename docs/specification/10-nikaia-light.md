@@ -355,6 +355,14 @@ an allocation happens only where you wrote that you wanted one, and [ADR-024](ad
 > written wherever a plain value meets a nullable slot: an annotated `let`, an
 > assignment, a `return`, a struct-literal field, and a call argument.
 >
+> **And in all five it is written even where this compiler cannot work the
+> value's type out** ([ADR-068](adr/adr-068.md)). It used to write nothing there,
+> because a value that is *already* nullable must not be wrapped twice and it
+> could not tell — so the program failed in the language below instead. What goes
+> in that case is a conversion, which is right whichever the value turns out to
+> be; the constructor stays wherever the type is known, because it says what the
+> line means.
+>
 > `let m = null` with nothing beside it is **not** refused here, and that is on
 > purpose: `let mut m = null` and then `m = "hi"` is a correct program, and this
 > compiler has no inference to tell it from the one where nothing ever says. So

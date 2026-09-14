@@ -770,20 +770,21 @@ struct Emitter<'p> {
     /// both sides of it agree by construction. A slot this map does not have gets
     /// the atomic floor.
     shared: std::collections::BTreeMap<String, crate::contracts::sharing::Count>,
-    /// Part I 2.3: the statements where a plain value stands in a nullable slot
-    /// and the `Some(…)` is this emitter's to write
-    /// (`check::Checked::nullable_sites`).
-    nullable_sites: std::collections::BTreeSet<usize>,
+    /// Part I 2.3: the statements where a plain value stands in a nullable slot,
+    /// and **which** of the two wraps this emitter writes there
+    /// (`check::Checked::nullable_sites`,
+    /// [ADR-068](../../../docs/specification/adr/adr-068.md)).
+    nullable_sites: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
     /// therefore flatten (`check::Checked::flattened_reaches`).
     flattened_reaches: std::collections::BTreeSet<(usize, String)>,
     /// Part I 2.3: the struct-literal fields where a plain value stands in a
     /// nullable slot (`check::Checked::nullable_fields`).
-    nullable_fields: std::collections::BTreeSet<(usize, String)>,
+    nullable_fields: std::collections::BTreeMap<(usize, String), crate::check::Wrap>,
     /// Part I 2.3: the call arguments where a plain value stands in a nullable
     /// parameter, by statement, callee as written, and position
     /// (`check::Checked::nullable_args`).
-    nullable_args: std::collections::BTreeSet<(usize, String, usize)>,
+    nullable_args: std::collections::BTreeMap<(usize, String, usize), crate::check::Wrap>,
     /// The handles a task's body uses, by the byte the statement starts at and
     /// the name (`check::Checked::task_handles`).
     ///
@@ -2744,31 +2745,23 @@ impl<'p> Emitter<'p> {
                 // Part I 2.3: a plain value standing in a nullable slot. That hull
                 // stays the compiler's, because it is one a program cannot observe
                 // - the same value, possibly absent (ADR-064 D2's own line).
-                let wrap = self.nullable_sites.contains(&span.start);
+                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
                 out.push(&format!("let {mutable}{bound}{annotation} = "));
-                if wrap {
-                    out.push("Some(");
-                }
+                out.push(before);
                 self.expr(out, value, depth, flow)?;
-                if wrap {
-                    out.push(")");
-                }
+                out.push(after);
                 out.push(";");
             }
             Stmt::Assign { target, op, value } => {
-                let wrap = self.nullable_sites.contains(&span.start);
+                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
                 self.expr(out, target, depth, flow)?;
                 match op {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
                     None => out.push(" = "),
                 }
-                if wrap {
-                    out.push("Some(");
-                }
+                out.push(before);
                 self.expr(out, value, depth, flow)?;
-                if wrap {
-                    out.push(")");
-                }
+                out.push(after);
                 out.push(";");
             }
             // Kap 3.3. Name for name (ADR-011 D2): the language below spells
@@ -2881,6 +2874,26 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// **What goes before a wrapped value, and what goes after**
+    /// ([ADR-068](../../../docs/specification/adr/adr-068.md)).
+    ///
+    /// One function for all four of Part I 2.3's positions, so the two forms are
+    /// written in one place: `Some(` … `)` where the checker knows the value is
+    /// a plain `T`, and `` … `.into()` where it could not work the type out —
+    /// which is right whether the value turns out to be a `T` or already a `T?`.
+    ///
+    /// The target is pinned in every one of the four — a declared result, an
+    /// annotation, an assignment's left side, a field's or a parameter's
+    /// declared type — so the conversion has something to resolve against and
+    /// never has to be inferred from the value alone.
+    fn around(how: Option<crate::check::Wrap>) -> (&'static str, &'static str) {
+        match how {
+            Some(crate::check::Wrap::Constructor) => ("Some(", ")"),
+            Some(crate::check::Wrap::Conversion) => ("", ".into()"),
+            None => ("", ""),
+        }
+    }
+
     /// An expression, with Part I 2.3's `Some(…)` around it where the checker
     /// says a plain value stands in a nullable slot.
     ///
@@ -2895,14 +2908,10 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let wrap = self.nullable_sites.contains(&span.start);
-        if wrap {
-            out.push("Some(");
-        }
+        let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+        out.push(before);
         self.expr(out, value, depth, flow)?;
-        if wrap {
-            out.push(")");
-        }
+        out.push(after);
         Ok(())
     }
 
@@ -3149,19 +3158,17 @@ impl<'p> Emitter<'p> {
                     // declares nullable. Keyed by the field's own name, because
                     // a struct literal has one of these per field and the
                     // statement has only one span.
-                    let wrap = self
+                    let how = self
                         .nullable_fields
-                        .contains(&(flow.statement, self.text(field.name).to_string()));
+                        .get(&(flow.statement, self.text(field.name).to_string()))
+                        .copied();
+                    let (before, after) = Self::around(how);
                     if let Some(value) = &field.value {
                         out.push(": ");
-                        if wrap {
-                            out.push("Some(");
-                        }
+                        out.push(before);
                         self.expr(out, value, depth, flow)?;
-                        if wrap {
-                            out.push(")");
-                        }
-                    } else if wrap {
+                        out.push(after);
+                    } else if how.is_some() {
                         // `Counter { db }` is the shorthand for `db: db`
                         // (Part I 4.1), and a wrapper has to be written around
                         // the name - which means writing the pair out.
@@ -4345,9 +4352,11 @@ impl<'p> Emitter<'p> {
                 && matches!(arg, Expr::Variable(_) | Expr::Field { .. });
             // Part I 2.3: a plain value in a parameter the callee declares
             // nullable.
-            let wrap = self
-                .nullable_args
-                .contains(&(flow.statement, callee.to_string(), i));
+            let (before, after) = Self::around(
+                self.nullable_args
+                    .get(&(flow.statement, callee.to_string(), i))
+                    .copied(),
+            );
             // **A count the language below wants in `usize`**
             // ([ADR-054](../../../docs/specification/adr/adr-054.md) D2), which
             // is the parameter direction of ADR-048 D1. The ledger writes such a
@@ -4362,9 +4371,7 @@ impl<'p> Emitter<'p> {
             // `cannot infer type` about a generated file is what Part III C.1
             // forbids. Rust's own inference already gives a literal the `usize`.
             let count = is_count(callee, i) && !only_literals(arg);
-            if wrap {
-                out.push("Some(");
-            }
+            out.push(before);
             if count {
                 out.push("nikaia_std::count::of(");
             }
@@ -4378,9 +4385,7 @@ impl<'p> Emitter<'p> {
             if count {
                 out.push(")");
             }
-            if wrap {
-                out.push(")");
-            }
+            out.push(after);
             if duplicate {
                 // `.clone()` and not `Rc::clone(&x)`: it is right under either
                 // count, so it cannot disagree with the type the position was

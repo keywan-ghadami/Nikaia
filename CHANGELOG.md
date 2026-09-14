@@ -147,6 +147,15 @@
 - One level deep, because one level is what is read: what a dependency's own dependencies are called is that crate's business (D3), and nothing below the level `modules::collect_with` reads is in this program's ledger to be renamed.
 - The test runs rather than only builds — the value is made in one package and read in another, so two types that were really two would say so in the generated Rust — and the library's key is deliberately a word the program never writes. `open-work.md` is one entry shorter, and the order list one item.
 
+### Added (a value whose type is not known is converted into the nullable slot)
+
+- **[ADR-068](docs/specification/adr/adr-068.md), and the argument is that the question stops needing an answer.** [ADR-052](docs/specification/adr/adr-052.md) D4 writes `Some(…)` only where it **knows** the value is not already a `T?` — right, because wrapping one that is makes an `Option<Option<T>>` — and stayed silent otherwise, so the program failed in the language below with `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does not have. `value.into()` is correct in **both** directions: Rust has `From<T> for Option<T>` and the blanket identity `From<T> for T`. So the uncertainty the rule was conservative about is made irrelevant rather than guessed at.
+- **Both directions, in one program, through one rule.** The test runs a file whose two methods both hand back values this checker cannot type — `.clone()` and `strip_prefix`, neither in any ledger — where one is a plain `String` and the other is **already** an `Option<&str>`. The same emitted `.into()` wraps the first and passes the second through: `Ada`, `da`, `no prefix`. Neither method compiled before, and `Some(…)` would have been wrong for the second.
+- **`Some(…)` stays where the type is known** (D2), in an `impl` and in a free function alike, because it says what the source *means* where a conversion only does what it means — [ADR-004](docs/specification/adr/adr-004.md) D2's pressure, paid only where the compiler could not work the type out and honest about that.
+- **The rule was four copies of three conditions and is one function now** (D3), answering *how* rather than *whether*: `Constructor`, `Conversion`, or nothing for a value that needs neither. The copies had already drifted in what they did with an unknown type, which is how a rule stated five times goes wrong.
+- **It was first filed under the wrong cause**, and measuring is what corrected it: *"a `return` in an `impl` method does not get its `Some(…)`"* named the position, and the position is not it — `nullable_sites` holds two of four `return`s, one in an `impl` and one free, and what separates them is whether the ledger describes the value. Growing the ledger until `clone` is in it is worth doing and was **not** the fix: the hole is "a type this checker could not work out", and the next program reaches it under another name.
+- `docs/open-work.md` §1 is **empty** again.
+
 ### Fixed (a member of a `T?` is refused where it is written, not where it runs)
 
 - **`NK1125`, and the correction that produced it was mine to make.** This was first written down as an open question — whether `a?.b.c` should mean `a?.b?.c` — on the claim that *"a `?.` short-circuits the rest of its chain in every language that has one"*. That claim conflates two things and the owner said so. The short-circuit decides whether what follows is **evaluated** when the guard fails; it never makes what follows safe. `a?.b.c` guards `a` and nothing else: absent `a` gives `null` and `.c` is never reached, while a present `a` with an absent `a.b` reaches `.c` with nothing to reach on.
@@ -166,7 +175,7 @@
 
 ### Found (two defects, neither caused by the work that found them)
 
-- **A value this checker cannot type does not get its `Some(…)`.** ADR-052 D4 has the compiler write the wrap where it **knows** the value is not already a `T?`, and leave everything else alone — right, because wrapping one that is would make an `Option<Option<T>>`. The silence is the defect: the reader gets `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does not have. **First filed as "in an `impl` method", which was the wrong cause**: `nullable_sites` holds two of four `return`s across the two positions, and what separates them is `.clone()` — no ledger describes it, so the value's type is `?`. `open-work.md` §1.1 carries it with the four-way evidence and a recommendation.
+- **A value this checker cannot type got no `Some(…)` and no word** — fixed below.
 - **A member reached off a `T?` with a plain `.` was emitted rather than refused** — fixed in the same session, below.
 
 ### Added (a lock shared by four tasks, on four threads, counts every increment)

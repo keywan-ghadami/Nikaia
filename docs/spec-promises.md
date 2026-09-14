@@ -54,7 +54,7 @@ the Result column; every other row is the original run.
 | `extern "C" { … }` | III 15.1 | parse error: *expected end of input; found `extern`* |
 | `unsafe { … }` | III 15.1, 16.3 | parses as `unsafe; { puts("hi") }` — **re-run**, and refused now: `NK1117` on the name |
 | `null` | I 2.3, 3.5 | **built** ([ADR-052](specification/adr/adr-052.md)): a reserved word, lowering to `None` |
-| `String?`, `&str?` | I 2.3 | **built**: `Option<String>`, `Option<&str>` — and the `Some(…)` where a plain value stands in a nullable slot is the compiler's to write |
+| `String?`, `&str?` | I 2.3 | **built**: `Option<String>`, `Option<&str>` — and the wrap where a plain value stands in a nullable slot is the compiler's to write, in all five positions. `Some(…)` where the type is known, `.into()` where it is not, which is right either way ([ADR-068](specification/adr/adr-068.md)) |
 | `a?.b` | I 3.5 | **built** ([ADR-052](specification/adr/adr-052.md) D6): `map` over a plain field, `and_then` over one that is itself a `T?` |
 | `a?.m()` | I 3.5 | **built** ([ADR-066](specification/adr/adr-066.md) D1): the section's word is *member* and a method is one. A `match` and not the field's `map`, because a method may pause and may fail |
 | `a ?? b ?? c` | I 3.5 | **built** ([ADR-066](specification/adr/adr-066.md) D4): right-associative. It used to be a parse error naming the second `??` |

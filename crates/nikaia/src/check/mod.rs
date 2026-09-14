@@ -172,7 +172,7 @@ pub struct Checked {
     /// `Option<T>` would make an `Option<Option<T>>` - so the set never claims
     /// a wrap that is not needed, which is the fail-closed direction
     /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1).
-    pub nullable_sites: BTreeSet<usize>,
+    pub nullable_sites: BTreeMap<usize, Wrap>,
     /// The `?.` reaches whose field is **itself** nullable, as the byte the
     /// statement starts at and the field's name (Part I 3.5).
     ///
@@ -198,7 +198,7 @@ pub struct Checked {
     /// one position per field, so it needs the name too. Same shape as
     /// `shared_sites`, which covers the same construct for the same kind of
     /// reason.
-    pub nullable_fields: BTreeSet<(usize, String)>,
+    pub nullable_fields: BTreeMap<(usize, String), Wrap>,
     /// The **call arguments** where a plain value stands in a nullable
     /// parameter, as the byte the statement starts at, the callee as the source
     /// wrote it, and the argument's position (Part I 2.3).
@@ -210,7 +210,7 @@ pub struct Checked {
     /// resolved key**, because the emitter has only what the source says: a
     /// method's key is `Type::method` and a constructor's is `Type::new`, and
     /// neither is what stands at the call.
-    pub nullable_args: BTreeSet<(usize, String, usize)>,
+    pub nullable_args: BTreeMap<(usize, String, usize), Wrap>,
     /// The **narrowing conversions**, as the byte the statement they stand in
     /// starts at and the type converted to (ADR-043 D4).
     ///
@@ -352,6 +352,44 @@ pub enum Narrowing {
 /// declared `Shared[T]` makes the first handle.
 ///
 /// All three together because all three come out of one pass, and a second pass
+/// Which wrap a value standing in `want` needs, and `None` where it needs none.
+///
+/// One function for all four of Part I 2.3's positions, so the rule is stated
+/// once: the annotated `let`, the assignment, the `return`, and a struct
+/// literal's field — and a call's argument, which is the fourth written a fifth
+/// way. Before this they were four copies of the same three conditions, and the
+/// copies had already drifted in what they did with an unknown type.
+fn wrap_for(found: &Ty, want: &Ty, literal: bool) -> Option<Wrap> {
+    if !matches!(want, Ty::Nullable(_)) || matches!(found, Ty::Nullable(_)) {
+        return None;
+    }
+    match !found.is_unknown() || literal {
+        true => Some(Wrap::Constructor),
+        false => Some(Wrap::Conversion),
+    }
+}
+
+/// **How a plain value is put into a nullable slot** (Part I 2.3,
+/// [ADR-068](../../../docs/specification/adr/adr-068.md)).
+///
+/// The question the four positions of [ADR-052](../../../docs/specification/adr/adr-052.md)
+/// D4 ask was never *whether* to wrap - it was **how**, and the second answer
+/// was missing. A value this checker worked out to be a plain `T` takes the
+/// constructor; one whose type it could not work out takes the conversion,
+/// which is right whichever the value turns out to be.
+///
+/// A value already known to be a `T?` is in neither: it needs nothing, and the
+/// position is simply not recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wrap {
+    /// `Some(value)`. The type is known and it is not a `T?`.
+    Constructor,
+    /// `value.into()`. The type is **not** known, and this is correct in both
+    /// directions - Rust has `From<T> for Option<T>` and the identity
+    /// `From<T> for T` - so the uncertainty stops needing an answer.
+    Conversion,
+}
+
 /// would cost a whole type check to answer a question the first one already
 /// answered.
 #[derive(Debug, Clone, Default)]
@@ -365,13 +403,13 @@ pub struct Propagation {
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
-    pub nullable: BTreeSet<usize>,
+    pub nullable: BTreeMap<usize, Wrap>,
     /// [`Checked::flattened_reaches`].
     pub flattened: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
-    pub nullable_in_fields: BTreeSet<(usize, String)>,
+    pub nullable_in_fields: BTreeMap<(usize, String), Wrap>,
     /// [`Checked::nullable_args`].
-    pub nullable_in_args: BTreeSet<(usize, String, usize)>,
+    pub nullable_in_args: BTreeMap<(usize, String, usize), Wrap>,
     /// [`Checked::task_handles`].
     pub task_handles: BTreeSet<(usize, String)>,
 }
@@ -1063,9 +1101,13 @@ impl<'a> Checker<'a> {
     /// language below needs the constructor written, and this is where the
     /// emitter is told.
     ///
-    /// **The value has to be known not to be nullable already**, because
-    /// wrapping one that is would make an `Option<Option<T>>`. Two ways it can
-    /// be known, and a type is only the first:
+    /// **Which of the two**, and the answer used to be *"one, or nothing"*
+    /// ([ADR-068](../../../docs/specification/adr/adr-068.md)).
+    ///
+    /// The constructor may only be written where the value is known **not** to
+    /// be a `T?` already, because wrapping one that is would make an
+    /// `Option<Option<T>>`. Two ways it can be known, and a type is only the
+    /// first:
     ///
     /// * its type says so — anything this checker worked out that is not a
     ///   `T?`; or
@@ -1075,21 +1117,20 @@ impl<'a> Checker<'a> {
     ///   `return 42` against a declared `i64?` answers `Unknown` and the type
     ///   alone would leave the commonest case in the section unwrapped.
     ///
-    /// Everything else is left alone rather than guessed at, so the set never
-    /// claims a wrap that is not needed (ADR-010 D1). `null` is excluded by the
-    /// first rule, being a `T?` itself.
+    /// **And everything else takes the conversion**, which is what changed:
+    /// `value.into()` is correct whether the value is a `T` or already a `T?`,
+    /// so a type this checker could not work out stops being a position it has
+    /// to stay silent about. It used to be left alone — right about the risk,
+    /// and the program then failed in the language below with `rustc`'s *"try
+    /// wrapping the expression in `Some`"* about a form Nikaia does not have
+    /// (Part III C.1).
+    ///
+    /// `null` is in neither, being a `T?` itself.
     fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
-        let Ty::Nullable(_) = want else {
+        let Some(how) = wrap_for(found, want, is_literal(value)) else {
             return;
         };
-        if matches!(found, Ty::Nullable(_)) {
-            return;
-        }
-        let known = !found.is_unknown() || is_literal(value);
-        if !known {
-            return;
-        }
-        self.checked.nullable_sites.insert(span.start);
+        self.checked.nullable_sites.insert(span.start, how);
     }
 
     /// Part I 2.2: a constant that does not fit the type it is given is a
@@ -1765,13 +1806,10 @@ impl<'a> Checker<'a> {
                             // one span.
                             let value = init.value.as_ref();
                             let is_literal = value.is_some_and(is_literal);
-                            if matches!(want, Ty::Nullable(_))
-                                && !matches!(found, Ty::Nullable(_))
-                                && (!found.is_unknown() || is_literal)
-                            {
+                            if let Some(how) = wrap_for(&found, &want, is_literal) {
                                 self.checked
                                     .nullable_fields
-                                    .insert((span.start, field.clone()));
+                                    .insert((span.start, field.clone()), how);
                                 continue;
                             }
                             self.expect(
@@ -2559,14 +2597,12 @@ impl<'a> Checker<'a> {
             // is consulted, because this *is* the fit - `Ty::fits` allows it,
             // and what is left is telling the emitter to write the
             // constructor.
-            if matches!(want, Ty::Nullable(_)) && !matches!(found, Ty::Nullable(_)) {
-                let is_literal = given.get(at).is_some_and(is_literal);
-                if !found.is_unknown() || is_literal {
-                    self.checked
-                        .nullable_args
-                        .insert((span.start, written.to_string(), at));
-                    continue;
-                }
+            let is_literal = given.get(at).is_some_and(is_literal);
+            if let Some(how) = wrap_for(found, want, is_literal) {
+                self.checked
+                    .nullable_args
+                    .insert((span.start, written.to_string(), at), how);
+                continue;
             }
             if self.fits_through_deref(found, want) {
                 continue;
