@@ -187,3 +187,45 @@ fn a_space_after_the_f_is_not_an_interpolation() {
         "a plain string became an interpolation: {value:?}"
     );
 }
+
+/// **A number no use constrains takes the first type that holds it**
+/// ([ADR-060](../../../docs/specification/adr/adr-060.md) D2, Part I 2.4).
+///
+/// `let big = 3000000000` is a correct program and was refused in the backend's
+/// words about a type it never wrote — *"literal out of range for `i32`"* —
+/// because Rust's integer **default** was inherited along with its inference. So
+/// a literal an `i32` does not hold is written as an `i64`, and nothing else
+/// changes.
+#[test]
+fn a_literal_an_i32_does_not_hold_is_written_as_an_i64() {
+    let emitted = emit("fn main() { let big = 3000000000 }");
+    assert!(emitted.contains("let big = 3000000000i64;"), "{emitted}");
+}
+
+/// **And one that fits is left alone**, which is what keeps the first half of
+/// Part I 2.4 working: the use decides, so a suffix here would pin what the use
+/// is supposed to answer. `let small = 42` handed to a parameter taking an
+/// `i64` is that page's own example, and it compiles because `42` carries no
+/// type of its own.
+#[test]
+fn a_literal_that_fits_carries_no_type_of_its_own() {
+    let emitted = emit("fn main() { let small = 42 }");
+    assert!(emitted.contains("let small = 42;"), "{emitted}");
+    assert!(!emitted.contains("42i64"), "{emitted}");
+}
+
+/// **The value, and not the digits** (D3's negation).
+///
+/// `-2147483648` is exactly `i32::MIN` and `2147483648` is one past `i32::MAX`,
+/// so a rule that read the literal alone would widen the one number where
+/// widening is wrong. The negation is folded before the question is asked.
+#[test]
+fn a_negation_is_folded_before_the_width_is_decided() {
+    let emitted = emit("fn main() { let edge = -2147483648 }");
+    assert!(emitted.contains("let edge = -2147483648;"), "{emitted}");
+    assert!(!emitted.contains("i64"), "{emitted}");
+
+    // One further out is an `i64`, and the sign is still written.
+    let wider = emit("fn main() { let past = -2147483649 }");
+    assert!(wider.contains("-2147483649i64"), "{wider}");
+}

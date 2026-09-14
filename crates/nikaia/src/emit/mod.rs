@@ -2822,7 +2822,7 @@ impl<'p> Emitter<'p> {
 
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
-            Expr::LitInt(v) => out.push(&v.to_string()),
+            Expr::LitInt(v) => out.push(&integer_literal(*v)),
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr(_) | Expr::LitInterpolated(_) => self.string(out, expr, depth, flow)?,
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
@@ -3153,6 +3153,17 @@ impl<'p> Emitter<'p> {
                 self.block(out, body, depth, inside, Tail::Return)?;
             }
             Expr::Unary { op, expr } => {
+                // **`-2147483648` is an `i32`**, and its digits are not
+                // ([ADR-060](../../../docs/specification/adr/adr-060.md) D3): the
+                // question is about the value, so a negation is folded here
+                // rather than left for `integer_literal` to answer about a number
+                // that is one too large.
+                if let (UnaryOp::Neg, Expr::LitInt(v)) = (op, &**expr) {
+                    if i32::try_from(-(*v as i128)).is_ok() {
+                        out.push(&format!("-{v}"));
+                        return Ok(());
+                    }
+                }
                 out.push(unary_op(*op));
                 self.nested(out, expr, u8::MAX, depth, flow)?;
             }
@@ -4278,6 +4289,36 @@ fn repeat_suffix(rep: Repeat) -> String {
         Repeat::Exactly(n) => format!("{{{n}}}"),
         Repeat::AtLeast(n) => format!("{{{n},}}"),
         Repeat::Between(n, m) => format!("{{{n},{m}}}"),
+    }
+}
+
+/// **An integer literal, and the one case it has to carry its own type**
+/// ([ADR-060](../../../docs/specification/adr/adr-060.md) D2).
+///
+/// Part I 2.4 says a number takes the type its use asks for, and `i32` where
+/// nothing asks. The first half is the language below's inference and works;
+/// the second half was that language's *default*, inherited rather than chosen,
+/// and it is what refused `let big = 3000000000` in the backend's words about a
+/// type the program never wrote (Part III C.1).
+///
+/// So a literal an `i32` does not hold is written as an `i64`, and D3 is why
+/// that needs no analysis at all: the integer types a program may write are
+/// `i32` and `i64` ([ADR-048](../../../docs/specification/adr/adr-048.md)), an
+/// integer literal is never a float, and `u8` is narrower — so a value an `i32`
+/// cannot hold has no second answer a use could ask for. There is nothing to
+/// find out.
+///
+/// **A literal that fits an `i32` is untouched**, which is what keeps every
+/// program that compiles today compiling: the suffix would pin what the use is
+/// supposed to decide, and `let small = 42` passed to a parameter taking an
+/// `i64` is Part I 2.4's own example.
+///
+/// The value and not the digits, which is why `-2147483648` never reaches here
+/// as `2147483648`: the negation is folded at the `Unary` arm above.
+fn integer_literal(value: i64) -> String {
+    match i32::try_from(value) {
+        Ok(_) => value.to_string(),
+        Err(_) => format!("{value}i64"),
     }
 }
 

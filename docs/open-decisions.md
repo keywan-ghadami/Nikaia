@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Four entries, and every one of them is open.** Nothing answered lives here: an
+**Five entries, and every one of them is open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -28,7 +28,7 @@ always the notes page.
 what either direction costs** — because a question without a recommendation is
 work handed back rather than a decision asked for.
 
-**What "blocked" means is broader than work, and narrower than everything.** §6
+**What "blocked" means is broader than work, and narrower than everything.** §4
 blocks no work at all and belongs here anyway: it blocks *reading* an accepted
 record whose surface half cannot be evaluated, which is a cost that grows
 silently. What does *not* belong is a question nothing rests on — which SQLite
@@ -187,3 +187,52 @@ writing that down is cheaper than discovering it when somebody builds to it.
 
 **A note on order rather than a recommendation.** The path check needs no answer
 here and closes a security hole; it can be built while this stays open.
+
+---
+
+## 5. Does a **sum** of literals widen the way a literal does?
+
+**Blocked by it:** nothing is half-built. One line decides it either way, and
+until it is decided the line should not be written.
+
+[ADR-060](specification/adr/adr-060.md) D2 gives an unconstrained literal the
+first type that holds it, so `let big = 3000000000` compiles and is an `i64`.
+D3's argument for why that needs no analysis is exact and it is about a
+**literal**: a value an `i32` cannot hold has no second answer a use could ask
+for. A sum is not a literal, and the rule does not reach it:
+
+```nika
+let b = 3000000000 + 1              // compiles: the first operand widened
+let c = 2000000000 + 2000000000     // refused: neither operand is out of range
+```
+
+The second line comes to a number an `i64` holds comfortably, and it is refused
+in the language below's words — *"this arithmetic operation will overflow"* — on
+the Nikaia line that wrote it. A reader who has just read Part I 2.4 has no way
+to predict which of those two lines works.
+
+**The options.**
+
+* **Leave it.** A sum of constants that overflows an `i32` is a mistake far more
+  often than it is a program, and [ADR-043](specification/adr/adr-043.md) exists
+  to make overflow loud rather than silent. The cost is the inconsistency above,
+  in a language whose page says a number takes the first type that holds it.
+* **Fold the sum and widen it**, using the fold `NK1116` already has
+  ([ADR-043](specification/adr/adr-043.md) D5, in an `i128`, over literals, a
+  folded immutable `let`, `+ - * / %` and a negation). The cost is that ADR-060
+  D3's "no analysis" stops being true: the emitter would be reading an expression
+  rather than a token, which is the one property that made that record cheap.
+* **Refuse it here instead**, in this compiler's own words rather than the
+  backend's, and say that a constant sum is computed at the width of its
+  operands. The cost is a new refusal in a compiler whose rule is never to refuse
+  a correct program — and whether this one is correct is the question.
+
+**What I would do: the second.** The fold already exists and is already trusted
+to decide `NK1116`; using it in the emitter is a smaller step than the first
+option's permanent inconsistency, and ADR-060 D3's claim can be restated
+honestly — no *use-site* walk, which was always the expensive half. But this is a
+change to what a program **means**, so it is the owner's.
+
+**What it explicitly is not.** A sum no `i64` holds either stays refused, by
+whoever refuses it; that is a different mistake and none of the options above
+make it better or worse.

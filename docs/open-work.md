@@ -109,27 +109,7 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 4. **Supervision.** Last because nothing else waits on it.
 
-### 2.1. A literal no use constrains still takes an `i32`, and `let big = 3000000000` is refused
-
-[ADR-060](specification/adr/adr-060.md) decided that such a literal takes the
-first type that holds it — `i32`, else `i64` — so that a line which looks like a
-mistake and is not one compiles. Part I 2.4 states the rule; the compiler does
-not do it, and `let big = 3000000000` is still refused in the backend's words
-about a type the program never wrote.
-
-*What it needs:* **one rule in the emitter**, and nothing else. Where an
-un-annotated integer literal's folded value does not hold in an `i32`, write it
-out as an `i64`. The fold is the one `NK1116` already reads
-([ADR-043](specification/adr/adr-043.md) D5) — over a literal, a folded immutable
-`let`, `+ - * / %` and a **negation**, which is why `-2147483648` is asked about
-its value and not about its digits.
-
-*What it explicitly does not need,* and this is D3's whole point: a use-site walk.
-A value an `i32` cannot hold has no second answer a use could ask for, because
-`i64` is the only other integer a program may write. A literal that *does* fit an
-`i32` is left exactly as it is emitted today, so nothing that compiles now stops.
-
-### 2.2. The `yes` executor, and what still needs a thread
+### 2.1. The `yes` executor, and what still needs a thread
 
 **`spawn` lowers.** It was the largest single unblocking in this file and the
 reason [ADR-055](specification/adr/adr-055.md) exists; all five steps of that
@@ -165,7 +145,7 @@ than waiting:** the analysis names a `spawn` body's handle as a duplication site
 and used again afterwards is not refused, which `tasks.rs` says about a program
 that does it.
 
-### 2.3. A lambda that pauses is refused, and a recursive pausing method is not boxed
+### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
 
 Both are [ADR-055](specification/adr/adr-055.md) §6's remainder, and both are
 limits of this compiler rather than of the language — so they are here and not in
@@ -208,7 +188,7 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.4. `let` takes one name, and the specification writes it taking several
+### 2.3. `let` takes one name, and the specification writes it taking several
 
 ```nika
 let (user, rights, prefs) = overlap { … }          // Part I 8.1.2
@@ -234,7 +214,7 @@ compiler's rule for a form nobody decided.
 not them; what the two sites need is destructuring a tuple whose arity is known,
 and a bigger answer would be a decision rather than this repair.
 
-### 2.5. Standard input is `async` and does not suspend
+### 2.4. Standard input is `async` and does not suspend
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -262,7 +242,7 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.6. `Locked[T]` has a shape and a surface, and a write across two locks has neither
+### 2.5. `Locked[T]` has a shape and a surface, and a write across two locks has neither
 
 [ADR-057](specification/adr/adr-057.md) decided what `Locked[T]` **is** and
 [ADR-059](specification/adr/adr-059.md) what a program writes to reach one: four
@@ -289,13 +269,13 @@ them. What is left:
   charges only on the values that actually cross;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.7. Part II 12.8's supervision syntax
+### 2.6. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.8. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.7. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -313,7 +293,7 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.9. There is no HTTP server, and three records now wait on it
+### 2.8. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal

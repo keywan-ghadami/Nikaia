@@ -320,11 +320,12 @@ literals that cannot fit, so neither waits for the program to run
 > `big.truncating_i32()` is the same `as` it always was. The `truncating_` names
 > exist for the three sources above and for `i32` and `i64` as destinations.
 >
-> **Not built:** a literal that nothing at all constrains — `let big =
-> 3000000000` on its own, and `let b = 3000000000 + 1`. That is still refused the
-> other way (Part III, C.1), and it stays that way on purpose: the same line is a
-> correct program where a later use asks for an `i64` (2.4), and this compiler has
-> no inference to tell the two apart.
+> **A literal that nothing at all constrains** — `let big = 3000000000` on its
+> own — is not this section's case and is not refused: it is an `i64`, because an
+> `i32` does not hold it ([ADR-060](adr/adr-060.md), and 2.4). What is still
+> refused the other way (Part III, C.1) is a **sum** of literals that each fit and
+> whose total does not, `let b = 2000000000 + 2000000000`: no literal there is out
+> of range, so nothing widens, and the language below refuses the arithmetic.
 
 ### 2.3. Nullable Types (Null Safety)
 In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
@@ -389,18 +390,17 @@ The use is asked first and the size second, which is why `small` may still becom
 an `i64` and `big` never has to be annotated to be one. A number too large for
 an `i64` is refused, because nothing holds it.
 
-> **Status:** the *use* half is built, and it is the language below that holds
-> it. **The size half is decided and not built**
-> ([ADR-060](adr/adr-060.md), `docs/open-work.md`): `let big = 3000000000` is
-> still refused today, in `rustc`'s words about a type the program did not write,
-> and what is owed is one rule in the emitter — a literal whose value an `i32`
-> cannot hold is written out as an `i64`. This
-> compiler's own `NK1116`
-> answers the case where a type **stands beside** the literal — an annotated
-> `let`, a `return` against a declared result, an argument whose parameter says
-> what it takes — and stays silent otherwise, because a literal whose use widens
-> it is a correct program and refusing one of those is the one thing the checker
-> may never do (Part III, C.4).
+> **Status:** built, both halves. The *use* half is the language below's
+> inference; the size half is one rule in the emitter
+> ([ADR-060](adr/adr-060.md)), a literal whose value an `i32` cannot hold written
+> out as an `i64` — and a literal that fits left exactly as it was, so the use
+> keeps deciding. The question is about the **value**: `-2147483648` is an `i32`
+> although its digits are one too many. This compiler's own `NK1116` answers the
+> case where a type **stands beside** the literal — an annotated `let`, a
+> `return` against a declared result, an argument whose parameter says what it
+> takes — and stays silent otherwise, because a literal whose use widens it is a
+> correct program and refusing one of those is the one thing the checker may
+> never do (Part III, C.4).
 
 ### 2.5. Strings, Plain and Interpolated
 There are two string literals, and the difference is one character at the front.
