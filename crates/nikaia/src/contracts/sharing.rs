@@ -995,19 +995,18 @@ impl<'a> Analysis<'a> {
                             // allocation is elsewhere is not one this analysis
                             // may lower.
                             //
-                            // **Unless this line is where it is made.** Part I
-                            // 6.2 makes an annotated `let` the constructor: where
-                            // the declared type is `Shared[T]` and the value
-                            // beside it is a plain `T`, the allocation happens
-                            // here and this analysis watched it. Before the type
-                            // existed there was no such case, which is why
-                            // `UnseenOrigin` used to be the only answer.
+                            // **Unless this line is where it is made**
+                            // ([ADR-064](../../../../docs/specification/adr/adr-064.md)
+                            // D2): `let counter = SharedMut(0)` is the allocation,
+                            // and this analysis is watching it. Asked of the
+                            // slot's type rather than of a written annotation -
+                            // the constructor says which hull, and the line needs
+                            // no annotation to say it.
                             None => match self.slot_of(function, value, scope) {
                                 Some(source) => {
                                     self.join(&slot(function, &name), &source);
                                 }
-                                None if declared.as_ref().is_some_and(by_value_shared)
-                                    && self.allocates_here(value) => {}
+                                None if by_value_shared(&ty) && self.allocates_here(value) => {}
                                 None => self.origin_unseen(function, &name, value),
                             },
                         }
@@ -1061,12 +1060,14 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    /// Whether an annotated `let` is itself the place the first handle is made.
+    /// Whether this `let` is itself the place the first handle is made.
     ///
-    /// Part I 6.2: the annotation is the constructor, so `let db: Shared[C] =
-    /// connect(…)` allocates the count on this line - and a count this analysis
-    /// watched being made is not [`Fallback::UnseenOrigin`], whatever else it may
-    /// turn out to be.
+    /// **The hull is written by a call**
+    /// ([ADR-064](../../../../docs/specification/adr/adr-064.md) D2), so
+    /// `let db = Shared(connect(…))` allocates the count on this line - and a
+    /// count this analysis watched being made is not [`Fallback::UnseenOrigin`],
+    /// whatever else it may turn out to be. An annotated `let` beside a plain
+    /// value is no longer such a place, because it no longer constructs.
     ///
     /// **The question is only ever answered yes where something written down says
     /// the value is not already a handle**, which keeps the polarity this file
@@ -1085,7 +1086,14 @@ impl<'a> Analysis<'a> {
             | Expr::LitBool(_)
             | Expr::LitNull
             | Expr::StructLit { .. } => true,
-            Expr::Call { func, .. } => self.hands_back_a_plain_value(self.path_of(func).as_deref()),
+            // **A hull's own constructor is the allocation**, and the one case
+            // where a call handing a hull back is *not* a reason to decline
+            // ([ADR-064](../../../../docs/specification/adr/adr-064.md) D2). It is
+            // the line the hull is made on, which is the whole question here.
+            Expr::Call { func, .. } => match self.path_of(func).as_deref() {
+                Some(name) if is_hull(name) => true,
+                other => self.hands_back_a_plain_value(other),
+            },
             Expr::MethodCall { method, .. } => {
                 self.hands_back_a_plain_value(Some(self.parsed.text(*method)))
             }

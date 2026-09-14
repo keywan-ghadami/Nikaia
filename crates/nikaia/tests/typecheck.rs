@@ -932,12 +932,13 @@ fn a_view_of_a_view_is_the_view() {
 
 // --- a shared value: where one is made, and where it is refused (Part I 6.2) --
 
-/// **An annotated `let` makes the first handle**, so a plain value standing
-/// there is not a mistake.
+/// **A call on the type makes the first handle**, and it is the only thing that
+/// does ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
 ///
-/// There is no `Shared::new` and must not be: the annotation is the constructor
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3), which is why this
-/// is an acceptance rather than a conversion the checker suggests.
+/// The annotation used to be the constructor
+/// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3), which meant the
+/// places a hull could be made were a **list** - and a list somebody keeps
+/// complete is a list with holes in it.
 #[test]
 fn a_call_on_the_type_makes_a_plain_value_shared() {
     assert!(

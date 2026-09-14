@@ -412,7 +412,7 @@ A task runs on a thread of its own at `yes`, so **everything it uses has to be a
 
 The answer is **the same at both settings**, so that a library written at one cannot turn out un-compilable where it is used. The question is asked of a value **and a destination**, and each destination gets one switch-independent answer; what the setting changes is only whether this build performs the crossing: at `no` nothing you wrote runs concurrently, so the task does not run and the refusal is a lint rather than an error. The diagnostic is `NK2501`, worked through in Part III C.5.
 
-> **Status.** The check runs, it is asked about the destination, and **no type reaches `NK2501`'s refusing half** — which is now a statement about this destination rather than about the types: plain data, a `Shared[T]` and a lock all go into a task of your own. What does not is the foreign destination, where the lock is refused as `NK2502`. `spawn` **lowers** now ([ADR-055](adr/adr-055.md) §6 step 4), so the plain-data half of this is a program that runs; what still does not emit is the lock, because neither it nor `SharedMut[T]` is a type the backend can build — so that half of the rule is checked on a program whose annotation writes one and refuses to emit afterwards ([ADR-039](adr/adr-039.md) §4).
+> **Status.** The check runs, it is asked about the destination, and **no type reaches `NK2501`'s refusing half** — which is now a statement about this destination rather than about the types: plain data, a `Shared[T]` and a lock all go into a task of your own. What does not is the foreign destination, where the lock is refused as `NK2502`. `spawn` **lowers** now ([ADR-055](adr/adr-055.md) §6 step 4) and so does the lock ([ADR-064](adr/adr-064.md)), so both halves of this are programs that run: a task that takes plain data, and a task that takes a `SharedMut[T]`.
 
 **The nesting rule does not reach into a spawned task, and a lock may be handed to one.** Two different rules, and only the first is about nesting. A `spawn`'s body runs later and elsewhere rather than during the call, so it is not part of whatever its writer was holding at the time, and the rule that refuses a lock taken while a lock is held (12.3) does not reach into it ([ADR-039](adr/adr-039.md) D3). A scope is the other case, because it waits for its tasks — see 12.7.
 
@@ -635,11 +635,12 @@ error[NK2201]: cannot wait for I/O while holding locked data
         fs::write("log", "{snapshot}")
 ```
 
-> **Status.** Not built. `SharedMut[T]` and `Locked[T]` are not types the compiler knows — the name
-> is an error where you write it, and the backend has no lowering for either — none of the four
-> doors exists, and nothing raises `NK2201`, so the refusal above does not happen. Both
-> implementations, their costs, the four doors, the two refusals above and this rule are specified
-> ahead of the compiler.
+> **Status.** **The types and the doors are built** ([ADR-057](adr/adr-057.md),
+> [ADR-059](adr/adr-059.md), [ADR-064](adr/adr-064.md)): `SharedMut[T]` and `Locked[T]` are types the
+> compiler knows, both implementations are in `std`, all four doors exist and `std`'s ledger describes
+> them. What is **not** built is the refusal on this page: nothing raises `NK2201`, so I/O inside a
+> door is not stopped when you compile — it is specified ahead of the check, which needs the
+> lock-touching property of 12.3 that no function carries yet.
 
 This turns the old advice "don't sleep while holding a lock" from a best practice into a guarantee. Re-entering the *same* lock through a chain of calls is not an edge case left to the runtime either — 12.3 refuses that when you compile, and at every setting. The runtime checks described above keep their place for a different reason: the reentrancy check is now **self-control of that refusal rather than error handling.** No input can make it fire; if it ever fires, the compiler has a hole rather than the program having a bug. That is why it is a switch you can decline (Part I, 1.2) and why poisoning on several threads is left as it is ([ADR-039](adr/adr-039.md) D2, D8).
 
@@ -709,11 +710,12 @@ access_all(account_a, account_b) fn(a, b) {
 > arguments, and it may follow a plain call as well as a method call (Part I,
 > 5.3), so `counter.access fn { … }`, `account.access fn(to) { … }` and
 > `access_all(account_a, account_b) fn(a, b) { … }` are each one call whose last
-> argument is the lambda. What is **not** built is what they call: `SharedMut[T]`,
-> `Locked[T]` and the four doors have no entry in `std`; no check refuses the
-> nesting this section forbids; no function carries the lock-touching property,
-> so nothing refuses a chain or a function handed outward; and nothing demands
-> the lambda 12.2 does.
+> argument is the lambda. **What they call is built too** now: `SharedMut[T]`,
+> `Locked[T]` and all four doors are in `std` and in its ledger
+> ([ADR-064](adr/adr-064.md)). What is **not** built is every refusal this section
+> states — nothing refuses the nesting, no function carries the lock-touching
+> property, so nothing refuses a chain or a function handed outward, and nothing
+> demands the lambda 12.2 does. The doors work and the rules around them do not.
 
 ### 12.4. Racing Tasks (`select`)
 Sometimes you want to run multiple tasks, but only care about the one that finishes *first*.

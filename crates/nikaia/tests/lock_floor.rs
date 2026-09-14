@@ -232,17 +232,16 @@ fn at_several_threads_a_lock_follows_the_value() {
     );
 }
 
-/// And the annotation is the constructor for **both** hulls, because there is no
-/// `Locked::new` in the language any more than there is a `Shared::new`.
+/// And **one call writes both hulls**
+/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2): `SharedMut(n)` is
+/// one name above and a count around a lock below, so the two cannot be written
+/// out of step with each other.
 ///
-/// **The two hulls are two decisions**, which this pins as well: the count keeps
-/// its own floor ([ADR-037](../../../docs/specification/adr/adr-037.md) D6, atomic
-/// at both settings until the analysis lowers it), while the lock is the cheap
-/// shape here by D2. `Arc<Local<T>>` is not `Send` and does not need to be at
-/// this setting — the answer that matters is that neither hull is guessed from
-/// the other.
+/// At this setting both are the cheap shape, and for one reason rather than two:
+/// nothing a user writes can cross a thread here
+/// ([ADR-061](../../../docs/specification/adr/adr-061.md) D2).
 #[test]
-fn the_annotation_allocates_the_lock_as_well_as_the_handle() {
+fn one_call_allocates_the_lock_as_well_as_the_handle() {
     let rust = lowered(
         "fn main() {\n    let n: i64 = 1\n    let c = SharedMut(n)\n}",
         false,

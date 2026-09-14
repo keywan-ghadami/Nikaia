@@ -3306,15 +3306,10 @@ fn becomes_shared(found: &Ty, want: &Ty) -> bool {
             if found.is_unknown() {
                 return false;
             }
-            // **`Shared[Locked[T]]` beside a `T` makes both hulls on one line**
-            // ([ADR-057](../../../docs/specification/adr/adr-057.md)). The
-            // annotation is the constructor, and there is no `Locked::new` in
-            // the language any more than there is a `Shared::new` - so the same
-            // sentence that gives one hull gives two where two are written.
-            //
-            // Asked in this order, so a value that is *already* a `Locked`
-            // matches at the first level and nothing is wrapped twice - which is
-            // the property the paragraph above rests on.
+            // A `SharedMut[T]` beside a `T` is the same shape as a `Shared[T]`
+            // beside one: the value that would go in. Asked in this order so a
+            // value that is *already* what the hull holds matches at the first
+            // level ([ADR-064](../../docs/specification/adr/adr-064.md) D2).
             found.fits(held) || found.fits(&locked_content(held))
         }
         _ => false,

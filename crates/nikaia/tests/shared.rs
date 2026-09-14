@@ -510,12 +510,16 @@ fn the_counter_of_part_ii_12_2_runs_at_both_settings() {
         );
         assert_eq!(printed.trim(), "6", "at `{setting}`");
 
-        // One name above, two hulls below, and the pair that belongs to the
-        // setting - never one of each (ADR-061 D2, ADR-057 D3).
-        let (count, lock) = match setting {
-            "no" => ("std::rc::Rc", "lock::Local"),
-            _ => ("std::sync::Arc", "lock::Crossing"),
-        };
+        // **One name above, two hulls below, and always a matching pair** -
+        // never an atomic count around a cheap lock (ADR-061 D2, ADR-057 D3).
+        //
+        // The cheap pair at **both** settings, and that is the per-value answer
+        // doing its work: `zaehle` is an ordinary call on the same thread, so
+        // nothing crosses even where the build allows it to
+        // ([ADR-037](../../../docs/specification/adr/adr-037.md) D7). The test
+        // below spawns, and takes the other pair.
+        let (count, lock) = ("std::rc::Rc", "lock::Local");
+        let _ = setting;
         assert!(
             rust.contains(&format!("{count}::new(nikaia_std::{lock}::new(")),
             "the constructor writes both hulls at `{setting}`:\n{rust}"
