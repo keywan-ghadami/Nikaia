@@ -54,66 +54,17 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. A name the language below reserves goes into the generated file unescaped
-
-*Reproduced:*
-
-```nika
-fn main() {
-    let trait = 3
-    println(f"{trait}")
-}
-```
-
-lowers to `let trait = 3;` and `rustc` answers
-
-```text
-error: expected identifier, found keyword `trait`
-help: escape `trait` to use it as an identifier
-```
-
-about a file nobody wrote, with advice that means nothing in this language —
-[Part III C.1](specification/30-nikaia-tooling.md)'s class exactly.
-
-*Measured, because the instance is not the point:* **24 words**, swept by
-lowering `let W = 3` for every Rust keyword and reserved word this language does
-not reserve, and reading `rustc`'s own *"found keyword"* rather than its exit
-status (two controls that are ordinary names came back clean, which is what says
-the sweep measures the right thing):
-
-```text
-dyn extern mod move ref static trait type unsafe where async await
-abstract become do final macro override priv typeof unsized virtual yield try
-```
-
-`crate`, `super`, `box`, `gen` and `union` are **not** among them: Rust takes
-those as identifiers in this position. So it is the language below's list and not
-a guess about it.
-
-*And not only at a `let`.* A field, a parameter and a function's own name go the
-same way — `struct Row { type: i64 }`, `fn type_of(type: i64) -> i64 { type }`
-are both written out verbatim.
-
-*Why it is a defect and not a reservation question:* the obvious move is to
-reserve these 24 words in Nikaia, and it is the wrong one.
-[ADR-051](specification/adr/adr-051.md) D1's rule is about words **this**
-language needs; `type`, `move`, `ref` and `static` are perfectly good Nikaia
-names and forbidding them for a Rust reason would let the backend decide what
-Nikaia's vocabulary is. The cause is [ADR-011](specification/adr/adr-011.md) D2 —
-the emitter writes a name for a name — so the fix belongs where the name is
-written: one rule that escapes what the language below reserves (`r#trait`),
-which is [ADR-056](specification/adr/adr-056.md)'s *a rule and not a list* applied
-to the same boundary one position over. **This needs a record, and the record is
-one decision wide.**
-
-*Found by* Part I 4.7's own `trait Summarize { … }` not parsing, which is §2.13
-below. The keyword is not reserved *and* not a construct, and the second was
-already written down while the first was not.
-
-**One entry, found while answering what to do next**, and it arrived the way the
-last one did: a test — here a program from the specification's own page — reached
-for something and did not find it (§1.1). The entry that *left* this section is
-still worth a sentence, because it left the opposite way from how it was filed. It was filed
+**Empty again**, and the entry that just left is worth a sentence for what the
+fix cost to get right. It was filed as *escape it, one rule at one place*, and
+the measurement behind that was wrong by three words: `crate`, `super` and `box`
+fail in the language below with a different message each, so a sweep keyed on one
+message missed them. The sweep that replaced it **compiles** every candidate in
+every position, which is the property actually wanted, and it is what found both
+those three and the one position the escape had not reached
+([ADR-076](specification/adr/adr-076.md)). Two of the words turn out to have no
+escape at all, so the one rule has one forced exception — `NK1128` — and it is
+the target's rather than this language's. The entry *before* it left the opposite
+way from how it was filed. It was filed
 as *"refuse the form until the roadmap's box is taken"*, on this section's own
 principle that a refusal is free before programs exist. What it got instead was
 the box — and the measurement is why: the entry's own note said writing the
@@ -597,6 +548,13 @@ on `origin/main` with nothing applied, three runs out of three, while `cargo tes
 four. Under the same command since: **seven consecutive clean whole-workspace
 runs**, two of them with a full rebuild immediately before in the same
 invocation, which was the best hypothesis and is now ruled out.
+
+**Seen once more since, and it brought one new datum.** Two runs failed and two
+runs of the same command minutes later did not, on both the branch and a clean
+`origin/main`. What is new is *where* the probe's output stops: the first time
+after `off`, the second after `unpacked` — a **varying** offset, part-way down a
+list the wrapper only passes through. That points at output being cut off rather
+than at anything the wrapper decides, which is one more thing ruled out.
 
 *What is left, and it is a guess rather than a finding:* every failing run
 happened while this container was doing a great deal else, and every clean run

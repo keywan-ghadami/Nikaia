@@ -647,13 +647,14 @@ impl<'a> Checker<'a> {
                     self.structs.insert(own, fields);
                 }
                 Item::Enum { name, variants, .. } => {
-                    self.nameable(&self.parsed.text(*name).to_string(), &item.span, "an enum");
-                    for v in variants {
-                        self.nameable(
-                            &self.parsed.text(v.name).to_string(),
-                            &item.span,
-                            "a variant",
-                        );
+                    let own = self.parsed.text(*name).to_string();
+                    self.nameable(&own, &item.span, "an enum");
+                    let named: Vec<String> = variants
+                        .iter()
+                        .map(|v| self.parsed.text(v.name).to_string())
+                        .collect();
+                    for name in &named {
+                        self.nameable(name, &item.span, "a variant");
                     }
                     let variants = variants
                         .iter()
