@@ -117,36 +117,7 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 4. **Supervision.** Last because nothing else waits on it.
 
-### 2.1. A handle a **task** uses is moved into it, not duplicated
-
-*Reproduced, and newly reachable:*
-
-```nika
-let counter = SharedMut(0)
-let t = spawn fn { counter.update fn(alt) { alt + 1 } }
-t.join()
-println(f"{counter.get()}")   // rustc: borrow of moved value: `counter`
-```
-
-[ADR-040](specification/adr/adr-040.md) D1 says a handle is **duplicated** where
-it is handed on by value, and a task is one of the two places it names. Built for
-a call, not for a task — and until `spawn` lowered, that half could not be run at
-all. It can now, and what comes back is the backend's words about the generated
-file: Part III C.1's class, on the program Part II 11.2 is about.
-
-*Why it is not simply the same code:* a call's duplication is decided from the
-**callee's signature** — the ledger says the parameter takes a handle. A task's
-body has no signature; what it captures is decided by which names its body
-mentions, which is the same question `contracts::sharing` already answers for the
-crossing analysis. So the site exists; what is missing is the emitter writing the
-`.clone()` on the capture.
-
-*And it must be unconditional* ([ADR-040](specification/adr/adr-040.md) D2): not
-only where the name is used again, because a line further down may not decide what
-a line further up does to a cleanup point. The program above uses it again and
-that is what makes the defect visible, not what makes it one.
-
-### 2.2. `examples/foreign-runtime/` explains the boundary with a rule that is gone
+### 2.1. `examples/foreign-runtime/` explains the boundary with a rule that is gone
 
 Four programs about handing values across the foreign boundary — `crossing`,
 `serve`, `shim`, `smuggled` — and their comments name the **per-build** expansion:
@@ -160,7 +131,7 @@ something. This is where a reader goes to learn what crossing means, so a stale
 explanation here is worth more than its size — and it is where the bridge D1
 reserved would first be missed, if it is missed at all.
 
-### 2.3. A task that may not cross a thread is refused by `rustc`, not by this compiler
+### 2.2. A task that may not cross a thread is refused by `rustc`, not by this compiler
 
 [ADR-055](specification/adr/adr-055.md) §2 D6's third sharp edge, and the last
 thing that record decided which the compiler does not do.
@@ -203,7 +174,7 @@ than waiting:** the analysis names a `spawn` body's handle as a duplication site
 and used again afterwards is not refused, which `tasks.rs` says about a program
 that does it.
 
-### 2.4. A lambda that pauses is refused, and a recursive pausing method is not boxed
+### 2.3. A lambda that pauses is refused, and a recursive pausing method is not boxed
 
 Both are [ADR-055](specification/adr/adr-055.md) §6's remainder, and both are
 limits of this compiler rather than of the language — so they are here and not in
@@ -246,7 +217,7 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.5. `let` takes one name, and the specification writes it taking several
+### 2.4. `let` takes one name, and the specification writes it taking several
 
 ```nika
 let (user, rights, prefs) = overlap { … }          // Part I 8.1.2
@@ -272,7 +243,7 @@ compiler's rule for a form nobody decided.
 not them; what the two sites need is destructuring a tuple whose arity is known,
 and a bigger answer would be a decision rather than this repair.
 
-### 2.6. Standard input is `async` and does not suspend
+### 2.5. Standard input is `async` and does not suspend
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -302,7 +273,7 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.7. The lock is built and every rule around it is not
+### 2.6. The lock is built and every rule around it is not
 
 [ADR-057](specification/adr/adr-057.md) decided what the lock **is**,
 [ADR-059](specification/adr/adr-059.md) what a program writes to reach one, and
@@ -324,13 +295,13 @@ left is the section's own rules, every one of which is a refusal nothing raises:
   charges only on the values that actually cross;
 * `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
 
-### 2.8. Part II 12.8's supervision syntax
+### 2.7. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.9. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.8. `fortunes.nika` waits on two runtime pieces, and neither is a language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -348,7 +319,7 @@ form. What is left is machinery, not syntax:
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.10. There is no HTTP server, and three records now wait on it
+### 2.9. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal
@@ -396,7 +367,7 @@ bench that decided it (`benches/sendfile/`) and the write-up
 been built ahead of the server and deliberately was not, because D3's measurement
 makes it the mechanism that loses at the sizes a server sends most.
 
-### 2.11. There is no target that lets foreign code call in, and the record for one is written
+### 2.10. There is no target that lets foreign code call in, and the record for one is written
 
 [ADR-062](specification/adr/adr-062.md). Nothing of it is built and nothing of it
 **can** be: `extern "C"` is a parse error (Part III 15.1), `Target` has two values,
@@ -415,7 +386,7 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.12. A type nothing declares goes into the language below untranslated
+### 2.11. A type nothing declares goes into the language below untranslated
 
 *Reproduced:* `let counter: SharedMut[i64] = 0` used to emit `SharedMut<i64>` and
 come back as `rustc`'s *"cannot find type `SharedMut` in this scope"* — about a

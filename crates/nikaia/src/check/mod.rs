@@ -226,6 +226,15 @@ pub struct Checked {
     /// resolved by position - a checked conversion on a widening one would be a
     /// `rustc` error about a file nobody wrote.
     pub narrowing_casts: BTreeMap<(usize, String), Narrowing>,
+    /// The **handles a task's body uses**, by the byte the statement starts at
+    /// and the name ([ADR-040](../../docs/specification/adr/adr-040.md) D1).
+    ///
+    /// A task takes what it names by value, and a handle handed on by value is
+    /// **duplicated**. For a call the emitter reads that off the callee's
+    /// signature; a task's body has no signature, so which names are handles is
+    /// a question about types and is answered here - the same arrangement
+    /// `fallible_methods` and the rest use.
+    pub task_handles: BTreeSet<(usize, String)>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -363,6 +372,8 @@ pub struct Propagation {
     pub nullable_in_fields: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_args`].
     pub nullable_in_args: BTreeSet<(usize, String, usize)>,
+    /// [`Checked::task_handles`].
+    pub task_handles: BTreeSet<(usize, String)>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -395,6 +406,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         flattened: checked.flattened_reaches,
         nullable_in_fields: checked.nullable_fields,
         nullable_in_args: checked.nullable_args,
+        task_handles: checked.task_handles,
     }
 }
 
@@ -2529,6 +2541,16 @@ impl<'a> Checker<'a> {
             let Some((ty, _)) = self.local(&name) else {
                 continue;
             };
+            // **A handle is duplicated into the task, not moved**
+            // ([ADR-040](../../docs/specification/adr/adr-040.md) D1). It is
+            // recorded rather than refused, because the emitter is what writes
+            // the step and it has no types (ADR-028) - the same arrangement
+            // every other answer this module hands over uses. Unconditional, and
+            // not only where the name is used again (D2): a line further down
+            // may not decide what a line further up does to a cleanup point.
+            if is_a_handle(&ty) {
+                self.checked.task_handles.insert((span.start, name.clone()));
+            }
             if !moves_away(&ty) {
                 continue;
             }
@@ -3277,6 +3299,16 @@ const SHARED_MUT: &str = "SharedMut";
 /// word stands where it happens.
 fn is_hull(name: &str) -> bool {
     matches!(name, SHARED | SHARED_MUT | LOCKED)
+}
+
+/// Whether a value **is** a handle on a shared one, held by value.
+///
+/// `&Shared[T]` is not: lending the inner value out hands no handle on, so
+/// nothing is duplicated ([ADR-040](../../../docs/specification/adr/adr-040.md)
+/// D1's correction). A type that merely *holds* one is not either - a struct is
+/// carried by whatever holds it.
+fn is_a_handle(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, view: false, .. } if name == SHARED || name == SHARED_MUT)
 }
 
 /// Whether a plain value stands where a **hull** is wanted - the shape whose

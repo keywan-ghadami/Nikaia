@@ -777,6 +777,14 @@ struct Emitter<'p> {
     /// parameter, by statement, callee as written, and position
     /// (`check::Checked::nullable_args`).
     nullable_args: std::collections::BTreeSet<(usize, String, usize)>,
+    /// The handles a task's body uses, by the byte the statement starts at and
+    /// the name (`check::Checked::task_handles`).
+    ///
+    /// A task takes what it names **by value**, and a handle handed on by value
+    /// is duplicated ([ADR-040](../../../docs/specification/adr/adr-040.md) D1).
+    /// For a call the callee's signature answers it; a task's body has no
+    /// signature, so the checker answers it and this writes the step.
+    task_handles: std::collections::BTreeSet<(usize, String)>,
     /// ADR-055 D6: what each pausing function can reach, over the pausing ones
     /// ([`pausing_reach`]).
     ///
@@ -1218,6 +1226,7 @@ impl<'p> Emitter<'p> {
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
             nullable_args: propagation.nullable_in_args,
+            task_handles: propagation.task_handles,
             pausing_reach: reach,
             own_contracts,
             library,
@@ -3326,6 +3335,25 @@ impl<'p> Emitter<'p> {
                 // holding the plain count ADR-061 D1 gives a `Shared` at one
                 // user thread. One Nikaia line, two lowerings, and the switch
                 // is what chooses.
+                // **A handle the body names is duplicated, not moved**
+                // ([ADR-040](../../../docs/specification/adr/adr-040.md) D1).
+                // The step is written *outside* the future, in a block of its
+                // own, so the name the body moves is the new handle and the
+                // caller's own survives the `spawn` - which is the whole of D1
+                // for the task half. Unconditional (D2): a line further down may
+                // not decide what a line further up does to a cleanup point.
+                let handles: Vec<&str> = self
+                    .task_handles
+                    .iter()
+                    .filter(|(at, _)| *at == flow.statement)
+                    .map(|(_, name)| name.as_str())
+                    .collect();
+                if !handles.is_empty() {
+                    out.push("{ ");
+                    for name in &handles {
+                        out.push(&format!("let {name} = {name}.clone(); "));
+                    }
+                }
                 match self.build.overlaps_user_code() {
                     true => out.push("nikaia_std::task::TaskHandle::start_on_pool(async move "),
                     false => out.push("nikaia_std::task::TaskHandle::start(async move "),
@@ -3340,6 +3368,9 @@ impl<'p> Emitter<'p> {
                 };
                 self.block(out, body, depth, inside, Tail::Return)?;
                 out.push(")");
+                if !handles.is_empty() {
+                    out.push(" }");
+                }
             }
             Expr::DslFrom { grammar, input } => {
                 self.dsl_from(out, *grammar, input, depth, flow, Propagate::Yes)?

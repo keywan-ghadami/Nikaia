@@ -562,3 +562,51 @@ fn a_shared_around_a_lock_is_refused_and_names_the_short_form() {
     assert!(said.contains("`SharedMut[i64]`"), "{said}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A handle a task uses is duplicated, not moved**
+/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1's task half).
+///
+/// Built for a call long before this, and unrunnable until `spawn` lowered: the
+/// task took the handle with it and `rustc` refused the later use about the
+/// generated file. The step is written *outside* the future, so the name the body
+/// moves is the new handle and the caller's own survives the `spawn`.
+///
+/// **And both hulls come out atomic here**, which is the other half of the claim:
+/// the same program with no `spawn` takes the cheap pair at `yes`, so this is the
+/// per-value answer and not a floor.
+const SHARED_WITH_A_TASK: &str = "\
+fn main() {
+    let counter = SharedMut(0)
+    let t = spawn fn { counter.update fn(alt) { alt + 1 } }
+    t.join()
+    println(f\"{counter.get()}\")
+}
+";
+
+#[test]
+fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
+    for setting in ["no", "yes"] {
+        let (printed, rust) = run(
+            &format!("task-handle-{setting}"),
+            SHARED_WITH_A_TASK,
+            &["--user-parallelism", setting],
+        );
+        assert_eq!(printed.trim(), "1", "at `{setting}`");
+        assert!(
+            rust.contains("{ let counter = counter.clone(); nikaia_std::task::TaskHandle::start"),
+            "the step is written outside the future at `{setting}`:\n{rust}"
+        );
+    }
+
+    // A value a task takes may reach another thread, so both hulls are the
+    // robust shape - and only where it does (ADR-037 D7, ADR-057 D3).
+    let (_, crossing) = run(
+        "task-handle-pair",
+        SHARED_WITH_A_TASK,
+        &["--user-parallelism", "yes"],
+    );
+    assert!(
+        crossing.contains("std::sync::Arc::new(nikaia_std::lock::Crossing::new("),
+        "a value a task takes is atomic in both hulls:\n{crossing}"
+    );
+}

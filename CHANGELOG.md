@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed (a handle a task uses is duplicated, which it was not)
+
+- **[ADR-040](docs/specification/adr/adr-040.md) D1's task half**, built for a call since it was written and for a task only now. It could not be run at all until `spawn` lowered; the moment it could, the task took the handle with it and `rustc` refused the later use — *"borrow of moved value: `counter`"*, about the generated file, on the program Part II 11.2 is about.
+- **The step is written outside the future**, in a block of its own, so the name the body moves is the **new** handle and the caller's own survives the `spawn`. Unconditional, not only where the name is used again ([ADR-040](docs/specification/adr/adr-040.md) D2): a line further down may not decide what a line further up does to a cleanup point.
+- **Why it is not the same code as a call's.** A call's duplication is read off the callee's signature — the ledger says the parameter takes a handle. A task's body has no signature, so which of the names it captures are handles is a question about types, and the checker answers it the way it answers every other one the emitter cannot (`Checked::task_handles`).
+- Now a real shared counter runs: a task increments it, `main` reads it back, and it prints `1` at both settings. At `yes` the value is atomic in **both** hulls because a task takes it; the same program without the `spawn` takes the cheap pair — the per-value answer, not a floor.
+
 ### Changed (the pages catch up with the lock, and the cheap shape reaches `yes`)
 
 - **Nine status notes said the shared mutable type does not exist**, and it does since [ADR-064](docs/specification/adr/adr-064.md): Part II 12.2's *"Not built. `SharedMut[T]` and `Locked[T]` are not types the compiler knows"*, 12.3's *"what is not built is what they call"*, Part III 15.2's reachability rule, the panic table, the `NK22xx` shapes and the crossing verdict's note that such a program *"would fail to emit"*. **The reason has moved in every one of them**: the types are there and every **refusal** around them is what is missing. That is a shorter way to go than it was, and the notes now say which.
