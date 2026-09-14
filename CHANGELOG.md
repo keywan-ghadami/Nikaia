@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed (the README stops saying "single-threaded", because the process is not)
+
+- **`no` was described as a "single-threaded event loop"**, which is a statement about the *process* — and the process has at least two OS threads. The runtime starts named I/O workers (`nikaia-io-0`, …) whatever the switch says, and its own test asserts *"one I/O thread always"*. The claim below it — two pieces of your code are never in flight together — was always true, and the word above it was not.
+- **The section contradicted its own principle.** Four lines further down it says *"it is a permission, not a count"* and *"the word **your** is load-bearing"*; the `no` line handed out the one count the switch does not give.
+- **And the correction is the selling point, not a footnote.** A reader who sees a language this quiet and reads "one thread" thinks of Python, where the single thread *is* the whole machine. Here it bounds your instructions and nothing else: the I/O is on the runtime's threads, and what `std` does uses every core whatever the switch says — a file's text is validated in chunks across all of them, 63.7 ms down to 16.5 ms ([ADR-016](docs/specification/adr/adr-016.md)), with no check of `user_parallelism` anywhere in that path.
+- `wasm32-unknown` stops reading as a choice a reader could make: it is named and **refused**, with the gap stated. The compiler already distinguishes — it carries a `has_runtime` for exactly this — and only the README flattened it.
+
 ### Added (`overlap { … }`, and the compiler checks the claim)
 
 - **[ADR-050](docs/specification/adr/adr-050.md) D2–D6, which is [ADR-055](docs/specification/adr/adr-055.md) §6's fifth and last step.** Each statement in the block is a branch, every branch is in flight at once, and the block's value is their results **in written order**. It needed less from the async work than the order suggested: what it wanted was a vehicle that takes *futures* rather than closures — the same thing step 3 needed for an overlapped pair — and `std` grew one per arity beside `task::interleave`.

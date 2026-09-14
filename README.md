@@ -260,18 +260,32 @@ Nikaia adapts to your problem, not the other way around. There is one language, 
 in your `nikaia.toml` decide how it is built — never what it means.
 
 ### `target` — which machine
-`x86_64-linux` by default, or `wasm32-unknown`. The machine decides what `std` can offer and
-what a panic does: an orderly unwind where the machine unwinds, a trap where it traps.
+`x86_64-linux` by default. The machine decides what `std` can offer and what a panic does: an
+orderly unwind where the machine unwinds, a trap where it traps. `wasm32-unknown` is named and
+**refused**, with the gap said out loud rather than code emitted for a different machine — what
+`std::fs` offers where there is neither a memory mapping nor a thread is undecided.
 
 ### `user_parallelism` — how much of *your* code runs at once
-* **`no`** (default) — single-threaded event loop. **Data races are impossible**: two pieces of
-  your code are never in flight together. Microservices, web servers, CLI tools, edge workers —
-  where you would reach for Node.js or Go.
+* **`no`** (default) — your code runs on **one** thread, over an event loop. **Data races are
+  impossible**: two pieces of your code are never in flight together, so nothing you write needs
+  a lock. Microservices, web servers, CLI tools, edge workers — where you would reach for
+  Node.js or Go.
 * **`yes`** — multi-threaded work-stealing runtime, every core busy, thread safety proven by
   the borrow checker. HPC, game engines, heavy backends — where you would reach for Rust or C++.
 
-It is a permission, not a count: *how many* threads serve a `yes` is the runtime's to decide,
-because the right answer belongs to the machine and not to the source file.
+**This is not the one thread you know from Python.** There the single thread is the whole
+machine and the other cores stand idle. Here it bounds **your instructions** and nothing else:
+the I/O runs on threads of the runtime's own, and where the kernel offers a completion queue it
+does not need a thread to wait on one. What `std` itself does uses the machine whatever this
+switch says — a file's text is validated in chunks across every core, **63.7 ms down to
+16.5 ms** ([ADR-016](docs/specification/adr/adr-016.md)). Your code stays a straight line; the
+machine does not stand still.
+
+It is a permission, not a count — in both directions. *How many* threads serve a `yes` is the
+runtime's to decide, because the right answer belongs to the machine and not to the source file.
+And on a machine with no threads the runtime has none either: that is why `wasm32-unknown` is
+not yet a target a program can be built for, and the compiler says so with a reason rather than
+pretending otherwise.
 
 **The word *your* is load-bearing.** It bounds your program, not the compiler: reading a file
 may still validate its text on four cores at `no`, because that is not code you wrote and it
