@@ -70,6 +70,15 @@ fn parse_input(input: String) throws {
 > 1` parses as two statements and is then refused by `NK1117`, *"nothing declares
 > `const`"*. So the compile-time half of dual-mode parsing has no syntax to be
 > written in, and a `dsl … from …` runs at runtime wherever it stands.
+>
+> **And when it does have one, the file will have to be named three times**
+> ([ADR-072](adr/adr-072.md) D3): in the code, as the literal above; in an
+> allowlist file, one path per line; and in the invocation that puts that list in
+> effect, `--allow-read-from-list=…`. Two of the three are committed, so adding a
+> read is a diff a reviewer sees; the third lets a build be run with compile-time
+> reading switched off without editing anything. A build given no list reads
+> nothing (D1), the path may not be computed (D4), and there are no patterns
+> (D5).
 
 ### 10.3. Code Generation (Quasi-Quoting)
 While parsing reads data, **Macros** create new code. Nikaia uses a mechanism called **Quasi-Quoting**. The `quote` block allows you to write Nikaia code as data templates and fill in the blanks with variables.

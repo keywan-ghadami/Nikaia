@@ -67,6 +67,14 @@ written down in [`specification/adr/`](specification/adr).
 build cache**, which is carried through `Key::build` and exercised by tests with
 no real producer behind it ([ADR-021](specification/adr/adr-021.md) D13).
 
+**Half of it is answered and this entry has shrunk to the other half.**
+[ADR-072](specification/adr/adr-072.md) decided where the bytes come from: a file
+a build reads is named three times — in the code, in an allowlist file, and in
+the invocation that puts the list in effect — and a build given no list reads
+nothing. That answers [ADR-026](specification/adr/adr-026.md) Q5 and the
+filesystem half of its Q6, and it decides nothing about what happens to the bytes
+afterwards.
+
 **This one is written down where it belongs.**
 [ADR-026](specification/adr/adr-026.md) is the record, its status is **Open**,
 and it holds the whole design space: two things already decided (I/O belongs to
@@ -74,10 +82,11 @@ the compiler rather than to a sandbox; a path stays in the project root and `..`
 is refused rather than resolved), six questions as Q1–Q6, prior art, what was
 considered and rejected, and what answering it buys the cache.
 
-**The one that blocks the others is Q4 — what is a program allowed to do in
-`const`?** Everything else in that record is downstream of it: whether a sandbox
-is needed at all, what it would be, and where the trust line goes all read
-differently depending on how much a build-time body may reach.
+**What is left is Q4 — what is a program allowed to do in `const`?** Everything
+still open in that record is downstream of it: whether a sandbox is needed at all,
+what it would be, and what bounds a body's steps and its memory all read
+differently depending on how much a build-time body may reach. The reading
+question that used to sit beside it is gone.
 
 **What I would do:** answer Q4 alone, narrowly, and leave Q1–Q3 and Q5–Q6 where
 they are. A grammar's `action` blocks are arbitrary Nikaia, so evaluating one at
