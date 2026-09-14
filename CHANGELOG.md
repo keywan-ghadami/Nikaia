@@ -166,7 +166,7 @@
 
 ### Found (two defects, neither caused by the work that found them)
 
-- **A `return` in an `impl` method does not get its `Some(…)`.** ADR-052 D4 has the compiler write the wrap at an annotated `let`, an assignment and a `return`; it does the third only in a **free function**. The emitted Rust of one file says it plainly: `async fn nick(&self) -> Option<String> { self.name.clone() }` beside `fn plain() -> Option<String> { Some("x".to_string()) }` — the signature right in both, the body in one. The reader gets `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does not have. `open-work.md` §1.1.
+- **A value this checker cannot type does not get its `Some(…)`.** ADR-052 D4 has the compiler write the wrap where it **knows** the value is not already a `T?`, and leave everything else alone — right, because wrapping one that is would make an `Option<Option<T>>`. The silence is the defect: the reader gets `rustc`'s *"try wrapping the expression in `Some`"* about a form Nikaia does not have. **First filed as "in an `impl` method", which was the wrong cause**: `nullable_sites` holds two of four `return`s across the two positions, and what separates them is `.clone()` — no ledger describes it, so the value's type is `?`. `open-work.md` §1.1 carries it with the four-way evidence and a recommendation.
 - **A member reached off a `T?` with a plain `.` was emitted rather than refused** — fixed in the same session, below.
 
 ### Added (a lock shared by four tasks, on four threads, counts every increment)

@@ -59,42 +59,52 @@ refused, and what it needed turned out to be Part I 2.3 applied to a position
 that had escaped it rather than a ruling ([ADR-066](specification/adr/adr-066.md)
 D6).
 
-### 1.1. A `return` in an `impl` method does not get its `Some(…)`
+### 1.1. A value this checker cannot type does not get its `Some(…)`
 
-[ADR-052](specification/adr/adr-052.md) D4 says the compiler writes the wrap, and
-the checker says where: an annotated `let`, an assignment, and a **`return`**
-against a declared result. It does the first two everywhere and the third only in
-a **free function**.
+[ADR-052](specification/adr/adr-052.md) D4 has the compiler write the wrap, and
+the checker say where. It writes it where it **knows** the value is not already a
+`T?` — its type says so, or it is a literal — and leaves everything else alone,
+because wrapping a value that is already nullable would make an
+`Option<Option<T>>`. That caution is right and the *silence* is what is wrong: a
+value whose type this checker could not work out gets no wrap and no word, and
+the program then fails in the language below.
 
 ```nika
-struct U { name: String }
-
 impl U {
-    fn nick(&self) -> String? {
-        return self.name.clone()      // no `Some(…)`, and the program does not compile
-    }
+    fn a(&self) -> String? { return self.name.clone() }   // no wrap
+    fn b(&self) -> String? { return "lit".to_string() }   // wrapped
 }
 
-fn plain() -> String? {
-    return "x".to_string()            // `Some("x".to_string())`, as D4 says
-}
+fn c(u: &U) -> String? { return u.name.clone() }          // no wrap
+fn d() -> String? { return "lit".to_string() }            // wrapped
 ```
 
-*Evidence:* the emitted Rust of exactly that file — `async fn nick(&self) ->
-Option<String> { self.name.clone() }` beside `fn plain() -> Option<String> {
-Some("x".to_string()) }`. The signature is right in both and the body only in
-one.
+*Evidence:* `check::Checked::nullable_sites` holds **two** of those four
+`return`s — `b` and `d`. So it is not `impl` against free function, which is what
+this entry said when it was written: it is `.clone()`, which no ledger describes,
+so the value's type is `?` and the rule declines. `b` and `d` differ only in
+having a value whose type is known.
 
-*Why it is a defect and not a limit:* the refusal a reader gets is `rustc`'s
-about the generated file — *"expected enum `Option<String>`, found struct
-`String`"*, with `try wrapping the expression in `Some`` about a type the program
-never wrote ([Part III C.1](specification/30-nikaia-tooling.md)). And the way out
-is not writable: `Some(…)` is not a form Nikaia has.
+*What the reader gets* is `rustc` about the generated file — *"expected enum
+`Option<String>`, found struct `String`"*, with *"try wrapping the expression in
+`Some`"* about a form Nikaia does not have
+([Part III C.1](specification/30-nikaia-tooling.md)).
 
-*What it needs:* wherever the checker reads a function's declared result to
-decide a `return`'s wrap, the same reading for a method — an `impl` body's result
-is on the method and the walk is not finding it. It is one place, and
-`nullable.rs` has the shape of the test already.
+*What it needs, and the recommendation:* **`.into()` where the type is not
+known.** `x.into()` against a declared `Option<T>` is correct whether `x` is a
+`T` or already an `Option<T>` — Rust has `From<T> for Option<T>` and the identity
+`From<T> for T`, and both directions were compiled and run to check it. So the
+uncertainty the rule is conservative about stops needing an answer: where the
+checker knows, it keeps writing `Some(…)` and the generated Rust reads as it
+does today; where it does not, it writes the form that is right either way. It is
+the same trick the `??` lowering already uses (`unwrap_or_else(|| b.into())`),
+one position over.
+
+*What it is not:* growing the ledger until `clone` is in it. That is worth doing
+for its own sake ([ADR-028](specification/adr/adr-028.md) D5: an entry exists
+because a program asked for it) and it is **not** the fix — the next program
+reaches the same wall under a different name, because the hole is "a type this
+checker could not work out" and not "this one method".
 
 ## 2. Decided and unbuilt
 
