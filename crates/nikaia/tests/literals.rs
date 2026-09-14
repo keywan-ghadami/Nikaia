@@ -229,3 +229,66 @@ fn a_negation_is_folded_before_the_width_is_decided() {
     let wider = emit("fn main() { let past = -2147483649 }");
     assert!(wider.contains("-2147483649i64"), "{wider}");
 }
+
+// --- a constant sum widens the way a constant does (ADR-063) -----------------
+
+/// **A constant written only in literals takes the first type that holds it**
+/// ([ADR-063](../../../docs/specification/adr/adr-063.md) D1).
+///
+/// [ADR-060](../../../docs/specification/adr/adr-060.md) gave that to a literal
+/// and the rule did not reach a sum, so `3000000000 + 1` compiled and
+/// `2000000000 + 2000000000` did not — refused in the backend's words, *"this
+/// arithmetic operation will overflow"*, on the Nikaia line that wrote it. Which
+/// of the two works was not predictable from any page.
+#[test]
+fn a_constant_sum_an_i32_does_not_hold_is_written_wide() {
+    let emitted = emit("fn main() { let c = 2000000000 + 2000000000 }");
+    assert!(
+        emitted.contains("2000000000i64 + 2000000000i64"),
+        "{emitted}"
+    );
+}
+
+/// **Every literal in it, not just the outermost.** Rust computes in the type of
+/// the operands, so one suffix on one half would be two types meeting across a
+/// `+`. The decision is taken once, on the outermost expression that folds, and
+/// reaches every literal under it.
+#[test]
+fn the_whole_expression_agrees_about_its_type() {
+    let emitted = emit("fn main() { let c = 1000000000 * 2 + 1000000000 * 2 }");
+    assert!(
+        emitted.contains("1000000000i64 * 2i64 + 1000000000i64 * 2i64"),
+        "{emitted}"
+    );
+
+    // Including a negation, whose own fast path writes the sign itself.
+    let signed = emit("fn main() { let c = -2000000000 - 2000000000 }");
+    assert!(
+        signed.contains("-2000000000i64 - 2000000000i64"),
+        "{signed}"
+    );
+}
+
+/// **And one that fits is left alone**, which is the whole of what keeps every
+/// program that compiles today compiling: a suffix pins what a use is supposed
+/// to decide (Part I 2.4).
+#[test]
+fn a_constant_sum_that_fits_carries_no_type_of_its_own() {
+    let emitted = emit("fn main() { let small = 2 + 3 }");
+    assert!(emitted.contains("let small = 2 + 3;"), "{emitted}");
+    assert!(!emitted.contains("i64"), "{emitted}");
+}
+
+/// **Not where the position decides the type.** A sequence index and a repeat
+/// count are `usize`, and both are deliberately left bare for Rust's own
+/// inference to answer — `index::at(0)` has nothing to infer from. A suffix
+/// written into one would pin the type the position is there to give, and what
+/// came back would be a message about the generated file.
+#[test]
+fn a_position_that_infers_the_type_is_left_alone() {
+    let indexed = emit("fn main() { let xs = \"abc\"\n let c = xs[1 + 1] }");
+    assert!(!indexed.contains("1i64"), "{indexed}");
+
+    let counted = emit("fn main() { let s = \"ab\".repeat(2 + 1) }");
+    assert!(!counted.contains("i64"), "{counted}");
+}

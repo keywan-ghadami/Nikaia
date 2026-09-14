@@ -1005,6 +1005,26 @@ struct Flow<'a> {
     /// a block inside the lambda is still written inside the lambda. A function
     /// body starts a `Flow` of its own, which is the boundary it does not cross.
     in_lambda: bool,
+    /// What is being emitted is **inside a constant this pass decided to write
+    /// in the wider type** ([ADR-063](../../../docs/specification/adr/adr-063.md)
+    /// D1), so every integer literal in it carries the `i64` suffix.
+    ///
+    /// It reaches inward, and it can only reach literals: an expression folds
+    /// only if it is built from literals and arithmetic, so nothing else is
+    /// down there to be reached. It is set on the **outermost** expression that
+    /// folds, which is why the arms below ask for it before folding again - one
+    /// decision per expression, not one per operator.
+    widen: bool,
+    /// What is being emitted stands where **Rust's own inference gives the
+    /// number its type** - a sequence index and a repeat count, both `usize`.
+    ///
+    /// Those are the two positions a literal is deliberately left bare in
+    /// (`index::at` and `count::of` are skipped there, because `at(0)` has
+    /// nothing to infer from), and a suffix written into one would pin the type
+    /// the position is supposed to decide. So `widen` does not start here, and
+    /// what an index that overflows an `i32` gets is the message it gets today
+    /// rather than a worse one.
+    inferred: bool,
 }
 
 impl Flow<'_> {
@@ -1015,6 +1035,8 @@ impl Flow<'_> {
         statement: usize::MAX,
         function: "",
         in_lambda: false,
+        widen: false,
+        inferred: false,
     };
 
     /// The same surroundings, for the expression a `catch` guards.
@@ -1028,6 +1050,22 @@ impl Flow<'_> {
     /// The same surroundings, for the statement that starts at this byte.
     fn at(self, statement: usize) -> Self {
         Flow { statement, ..self }
+    }
+
+    /// The same surroundings, inside a constant written in the wider type.
+    fn widened(self) -> Self {
+        Flow {
+            widen: true,
+            ..self
+        }
+    }
+
+    /// The same surroundings, where the position decides the number's type.
+    fn inferred(self) -> Self {
+        Flow {
+            inferred: true,
+            ..self
+        }
     }
 }
 
@@ -1789,6 +1827,9 @@ impl<'p> Emitter<'p> {
             // A function body was not written inside whatever lambda the call
             // to it sits in: this is the one boundary the flag does not cross.
             in_lambda: false,
+            // Both are decided per expression, so a body starts with neither.
+            widen: false,
+            inferred: false,
         };
 
         // A function body's last statement is the *function's* value, which is
@@ -2827,7 +2868,7 @@ impl<'p> Emitter<'p> {
 
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
-            Expr::LitInt(v) => out.push(&integer_literal(*v)),
+            Expr::LitInt(v) => out.push(&integer_literal(*v, flow.widen)),
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr(_) | Expr::LitInterpolated(_) => self.string(out, expr, depth, flow)?,
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
@@ -3034,7 +3075,7 @@ impl<'p> Emitter<'p> {
                 match only_literals(index) {
                     true => {
                         out.push("[");
-                        self.expr(out, index, depth, flow)?;
+                        self.expr(out, index, depth, flow.inferred())?;
                         out.push("]");
                     }
                     false => {
@@ -3165,7 +3206,14 @@ impl<'p> Emitter<'p> {
                 // that is one too large.
                 if let (UnaryOp::Neg, Expr::LitInt(v)) = (op, &**expr) {
                     if i32::try_from(-(*v as i128)).is_ok() {
-                        out.push(&format!("-{v}"));
+                        // The suffix still applies: a small negative number
+                        // inside a constant written wide is written wide too,
+                        // or the operands of one sum disagree.
+                        let wide = match flow.widen {
+                            true => "i64",
+                            false => "",
+                        };
+                        out.push(&format!("-{v}{wide}"));
                         return Ok(());
                     }
                 }
@@ -3173,6 +3221,19 @@ impl<'p> Emitter<'p> {
                 self.nested(out, expr, u8::MAX, depth, flow)?;
             }
             Expr::Binary { op, lhs, rhs } => {
+                // **A constant sum takes the first type that holds it**, the
+                // way a constant does
+                // ([ADR-063](../../../docs/specification/adr/adr-063.md) D1).
+                // Asked only on the outermost expression that folds - `widen`
+                // reaching inward is what makes the operands agree - and never
+                // where the position decides the type.
+                let flow = match flow.widen || flow.inferred {
+                    true => flow,
+                    false => match crate::fold::constant_of(expr, &crate::fold::nothing_is_known) {
+                        Some(folded) if crate::fold::wants_widening(&folded) => flow.widened(),
+                        _ => flow,
+                    },
+                };
                 // Parenthesised only where precedence needs it: the operators
                 // mean the same in both languages, so `value * 10 + n` should
                 // come out the way it went in.
@@ -4112,7 +4173,13 @@ impl<'p> Emitter<'p> {
             if count {
                 out.push("nikaia_std::count::of(");
             }
-            self.expr(out, arg, depth, flow)?;
+            // A count written only in literals is left for Rust to infer as a
+            // `usize`, so a suffix may not be written into it either.
+            let inside = match is_count(callee, i) && !count {
+                true => flow.inferred(),
+                false => flow,
+            };
+            self.expr(out, arg, depth, inside)?;
             if count {
                 out.push(")");
             }
@@ -4320,10 +4387,10 @@ fn repeat_suffix(rep: Repeat) -> String {
 ///
 /// The value and not the digits, which is why `-2147483648` never reaches here
 /// as `2147483648`: the negation is folded at the `Unary` arm above.
-fn integer_literal(value: i64) -> String {
+fn integer_literal(value: i64, widen: bool) -> String {
     match i32::try_from(value) {
-        Ok(_) => value.to_string(),
-        Err(_) => format!("{value}i64"),
+        Ok(_) if !widen => value.to_string(),
+        _ => format!("{value}i64"),
     }
 }
 

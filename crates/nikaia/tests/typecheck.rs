@@ -1095,6 +1095,56 @@ fn a_literal_that_fits_is_not_mentioned() {
     }
 }
 
+/// **A name pins the type its own value took**
+/// ([ADR-063](../../../docs/specification/adr/adr-063.md) D2), so a constant
+/// reached through one is arithmetic in that type.
+///
+/// `let a = 2000000000` is an `i32` — the first type that holds it — so `a + a`
+/// is an `i32` sum and does not fit. That is the same answer Kotlin and Rust
+/// give, and the way out is one word: `let a: i64 = …`. What changes is who
+/// says so: this was `rustc`'s *"this arithmetic operation will overflow"*
+/// about the generated file (Part III, C.1).
+///
+/// **It is deliberately not widened.** Widening `a + a` would mean widening
+/// `a`'s declaration, which is a walk back from a use to a binding — the one
+/// analysis ADR-060 was cheap for not needing.
+#[test]
+fn a_constant_reached_through_a_name_is_arithmetic_in_that_name_s_type() {
+    let found = findings("fn main() { let a = 2000000000\n let c = a + a }");
+    let it = found
+        .iter()
+        .find(|f| f.code == "NK1116")
+        .unwrap_or_else(|| panic!("no NK1116: {found:#?}"));
+    assert!(it.message.contains("comes to 4000000000"), "{it:#?}");
+    assert!(it.message.contains("does not fit in an `i32`"), "{it:#?}");
+
+    // And the way out compiles, because the declaration pins the wider type.
+    assert!(
+        !findings("fn main() { let a: i64 = 2000000000\n let c = a + a }")
+            .iter()
+            .any(|f| f.code == "NK1116"),
+        "the annotated form is a correct program"
+    );
+}
+
+/// **A constant no type holds is refused here too**, which is what makes the
+/// rule total: every constant integer expression gets an answer from this
+/// compiler. It takes the first type that holds it, and where none does, the
+/// message is ours and names the wider one it fell out of.
+#[test]
+fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
+    let found = findings("fn main() { let huge = 9000000000000000000 + 9000000000000000000 }");
+    let it = found
+        .iter()
+        .find(|f| f.code == "NK1116")
+        .unwrap_or_else(|| panic!("no NK1116: {found:#?}"));
+    assert!(it.message.contains("does not fit in an `i64`"), "{it:#?}");
+    assert!(
+        it.help.as_deref().is_some_and(|h| h.contains("widest")),
+        "every error names a way out (Part III C.2): {it:#?}"
+    );
+}
+
 /// **And it reaches a name inside an expression**, which is what
 /// `docs/open-work.md` carried: `NK1117` used to fire only where a
 /// statement *was* one name, so `let n = q + 1` was passed over in silence and

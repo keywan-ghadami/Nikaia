@@ -390,6 +390,27 @@ The use is asked first and the size second, which is why `small` may still becom
 an `i64` and `big` never has to be annotated to be one. A number too large for
 an `i64` is refused, because nothing holds it.
 
+**And a sum of numbers is a number** ([ADR-063](adr/adr-063.md)), so the same
+rule decides it:
+
+```nika
+let c = 2000000000 + 2000000000   // an i64: nothing asks, and an i32 does not hold it
+let small = 2 + 3                 // an i32, the same as any number that fits
+```
+
+**A name is where it stops, and on purpose.** A name already took a type, and
+arithmetic happens in the type of its operands:
+
+```nika
+let a = 2000000000        // an i32 - the first type that holds it
+let c = a + a             // refused: this comes to 4000000000, which an i32 does not hold
+let b: i64 = 2000000000   // say so, and the sum is an i64
+let d = b + b             // 4000000000
+```
+
+That is the answer every language with two integer widths gives, and the way out
+is the one word on the third line.
+
 > **Status:** built, both halves. The *use* half is the language below's
 > inference; the size half is one rule in the emitter
 > ([ADR-060](adr/adr-060.md)), a literal whose value an `i32` cannot hold written
@@ -401,6 +422,14 @@ an `i64` is refused, because nothing holds it.
 > takes — and stays silent otherwise, because a literal whose use widens it is a
 > correct program and refusing one of those is the one thing the checker may
 > never do (Part III, C.4).
+>
+> **The sum is built too** ([ADR-063](adr/adr-063.md)), and with it every
+> arrangement of a constant has an answer from this compiler rather than from the
+> language below: widened where an `i64` holds it, refused as `NK1116` where no
+> type does or where a name pinned a narrower one. The two positions where a
+> number's type comes from **where it stands** — a sequence index and a repeat
+> count, both counted by the machine — are left alone, because a type written
+> into one would pin what the position is there to decide.
 
 ### 2.5. Strings, Plain and Interpolated
 There are two string literals, and the difference is one character at the front.

@@ -29,6 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::contracts::{send, ty, ty::Ty, FieldContract, FnContract, Ledger};
+use crate::fold::Constant;
 use crate::parser::Parsed;
 use winnow_grammar::Symbol as Ident;
 
@@ -997,8 +998,16 @@ impl<'a> Checker<'a> {
         // pinned. Neither, and there is nothing to measure against - which is
         // the literal-alone case that must stay accepted (C.4).
         let named = want.and_then(integer_named);
-        let Some(ty) = named.or(folded.pinned) else {
-            return;
+        let ty = match named.or(folded.pinned) {
+            Some(ty) => ty,
+            // **Nothing beside it and nothing pinning it**, which is the
+            // constant that decides its own type
+            // ([ADR-063](../../docs/specification/adr/adr-063.md) D1): it takes
+            // the first that holds it, so the only thing left to report here is
+            // a value no type holds at all. Reported against the wider one,
+            // because that is the one it fell out of.
+            None if i64::try_from(folded.value).is_err() => "i64".to_string(),
+            None => return,
         };
         let fits = match ty.as_str() {
             "i32" => i32::try_from(folded.value).is_ok(),
@@ -1040,62 +1049,33 @@ impl<'a> Checker<'a> {
     /// What a constant integer expression comes to, and the type an operand's
     /// declaration pinned.
     ///
-    /// **Folded in an `i128`** so that a sum which cannot fit an `i64` is a
-    /// number this checker can name rather than one it wrapped - the fold must
-    /// not do quietly what it exists to refuse.
-    ///
-    /// **Every step is `checked_`, and `None` means nothing is claimed.** A name
-    /// this checker cannot evaluate, an operator it does not fold, a division by
-    /// a constant zero, a fold that leaves the `i128` - each one stops the whole
-    /// expression, and an expression that does not fold is never refused. That
-    /// is the polarity the checker is held to (Part III, C.4): it may fail to
-    /// refuse a program `rustc` will, and it may never refuse one that is right.
+    /// **The arithmetic is [`crate::fold`]'s**, and what this adds is the half
+    /// the emitter cannot have: a name resolved to what it is worth
+    /// ([ADR-063](../../docs/specification/adr/adr-063.md) D2). Only an
+    /// **immutable** `let` carries a value forward to be found here, which
+    /// `bind_with` decides; a declaration on the way pins the type, and that is
+    /// what makes `let a: i32 = 2` then `a + a` arithmetic in an `i32`.
     fn constant_of(&self, expr: &Expr) -> Option<Constant> {
-        match expr {
-            Expr::LitInt(value) => Some(Constant {
-                value: *value as i128,
-                pinned: None,
-            }),
-            Expr::Variable(name) => {
-                let (ty, constant) = self.local(self.parsed.text(*name))?;
-                Some(Constant {
-                    value: constant?,
-                    pinned: integer_named(&ty),
-                })
-            }
-            Expr::Unary {
-                op: UnaryOp::Neg,
-                expr,
-            } => {
-                let inner = self.constant_of(expr)?;
-                Some(Constant {
-                    value: inner.value.checked_neg()?,
-                    pinned: inner.pinned,
-                })
-            }
-            Expr::Binary { op, lhs, rhs } => {
-                let lhs = self.constant_of(lhs)?;
-                let rhs = self.constant_of(rhs)?;
-                // Two operands that pin different types are a mismatch `expect`
-                // reports on its own; folding them would be arithmetic in a type
-                // neither of them has.
-                let pinned = match (&lhs.pinned, &rhs.pinned) {
-                    (Some(a), Some(b)) if a != b => return None,
-                    (Some(a), _) => Some(a.clone()),
-                    (_, pinned) => pinned.clone(),
-                };
-                let value = match op {
-                    BinaryOp::Add => lhs.value.checked_add(rhs.value)?,
-                    BinaryOp::Sub => lhs.value.checked_sub(rhs.value)?,
-                    BinaryOp::Mul => lhs.value.checked_mul(rhs.value)?,
-                    BinaryOp::Div => lhs.value.checked_div(rhs.value)?,
-                    BinaryOp::Rem => lhs.value.checked_rem(rhs.value)?,
-                    _ => return None,
-                };
-                Some(Constant { value, pinned })
-            }
-            _ => None,
-        }
+        crate::fold::constant_of(expr, &|name| {
+            let (ty, constant) = self.local(self.parsed.text(name))?;
+            let value = constant?;
+            Some(Constant {
+                // **A name pins, and a literal does not**
+                // ([ADR-063](../../docs/specification/adr/adr-063.md) D2). A
+                // declaration pins what it says; a bare `let` pins the type its
+                // own value took, which is the first that holds it - so
+                // `let a = 2000000000` is an `i32` and `a + a` is arithmetic in
+                // one, the same as in every language that has both widths. The
+                // way out is one word: `let a: i64 = …`.
+                pinned: integer_named(&ty).or_else(|| {
+                    Some(match i32::try_from(value) {
+                        Ok(_) => "i32".to_string(),
+                        Err(_) => "i64".to_string(),
+                    })
+                }),
+                value,
+            })
+        })
     }
 
     /// `self` is a reserved word, and this is the one position the grammar
@@ -3284,18 +3264,6 @@ fn convert(found: &Ty, want: &Ty) -> String {
         }
         _ => format!("make it a `{want}`, or change what is declared to `{found}`"),
     }
-}
-
-/// What a constant integer expression came to, and the type an operand's
-/// declaration pinned ([`Checker::constant_of`]).
-struct Constant {
-    /// Folded in an `i128` so a sum that cannot fit an `i64` is still a number
-    /// this checker can name rather than one it wrapped.
-    value: i128,
-    /// The integer type an operand's *declaration* fixed, where one did. **A
-    /// literal pins nothing**: `3000000000` is an `i64` wherever a use asks for one
-    /// (Part I 2.4), which is why a literal standing alone may not be refused.
-    pinned: Option<String>,
 }
 
 /// The name of the integer type this is, among the two Part I 2.2 offers.

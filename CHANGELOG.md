@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed (a constant sum takes the first type that holds it, the way a constant does)
+
+- **[ADR-063](docs/specification/adr/adr-063.md).** [ADR-060](docs/specification/adr/adr-060.md) gave that to a literal and the rule did not reach a sum, so `3000000000 + 1` compiled and `2000000000 + 2000000000` did not. Measured before deciding, and it is worse than an inconsistency: what came back was `rustc`'s own lint, *"this arithmetic operation will overflow"*, on the Nikaia line that wrote it — Part III C.1's class, the one this compiler calls a bug of its own and built `NK1116` and `NK1118` to close.
+- **D1: the unit is the expression, not the token.** A constant written only in literals takes the first type that holds it, decided once on the outermost expression that folds and reaching every literal under it — Rust computes in the type of the operands, so one suffix on one half would be two types meeting across a `+`. **Not** where the position gives the number its type: a sequence index and a repeat count are counted by the machine and are deliberately left bare, and a type written into one would pin what the position is there to decide.
+- **D2: a name pins the type its own value took.** `let a = 2000000000` is an `i32`, so `a + a` is an `i32` sum and does not fit — refused as `NK1116`, *"this comes to 4000000000, which does not fit in an `i32`"*, with the way out one word away: `let a: i64 = …`. Widening it would mean widening `a`'s **declaration**, a walk back from a use to a binding, which is the analysis this whole line of decisions is cheap for not having. It is also what every language with two integer widths answers.
+- **D3: one fold, and the lookup is the parameter that separates the two passes.** The arithmetic moves to `crate::fold`; the checker passes what it knows about a name, and the emitter — which has no scope and no types — passes `nothing_is_known` and thereby gets exactly the subset answerable without looking anything up. Two constant folds in one compiler would be one fold and one liability.
+- **The class is closed.** Every arrangement of a constant now answers from this compiler: widened where an `i64` holds it, `NK1116` where no type does (*"does not fit in an `i64`"*) or where a name pinned a narrower one. `let small = 2 + 3` and `let small = 42` are written exactly as before, so nothing that compiles today stops.
+- What it costs is one sentence of [ADR-060](docs/specification/adr/adr-060.md) D3 restated honestly: the emitter reads an expression where it read a token — but an expression containing nothing but tokens. *"No analysis"* becomes *"no lookup"*, which was always the expensive half.
+
+### Fixed (a scratch manifest was committed by accident)
+
+- **`nikaia.toml` at the repository root** was a throwaway project file from a session's own testing, swept up by a `git add -A`. The root is a Cargo workspace and not a Nikaia project, and with that file there `nikaia` run anywhere under the root read it as *the* project and wrote a `nikaia.lock` beside it. Five tests across three binaries were failing for that one reason: the backend default, a broken cache, and a directory with no manifest not being a project.
+
 ### Decided (letting foreign code call in is a target, not a third value of the switch)
 
 - **[ADR-062](docs/specification/adr/adr-062.md), and nothing of it is built** — nothing of it *can* be: `extern "C"` is a parse error, `Target` has two values, and this repository has no notion of a linkable artifact. It is written down because it is the first direction that touches `user_parallelism` at its root, and a target added without it would answer the question by accident.
