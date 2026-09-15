@@ -148,6 +148,7 @@ and a decision is not an implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [020](adr-020.md) | The ledger records what the compiler knows, and a library brings its own | Accepted | yes |
+| [100](adr-100.md) | **A consumer reads a dependency's ledger and never derives it**, which is [020](adr-020.md) D5's rule for `std` applied to every package; **the inference graph is the package**, not the file. The ledger's header carries a SHA-256 per source unit, and a consumer believes the entries while the hashes match, derives that package again where they do not, and compares bytes only under `--locked` — so a build with a hundred unchanged dependencies infers none of them and a stale ledger is a derivation rather than a belief. One crate per package ([053](adr-053.md) D1) is why two builds must not derive the same answer twice: `http`'s crate emits `ok` one way, and its consumer has to write the `.await` the same way | Accepted | **no** — each unit is inferred alone today, the header has no hash, and a path dependency's ledger is neither read nor written; five steps in §5, the package-wide graph first |
 | [024](adr-024.md) | The type checker says only what is written down; `?` is the absence of a claim | Accepted | yes |
 | [027](adr-027.md) | `sync` is earned from the body, not typed by a person | Accepted | yes |
 | [028](adr-028.md) | The type checker already knew — the inference needs no second walk | Accepted | yes |

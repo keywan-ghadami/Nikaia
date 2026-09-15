@@ -270,11 +270,13 @@ this program's ledger"* — so a consumer **cannot** reproduce what the dependen
 computed about itself. Any pass that improves a package's own answer diverges
 from what its consumer can derive, unless the consumer stops deriving it.
 
-*So what closes it is a question, and it is on
-[`open-decisions.md`](open-decisions.md)* — *does a consumer read a dependency's
-published ledger?* — which is what [ADR-020](specification/adr/adr-020.md)
-exists for and what nothing does yet. With that answered the settling pass is
-half a day; without it, every fix is a divergence.
+*What closes it is [ADR-100](specification/adr/adr-100.md)*: the inference
+graph is the package rather than the file (D2), which is the two-file
+reproduction and needs no ledger from anybody, and a consumer reads a
+dependency's ledger rather than deriving it (D1), which is the three-package
+one. The settling pass is not the shape of the fix — it derives on the
+consumer's side, which is the divergence — and stays reverted. The work is
+§2.13.
 
 *What must not be done meanwhile:* relax `NK1129`. The refusal is right about
 what it reads; what it reads conflates two facts. Making it quieter would trade
@@ -746,6 +748,25 @@ rewrites every example, so the examples are the test.
 *Why it is here and not in §1:* nothing is miscompiled. It is a message in the
 wrong words at every site the caller forgets the `&`, and a tax at every site
 they remember it.
+
+### 2.13. A consumer reads a dependency's ledger, and the inference graph is the package
+
+[ADR-100](specification/adr/adr-100.md). A package's ledger is inferred over
+all of its units at once and written by its own build; a consumer reads it and
+believes it while the per-unit source hashes in its header match, derives it
+again where they do not, and compares bytes only under `--locked`. **None of it
+is built**: `modules::Program::of` calls `Ledger::infer` once per file, the
+header carries no hash, and a path dependency's ledger is neither read nor
+written. §1.1 is the defect this closes.
+
+*Evidence:* §1.1's two programs — two files of one package, and
+`app → http → deeper` — both run.
+
+*What it needs, in the record's own order (§5):* the package-wide graph first,
+because it closes the two-file case with no file format change; then the
+`[sources]` table in the header; then reading and writing a path dependency's
+ledger in dependency order; then `--locked` over path dependencies; then the
+boundary translation of D6.
 
 ---
 

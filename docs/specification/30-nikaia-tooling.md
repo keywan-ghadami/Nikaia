@@ -320,6 +320,11 @@ Nikaia source code contains no lifetime annotations (Part I, Chapter 6.5; [ADR-0
 version = 1
 toolchain = "nikaia 0.1.0"
 
+# What these entries were derived from; a consumer believes them while it holds.
+[sources]
+"src/text.nika" = "sha256:9f3a…"
+"src/main.nika" = "sha256:41c0…"
+
 [fn."text::longest"]
 returns = "borrows(a | b)"
 
@@ -424,6 +429,16 @@ One consequence is worth stating for a library author: **writing a signature dow
 
 **Distribution.** Published packages ship their ledger, so downstream projects build against stable contracts and receive identical diff-based explanations when a dependency upgrade changes one. `std` ships `std.contracts`, and it is the file a program's compiler reads when the program calls `io::…` or `fs::…`. A library whose implementation is partly in another language cannot have all of its contracts inferred, so those are **written in the ledger and reviewed like code**, marked as such, while the ones that can be inferred are regenerated and checked against the sources by the library's own tests ([ADR-020](adr/adr-020.md) D5).
 
+**A consumer reads a dependency's ledger; it never derives a dependency's contracts itself** ([ADR-100](adr/adr-100.md)). A package's ledger is written by the package's own build, in which its own dependencies are in view, and read by every consumer — the rule `std` has, for every package. The inference that writes it runs over the **package** as one graph, so a call from one file of a package to another resolves (D2); a call into a dependency is answered from that dependency's ledger; only a call into code no ledger describes is unresolved, and fails closed.
+
+**And it is believed only while the sources it came from are unchanged.** The header records, per unit, the SHA-256 of the file the entries were derived from — the hash `nikaia.lock` already holds. At a consumer's build a dependency whose sources hash as recorded is believed and nothing is inferred; one whose sources changed has its ledger derived again, written, and the difference narrated; one with a ledger and no sources is believed. A dependency is never believed against its own sources, which is what keeps the fast path honest: a stale ledger is a hash that does not match, and that is a derivation rather than a belief (D3). The build is ordered by the dependency graph, so a ledger exists before its consumer is checked (D5), and a mismatch the language below reports at a package boundary is translated as *the ledger of that package does not match its sources* (D6).
+
+> **Status:** not built. Each unit is inferred on its own today, so a call that
+> leaves the file is unresolved and read as pausing — `open-work.md`'s *a
+> `sync` body is refused as pausing when the call leaves the unit*; the header
+> carries no source hash; and a path dependency's ledger is neither read nor
+> written. [ADR-100](adr/adr-100.md) §5 is the order of work.
+
 **Version control.** Commit `nikaia.contracts`. Merge conflicts resolve like lockfile conflicts: accept either side and run `nikaia build` to regenerate. The recorded `toolchain` hash lets the compiler detect when a toolchain upgrade (not your code) changed inference results; in that case the build output states explicitly that the contract changes were caused by the toolchain update, not by your code.
 
 **Determinism guarantee.** The ledger is a **pure function of (source tree, toolchain)**: the same sources and the same pinned toolchain produce a byte-identical `nikaia.contracts` on every machine, every run, with any thread count. This is a hard guarantee (see [ADR-005](adr/adr-005.md), D8, including the implementation ban list and the CI tests that enforce it); a violation is treated as a compiler bug. Two consequences worth knowing:
@@ -431,7 +446,7 @@ One consequence is worth stating for a library author: **writing a signature dow
 * There is exactly **one** ledger per project — it is valid at every setting of every switch. Borrow contracts and tether relationships are switch-independent by design; switch-dependent checks (such as thread-safety rules) are performed by the compiler directly and are never recorded in the ledger.
 * Ledger stability is **not** promised across toolchain *upgrades* — a newer compiler may infer better contracts. The toolchain hash plus the explicit "caused by the toolchain update" narration make such diffs self-explaining instead of alarming.
 
-**Verification mode (`--locked`).** `nikaia build --locked` (and CI setups) verify instead of update: the compiler regenerates the contracts in memory and compares them byte-for-byte against the committed `nikaia.contracts`. Any difference fails the build with the narrated contract diff (see `NK2401` above). Because of the determinism guarantee, this check is exact and needs no tolerance or semantic comparison — the recommended CI line is simply building with `--locked`, which is equivalent to `git diff --exit-code nikaia.contracts` after a regular build.
+**Verification mode (`--locked`).** `nikaia build --locked` (and CI setups) verify instead of update: the compiler regenerates the contracts in memory — the program's, and those of every path dependency it has sources for — and compares each byte-for-byte against its committed `nikaia.contracts`. Any difference fails the build with the narrated contract diff (see `NK2401` above). This is the one place contracts are compared rather than hashes; a development build compares hashes and derives only what changed ([ADR-100](adr/adr-100.md) D3, D4). Because of the determinism guarantee, this check is exact and needs no tolerance or semantic comparison — the recommended CI line is simply building with `--locked`, which is equivalent to `git diff --exit-code nikaia.contracts` after a regular build.
 
 ---
 
