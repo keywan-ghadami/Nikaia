@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Decided (an error that newly reaches a `catch` is named once)
+
+- **[ADR-101](docs/specification/adr/adr-101.md).** Every failure is caught or declared, and that is checked; what a `catch { … }` did in silence was take a callee's *new* failure. When a `throws` set grows, every handler over that callee is named in the build output, `--locked` fails until the ledger is regenerated and committed, and the commit is the acknowledgement — nothing is written at the handler, and a handler that matches on `error` is told the same as one that does not. The syntax of `catch` is unchanged. `open-decisions.md`'s entry on whether `catch` takes a pattern leaves the file: the guarantee did not need one.
+- **Nothing of it is built**, and nothing can be until error types are lowered as enums — `std.contracts` writes `throws = ["?"]` on every entry. `open-work.md` carries it beside the `NK2401` machinery it reuses.
 ### Fixed (a consumer reads a dependency's ledger, and the false `NK1129` is gone)
 
 - **[ADR-100](docs/specification/adr/adr-100.md) D1, D3, D4 and D5 — everything but D6.** `open-work.md`'s oldest defect is closed in both of its shapes: a trait method whose only call is in the file next door, and **a handler whose body calls the package it implements against**. `impl lib::Greeter for Fixed { fn greet(&self) -> String { return lib::hello() } }` compiles and runs.

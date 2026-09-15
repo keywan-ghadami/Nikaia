@@ -712,6 +712,22 @@ repository can produce it, which is the state
 built and the reason it was built anyway: a message costs nothing before there
 is something to say it about.
 
+### 2.14. An error that newly reaches a `catch` is named once
+
+[ADR-101](specification/adr/adr-101.md). When a callee's `throws` set gains a
+member, every `catch` over it is named in the build output, and `--locked`
+fails until the ledger is committed. **Nothing of it is built**, and nothing
+can be yet: `std.contracts` writes `throws = ["?"]` on every entry, so there is
+no set to diff.
+
+*Evidence:* 22 `catch {` handlers in `examples/` and `tests/samples/`, none
+matching on `error`; a new failure in any callee reaches all of them in
+silence today.
+
+*What it needs:* error types lowered as enums, which [ADR-023](specification/adr/adr-023.md)
+D1's set already waits on; then the set written and diffed; then the note and
+the `--locked` failure, which are the `NK2401` machinery over one more column.
+
 ---
 
 ## 3. Upkeep

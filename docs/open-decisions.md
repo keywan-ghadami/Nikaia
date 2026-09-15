@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Six entries, and all of them are open.** Nothing answered lives here: an
+**Five entries, and all of them are open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -47,7 +47,10 @@ what it left was the backend's own message on a Nikaia line) and
 [ADR-100](specification/adr/adr-100.md) (a consumer reads a dependency's
 ledger and derives it again only where the sources it came from changed — the
 question of whether a consumer derives a dependency's contracts, answered the
-way `std`'s already were). Each record
+way `std`'s already were) and
+[ADR-101](specification/adr/adr-101.md) (an error that newly reaches a
+`catch` is named once in the build, and the ledger commit is the
+acknowledgement — the syntax of `catch` is unchanged). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.
@@ -432,88 +435,3 @@ taking it costs a representation change in `std`, a record, and the one
 measurement this project would want first — what the handle costs on a text
 that is compared and hashed a billion times, which `benches/refcount` can be
 pointed at.
-
----
-
-## 6. Does `catch` take a pattern, and is the catch-all spelled?
-
-**Blocked by it:** the one place in the language where a program can be
-*silently wrong* rather than refused, and it is the shape Part I 7.1 teaches
-first:
-
-```nika
-let port = read_port() catch { 8080 }
-```
-
-That handler runs for every error that can reach it. A missing file, a file
-that is a directory, a permission denied, a disk that is full, and every
-failure a callee three modules down gains next month all become port 8080.
-Three decisions, each right on its own, combine into it: nothing marks a call
-that can fail ([ADR-023](specification/adr/adr-023.md) D8), `throws` names no
-types and the set arriving at a `catch` is open and inferred (D1), and the
-handler's block has no pattern in front of it — the grammar is
-`value catch { block }`, and the lowering is `Err(error) => { … }`. The
-`NK2401` narration ADR-023 D1 promises for a `catch` that stops covering
-its arrivals can only fire where a `match error { … }` exists; the one-line
-form covers everything by construction and gets no narration ever.
-
-Counted: **22** `catch {` handlers in `examples/` and `tests/samples/`,
-**none** of which matches on `error`. Six more in Part I, sixteen test files.
-The whole corpus is catch-alls, because the language has no other spelling.
-
-**What this is not.** It is not the invisible propagation. A call that can
-fail and is not caught fails the function, and the compiler makes the
-function say `throws` (`NK2605`); that half is checked, and it is the half
-this file is not asking about. The question is what a *handler* claims.
-
-**Three ways out.**
-
-* **(a) Leave it, and lint.** A bare `catch { … }` that does not mention
-  `error` gets a warning naming the error set it swallows, once the ledger
-  records the set. Costs nothing today and fires nowhere today, because every
-  `throws` in `std.contracts` is `["?"]` — Stage 0 lowers no error type, so
-  there is no set to name. When the set exists, the lint fires on the
-  commonest shape in the language, which is the noise a lint dies of.
-* **(b) `catch` takes a pattern, and the catch-all is spelled `_`.**
-  `read_port() catch NotFound { 8080 }`; `load() catch ConfigError::BadSyntax
-  { line, .. } { … }`; several handlers chain, `catch A { … } catch B { … }`;
-  an error no handler matches propagates, and the function says `throws` as
-  it would for an uncaught call. The catch-all is `catch _ { … }`, which is
-  Part I 3.4's wildcard doing what it does everywhere else — and a bare
-  `catch { … }` is **refused** with a message naming `catch _`, the way
-  [ADR-022](specification/adr/adr-022.md) refuses `fn:`. Then a catch-all is a
-  thing somebody typed, a `catch` names what it handles, the ledger's set has
-  a consumer at the site it was inferred for, and `NK2401` has something to
-  narrate on every handler rather than on the ones that happened to `match`.
-  Costs: a grammar rule; 22 + 6 + 16 one-word edits; and the pattern half
-  needs an error to *have* a type below, which it does not yet — `throws`
-  lowers to `Box<dyn Error>` ([ADR-013](specification/adr/adr-013.md) D3), so
-  a pattern on a variant has nothing to match against until error types are
-  lowered as enums.
-* **(c) Keep the bare form, require the handler to say which.** `catch { … }`
-  stays and means catch-all, but a handler that ignores `error` must write
-  `_error` itself rather than have the emitter write it
-  ([ADR-090](specification/adr/adr-090.md) does the opposite). Makes the
-  swallow visible with no grammar change and no migration. Costs: it marks
-  *ignoring the error*, not *catching everything* — `catch { eprintln(f"{error}");
-  return }` reads the error and still catches everything — so it names the
-  wrong thing, and it is a second convention beside `_` in patterns.
-
-**What I would do: (b), in two halves, and the first half now.** The spelling
-`catch _ { … }` and the refusal of the bare form need no error types: they are
-a parser rule and a migration of one word at 44 sites, and they make every
-catch-all in the corpus say so on the line. The pattern half — `catch
-Variant { … }`, chaining, propagation of the unmatched — lands with lowered
-error types, which [ADR-023](specification/adr/adr-023.md) D1 already needs for
-its set and `NK2401` already waits on; it adds one grammar production to a
-spelling that already exists by then. Doing the first half first also means the
-examples are migrated once, not twice: `catch _` is what a catch-all is spelled
-in the final form too.
-
-**What either direction costs.** (a) costs the silent wrong value for as long
-as error types are unlowered, and a lint that fires everywhere afterwards. (b)
-costs a one-word edit per handler now — 44 sites, all mechanical — and the
-pattern grammar later; it also costs the reader of `main` an underscore on the
-`catch { eprintln(…); return }` that every example ends with, which is the
-honest price of making the other 21 visible. (c) costs a convention that says
-the wrong thing and would have to be replaced by (b) anyway.

@@ -191,6 +191,11 @@ it covers everything by construction.
 Twenty-two `catch {` handlers in `examples/`, and every one of them is a
 catch-all; none matches on `error`.
 
+*Decided since:* [ADR-101](specification/adr/adr-101.md) — the syntax stays,
+and a new error reaching any `catch` is named once in the build, with the
+ledger commit as the acknowledgement. The recommendation below is kept for the
+record and is not the decision.
+
 **Recommendation:** a handler that does not look at `error` is a decision the
 source should show. Either
 

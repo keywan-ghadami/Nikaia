@@ -1817,9 +1817,15 @@ let config = load() catch {
 
 Two sets, and they are not the same one. The **variants of an error type** are closed, a `match`
 over them is exhaustive, and adding one is a breaking change — correctly. The **set of error types**
-arriving at a `catch` is open, and it grows when a callee gains a failure. Where that changes a
-`catch`, the compiler narrates the chain: what changed, which contract moved, which caller broke
-(`NK2401`).
+arriving at a `catch` is open, and it grows when a callee gains a failure. When it does, **every
+`catch` over that callee is named once in the build output** — the new error, the handler it now
+reaches, and that the handler takes it as it takes everything — and under `--locked` the build
+fails until the ledger is regenerated and committed. The commit is the acknowledgement; nothing is
+written at the handler, and a handler that matches on `error` is told the same as one that does not
+([ADR-101](adr/adr-101.md), `NK2401`).
+
+> **Status:** not built — `std.contracts` writes `throws = ["?"]` on every entry,
+> so there is no set to diff until error types are lowered.
 
 **What an error brings without anyone attaching it.** The **site** it was raised from, and the chain
 beneath it where another error joined on the way — a cleanup that failed while the stack was
