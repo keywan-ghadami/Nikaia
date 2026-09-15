@@ -498,22 +498,38 @@ What waits inside it:
   hashing, which says in as many words that it has no target because there is no
   server.
 
-**One piece does not wait, and it is the one worth building first.**
-[ADR-058](specification/adr/adr-058.md) D7 — a path out of a request is
+**One piece looked as though it did not wait, and this entry was wrong about it
+twice.** [ADR-058](specification/adr/adr-058.md) D7 — a path out of a request is
 `Untrusted` and may not reach `fs::map`, `fs::read`, `fs::write` or `http::File`
-unchecked — needs no socket. `contracts::trust` exists and `nikaia --trust` prints
-what it found ([ADR-010](specification/adr/adr-010.md) D7); what is missing is the
-consumer, a diagnostic where an untrusted value reaches a path parameter, and
-`fs::within(root, name)` beside it. Testable against `fs::map` today, and every
-program that later writes `http::File` inherits it.
+unchecked — needs no socket, which is true and was the whole of the case for
+picking it up first. The two sentences under it were not, and both were measured
+the moment somebody did:
 
-**It is also the only entry in this section that closes a security hole rather
-than an ergonomic one**, which is worth saying where a reader chooses what to
-pick up. [ADR-010](specification/adr/adr-010.md) D8 built a taint lattice and
-argued for building it generally rather than as a hasher special case; its
-second consumer is the test of whether that generalised, and it costs no new
-analysis. Everything else here is a feature nobody can use yet — this one is
-absent from every program written before it lands.
+* it said the work *"costs no new analysis"*. `contracts::trust` is a
+  **whole-program join** — every body walked, every `std` source the program
+  calls folded into one answer ([ADR-010](specification/adr/adr-010.md) D7's
+  report, and the hasher choice D8 built it for). D7 needs a **per-value**
+  answer, which value reaching a path parameter came from where: a dataflow
+  analysis over locals, and a second thing that happens to read the same
+  lattice.
+* it said the rule was *"testable against `fs::map` today"*. Nothing can be
+  tainted: `std.contracts` carries no `provenance = "untrusted"` entry at all,
+  and the one untrusted source that needs no server —
+  `fs::map(path; trusted: false)`, [ADR-010](specification/adr/adr-010.md) D3 —
+  is **not built**, so no call site may write the word the ledger can parse.
+
+**So it is a question and not work**, and it is
+[`open-decisions.md`](open-decisions.md)'s sixth entry, where the owner has put
+the feature itself in doubt. What that entry adds beyond the two corrections:
+§2's rule that *a refusal is free before programs exist and breaking afterwards*
+— the reason every other unbuilt refusal on this page is urgent — **does not
+apply here**. A refusal about untrusted values cannot reject a program until
+some value is untrusted, and what makes one untrusted is the request. No window
+is being lost by waiting.
+
+**It would still be the only entry in this section that closes a security hole
+rather than an ergonomic one**, which is worth leaving on the page where a
+reader chooses what to pick up.
 
 Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
 bench that decided it (`benches/sendfile/`) and the write-up
