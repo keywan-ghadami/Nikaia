@@ -64,7 +64,7 @@
 10-nikaia-light.md #64 fragment (as written)  let config = load() catch {
 10-nikaia-light.md #65 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
 10-nikaia-light.md #66 fragment (as written)  use std::panic
-10-nikaia-light.md #67 fragment (as written)  let (user, rights, prefs) = overlap {
+10-nikaia-light.md #67 refused (a body) [NK1117]  let (user, rights, prefs) = overlap {
 10-nikaia-light.md #68 lowered (a body)  spawn fn { println("I am running in the background!") }
 10-nikaia-light.md #69 lowered (a body) [about-a-refusal]  let message = "Hello"
 10-nikaia-light.md #70 lowered (a body)  let message = "Hello"
@@ -91,7 +91,7 @@
 20-nikaia-advance.md #17 lowered (a body) [about-a-refusal]  let counter = SharedMut(0)
 20-nikaia-advance.md #18 fragment (as written) [about-a-refusal sketch]  let account_a = SharedMut(Account(…))
 20-nikaia-advance.md #19 fragment (as written)  select {
-20-nikaia-advance.md #20 fragment (as written)  // Subject: 100 (capacity)
+20-nikaia-advance.md #20 lowered (a body)  // Subject: 100 (capacity)
 20-nikaia-advance.md #21 fragment (as written)  let pixels = [/* 1 million pixels */]
 20-nikaia-advance.md #22 fragment (as written)  let data = [1, 2, 3]
 20-nikaia-advance.md #23 refused (a body) [NK1117]  // Subject: The Task (Lambda)
