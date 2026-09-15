@@ -362,6 +362,28 @@ const SPECIFICATION_LEVEL: &[&str] = &["fortunes.nika"];
 /// Runnable, but with a test of its own that checks more than the output.
 const COVERED_ELSEWHERE: &[&str] = &["1brc.nika"];
 
+/// Directories under `examples/` that no entry in `RUNNABLE` reaches into,
+/// because their check lives in another test file. Each is named together with
+/// that test, so a directory cannot sit here unchecked and so a deleted test
+/// leaves a name pointing at nothing.
+const DIRECTORIES_CHECKED_ELSEWHERE: &[(&str, &str)] = &[
+    // The Rust-passthrough arm and the experiment ADR-038 D7 put there. Its
+    // own test builds each program in it and checks more than the output.
+    ("foreign-runtime", "tests/foreign_runtime.rs"),
+    // A package has no output of its own; it is built by the program that
+    // depends on it.
+    (
+        "http",
+        "tests/project.rs: the_http_package_serves_its_example",
+    ),
+    // That program. It is a directory rather than a file because reaching a
+    // package by a path needs a manifest.
+    (
+        "hello-http",
+        "tests/project.rs: the_http_package_serves_its_example",
+    ),
+];
+
 #[test]
 fn every_runnable_example_prints_what_it_promises() {
     for example in RUNNABLE {
@@ -431,13 +453,36 @@ fn no_example_is_neither_run_nor_declared() {
 
     for entry in std::fs::read_dir(&dir).expect("read examples directory") {
         let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("nika") {
-            continue;
-        }
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
             .expect("utf-8 file name");
+
+        // A directory is an example too. It is either a program spread over
+        // several files, in which case some RUNNABLE entry reaches into it, or
+        // a package, in which case PACKAGES says where it is checked.
+        if path.is_dir() {
+            if name == "target" {
+                continue;
+            }
+            seen += 1;
+            let prefix = format!("{name}/");
+            let known = RUNNABLE.iter().any(|e| e.file.starts_with(&prefix))
+                || DIRECTORIES_CHECKED_ELSEWHERE
+                    .iter()
+                    .any(|(dir, _)| *dir == name);
+            assert!(
+                known,
+                "examples/{name}/ is in no list in tests/examples.rs: add its entry \
+                 file to RUNNABLE with what it prints, or the directory to \
+                 DIRECTORIES_CHECKED_ELSEWHERE with the test that checks it"
+            );
+            continue;
+        }
+
+        if path.extension().and_then(|e| e.to_str()) != Some("nika") {
+            continue;
+        }
         seen += 1;
 
         let known = RUNNABLE.iter().any(|e| e.file == name)
@@ -466,6 +511,18 @@ fn the_lists_name_files_that_exist() {
     for example in RUNNABLE {
         let path = repo_root().join("examples").join(example.file);
         assert!(path.exists(), "{} is listed but not there", path.display());
+    }
+    for (name, checked_by) in DIRECTORIES_CHECKED_ELSEWHERE {
+        let path = repo_root().join("examples").join(name);
+        assert!(path.is_dir(), "{} is listed but not there", path.display());
+        // The excuse names a test file; that file has to be there too, or the
+        // directory is unchecked and the list says otherwise.
+        let file = checked_by.split(':').next().expect("a test file");
+        let test = repo_root().join("crates/nikaia").join(file);
+        assert!(
+            test.exists(),
+            "examples/{name}/ says it is checked by {checked_by}, which is not there"
+        );
     }
 }
 

@@ -1,0 +1,9 @@
+// What a program does with the `http` package today: build a response and
+// render it.  There is no server to hand it to (`open-work.md` §2.9), so this
+// prints what a socket would have received.
+use http
+
+fn main() {
+    let answer = http::Response::text("Hello from a package".to_string())
+    print(http::render(&answer))
+}

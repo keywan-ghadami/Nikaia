@@ -1,0 +1,63 @@
+// The `http` package - **a skeleton, and it says where it stops**.
+//
+// ADR-069 made `http` a package and did not build one; this is the thing on the
+// other end of the path.  What it holds today is the *data* of ADR-018: what a
+// handler is given and what it gives back.  What it does not hold is a server,
+// and the reason is measured rather than guessed - see the note at the bottom.
+
+// What a handler is given (ADR-018 D1).
+//
+// The strings are views into the bytes the connection read (Part I 6.6), so a
+// parameter used inside the handler's scope costs nothing and one kept past it
+// has to be owned.  Nothing here allocates.
+pub struct Request {
+    pub method: String,
+    pub path: String,
+}
+
+// What a handler gives back (ADR-018 D3).
+//
+// A status, a content type and a body.  ADR-018 D2's other two rows - a bare
+// `String` and an `html::Raw` - are conveniences over this one, and they need
+// the conversion this package cannot express yet.
+pub struct Response {
+    pub status: i32,
+    pub content_type: String,
+    pub body: String,
+}
+
+impl Response {
+    // 200, text, the body given.  The shape every other constructor is a
+    // variation of.
+    pub fn text(body: String) -> Response {
+        return Response(status: 200, content_type: "text/plain".to_string(), body: body)
+    }
+
+    // The one a router writes when nothing matched.
+    pub fn not_found() -> Response {
+        return Response(status: 404, content_type: "text/plain".to_string(), body: "not found".to_string())
+    }
+}
+
+// The status line and headers, as bytes a socket would take.
+//
+// Written here rather than left to the server, because it is the half of
+// HTTP/1.1 that is pure text handling and needs nothing from the runtime - so
+// it is the half that can be built, tested and read today.
+pub fn render(response: &Response) -> String {
+    let status = status_line(response.status)
+    return f"HTTP/1.1 {status}\r\ncontent-type: {response.content_type}\r\ncontent-length: {response.body.len()}\r\n\r\n{response.body}"
+}
+
+pub fn status_line(status: i32) -> String {
+    if status == 200 {
+        return "200 OK".to_string()
+    }
+    if status == 404 {
+        return "404 Not Found".to_string()
+    }
+    if status == 400 {
+        return "400 Bad Request".to_string()
+    }
+    return "500 Internal Server Error".to_string()
+}

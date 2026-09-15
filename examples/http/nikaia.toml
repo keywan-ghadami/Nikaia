@@ -1,0 +1,20 @@
+# The `http` package (ADR-069 D1).
+#
+# It is here rather than in `std` because a keyword's worth of the argument is
+# this: subtract what needs the compiler - the untrusted-path rule, escaping by
+# type, a body the program never allocated - and what is left is a protocol and
+# a framework, which age.  Outside, the two of them ripen at their own speed
+# (D4); inside, every change of surface would be a change of the language.
+#
+# Reached by a path, which is what makes this possible today: no registry, no
+# version, no distribution format (D5).  `examples/hello-http/` is the consumer
+# that exercises it.
+[package]
+name = "http"
+version = "0.1.0"
+
+# The setting the specification's server example names.  Written down although
+# it is the default, because a server is the program where the other setting is
+# the interesting one.
+[build]
+user-parallelism = "no"

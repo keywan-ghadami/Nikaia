@@ -1389,3 +1389,43 @@ fn a_warning_reaches_the_user_once_and_in_nikaia_terms() {
         said(&run)
     );
 }
+
+/// **The committed `http` package, built and run by its committed consumer.**
+///
+/// The diamond test above proves path dependencies work; it builds its packages
+/// in a scratch directory, which means the mechanism is covered and no example
+/// of it was. [ADR-069](../../../docs/specification/adr/adr-069.md) made `http` a
+/// package and §4 said in as many words that the package did not exist — so
+/// `use http` answered *"no dependency is called `http`"* and a reader had
+/// nothing to copy.
+///
+/// This runs the real directories rather than a copy, for the reason
+/// `examples.rs` gives about its own: the example is the file, so it cannot
+/// drift.
+///
+/// **It also covers the trap that cost the first attempt.** The two dependency
+/// arms resolve their paths against different things: a Nikaia path is read by
+/// `project::packages_of` and is relative to the manifest's own directory, while
+/// a `type = "rust"` one is handed to Cargo verbatim (ADR-002 D1) and is
+/// therefore relative to the *generated* manifest under `target/nikaia/build/`.
+/// `examples/foreign-runtime/serve` climbs four levels; this climbs one.
+#[test]
+fn the_http_package_serves_its_example() {
+    let consumer = repo_root().join("examples/hello-http");
+    let ran = nikaia(&["run"], &consumer);
+    assert!(
+        ran.status.success(),
+        "examples/hello-http builds against examples/http: {}",
+        said(&ran)
+    );
+
+    let out = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        out.starts_with("HTTP/1.1 200 OK\r\n"),
+        "the status line ends with CRLF, which is what HTTP asks for: {out:?}"
+    );
+    assert!(
+        out.contains("content-length: 20\r\n\r\nHello from a package"),
+        "the headers are separated from the body by a blank line: {out:?}"
+    );
+}

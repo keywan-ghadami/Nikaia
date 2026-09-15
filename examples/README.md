@@ -1,8 +1,13 @@
 # Nikaia Examples
 
-Eleven of the twelve programs here compile, run, and are checked by `cargo test`. The twelfth is
-written at specification level — it shows what Nikaia 0.0.7 is meant to look like, and what it
-needs is listed under *Gaps* below.
+Twelve of the thirteen programs here compile, run, and are checked by `cargo test`. The
+thirteenth is written at specification level — it shows what Nikaia 0.0.7 is meant to look like,
+and what it needs is listed under *Gaps* below.
+
+Two of them are a **pair**: `http/` is a package and `hello-http/` is a program that reaches it
+by a path ([ADR-069](../docs/specification/adr/adr-069.md) D1). Everything else here is a program
+on its own, so the pair is the only place in this directory where the dependency arm is written
+down rather than described.
 
 | | what it is | runs |
 | :--- | :--- | :--- |
@@ -18,11 +23,14 @@ needs is listed under *Gaps* below.
 | [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
 | [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
+| [`http/`](http/) | the `http` **package** — what a handler is given and gives back, and HTTP/1.1's text half | ✅ through its consumer |
+| [`hello-http/`](hello-http/) | a program that reaches `http` **by a path**: the dependency arm, with a program on the end of it | ✅ `crates/nikaia/tests/project.rs` |
 
-Each of the eleven is compiled and run **at both settings**, and their output must be
-identical — that is the claim the switches rest on, and a test is where it belongs rather than
-in a paragraph. Each is the real file: the tests read `examples/*.nika` rather than a copy, so
-an example cannot drift from what is checked.
+Each of the eleven single programs is compiled and run **at both settings**, and their output
+must be identical — that is the claim the switches rest on, and a test is where it belongs
+rather than in a paragraph. The pair is built once, through its consumer, because what it is
+there to show is the dependency arm rather than a body of code. Each is the real file: the
+tests read the examples rather than a copy, so an example cannot drift from what is checked.
 
 They are deliberately different shapes.
 
