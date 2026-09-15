@@ -439,7 +439,9 @@ struct Reach {
     unknown: bool,
     /// What it reaches directly, through callees a library describes.
     outside: BTreeSet<Touch>,
-    /// The functions in this unit it calls. Its claim holds only while theirs do.
+    /// The functions in this **package** it calls — every unit of it, since
+    /// [ADR-100](../../../docs/specification/adr/adr-100.md) D2. Its claim holds
+    /// only while theirs do.
     calls: BTreeSet<String>,
 }
 
@@ -467,38 +469,40 @@ struct Reach {
 /// this column is conservative in.
 pub fn infer(
     ledger: &mut Ledger,
-    parsed: &Parsed,
+    units: &[&Parsed],
     library: &Ledger,
     resolved: &BTreeMap<String, MethodCalls>,
 ) {
     let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Fn { .. } => {
-                if let Some((name, reach)) =
-                    reach_of(parsed, &item.node, None, ledger, library, resolved)
-                {
-                    graph.insert(name, reach);
-                }
-            }
-            Item::Impl {
-                target, methods, ..
-            } => {
-                let target = parsed.text(target.name).to_string();
-                for method in methods {
-                    if let Some((name, reach)) = reach_of(
-                        parsed,
-                        &method.node,
-                        Some(&target),
-                        ledger,
-                        library,
-                        resolved,
-                    ) {
+    for parsed in units.iter().copied() {
+        for item in &parsed.program.items {
+            match &item.node {
+                Item::Fn { .. } => {
+                    if let Some((name, reach)) =
+                        reach_of(parsed, &item.node, None, ledger, library, resolved)
+                    {
                         graph.insert(name, reach);
                     }
                 }
+                Item::Impl {
+                    target, methods, ..
+                } => {
+                    let target = parsed.text(target.name).to_string();
+                    for method in methods {
+                        if let Some((name, reach)) = reach_of(
+                            parsed,
+                            &method.node,
+                            Some(&target),
+                            ledger,
+                            library,
+                            resolved,
+                        ) {
+                            graph.insert(name, reach);
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 

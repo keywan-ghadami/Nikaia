@@ -503,6 +503,27 @@ impl Ledger {
         Self::infer_checked(parsed).0
     }
 
+    /// The contracts of a **package**: every unit of it, inferred as one graph
+    /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D2).
+    ///
+    /// A package is one namespace ([ADR-047](../../../docs/specification/adr/adr-047.md)
+    /// D1), so a call from one of its files to a function in another is a call
+    /// this compiler can see - and the inference has to see it too. Inferring
+    /// each file alone made a callee in the file next door indistinguishable
+    /// from one in code nothing describes: `reach_of` found it in neither `own`
+    /// nor `std` and set `blocked`, which `Sync::No` spells *"can pause **or**
+    /// could not be vouched for"* and every reader takes as the first. `NK1129`
+    /// is where that showed - a trait method refused as pausing for calling a
+    /// plain function two lines away in another file.
+    ///
+    /// The units arrive in the order they were read, which Part III 13.5 needs:
+    /// this file is a pure function of the source tree, and the fixpoints below
+    /// walk a `BTreeMap` so that the answer does not depend on the order
+    /// anyway.
+    pub fn infer_package(units: &[&Parsed]) -> Self {
+        Self::infer_package_checked(units).0
+    }
+
     /// Every entry of `other`, under `module::`.
     ///
     /// A program of several files has **one** ledger (Part III, 13.5 puts it at
@@ -637,6 +658,20 @@ impl Ledger {
     /// running the checker twice per build to get one of them would be waste,
     /// not caution.
     pub fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked) {
+        let (ledger, mut checked) = Self::infer_package_checked(&[parsed]);
+        (ledger, checked.remove(0))
+    }
+
+    /// The same, over every unit of a package — see [`Self::infer_package`].
+    ///
+    /// **One `Checked` per unit, in the units' order**, and that is not a
+    /// convenience: almost everything that pass answers is keyed by the **byte**
+    /// a statement starts at, which names a position in one file and nothing at
+    /// all in a package. Only `methods` is keyed by a name, so only `methods` is
+    /// merged - and merging it is sound for the reason the package is one graph
+    /// in the first place: one namespace, so one function per name
+    /// (`modules::collect` refuses the second).
+    pub fn infer_package_checked(units: &[&Parsed]) -> (Self, Vec<crate::check::Checked>) {
         let mut ledger = Ledger {
             version: VERSION,
             toolchain: toolchain(),
@@ -644,120 +679,149 @@ impl Ledger {
             ..Default::default()
         };
 
-        let borrowing = borrowing_structs(parsed);
-        let declared = declared_types(parsed);
+        // **The package's types and not the file's.** `impl_parameters` asks
+        // whether a name in `impl Box[Thing]` is a type or a type *parameter*,
+        // and a `Thing` declared in the file next door is a type.
+        let declared: BTreeSet<String> = units.iter().flat_map(|u| declared_types(u)).collect();
 
-        for item in &parsed.program.items {
-            match &item.node {
-                Item::Fn { .. } => {
-                    let (name, contract) =
-                        ledger.function(parsed, &item.node, None, &BTreeSet::new());
-                    ledger.functions.insert(name, contract);
-                }
-                Item::Impl {
-                    target, methods, ..
-                } => {
-                    // `impl Stack[T]` puts `T` in scope for every method in it,
-                    // so it is a name that stands for a type there too.
-                    let outer: BTreeSet<String> = impl_parameters(parsed, target, &declared)
-                        .into_iter()
-                        .collect();
-                    let target = parsed.text(target.name).to_string();
-                    for method in methods {
+        for parsed in units.iter().copied() {
+            // Per unit, and it has to be: a `Symbol` is interned by the parse
+            // of one file, so a set of them means nothing to another.
+            let borrowing = borrowing_structs(parsed);
+
+            for item in &parsed.program.items {
+                match &item.node {
+                    Item::Fn { .. } => {
                         let (name, contract) =
-                            ledger.function(parsed, &method.node, Some(&target), &outer);
+                            ledger.function(parsed, &item.node, None, &BTreeSet::new());
                         ledger.functions.insert(name, contract);
                     }
-                }
-                // Kap 4.7: a trait's methods are recorded under the trait's own
-                // name - `Summarize::summary` - which is what lets a bound be
-                // looked up ([ADR-078](../../../docs/specification/adr/adr-078.md)
-                // D3). The same key shape an `impl`'s methods get, because a
-                // bound and a receiver ask the same question: what does a value
-                // of this thing have.
-                Item::Trait {
-                    name,
-                    methods,
-                    is_public,
-                } => {
-                    let own = parsed.text(*name).to_string();
-                    for method in methods {
-                        let (key, contract) = trait_method(parsed, &own, &method.node, *is_public);
-                        ledger.functions.insert(key, contract);
+                    Item::Impl {
+                        target, methods, ..
+                    } => {
+                        // `impl Stack[T]` puts `T` in scope for every method in it,
+                        // so it is a name that stands for a type there too.
+                        let outer: BTreeSet<String> = impl_parameters(parsed, target, &declared)
+                            .into_iter()
+                            .collect();
+                        let target = parsed.text(target.name).to_string();
+                        for method in methods {
+                            let (name, contract) =
+                                ledger.function(parsed, &method.node, Some(&target), &outer);
+                            ledger.functions.insert(name, contract);
+                        }
                     }
-                    ledger.traits.insert(
-                        own,
-                        methods
+                    // Kap 4.7: a trait's methods are recorded under the trait's own
+                    // name - `Summarize::summary` - which is what lets a bound be
+                    // looked up ([ADR-078](../../../docs/specification/adr/adr-078.md)
+                    // D3). The same key shape an `impl`'s methods get, because a
+                    // bound and a receiver ask the same question: what does a value
+                    // of this thing have.
+                    Item::Trait {
+                        name,
+                        methods,
+                        is_public,
+                    } => {
+                        let own = parsed.text(*name).to_string();
+                        for method in methods {
+                            let (key, contract) =
+                                trait_method(parsed, &own, &method.node, *is_public);
+                            ledger.functions.insert(key, contract);
+                        }
+                        ledger.traits.insert(
+                            own,
+                            methods
+                                .iter()
+                                .map(|m| parsed.text(m.node.name).to_string())
+                                .collect(),
+                        );
+                    }
+                    Item::Struct {
+                        name,
+                        generics,
+                        fields,
+                        is_public,
+                        is_borrowed,
+                        ..
+                    } => {
+                        let parameters: BTreeSet<String> = generics
                             .iter()
-                            .map(|m| parsed.text(m.node.name).to_string())
-                            .collect(),
-                    );
+                            .map(|g| parsed.text(g.name).to_string())
+                            .collect();
+                        let tethered = fields
+                            .iter()
+                            .filter(|f| holds_view(&f.ty) || names_borrowing(&f.ty, &borrowing))
+                            .map(|f| parsed.text(f.name).to_string())
+                            .collect();
+                        let field_types = fields
+                            .iter()
+                            .map(|f| FieldContract {
+                                name: parsed.text(f.name).to_string(),
+                                ty: ty::Ty::from_ast(parsed, &f.ty).parameterise(&parameters),
+                                public: f.is_public,
+                            })
+                            .collect();
+                        ledger.types.insert(
+                            parsed.text(*name).to_string(),
+                            TypeContract {
+                                public: *is_public,
+                                borrowed: *is_borrowed,
+                                fields: field_types,
+                                // Never inferred: a `struct` declared here records
+                                // its fields, and `contracts::send` walks those.
+                                // The key exists for types whose parts are Rust.
+                                crosses: false,
+                                // Nothing a `.nika` file declares iterates at all
+                                // yet, let alone fallibly: the types that do are
+                                // `std`'s, and `std` writes them down (ADR-025 D6).
+                                iterates_fallibly: false,
+                                tethered,
+                            },
+                        );
+                    }
+                    _ => {}
                 }
-                Item::Struct {
-                    name,
-                    generics,
-                    fields,
-                    is_public,
-                    is_borrowed,
-                    ..
-                } => {
-                    let parameters: BTreeSet<String> = generics
-                        .iter()
-                        .map(|g| parsed.text(g.name).to_string())
-                        .collect();
-                    let tethered = fields
-                        .iter()
-                        .filter(|f| holds_view(&f.ty) || names_borrowing(&f.ty, &borrowing))
-                        .map(|f| parsed.text(f.name).to_string())
-                        .collect();
-                    let field_types = fields
-                        .iter()
-                        .map(|f| FieldContract {
-                            name: parsed.text(f.name).to_string(),
-                            ty: ty::Ty::from_ast(parsed, &f.ty).parameterise(&parameters),
-                            public: f.is_public,
-                        })
-                        .collect();
-                    ledger.types.insert(
-                        parsed.text(*name).to_string(),
-                        TypeContract {
-                            public: *is_public,
-                            borrowed: *is_borrowed,
-                            fields: field_types,
-                            // Never inferred: a `struct` declared here records
-                            // its fields, and `contracts::send` walks those.
-                            // The key exists for types whose parts are Rust.
-                            crosses: false,
-                            // Nothing a `.nika` file declares iterates at all
-                            // yet, let alone fallibly: the types that do are
-                            // `std`'s, and `std` writes them down (ADR-025 D6).
-                            iterates_fallibly: false,
-                            tethered,
-                        },
-                    );
-                }
-                _ => {}
             }
         }
 
-        let checked = crate::check::check(parsed, &ledger, std_ledger());
-        sync::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
+        // **Every unit is checked against the whole package's declarations**,
+        // which is the other half of D2: a call to the file next door resolves
+        // here too, so the method calls the walks below read are the package's.
+        let checked: Vec<crate::check::Checked> = units
+            .iter()
+            .copied()
+            .map(|parsed| crate::check::check(parsed, &ledger, std_ledger()))
+            .collect();
+        let resolved: BTreeMap<String, crate::check::MethodCalls> = checked
+            .iter()
+            .flat_map(|c| c.methods.iter().map(|(k, v)| (k.clone(), v.clone())))
+            .collect();
+
+        sync::infer(&mut ledger, units, std_ledger(), &resolved);
         // Kap 7.1: `throws` in the source says *that* it fails; this says with
         // what (ADR-023 D1). After `sync`, because both read bodies and only
         // this one needs nothing from the other - and both are handed the same
-        // `checked.methods`, because ADR-028's whole point is that there is one
+        // `resolved`, because ADR-028's whole point is that there is one
         // answer to what `a.add(v)` goes to and both walks read it.
-        throws::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
+        throws::infer(&mut ledger, units, std_ledger(), &resolved);
         // **The fourth derived column** ([ADR-067](../../../docs/specification/adr/adr-067.md)
         // D2), and the one that was specified without an inference. After
         // `throws` for no reason but tidiness: it reads the same bodies through
         // the same walk and needs nothing either of the two produced.
-        touch::infer(&mut ledger, parsed, std_ledger(), &checked.methods);
+        touch::infer(&mut ledger, units, std_ledger(), &resolved);
         // ADR-037 D7: which count each `Shared` class gets. Last, because it
         // resolves a callee's parameters against the `signature` step 1 wrote
         // and a type's parts against its `fields`, and reads nothing the two
         // inferences above produced.
-        sharing::infer(&mut ledger, parsed, std_ledger());
+        //
+        // **A unit at a time, against the package's ledger.** It summarises the
+        // `Shared` values a body holds rather than folding a call graph, so
+        // there is no fixpoint to run across units - what it needed from its
+        // neighbours is the callee's `signature`, and that is in the ledger the
+        // loop above built.
+        for parsed in units.iter().copied() {
+            sharing::infer(&mut ledger, parsed, std_ledger());
+        }
         (ledger, checked)
     }
 
