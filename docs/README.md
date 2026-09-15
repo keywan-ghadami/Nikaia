@@ -89,6 +89,11 @@ is normative and nothing may depend on it to know what a program means.
 * [`spec-promises.md`](spec-promises.md) — every construct and command the
   specification names, run against the compiler one probe at a time; the
   evidence behind the **Status** notes in Parts I–III.
+* [`language-review.md`](language-review.md) — the surface language read as a
+  newcomer would read it: where it contradicts its own promise, where a program
+  can be silently wrong, where the syntax will make people curse, and the order
+  in which turning it inside out would pay. Every claim reproduced with a probe
+  or quoted from the page.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps: 0.64 % of a compile, which is what
   the text interface of ADR-004 D1 is paid for with.
