@@ -93,8 +93,9 @@ struct Reach {
     /// It calls something that can pause, or something that cannot be resolved.
     /// Either way the claim is off the table and no fixpoint will bring it back.
     blocked: bool,
-    /// The functions in this unit it calls. Its claim holds only while all of
-    /// theirs do.
+    /// The functions in this **package** it calls — every unit of it, since
+    /// [ADR-100](../../../docs/specification/adr/adr-100.md) D2. Its claim holds
+    /// only while all of theirs do.
     calls: BTreeSet<String>,
 }
 
@@ -119,61 +120,63 @@ struct Reach {
 /// was a second, worse one living in this file.
 pub fn infer(
     ledger: &mut Ledger,
-    parsed: &Parsed,
+    units: &[&Parsed],
     library: &Ledger,
     resolved: &BTreeMap<String, MethodCalls>,
 ) {
     let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
 
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Fn { .. } => {
-                if let Some((name, reach)) =
-                    reach_of(parsed, &item.node, None, ledger, library, resolved)
-                {
-                    graph.insert(name, reach);
-                }
-            }
-            Item::Impl {
-                target, methods, ..
-            } => {
-                let target = parsed.text(target.name).to_string();
-                for method in methods {
-                    if let Some((name, reach)) = reach_of(
-                        parsed,
-                        &method.node,
-                        Some(&target),
-                        ledger,
-                        library,
-                        resolved,
-                    ) {
+    for parsed in units.iter().copied() {
+        for item in &parsed.program.items {
+            match &item.node {
+                Item::Fn { .. } => {
+                    if let Some((name, reach)) =
+                        reach_of(parsed, &item.node, None, ledger, library, resolved)
+                    {
                         graph.insert(name, reach);
                     }
                 }
-            }
-            // Kap 4.7: a trait's methods are in this unit's ledger, so a body
-            // that reaches one through a bound names a callee the graph has to
-            // know about ([ADR-078](../../../docs/specification/adr/adr-078.md)
-            // D4). A **leaf that is not blocked**: a declaration has no body,
-            // so it reaches nothing, and D4 asserts its `sync` because a plain
-            // `fn` is the only thing the emitter can write in a trait.
-            //
-            // Without this the callee was simply absent from `holds` and
-            // `unwrap_or(false)` read that as *pauses* - so `fn shout[T:
-            // Summarize]` came out `async` and awaited a `String`.
-            Item::Trait { name, methods, .. } => {
-                let own = parsed.text(*name).to_string();
-                for method in methods {
-                    graph.insert(
-                        format!("{own}::{}", parsed.text(method.node.name)),
-                        Reach {
-                            blocked: false,
-                            calls: BTreeSet::new(),
-                        },
-                    );
+                Item::Impl {
+                    target, methods, ..
+                } => {
+                    let target = parsed.text(target.name).to_string();
+                    for method in methods {
+                        if let Some((name, reach)) = reach_of(
+                            parsed,
+                            &method.node,
+                            Some(&target),
+                            ledger,
+                            library,
+                            resolved,
+                        ) {
+                            graph.insert(name, reach);
+                        }
+                    }
                 }
+                // Kap 4.7: a trait's methods are in this package's ledger, so a body
+                // that reaches one through a bound names a callee the graph has to
+                // know about ([ADR-078](../../../docs/specification/adr/adr-078.md)
+                // D4). A **leaf that is not blocked**: a declaration has no body,
+                // so it reaches nothing, and D4 asserts its `sync` because a plain
+                // `fn` is the only thing the emitter can write in a trait.
+                //
+                // Without this the callee was simply absent from `holds` and
+                // `unwrap_or(false)` read that as *pauses* - so `fn shout[T:
+                // Summarize]` came out `async` and awaited a `String`.
+                Item::Trait { name, methods, .. } => {
+                    let own = parsed.text(*name).to_string();
+                    for method in methods {
+                        graph.insert(
+                            format!("{own}::{}", parsed.text(method.node.name)),
+                            Reach {
+                                blocked: false,
+                                calls: BTreeSet::new(),
+                            },
+                        );
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -189,9 +192,9 @@ pub fn infer(
             if !holds[name.as_str()] {
                 continue;
             }
-            // A call to something this unit does not declare was already
+            // A call to something this package does not declare was already
             // resolved against the library above and folded into `blocked`;
-            // what is left here is this unit's own, and an unknown name among
+            // what is left here is this package's own, and an unknown name among
             // them would be a bug in `reach_of` rather than a licence to assume.
             let reaches_pausing = reach
                 .calls
@@ -220,7 +223,7 @@ pub fn infer(
 }
 
 /// One function's calls, split into what settles the question now and what
-/// depends on the rest of the unit.
+/// depends on the rest of the package.
 ///
 /// `None` where the item is not a function. A function whose body cannot be
 /// seen at all would be `blocked`, not absent - but Stage 0 has no such thing.
@@ -376,7 +379,7 @@ fn walk_block(
 /// even resolves to would just be a bug waiting to happen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Reached {
-    /// A function this unit declares, by the name the ledger records it under.
+    /// A function this package declares, by the name the ledger records it under.
     Own(String),
     /// A function in a library, and what that library's ledger says about it.
     Library { key: String, sync: bool },

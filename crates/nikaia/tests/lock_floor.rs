@@ -103,7 +103,7 @@ fn sync_of(source: &str, library: &Ledger, resolved: bool) -> BTreeMap<String, S
             methods.insert(name.to_string(), calls);
         }
     }
-    sync::infer(&mut ledger, &parsed, library, &methods);
+    sync::infer(&mut ledger, &[&parsed], library, &methods);
 
     ledger
         .functions

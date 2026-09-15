@@ -413,17 +413,26 @@ impl Program {
         // The units arrive grouped (`collect_with`), so this is a walk and not a
         // sort - and the order inside a package is the order they were read in,
         // which Part III 13.5 needs to stay a function of the tree.
+        //
+        // **And the inference is the package's, not each file's**
+        // ([ADR-100](../../../docs/specification/adr/adr-100.md) D2). The group
+        // is handed over whole rather than inferred file by file and merged
+        // afterwards: merging joins *answers*, and the answer to `sync` is a
+        // fixpoint over a call graph, so a graph that stopped at the file
+        // boundary had already read a callee in the file next door as one it
+        // could not vouch for. That is what `NK1129` was refusing.
         let mut at = 0;
         while at < units.len() {
             let package = units[at].package.clone();
             // Every file of a package was read with the same table, so taking it
             // from the first is taking it from the package.
             let renames = units[at].renames.clone();
-            let mut own = crate::contracts::Ledger::empty();
+            let from = at;
             while at < units.len() && units[at].package == package {
-                own.absorb(None, crate::contracts::Ledger::infer(&units[at].parsed));
                 at += 1;
             }
+            let group: Vec<&Parsed> = units[from..at].iter().map(|u| &u.parsed).collect();
+            let own = crate::contracts::Ledger::infer_package(&group);
             contracts.absorb_renaming(package.as_deref(), &renames, own);
         }
 

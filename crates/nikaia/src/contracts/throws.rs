@@ -40,8 +40,10 @@ struct Contrib {
     /// Named here: `throw ConfigError::NotFound(p)` puts `ConfigError` in.
     /// `"?"` where something can fail and this compiler cannot name what with.
     direct: BTreeSet<String>,
-    /// Functions in this unit it calls. Their errors reach it, because nothing
-    /// marks a failing call (ADR-023 D8) — propagation is what a call does.
+    /// Functions in this **package** it calls — every unit of it, since
+    /// [ADR-100](../../../docs/specification/adr/adr-100.md) D2. Their errors
+    /// reach it, because nothing marks a failing call (ADR-023 D8) —
+    /// propagation is what a call does.
     calls: BTreeSet<String>,
 }
 
@@ -61,39 +63,41 @@ struct Contrib {
 /// `sync` had been following all along.
 pub fn infer(
     ledger: &mut Ledger,
-    parsed: &Parsed,
+    units: &[&Parsed],
     library: &Ledger,
     resolved: &BTreeMap<String, MethodCalls>,
 ) {
     let mut graph: BTreeMap<String, Contrib> = BTreeMap::new();
 
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Fn { .. } => {
-                if let Some((name, contrib)) =
-                    contrib_of(parsed, &item.node, None, ledger, library, resolved)
-                {
-                    graph.insert(name, contrib);
-                }
-            }
-            Item::Impl {
-                target, methods, ..
-            } => {
-                let target = parsed.text(target.name).to_string();
-                for method in methods {
-                    if let Some((name, contrib)) = contrib_of(
-                        parsed,
-                        &method.node,
-                        Some(&target),
-                        ledger,
-                        library,
-                        resolved,
-                    ) {
+    for parsed in units.iter().copied() {
+        for item in &parsed.program.items {
+            match &item.node {
+                Item::Fn { .. } => {
+                    if let Some((name, contrib)) =
+                        contrib_of(parsed, &item.node, None, ledger, library, resolved)
+                    {
                         graph.insert(name, contrib);
                     }
                 }
+                Item::Impl {
+                    target, methods, ..
+                } => {
+                    let target = parsed.text(target.name).to_string();
+                    for method in methods {
+                        if let Some((name, contrib)) = contrib_of(
+                            parsed,
+                            &method.node,
+                            Some(&target),
+                            ledger,
+                            library,
+                            resolved,
+                        ) {
+                            graph.insert(name, contrib);
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
