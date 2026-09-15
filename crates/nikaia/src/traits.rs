@@ -49,7 +49,10 @@ pub fn check(parsed: &Parsed, own: &Ledger) -> Vec<Finding> {
 
         let mut given: BTreeMap<String, &Span> = BTreeMap::new();
         for method in methods {
-            let Item::Fn { name: Some(name), .. } = &method.node else {
+            let Item::Fn {
+                name: Some(name), ..
+            } = &method.node
+            else {
                 continue;
             };
             given.insert(parsed.text(*name).to_string(), &method.span);
@@ -155,12 +158,7 @@ fn not_in_the_trait(trait_name: &str, target: &str, method: &str, span: &Span) -
     }
 }
 
-fn incomplete(
-    trait_name: &str,
-    target: &str,
-    missing: &BTreeSet<&String>,
-    span: &Span,
-) -> Finding {
+fn incomplete(trait_name: &str, target: &str, missing: &BTreeSet<&String>, span: &Span) -> Finding {
     let names: Vec<String> = missing.iter().map(|m| format!("`{m}`")).collect();
     Finding {
         severity: Severity::Error,

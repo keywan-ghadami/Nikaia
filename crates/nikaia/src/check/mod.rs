@@ -328,7 +328,10 @@ pub fn check_program(
     // of its own - it reads the ledger's **finished** `sync` column, and the
     // type walk runs before `sync::infer` fills that in
     // ([ADR-080](../../docs/specification/adr/adr-080.md)).
-    checker.checked.findings.extend(crate::traits::check(parsed, own));
+    checker
+        .checked
+        .findings
+        .extend(crate::traits::check(parsed, own));
     checker.checked.findings.sort_by_key(|f| f.span.start);
     // Only the calls that provably fail, and only where the name is not also a
     // call that does not: the emitter writes a `?` for each of these, and a `?`

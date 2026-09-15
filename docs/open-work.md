@@ -48,60 +48,16 @@ the program never wrote**, which wanted a rule and not a list
 ([ADR-056](specification/adr/adr-056.md)), and **a generic function that lowered
 without its type parameters** - which turned out to be three defects behind one
 reproduction, because writing the `<T>` closes only the first of them
-([ADR-074](specification/adr/adr-074.md)).
+([ADR-074](specification/adr/adr-074.md)), **a trait whose method pauses** and
+**a map whose key type the language below could not work out** - the second being
+Part I 4.5's own three-line example, which failed in a message naming this
+compiler's internal word for a map ([ADR-080](specification/adr/adr-080.md)).
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. A trait whose method pauses lowers to a signature the `impl` does not match
-
-*Reproduced:*
-
-```nika
-trait Loader {
-    fn load(&self) -> String throws
-}
-
-impl Loader for File {
-    fn load(&self) -> String throws {
-        return fs::read_to_string(self.path)
-    }
-}
-```
-
-The declaration lowers to `fn load(&self) -> Result<…>;` and the `impl` to
-`async fn load(&self) -> Result<…>`, so the language below answers
-
-```text
-error[E0053]: method `load` has an incompatible type for trait
-```
-
-about a file nobody wrote, which is
-[Part III C.1](specification/30-nikaia-tooling.md)'s class.
-
-*Why it is here rather than in [ADR-078](specification/adr/adr-078.md):* that
-record's D4 asserts `sync` for a declaration, and had to — `No` would have made
-**every** bound's call an `.await`, so `fn shout[T: Summarize]` came out `async`
-and awaited a `String`. Asserting it is right for every trait whose methods do
-not pause, which is every trait anybody has written so far, and wrong for one
-whose method does. D4 says exactly that and points here.
-
-*What it needs, and the choice is real:* `async fn` in a trait is what the
-declaration would have to write, which Rust has had since 1.75 — so the
-mechanism exists below and the question is what this compiler should do with a
-declaration whose *implementations* may disagree about pausing. Either the
-declaration gets a word that says a method may pause, and the ledger reads it
-instead of asserting; or an `impl` whose body pauses is refused where the trait
-did not say so. The second is smaller and is the direction every other entry
-here has taken; the first is what the specification would need if a trait is ever
-to describe I/O.
-
-*Found by* writing Part I 4.7's own program, and it was visible before it was
-reproduced: the emitter's own comment said so while `NK1129` was still in the
-plan.
-
-### 1.2. Three of the four string concatenations are accepted here and refused below
+### 1.1. Three of the four string concatenations are accepted here and refused below
 
 *Measured, all four shapes, with `s` and `s2` being `String`:*
 
@@ -136,60 +92,19 @@ statement — or `+` on strings lowers to a `format!` and the asymmetry stops
 existing. The second is one rule rather than a table of four cases, and it fixes
 the checker's side too, because the result is then a `String` in every shape.
 
-### 1.3. Part I 4.5's map example does not compile, and the message names three spellings the program never wrote
+**One entry left, and the other two closed the way they were filed.** All three
+were found the same way — by running the programs the specification prints,
+which is `crates/nikaia/tests/specification.rs` now rather than a habit: it takes
+every `nika` block in the three pages as far as it goes and hands the ones that
+lower to `rustc`, against two recorded baselines. Of 122 blocks, 52 are programs
+this compiler takes and 29 of those compile below.
 
-*Reproduced* — the page's own three lines:
-
-```nika
-use std::collections::HashMap
-
-fn main() {
-    let mut scores = HashMap::new()
-    scores["Player1"] = 100
-}
-```
-
-```text
-error[E0282]: type annotations needed for
-              `HashMap<_, i32, BuildHasherDefault<FxHasher>>`
-   |         let mut scores = TrustedMap::default();
-help: consider giving `scores` an explicit type, where the type for type
-      parameter `K` is specified
-```
-
-`TrustedMap`, `BuildHasherDefault<FxHasher>` and a type parameter `K`: three
-names this language does not have, in a message about a file nobody wrote. It is
-[Part III C.1](specification/30-nikaia-tooling.md) at its worst — not merely the
-backend's words, but the backend's words about this compiler's own internal
-spelling for a map ([ADR-034](specification/adr/adr-034.md)).
-
-*Why the key type stays unknown:* the index goes through
-`nikaia_std::index::at("Player1")`, which is generic so that an integer index and
-a map key can share one spelling
-([ADR-048](specification/adr/adr-048.md) D1) — and a generic index fixes nothing
-about the map. So `HashMap::new()` binds no key type, which
-[ADR-031](specification/adr/adr-031.md) already names in its own words: *a map
-built by `HashMap::new()` says nothing about what it holds.*
-
-*What it needs:* the checker knows the key's type at the assignment — it typed
-`"Player1"` — and has a channel for handing an answer to the emitter by
-statement ([ADR-028](specification/adr/adr-028.md)). So the smallest fix is the
-one the architecture already has a shape for: record the key and value type at
-the `let` that builds the map, and write the annotation. Making `index::at`
-non-generic for a map is the alternative and it undoes what ADR-048 D1 bought.
-
-*Found by* the specification sweep's second half, which hands every block that
-lowers to `rustc` — the only half that finds this class, because the front end is
-perfectly happy with it.
-
-**Three entries, and all three were found the same way**: by running the
-programs the specification prints. That is a test now rather than a habit —
-`crates/nikaia/tests/specification.rs` takes every `nika` block in the three
-pages as far as it goes and hands the ones that lower to `rustc`, against two
-recorded baselines. Of **122 blocks, 52 are programs this compiler takes and 28
-of those compile below**; most of the rest name a `User` or a `postgres` the
-chapter around them declares, which is a fragment and not a defect — and the
-baselines are what tell the two apart without anybody re-deciding each time.
+What left: a trait whose method **pauses** is `NK1129`, an `impl` that disagrees
+with its trait about which methods exist is `NK1130`, and Part I 4.5's map
+example **compiles** ([ADR-080](specification/adr/adr-080.md)). Each was filed as
+a choice between two options and each took the smaller one — a refusal, and a
+`std` trait that lets the language below choose on the container. The one that
+stays is the one where the smaller option is not obviously the right one.
 
 The sweep also turned up two things that were on the **page** rather than in the
 compiler, both fixed: Part I 4.7's body was refused twice over, and three plain
@@ -197,27 +112,6 @@ strings in Part I 7 held holes that
 [ADR-035](specification/adr/adr-035.md) D5 made into text. A page can be wrong in
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
-
-None of the three below is a repair — each names a real choice and says what the
-options cost. The entry that left just before them is worth a sentence for what
-its fix cost to get right. It was filed as *escape it, one rule at one place*, and
-the measurement behind that was wrong by three words: `crate`, `super` and `box`
-fail in the language below with a different message each, so a sweep keyed on one
-message missed them. The sweep that replaced it **compiles** every candidate in
-every position, which is the property actually wanted, and it is what found both
-those three and the one position the escape had not reached
-([ADR-076](specification/adr/adr-076.md)). Two of the words turn out to have no
-escape at all, so the one rule has one forced exception — `NK1128` — and it is
-the target's rather than this language's. The entry *before* it left the opposite
-way from how it was filed. It was filed
-as *"refuse the form until the roadmap's box is taken"*, on this section's own
-principle that a refusal is free before programs exist. What it got instead was
-the box — and the measurement is why: the entry's own note said writing the
-`<T>` would close only a third of the hole, which is true, and the other two
-thirds turned out to be one `bind` per call and one diagnostic rather than a
-type system ([ADR-074](specification/adr/adr-074.md)). The refusal that shipped
-is `NK1126`, and it refuses a *body that uses its parameter* rather than the
-whole form - which is the smallest true refusal rather than the safest one.
 
 ## 2. Decided and unbuilt
 
@@ -659,34 +553,38 @@ four. Under the same command since: **seven consecutive clean whole-workspace
 runs**, two of them with a full rebuild immediately before in the same
 invocation, which was the best hypothesis and is now ruled out.
 
-**Seen twice more since, and the second time named a mechanism.** The failing
-runs are still not reproducible — the same command minutes later passes, on this
-branch and on a clean `origin/main` alike, three runs out of three each. What
-changed is what the failure *says*. The first two truncated the probe's output at
-a varying offset. The third showed `rustc` being handed, as **source**, text that
-is not source:
+**Measured again, and the hypothesis this entry carried is refuted.** It said
+the wrapper's inherited **stdin** was shared between concurrent probes. Running
+the whole test with `cargo test … < /dev/null` fails identically, three runs out
+of three, so nothing about the caller's stdin is what decides it.
+
+**What the failing runs look like now**, and it is sharper than before: the
+probe's `--print` output arrives **complete**, and what fails is the compile of
+the source on stdin, because the source is this:
 
 ```text
 error: unknown start of token: `
  --> <anon>:7:55
-  |
 7 |   = help: only literals are allowed as values for the `message`, `note`
-    |         and `label` options…
+  |           and `label` options. These options must be separated by a comma
 ```
 
-`<anon>` is **standard input**, which is where cargo puts the probe's source
-(`rustc - --print=…`), and that line is a `rustc` *diagnostic* rather than a
-program. So something other than the probe's own source was on the wrapper's
-stdin.
+That is a `rustc` **diagnostic** about a malformed `#[diagnostic::on_unimplemented]`
+attribute. No such attribute exists anywhere in this repository, and the string
+is `rustc`'s own — so it is not something this compiler wrote, relayed or could
+have written.
 
-*What that points at, and it is a hypothesis with evidence rather than a guess:*
-the wrapper passes an invocation it does not lower straight through
-(`project::wrapper_main`, the `source_path()` early return), so the child
-**inherits** stdin. Under `cargo test --workspace` many cargo instances probe at
-once and share one stdin; two readers on one pipe would take each other's bytes,
-which is exactly the shape of both symptoms — a truncated read and a read of
-somebody else's output. Nothing here has measured that, and the next step is to
-measure it rather than to change the wrapper on a story.
+**And it clusters in time rather than in the code.** On one commit, seven
+consecutive whole-suite runs passed — two of them immediately after a full
+rebuild — and then eight consecutive runs failed. In the failing window a clean
+`origin/main`, built from scratch, fails identically two runs out of two; in the
+passing window it passes. Whatever decides it is a property of the machine at
+that moment and not of the tree, which is why this is here and not in §1.
+
+*What was ruled out, in order:* the tests (they pass alone), the wrapper's own
+code path (the probe run by hand exits 0), a stale binary, a rebuild immediately
+before, and now the caller's stdin. What is left to measure is what changes
+between the two windows on a machine where nothing in the repository does.
 
 *Why it is kept at all:* if it comes back, this says what was already ruled out —
 it is not the tests, not the wrapper's own code path, and not a stale binary. It

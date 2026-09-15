@@ -101,7 +101,9 @@ fn main() {
 "#,
     );
     assert!(
-        rust.contains("nikaia_std::index::set(&mut scores, nikaia_std::index::at(\"Player1\"), 100)"),
+        rust.contains(
+            "nikaia_std::index::set(&mut scores, nikaia_std::index::at(\"Player1\"), 100)"
+        ),
         "the write goes through `set`:\n{rust}"
     );
     assert!(

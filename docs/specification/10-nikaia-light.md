@@ -927,13 +927,15 @@ it can fail or pause all come from the declaration. Several bounds are written
 `[T: Named + Aged]`.
 
 > **Status:** the declaration, `[T: Bound]`, `[T: A + B]` and the lookup are
-> built ([ADR-078](adr/adr-078.md)). **Nothing yet checks an `impl` against the
-> trait it names** — a method with a different signature, or a missing one, is
-> refused by the language below rather than here. A **default body** has no
-> syntax, a trait is not a type (there is no `dyn` and no `fn f(x: Summarize)`),
-> and a trait cannot be named from another package. A trait whose method
-> genuinely **pauses** does not lower correctly, and `docs/open-work.md` carries
-> that with its reproduction.
+> built ([ADR-078](adr/adr-078.md)), and so is what an `impl` owes its trait:
+> a method the trait does not declare, or one it declares that the `impl` leaves
+> out, is `NK1130`, and a method whose implementation **pauses** is `NK1129` —
+> a trait's methods are `sync`, and a word that says one may pause is not in
+> this language ([ADR-080](adr/adr-080.md)). **A differing signature is not
+> compared yet**, so a method with the wrong arity or result is still refused by
+> the language below. A **default body** has no syntax, a trait is not a type
+> (there is no `dyn` and no `fn f(x: Summarize)`), and a trait cannot be named
+> from another package.
 
 ---
 
