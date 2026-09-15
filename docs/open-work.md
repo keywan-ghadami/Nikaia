@@ -155,13 +155,15 @@ strings in Part I 7 held holes that
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
 
-**This section is empty**, for the first time, and that is a statement about
-what to do next rather than a victory lap: the list below is decided-and-unbuilt
-and upkeep, and neither outranks a defect — so the next defect anybody finds
-goes here and goes first. The head of this file says what a defect is; the way
-they have been found, every round, is by **running programs** — the
-specification's, the corpus's, and the one somebody wrote while building a
-fixture for something else.
+**This section was empty**, for one round, and the two entries below are what
+the next program found — which is the sentence that stood here promising exactly
+that. The list further down is decided-and-unbuilt and upkeep, and neither
+outranks a defect, so these go first. The way they have been found, every round,
+is by **running programs** — the specification's, the corpus's, and the one
+somebody wrote while building a fixture for something else. These two came out
+of the third kind: a probe of whether a package could publish a `trait`, written
+to answer a question on [`open-decisions.md`](open-decisions.md) and not to find
+anything.
 
 The last one out was **a grammar fold's `init`, `step` and `merge`, which
 nothing checked at all** ([ADR-092](specification/adr/adr-092.md)). It had been
@@ -174,6 +176,94 @@ the walk D4 wrote could be **deleted** rather than kept beside the new one, and
 the jump's message got better for it. **A question that can be answered by
 running the corpus is not a reason to leave a defect open**, and this one had
 been open since the record that named it.
+
+
+### 1.1. A trait a package publishes is implemented and then not callable
+
+The emitter writes the `impl` and never brings the trait into scope, so the
+method cannot be called and the language below says so in its own words. Against
+`examples/http/` with `pub trait Handler { fn handle(&self) -> Response }` added,
+and a program next door:
+
+```nika
+use http
+
+impl http::Handler for Fixed {
+    fn handle(&self) -> http::Response { … }
+}
+
+fn main() {
+    print(http::render(&f.handle()))
+}
+```
+
+```
+error: …/src/main.nika:15:5: no method named `handle` found for struct `Fixed` in the current scope
+     = items from traits can only be used if the trait is in scope
+     = trait `Handler` which provides `handle` is implemented but not in scope; perhaps you want to import it
+```
+
+**That is Part III C.1's class**: an untranslated backend message reaching the
+user is a compiler bug, and this one names a construct the program did write and
+a rule the program has no way to satisfy — there is no import to write.
+
+The generated file says it plainly. `http.rs` has `pub trait Handler`, the
+program's file has `impl http::Handler for Fixed`, and no `use` anywhere:
+
+```
+gen/http/http.rs:37:       pub trait Handler {
+gen/hello_http/hello_http.rs:14: impl http::Handler for Fixed {
+```
+
+The same shape **in one file compiles and runs**, because there the trait is in
+the same module and needs no import. So what is missing is one emitted line
+where a trait is reached across a package.
+
+*What it needs:* the emitter to write a `use` for every foreign trait some `impl`
+in the unit names. What it does **not** need is the bound question — that one is
+a decision — *how does a package receive a handler* on
+[`open-decisions.md`](open-decisions.md).
+
+### 1.2. A `sync` body is refused as pausing when the call crosses a package
+
+[ADR-078](specification/adr/adr-078.md) D4 makes a trait's methods `sync`, and
+`NK1129` refuses an `impl` whose body pauses. Across a package it refuses one
+that does not:
+
+```nika
+impl http::Handler for Fixed {
+    fn handle(&self) -> http::Response {
+        return http::Response::not_found()
+    }
+}
+```
+
+```
+error[NK1129]: `Fixed::handle` can pause, and `http::Handler` declares it as a method that cannot
+```
+
+**The ledger the same build wrote disagrees with the refusal.** `http`'s own
+`nikaia.contracts` records `[fn."http::Response::not_found"] sync = "inferred"`,
+and the program's records `[fn."Fixed::handle"] sync = "inferred"` — so by the
+time anything is written down, both are known not to pause. Replacing the call
+with a struct literal makes the refusal go away, and the identical shape in one
+file compiles.
+
+So it is an **ordering** defect and not a `sync` one: the trait rule reads the
+column before `sync::infer` has filled it in for a callee that lives in another
+package, and a callee absent from that fixpoint is read as one that pauses.
+`tests/traits.rs` says in its own head that these rules need the *finished*
+column and that only the program-level entry point runs late enough — which is
+the single-unit version of this, already known and already handled there.
+
+*What it needs:* the trait check to run after the fixpoint has taken in every
+package's entries, or the package ledger to be folded in before it runs. A test
+belongs beside it that builds a two-package project, because
+`tests/traits.rs` builds one unit and cannot see this.
+
+*What it does not need:* a change to D4. A handler that genuinely pauses is still
+not declarable, and that is *how does a package receive a
+handler* on [`open-decisions.md`](open-decisions.md) rather than this defect.
 
 
 ## 2. Decided and unbuilt
@@ -428,7 +518,7 @@ left is the section's own rules, every one of which is a refusal nothing raises:
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.8. `fortunes.nika` waits on two runtime pieces, and neither is a language question
+### 2.8. `fortunes.nika` waits on two runtime pieces and one language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -442,6 +532,21 @@ form. What is left is machinery, not syntax:
   decided what a handler *is* — the request as its first implicit argument, and
   what each return type answers with — and none of it can be built before there is
   a server to bind to.
+* **And a handler cannot be received at all**, which is the language question
+  this entry used to say it did not have.
+  `.route("/fortunes") fn { fortunes(db) }` needs `route` to declare a parameter
+  that is code, and neither door is open: a function type is not sayable
+  (`fn apply(f: fn() -> String)` is a parse error) and a bound cannot name a
+  trait another package publishes. That is
+  *how does a package receive a handler* on
+  [`open-decisions.md`](open-decisions.md), and it is independent of the
+  server — a socket layer would leave it exactly where it is.
+
+**Measured, so the order is known.** Given a manifest that depends on
+`examples/http/`, the file stops before any of the three: `dsl postgres { … }`
+has no hole, and `postgres` is not a grammar this compiler has. So the first
+thing fortunes needs is the driver question above, and the handler question is
+what it meets after that.
 
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
