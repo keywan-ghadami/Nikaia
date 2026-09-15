@@ -218,7 +218,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
-| — | nothing is claimed right now | |
+| 088 | reflection is data; `macro`, `quote` and `with` are reserved and are not constructs | `claude/mutex-boden-entscheidung-x291jd` |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
