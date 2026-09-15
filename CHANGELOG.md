@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Decided (a parameter may be a function, and the type says what it may do)
+
+- **[ADR-102](docs/specification/adr/adr-102.md).** `fn(Request) -> Response` is a type, spelled as a signature is, with `sync` and `throws` after the result. Without `sync` the code may pause and without `throws` it cannot fail — the reading a declaration has. A lambda that does less fits a type that allows more; a pausing lambda handed to `fn() sync` is refused here, where today `rustc` refuses it about a file nobody wrote. Whether the callee runs the parameter or keeps it is inferred — the same `keeps` question [ADR-094](docs/specification/adr/adr-094.md) asks of every parameter — and only a kept handler's promises come from the type; a run lambda's still decide the callee's own, as `map`'s do. `@detached` is never written.
+- **What it answers:** how a package receives a handler. `examples/http/` can declare `route`, and `open-decisions.md`'s entry narrows to the one thing left — a bound naming a trait in another package.
+- **Nothing of it is built**; `open-work.md` carries the four steps.
+
 ### Decided (an error that newly reaches a `catch` is named once)
 
 - **[ADR-101](docs/specification/adr/adr-101.md).** Every failure is caught or declared, and that is checked; what a `catch { … }` did in silence was take a callee's *new* failure. When a `throws` set grows, every handler over that callee is named in the build output, `--locked` fails until the ledger is regenerated and committed, and the commit is the acknowledgement — nothing is written at the handler, and a handler that matches on `error` is told the same as one that does not. The syntax of `catch` is unchanged. `open-decisions.md`'s entry on whether `catch` takes a pattern leaves the file: the guarantee did not need one.

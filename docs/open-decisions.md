@@ -252,148 +252,41 @@ day the new one starts.
 
 ---
 
-## 4. How does a package receive a handler?
+## 4. Can a bound name a trait in another package?
 
-**Blocked by it:** every library written *in Nikaia* that is handed a piece of
-the caller's code — a route handler, a callback, a comparator. The first one is
-already in the tree. [`examples/http/`](../examples/http/) is a package with a
-request, a response and HTTP/1.1's text half, and **no server**, because the
-line a server exists for cannot be written against it:
+**Blocked by it:** a generic function in one package constrained by a trait
+declared in another. `fn dispatch[H: http::Handler](…)` is a parse error — a
+bound is one name — and `fn dispatch[H: Handler](…)` after `use http` is
+`NK1126`, because `use` brings no name in and a bound has no way to say where
+the trait lives. The `impl` side already crosses the boundary
+([ADR-095](specification/adr/adr-095.md)); the bound side does not.
 
-```nika
-http::Server::new()
-    .route("/fortunes") fn { fortunes(db) }
-    .listen(":8080")
-```
+Handing a package a *handler* is not this question any more:
+[ADR-102](specification/adr/adr-102.md) gives a parameter a function type,
+and `examples/http/`'s `route` is written with one. What is left is the trait
+door for its own sake — a `Repository` bound, a `Render` bound — across a
+package.
 
-That is [`examples/fortunes.nika`](../examples/fortunes.nika)'s `main`, and what
-stops it there is not the socket. **A socket layer would leave this exactly where
-it is** — *there is no HTTP server* on [`open-work.md`](open-work.md) is the
-other half and a separate thing. What is missing here is a way to *say* what
-`route` takes.
+**Two ways out.**
 
-### Two doors, and neither one opens from a package
+* **A qualified bound**: `[H: http::Handler]`, resolved the way a qualified
+  type in a parameter already is, and the ledger carrying a package's `traits`
+  so the lookup has something to read. The smaller change, and the one the
+  `impl` side already made for its half.
+* **Leave it until a program needs it.** No program in the tree writes a
+  cross-package bound; the handler that motivated it is answered elsewhere.
 
-**The lambda door is closed to everyone but `std`.** A parameter cannot be
-declared as a function — the type rule has a reference, a name, generic
-arguments and a `?`, and nothing else:
+**What I would do: the first, when the first such program arrives.** It is a
+lookup and a ledger column, not a language question — but it is also §1's
+neighbour (what a package publishes), and that is the reason not to decide it
+on nothing.
 
-```
-fn apply(f: fn() -> String) -> String { … }
-
-Parse error: expected `&`; found unexpected token `fn` at line 1, column 13
-in type_name / in type_ref / in fn_arg_def
-```
-
-Meanwhile lambdas are passed all over the corpus — `rows.sort_by_key fn(row) {
--row.1 }`, `names.map fn(path) { … }`, `par_fold(…, fn(acc, m) { … }, …)`. Those
-work because a `std` signature is written in the ledger and never goes through
-that rule: eight entries spell a parameter `f: fn(…)`. **So the door exists and
-only `std` may walk through it.**
-
-**The trait door opens — and then closes at the package boundary.**
-[ADR-078](specification/adr/adr-078.md) built a `trait` and a bound, and a
-handler stored in a struct works today, measured in one file:
-
-```nika
-trait Handler { fn handle(&self) -> Response }
-struct Router[H: Handler] { only: H }
-fn dispatch[H: Handler](r: &Router[H]) -> String { return r.only.handle() }
-```
-
-That compiles and runs. Put the trait in a package and three things stop it,
-each reproduced against `examples/http/` with a `Handler` added:
-
-| | what happens |
-| :--- | :--- |
-| `fn dispatch[H: http::Handler](…)` | parse error — a bound is one name, so a bound cannot reach into a package at all |
-| `fn dispatch[H: Handler](…)` after `use http` | `NK1126`: *nothing says it has a method `handle`* — `use` brings nothing in ([ADR-046](specification/adr/adr-046.md)) and a bound has no way to say where the trait is |
-| `impl http::Handler for Fixed` whose body calls the package | `NK1129`: *`Fixed::handle` can pause* — for a body the package's own ledger records as `sync = "inferred"`, and the identical shape in one file compiles |
-
-The third is a defect and is on [`open-work.md`](open-work.md) with its
-reproduction, as is the untranslated `rustc` message a fourth attempt produced
-when the pausing refusal was stepped around. **The first two are this question.**
-
-### The part that is a decision and not a defect
-
-A parameter that is code makes all four of a caller's derived answers depend on
-what is *passed in*. The ledger has met that once, unevenly:
-
-| | today | |
-| :--- | :--- | :--- |
-| `sync` | `sync = "from(f)"` — the lambda decides | [ADR-029](specification/adr/adr-029.md) D3 |
-| `touches` | deliberately **no** `from(f)`; a higher-order entry must *add* what the lambda reaches rather than assume it away | same record, and the ledger's own comment says why |
-| `throws` | never asked — no entry has a `from` form | — |
-| `sharing` | never asked | — |
-
-**And the one mechanism that exists does not reach a server.** `from` is for an
-**immediate** lambda, one the callee runs before it returns, and
-[ADR-029](specification/adr/adr-029.md) D4 says so with a test that enforces it.
-A router **stores** the handler and calls it later from a request loop — the
-detached case that record names as `from`'s limit, because the lambda's calls
-belong to nobody the caller is counting. A server is therefore not `sort_by_key`
-one level up; it is precisely the case the existing answer excluded. The trait
-door has the mirror-image version of the same gap:
-[ADR-078](specification/adr/adr-078.md) D4 makes every trait method `sync`
-because a declaration has no body to read, so a handler that genuinely pauses —
-which is what a handler that reads a database *is* — cannot be declared at all.
-
-**So whichever door is opened, the same thing has to be decided: what a
-signature says about code it is handed.** That is why this is one question and
-not two.
-
-### The options
-
-* **(a) Open the trait door across a package.** A bound gets a qualified name,
-  and a package publishes its traits. Smaller than it sounds: the `impl` side
-  already resolves `http::Handler` across the boundary — that is how `NK1129`
-  found it — so what is missing is the bound's lookup and the ledger carrying
-  `traits`, which [ADR-078](specification/adr/adr-078.md) §4 already names as
-  undecided. Does **not** answer the pausing handler.
-* **(b) Open the lambda door: a function type that carries the columns.**
-  `fn() -> String` becomes sayable, and what it says includes whether the
-  handler may pause, may throw, and what it may touch. The only option under
-  which `route` can write down what it demands and a caller be checked against
-  it.
-* **(c) A function type that carries nothing.** The grammar grows, the columns
-  do not, and anything holding a handler is treated as though it may do
-  anything — the fail-closed direction the compiler already uses when nobody
-  said. Cheap, and it makes every higher-order function in Nikaia as
-  unconstrained as the worst handler anybody might pass.
-* **(d) Register instead of pass.** A handler is a top-level function with a
-  marking above it and the compiler collects the table while the program is
-  built. No function type, no bound. Loses the capture: `fortunes(db)` closes
-  over a connection, and a free function cannot reach one — though a struct
-  field can, which is why this is weaker than (a) rather than different from it.
-* **(e) The server goes back into `std`.** Works immediately, because `std` may
-  already spell the parameter. Takes back [ADR-069](specification/adr/adr-069.md),
-  which moved `http` out so it could ripen at its own speed.
-
-**What I would do: (a) first, then (b).** (a) is the cheaper half of a door that
-is already built and already half-open, and it makes `examples/http/` able to
-hold a `Handler` that somebody outside it can implement — which is the smallest
-thing that turns the package from a data type into a library. It is not enough:
-a stored handler that pauses still cannot be declared, under either door. (b) is
-where that gets answered, and it is worth doing second rather than first because
-(a) will show what the columns actually need to say. (c) spends the grammar and
-keeps none of what the grammar was for. (d) buys less than (a) for comparable
-work. (e) trades a decision already taken for a shortcut.
-
-**What it costs.** (a) costs a name space question this project has been
-deferring — what a package publishes, and how a name reaches into one — which is
-§1's neighbour and should be read beside it. (b) costs a type language where a
-type says more than a name, the first time the surface language has needed that,
-and a second answer to the detached question. Both cost a refusal a user will
-meet: a handler that pauses, passed where the signature said it may not — and
-that refusal is the whole point, because today the same program is refused by
-`rustc` instead, about a file nobody wrote.
-
-**What it is not.** It is not a missing feature of the ledger. Eight `std`
-entries take a lambda and the corpus calls them; nothing about `std` is blocked.
-What is blocked is a second author writing the same kind of function, which is
-exactly what a package is for.
+**What it costs:** the first costs the `traits` column and the qualified
+bound's parse; the second costs a refusal a library author meets, which is
+where it belongs until then.
 
 ---
+
 
 ## 5. Is text one type whose state the compiler picks, or two the program picks between?
 

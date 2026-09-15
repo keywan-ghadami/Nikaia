@@ -1316,11 +1316,11 @@ the words of whoever wrote it.
 
 To enforce the "Contextual Capture" rules (Chapter 5.4) without hard-coding specific function names into the compiler, Nikaia uses internal attributes. They belong to the Standard Library.
 
-> **Status:** not built, and not writable in a source file. Nikaia's type grammar
-> has no function type, so neither the signatures below nor `@detached` can be
-> written in a `.nika` file (Part I, 5.4 C); the ledger's type language spells
-> `fn(…)` but has no `capture_mode`, and the immediate/detached rule is held by a
-> check over `std`'s entries ([ADR-029](adr/adr-029.md) D1, D4).
+> **Status:** not built. `@detached` is a ledger fact and not a word a program
+> writes: whether a function-typed parameter is run or kept is inferred from
+> the body ([ADR-102](adr/adr-102.md) D3), and the type itself is not yet in
+> the grammar (Part I, 5.4 C). The immediate/detached rule is held by a check
+> over `std`'s entries until then ([ADR-029](adr/adr-029.md) D4).
 
 ### B.1. Capture Attributes
 

@@ -771,6 +771,25 @@ is unbuilt is the emitter's half.
 matches on an error variant that crossed a function boundary, because none
 can.
 
+### 2.16. A parameter may be a function, and the type says what it may do
+
+[ADR-102](specification/adr/adr-102.md). `fn(Request) -> Response`, with
+`sync` and `throws` after the result as a declaration writes them; a lambda
+that does less fits a type that allows more, the other direction is refused;
+whether the parameter is run or kept is inferred, and a kept one's promises
+are the type's. **Nothing of it is built**: the type is a parse error, and the
+eight `std` entries that take a lambda bypass the grammar.
+
+*Evidence:* `fn twice(x: i64, f: fn(i64) -> i64)` — *expected `&`; found `fn`*
+— and `examples/fortunes.nika`'s `main`, whose `route` cannot be declared by
+`examples/http/`.
+
+*What it needs, in the record's order (§5):* the type in the grammar, using
+the spelling the ledger's type language already has; the two refusals; the
+run-or-kept inference, which is ADR-094's `keeps` asked of a code parameter;
+and the lowering of a kept pausing handler, which is *a lambda that pauses is
+refused* one entry up, with a callee that can now say which shape it wants.
+
 ---
 
 ## 3. Upkeep

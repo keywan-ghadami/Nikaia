@@ -112,6 +112,8 @@ The reason given is effect polymorphism: a wrapper's `sync` would have to follow
 its parameter's. But 13.5 already solved exactly that for `std` with
 `sync = "from(f)"`, and it is a mechanism, not a `std` privilege.
 
+*Decided since:* [ADR-102](specification/adr/adr-102.md).
+
 **Recommendation:** add the function type `fn(A, B) -> R` to the type grammar,
 record `from(f)` for any function that runs its parameter during the call, and
 reserve `@detached` for one that stores or spawns it. The ledger already has

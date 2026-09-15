@@ -1248,24 +1248,27 @@ the call: `map` is immediate for every caller and `spawn` is detached for every
 caller, and that is what lets the capture be decided where the lambda is
 written.
 
-**It is not something your own function can declare.** Nikaia's type grammar has
-no function type — a parameter's type is a name with type arguments, optionally
-a view, or a tuple — so no `.nika` source takes a lambda and passes it on, and
-`@detached` is a property of the standard library's own entries rather than a
-word a program writes (Part III, Appendix B). What that closes off is **effect
-polymorphism**: a wrapper whose own immediacy would have to follow its
-parameter's ([ADR-029](adr/adr-029.md) D1). A lambda that must be moved is
-therefore handed to the detached function where it is written, not through a
-wrapper of your own.
+**Your own function says it with a type** ([ADR-102](adr/adr-102.md)). A
+parameter that is code is written as a function type, spelled the way a
+signature is: `handler: fn(Request) -> Response`, and `sync` or `throws` after
+the result where the declaration would put them. Without `sync` the code may
+pause; without `throws` it cannot fail — the reading every declaration has. A
+lambda that does less fits a type that allows more; a pausing lambda handed to
+a `fn() sync` is refused.
 
-> **Status:** not built, and not writable — a parameter of function type is a
-> parse error, so `@detached` on one has nowhere to appear. The
-> immediate/detached rule itself is `std`'s, held by a check over `std`'s ledger
-> entries rather than by anything in a source file ([ADR-029](adr/adr-029.md)
-> D4). The capture it decides **is** reported now, for the one detached context
-> the language has a keyword for: `NK2101` at a `spawn` (8.3,
-> [ADR-055](adr/adr-055.md) §6 step 4). What is not writable is the annotation
-> on a parameter of your own.
+Which of the two contexts your parameter is in is **inferred**, not written: a
+parameter the body only calls is immediate and borrows, one the body keeps —
+stores, hands back, gives to a task — is detached and moves. It is the same
+question 6.5 asks of every parameter, and there is no `@detached` to write.
+For an immediate parameter the callee's own promises follow the lambda, as
+`map`'s do; for a kept one they follow the type, so a `listen` that calls a
+stored `fn(Request) -> Response` may pause.
+
+> **Status:** not built — a parameter of function type is a parse error, and
+> the eight `std` entries that take a lambda are written straight into the
+> ledger. The capture the rule decides **is** reported for the one detached
+> context the language has a keyword for: `NK2101` at a `spawn` (8.3).
+> [ADR-102](adr/adr-102.md) §5 is the order of work.
 
 ---
 
