@@ -3,7 +3,11 @@
 // Identical to `../crossing` except for the name of the function called, which
 // is the same crossing through a foreign API whose author wrote
 // `unsafe impl Send` for a type that is not. **This one builds and runs**, and
-// increments an `Rc` refcount on a thread the foreign runtime owns.
+// increments an `Rc` refcount on a thread the foreign runtime owns - the
+// foreign crate's `Rc`, not one this language wrote. `Shared` is an atomic
+// count at both settings since ADR-037 D6, and ADR-061 D1 refuses one handed
+// to code nothing describes, so a Nikaia value cannot be smuggled this way:
+// what is smuggled here came from the other side of the boundary.
 //
 // Nikaia contributes nothing to either outcome. That is the measurement.
 fn main() {

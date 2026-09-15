@@ -185,8 +185,9 @@ rebuilt").
 The task this experiment was set for asked to say plainly and prominently whether a Nikaia `Rc`
 can reach another thread with nothing complaining. The honest answer has two halves.
 
-**No, and twice over.** First, **Nikaia has no `Rc` to send.** `Shared`, which
-[ADR-037](specification/adr/adr-037.md) D3 lowers to `Rc` at `user_parallelism = no`, is not
+**No, and twice over** — *as of the day this was written; both halves have since gone stale and
+the correction is below.* First, **Nikaia has no `Rc` to send.** `Shared`, which
+[ADR-037](specification/adr/adr-037.md) D3 lowered to `Rc` at `user_parallelism = no`, was not
 implemented: there is no `Rc::new` or `Arc::new` anywhere in the emitter, and the only `Shared` in
 `crates/` is a word inside a comment about a type's generics. Every value a Nikaia program can
 build today — `i64`, `f64`, `bool`, `String`, `List`, `HashMap`, a struct of those — is `Send`.
@@ -202,6 +203,33 @@ compile at `yes` (where `Shared` is `Arc`) and fail at `no` (where it is `Rc`) �
 the "a library written at one setting turns out un-compilable at the other" that Group B, `NK25xx`
 and ADR-037 §3 all exist to prevent, arriving through a foreign call rather than through a
 `par_iter`. Nothing in the compiler will notice.
+
+---
+
+> **Both halves above went stale, and the correction is kept beside them rather than written over
+> them**, because what this page is for is the finding and the finding includes how it was reasoned.
+>
+> **`Shared` is built.** [ADR-064](specification/adr/adr-064.md) gave the shared mutable type its
+> name and constructor, and Part II 12.2's counter compiles and runs at both settings. So *"Nikaia
+> has no `Rc` to send"* is no longer the reason the answer is no.
+>
+> **And the failure mode this paragraph predicted cannot happen**, because the premise it rests on
+> was taken away deliberately. [ADR-037](specification/adr/adr-037.md) D6 narrowed D3: `Shared` is
+> an **atomic** count at *both* settings, so there is no `yes`/`no` split left to be inconsistent
+> about — and D6's own argument is this paragraph's, reached from the other side. D7 then allows
+> `contracts::sharing` to take the atomic away for a value it can prove crosses nothing, which is
+> an optimisation over the floor and never a second answer.
+>
+> **What replaced it is a refusal.** D7's per-value inference means a `Shared[Conn]` is an `Rc` for
+> one value and an `Arc` for another in the same program, and no foreign signature can name both —
+> so [ADR-061](specification/adr/adr-061.md) D1 refuses a `Shared` handed to code nothing describes,
+> the same refusal a lock already had and for the sentence that was already the lock's reason.
+> `contracts::send`'s `CHOSEN` is where that lives. The way out is to pass what is inside.
+>
+> **So the experiment's own value stopped being a stand-in.** `shim`'s `LocalHandle` was introduced
+> as *"what `Shared` would be at `no`"*; a Nikaia `Shared` cannot be written into this shape at all
+> now, so the foreign value is the only way to build it and the question is answered with a value
+> that exists rather than a stand-in for one.
 
 ### 3.3 What the refusal looks like when there is something to refuse
 
@@ -230,8 +258,8 @@ It is refused. Four things about *how* are the finding:
    the build wrote and the author has never read. The `.nika` line the error is about is line 14 of
    a file nobody mentions.
 3. **The vocabulary is Rust's.** `Rc<String>`, `Send`, `E0277`, `LocalHandle`. `Rc` is not a word
-   in Nikaia — ADR-037 D3 is the only place it appears, and there it is an implementation detail of
-   `Shared`. C.2's first requirement ("terms like *lifetime*, *borrow checker*, or Rust error codes
+   in Nikaia — it appears only in the records, as an implementation detail of `Shared` (ADR-037 D3,
+   narrowed by D6 and made per-value by D7). C.2's first requirement ("terms like *lifetime*, *borrow checker*, or Rust error codes
    never appear") is not met, and neither is its second: nothing says what to do next.
 4. **`E0277` is not in the catalogue at all.** ADR-005 D7 item 1 enumerates the classes that have
    translations — E0382, E0499, E0502, E0505, E0506, E0597, E0716 — every one of them a

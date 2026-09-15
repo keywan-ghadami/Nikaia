@@ -155,6 +155,26 @@ strings in Part I 7 held holes that
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
 
+And from §2 rather than §1, because it was an explanation rather than a
+miscompilation: **`examples/foreign-runtime/` explained the boundary with a rule
+that is gone.** Four programs, three manifests, a shim's doc comment and
+[`foreign-runtime.md`](foreign-runtime.md) itself all said `Shared` lowers to an
+`Rc` at `user_parallelism = no`
+([ADR-037](specification/adr/adr-037.md) D3) and that `Shared` was unbuilt.
+D6 narrowed D3 — `Shared` is an **atomic** count at both settings — and
+[ADR-064](specification/adr/adr-064.md) built it. The notes page had also
+*predicted* a failure mode that D6 then made impossible, and the correction is
+kept **beside** its reasoning rather than written over it, because what that
+page is for is the finding and the finding includes how it was reached.
+
+**What the four still demonstrate is sharper than what they claimed.** A Nikaia
+`Shared` cannot be written into this shape at all now:
+[ADR-061](specification/adr/adr-061.md) D1 refuses one handed to code nothing
+describes, since D7's per-value inference makes a `Shared[Conn]` an `Rc` for one
+value and an `Arc` for another in the same program. So the foreign value stopped
+being a stand-in for something unbuilt and became the only way to build the
+shape.
+
 And **a trait a package publishes, implemented and then not callable**
 ([ADR-095](specification/adr/adr-095.md)). Rust wants a trait in scope before
 its methods can be called and `impl http::Handler for Fixed` does not put it
@@ -322,21 +342,7 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 4. **Supervision.** Last because nothing else waits on it.
 
-### 2.1. `examples/foreign-runtime/` explains the boundary with a rule that is gone
-
-Four programs about handing values across the foreign boundary — `crossing`,
-`serve`, `shim`, `smuggled` — and their comments name the **per-build** expansion:
-*"what `Shared` lowers to at `user_parallelism = no`, namely an `Rc`"*. That is
-[ADR-037](specification/adr/adr-037.md) D3, which D6 replaced, and it is now wrong
-a second way: [ADR-061](specification/adr/adr-061.md) D1 refuses a `Shared` at a
-foreign destination outright.
-
-*What it needs:* somebody to read the four and say which still demonstrate
-something. This is where a reader goes to learn what crossing means, so a stale
-explanation here is worth more than its size — and it is where the bridge D1
-reserved would first be missed, if it is missed at all.
-
-### 2.2. A task that may not cross a thread is refused by `rustc`, not by this compiler
+### 2.1. A task that may not cross a thread is refused by `rustc`, not by this compiler
 
 [ADR-055](specification/adr/adr-055.md) §2 D6's third sharp edge, and the last
 thing that record decided which the compiler does not do.
@@ -392,7 +398,7 @@ than waiting:** the analysis names a `spawn` body's handle as a duplication site
 and used again afterwards is not refused, which `tasks.rs` says about a program
 that does it.
 
-### 2.3. A lambda that pauses is refused, and a recursive pausing method is not boxed
+### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
 
 Both are [ADR-055](specification/adr/adr-055.md) §6's remainder, and both are
 limits of this compiler rather than of the language — so they are here and not in
@@ -435,7 +441,7 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.4. `let` takes one name, and the specification writes it taking several
+### 2.3. `let` takes one name, and the specification writes it taking several
 
 ```nika
 let (user, rights, prefs) = overlap { … }          // Part I 8.1.2
@@ -461,7 +467,7 @@ compiler's rule for a form nobody decided.
 not them; what the two sites need is destructuring a tuple whose arity is known,
 and a bigger answer would be a decision rather than this repair.
 
-### 2.5. Standard input is `async` and does not suspend
+### 2.4. Standard input is `async` and does not suspend
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -491,7 +497,7 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.6. The lock is built and every rule around it is not
+### 2.5. The lock is built and every rule around it is not
 
 [ADR-057](specification/adr/adr-057.md) decided what the lock **is**,
 [ADR-059](specification/adr/adr-059.md) what a program writes to reach one, and
@@ -511,13 +517,13 @@ left is the section's own rules, every one of which is a refusal nothing raises:
   worth the extra words, because the bullet used to name the whole range and a
   reader would have gone looking for work that is done.
 
-### 2.7. Part II 12.8's supervision syntax
+### 2.6. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.8. `fortunes.nika` waits on two runtime pieces and one language question
+### 2.7. `fortunes.nika` waits on two runtime pieces and one language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -550,7 +556,7 @@ what it meets after that.
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.9. There is no HTTP server, and three records now wait on it
+### 2.8. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal
@@ -598,7 +604,7 @@ bench that decided it (`benches/sendfile/`) and the write-up
 been built ahead of the server and deliberately was not, because D3's measurement
 makes it the mechanism that loses at the sizes a server sends most.
 
-### 2.10. There is no target that lets foreign code call in, and the record for one is written
+### 2.9. There is no target that lets foreign code call in, and the record for one is written
 
 [ADR-062](specification/adr/adr-062.md). Nothing of it is built and nothing of it
 **can** be: `extern "C"` is a parse error (Part III 15.1), `Target` has two values,
@@ -617,7 +623,7 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.11. A `comptime` binding at item level has nowhere to stand
+### 2.10. A `comptime` binding at item level has nowhere to stand
 
 *Reproduced:* `comptime MAX = 1000` at the top of a file is a parse error; the same
 line inside a function body parses, folds and runs.
@@ -643,7 +649,7 @@ it crosses is [ADR-079](specification/adr/adr-079.md)'s.
 a restructure that removed the entry above it, and restored from its own commit.
 Nothing about it changed in between.
 
-### 2.12. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
+### 2.11. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
 
 [ADR-082](specification/adr/adr-082.md) D1: a grammar is entered by an ordinary
 call, `Json.value(input)`, and D2 makes every `pub` rule an entry. Accepted,
@@ -685,7 +691,7 @@ programs, each of which writes `catch` beside the entry.
 *Evidence:* the eight files, listed above, found by `grep` and confirmed by the
 refusal that ran over them.
 
-### 2.13. Nothing runs Nikaia code while the program is built
+### 2.12. Nothing runs Nikaia code while the program is built
 
 *Reproduced:* `comptime` is built and its evaluator is
 [`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
@@ -723,7 +729,7 @@ see 2.15.
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is 2.15's, and the reason is there.
 
-### 2.14. Running a grammar while the program is built is not interpretation
+### 2.13. Running a grammar while the program is built is not interpretation
 
 *The distinction, because it is the whole entry.* A grammar could be run at build
 time by interpreting the grammar tree the compiler already holds. **It must not

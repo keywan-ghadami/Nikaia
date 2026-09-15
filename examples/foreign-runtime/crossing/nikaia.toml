@@ -3,9 +3,13 @@ name = "foreign-runtime-crossing"
 version = "0.1.0"
 
 # The switch D7's first rule is about. `no` is the default and is written down
-# anyway, because it is the setting under which `Shared` would be an `Rc`
-# (ADR-037 D3) and the whole question is what that means next to a foreign
-# thread.
+# anyway, because a foreign thread exists whatever this says - which is the
+# whole finding.
+#
+# It used to say *"the setting under which `Shared` would be an `Rc`
+# (ADR-037 D3)"*, and that stopped being true: ADR-037 D6 narrowed D3, so
+# `Shared` is an atomic count at **both** settings and this switch no longer
+# changes its representation.
 [build]
 user-parallelism = "no"
 

@@ -92,12 +92,21 @@ impl Describe for String {
 
 /// A handle that cannot leave the thread it was made on.
 ///
-/// This stands in for `Shared` at `user_parallelism = no`, which
-/// [ADR-037](../../../../docs/specification/adr/adr-037.md) D3 lowers to `Rc`.
-/// `Shared` is unbuilt, so the experiment borrows a non-`Send` value instead:
-/// the question - what happens when a value that may not cross a thread reaches
-/// a thread the foreign runtime owns - is the same question either way, and
-/// this value exists today.
+/// This used to stand in for `Shared` at `user_parallelism = no`, which
+/// [ADR-037](../../../../docs/specification/adr/adr-037.md) D3 lowered to an
+/// `Rc`, on the grounds that `Shared` was unbuilt. **Both halves are gone**:
+/// D6 narrowed D3 so `Shared` is an atomic count at either setting, and
+/// `Shared` is built.
+///
+/// It stands in for nothing now, and is the experiment's own value - which is
+/// the sharper position. A Nikaia `Shared` cannot be written into this shape at
+/// all: [ADR-061](../../../../docs/specification/adr/adr-061.md) D1 refuses one
+/// handed to code nothing describes, because D7's per-value inference makes a
+/// `Shared[Conn]` an `Rc` for one value and an `Arc` for another in the same
+/// program and no foreign signature can name both. So a value that may not
+/// cross a thread has to come from **this** side of the boundary, and the
+/// question - what happens when one reaches a thread the foreign runtime owns -
+/// is answered with a value that exists rather than a stand-in for one.
 pub struct LocalHandle {
     name: std::rc::Rc<String>,
 }
