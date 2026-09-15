@@ -51,98 +51,79 @@ reproduction, because writing the `<T>` closes only the first of them
 ([ADR-074](specification/adr/adr-074.md)), **a trait whose method pauses** and
 **a map whose key type the language below could not work out** - the second being
 Part I 4.5's own three-line example, which failed in a message naming this
-compiler's internal word for a map ([ADR-080](specification/adr/adr-080.md)).
+compiler's internal word for a map ([ADR-080](specification/adr/adr-080.md)), and **three of the four string
+concatenations** - which also took back a *false* refusal, since `"a" + s` was
+typed as a `&str` and made `-> String` an error
+([ADR-081](specification/adr/adr-081.md)).
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. Three of the four string concatenations are accepted here and refused below
+### 1.1. A `&self` method cannot hand back a field it owns
 
-*Measured, all four shapes, with `s` and `s2` being `String`:*
+*Reproduced*, with no concatenation anywhere near it:
 
-| written | what the language below says |
-|---|---|
-| `"a" + "b"` | `error[E0369]: cannot add &str to &str` |
-| `"a" + s` | `error[E0369]: cannot add String to &str` |
-| `s + "b"` | compiles |
-| `s + s2` | `error[E0308]: mismatched types` |
-
-So Rust's own rule — `String + &str` and nothing else — reaches the user
-unchanged, about a file nobody wrote, which is
-[Part III C.1](specification/30-nikaia-tooling.md)'s class. This language's `+`
-says nothing about which side is owned, and it should not have to.
-
-*And the checker gets it wrong first, which is the half worth noticing:*
-`"User: " + self.username` is typed as a `&str`, so a function declaring
-`-> String` is refused as `NK1104` — a **false** refusal, since that
-concatenation is a `String` in any reading a user would give it. That is the
-rarer and worse direction: [Part III C.4](specification/30-nikaia-tooling.md)
-says this compiler never refuses a correct program.
-
-*Where it was reaching the page:* Part I 4.7's `impl Summarize for User` wrote
-exactly `return "User: " + self.username`, and Part I 6's `spawn` example wrote
-`println(prefix + "System started")`. Both are interpolated now, and
-`crates/nikaia/tests/specification.rs` is what keeps them that way.
-
-*What it needs, and two things that looked true are not.* It was filed as a
-choice between the emitter writing a conversion and `+` on strings lowering to a
-`format!`, with the second called *one rule rather than a table of four cases* at
-the cost of an allocation. Both halves of that are wrong, and both were measured.
-
-**The allocation is not a cost, because the rule can be the table.** A trait in
-`std` with an impl per shape — the arrangement
-[ADR-048](specification/adr/adr-048.md) D1 already uses twice — gives each form
-the lowering that suits it, and `String + &str` keeps the one it has. Three
-million concatenations, best of three:
-
-| | time |
-|---|---|
-| `String + &str`, as it lowers today | 42 ms |
-| `format!("{}{}")` for every shape | 250 ms |
-| through a trait, impl per shape | 42 ms |
-
-So `format!` everywhere would be a **6× regression** on the one form that works,
-and the trait is free.
-
-**What actually rules the trait out is arithmetic, and it is a trap worth
-naming.** A trait that takes `+` would take it for numbers too, and a number's
-`+` may not leave this language's own crates:
-[ADR-043](specification/adr/adr-043.md) D1 turns `overflow-checks` on **per
-Nikaia crate** and the orchestrator turns them off for the profile, because a
-foreign crate's hash function wraps on purpose. `nikaia_std` is foreign to that
-split. Measured, with the same profile shape:
-
-```text
-a + b directly in the checked crate      → aborts
-the same a + b through an #[inline]      → -9223372036854775808, silently
-helper in the unchecked crate
+```nika
+impl User {
+    fn name_of(&self) -> String {
+        return self.username
+    }
+}
 ```
 
-Inlining does not carry the check across: it is decided where the code is
-**written**. So any arithmetic moved into a `std` helper silently loses the
-abort — which `index::at` escapes only because its conversion is an explicit
-`try_from`, and `index::set` because it does none.
+```text
+error[E0507]: cannot move out of `self.username` which is behind a shared
+              reference
+```
 
-*So the fix is the first option after all:* a trait for the **string** shapes,
-and the checker telling the emitter which `+` is one. That needs a key, and
-`Expr::Binary` has **no span** to be keyed by — which `contracts/sync.rs` already
-names as open work in its own words. The span is the prerequisite, it is one
-field on one variant, and it is worth having for its own sake.
+about a file nobody wrote, which is
+[Part III C.1](specification/30-nikaia-tooling.md)'s class.
 
-**One entry left, and the other two closed the way they were filed.** All three
-were found the same way — by running the programs the specification prints,
+*Why it is bigger than it looks:* it is every accessor. A struct that owns a
+`String`, a `Vec` or any other value that is not `Copy` cannot hand one back from
+a method that takes `&self` — and `&self` is what Part I 4.2 writes for a method
+that only reads. The program is correct in this language's terms; what the
+language below objects to is a move this compiler wrote and the author did not.
+
+*What it needs, and there are two shapes:* the emitter writes `.clone()` where a
+body hands back a field it borrows — which is the language below's own answer and
+costs an allocation the author cannot see — or the checker refuses it and says to
+declare the receiver `self`. The first keeps the program and hides a cost; the
+second keeps the cost visible and takes a program away. Part I 6's whole chapter
+on what a value costs argues for the second, and nothing here has measured how
+often the first would fire.
+
+*Found by* running Part I 4.7's `impl Summarize for User` after
+[ADR-081](specification/adr/adr-081.md) took the concatenation out of it. Two
+defects were standing on one line, and the second only became visible when the
+first was gone.
+
+*And the page still cannot write its own line.* `return "User: " + self.username`
+type-checks now and compiles no better, so Part I 4.7 keeps the interpolated
+form it was given — `f"User: {self.username}"`, which borrows and therefore
+works. **Closing this is the condition for putting the page's own sentence
+back**, and that is written here so it is not forgotten rather than left to be
+noticed again.
+
+**One entry, and it is the third one a single line of Part I 4.7 was hiding.**
+The page's `return "User: " + self.username` was refused twice over; taking the
+concatenation out ([ADR-081](specification/adr/adr-081.md)) left the move
+underneath it, which is §1.1 and has nothing to do with text. Everything in this
+section was found the same way — by running the programs the specification prints,
 which is `crates/nikaia/tests/specification.rs` now rather than a habit: it takes
 every `nika` block in the three pages as far as it goes and hands the ones that
 lower to `rustc`, against two recorded baselines. Of 122 blocks, 52 are programs
 this compiler takes and 29 of those compile below.
 
 What left: a trait whose method **pauses** is `NK1129`, an `impl` that disagrees
-with its trait about which methods exist is `NK1130`, and Part I 4.5's map
-example **compiles** ([ADR-080](specification/adr/adr-080.md)). Each was filed as
-a choice between two options and each took the smaller one — a refusal, and a
-`std` trait that lets the language below choose on the container. The one that
-stays is the one where the smaller option is not obviously the right one.
+with its trait about which methods exist is `NK1130`, Part I 4.5's map example
+**compiles** ([ADR-080](specification/adr/adr-080.md)), and three of the four
+string concatenations are programs rather than errors from the language below
+([ADR-081](specification/adr/adr-081.md)). The last of those closed the way its
+entry said it could **not**: the entry conceded an allocation to `format!` and
+measurement said the trait is free — 42 ms against 250 — so the rule turned out
+to be the table of four cases rather than a replacement for it.
 
 The sweep also turned up two things that were on the **page** rather than in the
 compiler, both fixed: Part I 4.7's body was refused twice over, and three plain

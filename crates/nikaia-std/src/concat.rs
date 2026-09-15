@@ -131,6 +131,10 @@ mod tests {
         let before = roomy.as_ptr();
         let joined = plus("left-", roomy);
         assert_eq!(joined, "left-right");
-        assert_eq!(joined.as_ptr(), before, "the bytes moved, the buffer did not");
+        assert_eq!(
+            joined.as_ptr(),
+            before,
+            "the bytes moved, the buffer did not"
+        );
     }
 }

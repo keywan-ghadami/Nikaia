@@ -105,9 +105,7 @@ fn main() {
 "#,
     );
     assert!(
-        rust.contains(
-            "nikaia_std::concat::plus(nikaia_std::concat::plus(\"p\", \"q\"), \"r\")"
-        ),
+        rust.contains("nikaia_std::concat::plus(nikaia_std::concat::plus(\"p\", \"q\"), \"r\")"),
         "two operators, two calls, nested the way they were written:\n{rust}"
     );
 }
@@ -204,6 +202,9 @@ fn main() {
 }
 "#,
     );
-    assert!(rust.contains("nikaia_std::concat::plus(s, \"right\")"), "{rust}");
+    assert!(
+        rust.contains("nikaia_std::concat::plus(s, \"right\")"),
+        "{rust}"
+    );
     assert!(!rust.contains("format!"), "{rust}");
 }

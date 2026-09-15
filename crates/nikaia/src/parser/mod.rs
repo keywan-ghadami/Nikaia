@@ -262,10 +262,7 @@ pub fn params_of(
 /// own words since it was written. This is the first of them, and it is here
 /// rather than on every expression because one variant needed it and a field
 /// nobody reads is a field that goes stale.
-pub fn fold_binary(
-    head: ast::Expr,
-    tail: Vec<(ast::BinaryOp, ast::Expr, ast::Span)>,
-) -> ast::Expr {
+pub fn fold_binary(head: ast::Expr, tail: Vec<(ast::BinaryOp, ast::Expr, ast::Span)>) -> ast::Expr {
     tail.into_iter()
         .fold(head, |lhs, (op, rhs, span)| ast::Expr::Binary {
             op,
