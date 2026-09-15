@@ -155,6 +155,14 @@ strings in Part I 7 held holes that
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
 
+And **a trait a package publishes, implemented and then not callable**
+([ADR-095](specification/adr/adr-095.md)). Rust wants a trait in scope before
+its methods can be called and `impl http::Handler for Fixed` does not put it
+there, so the message named a remedy the program **cannot write** —
+[ADR-046](specification/adr/adr-046.md) D2 gives this language no import at all.
+The same shape in one file compiles, which is what said it was one emitted line
+rather than a question about the language.
+
 **This section was empty**, for one round, and the two entries below are what
 the next program found — which is the sentence that stood here promising exactly
 that. The list further down is decided-and-unbuilt and upkeep, and neither
@@ -178,53 +186,7 @@ running the corpus is not a reason to leave a defect open**, and this one had
 been open since the record that named it.
 
 
-### 1.1. A trait a package publishes is implemented and then not callable
-
-The emitter writes the `impl` and never brings the trait into scope, so the
-method cannot be called and the language below says so in its own words. Against
-`examples/http/` with `pub trait Handler { fn handle(&self) -> Response }` added,
-and a program next door:
-
-```nika
-use http
-
-impl http::Handler for Fixed {
-    fn handle(&self) -> http::Response { … }
-}
-
-fn main() {
-    print(http::render(&f.handle()))
-}
-```
-
-```
-error: …/src/main.nika:15:5: no method named `handle` found for struct `Fixed` in the current scope
-     = items from traits can only be used if the trait is in scope
-     = trait `Handler` which provides `handle` is implemented but not in scope; perhaps you want to import it
-```
-
-**That is Part III C.1's class**: an untranslated backend message reaching the
-user is a compiler bug, and this one names a construct the program did write and
-a rule the program has no way to satisfy — there is no import to write.
-
-The generated file says it plainly. `http.rs` has `pub trait Handler`, the
-program's file has `impl http::Handler for Fixed`, and no `use` anywhere:
-
-```
-gen/http/http.rs:37:       pub trait Handler {
-gen/hello_http/hello_http.rs:14: impl http::Handler for Fixed {
-```
-
-The same shape **in one file compiles and runs**, because there the trait is in
-the same module and needs no import. So what is missing is one emitted line
-where a trait is reached across a package.
-
-*What it needs:* the emitter to write a `use` for every foreign trait some `impl`
-in the unit names. What it does **not** need is the bound question — that one is
-a decision — *how does a package receive a handler* on
-[`open-decisions.md`](open-decisions.md).
-
-### 1.2. A `sync` body is refused as pausing when the call leaves the unit
+### 1.1. A `sync` body is refused as pausing when the call leaves the unit
 
 [ADR-078](specification/adr/adr-078.md) D4 makes a trait's methods `sync`, and
 `NK1129` refuses an `impl` whose body pauses. It refuses ones that do not:

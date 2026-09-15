@@ -1429,3 +1429,79 @@ fn the_http_package_serves_its_example() {
         "the headers are separated from the body by a blank line: {out:?}"
     );
 }
+
+/// **A trait a package publishes is implemented and then called**
+/// ([ADR-095](../../../docs/specification/adr/adr-095.md)).
+///
+/// The emitter wrote the `impl` and never brought the trait into scope, so the
+/// method could not be called and the language below said so in its own words:
+/// *"trait `Handler` which provides `handle` is implemented but not in scope;
+/// perhaps you want to import it"* — [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
+/// class, naming a rule the program has no way to satisfy, because
+/// [ADR-046](../../../docs/specification/adr/adr-046.md) D2 gives Nikaia no
+/// import to write.
+///
+/// **It has to be two packages.** The same shape in one file compiles, because
+/// there the trait is in the same module and needs no import — which is what
+/// said the gap was one emitted line rather than a question. `tests/traits.rs`
+/// builds one unit and cannot see this.
+///
+/// The body is a struct literal rather than a call to `handler::plain()`, and
+/// that is not tidiness: a call out of the unit is `NK1129` today
+/// (`open-work.md`, *a `sync` body is refused as pausing when the call leaves
+/// the unit*), so a fixture that made one would be testing two things and
+/// failing for the other.
+#[test]
+fn a_trait_a_package_publishes_can_be_implemented_and_called() {
+    let dir = a_program_and_a_package(
+        "foreign-trait",
+        "handler",
+        &[
+            (
+                "handler/src/main.nika",
+                "pub struct Answer {\n\
+                 \x20   pub text: String,\n\
+                 }\n\
+                 \n\
+                 pub trait Handler {\n\
+                 \x20   fn handle(&self) -> Answer\n\
+                 }\n\
+                 \n\
+                 pub fn render(answer: &Answer) -> String {\n\
+                 \x20   return answer.text.clone()\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use handler\n\n\
+                 struct Fixed {\n\
+                 \x20   n: i64,\n\
+                 }\n\
+                 \n\
+                 impl handler::Handler for Fixed {\n\
+                 \x20   fn handle(&self) -> handler::Answer {\n\
+                 \x20       return handler::Answer(text: \"handled\".to_string())\n\
+                 \x20   }\n\
+                 }\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   let f = Fixed(n: 1)\n\
+                 \x20   println(f\"{handler::render(&f.handle())}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+    let app = dir.join("app");
+    let ran = nikaia(&["run"], &app);
+    assert!(
+        ran.status.success(),
+        "a trait reached across a package is callable: {}",
+        said(&ran)
+    );
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "handled");
+
+    // **Not asserted against the generated file**, and the reason is worth a
+    // line: a package's crate names the `.nika` source as its `path`, so there
+    // is no `.rs` on disk to read. What this test has instead is the stronger
+    // thing - the program runs, which it cannot do without the import.
+}

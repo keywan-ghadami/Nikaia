@@ -613,7 +613,7 @@ pub fn emit_module_body_at(
 ///
 /// `uses_std` and the rest are per-file facts, and the preamble is written
 /// once - so they are joined here rather than guessed at from the entry.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Needs {
     pub grammar: bool,
     pub driver: bool,
@@ -621,6 +621,23 @@ pub struct Needs {
     /// Kap 7.1: a function here declares `throws`, so the error surface is
     /// reachable and `std`'s is what carries it.
     pub fails: bool,
+    /// Kap 4.7 across a package: every trait an `impl` in this unit names with
+    /// a package in front of it
+    /// ([ADR-095](../../docs/specification/adr/adr-095.md)).
+    ///
+    /// Rust needs a trait **in scope** before its methods can be called, and
+    /// `impl http::Handler for Fixed` does not put it there. So a trait a
+    /// package publishes could be implemented and then not called, in the
+    /// backend's words about the generated file: *"trait `Handler` … is
+    /// implemented but not in scope; perhaps you want to import it"* — a rule
+    /// the program has no way to satisfy, because Nikaia has no import to
+    /// write ([ADR-046](../../docs/specification/adr/adr-046.md) D2 brings no
+    /// names in).
+    ///
+    /// The **same shape in one file compiles**, which is what says this is one
+    /// missing emitted line rather than a question: there the trait is in the
+    /// same module and needs no import.
+    pub foreign_traits: std::collections::BTreeSet<String>,
 }
 
 impl Needs {
@@ -635,15 +652,18 @@ impl Needs {
             driver: emitter.uses_driver(),
             std: emitter.uses_std,
             fails: emitter.fails,
+            foreign_traits: foreign_traits(parsed),
         }
     }
 
-    pub fn join(self, other: Needs) -> Needs {
+    pub fn join(mut self, other: Needs) -> Needs {
+        self.foreign_traits.extend(other.foreign_traits);
         Needs {
             grammar: self.grammar || other.grammar,
             driver: self.driver || other.driver,
             std: self.std || other.std,
             fails: self.fails || other.fails,
+            foreign_traits: self.foreign_traits,
         }
     }
 
@@ -681,8 +701,46 @@ impl Needs {
             // mentions it.
             out.push_str("#[allow(unused_imports)]\npub use nikaia_std::error::Full;\n");
         }
+        // **A trait reached across a package is imported**
+        // ([ADR-095](../../docs/specification/adr/adr-095.md)). Written as the
+        // path the program already wrote, because that is the path the
+        // generated crate resolves: `impl http::Handler for Fixed` names the
+        // crate `http`, and so does this.
+        //
+        // `allow(unused_imports)` for the same reason the two lines above carry
+        // it - a program may implement a trait and never call the method, and a
+        // warning about a line nobody wrote is
+        // [Part III C.1](../../docs/specification/30-nikaia-tooling.md) one
+        // severity down.
+        for path in &self.foreign_traits {
+            out.push_str(&format!("#[allow(unused_imports)]\npub use {path};\n"));
+        }
         out
     }
+}
+
+/// Every trait an `impl` in this unit names with a package in front of it.
+///
+/// **Qualified only**, and that is the whole of the test: a trait of this
+/// program's own is in the same module below and needs no import, while a
+/// `::` in the name is exactly what says the declaration is in another crate.
+/// A trait the compiler reads rather than a `.nika` file wrote - `impl Error
+/// for ConfigError` ([ADR-023](../../docs/specification/adr/adr-023.md) D3) -
+/// carries no `::` either, so it is left alone by the same test.
+fn foreign_traits(parsed: &Parsed) -> std::collections::BTreeSet<String> {
+    parsed
+        .program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            Item::Impl {
+                trait_name: Some(name),
+                ..
+            } => Some(parsed.text(*name).to_string()),
+            _ => None,
+        })
+        .filter(|name| name.contains("::"))
+        .collect()
 }
 
 /// `std`'s shipped contracts, parsed once.
