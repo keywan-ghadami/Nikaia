@@ -313,6 +313,7 @@ pub fn check_program(
         expected: None,
         type_parameters: BTreeMap::new(),
         struct_parameters: BTreeMap::new(),
+        borrowing_self: false,
         enclosing: BTreeMap::new(),
         throwing: false,
         caught: false,
@@ -554,6 +555,13 @@ struct Checker<'a> {
     /// Absent for a struct with no parameters, which is every struct written
     /// today, so the two questions below cost a failed lookup and nothing else.
     struct_parameters: BTreeMap<String, Vec<String>>,
+    /// Whether the method being walked took its subject by **reference**.
+    ///
+    /// `&self` and `&mut self` borrow it; a bare `self` owns it. What hangs on
+    /// the difference is whether a field may be handed out by value at all
+    /// ([ADR-082](../../docs/specification/adr/adr-082.md)). `false` for a free
+    /// function, which has no subject to borrow.
+    borrowing_self: bool,
     /// The `[T]` of the `impl` whose methods are being walked, on its own.
     ///
     /// Separate from the field above because `function` rebuilds that one per
@@ -852,6 +860,11 @@ impl<'a> Checker<'a> {
         let parameters: BTreeSet<String> = ["Self".to_string()].into_iter().collect();
         let outer_declared = std::mem::replace(&mut self.type_parameters, declared);
 
+        let outer_borrowing = std::mem::replace(
+            &mut self.borrowing_self,
+            receiver.as_ref().is_some_and(|r| r.is_ref),
+        );
+
         let mut frame: Vec<Local> = Vec::new();
         if let Some(receiver) = receiver {
             let ty = match target {
@@ -914,6 +927,7 @@ impl<'a> Checker<'a> {
         self.expected = outer;
         self.throwing = outer_throwing;
         self.type_parameters = outer_declared;
+        self.borrowing_self = outer_borrowing;
         self.current = outer_current;
     }
 
@@ -1192,6 +1206,76 @@ impl<'a> Checker<'a> {
                 "write the type the value actually has, or take `{parameter}` out and \
                  declare the parameter as that type - a bound that says which types \
                  `{parameter}` may be is not built yet"
+            )),
+        });
+    }
+
+    /// **`NK1131`: a field of a borrowed subject, handed out by value.**
+    ///
+    /// ```nika
+    /// impl User {
+    ///     fn name_of(&self) -> String {
+    ///         return self.username     // error[NK1131]
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// `&self` borrows the subject, so what the body has is a loan of it; giving
+    /// the `username` away by value would take a piece out of something it does
+    /// not own. The language below says
+    /// *"cannot move out of `self.username` which is behind a shared reference"*
+    /// about a file nobody wrote — and
+    /// [Part I 6.8](../../docs/specification/10-nikaia-light.md) is what decides
+    /// that this is a refusal rather than something to paper over: *ownership
+    /// rules occasionally reject code, every such error explains itself in plain
+    /// language, and a raw internal error reaching you is a Nikaia bug.*
+    ///
+    /// **Not a hidden `.clone()`**, which was the other option and is against a
+    /// decision already made: [ADR-064](../../docs/specification/adr/adr-064.md)
+    /// D2 wrote *a hull you can see is one you write*, and a copy the author
+    /// cannot see is the same thing one position over. Both ways out already
+    /// exist and both are one word — `.clone()`, written where it happens, or a
+    /// `self` receiver where the method is meant to consume its subject.
+    ///
+    /// **Asked only where the field's type is known and does not copy.** A
+    /// number, a `bool`, a `char` and a view copy, so handing one out takes
+    /// nothing away; a field this compiler cannot type says nothing, and
+    /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md) is why that
+    /// is silence rather than a guess.
+    fn a_field_of_a_borrowed_subject(&mut self, value: &Expr, span: &Span, what: &str) {
+        if !self.borrowing_self {
+            return;
+        }
+        let Expr::Field { base, name } = value else {
+            return;
+        };
+        let Expr::Variable(subject) = base.as_ref() else {
+            return;
+        };
+        if self.parsed.text(*subject) != "self" {
+            return;
+        }
+        let field = self.parsed.text(*name).to_string();
+        let ty = self.expr(value, span);
+        if ty.is_unknown() || copies(&ty) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1131",
+            message: format!(
+                "`self` is borrowed here, so `{field}` cannot be {what} by value"
+            ),
+            notes: vec![format!(
+                "`&self` is a loan of the subject, and `{field}` is a `{}` - giving it \
+                 away would take a piece out of something this method does not own \
+                 (Part I, 6.5)",
+                ty.text()
+            )],
+            help: Some(format!(
+                "write `self.{field}.clone()` to hand out a copy, or declare the method \
+                 `fn …(self)` where it is meant to consume its subject"
             )),
         });
     }
@@ -1685,6 +1769,7 @@ impl<'a> Checker<'a> {
                 ty,
                 value,
             } => {
+                self.a_field_of_a_borrowed_subject(value, span, "bound");
                 let found = self.expr(value, span);
                 let name = self.parsed.text(*name).to_string();
                 self.nameable(&name, span, "a `let`");
@@ -1861,6 +1946,9 @@ impl<'a> Checker<'a> {
             }
 
             Stmt::Return(value) => {
+                if let Some(value) = value {
+                    self.a_field_of_a_borrowed_subject(value, span, "handed back");
+                }
                 let found = match value {
                     Some(value) => self.expr(value, span),
                     None => Ty::Tuple(Vec::new()),
@@ -2899,10 +2987,21 @@ impl<'a> Checker<'a> {
                 return self.locks(door, args, span);
             }
         }
-        let found: Vec<Ty> = args.iter().map(|a| self.expr(a, span)).collect();
+        let found: Vec<Ty> = args
+            .iter()
+            .map(|a| {
+                // A **free** call walks its arguments here rather than through
+                // `arguments_given`, which is the method path - so the same
+                // question is asked in both, or `takes(self.name)` slips past
+                // `NK1131` while `x.takes(self.name)` does not.
+                self.a_field_of_a_borrowed_subject(a, span, "passed");
+                self.expr(a, span)
+            })
+            .collect();
         let passed: Vec<(String, Ty)> = config
             .iter()
             .map(|a| {
+                self.a_field_of_a_borrowed_subject(&a.value, span, "passed");
                 (
                     self.parsed.text(a.name).to_string(),
                     self.expr(&a.value, span),
@@ -3864,7 +3963,10 @@ impl<'a> Checker<'a> {
                 (Expr::Closure { params, body }, Some(Ty::Fn { params: given })) => {
                     self.lambda(params, body, given)
                 }
-                _ => self.expr(arg, span),
+                _ => {
+                    self.a_field_of_a_borrowed_subject(arg, span, "passed");
+                    self.expr(arg, span)
+                }
             })
             .collect()
     }
@@ -4424,6 +4526,24 @@ fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether handing a value of this type out takes nothing away.
+///
+/// Part I 2.2's numbers, `bool` and `char`, and any **view**: all of them are
+/// copied rather than moved in the language below, so a field of one may leave a
+/// borrowed subject freely. Everything else - a `String`, a `Vec`, a struct this
+/// program declares - is moved, which is what `NK1131` is about.
+///
+/// A short list on purpose, and the polarity is the usual one: a type not on it
+/// is one this says nothing about only when it is also unknown.
+fn copies(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, view, .. } => {
+            *view || matches!(name.as_str(), "i32" | "i64" | "u8" | "f64" | "bool" | "char")
+        }
+        _ => false,
+    }
 }
 
 /// Whether a type is one this language calls text.

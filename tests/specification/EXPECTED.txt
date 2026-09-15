@@ -68,8 +68,8 @@
 10-nikaia-light.md #68 lowered (as written)  use http
 10-nikaia-light.md #69 lowered (as written)  // file: network.nika
 20-nikaia-advance.md #1 lowered (as written)  grammar Json {
-20-nikaia-advance.md #2 refused (a body) [NK1127]  // The compiler runs the Json grammar at build time.
-20-nikaia-advance.md #3 refused (as written)  fn parse_input(input: String) throws {
+20-nikaia-advance.md #2 fragment (as written)  // The compiler runs the Json grammar at build time.
+20-nikaia-advance.md #3 refused (as written) [NK1117]  fn parse_input(input: String) throws {
 20-nikaia-advance.md #4 fragment (as written)  // Definition of the Macro
 20-nikaia-advance.md #5 fragment (as written)  pub macro CreateVar(name_str: String) -> AstExpr {
 20-nikaia-advance.md #6 fragment (as written)  use nikaia_sql::{Database, mysql}
