@@ -39,9 +39,9 @@ the Result column; every other row is the original run.
 | `[]` | II 12.6 | parse error: *expected expression; found `[`* |
 | `-> [User]` (list type) | III 14.3 | parse error: *expected type; found `[`* |
 | `Vec[i64]`, `xs[0]`, `xs[k] = v` | I 4.5 | **built** |
-| `macro Name(…) -> AstExpr { … }` | II 10.3 | parse error: *expected end of input; found `macro`* |
-| `quote { … }` | II 10.3, 10.4 | parses as `let q = quote;` then `{ 1 + 1 }` — **re-run, and refused now**: `NK1117` reaches a name in an expression, not only one standing alone, so the *value of a `let`* is asked about too. The construct is still unbuilt; it no longer means something else in silence |
-| `struct User with Describe { … }` | II 10.3 | parse error: *expected `{`; found `with`* |
+| `macro Name(…) -> AstExpr { … }` | II 10.3 | **re-run, and withdrawn**: `macro` is a reserved word that is not a construct ([ADR-088](specification/adr/adr-088.md) D7), so the parse error now carries *"`macro` is a reserved word, so it is not a name"*. 10.3 no longer specifies a macro system |
+| `quote { … }` | II 10.3, 10.4 | it used to parse as `let q = quote;` then `{ 1 + 1 }`, then was refused by `NK1117` — and is now refused **by the grammar**, which is earlier and better: `quote` is a reserved word that is not a construct ([ADR-088](specification/adr/adr-088.md) D7). It never meant something else in silence again |
+| `struct User with Describe { … }` | II 10.3 | **re-run, and withdrawn**: same as the two above — the parse error now names `with` as a reserved word. Nothing is attached to a declaration, because nothing is generated ([ADR-088](specification/adr/adr-088.md) D1) |
 | `const NAME: T = …` (item) | II 10.2, I 9.2 | parse error: *expected end of input; found `const`* |
 | `const NAME = …` (in a body) | II 10.2 | parses as `const; LIMIT = 10;` — **re-run**, and refused now: `NK1117` on the name |
 | `select { … }` | II 12.4 | parse error: *expected expression; found `>`* (at the arm's `=>`) |
@@ -186,7 +186,14 @@ read against the day it was written.
    `fn: …` form in the same file. The `help:` line was the worst of the four,
    because the compiler's own suggested fix told the user to write what the
    compiler refuses.
-3. **Where the honest fix is a removal.** Part II 10.3–10.4 is two pages of
-   `macro` and `quote` with nothing underneath them, and Part III Chapter 14 is
-   a whole chapter. Each now carries a Status note; whether a chapter specified
-   that far ahead should stay is a decision, not a documentation defect.
+3. **Where the honest fix is a removal.** ~~Part II 10.3–10.4 is two pages of
+   `macro` and `quote` with nothing underneath them~~ — **decided, and it was a
+   removal** ([ADR-088](specification/adr/adr-088.md)). The two pages described a
+   macro system with three constructs; what they wanted, generating code from a
+   type's shape, needs none of them, because `comptime` plus a bound is enough.
+   10.3 is rewritten around that and 10.4's hygiene question dissolved with the
+   construct it applied to. The three words are reserved and are **not**
+   constructs, which is the one thing the pages now promise.
+   Part III Chapter 14 is still a whole chapter; it carries a Status note, and
+   whether a chapter specified that far ahead should stay is a decision, not a
+   documentation defect.

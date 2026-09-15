@@ -133,11 +133,11 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 35] = [
+pub const RESERVED_WORDS: [&str; 38] = [
     "as", "break", "catch", "comptime", "const", "continue", "dsl", "else", "enum", "false", "fn",
-    "for", "from", "grammar", "if", "impl", "in", "let", "loop", "match", "mut", "null", "overlap",
-    "pub", "return", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true", "use",
-    "while",
+    "for", "from", "grammar", "if", "impl", "in", "let", "loop", "macro", "match", "mut", "null",
+    "overlap", "pub", "quote", "return", "self", "spawn", "struct", "sync", "throw", "throws",
+    "trait", "true", "use", "while", "with",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -1852,12 +1852,14 @@ grammar! {
         rule KW_IN = "in" not(ident)
         rule KW_LET = "let" not(ident)
         rule KW_LOOP = "loop" not(ident)
+        rule KW_MACRO = "macro" not(ident)
         rule KW_MATCH = "match" not(ident)
         rule KW_MUT = "mut" not(ident)
         rule KW_NULL = "null" not(ident)
         rule KW_OVERLAP = "overlap" not(ident)
         rule KW_PAR_FOLD = "par_fold" not(ident)
         rule KW_PUB = "pub" not(ident)
+        rule KW_QUOTE = "quote" not(ident)
         rule KW_RETURN = "return" not(ident)
         rule KW_RULE = "rule" not(ident)
         rule KW_SELF = "self" not(ident)
@@ -1871,6 +1873,7 @@ grammar! {
         rule KW_UNCHECKED = "unchecked" not(ident)
         rule KW_USE = "use" not(ident)
         rule KW_WHILE = "while" not(ident)
+        rule KW_WITH = "with" not(ident)
 
         // **Every reserved word, in one rule** (ADR-051).
         //
@@ -1966,6 +1969,10 @@ grammar! {
           | KW_CONTINUE -> { 0 }
           | KW_LOOP -> { 0 }
           | KW_TRAIT -> { 0 }
+          | KW_MACRO -> { 0 }
+          | KW_QUOTE -> { 0 }
+          | KW_WITH -> { 0 }
+
 
         // The compiler's identifier.
         //

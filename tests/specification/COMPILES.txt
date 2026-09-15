@@ -42,9 +42,9 @@
 10-nikaia-light.md #73 error[E0433]
 10-nikaia-light.md #74 compiles
 20-nikaia-advance.md #1 error
-20-nikaia-advance.md #7 error[E0425]
-20-nikaia-advance.md #15 error[E0425]
-20-nikaia-advance.md #18 compiles
+20-nikaia-advance.md #6 error[E0425]
+20-nikaia-advance.md #14 error[E0425]
+20-nikaia-advance.md #17 compiles
 30-nikaia-tooling.md #1 error[E0433]
 30-nikaia-tooling.md #9 error[E0599]
 30-nikaia-tooling.md #12 compiles

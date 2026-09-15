@@ -116,11 +116,11 @@ These words mean one thing wherever they appear, so a name may not be one of the
 ([ADR-051](adr/adr-051.md) D1):
 
 ```text
-as       break   catch   comptime  const    continue dsl     else
-enum     false   fn      for       from     grammar  if      impl
-in       let     loop    match     mut      null     overlap pub
-return   self    spawn   struct    sync     throw    throws  true
-use      while
+as        break     catch     comptime  const     continue  dsl       else
+enum      false     fn        for       from      grammar   if        impl
+in        let       loop      macro     match     mut       null      overlap
+pub       quote     return    self      spawn     struct    sync      throw
+throws    trait     true      use       while     with
 ```
 
 **`comptime` is on the list for the opposite reason to the two after it**: it is
@@ -144,6 +144,14 @@ does. It is the same move [ADR-050](adr/adr-050.md) D2 made for `overlap`.
 `break` and `continue` were reserved on the same terms and are now constructs
 (3.3, [ADR-084](adr/adr-084.md)) — which is what a reservation is for, and why
 their arrival cost no program a name.
+
+**`macro`, `quote` and `with` are on the list and the language expects never to
+make them constructs** ([ADR-088](adr/adr-088.md) D7). 10.3 used to describe a
+macro system built out of the three; what it wanted — generating code from a
+type's shape — is done with `comptime` and a **bound** and needs none of them. They
+are reserved anyway, on the same polarity as `const`: all three are words a reader
+arriving from another language will type, and a reserved word can be given a
+message where a name cannot.
 
 **`seq` has left the list**, which is the direction a reserved word may move
 without breaking anything: the construct is withdrawn

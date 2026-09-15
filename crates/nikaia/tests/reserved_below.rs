@@ -27,18 +27,23 @@ use nikaia::parser::parse_to_ast;
 /// that takes its input from the code under test cannot notice the code losing
 /// an entry.
 const RESERVED_BELOW: &[&str] = &[
-    "abstract", "async", "await", "become", "box", "do", "dyn", "extern", "final", "macro", "mod",
-    "move", "override", "priv", "ref", "static", "try", "type", "typeof", "unsafe", "unsized",
-    "virtual", "where", "yield",
+    "abstract", "async", "await", "become", "box", "do", "dyn", "extern", "final", "mod", "move",
+    "override", "priv", "ref", "static", "try", "type", "typeof", "unsafe", "unsized", "virtual",
+    "where", "yield",
 ];
 
-/// The one word that has left the sweep since: `trait` is a reserved word of
-/// **this** language now ([ADR-078](../../../docs/specification/adr/adr-078.md)),
-/// so no program can put it in a name position and the escape can never fire for
-/// it. It stays in the emitter's list on purpose — that list says what the
-/// language *below* reserves, which is still true of it, and un-reserving here is
-/// the free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
-const RESERVED_HERE_TOO: &[&str] = &["trait"];
+/// The words that have left the sweep since: reserved words of **this** language
+/// now, so no program can put one in a name position and the escape can never
+/// fire for it. `trait` since
+/// [ADR-078](../../../docs/specification/adr/adr-078.md), `macro` since
+/// [ADR-088](../../../docs/specification/adr/adr-088.md) D7 — which reserved it
+/// *against* a construct rather than for one, and took it out of this sweep as a
+/// side effect nobody was looking for.
+///
+/// They stay in the emitter's list on purpose — that list says what the language
+/// *below* reserves, which is still true of both, and un-reserving here is the
+/// free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
+const RESERVED_HERE_TOO: &[&str] = &["trait", "macro"];
 
 /// The words Rust takes as identifiers, which must therefore **not** be escaped.
 ///

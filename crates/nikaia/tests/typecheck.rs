@@ -1210,10 +1210,15 @@ fn an_undeclared_name_inside_an_expression_is_refused_too() {
         // The misparse the statement rule was built for, one position over: a
         // number with a separator in it is a number beside a name (Part I 2.2).
         ("fn main() { let n = 1_000 }", "_000"),
-        // `quote { … }` (Part II 10.3) is unbuilt, and was the one row of
-        // `docs/spec-promises.md` still marked *"means something else"*: it
-        // parsed as `let q = quote` and a block, and lowered in silence.
-        ("fn main() { let q = quote { 1 + 1 } }", "quote"),
+        // A name followed by a block, which used to be `quote { … }` here: that
+        // parsed as `let q = quote` beside a block and lowered in silence, and
+        // this is the row of `docs/spec-promises.md` it answered. `quote` is a
+        // **reserved word** since
+        // [ADR-088](../../../docs/specification/adr/adr-088.md) D7, so it no
+        // longer reaches this check at all - the grammar refuses it first, which
+        // is the earlier and better place. The shape is what mattered, so an
+        // ordinary name stands here now.
+        ("fn main() { let q = builder { 1 + 1 } }", "builder"),
         // Inside an interpolation, which is Nikaia source too (ADR-032 D3).
         (r#"fn main() { let s = f"{nope}" }"#, "nope"),
         // And as an argument.

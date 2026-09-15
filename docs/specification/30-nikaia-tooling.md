@@ -19,7 +19,7 @@ When you create a new project (`nikaia new my_project`), the following structure
 
 * `nikaia.toml`: The **Manifest**. It describes the project, its authors, and its dependencies.
 * `nikaia.lock`: The **Lockfile**. It records *everything that determines the build*, and is therefore also the **Cache Key** ([ADR-021](adr/adr-021.md)). One file, because a reproducibility record that omits an input cannot tell you it is incomplete.
-    * **Asset Hashing:** If a macro or grammar reads an external file (e.g., `from "schema.sql"`), the compiler stores the file's SHA256 hash here - and so is the **allowlist** that permitted the read, because it is a file the build read too ([ADR-072](adr/adr-072.md) D7). A build **given no allowlist reads nothing** at compile time (D1): the strict default is what happens when nothing is passed, so *"this build reads nothing while building"* is not a claim anybody has to keep true.
+    * **Asset Hashing:** If a grammar reads an external file (e.g., `from "schema.sql"`), the compiler stores the file's SHA256 hash here - and so is the **allowlist** that permitted the read, because it is a file the build read too ([ADR-072](adr/adr-072.md) D7). A build **given no allowlist reads nothing** at compile time (D1): the strict default is what happens when nothing is passed, so *"this build reads nothing while building"* is not a claim anybody has to keep true.
     * **Source Hashing:** The SHA256 of each `.nika` source that took part, so an unchanged module skips parsing and expansion entirely.
     * **Resolved Versions:** The exact dependency versions, the toolchain version actually used, and the **Nikaia compiler's own version** - a changed emitter produces different output from identical input, so leaving it out makes the cache serve stale artifacts (ADR-021 D3). The dependency versions are the one thing here that is *recorded without being hashed into the key*: a dependency bump changes the machine code Cargo produces, never the Rust the compiler emits, and Cargo's own fingerprinting covers that half (ADR-021 §5).
     * **Declaration vs. record:** `nikaia.toml` states what the project *requires*; `nikaia.lock` records what was *resolved and used* - the same relationship `Cargo.toml` has with `Cargo.lock`.
@@ -1238,7 +1238,7 @@ fn query_data() {
     // Transparently starts the required Sidecar (Thread or Worker)
     let db = sqlite::open("app.db")
     
-    // The 'sql' macro validates syntax at compile-time.
+    // The `sql` grammar validates the syntax while the program is built.
     // At runtime, it performs an async round-trip to the sidecar.
     let active_users = dsl sql db {
         SELECT * FROM users WHERE last_login > 0
