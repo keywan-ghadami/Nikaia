@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed (the string-concatenation entry said two things that measurement contradicts)
+
+- **The allocation it conceded does not exist.** `docs/open-work.md` §1.1 offered `format!` for every shape as *one rule rather than a table of four cases*, at the cost of an allocation where `String + &str` reuses today. A trait in `std` with an impl per shape — the arrangement [ADR-048](docs/specification/adr/adr-048.md) D1 already uses twice — makes the rule **be** the table: three million concatenations take 42 ms as `String + &str` lowers today, 250 ms through `format!`, and **42 ms through the trait**. So `format!` everywhere would be a 6× regression on the one form that works, and the trait is free.
+- **And what actually rules the trait out is arithmetic, which is a trap worth naming.** A trait over `+` would take numbers too, and a number's `+` may not leave this language's own crates: [ADR-043](docs/specification/adr/adr-043.md) D1 turns `overflow-checks` on **per Nikaia crate** while the profile turns them off, because a foreign crate's hash function wraps on purpose — and `nikaia_std` is foreign to that split. Measured with the same profile shape: `a + b` in the checked crate **aborts**, and the same `a + b` through an `#[inline]` helper in the unchecked crate **wraps silently** to `-9223372036854775808`. Inlining does not carry the check across; it is decided where the code is written.
+- **So the fix is the option the entry had dismissed:** a trait for the string shapes, and the checker telling the emitter which `+` is one. That needs a key, and `Expr::Binary` has no span to be keyed by — which `contracts/sync.rs` already names as open work in its own words.
+- **`index::at` and `index::set` are unaffected** and it is worth saying why: the first converts with an explicit `try_from` and the second does no arithmetic at all. The trap is specific to moving an operator into `std`.
+
 ### Changed (the whole-workspace flake loses its hypothesis and gains a shape)
 
 - **The stdin explanation is refuted.** `docs/open-work.md` §3.1 held that concurrent probes shared the wrapper's inherited stdin; running the whole test with `< /dev/null` fails identically three runs out of three, so the caller's stdin decides nothing.

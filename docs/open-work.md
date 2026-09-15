@@ -85,12 +85,50 @@ exactly `return "User: " + self.username`, and Part I 6's `spawn` example wrote
 `println(prefix + "System started")`. Both are interpolated now, and
 `crates/nikaia/tests/specification.rs` is what keeps them that way.
 
-*What it needs, and it is a decision rather than a repair:* either the emitter
-writes the conversion where the types say one is needed — which it can, since
-[ADR-028](specification/adr/adr-028.md) has the checker hand answers over by
-statement — or `+` on strings lowers to a `format!` and the asymmetry stops
-existing. The second is one rule rather than a table of four cases, and it fixes
-the checker's side too, because the result is then a `String` in every shape.
+*What it needs, and two things that looked true are not.* It was filed as a
+choice between the emitter writing a conversion and `+` on strings lowering to a
+`format!`, with the second called *one rule rather than a table of four cases* at
+the cost of an allocation. Both halves of that are wrong, and both were measured.
+
+**The allocation is not a cost, because the rule can be the table.** A trait in
+`std` with an impl per shape — the arrangement
+[ADR-048](specification/adr/adr-048.md) D1 already uses twice — gives each form
+the lowering that suits it, and `String + &str` keeps the one it has. Three
+million concatenations, best of three:
+
+| | time |
+|---|---|
+| `String + &str`, as it lowers today | 42 ms |
+| `format!("{}{}")` for every shape | 250 ms |
+| through a trait, impl per shape | 42 ms |
+
+So `format!` everywhere would be a **6× regression** on the one form that works,
+and the trait is free.
+
+**What actually rules the trait out is arithmetic, and it is a trap worth
+naming.** A trait that takes `+` would take it for numbers too, and a number's
+`+` may not leave this language's own crates:
+[ADR-043](specification/adr/adr-043.md) D1 turns `overflow-checks` on **per
+Nikaia crate** and the orchestrator turns them off for the profile, because a
+foreign crate's hash function wraps on purpose. `nikaia_std` is foreign to that
+split. Measured, with the same profile shape:
+
+```text
+a + b directly in the checked crate      → aborts
+the same a + b through an #[inline]      → -9223372036854775808, silently
+helper in the unchecked crate
+```
+
+Inlining does not carry the check across: it is decided where the code is
+**written**. So any arithmetic moved into a `std` helper silently loses the
+abort — which `index::at` escapes only because its conversion is an explicit
+`try_from`, and `index::set` because it does none.
+
+*So the fix is the first option after all:* a trait for the **string** shapes,
+and the checker telling the emitter which `+` is one. That needs a key, and
+`Expr::Binary` has **no span** to be keyed by — which `contracts/sync.rs` already
+names as open work in its own words. The span is the prerequisite, it is one
+field on one variant, and it is worth having for its own sake.
 
 **One entry left, and the other two closed the way they were filed.** All three
 were found the same way — by running the programs the specification prints,
