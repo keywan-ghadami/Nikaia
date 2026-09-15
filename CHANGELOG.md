@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed (removing `dsl … from …` is a work order, not a question)
+
+- [ADR-082](docs/specification/adr/adr-082.md) §5 now says plainly what is built (nothing), what the live defect is (a grammar with two `pub` rules gets one of them by source order), and the one change that closes it: the call form built, a `throws` on every generated entry, the old form removed and refused with the new one in the message, and everything that writes it migrated in the same commit — eight programs, `examples/README.md`, Part II 10.7's own block, three test files. The record had carried a corrected count and a question about whether to deprecate first; the question leaves `open-decisions.md`, because the record had already answered it and only the size of the migration had been miscounted. `open-work.md`'s entry is the work order, with the steps and what *done* means.
+
 ### Decided (a parameter may be a function, and the type says what it may do)
 
 - **[ADR-102](docs/specification/adr/adr-102.md).** `fn(Request) -> Response` is a type, spelled as a signature is, with `sync` and `throws` after the result. Without `sync` the code may pause and without `throws` it cannot fail — the reading a declaration has. A lambda that does less fits a type that allows more; a pausing lambda handed to `fn() sync` is refused here, where today `rustc` refuses it about a file nobody wrote. Whether the callee runs the parameter or keeps it is inferred — the same `keeps` question [ADR-094](docs/specification/adr/adr-094.md) asks of every parameter — and only a kept handler's promises come from the type; a run lambda's still decide the callee's own, as `map`'s do. `@detached` is never written.

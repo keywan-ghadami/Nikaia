@@ -556,47 +556,49 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.9. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
+### 2.9. A grammar is entered by a call: build ADR-082 and remove `dsl … from …` in one change
 
-[ADR-082](specification/adr/adr-082.md) D1: a grammar is entered by an ordinary
-call, `Json.value(input)`, and D2 makes every `pub` rule an entry. Accepted,
-**Built: no** — *"a grammar name is not yet accepted as a callee"*.
+[ADR-082](specification/adr/adr-082.md) D1 and D2, accepted and unbuilt. The
+specification already teaches the new form — Part II 10.2 writes
+`Json.value(input)` — and the compiler only knows the old one, so the page and
+the parser disagree today. **This is a work order, not a question**: the
+record's §5 fixes the order and the shape, and nothing about it needs the
+owner.
 
-*Why it is here rather than in a subordinate clause:* it was in one. The entry
-about **running a grammar while the program is built** named it as *"the case
-ADR-082 rewrote the syntax for"*, and nothing else on this page did — which is the exact pattern the entry below this one was written about, two
-rounds ago: a record waiting on work that the list people read does not mention.
+*The defect it closes:* the emitter picks a grammar's entry rule by source
+order, a `par_fold` rule winning (`emit/mod.rs`, `find(|r| r.is_public && …)`),
+so a grammar with two `pub` rules gets one of them in silence.
 
-*What it fixes, in the record's words:* the emitter picks the entry rule with
+*Steps, all in one change:*
 
-```rust
-def.rules.iter().find(|r| r.is_public && par_fold_of(r).is_some())
-    .or_else(|| def.rules.iter().find(|r| r.is_public))
-```
+1. **Parser** — `Grammar.rule(expr)` parses as a call; a grammar name is a
+   callee, and the rule's name is the method's (D1).
+2. **Emitter** — the call lowers to the function the parser backend generates
+   per `pub` rule; the source-order entry choice is deleted (D2).
+3. **Ledger** — every `pub` rule gets an entry with `throws`, because a rule
+   past a commit point can fail ([ADR-023](specification/adr/adr-023.md) D9).
+   Without it `NK1134` refuses the `catch` written beside every entry in the
+   corpus. The one-line bridge in the checker that tells it a `dsl … from …`
+   can fail ([ADR-091](specification/adr/adr-091.md) D4) goes with the old
+   form.
+4. **Removal** — `dsl_from_expr` leaves the grammar and the word after
+   `dsl X` is refused with a message naming `X.rule(…)`, the shape
+   [ADR-022](specification/adr/adr-022.md) gave `fn:`.
+5. **Migration, in the same commit** — nine lines in eight programs
+   (`1brc`, `access-log`, `calc`, `config`, `inventory/stock`, `json`,
+   `k-nucleotide`, `report`), `examples/README.md`, Part II 10.7's own
+   `nika` block (`let totals = dsl Measurements from data`), and the three
+   test files `grammar_lowering.rs`, `fold_lambdas.rs`,
+   `infallible_catch.rs`; the specification test's recorded verdicts move
+   with 10.7.
 
-so a grammar with two `pub` rules gets one of them by source order, silently, and
-a `par_fold` one beats an earlier one. **That is a live defect and not merely an
-unbuilt decision** — it is filed here rather than in §1 only because the record
-that closes it is written and the repair is the migration, not a patch.
+*Done when:* `grep -rn "dsl [A-Za-z_]* from"` over `examples/`, `docs/`,
+`tests/` and `crates/` finds nothing; every example compiles and runs at both
+settings as before; a grammar with two `pub` rules is entered by either; the
+old spelling is refused with the new one in the message; `open-decisions.md`
+has no entry about it (it has none now).
 
-*And the free moment has passed.* ADR-082 §5 gave *"no program in the tree writes
-it"* as the reason to **remove** the old form rather than deprecate it. Counted
-while [ADR-091](specification/adr/adr-091.md) ran a new refusal over the corpus:
-**eight programs write it on nine lines** — `1brc`, `access-log`, `calc`,
-`config`, `inventory/stock`, `json`, `k-nucleotide`, `report` — plus Part II 10.2
-and three test files. The record now carries the count; whether removal is still
-right is a decision and is in
-[`open-decisions.md`](open-decisions.md).
-
-*One thing the migration has to carry with it:* the entry call needs a `throws`
-in its contract. Today `dsl … from …` is told it is fallible by one line in the
-checker ([ADR-091](specification/adr/adr-091.md) D4), because it is not a call
-and has no contract. As a call it would be answered from one — and a generated
-entry rule carrying no `throws` would meet `NK1134` at all eight of those
-programs, each of which writes `catch` beside the entry.
-
-*Evidence:* the eight files, listed above, found by `grep` and confirmed by the
-refusal that ran over them.
+*Evidence:* the eight files, listed above; Part II 10.2 against 10.7.
 
 ### 2.10. Nothing runs Nikaia code while the program is built
 
