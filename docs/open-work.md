@@ -652,6 +652,81 @@ it crosses is [ADR-079](specification/adr/adr-079.md)'s.
 a restructure that removed the entry above it, and restored from its own commit.
 Nothing about it changed in between.
 
+### 2.14. Nothing runs Nikaia code while the program is built
+
+*Reproduced:* `comptime` is built and its evaluator is
+[`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
+what it knows is an integer literal, a name whose value already folded, a
+negation, and `+ - * / %`. No call, no loop, no text, no aggregate.
+
+*Why it is work and not a question:* three records decided what may happen and
+none of them can happen.
+
+| record | what it wants of the evaluator |
+| :--- | :--- |
+| [ADR-073](specification/adr/adr-073.md) D5 | a **call** in an initialiser, which is what [ADR-072](specification/adr/adr-072.md)'s file reading waits behind |
+| [ADR-079](specification/adr/adr-079.md) §3 | a **loop and `push`**, to build a table that then crosses as a view |
+| [ADR-088](specification/adr/adr-088.md) D1 | a **loop over a type's fields**, which is the whole of 10.3 |
+
+[ADR-079](specification/adr/adr-079.md) §3 says it plainly — *"This is the real
+work behind the feature, and this record does not shorten it"* — and until this
+entry existed, that sentence was the only place in the repository where the work
+was named. Three records waiting on something the work list does not mention is
+how a thing stays unstarted.
+
+*What bounds it, and it is already decided:*
+[ADR-075](specification/adr/adr-075.md) D1 and D2 — a body it may evaluate is
+`sync` and touches at most the build's own parameters. So this is an interpreter
+for a **restricted** language, not for all of Nikaia, and what it must refuse is
+written down rather than invented here. There is deliberately **no step budget**
+(D4), so a body that does not terminate hangs the build: worth knowing before
+starting, and not a reason to add one on the way past.
+
+*The order the records imply:* the **call** first, because it alone unlocks
+reading a file at build time and is the smallest of the three. Then **loop and
+`push`**. The field walk last, because it needs something the other two do not —
+see 2.15.
+
+*What it does **not** include:* running a **grammar**. That looks like the same
+job and is not; it is 2.15's, and the reason is there.
+
+### 2.15. Running a grammar while the program is built is not interpretation
+
+*The distinction, because it is the whole entry.* A grammar could be run at build
+time by interpreting the grammar tree the compiler already holds. **It must not
+be**, and the reason is not the size of the work.
+
+`winnow-grammar` is a code **generator**: its model crate parses the grammar
+language, validates and analyses it, and hands the result to a macro that writes
+a parser. Its own summary says so — *"intended to be used by procedural macros
+that generate parsers"*. There is no interpreter in it to borrow.
+
+So interpreting a grammar here would be a **second implementation of the same
+semantics**, and the two would have to agree exactly. Part II 10.2 promises that
+one grammar means the same thing at both stages; with two implementations that
+stops being a property and becomes a hope. The disagreements would land in the
+corners — implicit whitespace, repetition bounds, the commit point, frames and
+resynchronisation, interning, spans — and would present as *"this file parsed
+while the program was built and fails while it runs"*, for the same file and the
+same grammar.
+
+*What to do instead:* compile the **generated** parser during the build and run
+it. Then there is one implementation and the agreement is a tautology rather than
+a claim. The cost is a second compilation, which
+[ADR-026](specification/adr/adr-026.md) Q4 named — and which the build cache
+turns from *every build* into *when the grammar changes*, since
+[ADR-021](specification/adr/adr-021.md) keys on the source. The compiler already
+emits Rust and already drives Cargo, so the machinery is not new.
+
+*Why this needs no new security model:* a grammar's action blocks are Nikaia, and
+[ADR-075](specification/adr/adr-075.md) already says what a build-time body may
+do. Running a generated parser is covered by the same rule as any other
+build-time call.
+
+*What it unblocks:* `comptime CONFIG = Config.value(from "config.toml")` — the
+case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
+[ADR-072](specification/adr/adr-072.md) built the permission for.
+
 ---
 
 ## 3. Upkeep

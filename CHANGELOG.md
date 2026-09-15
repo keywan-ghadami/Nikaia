@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added (the build-time evaluator is on the work list, as two entries)
+
+- **Three records were waiting on a piece of work that `open-work.md` did not mention.** [ADR-073](docs/specification/adr/adr-073.md) D5 wants a **call** in a `comptime` initialiser, [ADR-079](docs/specification/adr/adr-079.md) §3 wants a **loop and `push`** to build a table, and [ADR-088](docs/specification/adr/adr-088.md) D1 wants a **loop over a type's fields**. Each named it in a subordinate clause; none of them is the list people read to find something to do. §2.14 now is.
+- **What exists today, counted:** `comptime`'s evaluator is `fold.rs`, **124 lines**, and it knows an integer literal, a name that already folded, a negation, and `+ - * / %`. No call, no loop, no text, no aggregate. What bounds the work is already decided — [ADR-075](docs/specification/adr/adr-075.md) D1 and D2 — so this is an interpreter for a **restricted** language and what it must refuse is written down rather than invented on the way.
+- **And it is two entries, not one, because conflating them makes it look like re-implementing `winnow-grammar`.** §2.15 is the other half and the reason is not effort: running a grammar at build time by **interpreting** it would be a second implementation of the same semantics, and Part II 10.2 promises that one grammar means the same thing at both stages. With two implementations that stops being a property and becomes a hope — and the disagreements would land in implicit whitespace, repetition bounds, the commit point, frames, interning and spans, presenting as *"this file parsed while the program was built and fails while it runs"*, for the same file and the same grammar.
+- **There is nothing to borrow, either.** `winnow-grammar` is a code *generator*: its model crate parses, validates and analyses the grammar language and hands the result to a macro that writes a parser — *"intended to be used by procedural macros that generate parsers"*. It contains no interpreter.
+- **So §2.15 is compile-and-run, not interpretation**: build the *generated* parser during the build and run it, so the agreement between the two stages is a tautology rather than a claim. The second compilation is the cost [ADR-026](docs/specification/adr/adr-026.md) Q4 named, and [ADR-021](docs/specification/adr/adr-021.md)'s cache turns it from *every build* into *when the grammar changes*. No new security model: a grammar's actions are Nikaia, and [ADR-075](docs/specification/adr/adr-075.md) already covers what a build-time body may do.
+
 ### Fixed (a `??`'s fallback is one value, or an expression in brackets)
 
 - **[ADR-089](docs/specification/adr/adr-089.md).** `??` sits above the whole binary chain, so its fallback reached rightwards across every operator there is: `a ?? 0 > 3` was `a ?? (0 > 3)` while looking like `(a ?? 0) > 3`.
