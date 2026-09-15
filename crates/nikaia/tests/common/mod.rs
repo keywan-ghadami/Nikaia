@@ -306,3 +306,26 @@ pub const UNDESCRIBED_METHOD: &str = "insert_str";
 pub fn undescribed_call(receiver: &str) -> String {
     format!("{receiver}.{UNDESCRIBED_METHOD}(0, \"x\")")
 }
+
+/// An undescribed method that **hands back a `String`**, for a test that needs
+/// a *value* the checker cannot type rather than a statement it cannot type.
+///
+/// `insert_str` above yields nothing, so it cannot stand where a value is
+/// wanted. `String::repeat` is absent from the ledger while `str::repeat` is
+/// there — so a call on a `String` receiver is `?` and still compiles, which is
+/// what a test that lowers *and* runs needs.
+///
+/// **Here rather than written into a test**, for the reason the constant above
+/// is: five tests have broken on a name somebody wrote down, and the fifth was
+/// `.clone()` — `nullable.rs` used `self.name.clone()` as its example of a value
+/// nothing could type, and
+/// [ADR-083](../../../../docs/specification/adr/adr-083.md) put `String::clone`
+/// in the ledger because `NK1131`'s advice needed it. That is the ledger getting
+/// better and a test measuring the wrong thing, which is exactly the pair this
+/// file exists to keep apart.
+pub const UNDESCRIBED_VALUE_METHOD: &str = "repeat";
+
+/// `s.repeat(1)` — an undescribed call that yields a `String`.
+pub fn undescribed_value(receiver: &str) -> String {
+    format!("{receiver}.{UNDESCRIBED_VALUE_METHOD}(1)")
+}

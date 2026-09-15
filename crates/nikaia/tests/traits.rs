@@ -146,7 +146,12 @@ struct User {
 
 impl Named for User {
     fn name_of(&self) -> String {
-        return self.name
+        // `.clone()` and not `return self.name`, which `NK1131` refuses
+        // ([ADR-083](../../../docs/specification/adr/adr-083.md)) - and it
+        // caught this fixture, which had been writing a program that never
+        // compiled. A test that rests on a shape the language does not have is
+        // a test that measures the wrong thing.
+        return self.name.clone()
     }
 }
 

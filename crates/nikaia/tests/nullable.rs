@@ -808,6 +808,14 @@ fn main() {
 /// form is for: the generated Rust goes on saying `Some(…)` wherever the
 /// compiler knows enough to say it, so the conversion is what uncertainty
 /// costs rather than what every program pays.
+///
+/// The untypeable half used to be `self.name.clone()` and is
+/// `common::undescribed_value`'s method now:
+/// [ADR-083](../../../docs/specification/adr/adr-083.md) put `String::clone` in
+/// the ledger, because `NK1131`'s advice is to write one and a way out that
+/// makes another diagnostic fire is not a way out. So this test's example of a
+/// value nothing can type became one that something can — the ledger getting
+/// better, and a test that had been resting on it.
 #[test]
 fn a_value_of_known_type_still_gets_the_constructor() {
     let rust = lowered(
@@ -816,7 +824,7 @@ struct U { name: String }
 
 impl U {
     fn known(&self) -> String? { return \"lit\".to_string() }
-    fn unknown(&self) -> String? { return self.name.clone() }
+    fn unknown(&self) -> String? { return self.name.repeat(1) }
 }
 
 fn free() -> String? { return \"lit\".to_string() }
@@ -827,7 +835,7 @@ fn free() -> String? { return \"lit\".to_string() }
         "a known type keeps the constructor:\n{rust}"
     );
     assert!(
-        rust.contains("self.name.clone().into()"),
+        rust.contains("self.name.repeat(1).into()"),
         "an unknown one takes the conversion:\n{rust}"
     );
     // Two of the three are `Some(…)`, so the conversion is the exception rather

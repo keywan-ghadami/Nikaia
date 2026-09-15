@@ -854,6 +854,28 @@ sync = true
 touches = []
 signature = "(&String) -> String"
 
+# **The way out `NK1131` names, so it has to be described here**
+# ([ADR-083](../../docs/specification/adr/adr-083.md)). A field of a borrowed
+# subject cannot be handed out by value and the message says to write
+# `.clone()` - and with no entry, `sync::infer` could not vouch for the call, so
+# the method around it came out as one that *pauses* and `NK1129` refused it.
+# A recommended way out that makes another diagnostic fire is not a way out.
+#
+# Measured the hard way: the trait tests' own fixture was the first program to
+# take the advice.
+[fn."String::clone"]
+pub = true
+sync = true
+touches = []
+signature = "(&String) -> String"
+
+# The same for a view, which is what a `&str` field or a literal is cloned from.
+[fn."str::clone"]
+pub = true
+sync = true
+touches = []
+signature = "(&str) -> String"
+
 [fn."str::trim"]
 pub = true
 sync = true
