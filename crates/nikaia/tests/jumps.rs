@@ -609,15 +609,18 @@ fn a_head_holds_every_expression_that_is_not_brace_led() {
 ///
 /// The same expression in both positions, lowered, and the two lowerings
 /// compared — so a level that mirrors its counterpart *badly* is caught as
-/// readily as one that is missing. `a ?? 0 > 3` is the case that found this
-/// test's own first draft wrong: it is `a ?? (0 > 3)` in **both** positions,
-/// because `??` binds looser than a comparison everywhere in this language
-/// ([ADR-066](../../../docs/specification/adr/adr-066.md) D4) — which reads
-/// oddly and is not the head's business to differ about.
+/// readily as one that is missing.
+///
+/// `a ?? 0 > 3` used to be the first entry here, and it is the case that found
+/// this test's own first draft wrong: it was `a ?? (0 > 3)` in **both**
+/// positions, which reads oddly and was not the head's business to differ
+/// about. [ADR-089](../../../docs/specification/adr/adr-089.md) then refused the
+/// shape outright — in both positions, which is this test's claim holding by a
+/// different route — so it moved to
+/// [`a_bare_binary_fallback_is_refused_in_a_head_too`] below rather than out.
 #[test]
 fn a_head_parses_what_a_body_parses() {
     for expression in [
-        "a ?? 0 > 3",
         "(a ?? 0) > 3",
         "b as i64 > 3",
         "a == null",
@@ -646,6 +649,30 @@ fn a_head_parses_what_a_body_parses() {
             })
             .unwrap_or_else(|| panic!("no `if` in:\n{head}"));
         assert_eq!(body, head, "`{expression}` parses differently in a head");
+    }
+}
+
+/// And the claim holds for what is **refused**, which is the half a test about
+/// parsing would otherwise miss.
+///
+/// [ADR-089](../../../docs/specification/adr/adr-089.md) D1 narrows a `??`'s
+/// fallback, and the grammar has two chains: narrowing one and not the other
+/// would let `while a ?? x == y` parse where the same line in a body does not.
+/// That is exactly the drift this file exists to catch, and it caught it — the
+/// head's rule was missed on the first pass.
+#[test]
+fn a_bare_binary_fallback_is_refused_in_a_head_too() {
+    for shape in [
+        "fn f(a: i64?) -> bool {\n    let x = a ?? 0 > 3\n    return x\n}\n",
+        "fn f(a: i64?) -> i64 {\n    if a ?? 0 > 3 {\n        return 1\n    }\n    return 0\n}\n",
+        "fn f(a: i64?) -> i64 {\n    while a ?? 0 > 3 {\n        return 1\n    }\n    return 0\n}\n",
+    ] {
+        let refused = nikaia::parser::parse_to_ast(shape)
+            .expect_err("a bare binary fallback is refused wherever it stands");
+        assert!(
+            refused.to_string().contains("the fallback of a `??` is one value"),
+            "and says the same thing in every position:\n{refused}"
+        );
     }
 }
 

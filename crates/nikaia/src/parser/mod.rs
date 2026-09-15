@@ -190,8 +190,7 @@ fn coalesce_fallback_note(rendered: &str) -> String {
     // shape and not an assignment typo, which is what keeps the pair of
     // conditions together rather than either alone.
     const OPERATORS: &[&str] = &[
-        "==", "!=", "<=", ">=", "=", "<", ">", "&&", "|", "||", "..", "+", "-", "*", "/", "%",
-        "as",
+        "==", "!=", "<=", ">=", "=", "<", ">", "&&", "|", "||", "..", "+", "-", "*", "/", "%", "as",
     ];
     let Some(after) = rendered.split(MARK).nth(1) else {
         return String::new();
@@ -1695,8 +1694,25 @@ grammar! {
 
         // Right-associative, like `coalesce_tail`
         // ([ADR-066](../../../../docs/specification/adr/adr-066.md) D4).
+        // The head's half of [ADR-089](../../../docs/specification/adr/adr-089.md)
+        // D1, and it is here because `a_head_parses_what_a_body_parses` caught
+        // it: narrowing the body's fallback and not this one would have made a
+        // `while a ?? x == y` parse where the same line in a body does not,
+        // which is exactly the drift [ADR-076](../../../docs/specification/adr/adr-076.md)
+        // put that test there to stop.
         rule head_coalesce_tail -> Expr =
-            "??" e:head_expr -> { e }
+            "??" e:head_coalesce_fallback -> { e }
+
+        rule head_coalesce_fallback -> Expr # "one value, or an expression in brackets" =
+            head:head_unary tail:head_coalesce_tail? -> {
+                match tail {
+                    Some(fallback) => Expr::Coalesce {
+                        value: Box::new(head),
+                        fallback: Box::new(fallback),
+                    },
+                    None => head,
+                }
+            }
 
         rule head_range -> Expr =
             start:head_or end:head_range_tail? -> {

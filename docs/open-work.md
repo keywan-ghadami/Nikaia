@@ -83,6 +83,11 @@ That one also corrected a number: the shape it made writable turns out to cost
 exactly what a `break` costs, so [ADR-084](specification/adr/adr-084.md) §4's
 `while` row had been measuring this gap rather than the jump.
 
+and **a `??` whose fallback reached rightwards across every
+operator**, which was filed as a suspicion with the exact question that would
+decide it and turned out to be a silent wrong value
+([ADR-089](specification/adr/adr-089.md)).
+
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
@@ -178,29 +183,7 @@ checked against a hole, a nested block and a handler that only passes `error` on
 reason: the warning is `rustc` reading the emitted code correctly, so the thing
 to change is the emitted code.
 
-### 1.2. `??` binds looser than a comparison, and `a ?? 0 > 3` reads as though it does not
-
-```nika
-let x = a ?? 0 > 3     // is `a ?? (0 > 3)`, not `(a ?? 0) > 3`
-```
-
-[ADR-066](specification/adr/adr-066.md) D4 put `??` above the range level, which
-puts it above comparison too, so the fallback swallows everything to its right.
-Written out, that is what the grammar says and it is not what the line looks
-like.
-
-*Why it is a suspicion and not a defect:* it is **consistent** — a head parses it
-exactly as a body does ([ADR-076](specification/adr/adr-076.md)) — and in the
-shape above it produces a type error rather than a wrong answer, because a
-`bool` does not fit an `i64`. Whether there is a shape where **both** readings
-type-check, so the program silently takes the other one, is precisely what has
-not been established; until it is, this is a question about the ordinary grammar
-rather than a fault in it.
-
-*Found by* [ADR-076](specification/adr/adr-076.md)'s own first test, which
-asserted the other reading and was wrong.
-
-### 1.3. A grammar fold's `init`, `step` and `merge` are not checked at all
+### 1.2. A grammar fold's `init`, `step` and `merge` are not checked at all
 
 ```nika
 grammar Nums {

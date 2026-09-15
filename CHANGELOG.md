@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed (a `??`'s fallback is one value, or an expression in brackets)
+
+- **[ADR-089](docs/specification/adr/adr-089.md).** `??` sits above the whole binary chain, so its fallback reached rightwards across every operator there is: `a ?? 0 > 3` was `a ?? (0 > 3)` while looking like `(a ?? 0) > 3`.
+- **It was filed as a suspicion, with the exact question that would decide it** — *is there a shape where both readings type-check, so the program silently takes the other one* — and the answer is yes. With `a: bool? = false`, `x: bool = true`, `y: bool = false`, the line `a ?? x == y` is **`false`** and `(a ?? x) == y` is **`true`**. Both are well typed, so nothing downstream would have caught it: a silent wrong value, which is the worst thing in `docs/README.md`'s list.
+- **D1: the fallback takes `unary_expr`.** A literal, a name, a call, a field, a `-1` and a bracketed expression reach it; no binary operator does. The chain survives, because the rule recurses on its own tail ([ADR-066](docs/specification/adr/adr-066.md) D4).
+- **Refused rather than re-precedenced, and that is the decision rather than the cheap way out.** The alternative is to raise `??` above comparison so the line means what it looks like — which is what Swift does, while C# and Kotlin read it the way this language did. **The languages disagree**, so whichever precedence is chosen somebody reads the line wrong and gets no message at all; making the author say which they meant is the only answer right for both readers. And the polarity settles the rest: a narrowing can be relaxed into a precedence later, a precedence cannot be un-chosen. It costs nothing today — every `??` in `examples/` has a fallback that is a literal, a name or a call.
+- **D2: the refusal says why, from what a reader sees.** A grammar refusal cannot always say why — this one fails *after* the fallback has succeeded on `0`, so the backend's message is about an enclosing rule's brace and the caret lands on a token nobody typed wrong. A note is added when the rendered message shows a `??` to the left of the caret and an operator at it, naming both readings. The offending token is deliberately **not** quoted back: the backend reports the first character it could not use, so a `==` arrives as `=` and a help echoing it would read `(a ?? 0) = …`.
+
 ### Changed (there is no macro system)
 
 - **[ADR-088](docs/specification/adr/adr-088.md)** withdraws the design of Part II 10.3 — `macro`, code written as data, and something attached to a declaration — and keeps the **problem** it names: generating code from a type's shape. That needs none of the three, because `comptime` plus a **bound** is enough. Before reserving the words, the question was put the other way round: *what does this language actually need, now that it has `comptime`?*
