@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Decided (a package is found by version through Cargo, under `nikaia_<name>`)
+
+- **[ADR-103](docs/specification/adr/adr-103.md).** `http = "1.2"` in `nikaia.toml` resolves on crates.io as the crate `nikaia_http`, through Cargo's own dependency rename, so the prefix appears in one generated line and never in a `.nika` file or a `use`. `"1.2"` is Cargo's semver, the resolved version is the lockfile column ADR-021 already has, a `git` table with a `tag` is the same arm without an index, and the path arm stays. A published crate holds the manifest, the sources and the ledger, plus a stub `Cargo.toml` that exists only for the resolver; the consumer reads and emits it as it does a path dependency. A crate under the prefix without sources and ledger is refused by name.
+- **What it answers:** `open-decisions.md`'s first entry, how a package is named by a version, which leaves the file — the registry, the version grammar and the lockfile were already in the tool every build runs, and the one thing to decide was the name.
+- **Nothing of it is built**; `open-work.md` carries the four steps.
+
 ### Fixed (removing `dsl … from …` is a work order, not a question)
 
 - [ADR-082](docs/specification/adr/adr-082.md) §5 now says plainly what is built (nothing), what the live defect is (a grammar with two `pub` rules gets one of them by source order), and the one change that closes it: the call form built, a `throws` on every generated entry, the old form removed and refused with the new one in the message, and everything that writes it migrated in the same commit — eight programs, `examples/README.md`, Part II 10.7's own block, three test files. The record had carried a corrected count and a question about whether to deprecate first; the question leaves `open-decisions.md`, because the record had already answered it and only the size of the migration had been miscounted. `open-work.md`'s entry is the work order, with the steps and what *done* means.

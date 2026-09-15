@@ -803,6 +803,25 @@ run-or-kept inference, which is ADR-094's `keeps` asked of a code parameter;
 and the lowering of a kept pausing handler, which is *a lambda that pauses is
 refused* one entry up, with a callee that can now say which shape it wants.
 
+### 2.17. A package is found by version through Cargo, under `nikaia_<name>`
+
+[ADR-103](specification/adr/adr-103.md). `http = "1.2"` becomes
+`http = { package = "nikaia_http", version = "1.2" }` in the generated
+`Cargo.toml`; Cargo finds and fetches, the compiler reads `src/*.nika` and
+`nikaia.contracts` from where the crate landed and emits it as a workspace
+member as it does a path dependency; a crate under the prefix without both is
+refused by name. **Nothing of it is built**: a bare version is refused with
+the old sentence, and a package's own package dependencies are not followed.
+
+*What it needs, in the record's order (§5):* the manifest arm and the rename;
+resolution through `cargo metadata` and the not-a-Nikaia-package refusal;
+following a dependency's own manifest in both arms; the stub `Cargo.toml`
+written by the build so that `cargo publish` is the whole of publishing.
+
+*Evidence:* Part III 13.3's own example, which was a refusal and is now a
+dependency; no package in the tree is published yet, so the first one is the
+test.
+
 ---
 
 ## 3. Upkeep

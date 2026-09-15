@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Five entries, and all of them are open.** Nothing answered lives here: an
+**Four entries, and all of them are open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -53,7 +53,10 @@ way `std`'s already were) and
 acknowledgement — the syntax of `catch` is unchanged) and
 [ADR-082](specification/adr/adr-082.md) §5 (the old `dsl … from …` form is
 removed in the one change that migrates what writes it — never a question,
-only work whose size had been miscounted). Each record
+only work whose size had been miscounted) and
+[ADR-103](specification/adr/adr-103.md) (a package is found by version through
+Cargo, under the crate name `nikaia_<name>` — the registry, the version
+grammar and the lockfile were already in the tool every build runs). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.
@@ -77,47 +80,7 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. How is a package named by a version?
-
-**Blocked by it:** every dependency that is not a path.
-`nikaia.toml` refuses `http-server = "1.2"` and says why — no record names a
-registry, a name space, or a distribution format — and
-[ADR-002](specification/adr/adr-002.md) D1 §5 declines to answer it deliberately,
-so the refusal is correct rather than missing.
-[ADR-053](specification/adr/adr-053.md) was built to keep it deferred: a
-manifest key is only ever read by one crate, so nothing in the language needs a
-global name yet.
-
-**Three ways out, and they are not equally big.**
-
-* **(a) Nothing yet.** A path dependency is what a package gets, and a Nikaia
-  library is distributed the way `std` already is
-  ([ADR-002](specification/adr/adr-002.md) D4). Costs nothing and stays honest
-  as long as there is no second author.
-* **(b) Lean on Cargo's registry.** A Nikaia package is published as a crate,
-  and a version means what Cargo means by one. The resolver, the lockfile and
-  the name space all already exist and this compiler already generates a
-  workspace into them.
-* **(c) A registry of this language's own.** A name space, a distribution
-  format, an index, and the operational commitment that comes with all three.
-
-**What I would do: (a) now, and (b) when there is a second author.** The
-question is not ripe: there is one author, one repository, and no package
-anybody outside it would fetch — and a distribution format decided before
-anything is distributed is decided on a guess. (b) is the answer when it becomes
-ripe, for the reason ADR-053 took its own answer: machinery this project already
-leans on beats machinery it would then own. (c) needs a reason nothing has given
-yet.
-
-**What it costs:** (a) costs a refusal a future consumer meets, which is where
-it belongs. (b) costs a record and a mapping from a Nikaia package to a crate
-name — and pins this language's distribution to Cargo's, which is a real thing
-to give up and the reason it deserves a decision rather than a drift. (c) costs
-a project of its own.
-
----
-
-## 2. Does the ledger's type language grow, so fewer values are `?`?
+## 1. Does the ledger's type language grow, so fewer values are `?`?
 
 **Blocked by it:** nothing is half-built. What it blocks is how often this
 compiler can answer at all — a cost that is paid everywhere and shows up nowhere
@@ -200,7 +163,7 @@ than they do.
 
 ---
 
-## 3. Can a bound name a trait in another package?
+## 2. Can a bound name a trait in another package?
 
 **Blocked by it:** a generic function in one package constrained by a trait
 declared in another. `fn dispatch[H: http::Handler](…)` is a parse error — a
@@ -236,7 +199,7 @@ where it belongs until then.
 ---
 
 
-## 4. Is text one type whose state the compiler picks, or two the program picks between?
+## 3. Is text one type whose state the compiler picks, or two the program picks between?
 
 **Blocked by it:** nothing half-built. What it blocks is 13 `.to_string()` in
 `examples/`, every one a literal or a view being put where a `String` is
@@ -279,7 +242,7 @@ pointed at.
 
 ---
 
-## 5. Is an untrusted path a **refusal**, or is the taint analysis a feature this language should not have?
+## 4. Is an untrusted path a **refusal**, or is the taint analysis a feature this language should not have?
 
 **Blocked by it:** [ADR-058](specification/adr/adr-058.md) D7, which
 [`open-work.md`](open-work.md) has been carrying as *"the one piece that does

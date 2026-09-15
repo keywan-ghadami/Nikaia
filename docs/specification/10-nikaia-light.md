@@ -2233,8 +2233,9 @@ than a package of yours ([ADR-030](adr/adr-030.md) D1).
 > or the star ([ADR-046](adr/adr-046.md) §5).
 >
 > **Not built:** a package's *own* package dependencies are refused rather than
-> resolved, and a version is not how a package is found
-> ([ADR-047](adr/adr-047.md) §5).
+> resolved, and a version does not yet find a package — it resolves through
+> Cargo under the crate name `nikaia_<name>` ([ADR-103](adr/adr-103.md)), and
+> that arm is unbuilt.
 >
 > Outside a project a `.nika` file is compiled **on its own**: a package is a
 > directory of a project, and a directory of loose examples is a directory of

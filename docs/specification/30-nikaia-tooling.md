@@ -198,10 +198,12 @@ reentrancy-check = "on"
 # of A.2 reach it, because a Nikaia dependency is part of the program rather
 # than a foreign package.
 http = { path = "../http" }
-# A Nikaia package by **version** is refused, and says so: no record names a
-# registry, a version grammar or a distribution format, so the compiler does not
-# guess (ADR-002 D1 §5, ADR-047 D2).
-http-server = "1.2"
+# A Nikaia package by **version** resolves through Cargo (ADR-103): on crates.io
+# it is the crate `nikaia_http_server`, and the generated `Cargo.toml` writes the
+# rename, so the prefix never reaches a `.nika` file. `"1.2"` is Cargo's semver;
+# a `git` table with a `tag` is the same arm without an index. The key is an
+# identifier, because it is the `use` name.
+http_server = "1.2"
 # Import native Rust Crates. This reaches Cargo with only `type` removed, and
 # Cargo resolves, fetches and links it as it would for any Rust project.
 regex = { type = "rust", version = "1.5" }

@@ -40,6 +40,7 @@ and a decision is not an implementation.
 | [003](adr-003.md) | The language and the machinery that compiles it are two programs, and the interface between them is Rust source text; CLI, cache and Cargo wrapping are generic | Accepted | yes |
 | [004](adr-004.md) | One lowering, and it emits Rust source text; the text a person reads is the text that is compiled | Accepted | yes — `crates/nikaia/src/emit`, what a bare `nikaia` runs |
 | [021](adr-021.md) | The build cache is ours; what is hashed into its key, and what invalidates what; a backend that is not here refuses by name (D9) | Accepted | key, store, lockfile - D2's resolved versions included (§5); D9's refusal; not `--locked` for the lock |
+| [103](adr-103.md) | **A package is found by version through Cargo, under the crate name `nikaia_<name>`.** `http = "1.2"` resolves on crates.io as `nikaia_http` through Cargo's own rename, so the prefix appears in one generated line and never in a `.nika` file; a `git` table with a `tag` is the same arm without an index; the path arm stays. A published crate holds `nikaia.toml`, the sources and the ledger, and a stub `Cargo.toml` for the resolver only — nothing lowered, because the lowering is the consumer's. A crate under the prefix without sources and ledger is refused by name. Cargo's semver, Cargo's lockfile column, Cargo's fetch; what the project gives up is an index of its own, reversibly | Accepted | **no** — a bare version is refused with the old sentence |
 
 ### Ownership, borrowing, cleanup
 
