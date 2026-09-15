@@ -674,6 +674,21 @@ sync = true
 touches = []
 signature = "() -> Vec[?]"
 
+# **`drain` takes the elements away** (ADR-094 D4). A `for` lends, so the body
+# that hands an element to something which keeps it says so here - and below it
+# is `into_iter`, because what D4 writes is *removing a name from scope*.
+[fn."Vec::drain"]
+pub = true
+sync = true
+touches = []
+signature = "(Vec[$T]) -> ?"
+
+[fn."HashMap::drain"]
+pub = true
+sync = true
+touches = []
+signature = "(HashMap[$K, $V]) -> ?"
+
 [fn."Vec::push"]
 pub = true
 sync = true

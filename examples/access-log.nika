@@ -130,7 +130,7 @@ impl Report {
     fn merge(&mut self, other: Report) sync {
         self.requests += other.requests
         self.failures += other.failures
-        for (path, counts) in other.paths {
+        for (path, counts) in other.paths.drain() {
             self.paths
                 .entry(path)
                 .and_modify fn (into) { into.merge(&counts) }

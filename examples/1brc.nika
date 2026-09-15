@@ -198,7 +198,7 @@ impl Summary {
     }
 
     fn merge(&mut self, other: Summary) sync {
-        for (name, stats) in other.stations {
+        for (name, stats) in other.stations.drain() {
             self.stations
                 .entry(name)
                 .and_modify fn (into) { into.merge(&stats) }

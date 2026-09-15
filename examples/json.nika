@@ -85,7 +85,7 @@ grammar Json_ {
         head:value tail:value_tail* -> {
             let mut all = Vec::new()
             all.push(head)
-            for v in tail { all.push(v) }
+            for v in tail.drain() { all.push(v) }
             all
         }
 
@@ -95,7 +95,7 @@ grammar Json_ {
         head:member tail:member_tail* -> {
             let mut all = Vec::new()
             all.push(head)
-            for m in tail { all.push(m) }
+            for m in tail.drain() { all.push(m) }
             all
         }
 
@@ -148,7 +148,7 @@ fn show(value: Json, indent: i64) {
             } else {
                 print("[\n")
                 let mut first = true
-                for item in items {
+                for item in items.drain() {
                     if !first { print(",\n") }
                     first = false
                     print(f"{inner}")
@@ -168,7 +168,7 @@ fn show(value: Json, indent: i64) {
             } else {
                 print("{\n")
                 let mut first = true
-                for field in fields {
+                for field in fields.drain() {
                     if !first { print(",\n") }
                     first = false
                     print(f"{inner}\"{field.key}\": ")

@@ -611,8 +611,11 @@ still there when the loop is over. Taking them away is written,
 `for x in xs.drain()` ([ADR-094](adr/adr-094.md) D4, and 6.5 for the rule it
 is part of).
 
-> **Status:** not built — today `for x in xs` takes `xs` with it, and a use of
-> `xs` after the loop is refused by the language below. See 6.5.
+> **Status:** built ([ADR-094](adr/adr-094.md) D4). A `for` over a place lends
+> it and `xs.drain()` is how a loop takes the elements away; a `&` written in
+> front of the list is `NK1137`, because the compiler writes that reference. See
+> 6.5 for the half that is not built — the caller still writes the `&` at a
+> call.
 
 **Leaving a loop early: `break` and `continue`**
 
@@ -1569,11 +1572,13 @@ loop; iteration that takes the elements away is written, `for x in xs.drain()`.
 Nothing here inserts a copy: a value handed to a function that keeps it, and
 used again afterwards, is refused with `.clone()` named as the way out (8.3).
 
-> **Status:** decided and not built. Today the caller writes the `&` — every
-> example does — and `for x in xs` takes `xs` away, so `xs.len()` after the loop
-> is refused by the language below in its own words, which Part III C.1 calls a
-> bug. The rule above is the order of work in [ADR-094](adr/adr-094.md) §5, and
-> the examples move to it when it lands. Until then `&` at a call is what a
+> **Status:** partly built ([ADR-094](adr/adr-094.md) §5). **A `for` lends** and
+> `xs.len()` after the loop is a program; `xs.drain()` is how a loop takes the
+> elements away; a `let` over a place — `config.name`, `totals.stations[name]` —
+> is a view of it where the value would otherwise have to move; and the `keeps`
+> column is inferred and recorded for every function. **Not built:** the caller
+> still writes the `&` at a **call**, and `mut` on a parameter is not a
+> declaration this compiler reads. Until they land, `&` at a call is what a
 > program writes.
 
 ### 6.6. Escaping References Are Tethered

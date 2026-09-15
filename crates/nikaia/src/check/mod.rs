@@ -277,6 +277,28 @@ pub struct Checked {
     /// a question about types and is answered here - the same arrangement
     /// `fallible_methods` and the rest use.
     pub task_handles: BTreeSet<(usize, String)>,
+    /// The `let` statements whose initialiser is a **place** holding a value
+    /// that would have to move, by the byte the statement starts at
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
+    ///
+    /// `let s = totals.stations[name]` and `let name = config.name` are views:
+    /// the language below refuses to move a value out of a container or out of
+    /// a borrowed field, so a move there was never what the line meant, and the
+    /// emitter writes the `&` it would otherwise have been refused for leaving
+    /// out.
+    ///
+    /// **And only where the value would move.** `let mi = self.bodies[i].mass`
+    /// over an `f64` is a *copy*, and a `&` there is a borrow held across the
+    /// loop that writes the same field — `E0502` about a file nobody wrote.
+    /// Which of the two is a question about the type, the emitter has none
+    /// (ADR-028), and [`moves_away`] is the same answer `NK2101` reads.
+    ///
+    /// **Silence where the type is unknown**, which leaves the statement
+    /// exactly where every program already is. The two wrong answers are both
+    /// `rustc`'s words about the generated file — a borrow that conflicts, or a
+    /// move out of a container — so this is a set that has to be *right* rather
+    /// than one that can be safe.
+    pub lent_lets: BTreeSet<usize>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -519,6 +541,8 @@ pub struct Propagation {
     pub comptime_values: BTreeMap<usize, (String, String)>,
     /// [`Checked::concatenations`].
     pub concatenations: BTreeSet<usize>,
+    /// [`Checked::lent_lets`].
+    pub lent_lets: BTreeSet<usize>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -554,6 +578,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         task_handles: checked.task_handles,
         comptime_values: checked.comptime_values,
         concatenations: checked.concatenations,
+        lent_lets: checked.lent_lets,
     }
 }
 
@@ -1467,6 +1492,49 @@ impl<'a> Checker<'a> {
     /// nothing away; a field this compiler cannot type says nothing, and
     /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md) is why that
     /// is silence rather than a guess.
+    /// **`NK1137`: the `&` is the compiler's to write**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
+    ///
+    /// A `for` lends what it iterates and a `let` over a place is a view of it,
+    /// so a `&` written in front of either says what the line already means.
+    /// Left alone it would be a second reference — `&&Vec<Entry>`, which Rust
+    /// does not iterate — and reported about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Refused rather than absorbed**, which is D1's rule and is the whole
+    /// point of the record: two spellings for one thing is the state a reader
+    /// cannot tell a rule from a habit in. A `&` in a **declaration** is
+    /// untouched (D6) — that is where it lives.
+    ///
+    /// **The `for` position only, and the `let` one is open work.** A `for`
+    /// lends whatever place it is given, so a written `&` there is always the
+    /// compiler's line said twice. A `let` lends only where the checker could
+    /// *type* the place ([`Checked::lent_lets`]), and where it could not, the
+    /// written `&` is the program's only way to say what the line means — so
+    /// refusing it there would take away the escape hatch before the inference
+    /// that replaces it exists. `open-work.md` carries that as the rest of D4.
+    fn the_caller_writes_no_reference(&mut self, value: &Expr, span: &Span, because: &str) {
+        if !matches!(
+            value,
+            Expr::Unary {
+                op: crate::ast::UnaryOp::Ref,
+                ..
+            }
+        ) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1137",
+            message: "the `&` here is the compiler's to write".to_string(),
+            notes: vec![format!(
+                "{because}, so the reference is already what this line means                  (ADR-094 D4) - written twice it is a reference to a reference,                  which the language below reports about a file nobody wrote"
+            )],
+            help: Some("take the `&` off".to_string()),
+        });
+    }
+
     fn a_field_of_a_borrowed_subject(&mut self, value: &Expr, span: &Span, what: &str) {
         if !self.borrowing_self {
             return;
@@ -2009,6 +2077,14 @@ impl<'a> Checker<'a> {
             } => {
                 self.a_field_of_a_borrowed_subject(value, span, "bound");
                 let found = self.expr(value, span);
+                // **A `let` over a place is a view of it** (ADR-094 D4), and
+                // the emitter needs to know before it writes the line. A bare
+                // name is deliberately not a place here: `let y = x` is a
+                // rename and stays a move, which is the one shape that
+                // separates this rule from `for`'s.
+                if matches!(value, Expr::Field { .. } | Expr::Index { .. }) && moves_away(&found) {
+                    self.checked.lent_lets.insert(span.start);
+                }
                 // **A tuple of names takes the value apart**
                 // ([ADR-098](../../../docs/specification/adr/adr-098.md)). The
                 // parts come from the value's own type where it is a tuple of
@@ -2119,6 +2195,7 @@ impl<'a> Checker<'a> {
                 iter,
                 body,
             } => {
+                self.the_caller_writes_no_reference(iter, span, "a `for` lends what it iterates");
                 let over = self.expr(iter, span);
                 self.fallible_step(&over, bindings.len(), span);
                 let element = element_of(&over, bindings.len());

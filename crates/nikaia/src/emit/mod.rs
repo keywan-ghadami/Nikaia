@@ -854,6 +854,12 @@ struct Emitter<'p> {
     /// The `for` statements whose step can fail, by the byte they start at
     /// (ADR-025 D1).
     fallible_loops: std::collections::BTreeSet<usize>,
+    /// The `let`s whose place-initialiser has to be lent
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4), by the byte the
+    /// statement starts at. Answered by the checker for the reason every set
+    /// beside it is: it is a question about the type, and this has none
+    /// (ADR-028).
+    lent_lets: std::collections::BTreeSet<usize>,
     /// The method calls that can fail, by the byte their statement starts at
     /// and the method's name (ADR-023 D8).
     ///
@@ -1407,6 +1413,7 @@ impl<'p> Emitter<'p> {
             shared,
             nullable_sites: propagation.nullable,
             concatenations: propagation.concatenations,
+            lent_lets: propagation.lent_lets,
             comptime_values: propagation.comptime_values,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
@@ -3137,6 +3144,22 @@ impl<'p> Emitter<'p> {
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
                 out.push(&format!("let {mutable}{}{annotation} = ", escaped(bound)));
                 out.push(before);
+                // **A `let` over a place is a view of it**
+                // ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
+                // `let s = totals.stations[name]` and `let name = config.name`
+                // were never moves: the language below refuses to move a value
+                // out of a container or out of a borrowed field, so what the
+                // line meant is the `&` it would otherwise have been refused
+                // for not writing.
+                //
+                // **`let y = x` over a whole variable stays a move** — it is a
+                // rename — and a `let` whose initialiser is a call or a literal
+                // owns what it is given. So this is narrower than `for`'s rule
+                // by exactly one shape, and that shape is the reason both are
+                // written here rather than in one test.
+                if self.lent_lets.contains(&span.start) {
+                    out.push("&");
+                }
                 self.expr(out, value, depth, flow)?;
                 out.push(after);
                 out.push(";");
@@ -3271,7 +3294,29 @@ impl<'p> Emitter<'p> {
                 } else {
                     out.push(&format!("for {names} in "));
                 }
+                // **A `for` lends** ([ADR-094](../../docs/specification/adr/adr-094.md)
+                // D4). `for e in entries { … }` leaves `entries` where it was,
+                // so `entries.len()` on the next line is a program rather than
+                // `rustc`'s *use of moved value* about a file nobody wrote.
+                // Iteration that takes the elements away is **written** —
+                // `for x in xs.drain()` — because removing a name from scope is
+                // the rare case and the one worth a word.
+                //
+                // Off the shape of the expression and not off a column: a
+                // **place** is lent, and a call, a range or a literal owns what
+                // it made.
+                //
+                // **`.iter()` and not `&`**, which is one measurement rather
+                // than a preference: `entries` may already *be* a view — a
+                // parameter declared `&Vec[Entry]` — and `&entries` is then a
+                // `&&Vec<Entry>`, which Rust does not iterate. `.iter()` reads
+                // the same through any number of references, and this emitter
+                // has no types to tell the two apart with (ADR-028).
+                let lends = is_a_place(iter);
                 self.expr(out, iter, depth, flow)?;
+                if lends {
+                    out.push(".iter()");
+                }
                 out.push(" ");
 
                 // ADR-025 D1: a step that can fail fails the enclosing
@@ -4722,9 +4767,24 @@ impl<'p> Emitter<'p> {
         // in `std.contracts` return a length, `len` is what all four are
         // called, and `the_four_lengths_are_i64` in `tests/contracts.rs`
         // is what keeps the two from drifting apart.
+        // **`xs.drain()` is the written form of taking the elements away**
+        // ([ADR-094](../../docs/specification/adr/adr-094.md) D4). Since a
+        // `for` lends, a body that hands an element to a callee which *keeps*
+        // it has to say so — and what it says is this. Below, that is
+        // `into_iter`: D4's words are *"removing a name from scope"*, which is
+        // consuming the container rather than emptying one somebody still
+        // holds, and Rust spells the first `into_iter` and the second `drain`.
+        //
+        // A name and not a rule, for `len`'s reason one paragraph down: it
+        // encodes a fact about *Rust's* library rather than about this
+        // language.
+        let written = match self.text(method) {
+            "drain" if args.is_empty() => "into_iter",
+            other => other,
+        };
         let length = is_length(self.text(method), args);
         self.receiver(out, receiver, depth, flow, false)?;
-        out.push(&format!(".{}", self.text(method)));
+        out.push(&format!(".{written}"));
         // Nikaia's `collect` builds a List; Rust's needs to be told
         // what to build, and with no types here that is `Vec<_>`.
         if self.text(method) == "collect" && args.is_empty() {
@@ -5298,6 +5358,21 @@ fn pausing_in_a_lambda(callee: &str) -> anyhow::Error {
         "this lambda calls `{callee}`, which can pause - and a lambda that pauses is \
          not something this compiler can build yet (ADR-055 §6). Call `{callee}` \
          outside the lambda and hand it the value, or give it a `sync` body"
+    )
+}
+
+/// Whether an expression names a **place** — something that already exists and
+/// can be pointed at — rather than a value this expression makes
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D4).
+///
+/// A name, a field of one, an element of one. A call, a range, a literal and a
+/// method call are not: `for i in 0..n` counts, `for line in io::lines()` reads
+/// a stream, and `for x in xs.drain()` is the written form of taking the
+/// elements away — none of the three has anything to lend.
+fn is_a_place(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Variable(_) | Expr::Field { .. } | Expr::SafeField { .. } | Expr::Index { .. }
     )
 }
 

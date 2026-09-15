@@ -680,16 +680,18 @@ case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
 [ADR-094](specification/adr/adr-094.md). A parameter is a view unless its body
 keeps the value, a `keeps` column records which, the emitter writes the
 reference at the call, a `for` lends, a `let` over a place is a view, and
-`mut` on a parameter is where in-place change is written. **The column is built
-and nothing else is**: every `&` in `examples/` is still the caller's, `for x in xs` consumes `xs`,
-and `xs.len()` on the next line is `rustc`'s *use of moved value* about a file
-nobody wrote — reproduced with a nine-line probe, and the review that found it
-is [`language-review.md`](language-review.md) §1.1.
+`mut` on a parameter is where in-place change is written. **Steps 1 and 2 are
+built**: the column is inferred, a `for` over a place lends it, a `let` over a
+place is a view where the value would move, and `xs.drain()` is how a loop
+takes the elements away. **What is left is the call**: every `&` at a call in
+`examples/` is still the caller's, and a value handed to a callee that does not
+keep it is still moved.
 
-*Evidence:* 42 `&` at calls and loop heads in 913 non-comment lines of
-`examples/`, each repeating what the callee's signature says;
-`examples/report.nika`'s comment explaining that `count` has to be read before
-`page(entries, total)` "consumes" them.
+*Evidence:* what remains of the 42 `&` at calls and loop heads in 913
+non-comment lines of `examples/` — the loop heads are gone and the calls are
+not; `examples/report.nika`'s comment explaining that `count` has to be read
+before `page(entries, total)` "consumes" them, which the `keeps` column now
+contradicts.
 
 **Step 1 is built.** `contracts::keeps` infers the column and the ledger
 records it beside `returns`; nothing reads it yet, which is what that step is
@@ -701,13 +703,35 @@ carries a comment explaining that `count` must be read first because `page`
 absent `keeps` on a present entry means it keeps nothing, which is that file's
 own convention for `sync` said once more.
 
-*What is left, in the record's own order (§5):* the `for` and `let` half, which
-needs no ledger; then the emitter writing the argument off the column and
-refusing a written `&`; then `mut` parameters; then the cleanup-point narration
-of D5. **Step 3 is the one that rewrites every example**, so the examples are
-the test — and it is also where a *copy* type reported as kept stops being
-merely truthful and starts needing an answer: `self.min = temp` for an `i32`
-keeps, and keeping costs nothing there.
+**Step 2 is built too, and it changed what programs mean** — the first step
+deliberately did not. A `for` over a place lends it, so `xs.len()` after the
+loop is a program; `xs.drain()` is the written form of taking the elements
+away, lowered as `into_iter`; and `NK1137` refuses a `&` written in front of a
+`for`'s list. Four loops and two `&` moved in `examples/`, which is the whole
+of what the corpus had to say.
+
+*Three things that step met and the record had not said*, each on the corpus
+rather than in argument: `.iter()` rather than `&`, because an iterated name
+may already be a view and `&&Vec<T>` does not iterate; `drain()` had to be
+**built**, because D4 names it as the written form and `std` had no such entry;
+and a `let` over a place that *copies* must not lend, because a borrow held
+across a loop that writes the same field is `E0502`.
+
+*One limit that step left, and it is the next thing here.* The `let` half lends
+only where the checker could **type** the place; where it could not — a place
+inside a lambda, where the parameter's type is unknown — it says nothing and
+the written `&` stays the program's only way to say what the line means. So
+`NK1137` covers the `for` position and not the `let` one, and two sites in
+`examples/` still write that `&`. Closing it is either a better answer for a
+lambda's parameter type or the refusal narrowed to *where the compiler writes
+one*.
+
+*What is left of the record, in its own order (§5):* the emitter writing the
+argument off the column and refusing a written `&` at a call; then `mut`
+parameters; then the cleanup-point narration of D5. **Step 3 is the one that
+rewrites every example**, so the examples are the test — and it is also where a
+*copy* type reported as kept stops being merely truthful and starts needing an
+answer: `self.min = temp` for an `i32` keeps, and keeping costs nothing there.
 
 *Why it is here and not in §1:* nothing is miscompiled. It is a message in the
 wrong words at every site the caller forgets the `&`, and a tax at every site

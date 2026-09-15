@@ -112,7 +112,7 @@ fn main() throws {
     entries.sort_by_key fn(entry) { -entry.count }
 
     let mut total = 0
-    for e in &entries { total += e.count }
+    for e in entries { total += e.count }
 
     // Both read off before the page takes the entries: rendering consumes
     // them, and a summary that asked afterwards would be asking about

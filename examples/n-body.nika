@@ -133,7 +133,7 @@ impl System {
         let mut e = 0.0
 
         for i in 0..n {
-            let b = &self.bodies[i]
+            let b = self.bodies[i]
             e = e + 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz)
 
             for j in i + 1..n {
