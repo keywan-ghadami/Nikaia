@@ -223,6 +223,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 095 | a trait reached across a package is imported by the emitter | `open-work.md`, *a trait a package publishes is implemented and then not callable* |
 | 093 | a loop that cannot end needs no unreachable `return` | `open-work.md`, *a loop that cannot end still has to be followed by a `return`* |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
