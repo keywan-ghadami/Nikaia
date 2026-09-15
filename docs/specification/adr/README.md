@@ -221,6 +221,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 091 | a `catch` on an expression that cannot fail | `open-work.md`, *a `catch` on an expression that cannot fail does not compile* |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
