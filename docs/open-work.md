@@ -864,6 +864,27 @@ refusal.
 sources; the file, its header and the hash rule; the rustdoc-JSON reader
 behind a toolchain check; the four examples.
 
+### 2.19. The ledger says `Seq[T]` and `Par[T]`
+
+[ADR-105](specification/adr/adr-105.md). Two words join the ledger's type
+language: `Seq[T]` for what is produced step by step, with `sync`/`throws`
+after it for the step, and `Par[T]` for what `par_iter()` hands back, whose
+lambdas must be `sync`. A `Seq` is consumed by walking; a container is not.
+**Nothing of it is built**: nine `std` entries say `-> ?`, and every method
+called on their results is unfound.
+
+*Evidence:* `open-decisions.md`'s measurement, kept here — 51 unanswered
+method calls across the corpus, 16 closed by filling entries, the remaining
+**35** all downstream of a `?` that is a sequence; `HashMap::keys` as
+`(&HashMap[?, ?]) -> ?`, which costs `keys().collect()`, `names`, and
+`names.sort()` in one line.
+
+*What it needs, in the record's order (§5):* the two words in the type
+language's parser; the `std` entries rewritten (`keys`, `values`, `chars`,
+`lines` for file and pipe, `args`, `map`, `filter`, `collect`, `join`,
+`count`, `nth`, `par_iter`); the once-only refusal, which is `keeps` asked
+of a `Seq`; the `sync` demand on a `Par[T]`'s lambda.
+
 ---
 
 ## 3. Upkeep

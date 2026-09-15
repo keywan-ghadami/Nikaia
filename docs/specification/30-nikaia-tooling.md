@@ -411,6 +411,12 @@ That reason is also the limit. A parameter the callee **stores or spawns** — P
 
 **A signature may name its receiver's type arguments** ([ADR-031](adr/adr-031.md)). `HashMap::entry` is written `(&HashMap[$K, $V], key: ?) -> Entry[$V]`: the result holds whatever the map holds. At a call site the receiver's actual type binds the variables and they are substituted away, so `HashMap[&str, Stats]` makes that result an `Entry[Stats]`, and `and_modify`'s `fn(&$V)` a `fn(&Stats)` — which is what gives the `s` in `fn(s) { s.add(t) }` a type at all.
 
+**A sequence has a name in this language, and a container keeps its own** ([ADR-105](adr/adr-105.md)). `Seq[T]` is elements of `T` produced step by step — what `keys()`, `chars()`, `io::lines()` and `xs.map fn …` hand back — and `sync` or `throws` after it say what one step may do, as they do after a function type. A `Seq` is consumed by walking it, so a second walk is refused; a `Vec[T]` or a `HashMap[K, V]` is a container, walked by view and as often as one likes. `Par[T]` is what `par_iter()` hands back, and a lambda handed to it must be `sync` (Part II 12.6). Neither word is in a program's type grammar.
+
+> **Status:** not built — nine `std` entries say `-> ?` where they would say
+> `Seq[…]`, and no method has a `Seq` receiver. [ADR-105](adr/adr-105.md) §5 is
+> the order of work.
+
 **An unbound variable becomes `?`, never a name**, and that is the whole of why this is safe. A variable that survived into a comparison would make the checker report that `i32` is not `$V` — the false positive ADR-024 D4 erases generics to avoid. Here it cannot survive: it is bound and replaced, or it is the absence of a claim. A map built by `HashMap::new()` says nothing about what it holds, binds nothing, and the chain stops helping rather than guessing.
 
 **A variable says what flows *out*; `?` stays for what flows *in*.** It may appear in a result and in a lambda's parameter type, and never in an argument. What flows out is a promise the ledger makes and is wrong on its own account; what flows in is a constraint on somebody's program — and the language below deliberately accepts more than its type parameters suggest, so a variable there would reject correct code. Binding itself is narrow on purpose: from the receiver, by position, one pattern. This is the first inference in this file's type language rather than more vocabulary, and widening it is meant to be a decision rather than a diff.

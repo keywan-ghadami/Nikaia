@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (the ledger says `Seq[T]` and `Par[T]`)
+
+- **[ADR-105](docs/specification/adr/adr-105.md).** The ledger's type language gains `Seq[T]` — elements produced step by step, with `sync`/`throws` after it saying what a step may do, as after a function type — and `Par[T]` for what `par_iter()` hands back, whose lambdas must be `sync`. A `Seq` is consumed by walking, so a second walk is refused in our words; a container keeps its name and is walked by view. Neither word is in a program's grammar. What it closes: nine `std` entries that said `-> ?`, and the 35 unanswered method calls in the corpus that were all downstream of one. `open-decisions.md`'s entry on the ledger's type language leaves the file.
+- **Nothing of it is built**; `open-work.md` carries the four steps.
+
 ### Decided (a foreign crate is described before it is called)
 
 - **[ADR-104](docs/specification/adr/adr-104.md).** A call into a Rust crate no ledger describes is refused, and the message names `nikaia describe <crate>`, which writes a draft entry for every function the program calls and the types their signatures name — from rustdoc-JSON where the toolchain offers it, from the crate's sources where it does not — translated by Part III 15.2's table, with `touches` and `locks` fail-closed and what neither reader can read written `?`. The draft is `contracts/<crate>.contracts`, believed while the crate's version and hash hold, and reviewed like code, which is what `std`'s own Rust half already gets. Every analysis then reads an entry at the boundary, never an absence, and C.1's promise becomes keepable at the one place it was not.
