@@ -155,35 +155,26 @@ strings in Part I 7 held holes that
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
 
-### 1.1. A grammar fold's `init`, `step` and `merge` are not checked at all
+**This section is empty**, for the first time, and that is a statement about
+what to do next rather than a victory lap: the list below is decided-and-unbuilt
+and upkeep, and neither outranks a defect — so the next defect anybody finds
+goes here and goes first. The head of this file says what a defect is; the way
+they have been found, every round, is by **running programs** — the
+specification's, the corpus's, and the one somebody wrote while building a
+fixture for something else.
 
-```nika
-grammar Nums {
-    rule N -> i64 = d:i64 -> { d }
-    pub rule file -> i64 = fold(N, zero, fn(acc, m) { nothing_declares_this })
-}
-```
+The last one out was **a grammar fold's `init`, `step` and `merge`, which
+nothing checked at all** ([ADR-092](specification/adr/adr-092.md)). It had been
+sitting behind a question rather than behind work:
+[ADR-084](specification/adr/adr-084.md) D4 closed the half a **jump** can reach
+and stopped, because walking those bodies with the whole checker *might newly
+refuse programs for reasons that have nothing to do with the construct*. That is
+a thing to measure, and measuring it took one afternoon and refused nothing — so
+the walk D4 wrote could be **deleted** rather than kept beside the new one, and
+the jump's message got better for it. **A question that can be answered by
+running the corpus is not a reason to leave a defect open**, and this one had
+been open since the record that named it.
 
-lowers without a word. A fold's three lambdas are expressions inside a
-**pattern**, and `check`'s grammar walk takes a rule's *action block* and nothing
-else — so `NK1117` never sees the body, and neither does anything else. What
-reaches `rustc` is `|acc, m| { nothing_declares_this }`.
-
-*Why it is a defect and not a gap in coverage:* the same walk is what refuses an
-undeclared name everywhere else in the language, and a lambda that the compiler
-does not look inside is a lambda whose errors are the backend's.
-
-*What was already done about it:*
-[ADR-084](specification/adr/adr-084.md) D4 closes the half a jump can reach — a
-`break` in a fold step is `NK1132` rather than *"`break` outside of a loop"* —
-and deliberately no more, because walking those bodies with the whole checker
-would newly refuse programs for reasons that have nothing to do with the
-construct that found this. Its D6 is the reason the *rest* of the gap cannot bite
-a jump either: the refusal is in the lowering as well, where no walk has to be
-complete.
-
-*What closes it:* walking them with the whole checker, with the frame the
-lambda's parameters make, and running the corpus to see what it newly refuses.
 
 ## 2. Decided and unbuilt
 

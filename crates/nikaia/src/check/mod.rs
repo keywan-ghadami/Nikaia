@@ -857,10 +857,20 @@ impl<'a> Checker<'a> {
         for rule in &grammar.rules {
             let expected = rule.ret_type.as_ref().map(|t| Ty::from_ast(self.parsed, t));
             for alt in &rule.alts {
-                self.jumps_in_a_fold(&alt.pattern.node);
-                let Some(action) = &alt.action else { continue };
                 let mut frame = Vec::new();
                 self.bindings_of(&alt.pattern.node, &mut frame);
+                // **A fold's lambdas first, and in the pattern's own frame**
+                // ([ADR-092](../../../docs/specification/adr/adr-092.md)),
+                // because a fold may stand beside a binding in a sequence:
+                // `head:N rest:fold(N, zero, fn(acc, m) { acc + m + head })`
+                // parses, and without this `head` is refused. And outside
+                // `expected`, which is the rule's declared type - what a fold's
+                // `init` and `step` build is the parser backend's arithmetic on
+                // the way to that type, not the type itself.
+                self.scope.push(frame.clone());
+                self.folds_in(&alt.pattern.node, &alt.pattern.span);
+                self.scope.pop();
+                let Some(action) = &alt.action else { continue };
                 let outer = std::mem::replace(&mut self.expected, expected.clone());
                 self.scope.push(frame);
                 let tail_span = action.stmts.last().map(|s| s.span.clone());
@@ -876,79 +886,45 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **A jump inside a `fold`'s lambdas**, which nothing else here reaches.
+    /// **A `fold`'s `init`, `step` and `merge`, walked like any other code**
+    /// ([ADR-092](../../../docs/specification/adr/adr-092.md)).
     ///
-    /// A fold's `init`, `step` and `merge` are expressions inside a *pattern*,
-    /// and the walk above takes only the action block - so a `break` written in
-    /// a step would arrive at the backend unseen, and the message would be
-    /// `rustc`'s about a file nobody wrote (Part III, C.1). That a fold's
-    /// lambdas are not checked **at all** is older and wider than this - an
-    /// undeclared name in one is not refused either - and it is on
-    /// `open-work.md` as the gap it is. This closes the half a jump can reach,
-    /// which is the half this construct opened.
-    fn jumps_in_a_fold(&mut self, pattern: &ast::Pattern) {
+    /// They are expressions inside a **pattern**, and the walk above takes a
+    /// rule's *action block* and nothing else - so
+    /// `fn(acc, m) { nothing_declares_this }` lowered without a word and the
+    /// message was `rustc`'s about a file nobody wrote (Part III, C.1).
+    ///
+    /// [ADR-084](../../../docs/specification/adr/adr-084.md) D4 closed the half
+    /// a **jump** can reach and deliberately no more, with its own walk of
+    /// these same expressions. This subsumes that walk rather than standing
+    /// beside it: [`Expr::Closure`]'s arm already crosses a boundary and counts
+    /// loops from zero, so a jump here meets `NK1132` through the path every
+    /// other lambda's does - and gets the better of the two messages, naming
+    /// the lambda instead of saying there is no loop.
+    fn folds_in(&mut self, pattern: &ast::Pattern, span: &Span) {
         match pattern {
             ast::Pattern::Fold(spec) => {
-                // `Stmt::Expr` is a wrapper and not a claim: the walk below
-                // wants every block an *expression* holds, and the one total
-                // walk that answers that takes a statement.
                 for part in [Some(&spec.init), Some(&spec.step), spec.merge.as_ref()]
                     .into_iter()
                     .flatten()
                 {
-                    let holder = Stmt::Expr(part.clone());
-                    let mut blocks: Vec<&Block> = Vec::new();
-                    crate::contracts::sync::visit_stmt_blocks(&holder, &mut |b| blocks.push(b));
-                    for block in blocks {
-                        self.jumps_outside_a_loop(block, 0);
-                    }
+                    self.expr(part, span);
                 }
             }
             ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
                 for part in parts {
-                    self.jumps_in_a_fold(&part.node);
+                    self.folds_in(&part.node, &part.span);
                 }
             }
             ast::Pattern::Bind { pat, .. }
             | ast::Pattern::Repeat { pat, .. }
-            | ast::Pattern::Group(pat) => self.jumps_in_a_fold(&pat.node),
+            | ast::Pattern::Group(pat) => self.folds_in(&pat.node, &pat.span),
             ast::Pattern::Ref { args, .. } => {
                 for arg in args {
-                    self.jumps_in_a_fold(&arg.node);
+                    self.folds_in(&arg.node, &arg.span);
                 }
             }
             ast::Pattern::Literal(_) | ast::Pattern::Cut => {}
-        }
-    }
-
-    /// Report every jump in a block that no loop **written in that block**
-    /// encloses.
-    ///
-    /// A lambda nested further in is another boundary and does not change the
-    /// answer: there is no loop outside either of them to reach.
-    fn jumps_outside_a_loop(&mut self, block: &Block, loops: usize) {
-        for stmt in &block.stmts {
-            match &stmt.node {
-                Stmt::Break | Stmt::Continue => {
-                    if loops == 0 {
-                        let word = match stmt.node {
-                            Stmt::Break => "break",
-                            _ => "continue",
-                        };
-                        self.a_jump_with_nowhere_to_go(word, &stmt.span);
-                    }
-                }
-                Stmt::For { body, .. } | Stmt::While { body, .. } => {
-                    self.jumps_outside_a_loop(body, loops + 1)
-                }
-                other => {
-                    let mut inner: Vec<&Block> = Vec::new();
-                    crate::contracts::sync::visit_stmt_blocks(other, &mut |b| inner.push(b));
-                    for block in inner {
-                        self.jumps_outside_a_loop(block, loops);
-                    }
-                }
-            }
         }
     }
 
