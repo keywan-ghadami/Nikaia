@@ -456,6 +456,27 @@ pub struct Ledger {
     pub version: u32,
     pub toolchain: String,
     pub inference: String,
+    /// The sources these entries were derived from: one unit of the package by
+    /// file name, and the SHA-256 of its bytes
+    /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D3).
+    ///
+    /// **What it is for is telling a stale ledger from a believed one.** A
+    /// consumer reads a dependency's ledger rather than deriving it (D1), and
+    /// the only thing that makes believing safe is that a ledger is never
+    /// believed against its own sources: where a hash does not match, that
+    /// package is derived again. So this is not a checksum of the file — it is
+    /// the record of what the file is an answer *about*.
+    ///
+    /// **The file name and not a path**, because a package is one directory of
+    /// `.nika` files (`modules::collect`) and a path would put the machine that
+    /// built it into a file Part III 13.5 makes a pure function of the source
+    /// tree.
+    ///
+    /// Empty where nothing knows the sources — a ledger inferred from one
+    /// `Parsed` that never came from a file, and `std`'s own, whose Rust half
+    /// has no `.nika` to hash ([ADR-020](../../../docs/specification/adr/adr-020.md)
+    /// D5). An empty table renders nothing, so no existing ledger changes.
+    pub sources: BTreeMap<String, String>,
     pub functions: BTreeMap<String, FnContract>,
     pub types: BTreeMap<String, TypeContract>,
     /// Kap 4.7: every `trait` declared here, with the names of its methods.
@@ -482,12 +503,15 @@ impl Ledger {
     /// reads the bodies and gives `sync` to what earns it, which it can only do
     /// once every function in the unit has an entry to be looked up in.
     ///
-    /// The library it resolves calls against is `std`'s shipped ledger, and it
-    /// is not a parameter on purpose. 13.5 makes this file a pure function of
-    /// (source, toolchain); a ledger inferred against a *different* library
-    /// would be a different file for the same source, and `--locked` compares
-    /// bytes. The compiler and `std` ship together, so there is exactly one
-    /// answer here and no way to pass the wrong one.
+    /// The library it resolves calls against is `std`'s shipped ledger. It used
+    /// to be closed for a reason that has since been answered rather than
+    /// abandoned: 13.5 makes this file a pure function of (source, toolchain),
+    /// so a ledger inferred against a *different* library would be a different
+    /// file for the same source. [ADR-100](../../../docs/specification/adr/adr-100.md)
+    /// D1 and D5 make a dependency's ledger a **build input** — one answer with
+    /// one author, existing before its consumer is checked — so
+    /// [`Self::infer_package`] takes the library and this entry point keeps
+    /// `std` alone.
     /// A ledger with a header and nothing in it - what a program of several
     /// files starts from before it absorbs its modules.
     pub fn empty() -> Self {
@@ -520,8 +544,90 @@ impl Ledger {
     /// this file is a pure function of the source tree, and the fixpoints below
     /// walk a `BTreeMap` so that the answer does not depend on the order
     /// anyway.
-    pub fn infer_package(units: &[&Parsed]) -> Self {
-        Self::infer_package_checked(units).0
+    ///
+    /// **`library` is `std`'s ledger and every dependency's**
+    /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D1), each under
+    /// the name this package reaches it by. A call that leaves the package is
+    /// answered from it; what is in neither it nor the package's own entries is
+    /// code no ledger describes, and *that* is what fails closed
+    /// ([ADR-027](../../../docs/specification/adr/adr-027.md)).
+    pub fn infer_package(units: &[&Parsed], library: &Ledger) -> Self {
+        Self::infer_package_checked(units, library).0
+    }
+
+    /// This package's **own** entries: what it publishes, with everything that
+    /// belongs to a package *it* depends on left out
+    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D3).
+    ///
+    /// A package's ledger file is the program's record of a whole build, so a
+    /// library's carries its own dependencies' entries under their names. A
+    /// consumer reading it (ADR-100 D1) must not take those: a transitive
+    /// package is deliberately invisible, and absorbing `c::Id` under this
+    /// package's name would make `lib::c::Id` — a type nothing declares and
+    /// nobody can write. The derived answer has never had them, so this is what
+    /// makes the believed one the *same* answer rather than a bigger one.
+    ///
+    /// `foreign` is the depending build's record of what words this package
+    /// uses for packages of its own (`modules::Dependency::reachable`).
+    pub fn published(&self, foreign: &BTreeSet<String>) -> Ledger {
+        let theirs = |key: &str| {
+            key.split_once("::")
+                .is_some_and(|(first, _)| foreign.contains(first))
+        };
+        Ledger {
+            functions: self
+                .functions
+                .iter()
+                .filter(|(key, _)| !theirs(key))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            types: self
+                .types
+                .iter()
+                .filter(|(key, _)| !theirs(key))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            traits: self
+                .traits
+                .iter()
+                .filter(|(key, _)| !theirs(key))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            ..self.clone()
+        }
+    }
+
+    /// Whether this ledger may be **believed** for the sources given, and which
+    /// units say otherwise ([ADR-100](../../../docs/specification/adr/adr-100.md)
+    /// D3).
+    ///
+    /// Empty means believe it. A non-empty answer names the units that moved,
+    /// and the caller derives that package again rather than trusting an entry
+    /// derived from a file that is no longer there.
+    ///
+    /// **A ledger with no `[sources]` at all is never believed against sources
+    /// that exist.** It was written before this table or by hand, and the one
+    /// polarity this must not get wrong is reading *nothing was recorded* as
+    /// *nothing changed* — a stale `touches` is a data race with no message
+    /// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1). A package
+    /// with a ledger and **no sources** is the third row of D3's table and is
+    /// not this function's question: nothing calls it with an empty `sources`.
+    pub fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String> {
+        let mut moved: BTreeSet<String> = BTreeSet::new();
+        for (unit, hash) in sources {
+            if self.sources.get(unit) != Some(hash) {
+                moved.insert(unit.clone());
+            }
+        }
+        // A unit the ledger names and the package no longer has is as much a
+        // reason to derive again as one that changed: what left took its
+        // entries with it.
+        for unit in self.sources.keys() {
+            if !sources.contains_key(unit) {
+                moved.insert(unit.clone());
+            }
+        }
+        moved.into_iter().collect()
     }
 
     /// Every entry of `other`, under `module::`.
@@ -658,7 +764,7 @@ impl Ledger {
     /// running the checker twice per build to get one of them would be waste,
     /// not caution.
     pub fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked) {
-        let (ledger, mut checked) = Self::infer_package_checked(&[parsed]);
+        let (ledger, mut checked) = Self::infer_package_checked(&[parsed], std_ledger());
         (ledger, checked.remove(0))
     }
 
@@ -671,7 +777,10 @@ impl Ledger {
     /// merged - and merging it is sound for the reason the package is one graph
     /// in the first place: one namespace, so one function per name
     /// (`modules::collect` refuses the second).
-    pub fn infer_package_checked(units: &[&Parsed]) -> (Self, Vec<crate::check::Checked>) {
+    pub fn infer_package_checked(
+        units: &[&Parsed],
+        library: &Ledger,
+    ) -> (Self, Vec<crate::check::Checked>) {
         let mut ledger = Ledger {
             version: VERSION,
             toolchain: toolchain(),
@@ -790,25 +899,25 @@ impl Ledger {
         let checked: Vec<crate::check::Checked> = units
             .iter()
             .copied()
-            .map(|parsed| crate::check::check(parsed, &ledger, std_ledger()))
+            .map(|parsed| crate::check::check(parsed, &ledger, library))
             .collect();
         let resolved: BTreeMap<String, crate::check::MethodCalls> = checked
             .iter()
             .flat_map(|c| c.methods.iter().map(|(k, v)| (k.clone(), v.clone())))
             .collect();
 
-        sync::infer(&mut ledger, units, std_ledger(), &resolved);
+        sync::infer(&mut ledger, units, library, &resolved);
         // Kap 7.1: `throws` in the source says *that* it fails; this says with
         // what (ADR-023 D1). After `sync`, because both read bodies and only
         // this one needs nothing from the other - and both are handed the same
         // `resolved`, because ADR-028's whole point is that there is one
         // answer to what `a.add(v)` goes to and both walks read it.
-        throws::infer(&mut ledger, units, std_ledger(), &resolved);
+        throws::infer(&mut ledger, units, library, &resolved);
         // **The fourth derived column** ([ADR-067](../../../docs/specification/adr/adr-067.md)
         // D2), and the one that was specified without an inference. After
         // `throws` for no reason but tidiness: it reads the same bodies through
         // the same walk and needs nothing either of the two produced.
-        touch::infer(&mut ledger, units, std_ledger(), &resolved);
+        touch::infer(&mut ledger, units, library, &resolved);
         // ADR-037 D7: which count each `Shared` class gets. Last, because it
         // resolves a callee's parameters against the `signature` step 1 wrote
         // and a type's parts against its `fields`, and reads nothing the two
@@ -820,7 +929,7 @@ impl Ledger {
         // neighbours is the callee's `signature`, and that is in the ledger the
         // loop above built.
         for parsed in units.iter().copied() {
-            sharing::infer(&mut ledger, parsed, std_ledger());
+            sharing::infer(&mut ledger, parsed, library);
         }
         (ledger, checked)
     }
@@ -1009,6 +1118,17 @@ impl Ledger {
         out.push_str(&format!("toolchain = \"{}\"\n", self.toolchain));
         out.push_str(&format!("inference = \"{}\"\n", self.inference));
 
+        // **Before the entries**, because it says what they are an answer
+        // about ([ADR-100](../../../docs/specification/adr/adr-100.md) D3), and
+        // only when there is one: a ledger nothing can hash renders exactly the
+        // file it rendered before.
+        if !self.sources.is_empty() {
+            out.push_str("\n[sources]\n");
+            for (unit, hash) in &self.sources {
+                out.push_str(&format!("\"{unit}\" = \"{hash}\"\n"));
+            }
+        }
+
         for (name, contract) in &self.functions {
             out.push_str(&format!("\n[fn.\"{name}\"]\n"));
             if contract.public {
@@ -1123,8 +1243,21 @@ impl Ledger {
     /// the shapes written above, and a dependency to read one's own output back
     /// is a dependency to keep in step.
     pub fn parse(text: &str) -> Result<Self> {
+        /// Which table the lines being read belong to.
+        ///
+        /// An enum rather than the pair it used to be, because
+        /// [ADR-100](../../../docs/specification/adr/adr-100.md) D3 adds a third
+        /// table whose keys are neither a function nor a type, and a `bool`
+        /// that had to mean one of three things is how a reader stops being
+        /// able to tell which.
+        enum In {
+            Fn(String),
+            Type(String),
+            Sources,
+        }
+
         let mut ledger = Ledger::default();
-        let mut section: Option<(bool, String)> = None;
+        let mut section: Option<In> = None;
 
         for (n, line) in text.lines().enumerate() {
             let line = line.trim();
@@ -1134,19 +1267,19 @@ impl Ledger {
             }
 
             if let Some(rest) = line.strip_prefix("[fn.\"") {
-                section = Some((true, quoted(rest, "]", at())?));
-                ledger
-                    .functions
-                    .entry(section.as_ref().expect("just set").1.clone())
-                    .or_default();
+                let name = quoted(rest, "]", at())?;
+                ledger.functions.entry(name.clone()).or_default();
+                section = Some(In::Fn(name));
                 continue;
             }
             if let Some(rest) = line.strip_prefix("[type.\"") {
-                section = Some((false, quoted(rest, "]", at())?));
-                ledger
-                    .types
-                    .entry(section.as_ref().expect("just set").1.clone())
-                    .or_default();
+                let name = quoted(rest, "]", at())?;
+                ledger.types.entry(name.clone()).or_default();
+                section = Some(In::Type(name));
+                continue;
+            }
+            if line == "[sources]" {
+                section = Some(In::Sources);
                 continue;
             }
 
@@ -1161,7 +1294,16 @@ impl Ledger {
                 (None, "inference") => ledger.inference = unquote(value, at())?,
                 (None, _) => return Err(anyhow!("line {}: unknown header key `{key}`", at())),
 
-                (Some((true, name)), _) => {
+                // A unit and its hash, and the **key** is quoted here where
+                // every other table quotes the section name instead: a file
+                // name holds a `.`, which in this format's ancestor would have
+                // made two keys out of one.
+                (Some(In::Sources), _) => {
+                    let unit = unquote(key, at())?;
+                    ledger.sources.insert(unit, unquote(value, at())?);
+                }
+
+                (Some(In::Fn(name)), _) => {
                     let entry = ledger.functions.entry(name.clone()).or_default();
                     match key {
                         "pub" => entry.public = value == "true",
@@ -1198,7 +1340,7 @@ impl Ledger {
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
                     }
                 }
-                (Some((false, name)), _) => {
+                (Some(In::Type(name)), _) => {
                     let entry = ledger.types.entry(name.clone()).or_default();
                     match key {
                         "pub" => entry.public = value == "true",
@@ -1264,6 +1406,18 @@ impl Ledger {
 fn std_ledger() -> &'static Ledger {
     static PARSED: std::sync::OnceLock<Ledger> = std::sync::OnceLock::new();
     PARSED.get_or_init(|| Ledger::parse(STD).expect("std ships a ledger this compiler can read"))
+}
+
+/// `std`'s ledger as a library to **build on**: the floor every package's
+/// inference starts from, before its own dependencies are absorbed into it
+/// ([ADR-100](../../../docs/specification/adr/adr-100.md) D1).
+///
+/// A clone, because a consumer's library is `std` *plus* what its dependencies
+/// published and the shipped one is shared and immutable. One `std` per package
+/// inferred is a few hundred entries copied — measured against what it replaces,
+/// which is deriving that dependency's whole source tree again.
+pub fn std_library() -> Ledger {
+    std_ledger().clone()
 }
 
 /// The receiver's type, as a caller sees it: the type the `impl` is for, with

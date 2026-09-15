@@ -366,6 +366,102 @@ fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Re
     Ok(())
 }
 
+/// The units of one package, by file name and the SHA-256 of their bytes
+/// ([ADR-100](../../../docs/specification/adr/adr-100.md) D3).
+///
+/// **The same digest the cache key uses** ([ADR-021](../../../docs/specification/adr/adr-021.md)),
+/// because the record says so and because a build that hashed the same file
+/// twice with two digests would be paying twice to disagree with itself.
+fn sources_of<'a>(units: impl IntoIterator<Item = &'a Unit>) -> BTreeMap<String, String> {
+    units
+        .into_iter()
+        .map(|unit| {
+            let name = unit
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                // A unit always comes from a file; a path that ends in nothing
+                // is not one this compiler read, and naming it by its whole
+                // spelling is better than dropping it out of the table.
+                .unwrap_or_else(|| unit.path.to_string_lossy().to_string());
+            (
+                name,
+                orchestrator::cache::sha256_hex(unit.source.as_bytes()),
+            )
+        })
+        .collect()
+}
+
+/// The runs of units that belong to one package, in the order they were read.
+///
+/// The units arrive grouped (`collect_with`), so this is a walk and not a sort.
+fn groups(units: &[Unit]) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < units.len() {
+        let from = at;
+        while at < units.len() && units[at].package == units[from].package {
+            at += 1;
+        }
+        out.push(from..at);
+    }
+    out
+}
+
+/// One package's contracts: the ledger it ships where that may be believed, and
+/// the inference over its own units where it may not
+/// ([ADR-100](../../../docs/specification/adr/adr-100.md) D1 and D3).
+///
+/// **Believed is the fast path and the *correct* one**, not merely the quick
+/// one. A package's own build had its own dependencies in view and this one does
+/// not (ADR-053 D3), so an answer derived here can only be the same or worse -
+/// and two builds that derive the same function differently is the divergence
+/// D1 exists to make impossible.
+///
+/// **And it is never believed against its own sources.** The hashes in the
+/// header say which files the entries are an answer about; where one does not
+/// match, that package is derived again here. A ledger with no `[sources]` at
+/// all is treated as not matching, which is the fail-closed direction
+/// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1): *nothing was
+/// recorded* must not read as *nothing changed*.
+fn package_ledger(
+    units: &[Unit],
+    dependency: Option<&Dependency>,
+    library: &crate::contracts::Ledger,
+) -> crate::contracts::Ledger {
+    let sources = sources_of(units);
+
+    if let Some(dependency) = dependency {
+        if let Some(shipped) = shipped_ledger(&dependency.root) {
+            if shipped.stale_against(&sources).is_empty() {
+                return shipped.published(&dependency.reachable);
+            }
+        }
+    }
+
+    let parsed: Vec<&Parsed> = units.iter().map(|u| &u.parsed).collect();
+    let mut own = crate::contracts::Ledger::infer_package(&parsed, library);
+    // **What these entries are an answer about** (D3), recorded here because
+    // this is the only place that has both the answer and the files it came
+    // from - and recorded for every package, so that the ledger a dependency's
+    // own build writes says what it was derived from.
+    own.sources = sources;
+    own
+}
+
+/// A package's committed `nikaia.contracts`, where it has one this compiler can
+/// read.
+///
+/// **A ledger that does not parse is not an error here.** It is a generated file
+/// a person may have edited or an older compiler may have written, and the
+/// answer to both is the same as to a stale one: derive this package again. A
+/// build that failed because a *cache* was unreadable would be a worse build
+/// than one that is slower.
+fn shipped_ledger(root: &Path) -> Option<crate::contracts::Ledger> {
+    let text = std::fs::read_to_string(root.join("nikaia.contracts")).ok()?;
+    crate::contracts::Ledger::parse(&text).ok()
+}
+
 /// A whole program: one ledger, one Rust file, one source map.
 pub struct Program {
     pub units: Vec<Unit>,
@@ -383,22 +479,22 @@ impl Program {
     /// 13.5 makes the ledger a pure function of the source tree, which is a
     /// promise about the tree and not about each file in it.
     pub fn read(entry: &Path) -> Result<Program> {
-        Self::of(collect(entry)?)
+        Self::of(collect(entry)?, &[])
     }
 
     /// The same, with the packages this program depends on
     /// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
     pub fn read_with(entry: &Path, dependencies: &[Dependency]) -> Result<Program> {
-        Self::of(collect_with(entry, dependencies)?)
+        Self::of(collect_with(entry, dependencies)?, dependencies)
     }
 
     /// The entry compiled on its own - what `--input` outside a project is
     /// (see [`collect_one`]).
     pub fn read_one(entry: &Path) -> Result<Program> {
-        Self::of(collect_one(entry)?)
+        Self::of(collect_one(entry)?, &[])
     }
 
-    fn of(units: Vec<Unit>) -> Result<Program> {
+    fn of(units: Vec<Unit>, dependencies: &[Dependency]) -> Result<Program> {
         let mut contracts = crate::contracts::Ledger::empty();
 
         // **A package at a time, not a file at a time.** `absorb` qualifies the
@@ -421,19 +517,41 @@ impl Program {
         // fixpoint over a call graph, so a graph that stopped at the file
         // boundary had already read a callee in the file next door as one it
         // could not vouch for. That is what `NK1129` was refusing.
-        let mut at = 0;
-        while at < units.len() {
-            let package = units[at].package.clone();
-            // Every file of a package was read with the same table, so taking it
-            // from the first is taking it from the package.
-            let renames = units[at].renames.clone();
-            let from = at;
-            while at < units.len() && units[at].package == package {
-                at += 1;
+        //
+        // **The dependencies first, and the program's own package last**
+        // (D5). A package's ledger is a build input of everything that depends
+        // on it, so it has to exist before its consumer is checked - and what
+        // the consumer then resolves `http::ok` against is that *answer*,
+        // rather than a worse one derived here from half the graph. That order
+        // is the whole of why this is two passes over the groups and not one.
+        let mut library = crate::contracts::std_library();
+
+        for group in groups(&units) {
+            let Some(package) = units[group.start].package.clone() else {
+                continue;
+            };
+            let renames = units[group.start].renames.clone();
+            let own = package_ledger(
+                &units[group.clone()],
+                dependencies.iter().find(|d| d.name == package),
+                // **`std` alone for a dependency's own inference.** Its own
+                // dependencies are deliberately invisible here (ADR-053 D3),
+                // which is exactly why a ledger derived on this side is the
+                // second-best answer and D1 prefers the one it shipped.
+                &crate::contracts::std_library(),
+            );
+            library.absorb_renaming(Some(&package), &renames, own.clone());
+            contracts.absorb_renaming(Some(&package), &renames, own);
+        }
+
+        for group in groups(&units) {
+            if units[group.start].package.is_some() {
+                continue;
             }
-            let group: Vec<&Parsed> = units[from..at].iter().map(|u| &u.parsed).collect();
-            let own = crate::contracts::Ledger::infer_package(&group);
-            contracts.absorb_renaming(package.as_deref(), &renames, own);
+            let renames = units[group.start].renames.clone();
+            let own = package_ledger(&units[group.clone()], None, &library);
+            contracts.sources = own.sources.clone();
+            contracts.absorb_renaming(None, &renames, own);
         }
 
         Ok(Program { units, contracts })

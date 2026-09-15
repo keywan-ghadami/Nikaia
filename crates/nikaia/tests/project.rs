@@ -909,6 +909,77 @@ fn arithmetic_in_a_package_aborts_like_the_programs_own() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **A trait a package publishes, implemented by a body that calls back into
+/// that package** ([ADR-100](../../../docs/specification/adr/adr-100.md) D1,
+/// D5) — the shape `open-work.md` carried as a defect for as long as the entry
+/// existed.
+///
+/// It was `NK1129`: *"`Fixed::greet` can pause, and `lib::Greeter` declares it
+/// as a method that cannot"*, for a body whose only call is a `String` two
+/// files away in another package. The consumer's inference could not see into
+/// `lib` at all, so `reach_of` set `blocked` — and `Sync::No` means *"can pause
+/// **or** could not be vouched for"*, which every reader takes as the first.
+///
+/// **Driven through the binary and run**, because what closed it is an ordering
+/// between two lowerings: `lib` is lowered first, its ledger is written in its
+/// own root, and `app`'s inference reads that answer rather than deriving a
+/// worse one. None of that exists inside one `Program`.
+#[test]
+fn a_package_trait_is_implemented_by_a_body_that_calls_that_package() {
+    let dir = a_program_and_a_package(
+        "package-trait-call",
+        "lib",
+        &[
+            (
+                "lib/src/main.nika",
+                "pub trait Greeter {\n\
+                 \x20   fn greet(&self) -> String\n\
+                 }\n\
+                 \n\
+                 pub fn hello() -> String {\n\
+                 \x20   return \"hello\".to_string()\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use lib\n\
+                 \n\
+                 struct Fixed { n: i64 }\n\
+                 \n\
+                 impl lib::Greeter for Fixed {\n\
+                 \x20   fn greet(&self) -> String {\n\
+                 \x20       return lib::hello()\n\
+                 \x20   }\n\
+                 }\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   let f = Fixed { n: 1 }\n\
+                 \x20   println(f\"{f.greet()}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+    let app = dir.join("app");
+
+    let ran = nikaia(&["run"], &app);
+    assert!(
+        ran.status.success(),
+        "a body that calls the package it implements against is not a pausing body: {}",
+        said(&ran)
+    );
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "hello");
+
+    // **And the dependency's own ledger is in the dependency's own root** (D5),
+    // which is what the consumer read: a package's answers are written by the
+    // package's build and committed with it, the way `std` has always worked.
+    let shipped = std::fs::read_to_string(dir.join("lib/nikaia.contracts"))
+        .expect("a package's build writes its own ledger");
+    assert!(shipped.contains("[sources]"), "{shipped}");
+    assert!(shipped.contains("[fn.\"hello\"]"), "{shipped}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The three rules of [ADR-047](../../../docs/specification/adr/adr-047.md) D2
 /// that are about the **set** of dependencies rather than any one of them.
 ///

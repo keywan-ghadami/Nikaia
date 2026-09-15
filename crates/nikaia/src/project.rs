@@ -336,6 +336,65 @@ pub struct Member {
     pub dependencies: Vec<modules::Dependency>,
 }
 
+/// The members in an order where every package comes after the packages it
+/// depends on ([ADR-100](../../docs/specification/adr/adr-100.md) D5).
+///
+/// **Why not simply reverse `members_of`.** That walk is breadth-first from the
+/// entry, and reversing it is a topological order only where nothing is reached
+/// two ways: with `a → b`, `a → c` and `c → b`, breadth-first gives `a, b, c`
+/// and the reverse puts `c` before `b`, which is exactly backwards. So this is
+/// Kahn's, over the edges the members already carry.
+///
+/// **A cycle keeps the order it had.** Two packages that depend on each other
+/// are refused below this — Cargo will not build the workspace — and a
+/// compiler that hung or panicked on the way to that message would be reporting
+/// the wrong thing. What comes out is every member exactly once either way,
+/// which is what the caller needs of it.
+fn dependencies_first(members: &[Member]) -> Vec<usize> {
+    let at_of: BTreeMap<&Path, usize> = members
+        .iter()
+        .enumerate()
+        .map(|(at, m)| (m.root.as_path(), at))
+        .collect();
+
+    // `needs[at]` is what `at` waits for; `feeds[at]` is who waits for it.
+    let needs: Vec<BTreeSet<usize>> = members
+        .iter()
+        .map(|m| {
+            m.dependencies
+                .iter()
+                .filter_map(|d| at_of.get(canonical(&d.root).as_path()).copied())
+                .collect()
+        })
+        .collect();
+
+    let mut left: Vec<usize> = needs.iter().map(|n| n.len()).collect();
+    // Ready in `members_of`'s order, so the result is a function of the source
+    // tree and not of a set's iteration (Part III 13.5).
+    let mut ready: Vec<usize> = (0..members.len()).filter(|at| left[*at] == 0).collect();
+    let mut out: Vec<usize> = Vec::with_capacity(members.len());
+
+    while let Some(at) = ready.first().copied() {
+        ready.remove(0);
+        out.push(at);
+        for (other, waits_for) in needs.iter().enumerate() {
+            if waits_for.contains(&at) {
+                left[other] -= 1;
+                if left[other] == 0 {
+                    ready.push(other);
+                }
+            }
+        }
+    }
+
+    // A cycle leaves members unplaced. They go on the end in the order they
+    // came, so every member is lowered exactly once and the refusal that is
+    // really about this arrives from where it belongs.
+    let unplaced: Vec<usize> = (0..members.len()).filter(|at| !out.contains(at)).collect();
+    out.extend(unplaced);
+    out
+}
+
 /// Every package of this build, the entry first
 /// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
 ///
@@ -1186,25 +1245,45 @@ impl Project {
         // subprocess. Each is lowered again inside the wrapper and each of
         // those is a cache hit, so a package is compiled once however many
         // crates now ask about it.
-        let mut rust: Vec<String> = Vec::with_capacity(members.len());
-        let mut entry_ledger = None;
-        for member in &members {
+        //
+        // **Dependencies first** ([ADR-100](../../docs/specification/adr/adr-100.md)
+        // D5). A package's ledger is a build input of everything that depends
+        // on it: `http`'s own build has `deeper` in view and a consumer's does
+        // not (ADR-053 D3), so the consumer has to read the answer `http`
+        // computed rather than derive a worse one. `members_of` is
+        // breadth-first from the entry, which is the wrong end and is not a
+        // topological order once a package is reached two ways — so the order
+        // is computed here, and this loop is where the two builds of one
+        // package stop being able to disagree.
+        let order = dependencies_first(&members);
+        let mut rust: Vec<Option<String>> = vec![None; members.len()];
+        for at in order {
+            let member = &members[at];
             let lowered = lower(
                 &member.entry,
                 &self.settings,
                 no_cache,
                 &member.dependencies,
             )?;
-            if entry_ledger.is_none() {
-                entry_ledger = Some(lowered.ledger);
-            }
-            rust.push(lowered.rust);
+            // **Each package's ledger in that package's own root**
+            // (Part III 13.5, ADR-100 D1): written here so the consumers
+            // lowered after it read it, and committed with the package the way
+            // a lockfile is. Under `--locked` this is D4 — each is compared
+            // byte for byte rather than rewritten, which is the check CI wants
+            // and the one a development build must not pay for.
+            write_ledger(
+                &member.root.join("nikaia.contracts"),
+                &lowered.ledger,
+                locked,
+            )?;
+            rust[at] = Some(lowered.rust);
         }
-        // One ledger, in the project root (Part III 13.5): it is the program's
-        // record, and a library's own is written when that library is built.
-        if let Some(ledger) = entry_ledger {
-            write_ledger(&self.ledger_path(), &ledger, locked)?;
-        }
+        // Back into `members_of`'s own order, which is what the generated
+        // workspace is written in.
+        let rust: Vec<String> = rust
+            .into_iter()
+            .map(|r| r.expect("every member is lowered"))
+            .collect();
 
         // **Before `cargo`**, and written only when it differs, so an
         // unchanged switch does not dirty the package every build. What is in

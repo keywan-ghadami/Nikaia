@@ -183,15 +183,31 @@ there, so the message named a remedy the program **cannot write** —
 The same shape in one file compiles, which is what said it was one emitted line
 rather than a question about the language.
 
-**This section was empty**, for one round, and the two entries below are what
-the next program found — which is the sentence that stood here promising exactly
-that. The list further down is decided-and-unbuilt and upkeep, and neither
-outranks a defect, so these go first. The way they have been found, every round,
-is by **running programs** — the specification's, the corpus's, and the one
-somebody wrote while building a fixture for something else. These two came out
-of the third kind: a probe of whether a package could publish a `trait`, written
-to answer a question on [`open-decisions.md`](open-decisions.md) and not to find
-anything.
+**This section is empty again**, and the entry that was here is worth naming
+because of how long it took and why. **A `sync` body was refused as pausing when
+the call left the unit** — `NK1129` about a trait method whose only call is
+`n + 1` in the file next door, and about a handler whose body calls the package
+it implements against. It was a *false refusal*, the second-worst thing on
+`docs/README.md`'s list, and it stood for several rounds behind a question
+rather than behind work: the obvious repair was built, made both programs
+compile, and was **reverted**, because with three packages it made two builds of
+one library disagree about whether a function pauses.
+
+**What closed it was the question being answered rather than the work being
+found.** [ADR-100](specification/adr/adr-100.md) said what a consumer does with
+a dependency's contracts — reads them, never derives them — and once that was
+decided the two halves were a week apart: the inference graph became the package
+(D2), and then the build became ordered so that a package's ledger exists before
+its consumer is checked (D1, D5). The reverted pass is still the wrong shape and
+is still reverted. **A defect that needs a decision is not a defect that needs
+patience** — it needs the decision put on
+[`open-decisions.md`](open-decisions.md), which is where that one sat until it
+was taken.
+
+The two before it came out of **running programs** — the specification's, the
+corpus's, and the one somebody wrote while building a fixture for something
+else. Both of those came from the third kind: a probe of whether a package could
+publish a `trait`, written to answer a question and not to find anything.
 
 The last one out was **a grammar fold's `init`, `step` and `merge`, which
 nothing checked at all** ([ADR-092](specification/adr/adr-092.md)). It had been
@@ -204,97 +220,6 @@ the walk D4 wrote could be **deleted** rather than kept beside the new one, and
 the jump's message got better for it. **A question that can be answered by
 running the corpus is not a reason to leave a defect open**, and this one had
 been open since the record that named it.
-
-
-### 1.1. A `sync` body is refused as pausing when the call leaves the package
-
-[ADR-078](specification/adr/adr-078.md) D4 makes a trait's methods `sync`, and
-`NK1129` refuses an `impl` whose body pauses. It refuses ones that do not:
-
-```nika
-impl http::Handler for Fixed {
-    fn handle(&self) -> http::Response {
-        return http::Response::not_found()
-    }
-}
-```
-
-```
-error[NK1129]: `Fixed::handle` can pause, and `http::Handler` declares it as a method that cannot
-```
-
-**The cause was one level below where this entry first put it, and half of it
-is now gone.** It was filed as a *package* boundary; it was **also** a **unit**
-boundary, and the shorter reproduction was two files of **one** package with no
-packages in sight:
-
-```nika
-// helper.nika
-pub fn plain(n: i64) -> i64 { return n + 1 }
-
-// main.nika
-impl Simple for Thing {
-    fn go(&self) -> i64 { return plain(self.n) }   // was NK1129
-}
-```
-
-**That one compiles and runs** ([ADR-100](specification/adr/adr-100.md) D2 —
-the entry below, *a consumer reads a dependency's ledger*, carries the work):
-`Ledger::infer_package` is called once per **package** now, so
-`sync::infer`'s graph is every file of it. What is left is the *package*
-boundary the entry was first filed at — `impl lib::Greeter for Fixed` whose body
-calls `lib::hello()` is still `NK1129`, reproduced with the two-package probe
-D1 is for.
-
-The conflation itself is unchanged and is what both halves are: a callee outside
-the graph is in neither `own` nor `std`, `reach_of` sets `blocked`, and
-`Sync::No`'s own documentation says it means *"something it calls can pause,
-**or** something it calls cannot be resolved and therefore cannot be vouched
-for"* — while every reader takes the first meaning. `NK1129` is simply the first
-reader where that shows.
-
-*Measured, both ways:* the package-wide graph closes the two-file program and
-does not touch the two-package one, and a settling pass — re-running the
-assembly with the previous round's ledger as the library, until it stops
-changing — would make both compile.
-
-**And that settling pass is why this is not the small fix the entry first
-claimed.** It was built and reverted, because it breaks
-`the_rules_that_come_with_a_path_dependency`:
-
-```
-error: app/src/main.nika:4:5: `i64` is not a future
-```
-
-With three packages — `app` → `http` → `deeper`, and `http::ok` calling
-`deeper::two` — **the two builds of `http` stop agreeing about it.** `http`'s own
-build settles and makes `ok` `sync`, so its crate declares a plain `fn`; `app`'s
-build cannot see `deeper` at all, so it still reads `ok` as pausing and writes
-an `.await`. Today they agree only because both are equally ignorant.
-
-*Why that is not a bug in the settling:* it is
-[ADR-053](specification/adr/adr-053.md) D3 working as decided. A transitive
-package is deliberately not in this program's ledger — *"nothing below it is in
-this program's ledger"* — so a consumer **cannot** reproduce what the dependency
-computed about itself. Any pass that improves a package's own answer diverges
-from what its consumer can derive, unless the consumer stops deriving it.
-
-*What closes the rest is [ADR-100](specification/adr/adr-100.md)* D1: a
-consumer reads a dependency's ledger rather than deriving it, which is the
-three-package case. The settling pass is not the shape of the fix — it derives
-on the consumer's side, which is the divergence — and stays reverted. The work
-is the entry *a consumer reads a dependency's ledger*, step 3.
-
-*What must not be done meanwhile:* relax `NK1129`. The refusal is right about
-what it reads; what it reads conflates two facts. Making it quieter would trade
-a false refusal for a silent miscompilation, which is the worse half of
-`docs/README.md`'s list. **The half that closed did not relax it**, and
-`crates/nikaia/tests/package_graph.rs` is where that is held to: the same
-program with a genuinely pausing neighbour is still `NK1129`, beside the one
-that now runs.
-
-*Evidence:* the two programs above — the first compiled and run, the second
-refused — the reverted pass, and the three-package test that fails under it.
 
 
 ## 2. Decided and unbuilt
@@ -759,39 +684,33 @@ rewrites every example, so the examples are the test.
 wrong words at every site the caller forgets the `&`, and a tax at every site
 they remember it.
 
-### 2.13. A consumer reads a dependency's ledger, and the inference graph is the package
+### 2.13. The boundary translation for a hand-edited hash
 
-[ADR-100](specification/adr/adr-100.md). A package's ledger is inferred over
-all of its units at once and written by its own build; a consumer reads it and
-believes it while the per-unit source hashes in its header match, derives it
-again where they do not, and compares bytes only under `--locked`.
+[ADR-100](specification/adr/adr-100.md) D6, and the only part of that record
+left. **D1, D2, D3, D4 and D5 are built**: a package's units are inferred as one
+graph, its ledger is written in its own root by its own build, the header
+records a SHA-256 per unit, a consumer believes that ledger while the hashes
+match and derives that package again where they do not, the build is ordered so
+a dependency's ledger exists before its consumer is checked, and `--locked`
+compares each of them byte for byte. §1's defect closed with them.
 
-**Step 1 is built, and it is the half that needed no file format at all.**
-`modules::Program::of` hands each package's units to `Ledger::infer_package`,
-which reads every declaration into one ledger and then runs `sync`, `throws`
-and `touches` over the whole group — one graph, so a call to the file next door
-is a call this compiler can see. `sharing` runs per unit against that finished
-ledger, because it summarises a body rather than folding a call graph, and what
-it needed from its neighbours was the callee's signature.
+*What is left:* if `rustc` reports, at a call across a package boundary, that a
+value *is not a future* or that a `Result` was not expected, the driver should
+say *the ledger of `<package>` does not match its sources* and name the package
+to rebuild. Today it reaches the user in the backend's words about the generated
+file, which is [Part III C.1](specification/30-nikaia-tooling.md)'s class.
 
-*What it changed, measured on one probe rather than argued:* `sync = "inferred"`
-where the column had been absent for four functions, `throws = ["LeereZeile"]`
-where it had been `["?"]` — the absence of a claim — and
-`touches = ["stdout write"]` where it had been the empty list that means
-*touches everything*. The polarity is the point of the last one: an unresolved
-call did not read as an unknown, it read as an answer nobody could use, and two
-`overlap` branches over such a function order against each other for nothing.
+*Why it is small and still worth doing:* it is a **safety net and not the
+mechanism**. D3 establishes the agreement, and the one way past D3 is a hash
+edited by hand — so this is the message for a case nothing in a normal build
+reaches. That is also why it is last: the same sentence says it is the least
+urgent thing in this record and the only one that can still surprise somebody.
 
-**The four steps left are D3, then D1 and D5, then D4, then D6**, and the
-boundary they are about is the package's: the header carries no hash and a path dependency's
-ledger is neither read nor written, so §1.1's two-package program is still
-`NK1129`. In the record's own order (§5): the `[sources]` table in the header;
-then reading and writing a path dependency's ledger in dependency order; then
-`--locked` over path dependencies; then the boundary translation of D6.
-
-*Evidence:* `crates/nikaia/tests/package_graph.rs` — six tests, the first of
-them compiled and run, and each column checked both where it now answers and
-where it still declines — and the two-package probe that is still refused.
+*Evidence: none, and the way to get some is to edit a hash.* No program in the
+repository can produce it, which is the state
+[ADR-055](specification/adr/adr-055.md) §2 D6's refusal was in before it was
+built and the reason it was built anyway: a message costs nothing before there
+is something to say it about.
 
 ---
 

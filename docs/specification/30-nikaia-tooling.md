@@ -433,14 +433,13 @@ One consequence is worth stating for a library author: **writing a signature dow
 
 **And it is believed only while the sources it came from are unchanged.** The header records, per unit, the SHA-256 of the file the entries were derived from — the hash `nikaia.lock` already holds. At a consumer's build a dependency whose sources hash as recorded is believed and nothing is inferred; one whose sources changed has its ledger derived again, written, and the difference narrated; one with a ledger and no sources is believed. A dependency is never believed against its own sources, which is what keeps the fast path honest: a stale ledger is a hash that does not match, and that is a derivation rather than a belief (D3). The build is ordered by the dependency graph, so a ledger exists before its consumer is checked (D5), and a mismatch the language below reports at a package boundary is translated as *the ledger of that package does not match its sources* (D6).
 
-> **Status:** partly built. **D2 is built**: a package's units are inferred as
-> one graph, so `sync`, `throws` and `touches` are answered across its files and
-> `sharing` resolves a callee's signature across them. Not built: the header
-> carries no source hash, and a path dependency's ledger is neither read nor
-> written — so a call that leaves the **package** is still unresolved and read
-> as pausing, which is `open-work.md`'s *a `sync` body is refused as pausing
-> when the call leaves the package*. [ADR-100](adr/adr-100.md) §5 is the order
-> of the rest.
+> **Status:** built, except D6. A package's units are inferred as one graph, its
+> ledger is written in its own root by its own build in dependency order, the
+> header carries a SHA-256 per unit, a consumer believes that ledger while the
+> hashes match and derives that package again where they do not, and `--locked`
+> compares each package's ledger byte for byte. What is not built is D6's
+> translation of a boundary mismatch the language below reports — the message
+> for a hash edited by hand ([ADR-100](adr/adr-100.md) §5).
 
 **Version control.** Commit `nikaia.contracts`. Merge conflicts resolve like lockfile conflicts: accept either side and run `nikaia build` to regenerate. The recorded `toolchain` hash lets the compiler detect when a toolchain upgrade (not your code) changed inference results; in that case the build output states explicitly that the contract changes were caused by the toolchain update, not by your code.
 

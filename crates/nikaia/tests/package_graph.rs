@@ -328,14 +328,15 @@ fn the_ledger_does_not_depend_on_the_order_the_units_arrive_in() {
     let b = nikaia::parser::parse_to_ast("pub fn twice(n: i64) -> i64 { return plain(n) * 2 }\n")
         .expect("the source parses");
 
-    let forwards = Ledger::infer_package(&[&a, &b]).render();
-    let backwards = Ledger::infer_package(&[&b, &a]).render();
+    let library = Ledger::parse(STD).expect("std ships a ledger this compiler can read");
+    let forwards = Ledger::infer_package(&[&a, &b], &library).render();
+    let backwards = Ledger::infer_package(&[&b, &a], &library).render();
     assert_eq!(forwards, backwards);
 
     // And it is an answer rather than two matching absences: the call graph
     // here runs `calls_across` → `twice` → `plain`, across the boundary in both
     // directions, and every step of it is `sync`.
-    let ledger = Ledger::infer_package(&[&a, &b]);
+    let ledger = Ledger::infer_package(&[&a, &b], &library);
     assert_eq!(ledger.functions["calls_across"].sync, Sync::Inferred);
     assert_eq!(ledger.functions["twice"].sync, Sync::Inferred);
 }
