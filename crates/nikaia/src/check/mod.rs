@@ -329,6 +329,7 @@ pub fn check_program(
         enclosing: BTreeMap::new(),
         throwing: false,
         caught: false,
+        guarded: None,
         loops: 0,
         barrier: None,
         current: None,
@@ -630,6 +631,15 @@ struct Checker<'a> {
     /// handler's own body is not - a failure raised there propagates - so this
     /// goes back to what it was before the handler is walked.
     caught: bool,
+    /// What the guarded expression of the nearest `catch` turned out to hold,
+    /// while that expression is being walked - and `None` everywhere else.
+    ///
+    /// The mirror of [`Self::caught`], asked in the other direction: that one
+    /// says *a failure here needs no `throws`*, this one says *was there a
+    /// failure at all*. A `catch` over an expression that cannot fail lowers to
+    /// a `match` over something that is not a `Result`, which is `NK1134`
+    /// ([ADR-091](../../../docs/specification/adr/adr-091.md)).
+    guarded: Option<Guarded>,
     /// How many loops are open around the statement being walked, counted from
     /// the nearest boundary a jump may not cross rather than from the function.
     ///
@@ -693,6 +703,24 @@ struct Checker<'a> {
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
     checked: Checked,
+}
+
+/// What the guarded expression of a `catch` turned out to hold.
+///
+/// Two answers and not one, because *nothing can fail here* and *nothing here
+/// could be looked up* are different facts and only the first may be acted on.
+/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md): a call no
+/// ledger describes says nothing about whether it throws, and refusing a
+/// `catch` over one would refuse a program that is right. The refusal fires on
+/// **known not to fail**, never on *not known to fail* - which is
+/// [`Checker::may_fail_here`]'s own standard, read from the other end.
+#[derive(Default)]
+struct Guarded {
+    /// A call the ledger describes, whose contract carries a `throws`.
+    fallible: bool,
+    /// Something this compiler could not look up, or a nested `catch` - either
+    /// way, no answer, and the refusal stays quiet.
+    unanswered: bool,
 }
 
 /// **What a `?.` reaches**, which Part I 3.5 calls a *member*
@@ -2709,8 +2737,23 @@ impl<'a> Checker<'a> {
                 // itself is ordinary code again - a failure raised inside one
                 // leaves the function like any other.
                 let outer = std::mem::replace(&mut self.caught, true);
+                // **A guard of its own, and the enclosing one set aside**
+                // ([ADR-091](../../../docs/specification/adr/adr-091.md)). A
+                // `catch` inside another one's guarded expression handles its
+                // own failures, so those are not the outer one's to count -
+                // `(a.parse() catch { 1 }) catch { 2 }` has nothing left for the
+                // second. The outer is told *no answer* rather than *nothing
+                // fails*, because what a handler's own failure does is
+                // [ADR-034](../../../docs/specification/adr/adr-034.md)'s
+                // question and this refusal does not need it answered.
+                let enclosing = self.guarded.replace(Guarded::default());
                 self.expr(expr, span);
+                let guarded = std::mem::replace(&mut self.guarded, enclosing);
+                if self.guarded.is_some() {
+                    self.guard_has_no_answer();
+                }
                 self.caught = outer;
+                self.nothing_here_can_fail(guarded.unwrap_or_default(), span);
                 self.scope
                     .push(vec![("error".to_string(), Ty::Unknown, None)]);
                 self.block(handler);
@@ -2764,6 +2807,18 @@ impl<'a> Checker<'a> {
             }
 
             Expr::DslFrom { input, .. } => {
+                // **Running a grammar over an input can fail**, and that is
+                // where the `catch` beside a `dsl` comes from
+                // ([ADR-023](../../../docs/specification/adr/adr-023.md) D9):
+                // the failure leaves the parser as the Nikaia error it is and
+                // lands in that handler. It is not a call and carries no
+                // contract, so `NK1134` had to be told
+                // ([ADR-091](../../../docs/specification/adr/adr-091.md)) - the
+                // six examples in `examples/` that write the shape are what
+                // said so, by being refused.
+                if let Some(guarded) = &mut self.guarded {
+                    guarded.fallible = true;
+                }
                 self.expr(input, span);
                 Ty::Unknown
             }
@@ -2771,13 +2826,20 @@ impl<'a> Checker<'a> {
             // A template's holes are Nikaia too (ADR-017), and what the
             // template *produces* is still the emitter's business.
             Expr::Dsl { .. } => {
+                // Which is also why `NK1134` says nothing about one: what this
+                // becomes is decided after the checker has run, so whether it
+                // can fail is not this walk's to answer.
+                self.guard_has_no_answer();
                 self.holes(expr, span);
                 Ty::Unknown
             }
 
             // A grammar and an `asm` block: what these produce is the business
             // of the emitter that compiles them.
-            Expr::Asm { .. } => Ty::Unknown,
+            Expr::Asm { .. } => {
+                self.guard_has_no_answer();
+                Ty::Unknown
+            }
         }
     }
 
@@ -3249,6 +3311,10 @@ impl<'a> Checker<'a> {
             // end of, and a thread of its own is among the things it may do
             // (ADR-038 D7). What it is handed is therefore handed across.
             self.crosses_into_an_unseen_call(&name, args, &found, config, &passed, span);
+            // And a call this compiler cannot see the end of says nothing about
+            // whether it can **fail**, either
+            // ([ADR-091](../../docs/specification/adr/adr-091.md)).
+            self.guard_has_no_answer();
             return Ty::Unknown;
         };
         self.reachable(&name, contract, span);
@@ -3523,6 +3589,16 @@ impl<'a> Checker<'a> {
     /// method calls keep, C.4). So it never refuses a program that is right,
     /// and it grows as the ledger does.
     fn may_fail_here(&mut self, key: &str, contract: &FnContract, span: &Span) {
+        // **Before the early return**, because the guard's question is asked of
+        // exactly the calls this one declines to report: inside a `catch`,
+        // `self.caught` is what sends this function home, and a call that
+        // carries a `throws` is precisely what gives that `catch` something to
+        // do ([ADR-091](../../../docs/specification/adr/adr-091.md)).
+        if !contract.throws.is_empty() {
+            if let Some(guarded) = &mut self.guarded {
+                guarded.fallible = true;
+            }
+        }
         if contract.throws.is_empty() || self.throwing || self.caught {
             return;
         }
@@ -4216,6 +4292,53 @@ impl<'a> Checker<'a> {
         value
     }
 
+    /// `NK1134`: a `catch` over an expression that cannot fail
+    /// ([ADR-091](../../../docs/specification/adr/adr-091.md)).
+    ///
+    /// The lowering makes a `catch` a `match` over a `Result`, so a guarded
+    /// expression that is not one produces `E0308` about the generated file -
+    /// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class,
+    /// naming a `match` and an `Ok` arm nobody wrote.
+    ///
+    /// **Refused rather than dropped**, and that is the decision rather than
+    /// the smaller change. Emitting the expression without the `match` would
+    /// take the program the author wrote and quietly delete a block from it -
+    /// including a `return` inside the handler, which
+    /// [ADR-034](../../../docs/specification/adr/adr-034.md) makes the
+    /// *function's* return. A handler that never runs is a belief about the
+    /// program, and a belief that is wrong is worth a sentence.
+    ///
+    /// **Only where the ledger says so.** [`Self::may_fail_here`] refuses a
+    /// call that can fail outside a `catch`, reported "only where the callee's
+    /// contract **says** it can fail"; this is that standard read from the
+    /// other end, and [`Guarded`] carries the two answers apart so that *could
+    /// not look it up* never becomes *cannot fail*.
+    fn nothing_here_can_fail(&mut self, guarded: Guarded, span: &Span) {
+        if guarded.fallible || guarded.unanswered {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1134",
+            message: "nothing in this expression can fail, so the `catch` has nothing to handle"
+                .to_string(),
+            notes: vec![
+                "a failure comes from a call whose contract carries a `throws` (Part I, 7.1)"
+                    .to_string(),
+                "every call here is one this compiler could look up, and none of them \
+                 declares one"
+                    .to_string(),
+                "a call no contract describes would leave this unsaid rather than \
+                 refused (Part III, C.4)"
+                    .to_string(),
+            ],
+            help: Some(
+                "delete the `catch` and its handler: the expression is the value".to_string(),
+            ),
+        });
+    }
+
     /// `NK1133`: a statement after a `break` or a `continue`, in the same block.
     ///
     /// **The shape this is really about is `break i`**
@@ -4302,6 +4425,13 @@ impl<'a> Checker<'a> {
     /// dropped: an analysis that claims a property has to be able to tell that
     /// apart from a body that called nothing.
     fn reached_method(&mut self, key: Option<&str>) {
+        // **Before the `current` gate**, which is about which function's set an
+        // answer lands in and not about whether there is one: a method nothing
+        // describes says nothing about failing, wherever it stands
+        // ([ADR-091](../../../docs/specification/adr/adr-091.md)).
+        if key.is_none() {
+            self.guard_has_no_answer();
+        }
         let Some(current) = &self.current else {
             return;
         };
@@ -4311,6 +4441,18 @@ impl<'a> Checker<'a> {
                 entry.resolved.insert(key.to_string());
             }
             None => entry.unresolved = true,
+        }
+    }
+
+    /// **Something the guarded expression of a `catch` holds and this compiler
+    /// cannot see the end of** ([ADR-091](../../../docs/specification/adr/adr-091.md)).
+    ///
+    /// Called where a call could not be resolved and where a `catch` stands
+    /// inside another one's guarded expression. A no-op outside a guarded
+    /// expression, which is most of a program.
+    fn guard_has_no_answer(&mut self) {
+        if let Some(guarded) = &mut self.guarded {
+            guarded.unanswered = true;
         }
     }
 

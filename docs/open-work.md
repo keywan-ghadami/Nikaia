@@ -93,7 +93,15 @@ and the walk that answers *does this handler mention the name* was already
 there, doing the ordering ([ADR-090](specification/adr/adr-090.md)). Its
 over-approximation is what made it usable: the two failure modes are not
 symmetric, so a walk that only has to **lean** did work a precise analysis would
-have had to be **right** for.
+have had to be **right** for. That round's own fixture found the next
+one and closed it too: **a `catch` over an expression that cannot fail** lowered
+to a `match` over something that is not a `Result`, and `NK1134` now says so
+([ADR-091](specification/adr/adr-091.md)). Its polarity is the same shape as the
+one above and had to be split into two answers rather than one — *nothing here
+can fail* and *nothing here could be looked up* — and the **corpus** is what
+proved that: six examples write `dsl … from … catch { … }`, which can fail by
+[ADR-023](specification/adr/adr-023.md) D9 and carries no contract to say so,
+and all six were refused the first time the refusal ran over `examples/`.
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
@@ -147,49 +155,7 @@ strings in Part I 7 held holes that
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
 
-### 1.1. A `catch` on an expression that cannot fail does not compile
-
-```nika
-fn energy(text: &str) -> i64 {
-    return text.len() as i64 catch { 1000 }
-}
-```
-
-```text
-error[E0308]: mismatched types
-    |
-    |         Ok(value) => value,
-    |         ^^^^^^^^^ expected `i64`, found `Result<_, _>`
-```
-
-`text.len() as i64` cannot fail, so the `catch` lowers to a `match` over
-something that is not a `Result` and `rustc` answers about the generated file —
-[Part III C.1](specification/30-nikaia-tooling.md)'s class, naming a `match` and
-an `Ok` arm the author did not write.
-
-*Found while building a fixture* for the entry that used to stand here, which is
-why the reproduction is that entry's own opening line: the `catch` there was
-written to be ignored and turned out to be infallible as well. The two are
-independent — that one was about the **name** in the arm and is closed
-([ADR-090](specification/adr/adr-090.md)); this one is about the arm existing at
-all.
-
-*What closes it:* the checker knows whether an expression throws. `throws` is a
-contract column and `NK1113` already refuses a call that may fail outside a
-`catch`, so the question is asked in the other direction every day. A `catch`
-over an expression whose `throws` is empty is the mirror of that refusal, and it
-wants a code of its own because the repair is to **delete the `catch`** rather
-than to add one.
-
-*The polarity to check is the reverse of the one above.* A `catch` over a call
-the ledger does not describe has to keep working: an unresolved call says
-nothing about whether it throws, and refusing it would be
-[Part III C.4](specification/30-nikaia-tooling.md) — a correct program refused.
-So the refusal fires on *known not to throw*, never on *not known to throw*.
-
-*Evidence:* the reproduction above, through the release binary.
-
-### 1.2. A grammar fold's `init`, `step` and `merge` are not checked at all
+### 1.1. A grammar fold's `init`, `step` and `merge` are not checked at all
 
 ```nika
 grammar Nums {
