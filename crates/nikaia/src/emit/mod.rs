@@ -1453,7 +1453,7 @@ impl<'p> Emitter<'p> {
         let mut out = Out::default();
         self.shadow_types(&mut out);
         for item in &self.parsed.program.items {
-            out.from(&item.span, |out| self.item(out, &item.node))?;
+            out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
             out.push("\n");
         }
         self.entry_point(&mut out);
@@ -1499,7 +1499,7 @@ impl<'p> Emitter<'p> {
         self.shadow_types(&mut out);
 
         for item in &self.parsed.program.items {
-            out.from(&item.span, |out| self.item(out, &item.node))?;
+            out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
             out.push("\n");
         }
         self.entry_point(&mut out);
@@ -1652,7 +1652,7 @@ impl<'p> Emitter<'p> {
         found
     }
 
-    fn item(&self, out: &mut Out, item: &Item) -> Result<()> {
+    fn item(&self, out: &mut Out, item: &Item, span: &Span) -> Result<()> {
         match item {
             Item::Grammar(def) => self.grammar(out, def),
             Item::Enum {
@@ -1858,6 +1858,31 @@ impl<'p> Emitter<'p> {
                     Some(alias) => out.push(&format!("// use {path} as {}\n", self.text(*alias))),
                     None => out.push(&format!("// use {path}\n")),
                 }
+                Ok(())
+            }
+            // **The same `const` the body form writes, one level out**
+            // ([ADR-097](../../docs/specification/adr/adr-097.md)). The
+            // spelling is the checker's, handed over keyed by the item's own
+            // byte offset the way a statement's is - this emitter knows no
+            // types ([ADR-011](../../docs/specification/adr/adr-011.md) D2), so
+            // what `1000` is called below is not a question it can answer.
+            //
+            // `pub` is Part I 9.2's rule for Constants and reaches Rust as
+            // Rust's own ([ADR-047](../../docs/specification/adr/adr-047.md)
+            // D2): a package's crate is what another package reads.
+            Item::Comptime { name, public, .. } => {
+                let bound = self.name(*name);
+                let Some((below, written)) = self.comptime_values.get(&span.start).cloned() else {
+                    return Err(refused!(
+                        "`{bound}` has nothing to write, which `NK1127` reports - \
+                         so this item should not have reached the emitter"
+                    ));
+                };
+                let vis = match public {
+                    true => "pub ",
+                    false => "",
+                };
+                out.push(&format!("{vis}const {bound}: {below} = {written};\n"));
                 Ok(())
             }
             other => Err(refused!("cannot emit item yet: {other:?}")),

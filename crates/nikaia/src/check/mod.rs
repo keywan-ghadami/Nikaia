@@ -861,8 +861,18 @@ impl<'a> Checker<'a> {
     }
 
     fn program(&mut self) {
+        // **A frame under every body, filled before any of them is walked**
+        // ([ADR-097](../../../docs/specification/adr/adr-097.md)). A `comptime`
+        // at item level is in scope for the whole file, and this checker's
+        // scope is a stack pushed per function — so the name has to be there
+        // before the first `fn` is entered, and it has to be there for a
+        // function declared *above* the constant as much as below it. That is
+        // the whole of why this is a pass and not an arm.
+        self.item_constants();
         for item in &self.parsed.program.items {
             match &item.node {
+                // Walked by `item_constants` above, in a frame that stays.
+                Item::Comptime { .. } => {}
                 Item::Fn { .. } => self.function(&item.node, None),
                 Item::Impl {
                     target, methods, ..
@@ -2049,74 +2059,7 @@ impl<'a> Checker<'a> {
             // back would break the promise the word is for, and quietly - the
             // program would still work and the guarantee would be gone.
             Stmt::Comptime { name, ty, value } => {
-                let found = self.expr(value, span);
-                let bound = self.parsed.text(*name).to_string();
-                self.nameable(&bound, span, "a `comptime`");
-                let want = ty.as_ref().map(|ty| self.declared(ty, span));
-                if let Some(want) = &want {
-                    self.constant_fits(value, Some(want), span);
-                    self.expect(&found, want, span.clone(), "const", |found, want| {
-                        format!("this is `{found}`, and the `const` says `{want}`")
-                    });
-                } else {
-                    self.constant_fits(value, None, span);
-                }
-
-                // What the emitter writes, spelled in the language below. An
-                // integer takes the type its declaration pinned, and otherwise
-                // the first one that holds it - Part I 2.4's rule, applied here
-                // because Rust's `const` will not take the absence.
-                let folded = self.constant_of(value);
-                let below = match (&want, &folded, value) {
-                    (Some(want), _, _) => rust_constant_type(want),
-                    (None, Some(folded), _) => Some(match &folded.pinned {
-                        Some(pinned) => pinned.clone(),
-                        None => match i32::try_from(folded.value) {
-                            Ok(_) => "i32".to_string(),
-                            Err(_) => "i64".to_string(),
-                        },
-                    }),
-                    (None, None, Expr::LitBool(_)) => Some("bool".to_string()),
-                    _ => None,
-                };
-
-                // The value, spelled below. An integer is what the fold came
-                // to; `true` and `false` are themselves.
-                let written = match (&folded, value) {
-                    (Some(folded), _) => Some(folded.value.to_string()),
-                    (None, Expr::LitBool(yes)) => Some(yes.to_string()),
-                    _ => None,
-                };
-                match (&below, &written) {
-                    (Some(below), Some(written)) => {
-                        self.checked
-                            .comptime_values
-                            .insert(span.start, (below.clone(), written.clone()));
-                    }
-                    _ => self.checked.findings.push(Finding {
-                        code: "NK1127",
-                        severity: Severity::Error,
-                        span: span.clone(),
-                        message: format!("this compiler cannot evaluate `{bound}` while it builds"),
-                        notes: vec![
-                            "a `comptime` is a `let` that *must* fold, so one that cannot is \
-                             refused rather than computed while the program runs (Part II, 10.2)"
-                                .to_string(),
-                            "what it evaluates today is an integer - a literal, arithmetic \
-                             over literals and over other constants - and `true` or `false`. \
-                             A call is not in it yet"
-                                .to_string(),
-                        ],
-                        help: Some(format!(
-                            "write `let {bound} = …` if it is meant to be computed while the \
-                             program runs"
-                        )),
-                    }),
-                }
-
-                let held = want.unwrap_or(found);
-                self.bind_with(bound, held, folded.map(|c| c.value));
-                Ty::Tuple(Vec::new())
+                self.comptime_binding(*name, ty.as_ref(), value, span)
             }
 
             Stmt::Assign {
@@ -4385,6 +4328,120 @@ impl<'a> Checker<'a> {
                 "delete the `catch` and its handler: the expression is the value".to_string(),
             ),
         });
+    }
+
+    /// **Every item-level `comptime`, in a frame that stays under the whole
+    /// file** ([ADR-097](../../../docs/specification/adr/adr-097.md)).
+    ///
+    /// A pass of its own, and both halves of that are load-bearing. It runs
+    /// *before* the item loop, because a `fn` declared **above** a constant
+    /// sees it as much as one below — an item is visible in its whole scope,
+    /// which is what makes it an item. And the frame is pushed and never
+    /// popped, because this checker's scope is a stack pushed per function and
+    /// there is nothing under all of them otherwise.
+    ///
+    /// The bodies go through [`Self::comptime_binding`], the same function the
+    /// statement form uses, so the fold, the refusal and the spelling the
+    /// emitter is handed are one thing in one place
+    /// ([ADR-073](../../docs/specification/adr/adr-073.md) D2: the difference
+    /// between the two places is where the name is visible and nothing else).
+    fn item_constants(&mut self) {
+        self.scope.push(Vec::new());
+        for item in &self.parsed.program.items {
+            let Item::Comptime {
+                name, ty, value, ..
+            } = &item.node
+            else {
+                continue;
+            };
+            self.comptime_binding(*name, ty.as_ref(), value, &item.span);
+        }
+    }
+
+    /// **One `comptime`, wherever it stands**
+    /// ([ADR-097](../../../docs/specification/adr/adr-097.md)).
+    ///
+    /// [ADR-073](../../docs/specification/adr/adr-073.md) D2 decided both
+    /// places and said the difference is *"where the name is visible, never
+    /// what may stand to the right of the `='"*. So there is one function and
+    /// the two callers differ only in which frame the name lands in - a second
+    /// copy of the fold, the refusal and the emitter's spelling would be three
+    /// chances for the two places to disagree about what a constant is.
+    fn comptime_binding(
+        &mut self,
+        name: Ident,
+        ty: Option<&crate::ast::Type>,
+        value: &Expr,
+        span: &Span,
+    ) -> Ty {
+        let found = self.expr(value, span);
+        let bound = self.parsed.text(name).to_string();
+        self.nameable(&bound, span, "a `comptime`");
+        let want = ty.as_ref().map(|ty| self.declared(ty, span));
+        if let Some(want) = &want {
+            self.constant_fits(value, Some(want), span);
+            self.expect(&found, want, span.clone(), "const", |found, want| {
+                format!("this is `{found}`, and the `const` says `{want}`")
+            });
+        } else {
+            self.constant_fits(value, None, span);
+        }
+
+        // What the emitter writes, spelled in the language below. An
+        // integer takes the type its declaration pinned, and otherwise
+        // the first one that holds it - Part I 2.4's rule, applied here
+        // because Rust's `const` will not take the absence.
+        let folded = self.constant_of(value);
+        let below = match (&want, &folded, value) {
+            (Some(want), _, _) => rust_constant_type(want),
+            (None, Some(folded), _) => Some(match &folded.pinned {
+                Some(pinned) => pinned.clone(),
+                None => match i32::try_from(folded.value) {
+                    Ok(_) => "i32".to_string(),
+                    Err(_) => "i64".to_string(),
+                },
+            }),
+            (None, None, Expr::LitBool(_)) => Some("bool".to_string()),
+            _ => None,
+        };
+
+        // The value, spelled below. An integer is what the fold came
+        // to; `true` and `false` are themselves.
+        let written = match (&folded, value) {
+            (Some(folded), _) => Some(folded.value.to_string()),
+            (None, Expr::LitBool(yes)) => Some(yes.to_string()),
+            _ => None,
+        };
+        match (&below, &written) {
+            (Some(below), Some(written)) => {
+                self.checked
+                    .comptime_values
+                    .insert(span.start, (below.clone(), written.clone()));
+            }
+            _ => self.checked.findings.push(Finding {
+                code: "NK1127",
+                severity: Severity::Error,
+                span: span.clone(),
+                message: format!("this compiler cannot evaluate `{bound}` while it builds"),
+                notes: vec![
+                    "a `comptime` is a `let` that *must* fold, so one that cannot is \
+                         refused rather than computed while the program runs (Part II, 10.2)"
+                        .to_string(),
+                    "what it evaluates today is an integer - a literal, arithmetic \
+                         over literals and over other constants - and `true` or `false`. \
+                         A call is not in it yet"
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "write `let {bound} = …` if it is meant to be computed while the \
+                         program runs"
+                )),
+            }),
+        }
+
+        let held = want.unwrap_or(found);
+        self.bind_with(bound, held, folded.map(|c| c.value));
+        Ty::Tuple(Vec::new())
     }
 
     /// `NK1133`: a statement after a `break` or a `continue`, in the same block.

@@ -1,0 +1,140 @@
+//! A `comptime` binding where an item stands
+//! ([ADR-097](../../../docs/specification/adr/adr-097.md)).
+//!
+//! [ADR-073](../../../docs/specification/adr/adr-073.md) D2 decided **both**
+//! places and built one: `comptime MAX = 1000` at the top of a file was a parse
+//! error while the same line inside a body parsed, folded and ran. Part I 9.2
+//! already lists **Constants** among the items `pub` applies to, so the rule for
+//! a constant another package may read was written and the syntax for one was
+//! not.
+//!
+//! **What the item form needed that the body form did not** is a frame under
+//! every body, filled before any of them is walked: this checker's scope is a
+//! stack pushed per function, and an item is visible in its whole scope — a
+//! function declared *above* the constant included.
+
+mod common;
+
+use nikaia::check;
+use nikaia::contracts::{Ledger, STD};
+use nikaia::emit::{emit_program, Build};
+use nikaia::parser::parse_to_ast;
+
+fn findings(source: &str) -> Vec<check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new()).findings
+}
+
+fn lowered(source: &str) -> String {
+    let found = findings(source);
+    assert!(found.is_empty(), "a correct program: {found:#?}");
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit_program(&parsed, Build::default())
+        .expect("the source lowers")
+        .rust
+}
+
+/// **The whole shape, compiled and run**: the four kinds of initialiser the
+/// body form takes, `pub`, and a function that reads a constant declared
+/// **below** it.
+#[test]
+fn an_item_constant_is_written_folded_and_read_from_anywhere() {
+    let source = r#"
+fn before() -> i64 {
+    return LIMIT
+}
+
+comptime MAX = 1000
+pub comptime LIMIT: i64 = 4 * 1024
+comptime DOUBLE = MAX * 2
+comptime YES = true
+
+fn main() {
+    let b = before()
+    println(f"{MAX} {LIMIT} {DOUBLE} {YES} {b}")
+}
+"#;
+    let rust = lowered(source);
+    for written in [
+        "const MAX: i32 = 1000;",
+        "pub const LIMIT: i64 = 4096;",
+        "const DOUBLE: i32 = 2000;",
+        "const YES: bool = true;",
+    ] {
+        assert!(rust.contains(written), "`{written}` is written:\n{rust}");
+    }
+
+    let dir = common::scratch_dir("comptime-item");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("the program runs");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "1000 4096 2000 true 4096",
+        "and `before()` read a constant declared below it"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **A constant declared after the function that reads it**, on its own,
+/// because it is the half the frame exists for and the easiest to lose: a pass
+/// that filled the frame as it walked would pass every other test here.
+#[test]
+fn a_function_above_the_constant_still_sees_it() {
+    assert!(
+        findings("fn f() -> i64 {\n    return N\n}\n\ncomptime N: i64 = 7\n\nfn main() { }\n")
+            .is_empty(),
+        "an item is visible in its whole scope, which is what makes it an item"
+    );
+}
+
+/// **`NK1127` reaches the item form too**, which it has to: the refusal is what
+/// the word is for ([ADR-073](../../../docs/specification/adr/adr-073.md) D3 —
+/// a `let` may fold, a `comptime` **must**), and a place where it did not fire
+/// would be a place where `comptime` quietly means `let`.
+#[test]
+fn an_item_that_cannot_fold_is_refused() {
+    let found = findings("comptime BAD = \"x\".len()\n\nfn main() { }\n");
+    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    assert!(
+        codes.contains(&"NK1127"),
+        "the same refusal the body form gets: {found:#?}"
+    );
+}
+
+/// **One function under both places**, checked by behaviour rather than by
+/// reading the source: the same initialiser folds to the same value and the
+/// same spelling below, wherever it stands.
+#[test]
+fn the_two_places_agree_about_what_a_constant_is() {
+    let as_item = lowered("comptime N: i64 = 2 * 3\n\nfn main() {\n    println(f\"{N}\")\n}\n");
+    let in_a_body = lowered("fn main() {\n    comptime N: i64 = 2 * 3\n    println(f\"{N}\")\n}\n");
+    assert!(
+        as_item.contains("const N: i64 = 6;") && in_a_body.contains("const N: i64 = 6;"),
+        "the same `const`, one level apart:\n--- item ---\n{as_item}\n--- body ---\n{in_a_body}"
+    );
+}
+
+/// **`pub` is Part I 9.2's existing rule for Constants**, not a new one — and
+/// it is the reason the item form carries a flag the statement form does not.
+#[test]
+fn pub_reaches_the_language_below() {
+    let public = lowered("pub comptime N: i64 = 1\n\nfn main() {\n    println(f\"{N}\")\n}\n");
+    assert!(public.contains("pub const N: i64 = 1;"), "{public}");
+    let private = lowered("comptime N: i64 = 1\n\nfn main() {\n    println(f\"{N}\")\n}\n");
+    assert!(
+        private.contains("const N: i64 = 1;") && !private.contains("pub const N"),
+        "{private}"
+    );
+}

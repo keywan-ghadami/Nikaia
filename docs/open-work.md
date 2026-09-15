@@ -623,33 +623,7 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.10. A `comptime` binding at item level has nowhere to stand
-
-*Reproduced:* `comptime MAX = 1000` at the top of a file is a parse error; the same
-line inside a function body parses, folds and runs.
-
-*Why it is work and not a question:*
-[ADR-073](specification/adr/adr-073.md) D2 decided both places, and Part I 9.2
-already lists **Constants** among the items `pub` applies to - so the rule for a
-constant another package may read is written and the syntax for one is not.
-
-*What it needs, and why it is more than a grammar rule:* a name at item level is
-in scope for **every** function in the package, and this checker's scope is a
-stack pushed per function. So the item form needs a frame under all of them,
-filled before any body is walked - which is also where `pub` would be checked,
-since a constant reached from another package is [ADR-047](specification/adr/adr-047.md)
-D2's question rather than a new one. The emitter needs the same table it already
-reads for the body form, keyed the same way.
-
-*What it does **not** need:* any decision. The evaluator, the refusal and the
-type spelling are the body form's and are built, and what a result may *be* when
-it crosses is [ADR-079](specification/adr/adr-079.md)'s.
-
-*How it came back:* it was written with the body form, dropped from this file by
-a restructure that removed the entry above it, and restored from its own commit.
-Nothing about it changed in between.
-
-### 2.11. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
+### 2.10. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
 
 [ADR-082](specification/adr/adr-082.md) D1: a grammar is entered by an ordinary
 call, `Json.value(input)`, and D2 makes every `pub` rule an entry. Accepted,
@@ -691,7 +665,7 @@ programs, each of which writes `catch` beside the entry.
 *Evidence:* the eight files, listed above, found by `grep` and confirmed by the
 refusal that ran over them.
 
-### 2.12. Nothing runs Nikaia code while the program is built
+### 2.11. Nothing runs Nikaia code while the program is built
 
 *Reproduced:* `comptime` is built and its evaluator is
 [`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
@@ -729,7 +703,7 @@ see 2.15.
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is 2.15's, and the reason is there.
 
-### 2.13. Running a grammar while the program is built is not interpretation
+### 2.12. Running a grammar while the program is built is not interpretation
 
 *The distinction, because it is the whole entry.* A grammar could be run at build
 time by interpreting the grammar tree the compiler already holds. **It must not

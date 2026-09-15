@@ -428,6 +428,7 @@ grammar! {
           | im:impl_item -> { Spanned::new(im, _span) }
           | t:trait_item -> { Spanned::new(t, _span) }
           | u:use_item -> { Spanned::new(u, _span) }
+          | c:comptime_item -> { Spanned::new(c, _span) }
           | i:fn_item -> { Spanned::new(i, _span) }
 
         // Kap 4.2: behaviour lives in an `impl`, never in the struct.
@@ -1199,6 +1200,34 @@ grammar! {
             ";"?
             -> {
                 Stmt::Comptime { name, ty, value: val }
+            }
+
+        // Part I 9.2 and [ADR-073](../../../../docs/specification/adr/adr-073.md)
+        // D2's other half: the same form where an item stands.
+        //
+        // **`pub` is Part I 9.2's existing rule for Constants** rather than a
+        // new one, which is why the statement form has no such flag and this
+        // one does: what `pub` means here is what it means on a `struct`.
+        //
+        // Written as a rule of its own rather than by giving `comptime_stmt` an
+        // optional `pub`, because the two produce different types - a `Stmt`
+        // and an `Item` - and one rule handing back either is a rule that says
+        // less about where it may stand.
+        rule comptime_item -> Item =
+            vis:kw_pub?
+            KW_COMPTIME
+            name:NAME
+            ty:type_annotation?
+            "="
+            val:expr
+            ";"?
+            -> {
+                Item::Comptime {
+                    name,
+                    ty,
+                    value: val,
+                    public: vis.is_some(),
+                }
             }
 
         rule let_stmt -> Stmt =
