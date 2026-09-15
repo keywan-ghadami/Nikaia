@@ -219,7 +219,7 @@ undeclared name everywhere else in the language, and a lambda that the compiler
 does not look inside is a lambda whose errors are the backend's.
 
 *What was already done about it:*
-[ADR-073](specification/adr/adr-073.md) D4 closes the half a jump can reach — a
+[ADR-084](specification/adr/adr-084.md) D4 closes the half a jump can reach — a
 `break` in a fold step is `NK1132` rather than *"`break` outside of a loop"* —
 and deliberately no more, because walking those bodies with the whole checker
 would newly refuse programs for reasons that have nothing to do with the
@@ -470,7 +470,11 @@ left is the section's own rules, every one of which is a refusal nothing raises:
 * the **re-entrancy check as a build switch** (ADR-039 D8), which the cache key
   already accounts for — and which ADR-057 D2 makes free at one thread and D3
   charges only on the values that actually cross;
-* `NK2201`–`NK2205` and `NK2503`, catalogued and not emitted.
+* `NK2201`, `NK2203`, `NK2204`, `NK2205` and `NK2503`, catalogued and not
+  emitted. **`NK2202` is the exception and is raised** — `sync::check` finds the
+  calls that contradict an assertion and `diagnostics` renders them — which is
+  worth the extra words, because the bullet used to name the whole range and a
+  reader would have gone looking for work that is done.
 
 ### 2.7. Part II 12.8's supervision syntax
 
@@ -608,8 +612,8 @@ that line cannot tell dead code from a mistake.
 [ADR-070](specification/adr/adr-070.md) D3 decided it. It is also the one real
 cost of D1's *no second keyword*, which is why the two were settled together.
 
-*What it needs, and what it needed before
-[ADR-073](specification/adr/adr-073.md):* a `while` whose condition is the
+*What it needs, and what it did not need before
+[ADR-084](specification/adr/adr-084.md):* a `while` whose condition is the
 literal `true` can be left in exactly two ways — a `return`, and a `break` bound
 to **this** loop. So the test is *"the condition is the literal `true` **and** no
 `break` in the body is bound to this loop"*, which is a walk of the body rather

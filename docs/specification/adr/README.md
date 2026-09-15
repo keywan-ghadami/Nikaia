@@ -224,6 +224,23 @@ A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
 A claim whose branch is abandoned is deleted by whoever notices.
 
+**When a record does have to move, its citations move with it** — and that half
+is the one that gets forgotten, because nothing catches it. A renumbered record
+keeps a working link from every sentence that cited its old number, so
+`check-adr-refs.py` stays quiet while the sentence now points at whatever record
+took the number. Two such sentences were found in `open-work.md` by reading them:
+both said *"ADR-073 D4"* about a `break`, and ADR-073's D4 is about whether a
+type may be written.
+
+**A guard for this was measured and not built.** The one mechanical shape
+available — *a sentence naming an `NK` code and an ADR should name the ADR that
+carries the code* — was tried across the docs: 55 sentences name both, 11 have no
+overlap, and most of those eleven are correct, because a sentence may name a code
+and cite the record that decided the **rule** rather than the one that introduced
+the spelling. A gate that is a fifth false alarm teaches people to ignore it. So
+this stays a thing to do by hand, and it is written here rather than discovered
+again.
+
 ## Writing a new one
 
 Take the next free number — free means neither a file above nor a row under
