@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed (a grammar is entered by a call)
+
+- **[ADR-082](docs/specification/adr/adr-082.md)** withdraws `dsl <grammar> from <expr>` for an ordinary call — `Json.value(input)`. The **block** form, `dsl <driver> { … } eod`, is untouched: its body must not be read as Nikaia at all, which no call can arrange, and that is what earns it a keyword.
+- **`dsl` spelled two constructs with nothing in common, and took its name from two different places.** `dsl Json from x` looks `Json` up among the file's **grammars** and refuses if there is none; `dsl mysql { … } eod` does not resolve its target to a grammar at all — Part II 10.2's own status note says so — because `mysql` names a **driver**. One keyword, two namespaces. After this, `dsl` takes a driver name and only a driver name.
+- **And the same line meant two things by position.** At run time `dsl Json from "config.json"` parses the eleven characters `config.json`; in a build-time binding it was meant to parse that file's contents. The specification presented that as a feature — *"the same syntax … follows from the context, not from a different spelling"* — and it is the one thing this project refuses everywhere else. Now three visible steps say it: `comptime` **when**, `from "…"` **where the bytes come from**, the call **what is done with them**.
+- **D2: every `pub` rule is an entry, and the distinguished one was ours.** `winnow-grammar` generates one function per public rule named after it (`Cron::parse_schedule()`) and has no main rule — the pick is this compiler's, and it is `find(|r| r.is_public && par_fold_of(r).is_some()).or_else(…)`: the **first** public rule wins, and a `par_fold` one beats an earlier one, by source order, silently. The call form removes the question rather than fixing the pick, and with it the refusal *"grammar `…` has no `pub` rule to enter through"*.
+- **D3: no `parse` alias.** One that exists only while a grammar has exactly one public rule is a name that appears and disappears with its neighbours; one a grammar must declare says a second time what the rule name already says. A program that wants `Json.parse(x)` names its rule `parse`.
+- Nothing is built — a grammar name is not yet accepted as a callee — and the old form is to be **taken back rather than deprecated**, because no program in this tree writes it and that is the free moment.
+
 ### Fixed (a `+` over text is a call, and an expression gets a span to key it by)
 
 - **[ADR-081](docs/specification/adr/adr-081.md).** Three of the four ways a program can join text went to the language below and were refused there — Rust's `String + &str` rule reaching the user unchanged, about a file nobody wrote. And the checker got it wrong **first**, which is the worse half: `"a" + s` came to a `&str`, so a function declaring `-> String` was refused as `NK1104` — a **false** refusal, and Part III C.4 says this compiler never refuses a correct program. Part I 4.7 wrote that line as its own example.

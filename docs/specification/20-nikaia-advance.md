@@ -44,15 +44,29 @@ grammar Json {
 > **Note:** Auto-generated AST types (structs for labelled sequences, enums for alternatives, when no `-> { … }` is given) are a planned convenience, not current behaviour. Action blocks are required today. See [ADR-007](adr/adr-007.md), D7.
 
 ### 10.2. Dual-Mode Parsing (Static vs. Dynamic)
-A grammar defined once can be used at compile time and at runtime — **with the same syntax**. Whether parsing happens during the build or while the program runs follows from the context, not from a different spelling.
+A grammar defined once can be used at compile time and at runtime — **with the same
+syntax and the same meaning**. A grammar is entered by an **ordinary call**, and
+every `pub` rule in it is an entry named after the rule
+([ADR-082](adr/adr-082.md) D1, D2): `Json.value(x)` runs the rule `value` of the
+grammar `Json`. What decides *when* it runs is the word in front of the binding,
+not the shape of the line.
 
 **A. Static Embedding (Compile-Time)**
-Used in a `const`, the parser runs *during the build*. If the input is invalid, compilation fails. The result is embedded in the binary with zero runtime cost.
+In a `comptime` binding the parser runs *during the build*. If the input is
+invalid, compilation fails. The result is embedded in the binary with zero runtime
+cost.
+
+Three visible steps, each decided on its own: `comptime` says **when**, `from "…"`
+says **where the bytes come from** ([ADR-072](adr/adr-072.md)), and the call says
+**what is done with them**. The older spelling put all three in one line whose
+meaning depended on where it stood — at run time `dsl Json from "config.json"`
+parsed the eleven characters of the name, in a binding it was meant to parse the
+file.
 
 ```nika
 // The compiler runs the Json grammar at build time.
 // If "config.json" is malformed, the build stops.
-comptime CONFIG: Json::Value = dsl Json from "config.json"
+comptime CONFIG: Json::Value = Json.value(from "config.json")
 ```
 
 **B. Dynamic Parsing (Runtime)**
@@ -60,7 +74,7 @@ The exact same grammar processes user input or network data while the program ru
 
 ```nika
 fn parse_input(input: String) throws {
-    let data = dsl Json from input
+    let data = Json.value(input)
     println(f"Parsed: {data}")
 }
 ```
@@ -89,6 +103,13 @@ fn parse_input(input: String) throws {
 > where it closes; how it is looked up is then the compiler's, the way a map's
 > hasher already is. None of that is built — what is missing is an evaluator that
 > can loop and `push`.
+>
+> **And the call form above is not built either** ([ADR-082](adr/adr-082.md) §5):
+> a grammar name is not yet accepted as a callee, so what the compiler parses
+> today is still `dsl Json from input`, with the distinguished entry D2 removes —
+> the **first** `pub` rule, and a `par_fold` one ahead of an earlier one. The old
+> form is to be taken back rather than deprecated, because no program in this tree
+> writes it.
 >
 > **What the declaration will mean is decided** ([ADR-073](adr/adr-073.md)): it
 > stands where an item stands and inside a body, its type may be written and does
