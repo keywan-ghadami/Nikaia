@@ -108,9 +108,9 @@ package.
   cross-package bound; the handler that motivated it is answered elsewhere.
 
 **What I would do: the first, when the first such program arrives.** It is a
-lookup and a ledger column, not a language question — but it is also §1's
-neighbour (what a package publishes), and that is the reason not to decide it
-on nothing.
+lookup and a ledger column, not a language question — but it is also the
+neighbour of what a package publishes ([ADR-103](specification/adr/adr-103.md)
+D3), and that is the reason not to decide it on nothing.
 
 **What it costs:** the first costs the `traits` column and the qualified
 bound's parse; the second costs a refusal a library author meets, which is
