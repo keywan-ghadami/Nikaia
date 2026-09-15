@@ -120,7 +120,7 @@ fn main() throws {
     //
     // `catch` turns a rejected input into a message rather than a stack trace:
     // the parse is an expression, so its failure is a value like any other.
-    let value = dsl Calc from source catch {
+    let value = Calc.expr(source) catch {
         eprintln(f"{source}: {error}")
         return
     }

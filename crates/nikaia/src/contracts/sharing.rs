@@ -1432,7 +1432,6 @@ impl<'a> Analysis<'a> {
                 self.expr(function, start, scope);
                 self.expr(function, end, scope);
             }
-            Expr::DslFrom { input, .. } => self.expr(function, input, scope),
             _ => {}
         }
     }

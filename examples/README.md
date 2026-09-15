@@ -315,7 +315,7 @@ ADR 16 names them), with `frames_<RULE>`, `merge_<RULE>` and the driver
 `parse_<RULE>_pieces(input, ctx, Parallelism)` generated; Nikaia chooses the `Parallelism` from
 the switch and the executor. The blind split, the
 seam repair, the per-core accumulators and the reduce are then generated; `1brc.nika`'s `main`
-is down to `let totals = dsl Measurements from data`.
+is down to `let totals = Measurements.file(data)`.
 
 The same ADR settles what the compiler may then do with the format the grammar states:
 word-at-a-time scanning as a specified complexity rather than a hoped-for optimization

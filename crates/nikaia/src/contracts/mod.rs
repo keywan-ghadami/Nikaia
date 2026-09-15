@@ -909,6 +909,46 @@ impl Ledger {
                             },
                         );
                     }
+                    // **Every `pub` rule of a grammar is an entry**
+                    // ([ADR-082](../../../docs/specification/adr/adr-082.md) D2).
+                    // A grammar is entered by an ordinary call — `Json.value(input)`
+                    // — so the thing entered has to be an ordinary contract, and
+                    // the one column it must carry is `throws`: a rule past a
+                    // commit point can fail ([ADR-023](../../../docs/specification/adr/adr-023.md)
+                    // D9), and a `catch` beside the entry would meet `NK1134`
+                    // without it.
+                    //
+                    // `["?"]` and not a name, for `std`'s reason: a parse failure
+                    // is the backend's error rendered, and it has no Nikaia type to
+                    // name ([ADR-024](../../../docs/specification/adr/adr-024.md)
+                    // D1's absence of a claim).
+                    Item::Grammar(def) => {
+                        let grammar = parsed.text(def.name).to_string();
+                        for rule in def.rules.iter().filter(|r| r.is_public) {
+                            let key = format!("{grammar}::{}", parsed.text(rule.name));
+                            ledger.functions.insert(
+                                key,
+                                FnContract {
+                                    public: true,
+                                    throws: vec![UNNAMED_ERROR.to_string()],
+                                    signature: Some(Signature {
+                                        // The input, as every entry takes it: the
+                                        // text to parse. `?` because a mapping, an
+                                        // owned string and a view all reach the
+                                        // parser the same way and no one type is
+                                        // the true one.
+                                        params: vec![("input".to_string(), ty::Ty::Unknown)],
+                                        config: Vec::new(),
+                                        result: rule
+                                            .ret_type
+                                            .as_ref()
+                                            .map(|t| ty::Ty::from_ast(parsed, t)),
+                                    }),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
                     _ => {}
                 }
             }

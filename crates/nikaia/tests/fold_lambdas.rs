@@ -30,6 +30,14 @@ fn findings(source: &str) -> Vec<check::Finding> {
 /// Everything below is one rule in this grammar, with a `zero` to be the `init`
 /// that the real examples write as `Summary::new`.
 fn program(rule: &str) -> String {
+    // **The entry is named at the call** now
+    // ([ADR-082](../../../docs/specification/adr/adr-082.md) D1), so this
+    // fixture has to name it too — and which rule it is varies per test, so it
+    // is read off the rule being planted rather than written twice.
+    let entry = rule
+        .split_whitespace()
+        .nth(2)
+        .expect("`pub rule <name> -> …`");
     format!(
         "grammar Nums {{\n\
          \x20   rule N -> i64 = d:dec[i64](digit+) -> {{ d }}\n\
@@ -40,7 +48,7 @@ fn program(rule: &str) -> String {
          \n\
          fn main() {{\n\
          \x20   let text = \"7\"\n\
-         \x20   let it = dsl Nums from text catch {{ 0 }}\n\
+         \x20   let it = Nums.{entry}(text) catch {{ 0 }}\n\
          \x20   println(f\"{{it}}\")\n\
          }}\n"
     )

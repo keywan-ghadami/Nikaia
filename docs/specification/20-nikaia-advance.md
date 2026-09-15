@@ -104,12 +104,13 @@ fn parse_input(input: String) throws {
 > hasher already is. None of that is built — what is missing is an evaluator that
 > can loop and `push`.
 >
-> **And the call form above is not built either** ([ADR-082](adr/adr-082.md) §5):
-> a grammar name is not yet accepted as a callee, so what the compiler parses
-> today is still `dsl Json from input`, with the distinguished entry D2 removes —
-> the **first** `pub` rule, and a `par_fold` one ahead of an earlier one. The old
-> form is to be taken back rather than deprecated, because no program in this tree
-> writes it.
+> **The call form above is built** ([ADR-082](adr/adr-082.md) D1, D2): a grammar
+> name stands where a callee stands, every `pub` rule is an entry, and the old
+> `dsl X from e` is refused with a message naming `X.rule(e)`. What the
+> distinguished entry cost is what went with it — the emitter used to take the
+> **first** `pub` rule, a `par_fold` one ahead of an earlier one, silently. What
+> is still not built is the half this note is really about: the evaluator that
+> could run one while the program is built.
 >
 > **What the declaration will mean is decided** ([ADR-073](adr/adr-073.md)): it
 > stands where an item stands and inside a body, its type may be written and does
@@ -430,7 +431,7 @@ pub rule file -> Summary =
 
 ```nika
 let data = fs::map(path)
-let totals = dsl Measurements from data
+let totals = Measurements.file(data)
 ```
 
 **Pieces and the whole agree — always.** A `par_fold` rule's parser is the per-piece parser, so it skips no whitespace at its entry, unlike every other rule: whitespace skipped there would be skipped at every cut rather than once. A frame that begins with a space keeps it; whitespace-only text between two frames is an error, in pieces and in one go alike. That is what makes the number of cores unable to change the answer — on inputs the grammar accepts and on inputs it rejects.

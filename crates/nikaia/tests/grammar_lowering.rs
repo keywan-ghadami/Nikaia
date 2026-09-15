@@ -77,7 +77,7 @@ mod measurements {
 mod digits {
     include!("fixtures/digits_expected.rs");
 
-    /// What `dsl Digits from data` lowers to, written out so that the compiler
+    /// What `Digits.pair(data)` lowers to, written out so that the compiler
     /// has to accept it and a test can run it.
     /// `a_sequential_entry_rule_gets_no_piece_driver` is what keeps this copy
     /// and the emitter's output the same code.
@@ -192,7 +192,7 @@ grammar Measurements {
 }
 
 fn summarize() {
-    let totals = dsl Measurements from data
+    let totals = Measurements.file(data)
 }
 "#;
 
@@ -243,7 +243,7 @@ fn a_target_without_threads_pins_the_driver_sequential() {
 fn a_sequential_entry_rule_gets_no_piece_driver() {
     // Without a `par_fold` there is nothing to cut and nothing to merge, so the
     // lowering drives the rule's own parser over the whole input (ADR-011 D4).
-    let source = format!("{DIGITS}\n\nfn read() {{\n    let p = dsl Digits from data\n}}\n");
+    let source = format!("{DIGITS}\n\nfn read() {{\n    let p = Digits.pair(data)\n}}\n");
     let emitted = emit(&source, Build::default());
 
     assert!(!emitted.contains("_pieces("), "{emitted}");
@@ -275,7 +275,7 @@ fn a_sequential_entry_rule_gets_no_piece_driver() {
 fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
     let source = format!(
         "{DIGITS}\n\nfn read() throws {{\n    \
-         let p = dsl Digits from data catch {{\n        return\n    }}\n}}\n"
+         let p = Digits.pair(data) catch {{\n        return\n    }}\n}}\n"
     );
     let emitted = emit(&source, Build::default());
 
@@ -613,4 +613,85 @@ grammar Ids {
     assert!(emitted.contains("n:dec<i32>(digit{1,2})"), "{emitted}");
     // A built-in without type arguments keeps its call exactly as written.
     assert!(emitted.contains("t:text(alpha1 digit*)"), "{emitted}");
+}
+
+/// **A grammar with two `pub` rules is entered by either**
+/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D2), which is the
+/// defect that record closes rather than a feature it adds.
+///
+/// The emitter used to pick the entry itself — the first `pub` rule, and a
+/// `par_fold` one ahead of an earlier one — so a grammar with two of them got
+/// one of them by source order, silently. Here `both` stands first and is a
+/// `par_fold`, so the old choice would have taken it whichever was asked for.
+#[test]
+fn a_grammar_with_two_public_rules_is_entered_by_either() {
+    let source = r#"
+grammar Two {
+    @frame(boundary: "\n")
+    rule M -> i32 = t:i32 frame_end -> { t }
+    rule N -> i64 = d:dec[i64](digit+) -> { d }
+
+    pub rule both -> i64 = par_fold(M, zero, fn(acc, m) { acc + m }, add)
+    pub rule one -> i64 = n:N -> { n }
+}
+
+fn zero() -> i64 { return 0 }
+fn add(a: i64, b: i64) -> i64 { return a + b }
+
+fn pieces() { let p = Two.both(data) }
+fn single() { let s = Two.one(data) }
+"#;
+    let emitted = emit(source, Build::default());
+
+    // The parallel rule gets the piece driver…
+    assert!(emitted.contains("Two::parse_both_pieces("), "{emitted}");
+    // …and the sequential one does not, in the same program.
+    assert!(emitted.contains("Two::parse_one()"), "{emitted}");
+    assert!(!emitted.contains("parse_one_pieces("), "{emitted}");
+}
+
+/// **A rule that is not `pub` is not an entry** (D2), and the message says which
+/// of the two it is.
+///
+/// A grammar name can only stand where a callee stands, so `Two.N(data)` is not
+/// a method call that happens to miss — it is an entry naming a rule that is
+/// there and is private. Saying *there is no such rule* about one written three
+/// lines up is the message a reader cannot act on.
+#[test]
+fn a_private_rule_is_not_an_entry() {
+    let source = r#"
+grammar Two {
+    rule N -> i64 = d:dec[i64](digit+) -> { d }
+    pub rule one -> i64 = n:N -> { n }
+}
+
+fn reach() { let s = Two.N(data) }
+"#;
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let Err(error) = emit_program(&parsed, Build::default()) else {
+        panic!("a private rule was entered");
+    };
+    let message = format!("{error:#}");
+    assert!(message.contains("is not `pub`"), "{message}");
+    assert!(message.contains("write `pub rule N`"), "{message}");
+}
+
+/// **The old spelling is refused, and the message names the new one**
+/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1) — the shape
+/// [ADR-022](../../../docs/specification/adr/adr-022.md) gave `fn:`: a form the
+/// specification taught deserves a sentence rather than a parse error at
+/// whatever token happens to come next.
+#[test]
+fn the_old_from_form_is_refused_with_the_call_in_the_message() {
+    let source = "grammar Nums {\n\
+                  \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+                  }\n\
+                  \n\
+                  fn read() { let n = dsl Nums from text }\n";
+    let Err(error) = parse_to_ast(source) else {
+        panic!("`dsl X from e` was removed and still parses");
+    };
+    let message = format!("{error:#}");
+    assert!(message.contains("was removed (ADR-082)"), "{message}");
+    assert!(message.contains("X.rule(e)"), "{message}");
 }

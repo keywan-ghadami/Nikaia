@@ -855,8 +855,7 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
         | Expr::Try(expr)
         | Expr::Throw(expr)
         | Expr::Cast { expr, .. }
-        | Expr::Spawn { body: expr, .. }
-        | Expr::DslFrom { input: expr, .. } => children.push(expr),
+        | Expr::Spawn { body: expr, .. } => children.push(expr),
         Expr::Coalesce { value, fallback } => {
             children.push(value);
             children.push(fallback);

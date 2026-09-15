@@ -243,7 +243,7 @@ fn main() throws {
     // parallel form requires. Had a `println` found its way into an action
     // block, the compiler would have said so here rather than quietly
     // serialising the workers.
-    let totals = dsl Measurements from data
+    let totals = Measurements.file(data)
 
     let mut names = totals.stations.keys().collect()
     names.sort()

@@ -8,7 +8,7 @@
 //
 //   * `grammar Name { rule ... }`  ->  `grammar! { grammar Name { ... } }`
 //   * `@frame(boundary: "\n")`     ->  `#[frame(boundary = "\n")]`
-//   * `dsl Name from input`        ->  the generated `par_fold` driver, with
+//   * `Name.rule(input)`            ->  the generated `par_fold` driver, with
 //                                      the `Parallelism` the build asks for
 //
 // What it is *not* is a type checker. The lowering is syntactic: every action
@@ -1286,16 +1286,6 @@ impl Flow<'_> {
     }
 }
 
-/// Whether a `dsl … from …` hands its failure to the enclosing function or to
-/// a `catch` beside it. Everywhere else the parse propagates - `catch` is the
-/// one place that wants the `Result` itself, and asking for it there is the
-/// whole difference (Kap 7.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Propagate {
-    Yes,
-    No,
-}
-
 impl<'p> Emitter<'p> {
     fn new(parsed: &'p Parsed, build: Build, provenance: crate::contracts::Provenance) -> Self {
         let own = crate::contracts::Ledger::infer(parsed);
@@ -1637,20 +1627,34 @@ impl<'p> Emitter<'p> {
         out.push("}\n");
     }
 
-    /// Whether any `dsl … from …` in the program reaches a parallel entry rule.
+    /// Whether any grammar entry in the program reaches a **parallel** rule,
+    /// which is what decides whether the piece driver's names are in the
+    /// preamble.
+    ///
+    /// The entry is a call now ([ADR-082](../../docs/specification/adr/adr-082.md)
+    /// D1), so the rule is the one the program **named** rather than the one
+    /// this file used to pick. Found by being wrong: the lowering was right and
+    /// the preamble was not, and `rustc` answered *"use of undeclared type
+    /// `ParseContext`"* about the generated file.
     fn uses_driver(&self) -> bool {
         let mut found = false;
+        let mut parallel = |grammar: &Symbol, entry: &Symbol| {
+            if let Some(def) = self.grammars.get(grammar) {
+                let rule = def.rules.iter().find(|r| r.is_public && r.name == *entry);
+                if rule.map(|r| par_fold_of(r).is_some()).unwrap_or(false) {
+                    found = true;
+                }
+            }
+        };
         for item in &self.parsed.program.items {
             if let Item::Fn { body, .. } = &item.node {
                 visit_block(body, &mut |e| {
-                    if let Expr::DslFrom { grammar, .. } = e {
-                        if let Some(def) = self.grammars.get(grammar) {
-                            if entry_rule(def)
-                                .map(|r| par_fold_of(r).is_some())
-                                .unwrap_or(false)
-                            {
-                                found = true;
-                            }
+                    if let Expr::MethodCall {
+                        receiver, method, ..
+                    } = e
+                    {
+                        if let Expr::Variable(name) = receiver.as_ref() {
+                            parallel(name, method);
                         }
                     }
                 });
@@ -3852,15 +3856,13 @@ impl<'p> Emitter<'p> {
                 // `catch` needs the `Result`, not the value: a `dsl … from …`
                 // propagates on its own everywhere else, and here the handler
                 // is what handles it.
-                match expr.as_ref() {
-                    Expr::DslFrom { grammar, input } => {
-                        self.dsl_from(out, *grammar, input, depth, flow, Propagate::No)?
-                    }
-                    // A written call inside the guarded half must not take the
-                    // `?` either, for exactly the same reason: the `match`
-                    // below is what handles the failure.
-                    _ => self.expr(out, expr, depth, flow.guarded())?,
-                }
+                // A written call inside the guarded half must not take the
+                // `?`: the `match` below is what handles the failure. A grammar
+                // entry is one of those calls now
+                // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), so it
+                // needs no arm of its own — which is what that record meant by
+                // *an ordinary call*.
+                self.expr(out, expr, depth, flow.guarded())?;
                 let pad = "    ".repeat(depth + 1);
                 let close = "    ".repeat(depth);
                 // **A handler that does not read the error binds `_error`**
@@ -3981,12 +3983,21 @@ impl<'p> Emitter<'p> {
                     out.push(" }");
                 }
             }
-            Expr::DslFrom { grammar, input } => {
-                self.dsl_from(out, *grammar, input, depth, flow, Propagate::Yes)?
-            }
             other => return Err(refused!("cannot emit expression yet: {other:?}")),
         }
         Ok(())
+    }
+
+    /// Whether `receiver.method(…)` **enters a grammar**: a receiver naming one
+    /// of this file's grammars and a method naming one of its `pub` rules
+    /// ([ADR-082](../../docs/specification/adr/adr-082.md) D1, D2).
+    fn enters_a_grammar(&self, receiver: &Expr, method: Symbol) -> bool {
+        let Expr::Variable(name) = receiver else {
+            return false;
+        };
+        self.grammars
+            .get(name)
+            .is_some_and(|def| def.rules.iter().any(|r| r.is_public && r.name == method))
     }
 
     /// A call. `Stats(temp)` is the anonymous constructor of Kap 4.2 - Rust has
@@ -4247,7 +4258,12 @@ impl<'p> Emitter<'p> {
                 args,
                 config,
             } => {
-                self.method_can_fail(flow, *method)
+                // **A grammar entry propagates on its own** (Kap 7.1, and
+                // [ADR-082](../../docs/specification/adr/adr-082.md) D2's
+                // `throws`): it is an ordinary call now, and this is the arm
+                // ordinary calls are in — which is what that record meant.
+                self.enters_a_grammar(receiver, *method)
+                    || self.method_can_fail(flow, *method)
                     || self.branch_can_fail(receiver, flow)
                     || args.iter().any(|a| self.branch_can_fail(a, flow))
                     || config.iter().any(|a| self.branch_can_fail(&a.value, flow))
@@ -4257,8 +4273,6 @@ impl<'p> Emitter<'p> {
                 |stmt| matches!(&stmt.node, Stmt::Expr(value) if self.branch_can_fail(value, flow)),
             ),
             Expr::Throw(_) => true,
-            // A `dsl … from …` propagates on its own (Kap 7.1).
-            Expr::DslFrom { .. } => true,
             Expr::Try(inner) | Expr::Unary { expr: inner, .. } => self.branch_can_fail(inner, flow),
             Expr::Binary { lhs, rhs, .. } => {
                 self.branch_can_fail(lhs, flow) || self.branch_can_fail(rhs, flow)
@@ -4753,6 +4767,18 @@ impl<'p> Emitter<'p> {
         // about the generated file** (`let n = (big as i32);` is
         // "unnecessary parentheses around assigned value"), and Part III
         // C.1 says a reader must not meet one.
+        // **A grammar is entered by an ordinary call**
+        // ([ADR-082](../../docs/specification/adr/adr-082.md) D1):
+        // `Json.value(input)`, where `Json` names a grammar in this file and
+        // `value` one of its `pub` rules. It is a method call in the grammar
+        // of this language and nothing else could have been — a grammar name is
+        // not a value, so there is no receiver to resolve and no ambiguity to
+        // settle.
+        if let Some(Expr::Variable(name)) = receiver {
+            if self.grammars.contains_key(name) && args.len() == 1 {
+                return self.grammar_entry(out, *name, method, &args[0], depth, flow);
+            }
+        }
         if let Some(into) = truncating(self.text(method)) {
             self.receiver(out, receiver, depth, flow, true)?;
             out.push(&format!(" as {into}"));
@@ -4871,7 +4897,6 @@ impl<'p> Emitter<'p> {
                     | Expr::Closure { .. }
                     | Expr::TryCatch { .. }
                     | Expr::Dsl { .. }
-                    | Expr::DslFrom { .. }
                     | Expr::Asm { .. }
             );
 
@@ -5099,23 +5124,28 @@ impl<'p> Emitter<'p> {
         }
     }
 
-    /// `dsl Measurements from data` - the whole of what a user writes to run a
+    /// `Measurements.file(data)` - the whole of what a user writes to run a
     /// grammar. Everything the parallel form needs is already in the grammar
     /// (ADR-009): the frame says where the input may be cut, the `par_fold`
     /// says how the pieces combine. What is left is choosing the executor, and
     /// that is the build's decision, not the program's.
-    fn dsl_from(
+    fn grammar_entry(
         &self,
         out: &mut Out,
         grammar: Symbol,
+        entry: Symbol,
         input: &Expr,
         depth: usize,
         flow: Flow<'_>,
-        propagate: Propagate,
     ) -> Result<()> {
-        let question = match propagate {
-            Propagate::Yes => "?",
-            Propagate::No => "",
+        // **The `?` is the call's, and a `catch` is what takes it away.** A
+        // grammar entry propagates on its own everywhere else (Kap 7.1); inside
+        // the half a `catch` guards, the `match` around it handles the failure,
+        // so the `Result` has to arrive whole. Read off `flow` rather than
+        // passed in, which is how every other call decides it.
+        let question = match flow.caught {
+            false => "?",
+            true => "",
         };
         let name = self.text(grammar);
         let def = self
@@ -5123,8 +5153,29 @@ impl<'p> Emitter<'p> {
             .get(&grammar)
             .ok_or_else(|| refused!("no grammar named `{name}` in this file"))?;
 
-        let rule = entry_rule(def)
-            .ok_or_else(|| refused!("grammar `{name}` has no `pub` rule to enter through"))?;
+        // **The rule is named at the call** ([ADR-082](../../docs/specification/adr/adr-082.md)
+        // D1, D2). It used to be picked here — the first `pub` rule, a
+        // `par_fold` one beating an earlier one — so a grammar with two of them
+        // got one by source order, in silence. Every `pub` rule is an entry
+        // now, and which one is what the program wrote.
+        let rule = def
+            .rules
+            .iter()
+            .find(|r| r.is_public && r.name == entry)
+            .ok_or_else(|| {
+                let rule = self.text(entry);
+                match def.rules.iter().any(|r| r.name == entry) {
+                    // **A rule that is not `pub` is not an entry** (D2), and
+                    // saying *there is no such rule* about one written three
+                    // lines up is the message a reader cannot act on.
+                    true => refused!(
+                        "`{rule}` is a rule of grammar `{name}` and is not `pub`, \
+                         so it is not an entry (ADR-082 D2) - write `pub rule {rule}` \
+                         to make it one"
+                    ),
+                    false => refused!("grammar `{name}` has no `pub` rule called `{rule}`"),
+                }
+            })?;
         let rule_name = self.text(rule.name);
 
         let pad = "    ".repeat(depth + 1);
@@ -5316,14 +5367,6 @@ fn binary_op(op: BinaryOp) -> &'static str {
         BinaryOp::And => "&&",
         BinaryOp::Or => "||",
     }
-}
-
-/// The rule a `dsl … from …` enters through: the first public one.
-fn entry_rule(def: &GrammarDef) -> Option<&GrammarRule> {
-    def.rules
-        .iter()
-        .find(|r| r.is_public && par_fold_of(r).is_some())
-        .or_else(|| def.rules.iter().find(|r| r.is_public))
 }
 
 /// The `par_fold` a rule *is*, if it is one. A fold with a merge is the only
@@ -5734,7 +5777,6 @@ pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_block(handler, f);
         }
         Expr::Spawn { body, .. } => visit_expr(body, f),
-        Expr::DslFrom { input, .. } => visit_expr(input, f),
         _ => {}
     }
 }

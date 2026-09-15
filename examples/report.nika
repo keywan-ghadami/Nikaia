@@ -102,7 +102,7 @@ fn main() throws {
         return
     }
 
-    let mut entries = dsl Stock from data catch {
+    let mut entries = Stock.file(data) catch {
         eprintln(f"{path}: {error}")
         return
     }

@@ -147,7 +147,7 @@ grammar Nums {
 
 fn main() {
     let text = "7"
-    let it = dsl Nums from text catch { 0 }
+    let it = Nums.number(text) catch { 0 }
     println(f"{it}")
 }
 "#;

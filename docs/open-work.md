@@ -264,7 +264,7 @@ So, in order, and each says below why it sits where it does:
    What is left of it is one refusal rather than one mechanism: §2 D6's `Send`
    is asked for by the pool's starter, so a task holding something that may not
    cross is refused by `rustc` about the generated file rather than by this
-   compiler about the program. §2.2 below.
+   compiler about the program. *A task that may not cross a thread*, below.
 2. **The rules around the lock**, now that the lock itself is finished. The type,
    its constructor, its single spelling and all four doors are built
    ([ADR-057](specification/adr/adr-057.md),
@@ -556,51 +556,7 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.9. A grammar is entered by a call: build ADR-082 and remove `dsl … from …` in one change
-
-[ADR-082](specification/adr/adr-082.md) D1 and D2, accepted and unbuilt. The
-specification already teaches the new form — Part II 10.2 writes
-`Json.value(input)` — and the compiler only knows the old one, so the page and
-the parser disagree today. **This is a work order, not a question**: the
-record's §5 fixes the order and the shape, and nothing about it needs the
-owner.
-
-*The defect it closes:* the emitter picks a grammar's entry rule by source
-order, a `par_fold` rule winning (`emit/mod.rs`, `find(|r| r.is_public && …)`),
-so a grammar with two `pub` rules gets one of them in silence.
-
-*Steps, all in one change:*
-
-1. **Parser** — `Grammar.rule(expr)` parses as a call; a grammar name is a
-   callee, and the rule's name is the method's (D1).
-2. **Emitter** — the call lowers to the function the parser backend generates
-   per `pub` rule; the source-order entry choice is deleted (D2).
-3. **Ledger** — every `pub` rule gets an entry with `throws`, because a rule
-   past a commit point can fail ([ADR-023](specification/adr/adr-023.md) D9).
-   Without it `NK1134` refuses the `catch` written beside every entry in the
-   corpus. The one-line bridge in the checker that tells it a `dsl … from …`
-   can fail ([ADR-091](specification/adr/adr-091.md) D4) goes with the old
-   form.
-4. **Removal** — `dsl_from_expr` leaves the grammar and the word after
-   `dsl X` is refused with a message naming `X.rule(…)`, the shape
-   [ADR-022](specification/adr/adr-022.md) gave `fn:`.
-5. **Migration, in the same commit** — nine lines in eight programs
-   (`1brc`, `access-log`, `calc`, `config`, `inventory/stock`, `json`,
-   `k-nucleotide`, `report`), `examples/README.md`, Part II 10.7's own
-   `nika` block (`let totals = dsl Measurements from data`), and the three
-   test files `grammar_lowering.rs`, `fold_lambdas.rs`,
-   `infallible_catch.rs`; the specification test's recorded verdicts move
-   with 10.7.
-
-*Done when:* `grep -rn "dsl [A-Za-z_]* from"` over `examples/`, `docs/`,
-`tests/` and `crates/` finds nothing; every example compiles and runs at both
-settings as before; a grammar with two `pub` rules is entered by either; the
-old spelling is refused with the new one in the message; `open-decisions.md`
-has no entry about it (it has none now).
-
-*Evidence:* the eight files, listed above; Part II 10.2 against 10.7.
-
-### 2.10. Nothing runs Nikaia code while the program is built
+### 2.9. Nothing runs Nikaia code while the program is built
 
 *Reproduced:* `comptime` is built and its evaluator is
 [`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
@@ -633,12 +589,13 @@ starting, and not a reason to add one on the way past.
 *The order the records imply:* the **call** first, because it alone unlocks
 reading a file at build time and is the smallest of the three. Then **loop and
 `push`**. The field walk last, because it needs something the other two do not —
-see 2.15.
+see the entry below, *running a grammar while the program is built*.
 
 *What it does **not** include:* running a **grammar**. That looks like the same
-job and is not; it is 2.15's, and the reason is there.
+job and is not; it is the next entry's, *running a grammar while the program is
+built*, and the reason is there.
 
-### 2.11. Running a grammar while the program is built is not interpretation
+### 2.10. Running a grammar while the program is built is not interpretation
 
 *The distinction, because it is the whole entry.* A grammar could be run at build
 time by interpreting the grammar tree the compiler already holds. **It must not
@@ -675,7 +632,7 @@ build-time call.
 case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
 [ADR-072](specification/adr/adr-072.md) built the permission for.
 
-### 2.12. The caller writes the `&`, and the record says the compiler does
+### 2.11. The caller writes the `&`, and the record says the compiler does
 
 [ADR-094](specification/adr/adr-094.md). A parameter is a view unless its body
 keeps the value, a `keeps` column records which, the emitter writes the
@@ -737,7 +694,7 @@ answer: `self.min = temp` for an `i32` keeps, and keeping costs nothing there.
 wrong words at every site the caller forgets the `&`, and a tax at every site
 they remember it.
 
-### 2.13. The boundary translation for a hand-edited hash
+### 2.12. The boundary translation for a hand-edited hash
 
 [ADR-100](specification/adr/adr-100.md) D6, and the only part of that record
 left. **D1, D2, D3, D4 and D5 are built**: a package's units are inferred as one
@@ -765,7 +722,7 @@ repository can produce it, which is the state
 built and the reason it was built anyway: a message costs nothing before there
 is something to say it about.
 
-### 2.14. An error that newly reaches a `catch` is named once
+### 2.13. An error that newly reaches a `catch` is named once
 
 [ADR-101](specification/adr/adr-101.md). When a callee's `throws` set gains a
 member, every `catch` over it is named in the build output, and `--locked`
@@ -780,9 +737,10 @@ silence today.
 *What it needs:* error types lowered as enums, which [ADR-023](specification/adr/adr-023.md)
 D1's set already waits on; then the set written and diffed; then the note and
 the `--locked` failure, which are the `NK2401` machinery over one more column.
-The first of those is §2.15 and is the thing this entry waits on.
+The first of those is the entry below — *an error type is lowered as the `enum`
+it is* — and is the thing this entry waits on.
 
-### 2.15. An error type is lowered as the `enum` it is
+### 2.14. An error type is lowered as the `enum` it is
 
 [ADR-023](specification/adr/adr-023.md) D1 records `throws` as a **set** of
 error types; [ADR-013](specification/adr/adr-013.md) D3 lowers every `throws`
@@ -794,7 +752,8 @@ error a function fails with, so that a `throw ConfigError::NotFound(path)`
 reaches a `catch` as that variant and the ledger can write the name down.
 
 *What waits on it:* the `throws` set (ADR-023 D1), the note over `catch` sites
-and the `--locked` failure (§2.14, [ADR-101](specification/adr/adr-101.md)),
+and the `--locked` failure (*an error that newly reaches a `catch` is named
+once*, [ADR-101](specification/adr/adr-101.md)),
 the reserved `NK2401` case for a `catch` that stops covering its arrivals, and
 `match error { … }` over a variant from a callee in another package.
 
@@ -808,7 +767,7 @@ is unbuilt is the emitter's half.
 matches on an error variant that crossed a function boundary, because none
 can.
 
-### 2.16. A parameter may be a function, and the type says what it may do
+### 2.15. A parameter may be a function, and the type says what it may do
 
 [ADR-102](specification/adr/adr-102.md). `fn(Request) -> Response`, with
 `sync` and `throws` after the result as a declaration writes them; a lambda
@@ -827,7 +786,7 @@ run-or-kept inference, which is ADR-094's `keeps` asked of a code parameter;
 and the lowering of a kept pausing handler, which is *a lambda that pauses is
 refused* one entry up, with a callee that can now say which shape it wants.
 
-### 2.17. A package is found by version through Cargo, under `nikaia_<name>`
+### 2.16. A package is found by version through Cargo, under `nikaia_<name>`
 
 [ADR-103](specification/adr/adr-103.md). `http = "1.2"` becomes
 `http = { package = "nikaia_http", version = "1.2" }` in the generated

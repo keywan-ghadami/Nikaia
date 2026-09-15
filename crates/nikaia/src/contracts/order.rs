@@ -1111,10 +1111,6 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             }
             words_in(content, out);
         }
-        Expr::DslFrom { grammar, input } => {
-            out.insert(parsed.text(*grammar).to_string());
-            names_in(parsed, input, out);
-        }
         Expr::Asm { bindings, code } => {
             for binding in bindings {
                 out.insert(parsed.text(binding.variable).to_string());

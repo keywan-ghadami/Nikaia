@@ -1890,9 +1890,9 @@ grammar! {
         // brace. Each of them is written in a head by putting it in parentheses,
         // which `paren_expr` takes a whole `expr` inside (D2).
         //
-        // `dsl_from_expr` is here although its sibling is not: `dsl X from y`
-        // has no brace, and the two are separate rules precisely because one of
-        // them is a block and the other is not.
+        // `dsl_from_expr` is here although its sibling is not: the form it
+        // refuses has no brace, and the two are separate rules precisely because
+        // one of them is a block and the other is not.
         rule head_primary -> Expr =
             c:ctor_lit -> { c }
           | b:bool_lit -> { b }
@@ -1962,7 +1962,7 @@ grammar! {
                 }
             }
 
-        // Part II, 10.2/10.5: `dsl Json from input` - a named grammar run over
+        // Part II, 10.2: a named grammar run over an input, which is a call now
         // Part II, 10.5: a DSL block ends with `} eod`, and the end cannot be
         // found by counting braces - the body is foreign syntax where a `}` may
         // be a string character or absent entirely. So the body is what lies
@@ -1973,13 +1973,22 @@ grammar! {
                 Expr::Dsl { target: name, context: None, content: body.to_string() }
             }
 
-        // a value. The other `dsl` form takes a foreign-syntax block.
+        // **The form that is gone** ([ADR-082](../../../docs/specification/adr/adr-082.md)
+        // D1). A grammar is entered by an ordinary call — `Json.value(input)` —
+        // and every `pub` rule is an entry (D2), which is what took the silent
+        // choice away: the emitter used to pick the *first* `pub` rule, a
+        // `par_fold` one beating an earlier one.
+        //
+        // `fail` beats the alternatives at this position, the shape ADR-022
+        // gave `fn:`: a form the specification taught deserves a sentence
+        // rather than a parse error at whatever token happens to be next.
         rule dsl_from_expr -> Expr =
-            // The binding is `source`, not `input`: the generated parser's own
-            // closure takes a parameter called `input`, and a binding of that
-            // name shadows it for the rest of the action.
-            KW_DSL name:NAME KW_FROM source:head_expr -> {
-                Expr::DslFrom { grammar: name, input: Box::new(source) }
+            KW_DSL name:NAME KW_FROM fail("`dsl X from e` was removed (ADR-082): \
+                                           a grammar is entered by a call, so write \
+                                           `X.rule(e)` naming the rule you mean. \
+                                           Every `pub` rule is an entry, and the old \
+                                           form picked one of them by source order") -> {
+                Expr::Variable(name)
             }
 
         // Kap 3.4. The value is a `head_expr` for the reason `if`'s condition is

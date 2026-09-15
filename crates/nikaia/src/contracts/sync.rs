@@ -430,9 +430,7 @@ pub(crate) fn reached(
         Expr::MethodCall { .. } | Expr::SafeMethod { .. } => return Some(Reached::Method),
         // Starts a task, or runs a grammar whose actions are arbitrary Nikaia.
         // Neither is pure computation this compiler can see the end of.
-        Expr::Spawn { .. } | Expr::Dsl { .. } | Expr::DslFrom { .. } => {
-            return Some(Reached::Opaque(None))
-        }
+        Expr::Spawn { .. } | Expr::Dsl { .. } => return Some(Reached::Opaque(None)),
         _ => return None,
     };
 

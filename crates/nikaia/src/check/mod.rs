@@ -343,6 +343,22 @@ pub fn check_program(
         library,
         structs: BTreeMap::new(),
         enums: BTreeMap::new(),
+        grammars: parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Grammar(def) => Some((
+                    parsed.text(def.name).to_string(),
+                    def.rules
+                        .iter()
+                        .filter(|r| r.is_public)
+                        .map(|r| parsed.text(r.name).to_string())
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect(),
         scope: Vec::new(),
         expected: None,
         type_parameters: BTreeMap::new(),
@@ -624,6 +640,13 @@ struct Checker<'a> {
     structs: BTreeMap<String, Vec<FieldContract>>,
     /// Every enum declared here, with its variant names.
     enums: BTreeMap<String, BTreeSet<String>>,
+    /// Every **grammar** declared here, with the names of its `pub` rules
+    /// ([ADR-082](../../docs/specification/adr/adr-082.md) D1, D2).
+    ///
+    /// A grammar is entered by an ordinary call — `Json.value(input)` — so its
+    /// name has to be something `NK1117` counts as declared, and which rules
+    /// may stand after the dot is what says `Json.internal(x)` is not an entry.
+    grammars: BTreeMap<String, BTreeSet<String>>,
     /// Names in scope, innermost frame last.
     scope: Vec<Vec<Local>>,
     /// What the function being walked declared it hands back.
@@ -1274,7 +1297,10 @@ impl<'a> Checker<'a> {
             || self.structs.contains_key(&name)
             || self.enums.contains_key(&name)
             || self.own.types.contains_key(&name)
-            || self.modules.contains(&name);
+            || self.modules.contains(&name)
+            // A grammar's name stands where a callee stands (ADR-082 D1), so
+            // it is declared in exactly the way a module is.
+            || self.grammars.contains_key(&name);
         if declared {
             return;
         }
@@ -1492,6 +1518,56 @@ impl<'a> Checker<'a> {
     /// nothing away; a field this compiler cannot type says nothing, and
     /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md) is why that
     /// is silence rather than a guess.
+    /// The ledger key `Json.value(input)` enters through, where the receiver
+    /// names a grammar of this file and the method one of its `pub` rules
+    /// ([ADR-082](../../docs/specification/adr/adr-082.md) D1, D2).
+    ///
+    /// `None` for everything else, which is every other method call: a grammar
+    /// name is not a value, so there is nothing to confuse this with.
+    fn grammar_entry(&self, receiver: &Expr, method: Ident) -> Option<String> {
+        let Expr::Variable(name) = receiver else {
+            return None;
+        };
+        let grammar = self.parsed.text(*name).to_string();
+        let rule = self.parsed.text(method).to_string();
+        self.grammars
+            .get(&grammar)
+            .filter(|rules| rules.contains(&rule))
+            .map(|_| format!("{grammar}::{rule}"))
+    }
+
+    /// The entry call itself: the input is an expression like any other, and
+    /// what comes back is what the rule declares.
+    ///
+    /// **Whether it can fail comes from the contract**, which is the whole of
+    /// what D2 changed: a `pub` rule is an entry in the ledger with
+    /// `throws = ["?"]`, because a rule past a commit point can fail
+    /// ([ADR-023](../../docs/specification/adr/adr-023.md) D9). The old form
+    /// was not a call and carried no contract, so `NK1134` had to be told in
+    /// one line ([ADR-091](../../docs/specification/adr/adr-091.md) D4); that
+    /// line is gone with it.
+    fn grammar_call(&mut self, key: &str, args: &[Expr], span: &Span) -> Ty {
+        for arg in args {
+            self.expr(arg, span);
+        }
+        let fallible = self
+            .own
+            .functions
+            .get(key)
+            .is_some_and(|c| !c.throws.is_empty());
+        if fallible {
+            if let Some(guarded) = &mut self.guarded {
+                guarded.fallible = true;
+            }
+        }
+        self.own
+            .functions
+            .get(key)
+            .and_then(|c| c.signature.as_ref())
+            .and_then(|s| s.result.clone())
+            .unwrap_or(Ty::Unknown)
+    }
+
     /// **`NK1137`: the `&` is the compiler's to write**
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
     ///
@@ -2433,6 +2509,15 @@ impl<'a> Checker<'a> {
                 config.iter().for_each(|a| {
                     self.expr(&a.value, span);
                 });
+                // **A grammar is entered by an ordinary call**
+                // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), so
+                // this is that call: a receiver naming a grammar of this file
+                // and a method naming one of its `pub` rules. Answered before
+                // the receiver is typed, because a grammar name is not a value
+                // and typing it would be asking the wrong question.
+                if let Some(entered) = self.grammar_entry(receiver, *method) {
+                    return self.grammar_call(&entered, args, span);
+                }
                 let on = self.expr(receiver, span);
                 if let Ty::Nullable(_) = &on {
                     let name = self.parsed.text(*method).to_string();
@@ -2880,32 +2965,6 @@ impl<'a> Checker<'a> {
                     args: vec![value],
                     view: false,
                 }
-            }
-
-            Expr::DslFrom { input, .. } => {
-                // **Running a grammar over an input can fail**, and that is
-                // where the `catch` beside a `dsl` comes from
-                // ([ADR-023](../../../docs/specification/adr/adr-023.md) D9):
-                // the failure leaves the parser as the Nikaia error it is and
-                // lands in that handler. It is not a call and carries no
-                // contract, so `NK1134` had to be told
-                // ([ADR-091](../../../docs/specification/adr/adr-091.md)) - the
-                // examples that write the shape are what said so, by being
-                // refused.
-                //
-                // **This arm is on borrowed time**, and deliberately so:
-                // [ADR-082](../../../docs/specification/adr/adr-082.md) D1
-                // supersedes `dsl X from e` with `X.rule(e)`, which is decided
-                // and not built. When it is, the entry is an ordinary call and
-                // this line is *deleted* rather than edited - the answer comes
-                // from the callee's contract, as it does for every other call.
-                // A generated entry rule that carries no `throws` would meet
-                // `NK1134` at every one of those programs.
-                if let Some(guarded) = &mut self.guarded {
-                    guarded.fallible = true;
-                }
-                self.expr(input, span);
-                Ty::Unknown
             }
 
             // A template's holes are Nikaia too (ADR-017), and what the

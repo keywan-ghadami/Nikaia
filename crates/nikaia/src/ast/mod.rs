@@ -359,15 +359,6 @@ pub enum Expr {
         content: String,        // Simplified from TokenStream
     },
 
-    // Part II, Kap 10.2/10.5: dsl Json from input
-    //
-    // The other half of the grammar protocol: `from` runs a named grammar over
-    // an input that is already a value, rather than over a foreign-syntax block.
-    DslFrom {
-        grammar: Ident,
-        input: Box<Expr>,
-    },
-
     // Ein qualifizierter Pfad: Summary::new, u8::from_str_radix
     Path(Vec<Ident>),
 
