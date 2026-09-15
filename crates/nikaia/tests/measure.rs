@@ -212,3 +212,68 @@ fn what_escaping_costs() {
     let runs = [instructions("html::escape", &rust, &["20000"])];
     report("escaping", "20000 rows, 40000 holes", &runs);
 }
+
+/// **What `break` and `continue` are worth**, measured against the shapes the
+/// language forced before them.
+///
+/// `benches/jumps.nika` holds both halves of every A/B in one file, so the
+/// lowering, the `rustc` invocation and the optimiser's settings are shared and
+/// the only difference between a pair is the construct. The argument selects
+/// which half runs; both print the same three numbers, which is what says they
+/// are the same program.
+///
+/// **What is being asked.** Not *"is a jump fast"* - it is one instruction -
+/// but *"what does a program pay for not having one"*, which is a different
+/// question with three different answers, one per loop shape. They are printed
+/// together rather than argued about: `docs/break-continue-cost.md` reads them.
+#[test]
+#[ignore = "shells out to valgrind; run with --ignored"]
+fn what_a_jump_saves_against_the_shape_that_replaces_it() {
+    let rust = lower("jumps.nika");
+
+    // Three groups, each measured on its own. `stop` and `scan` are run at
+    // three sizes because what they cost is a curve; `skip` is run at three
+    // because a number that does not move is worth showing not moving.
+    //
+    // **The first group has three members and the reason is
+    // [ADR-086](../../../docs/specification/adr/adr-086.md).** When these
+    // numbers were first taken, the obvious `break`-less shape -
+    // `while i < n && running` - did not parse, so the baseline had to nest an
+    // `if` inside the loop. It parses now, and the honest thing is to measure
+    // the shape that is writable **beside** the one the published numbers were
+    // taken on rather than instead of it.
+    let groups: [(&str, &[(&str, &str)]); 3] = [
+        (
+            "a `while` that stops mid-body",
+            &[
+                ("a flag, and a nested `if`", "stop-flag"),
+                ("a flag, and `&&` in the head", "stop-and"),
+                ("`break`", "stop-break"),
+            ],
+        ),
+        (
+            "a `for` that stops early",
+            &[
+                ("a flag, and every turn taken", "scan-flag"),
+                ("`break`", "scan-break"),
+            ],
+        ),
+        (
+            "a `for` that skips turns",
+            &[
+                ("the body inside an `if`", "skip-nesting"),
+                ("`continue`", "skip-continue"),
+            ],
+        ),
+    ];
+
+    for (what, members) in groups {
+        for n in ["20000", "200000", "2000000"] {
+            let runs: Vec<Run> = members
+                .iter()
+                .map(|(label, which)| instructions(label, &rust, &[n, which]))
+                .collect();
+            report(what, &format!("n = {n}"), &runs);
+        }
+    }
+}

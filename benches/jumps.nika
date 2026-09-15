@@ -1,0 +1,190 @@
+// benches/jumps.nika
+//
+// **What `break` and `continue` are worth**, against the shapes a program has
+// to write without them.
+//
+// Three loops, each written twice in the same file, so that one lowering and
+// one `rustc` invocation produce both halves of every A/B and the only
+// difference between a pair is the construct being weighed:
+//
+//   * `stop_*` — a `while` whose exit condition is known **in the middle of
+//     the body**. Without `break` the condition moves into the head and a flag
+//     carries it there, which is a store and a load per turn.
+//   * `scan_*` — a `for` over a range that wants to stop early. Without
+//     `break` there is no stopping at all: the flag version has to keep
+//     turning the loop to its end, which is the one case where the absence
+//     costs **work** rather than instructions per turn.
+//   * `skip_*` — a `for` that ignores some of its turns. Without `continue`
+//     the rest of the body moves inside an `if`, which is the same branch
+//     written the other way round.
+//
+// `n` is the first argument, because a difference that only shows at one size
+// is not a difference. The totals are printed so that nothing can be removed:
+// every loop's result reaches standard output.
+//
+// Measured by `crates/nikaia/tests/measure.rs`. This file is the workload; the
+// numbers and what they mean live there and in `docs/break-continue-cost.md`.
+
+use std::cli
+
+// --- a `while` that learns it is finished half way through its body --------
+
+fn stop_with_break(n: i64) -> i64 {
+    let mut i = 0
+    let mut total = 0
+    while i < n {
+        total += i % 13
+        if total > n {
+            break
+        }
+        i += 1
+    }
+    return total
+}
+
+// **And when this was written it could not be written the obvious way.**
+// `while i < n && running` did not parse: the head of a `while`, a `for` or an
+// `if` is the brace-free expression grammar, and `&&` was not in it - so the
+// second condition became a nested `if` rather than a second term. That was a
+// gap of its own, found here, and it is what a program without `break` walked
+// into first.
+//
+// [ADR-086](../docs/specification/adr/adr-086.md) closed it. **This function is
+// kept as it was** - it is the shape ADR-084's numbers were taken on, and a
+// benchmark rewritten under a published measurement is a measurement nobody can
+// check - and `stop_with_and` below is the shape that is writable now, measured
+// beside it.
+fn stop_with_flag(n: i64) -> i64 {
+    let mut i = 0
+    let mut total = 0
+    let mut running = true
+    while running {
+        if i < n {
+            total += i % 13
+            if total > n {
+                running = false
+            } else {
+                i += 1
+            }
+        } else {
+            running = false
+        }
+    }
+    return total
+}
+
+// The same program again, in the form the head grammar accepts since
+// [ADR-086](../docs/specification/adr/adr-086.md): one `while` with two terms
+// in its head, and no nesting. Whether that is also *cheaper* than the nested
+// form is the question ADR-086 §3 asks of this function - the two are the same
+// program, and the optimiser is what decides whether they are the same code.
+fn stop_with_and(n: i64) -> i64 {
+    let mut i = 0
+    let mut total = 0
+    let mut running = true
+    while i < n && running {
+        total += i % 13
+        if total > n {
+            running = false
+        } else {
+            i += 1
+        }
+    }
+    return total
+}
+
+// --- a `for` that wants to stop early -------------------------------------
+
+fn scan_with_break(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        if i * i > n {
+            break
+        }
+        total += i
+    }
+    return total
+}
+
+// No `break`, and no way to leave the loop: a `return` here would leave the
+// function before the second half of it runs, so what is left is a flag and
+// every remaining turn of the range.
+fn scan_with_flag(n: i64) -> i64 {
+    let mut total = 0
+    let mut running = true
+    for i in 0..n {
+        if running {
+            if i * i > n {
+                running = false
+            }
+            if running {
+                total += i
+            }
+        }
+    }
+    return total
+}
+
+// --- a `for` that ignores some of its turns -------------------------------
+
+fn skip_with_continue(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        if i % 3 == 0 {
+            continue
+        }
+        if i % 5 == 0 {
+            continue
+        }
+        total += i % 7
+    }
+    return total
+}
+
+fn skip_with_nesting(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        if i % 3 != 0 {
+            if i % 5 != 0 {
+                total += i % 7
+            }
+        }
+    }
+    return total
+}
+
+// One loop per run, named by the second argument: an A/B of three pairs at
+// once would print one number for three different questions, and the three have
+// different answers.
+fn main() {
+    let count = cli::args().nth(1) ?? "200000"
+    let n: i64 = count.parse() catch { 200000 }
+    let which = cli::args().nth(2) ?? "all"
+
+    if which == "stop-break" {
+        println(f"{stop_with_break(n)}")
+    }
+    if which == "stop-flag" {
+        println(f"{stop_with_flag(n)}")
+    }
+    if which == "stop-and" {
+        println(f"{stop_with_and(n)}")
+    }
+    if which == "scan-break" {
+        println(f"{scan_with_break(n)}")
+    }
+    if which == "scan-flag" {
+        println(f"{scan_with_flag(n)}")
+    }
+    if which == "skip-continue" {
+        println(f"{skip_with_continue(n)}")
+    }
+    if which == "skip-nesting" {
+        println(f"{skip_with_nesting(n)}")
+    }
+    if which == "all" {
+        println(f"{stop_with_break(n)} {scan_with_break(n)} {skip_with_continue(n)}")
+        println(f"{stop_with_flag(n)} {scan_with_flag(n)} {skip_with_nesting(n)}")
+        println(f"{stop_with_and(n)}")
+    }
+}

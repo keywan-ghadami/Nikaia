@@ -53,6 +53,7 @@ the Result column; every other row is the original run.
 | `assert(cond)` | — | parses as a call to a function named `assert` |
 | `extern "C" { … }` | III 15.1 | parse error: *expected end of input; found `extern`* |
 | `unsafe { … }` | III 15.1, 16.3 | parses as `unsafe; { puts("hi") }` — **re-run**, and refused now: `NK1117` on the name |
+| `break`, `continue` | I 3.3 | **built** ([ADR-073](specification/adr/adr-073.md)): name for name, and the rule that bounds them is `NK1126` — a jump may not leave a lambda, a task, an `overlap` branch or a DSL fold's step, each being a function in the language below. **A row added by a construct arriving rather than by a probe**: before the record the two words parsed as nothing at all, since [ADR-071](specification/adr/adr-071.md) had reserved them, so the probe that belongs beside the others here is `break x` — refused, `NK1127`, because a jump takes no value and a value after one would otherwise be a statement of its own |
 | `null` | I 2.3, 3.5 | **built** ([ADR-052](specification/adr/adr-052.md)): a reserved word, lowering to `None` |
 | `String?`, `&str?` | I 2.3 | **built**: `Option<String>`, `Option<&str>` — and the wrap where a plain value stands in a nullable slot is the compiler's to write, in all five positions. `Some(…)` where the type is known, `.into()` where it is not, which is right either way ([ADR-068](specification/adr/adr-068.md)) |
 | `a?.b` | I 3.5 | **built** ([ADR-052](specification/adr/adr-052.md) D6): `map` over a plain field, `and_then` over one that is itself a `T?` |

@@ -360,7 +360,7 @@ fn stmt_exprs(stmt: &Stmt) -> impl Iterator<Item = &Expr> {
         }
         Stmt::For { iter, .. } => found.push(iter),
         Stmt::While { cond, .. } => found.push(cond),
-        Stmt::Return(None) => {}
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
     }
     found.into_iter()
 }

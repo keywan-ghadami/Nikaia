@@ -857,11 +857,17 @@ struct Emitter<'p> {
     flattened_reaches: std::collections::BTreeSet<(usize, String)>,
     /// Part I 2.3: the struct-literal fields where a plain value stands in a
     /// nullable slot (`check::Checked::nullable_fields`).
-    nullable_fields: std::collections::BTreeMap<(usize, String), crate::check::Wrap>,
+    nullable_fields: std::collections::BTreeMap<
+        (usize, String, String),
+        std::collections::BTreeMap<String, crate::check::Wrap>,
+    >,
     /// Part I 2.3: the call arguments where a plain value stands in a nullable
     /// parameter, by statement, callee as written, and position
     /// (`check::Checked::nullable_args`).
-    nullable_args: std::collections::BTreeMap<(usize, String, usize), crate::check::Wrap>,
+    nullable_args: std::collections::BTreeMap<
+        (usize, String, usize),
+        std::collections::BTreeMap<String, crate::check::Wrap>,
+    >,
     /// The handles a task's body uses, by the byte the statement starts at and
     /// the name (`check::Checked::task_handles`).
     ///
@@ -1129,6 +1135,22 @@ struct Flow<'a> {
     /// what an index that overflows an `i32` gets is the message it gets today
     /// rather than a worse one.
     inferred: bool,
+    /// What is being emitted sits inside the **body of a loop** - so a `break`
+    /// or a `continue` here has somewhere to go (Part I, 3.3).
+    ///
+    /// **The backstop, and the checker is the diagnostic.** `NK1132` is what a
+    /// program actually meets, and it is the one worth writing because it names
+    /// which of a lambda, a task, an `overlap` branch or a fold's step stands in
+    /// the way. This is the guarantee underneath it: a walk that missed a
+    /// corner would otherwise put `break;` into a closure and let `rustc` answer
+    /// about a file nobody wrote (Part III, C.1), and *"the checker's walk is
+    /// complete"* is a thing to hope for rather than a thing that holds. Every
+    /// statement is emitted through one place, so asking here cannot be evaded.
+    ///
+    /// It reaches inward the way `caught` and `in_lambda` do, and it stops at
+    /// exactly the constructs that are a function below: each of them starts
+    /// from [`Flow::PLAIN`], where this is false.
+    in_loop: bool,
 }
 
 impl Flow<'_> {
@@ -1142,7 +1164,16 @@ impl Flow<'_> {
         bound: "",
         widen: false,
         inferred: false,
+        in_loop: false,
     };
+
+    /// The same surroundings, for the body of a loop.
+    fn inside_a_loop(self) -> Self {
+        Flow {
+            in_loop: true,
+            ..self
+        }
+    }
 
     /// The same surroundings, for the expression a `catch` guards.
     fn guarded(self) -> Self {
@@ -2110,6 +2141,8 @@ impl<'p> Emitter<'p> {
             // Both are decided per expression, so a body starts with neither.
             widen: false,
             inferred: false,
+            // And no loop encloses a function's first statement.
+            in_loop: false,
         };
 
         // A function body's last statement is the *function's* value, which is
@@ -3062,10 +3095,50 @@ impl<'p> Emitter<'p> {
             // Kap 3.3. Name for name (ADR-011 D2): the language below spells
             // this the same way, so there is nothing to decide here.
             Stmt::While { cond, body } => {
-                out.push("while ");
-                self.expr(out, cond, depth, flow)?;
-                out.push(" ");
-                self.block(out, body, depth, flow, Tail::Statement)?;
+                // **`while true` is emitted as `loop`**, and this is the one
+                // place the lowering translates what a loop *means* rather than
+                // how it is spelled.
+                //
+                // It is not a departure from name for name (ADR-011 D2) but the
+                // decided case of it:
+                // [ADR-070](../../../docs/specification/adr/adr-070.md) D1 says
+                // `while true { … }` **is** this language's unconditional loop
+                // and that the absence of a second spelling is a decision. Rust's
+                // name for the unconditional loop is `loop`. So `loop` is the
+                // translation of the program and `while true` is a transcription
+                // of its letters - and the letters are what the language below
+                // objects to:
+                //
+                //     warning: denote infinite loops with `loop { ... }`
+                //
+                // a warning on a line nobody wrote, which is Part III C.1's class
+                // one severity down. **The alternative was an `#![allow]` in the
+                // preamble**, and it is worse twice over: it silences a symptom
+                // on every file this compiler will ever write, and it leaves the
+                // second reason below unbuilt.
+                //
+                // **The second reason, which is why this is not cosmetic.** The
+                // two forms do not have the same *type* below. `while true { }`
+                // is `()`; `loop { }` diverges and is `!`, so
+                // `fn f() -> i32 { loop { } }` compiles and the `while` form is
+                // an `E0308`. `open-work.md` §2.12 wants a function that never
+                // returns to stop needing an unreachable `return`, and no
+                // checker change can deliver that while the lowering emits the
+                // form the language below refuses. This is that prerequisite.
+                //
+                // **The literal only**, never a name that happens to be true:
+                // the equivalence is ADR-070 D1's and it is about the written
+                // form, and the polarity is the usual one - claim it where it is
+                // certain and nowhere else.
+                match cond {
+                    Expr::LitBool(true) => out.push("loop "),
+                    _ => {
+                        out.push("while ");
+                        self.expr(out, cond, depth, flow)?;
+                        out.push(" ");
+                    }
+                }
+                self.block(out, body, depth, flow.inside_a_loop(), Tail::Statement)?;
             }
 
             Stmt::For {
@@ -3100,7 +3173,7 @@ impl<'p> Emitter<'p> {
                     out,
                     body,
                     depth,
-                    flow,
+                    flow.inside_a_loop(),
                     Tail::Statement,
                     unwrap.as_deref(),
                 )?;
@@ -3115,6 +3188,35 @@ impl<'p> Emitter<'p> {
             // value of the expression around it, and a `return` there leaves
             // the function past that expression. It falls through to the arm
             // below and stays a `return`.
+            // Kap 3.3 and [ADR-084](../../../docs/specification/adr/adr-084.md).
+            // Name for name, like `while` above and for the same reason
+            // (ADR-011 D2): the language below spells both of these the same way
+            // and gives them the same meaning, so the lowering is a
+            // transcription - which is also what makes the construct cost
+            // nothing at run time (`docs/break-continue-cost.md` §2).
+            //
+            // **No `Tail` arm**, and the semicolon stands even where the
+            // statement is a block's last: a block that ends in a jump diverges,
+            // and Rust reads `{ break; }` in value position as the `!` it is -
+            // the same way `{ return x; }` is read there.
+            //
+            // **And the `in_loop` test is D6's guarantee**, not a second opinion
+            // on the checker's: `NK1132` is the message a program meets, and
+            // this is what makes *"the checker's walk is complete"* something
+            // that holds rather than something to hope for.
+            Stmt::Break | Stmt::Continue => {
+                let word = match stmt {
+                    Stmt::Break => "break",
+                    _ => "continue",
+                };
+                if !flow.in_loop {
+                    return Err(refused!(
+                        "`{word}` has no loop to act on here, and the language below \
+                         would refuse the file this writes (Part I, 3.3)"
+                    ));
+                }
+                out.push(&format!("{word};"));
+            }
             Stmt::Return(Some(value)) if tail == Tail::Return => {
                 self.nullable(out, value, span, depth, flow)?;
             }
@@ -3449,13 +3551,28 @@ impl<'p> Emitter<'p> {
                         out.push(", ");
                     }
                     out.push(&self.name(field.name));
-                    // Part I 2.3: a plain value in a field the struct
-                    // declares nullable. Keyed by the field's own name, because
-                    // a struct literal has one of these per field and the
-                    // statement has only one span.
+                    // Part I 2.3: a plain value in a field the struct declares
+                    // nullable. Keyed by the field's own name, because a struct
+                    // literal has one of these per field and the statement has
+                    // only one span - **and by the type and the value's shape**,
+                    // because a statement may build two literals
+                    // (`check::argument_shape`).
                     let how = self
                         .nullable_fields
-                        .get(&(flow.statement, self.text(field.name).to_string()))
+                        .get(&(
+                            flow.statement,
+                            owner.to_string(),
+                            self.text(field.name).to_string(),
+                        ))
+                        .and_then(|by_shape| {
+                            by_shape.get(
+                                &field
+                                    .value
+                                    .as_ref()
+                                    .map(crate::check::argument_shape)
+                                    .unwrap_or_default(),
+                            )
+                        })
                         .copied();
                     let (before, after) = Self::around(how);
                     if let Some(value) = &field.value {
@@ -4673,9 +4790,16 @@ impl<'p> Emitter<'p> {
                 && matches!(arg, Expr::Variable(_) | Expr::Field { .. });
             // Part I 2.3: a plain value in a parameter the callee declares
             // nullable.
+            // **And which of the statement's calls this is**
+            // (`check::argument_shape`): the three parts above name a
+            // *parameter*, and a statement may call one function twice. The
+            // shape is built only where something was recorded for this
+            // statement, callee and position, so the common argument pays a
+            // lookup and no allocation beyond the one this key already made.
             let (before, after) = Self::around(
                 self.nullable_args
                     .get(&(flow.statement, callee.to_string(), i))
+                    .and_then(|by_shape| by_shape.get(&crate::check::argument_shape(arg)))
                     .copied(),
             );
             // **A count the language below wants in `usize`**
@@ -5333,6 +5457,8 @@ pub(crate) fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
                     visit_expr(value, f);
                 }
             }
+            // Neither holds an expression, so there is nothing here to walk.
+            Stmt::Break | Stmt::Continue => {}
             Stmt::Expr(expr) => visit_expr(expr, f),
         }
     }

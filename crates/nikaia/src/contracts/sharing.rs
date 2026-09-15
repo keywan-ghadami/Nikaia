@@ -1051,7 +1051,10 @@ impl<'a> Analysis<'a> {
                 self.hands_back(function, value, scope);
                 self.expr(function, value, scope);
             }
-            Stmt::Return(None) => {}
+            // A jump carries no value, so nothing here joins two slots and
+            // nothing reaches the result. The classes are about **where a
+            // value goes**, and these send none anywhere.
+            Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
             Stmt::Expr(value) => {
                 // Part I 3.1: the last statement of a value-returning body is
                 // the value, and joining it with the result slot costs nothing

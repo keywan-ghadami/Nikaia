@@ -51,14 +51,37 @@ reproduction, because writing the `<T>` closes only the first of them
 ([ADR-074](specification/adr/adr-074.md)), **a trait whose method pauses** and
 **a map whose key type the language below could not work out** - the second being
 Part I 4.5's own three-line example, which failed in a message naming this
-compiler's internal word for a map ([ADR-080](specification/adr/adr-080.md)), and **three of the four string
-concatenations** - which also took back a *false* refusal, since `"a" + s` was
-typed as a `&str` and made `-> String` an error
-([ADR-081](specification/adr/adr-081.md)), and **a field of a borrowed subject
-handed out by value** - which Part I 6.8 had already decided in its own words, by
-promising that an ownership rule rejects in plain language and that a raw
-internal error reaching the user is a bug
-([ADR-083](specification/adr/adr-083.md)).
+compiler's internal word for a map ([ADR-080](specification/adr/adr-080.md)),
+and **three of the four string concatenations** - which also took back a
+*false* refusal, since `"a" + s` was typed as a `&str` and made `-> String` an
+error ([ADR-081](specification/adr/adr-081.md)), and **a field of a borrowed
+subject handed out by value** - which Part I 6.8 had already decided in its own
+words, by promising that an ownership rule rejects in plain language and that a
+raw internal error reaching the user is a bug
+([ADR-083](specification/adr/adr-083.md)), and **a `rustc` warning on a `while
+true`**, which arrived the day [ADR-084](specification/adr/adr-084.md) made the
+shape writable and left the same day: the fix named for it was a line in the
+emitted preamble, and the right one was to stop emitting the shape `rustc` was
+right about ([ADR-085](specification/adr/adr-085.md)), and **a statement that
+wrapped one call's argument with another call's answer** - `let r = pick(1) +
+pick(null)` came out `pick(Some(1)) + pick(Some(None))`, because Part I 2.3's
+wrap was keyed by the statement, the callee and the position, which name a
+*parameter* rather than a *call*; the same design and the same defect in a
+struct literal, where a statement may build two. **Filed here with the wrong
+characterisation**, which is worth keeping visible:
+[ADR-087](specification/adr/adr-087.md) §3 reported it as *"a `null` in the
+second hole of an `f"…"`"*, because that is where it was met - and the string
+had nothing to do with it. The entry said the condition was *"two holes with a
+non-`null` in the first"*; the condition was two calls to one callee in one
+statement, which a probe two lines longer would have found. **A narrow
+characterisation is a guess about the cause wearing the clothes of a
+reproduction** - and **`&&` and `||` missing from the head of an `if`, a
+`while` and a `for`** - found by writing the loop a language without `break`
+has to write, and closed by the rule that a head parses the same language as a
+body minus the forms a `{` begins ([ADR-086](specification/adr/adr-086.md)).
+That one also corrected a number: the shape it made writable turns out to cost
+exactly what a `break` costs, so [ADR-084](specification/adr/adr-084.md) §4's
+`while` row had been measuring this gap rather than the jump.
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
@@ -93,8 +116,8 @@ for a `Vec` field as well as for text.
 Everything this section has held was found the same way — by running the programs the specification prints,
 which is `crates/nikaia/tests/specification.rs` now rather than a habit: it takes
 every `nika` block in the three pages as far as it goes and hands the ones that
-lower to `rustc`, against two recorded baselines. Of 122 blocks, 52 are programs
-this compiler takes and 29 of those compile below.
+lower to `rustc`, against two recorded baselines. Of 127 blocks, 53 are programs
+this compiler takes and 31 of those compile below.
 
 What left: a trait whose method **pauses** is `NK1129`, an `impl` that disagrees
 with its trait about which methods exist is `NK1130`, Part I 4.5's map example
@@ -111,6 +134,101 @@ strings in Part I 7 held holes that
 [ADR-035](specification/adr/adr-035.md) D5 made into text. A page can be wrong in
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
+
+### 1.1. A `catch` that ignores the error warns about a name the emitter wrote
+
+```nika
+fn energy(text: &str) -> i64 {
+    return text.len() as i64 catch { 1000 }
+}
+```
+
+```text
+warning: unused variable: `error`
+   --> n-body.rs:104:13
+    |
+104 |         Err(error) => { 1000 },
+```
+
+The author wrote `catch { 1000 }`. The name `error` is the **emitter's**: Kap 7.1
+says a handler sees the failure under that name, so the `match` arm binds it
+whether or not the handler reads it. A handler that supplies a constant fallback
+— which is the common shape, and the one Part I 7.1 teaches first — therefore
+gets a warning about a binding that exists nowhere in the program.
+
+That is [Part III C.1](specification/30-nikaia-tooling.md)'s class exactly, one
+severity down, and it is the second half of what
+[ADR-074](specification/adr/adr-074.md)'s survey turned up.
+
+*Why it is not the same as the two beside it:* the same survey found
+`unused variable: x` and `unused variable: k` in `tests/samples/`, and those are
+names the **user** wrote — a `let` and a `for` binding. The message is actionable
+and only the file it names is wrong, which is a smaller and different problem.
+This one is about something nobody wrote at all.
+
+*What closes it:* bind `_error` where the handler does not mention the name.
+`contracts::order::names_in_block` already answers *"does this block mention
+`error`"* and is deliberately over-approximate — it counts a word inside raw
+text, so an `f"{error}"` is a mention — which is the safe direction here: a false
+*"it is mentioned"* keeps today's binding and today's warning, and a false
+*"it is not"* would be a program that does not compile. The polarity has to be
+checked against a hole, a nested block and a handler that only passes `error` on.
+
+*And not with an `allow`*, for [ADR-074](specification/adr/adr-074.md) D3's
+reason: the warning is `rustc` reading the emitted code correctly, so the thing
+to change is the emitted code.
+
+### 1.2. `??` binds looser than a comparison, and `a ?? 0 > 3` reads as though it does not
+
+```nika
+let x = a ?? 0 > 3     // is `a ?? (0 > 3)`, not `(a ?? 0) > 3`
+```
+
+[ADR-066](specification/adr/adr-066.md) D4 put `??` above the range level, which
+puts it above comparison too, so the fallback swallows everything to its right.
+Written out, that is what the grammar says and it is not what the line looks
+like.
+
+*Why it is a suspicion and not a defect:* it is **consistent** — a head parses it
+exactly as a body does ([ADR-076](specification/adr/adr-076.md)) — and in the
+shape above it produces a type error rather than a wrong answer, because a
+`bool` does not fit an `i64`. Whether there is a shape where **both** readings
+type-check, so the program silently takes the other one, is precisely what has
+not been established; until it is, this is a question about the ordinary grammar
+rather than a fault in it.
+
+*Found by* [ADR-076](specification/adr/adr-076.md)'s own first test, which
+asserted the other reading and was wrong.
+
+### 1.3. A grammar fold's `init`, `step` and `merge` are not checked at all
+
+```nika
+grammar Nums {
+    rule N -> i64 = d:i64 -> { d }
+    pub rule file -> i64 = fold(N, zero, fn(acc, m) { nothing_declares_this })
+}
+```
+
+lowers without a word. A fold's three lambdas are expressions inside a
+**pattern**, and `check`'s grammar walk takes a rule's *action block* and nothing
+else — so `NK1117` never sees the body, and neither does anything else. What
+reaches `rustc` is `|acc, m| { nothing_declares_this }`.
+
+*Why it is a defect and not a gap in coverage:* the same walk is what refuses an
+undeclared name everywhere else in the language, and a lambda that the compiler
+does not look inside is a lambda whose errors are the backend's.
+
+*What was already done about it:*
+[ADR-073](specification/adr/adr-073.md) D4 closes the half a jump can reach — a
+`break` in a fold step is `NK1132` rather than *"`break` outside of a loop"* —
+and deliberately no more, because walking those bodies with the whole checker
+would newly refuse programs for reasons that have nothing to do with the
+construct that found this. Its D6 is the reason the *rest* of the gap cannot bite
+a jump either: the refusal is in the lowering as well, where no walk has to be
+complete.
+
+*What closes it:* walking them with the whole checker, with the frame the
+lambda's parameters make, and running the corpus to see what it newly refuses.
 
 ## 2. Decided and unbuilt
 
@@ -490,13 +608,36 @@ that line cannot tell dead code from a mistake.
 [ADR-070](specification/adr/adr-070.md) D3 decided it. It is also the one real
 cost of D1's *no second keyword*, which is why the two were settled together.
 
-*What it needs, and why it is small here and is not small in Rust:* a `while`
-whose condition is the literal `true` cannot be left except by `return`, because
-`break` and `continue` do not exist — not in the grammar, not in the parser, and
-not among the reserved words. So the analysis other languages need for this
-question is, here, one test on the condition. The polarity is the usual one: say
-*"cannot be reached"* only where the condition is the literal, never where it is a
-name that happens to be true.
+*What it needs, and what it needed before
+[ADR-073](specification/adr/adr-073.md):* a `while` whose condition is the
+literal `true` can be left in exactly two ways — a `return`, and a `break` bound
+to **this** loop. So the test is *"the condition is the literal `true` **and** no
+`break` in the body is bound to this loop"*, which is a walk of the body rather
+than a look at the head.
+
+It is still small, and smaller than it sounds: the checker already keeps the loop
+count that answers it ([ADR-073](specification/adr/adr-073.md) D4's boundaries),
+so what this needs is to record, per loop, whether a jump reached it — not a new
+analysis.
+
+*And the half that was not the checker's is now in place.* This could not have
+been built at all while the lowering emitted `while true`, whatever the checker
+did: `while true { }` is `()` in the language below and `loop { }` is `!`, so a
+function whose body is an unconditional loop and whose declared type is `i32` was
+an `E0308` there. The checker would have stopped refusing and `rustc` would have
+refused instead, about a file nobody wrote.
+[ADR-074](specification/adr/adr-074.md) D1 emits `loop`, so what is left here is
+the checker's half alone.
+
+*What this entry said before, and why the correction is written rather than
+edited away:* the version before ADR-073 argued the work was small **because
+`break` and `continue` do not exist**, so *"the analysis other languages need for
+this question is, here, one test on the condition."* That was true and is not,
+and it is the kind of sentence that stays quoted long after its premise leaves.
+
+The polarity is unchanged and is the usual one: say *"cannot be reached"* only
+where the condition is the literal and no jump leaves it, never where the
+condition is a name that happens to be true.
 
 ### 2.13. A `comptime` binding at item level has nowhere to stand
 

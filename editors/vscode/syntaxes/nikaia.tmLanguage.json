@@ -301,8 +301,9 @@
           "match": "\\b(while|for|in)\\b"
         },
         {
+          "comment": "ADR-084: `break` and `continue` leave the innermost loop and start its next turn. They are here with `return` rather than with `while` and `for` because what they are is a jump - `keyword.control.loop` is the word that opens a loop, and these two are words that leave one. Neither takes a value and neither takes a label, so there is nothing after either to scope.",
           "name": "keyword.control.flow.nika",
-          "match": "\\b(return)\\b"
+          "match": "\\b(return|break|continue)\\b"
         },
         {
           "comment": "ADR-023 / ADR-025: errors are not a Result. `throw` raises, `catch { … }` is a postfix expression that supplies a replacement value or leaves the function.",
@@ -324,7 +325,7 @@
           "match": "\\bselect\\b(?=\\s*\\{)"
         },
         {
-          "comment": "Part II 10.5. A whole `dsl … { … } eod` is an embedded block and a `dsl … from …` its own match; this catches a `dsl` neither of them reached. `from` is deliberately NOT here — it is not a reserved word, and `fn countdown(from: i32)` in tests/samples/while_loop.nika uses it as a parameter name.",
+          "comment": "Part II 10.5. A whole `dsl … { … } eod` is an embedded block and a `dsl … from …` its own match; this catches a `dsl` neither of them reached. `from` is deliberately NOT here — it has its own scope, `keyword.control.dsl.from.nika`, in the `dsl … from …` match above, and catching it again here would colour the halves of one construct differently.",
           "name": "keyword.control.dsl.nika",
           "match": "(?<!::)\\b(dsl|eod)\\b"
         },

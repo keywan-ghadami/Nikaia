@@ -123,7 +123,7 @@ return   self    spawn   struct    sync     throw    throws  true
 use      while
 ```
 
-**`comptime` is on the list for the opposite reason to the four after it**: it is
+**`comptime` is on the list for the opposite reason to the two after it**: it is
 reserved *for* a construct rather than against the possibility of one, and the
 construct exists — a statement inside a function body (Part II, 10.2).
 
@@ -135,13 +135,15 @@ is what says so. `const` stays on the list rather than becoming an ordinary name
 because it is the first thing a reader arriving from another language will type,
 and a reserved word can be given a message where a name cannot.
 
-**`break`, `continue` and `loop` are on the list and are not constructs**
-([ADR-071](adr/adr-071.md) D2). Reserving a word is not adding one: `break` and
-`continue` are questions the language has not answered — its loops are left by
-their condition or by `return` — and `loop` is one it has answered *no* to
-(3.3, [ADR-070](adr/adr-070.md) D1) and reserved anyway, because that no has a
+**`loop` is on the list and is not a construct** ([ADR-071](adr/adr-071.md) D2).
+Reserving a word is not adding one: 3.3 and [ADR-070](adr/adr-070.md) D1 answered
+*no* to a `loop` keyword, and the word is reserved anyway, because that no has a
 written condition for reopening and the word has to still be free on the day it
 does. It is the same move [ADR-050](adr/adr-050.md) D2 made for `overlap`.
+
+`break` and `continue` were reserved on the same terms and are now constructs
+(3.3, [ADR-084](adr/adr-084.md)) — which is what a reservation is for, and why
+their arrival cost no program a name.
 
 **`seq` has left the list**, which is the direction a reserved word may move
 without breaking anything: the construct is withdrawn
@@ -541,6 +543,31 @@ let status = if age >= 18 {
 }
 ```
 
+**A condition is an ordinary expression — every one the language has**, with the
+same operators, the same precedence and the same associativity as anywhere else
+([ADR-087](adr/adr-087.md) D1). `&&`, `||`, `!`, `??`, `as`, `null`, a tuple, a
+range: nothing is special about this position.
+
+**Except one thing, and it is about the brace rather than about the
+expression.** The `{` after the condition opens the **body**, so an expression
+that *starts* with a brace has to be parenthesised — otherwise the compiler
+cannot tell where the condition ends:
+
+```nika
+if p == (P { x: 1 }) {          // the parentheses say which `{` is which
+    …
+}
+
+if (match n { 1 => 10, _ => 20 }) > 15 {
+    …
+}
+```
+
+That is the whole of the difference between the head of an `if`, a `while` or a
+`for` and any other position ([ADR-087](adr/adr-087.md) D2) — and it is a rule
+about spelling, not about meaning: everything is reachable, and one character
+says so.
+
 ### 3.3. Loops
 Loops allow code to be repeated.
 
@@ -571,6 +598,69 @@ expression — it may be given a name, passed, or indexed with — and it binds
 `n - 1` rather than a range with something subtracted from it. That is the
 reading a loop head wants and the only one that is ever useful.
 
+**Leaving a loop early: `break` and `continue`**
+
+`break` leaves the loop. `continue` skips the rest of this turn and starts the
+next one. Both act on the **innermost** loop around them
+([ADR-084](adr/adr-084.md) D1):
+
+```nika
+let mut first_even = 0 - 1
+for n in numbers {
+    if n % 2 != 0 {
+        continue                 // not this one; take the next
+    }
+    first_even = n
+    break                        // found it; stop looking
+}
+println(f"{first_even}")         // the loop is over, the program is not
+```
+
+A `break` leaves the **loop** and a `return` leaves the **function**. That is the
+difference worth keeping straight: after the `break` above, the `println` runs.
+
+Three things about them, and each is a decision rather than an accident:
+
+* **Neither takes a value.** A loop here is a statement and hands back nothing,
+  so `break` has nothing to carry out of one. `break n` is refused rather than
+  read as a `break` followed by a statement `n` — which is what it would
+  otherwise mean, with the value quietly dropped
+  ([ADR-084](adr/adr-084.md) D3):
+
+  ```
+  error[NK1133]: nothing after a `break` in the same block is reached
+  ```
+
+* **There is no label.** `break` acts on the loop it is written in and there is
+  no way to name an outer one ([ADR-084](adr/adr-084.md) D2). To leave two loops
+  at once, leave the inner one and test outside it — or `return`, where the
+  function has nothing left to do.
+
+* **A jump does not leave a function**, so a `break` whose loop is outside a
+  **lambda**, a **task** (`spawn`), an **`overlap` branch** or a DSL fold's step
+  is refused ([ADR-084](adr/adr-084.md) D4). Each of those is a function of its
+  own, and a jump is a jump to a place in *this* one:
+
+  ```nika
+  for x in xs {
+      let each = fn (n) {
+          break                  // error[NK1132]: the nearest loop is
+      }                          //               outside this lambda
+  }
+  ```
+
+  The way out is to decide inside and act outside — hand back a `bool` and let
+  the loop test it. A `catch` handler is **not** one of these: a `break` in one
+  leaves the loop around it, which is usually exactly what is wanted
+  ([ADR-084](adr/adr-084.md) D5):
+
+  ```nika
+  for p in paths {
+      let text = fs::read_to_string(p) catch { break }
+      seen += text.len()
+  }
+  ```
+
 **A loop can fail.** Some things a `for` walks are read *as it goes* — standard
 input's lines are the one `std` has today. Getting the next one is real work,
 and real work can fail. When it does, the loop stops and **the failure leaves
@@ -600,11 +690,28 @@ Most loops cannot fail. A range, a list, a map: nothing is read, so nothing
 about them changes.
 
 **And there is no third form.** A loop that does not end on its own is written
-`while true { … }`; there is no `loop` keyword, and that is a decision rather than
-an omission ([ADR-070](adr/adr-070.md) D1). Go is the precedent, read carefully:
-it has no `while` at all and lets `for` carry every loop shape, so what it shows
-is that one keyword is enough — not that the unconditional loop is unnecessary.
-Nikaia picked the other word to be the general one.
+`while true { … }`, and it is left by a `break`:
+
+```nika
+let mut n = 0
+while true {
+    n += 1
+    if n == 5 {
+        break
+    }
+}
+```
+
+There is no `loop` keyword, and that is a decision rather than an omission
+([ADR-070](adr/adr-070.md) D1). Go is the precedent, read carefully: it has no
+`while` at all and lets `for` carry every loop shape, so what it shows is that one
+keyword is enough — not that the unconditional loop is unnecessary. Nikaia picked
+the other word to be the general one.
+
+The word stays reserved, against the one thing that would reopen the question: a
+`break` that hands back a **value** would make `while true` read as a lie, since
+the head says the loop does not end and the body would say what it ends *with*.
+This `break` hands back nothing ([ADR-084](adr/adr-084.md) D7), so it does not.
 
 ### 3.4. Pattern Matching (`match`)
 The `match` expression compares a value against a series of patterns. It is similar to a "switch" statement in other languages but ensures that every possible case is handled.

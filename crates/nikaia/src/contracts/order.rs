@@ -881,38 +881,60 @@ fn callee_of(parsed: &Parsed, expr: &Expr) -> Option<String> {
     }
 }
 
-/// Whether a block can leave the function it is in.
+/// Whether a block can leave **by a door other than its own last statement**.
 ///
-/// Conservative and shallow on purpose: any `return` or `throw` anywhere in it,
+/// Named for the `return` and the `throw` it was written for, and it counts a
+/// `break` and a `continue` too. What the caller needs is not *"does this leave
+/// the function"* but the consequence ADR-034 draws from that: the statement
+/// after this one is **conditional on this one having succeeded**, so the two
+/// may not be overlapped. A `break` in a handler makes the next statement
+/// conditional exactly as a `return` does; that the jump lands inside the same
+/// function rather than outside it changes nothing about the question.
+///
+/// Conservative and shallow otherwise: any `return` or `throw` anywhere in it,
 /// however deeply nested, counts. A handler that merely supplies a fallback
 /// value does not, and that is the case this exists to let through.
+///
+/// **A jump bound to a loop inside the block does not count**, which is the one
+/// place this is exact rather than conservative, and it is exact because being
+/// so is three lines: a `break` inside a `while` written in the handler leaves
+/// that `while` and lands in the handler, so the statement after the handler is
+/// reached either way.
 fn diverts(stmts: &[crate::ast::Spanned<Stmt>]) -> bool {
+    diverts_within(stmts, false)
+}
+
+/// `bound` says a loop written *inside* the block being asked about stands
+/// between here and the block's end, so a jump here is that loop's and not a
+/// door out of the block.
+fn diverts_within(stmts: &[crate::ast::Spanned<Stmt>], bound: bool) -> bool {
     stmts.iter().any(|stmt| match &stmt.node {
         Stmt::Return(_) => true,
+        Stmt::Break | Stmt::Continue => !bound,
         Stmt::Expr(expr) | Stmt::Let { value: expr, .. } | Stmt::Comptime { value: expr, .. } => {
-            holds_throw(expr)
+            holds_throw(expr, bound)
         }
-        Stmt::Assign { value, .. } => holds_throw(value),
-        Stmt::For { body, .. } | Stmt::While { body, .. } => diverts(&body.stmts),
+        Stmt::Assign { value, .. } => holds_throw(value, bound),
+        Stmt::For { body, .. } | Stmt::While { body, .. } => diverts_within(&body.stmts, true),
     })
 }
 
-/// Whether an expression can throw out of the block it is in.
-fn holds_throw(expr: &Expr) -> bool {
+/// Whether an expression can leave the block it is in.
+fn holds_throw(expr: &Expr, bound: bool) -> bool {
     match expr {
         Expr::Throw(_) => true,
-        Expr::Block(block) | Expr::Overlap(block) => diverts(&block.stmts),
+        Expr::Block(block) | Expr::Overlap(block) => diverts_within(&block.stmts, bound),
         Expr::If {
             then_branch,
             else_branch,
             ..
         } => {
-            diverts(&then_branch.stmts)
+            diverts_within(&then_branch.stmts, bound)
                 || else_branch
                     .as_ref()
-                    .is_some_and(|block| diverts(&block.stmts))
+                    .is_some_and(|block| diverts_within(&block.stmts, bound))
         }
-        Expr::Match { arms, .. } => arms.iter().any(|arm| holds_throw(&arm.body)),
+        Expr::Match { arms, .. } => arms.iter().any(|arm| holds_throw(&arm.body, bound)),
         _ => false,
     }
 }
@@ -1109,6 +1131,8 @@ pub(super) fn names_in_block(
                     names_in(parsed, value, out);
                 }
             }
+            // Neither mentions a name, so neither contributes one.
+            Stmt::Break | Stmt::Continue => {}
         }
     }
 }

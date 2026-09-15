@@ -524,12 +524,12 @@ pub(crate) fn visit_stmt(parsed: &Parsed, stmt: &Stmt, f: &mut impl FnMut(&Expr)
         Stmt::For { iter, .. } => visit_expr(parsed, iter, f),
         Stmt::While { cond, .. } => visit_expr(parsed, cond, f),
         Stmt::Return(Some(value)) => visit_expr(parsed, value, f),
-        Stmt::Return(None) => {}
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
         Stmt::Expr(expr) => visit_expr(parsed, expr, f),
     }
 }
 
-pub(crate) fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
+pub(crate) fn visit_stmt_blocks<'a>(stmt: &'a Stmt, f: &mut impl FnMut(&'a Block)) {
     match stmt {
         Stmt::For { body, .. } | Stmt::While { body, .. } => f(body),
         Stmt::Let { value, .. } | Stmt::Comptime { value, .. } | Stmt::Expr(value) => {
@@ -540,7 +540,7 @@ pub(crate) fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
             visit_expr_blocks(value, f);
         }
         Stmt::Return(Some(value)) => visit_expr_blocks(value, f),
-        Stmt::Return(None) => {}
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
     }
 }
 
@@ -551,7 +551,7 @@ pub(crate) fn visit_stmt_blocks(stmt: &Stmt, f: &mut impl FnMut(&Block)) {
 /// … }` is not deferred - so what it calls, the function around it calls. The
 /// one shape that is different is `spawn`, whose body runs later and elsewhere;
 /// it is a detached context (Part I, 5.4) and is not walked here.
-fn visit_expr_blocks(expr: &Expr, f: &mut impl FnMut(&Block)) {
+fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block)) {
     match expr {
         Expr::Block(block) | Expr::Overlap(block) | Expr::Closure { body: block, .. } => f(block),
         Expr::Call { func, args, config } => {

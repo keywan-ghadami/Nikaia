@@ -355,6 +355,21 @@ const cases = [
     ],
   },
   {
+    comment:
+      "ADR-084. A jump is scoped with `return` and not with `while`: " +
+      "`keyword.control.loop` opens a loop and these two leave one. And " +
+      "neither takes a value or a label, so the word is the whole token.",
+    name: "`break` and `continue` are control flow, like `return`",
+    src: `for i in 0..n {\n    if i % 2 == 0 { continue }\n    if i > 3 { break }\n}\nreturn 0\n`,
+    // In source order: the runner walks the token stream with a cursor.
+    expect: [
+      ["for", "keyword.control.loop.nika"],
+      ["continue", "keyword.control.flow.nika"],
+      ["break", "keyword.control.flow.nika"],
+      ["return", "keyword.control.flow.nika"],
+    ],
+  },
+  {
     name: "a char is one character",
     src: `match c {\n    'n' => { out.push('\\n') }\n}\n`,
     expect: [

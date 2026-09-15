@@ -12,61 +12,66 @@
 10-nikaia-light.md #12 lowered (a body)  print("{}")               // prints {}
 10-nikaia-light.md #13 lowered (a body)  let result = {
 10-nikaia-light.md #14 lowered (a body)  let age = 18
-10-nikaia-light.md #15 lowered (a body)  let mut count = 0
-10-nikaia-light.md #16 lowered (a body)  // Iterates from 0 to 4 (5 is excluded)
-10-nikaia-light.md #17 lowered (as written)  fn tally() -> i64 throws {           // without `throws…
-10-nikaia-light.md #18 lowered (a body)  let value = 2
-10-nikaia-light.md #19 refused (a body) [NK1117]  match step.0 {
-10-nikaia-light.md #20 refused (a body) [NK1117]  // If find_user returns null, 'name' becomes null.
-10-nikaia-light.md #21 lowered (as written)  // file: users.nika
-10-nikaia-light.md #22 lowered (as written)  // file: users.nika
-10-nikaia-light.md #23 lowered (as written) [about-a-refusal]  // file: main.nika
-10-nikaia-light.md #24 lowered (as written)  // Defining behavior for the User struct
-10-nikaia-light.md #25 lowered (as written)  enum Message {
-10-nikaia-light.md #26 fragment (as written)  let numbers = [1, 2, 3, 4]
-10-nikaia-light.md #27 refused (a body) [NK1117]  names.sort()                                  // by name
-10-nikaia-light.md #28 lowered (a body)  let pair = ("*", 3)          // (&str, i64)
-10-nikaia-light.md #29 lowered (items, then a body)  use std::collections::HashMap
-10-nikaia-light.md #30 lowered (as written)  struct Box[T] {
-10-nikaia-light.md #31 refused (as written) [about-a-refusal NK1126]  fn shout[T](x: T) -> String {
-10-nikaia-light.md #32 lowered (as written)  trait Summarize {
-10-nikaia-light.md #33 lowered (as written)  trait Summarize {
-10-nikaia-light.md #34 fragment (as written) [about-a-refusal sketch]  // Definition
-10-nikaia-light.md #35 fragment (as written)  fn init {
-10-nikaia-light.md #36 refused (a body) [NK1117]  let complex = users.map fn(user) {
-10-nikaia-light.md #37 refused (a body) [NK1117]  let ids = users.map fn(user) { user.id }
-10-nikaia-light.md #38 refused (a body) [NK1117]  Server::new()
-10-nikaia-light.md #39 refused (a body) [NK1117]  // The count comes from the list, so a local may be cal…
-10-nikaia-light.md #40 fragment (as written)  let prefix = "User: "
-10-nikaia-light.md #41 lowered (a body) [about-a-refusal]  let prefix = "Log: "
-10-nikaia-light.md #42 fragment (as written) [sketch]  fn serve(db: &Connection) { … }
-10-nikaia-light.md #43 lowered (a body) [sketch]  let db = SharedMut(postgres::connect("…"))
-10-nikaia-light.md #44 lowered (a body) [sketch]  let db = Shared(postgres::connect("…"))
-10-nikaia-light.md #45 fragment (as written)  keep(Shared(connect(url)))                      // an a…
-10-nikaia-light.md #46 fragment (as written) [sketch]  let kasse: SharedMut[i32] = ...
-10-nikaia-light.md #47 lowered (as written) [sketch]  struct FileHandle {
-10-nikaia-light.md #48 lowered (as written)  impl Cleanup for BufferedFile {
-10-nikaia-light.md #49 refused (as written) [sketch NK2605]  fn report(config: &Config) {
-10-nikaia-light.md #50 fragment (as written) [sketch]  struct Token {
-10-nikaia-light.md #51 lowered (as written)  @borrowed
-10-nikaia-light.md #52 fragment (as written) [sketch]  @borrowed
-10-nikaia-light.md #53 lowered (a body)  let mut users = load_users()
-10-nikaia-light.md #54 lowered (as written)  fn fetch_config() throws -> String {
-10-nikaia-light.md #55 lowered (as written)  enum ConfigError {
-10-nikaia-light.md #56 refused (a body) [NK1117]  if !fs::exists(path) {
-10-nikaia-light.md #57 lowered (as written)  fn load() throws -> Config {
-10-nikaia-light.md #58 lowered (a body)  let config = load() catch {
-10-nikaia-light.md #59 fragment (as written)  let config = load() catch {
-10-nikaia-light.md #60 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
-10-nikaia-light.md #61 fragment (as written)  use std::panic
-10-nikaia-light.md #62 fragment (as written)  let (user, rights, prefs) = overlap {
-10-nikaia-light.md #63 lowered (a body)  spawn fn { println("I am running in the background!") }
-10-nikaia-light.md #64 lowered (a body) [about-a-refusal]  let message = "Hello"
-10-nikaia-light.md #65 lowered (a body)  let message = "Hello"
-10-nikaia-light.md #66 lowered (as written)  // file: src/parse.nika      (the same package as src/m…
-10-nikaia-light.md #67 lowered (as written)  // file: src/main.nika
-10-nikaia-light.md #68 lowered (as written)  use http
-10-nikaia-light.md #69 lowered (as written)  // file: network.nika
+10-nikaia-light.md #15 fragment (as written) [sketch]  if p == (P { x: 1 }) {          // the parentheses say …
+10-nikaia-light.md #16 lowered (a body)  let mut count = 0
+10-nikaia-light.md #17 lowered (a body)  // Iterates from 0 to 4 (5 is excluded)
+10-nikaia-light.md #18 refused (a body) [NK1117]  let mut first_even = 0 - 1
+10-nikaia-light.md #19 refused (a body) [about-a-refusal NK1117,NK1132]  for x in xs {
+10-nikaia-light.md #20 refused (a body) [NK1117]  for p in paths {
+10-nikaia-light.md #21 lowered (as written)  fn tally() -> i64 throws {           // without `throws…
+10-nikaia-light.md #22 lowered (a body)  let mut n = 0
+10-nikaia-light.md #23 lowered (a body)  let value = 2
+10-nikaia-light.md #24 refused (a body) [NK1117]  match step.0 {
+10-nikaia-light.md #25 refused (a body) [NK1117]  // If find_user returns null, 'name' becomes null.
+10-nikaia-light.md #26 lowered (as written)  // file: users.nika
+10-nikaia-light.md #27 lowered (as written)  // file: users.nika
+10-nikaia-light.md #28 lowered (as written) [about-a-refusal]  // file: main.nika
+10-nikaia-light.md #29 lowered (as written)  // Defining behavior for the User struct
+10-nikaia-light.md #30 lowered (as written)  enum Message {
+10-nikaia-light.md #31 fragment (as written)  let numbers = [1, 2, 3, 4]
+10-nikaia-light.md #32 refused (a body) [NK1117]  names.sort()                                  // by name
+10-nikaia-light.md #33 lowered (a body)  let pair = ("*", 3)          // (&str, i64)
+10-nikaia-light.md #34 lowered (items, then a body)  use std::collections::HashMap
+10-nikaia-light.md #35 lowered (as written)  struct Box[T] {
+10-nikaia-light.md #36 refused (as written) [about-a-refusal NK1126]  fn shout[T](x: T) -> String {
+10-nikaia-light.md #37 lowered (as written)  trait Summarize {
+10-nikaia-light.md #38 lowered (as written)  trait Summarize {
+10-nikaia-light.md #39 fragment (as written) [about-a-refusal sketch]  // Definition
+10-nikaia-light.md #40 fragment (as written)  fn init {
+10-nikaia-light.md #41 refused (a body) [NK1117]  let complex = users.map fn(user) {
+10-nikaia-light.md #42 refused (a body) [NK1117]  let ids = users.map fn(user) { user.id }
+10-nikaia-light.md #43 refused (a body) [NK1117]  Server::new()
+10-nikaia-light.md #44 refused (a body) [NK1117]  // The count comes from the list, so a local may be cal…
+10-nikaia-light.md #45 fragment (as written)  let prefix = "User: "
+10-nikaia-light.md #46 lowered (a body) [about-a-refusal]  let prefix = "Log: "
+10-nikaia-light.md #47 fragment (as written) [sketch]  fn serve(db: &Connection) { … }
+10-nikaia-light.md #48 lowered (a body) [sketch]  let db = SharedMut(postgres::connect("…"))
+10-nikaia-light.md #49 lowered (a body) [sketch]  let db = Shared(postgres::connect("…"))
+10-nikaia-light.md #50 fragment (as written)  keep(Shared(connect(url)))                      // an a…
+10-nikaia-light.md #51 fragment (as written) [sketch]  let kasse: SharedMut[i32] = ...
+10-nikaia-light.md #52 lowered (as written) [sketch]  struct FileHandle {
+10-nikaia-light.md #53 lowered (as written)  impl Cleanup for BufferedFile {
+10-nikaia-light.md #54 refused (as written) [sketch NK2605]  fn report(config: &Config) {
+10-nikaia-light.md #55 fragment (as written) [sketch]  struct Token {
+10-nikaia-light.md #56 lowered (as written)  @borrowed
+10-nikaia-light.md #57 fragment (as written) [sketch]  @borrowed
+10-nikaia-light.md #58 lowered (a body)  let mut users = load_users()
+10-nikaia-light.md #59 lowered (as written)  fn fetch_config() throws -> String {
+10-nikaia-light.md #60 lowered (as written)  enum ConfigError {
+10-nikaia-light.md #61 refused (a body) [NK1117]  if !fs::exists(path) {
+10-nikaia-light.md #62 lowered (as written)  fn load() throws -> Config {
+10-nikaia-light.md #63 lowered (a body)  let config = load() catch {
+10-nikaia-light.md #64 fragment (as written)  let config = load() catch {
+10-nikaia-light.md #65 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
+10-nikaia-light.md #66 fragment (as written)  use std::panic
+10-nikaia-light.md #67 fragment (as written)  let (user, rights, prefs) = overlap {
+10-nikaia-light.md #68 lowered (a body)  spawn fn { println("I am running in the background!") }
+10-nikaia-light.md #69 lowered (a body) [about-a-refusal]  let message = "Hello"
+10-nikaia-light.md #70 lowered (a body)  let message = "Hello"
+10-nikaia-light.md #71 lowered (as written)  // file: src/parse.nika      (the same package as src/m…
+10-nikaia-light.md #72 lowered (as written)  // file: src/main.nika
+10-nikaia-light.md #73 lowered (as written)  use http
+10-nikaia-light.md #74 lowered (as written)  // file: network.nika
 20-nikaia-advance.md #1 lowered (as written)  grammar Json {
 20-nikaia-advance.md #2 fragment (as written)  // The compiler runs the Json grammar at build time.
 20-nikaia-advance.md #3 refused (as written) [NK1117]  fn parse_input(input: String) throws {

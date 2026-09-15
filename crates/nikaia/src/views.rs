@@ -570,6 +570,9 @@ impl Scanner<'_> {
                     self.stores(cond, &stmt.span);
                     self.block(body, false);
                 }
+                // Neither stores anything and neither carries a value, so
+                // there is no destination for a view to reach here.
+                Stmt::Break | Stmt::Continue => {}
             }
         }
     }
@@ -792,7 +795,7 @@ fn stmt_exprs(stmt: &Stmt) -> Vec<&Expr> {
         Stmt::Assign { target, value, .. } => vec![target, value],
         Stmt::For { iter, .. } => vec![iter],
         Stmt::While { cond, .. } => vec![cond],
-        Stmt::Return(None) => Vec::new(),
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => Vec::new(),
     }
 }
 

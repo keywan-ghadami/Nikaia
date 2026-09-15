@@ -225,22 +225,34 @@ pub struct Checked {
     ///
     /// `nullable_sites` covers the three positions a statement *is* - an
     /// annotated `let`, an assignment, a `return` - and a struct literal has
-    /// one position per field, so it needs the name too. Same shape as
-    /// `shared_sites`, which covers the same construct for the same kind of
-    /// reason.
-    pub nullable_fields: BTreeMap<(usize, String), Wrap>,
+    /// one position per field, so it needs the name too.
+    ///
+    /// **And the type, and [`argument_shape`]**, for `nullable_args`' reason and
+    /// found by the same probe: a statement may build two literals.
+    /// `f(P { x: 1 }, P { x: null })` had one key for two fields and came out
+    /// `P { x: Some(1) }, P { x: Some(None) }`; `f(P { x }, Q { x })` would have
+    /// had one for two *structs*. The type is `unaliased` on both sides, so the
+    /// two passes spell it the same.
+    pub nullable_fields: BTreeMap<(usize, String, String), BTreeMap<String, Wrap>>,
     /// The **call arguments** where a plain value stands in a nullable
     /// parameter, as the byte the statement starts at, the callee as the source
     /// wrote it, and the argument's position (Part I 2.3).
     ///
-    /// The third position D4's wrap needs a key for, and the narrowest one that
-    /// works: an expression carries no span, a statement may hold several calls,
-    /// and one call may pass several arguments - so the callee's written name
-    /// and the index together say which. **The written name and not the
-    /// resolved key**, because the emitter has only what the source says: a
-    /// method's key is `Type::method` and a constructor's is `Type::new`, and
-    /// neither is what stands at the call.
-    pub nullable_args: BTreeMap<(usize, String, usize), Wrap>,
+    /// The third position D4's wrap needs a key for. An expression carries no
+    /// span, so the key is built out of what both sides can see: the statement,
+    /// the callee's **written** name - the emitter has only what the source
+    /// says, and a method's key is `Type::method` while a constructor's is
+    /// `Type::new`, neither of which stands at the call - the argument's
+    /// position, and [`argument_shape`].
+    ///
+    /// **The shape is what says which *call***, and leaving it out was a
+    /// defect rather than a simplification. The three outer parts name a
+    /// *parameter*; a statement may call the same function twice, and then
+    /// `let r = pick(1) + pick(null)` had one key for two arguments. The last
+    /// one walked won, so one of them was emitted with the other's answer -
+    /// `pick(Some(1)) + pick(Some(None))`, which `rustc` refuses about a file
+    /// nobody wrote (Part III, C.1).
+    pub nullable_args: BTreeMap<(usize, String, usize), BTreeMap<String, Wrap>>,
     /// The **narrowing conversions**, as the byte the statement they stand in
     /// starts at and the type converted to (ADR-043 D4).
     ///
@@ -317,6 +329,8 @@ pub fn check_program(
         enclosing: BTreeMap::new(),
         throwing: false,
         caught: false,
+        loops: 0,
+        barrier: None,
         current: None,
         modules: modules.clone(),
         fallible_methods: BTreeSet::new(),
@@ -401,6 +415,42 @@ pub enum Narrowing {
 /// literal's field — and a call's argument, which is the fourth written a fifth
 /// way. Before this they were four copies of the same three conditions, and the
 /// copies had already drifted in what they did with an unknown type.
+/// **Which of a statement's calls an argument belongs to**, as text both the
+/// checker and the emitter can produce from the same tree.
+///
+/// A key of statement, callee and position names a *parameter*; a statement may
+/// call one function more than once, and the argument itself is what tells the
+/// two calls apart. The alternatives were weighed and each fails on something
+/// this does not:
+///
+///   * **the argument's span** - an argument has none. One node type does:
+///     [ADR-081](../../docs/specification/adr/adr-081.md) D1 gave `Expr::Binary`
+///     a span of its own, for a key of exactly this kind. It is one node and an
+///     argument is rarely that one, so there is nothing general to key by -
+///     which is the reason this whole side table exists;
+///   * **the address of the `Expr`** - stable for a statement walked twice, and
+///     not for an `f"…"` hole, which is *text* until each pass parses it into a
+///     tree of its own ([`crate::emit::literal_expressions`]);
+///   * **the order the calls are walked in** - which would make the two passes
+///     agree by assumption rather than by construction.
+///
+/// So it is structural: the same expression, from either pass, renders the
+/// same. The interner is shared, so an identifier renders as the same `Symbol`
+/// on both sides - including in a re-parsed hole, which is parsed with that
+/// interner.
+///
+/// **Two textually identical arguments share an entry, and want the same
+/// answer**: the wrap is a function of the argument's type and the parameter's,
+/// and within one statement the same expression in the same position has the
+/// same type.
+///
+/// It is built only where a wrap was recorded for this statement, callee and
+/// position - which is rare - so the cost is not on the path every argument
+/// takes.
+pub fn argument_shape(expr: &Expr) -> String {
+    format!("{expr:?}")
+}
+
 fn wrap_for(found: &Ty, want: &Ty, literal: bool) -> Option<Wrap> {
     if !matches!(want, Ty::Nullable(_)) || matches!(found, Ty::Nullable(_)) {
         return None;
@@ -449,9 +499,9 @@ pub struct Propagation {
     /// [`Checked::flattened_reaches`].
     pub flattened: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
-    pub nullable_in_fields: BTreeMap<(usize, String), Wrap>,
+    pub nullable_in_fields: BTreeMap<(usize, String, String), BTreeMap<String, Wrap>>,
     /// [`Checked::nullable_args`].
-    pub nullable_in_args: BTreeMap<(usize, String, usize), Wrap>,
+    pub nullable_in_args: BTreeMap<(usize, String, usize), BTreeMap<String, Wrap>>,
     /// [`Checked::task_handles`].
     pub task_handles: BTreeSet<(usize, String)>,
     /// [`Checked::comptime_values`].
@@ -580,6 +630,27 @@ struct Checker<'a> {
     /// handler's own body is not - a failure raised there propagates - so this
     /// goes back to what it was before the handler is walked.
     caught: bool,
+    /// How many loops are open around the statement being walked, counted from
+    /// the nearest boundary a jump may not cross rather than from the function.
+    ///
+    /// A `break` is legal where this is not zero, and `NK1132` is what it meets
+    /// where it is (Part I 3.3,
+    /// [ADR-084](../../../docs/specification/adr/adr-084.md) D4).
+    loops: usize,
+    /// What that nearest boundary is, where one stands between here and the
+    /// function's own body: a lambda, a task, an `overlap` branch.
+    ///
+    /// Each of those is **a function of its own in the language below**, and a
+    /// jump does not leave a function - so a `break` inside one whose loop is
+    /// outside it is not a program this compiler may lower
+    /// ([ADR-084](../../../docs/specification/adr/adr-084.md) D4). It is carried
+    /// rather than derived because the message is the whole value of catching
+    /// it here: without the word, the refusal would be `rustc`'s, about a file
+    /// nobody wrote (Part III, C.1).
+    ///
+    /// **A `catch` handler is deliberately not one of these** (D5): it lowers to
+    /// a `match` arm, and a jump in one reaches the loop around it.
+    barrier: Option<&'static str>,
     /// The function being walked, by the name the ledger records it under.
     ///
     /// `None` inside a grammar action, a `test` or a `bench` - code that
@@ -758,6 +829,7 @@ impl<'a> Checker<'a> {
         for rule in &grammar.rules {
             let expected = rule.ret_type.as_ref().map(|t| Ty::from_ast(self.parsed, t));
             for alt in &rule.alts {
+                self.jumps_in_a_fold(&alt.pattern.node);
                 let Some(action) = &alt.action else { continue };
                 let mut frame = Vec::new();
                 self.bindings_of(&alt.pattern.node, &mut frame);
@@ -772,6 +844,82 @@ impl<'a> Checker<'a> {
                     });
                 }
                 self.expected = outer;
+            }
+        }
+    }
+
+    /// **A jump inside a `fold`'s lambdas**, which nothing else here reaches.
+    ///
+    /// A fold's `init`, `step` and `merge` are expressions inside a *pattern*,
+    /// and the walk above takes only the action block - so a `break` written in
+    /// a step would arrive at the backend unseen, and the message would be
+    /// `rustc`'s about a file nobody wrote (Part III, C.1). That a fold's
+    /// lambdas are not checked **at all** is older and wider than this - an
+    /// undeclared name in one is not refused either - and it is on
+    /// `open-work.md` as the gap it is. This closes the half a jump can reach,
+    /// which is the half this construct opened.
+    fn jumps_in_a_fold(&mut self, pattern: &ast::Pattern) {
+        match pattern {
+            ast::Pattern::Fold(spec) => {
+                // `Stmt::Expr` is a wrapper and not a claim: the walk below
+                // wants every block an *expression* holds, and the one total
+                // walk that answers that takes a statement.
+                for part in [Some(&spec.init), Some(&spec.step), spec.merge.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    let holder = Stmt::Expr(part.clone());
+                    let mut blocks: Vec<&Block> = Vec::new();
+                    crate::contracts::sync::visit_stmt_blocks(&holder, &mut |b| blocks.push(b));
+                    for block in blocks {
+                        self.jumps_outside_a_loop(block, 0);
+                    }
+                }
+            }
+            ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
+                for part in parts {
+                    self.jumps_in_a_fold(&part.node);
+                }
+            }
+            ast::Pattern::Bind { pat, .. }
+            | ast::Pattern::Repeat { pat, .. }
+            | ast::Pattern::Group(pat) => self.jumps_in_a_fold(&pat.node),
+            ast::Pattern::Ref { args, .. } => {
+                for arg in args {
+                    self.jumps_in_a_fold(&arg.node);
+                }
+            }
+            ast::Pattern::Literal(_) | ast::Pattern::Cut => {}
+        }
+    }
+
+    /// Report every jump in a block that no loop **written in that block**
+    /// encloses.
+    ///
+    /// A lambda nested further in is another boundary and does not change the
+    /// answer: there is no loop outside either of them to reach.
+    fn jumps_outside_a_loop(&mut self, block: &Block, loops: usize) {
+        for stmt in &block.stmts {
+            match &stmt.node {
+                Stmt::Break | Stmt::Continue => {
+                    if loops == 0 {
+                        let word = match stmt.node {
+                            Stmt::Break => "break",
+                            _ => "continue",
+                        };
+                        self.a_jump_with_nowhere_to_go(word, &stmt.span);
+                    }
+                }
+                Stmt::For { body, .. } | Stmt::While { body, .. } => {
+                    self.jumps_outside_a_loop(body, loops + 1)
+                }
+                other => {
+                    let mut inner: Vec<&Block> = Vec::new();
+                    crate::contracts::sync::visit_stmt_blocks(other, &mut |b| inner.push(b));
+                    for block in inner {
+                        self.jumps_outside_a_loop(block, loops);
+                    }
+                }
             }
         }
     }
@@ -1754,6 +1902,18 @@ impl<'a> Checker<'a> {
         let last = block.stmts.len().saturating_sub(1);
         for (at, stmt) in block.stmts.iter().enumerate() {
             let ty = self.stmt(&stmt.node, &stmt.span);
+            // **`break i` is two statements, and that is the point** - a jump
+            // takes no value, so the value becomes a statement of its own and
+            // the program written is not the program compiled. `while_stmt`
+            // has the identical note about the identical failure: three
+            // statements, no error, and `rustc` complaining about a file
+            // nobody wrote. Asked here rather than in the grammar because the
+            // grammar cannot see what follows without a lookahead over every
+            // expression there is - and asked of the **next** statement's span,
+            // because that is what the author would have to delete.
+            if at < last && matches!(stmt.node, Stmt::Break | Stmt::Continue) {
+                self.nothing_follows_a_jump(&stmt.node, &block.stmts[at + 1].span);
+            }
             if at == last {
                 tail = ty;
             }
@@ -1920,7 +2080,14 @@ impl<'a> Checker<'a> {
                 let cond_ty = self.expr(cond, span);
                 self.expect_bool(&cond_ty, span, "a `while` repeats while a `bool` holds");
                 self.scope.push(Vec::new());
+                // **The body and not the condition.** A `break` written in the
+                // condition is bound to this very loop in the language below,
+                // which is legal there and is a program nobody writes; refusing
+                // it is the direction that can be taken back later, and
+                // accepting it is not.
+                self.loops += 1;
                 self.block(body);
+                self.loops -= 1;
                 self.scope.pop();
                 Ty::Tuple(Vec::new())
             }
@@ -1941,7 +2108,9 @@ impl<'a> Checker<'a> {
                     self.nameable(&name.clone(), span, "a `for` binding");
                 }
                 self.scope.push(frame);
+                self.loops += 1;
                 self.block(body);
+                self.loops -= 1;
                 self.scope.pop();
                 Ty::Tuple(Vec::new())
             }
@@ -1964,6 +2133,24 @@ impl<'a> Checker<'a> {
                     self.expect(&found, &expected, span.clone(), "returns", |found, want| {
                         format!("this returns `{found}`, and the function declares `{want}`")
                     });
+                }
+                Ty::Unknown
+            }
+
+            // Part I 3.3. **`Ty::Unknown` and not `()`**, for the reason a
+            // `return` hands back one: a statement that jumps is not a value,
+            // and a block that ends in one is a block nothing arrives at the
+            // end of. `if c { break } else { 1 }` would otherwise be an `if`
+            // whose halves disagree, which is a refusal about a program that is
+            // right - the language below reads the jumping half as the `!` it
+            // is and coerces it to the other.
+            Stmt::Break | Stmt::Continue => {
+                let word = match stmt {
+                    Stmt::Break => "break",
+                    _ => "continue",
+                };
+                if self.loops == 0 {
+                    self.a_jump_with_nowhere_to_go(word, span);
                 }
                 Ty::Unknown
             }
@@ -2068,12 +2255,17 @@ impl<'a> Checker<'a> {
                 let parts: Vec<Ty> = block
                     .stmts
                     .iter()
-                    .map(|stmt| match &stmt.node {
-                        Stmt::Expr(value) => self.expr(value, &stmt.span),
-                        other => {
-                            self.stmt(other, &stmt.span);
-                            Ty::Unknown
-                        }
+                    .map(|stmt| {
+                        // Each branch is an `async` block of its own (ADR-050
+                        // D2), so the boundary is per branch rather than per
+                        // block.
+                        self.past_a_boundary("`overlap` branch", |me| match &stmt.node {
+                            Stmt::Expr(value) => me.expr(value, &stmt.span),
+                            other => {
+                                me.stmt(other, &stmt.span);
+                                Ty::Unknown
+                            }
+                        })
                     })
                     .collect();
                 self.scope.pop();
@@ -2318,7 +2510,9 @@ impl<'a> Checker<'a> {
                             if let Some(how) = wrap_for(&found, &want, is_literal) {
                                 self.checked
                                     .nullable_fields
-                                    .insert((span.start, field.clone()), how);
+                                    .entry((span.start, owner.clone(), field.clone()))
+                                    .or_default()
+                                    .insert(value.map(argument_shape).unwrap_or_default(), how);
                                 continue;
                             }
                             self.expect(
@@ -2363,7 +2557,9 @@ impl<'a> Checker<'a> {
                     self.nameable(&name.clone(), span, "a lambda's argument");
                 }
                 self.scope.push(frame);
-                self.block(body);
+                // Part I 3.3: a lambda is a closure below, and a jump does not
+                // leave one.
+                self.past_a_boundary("lambda", |me| me.block(body));
                 self.scope.pop();
                 Ty::Unknown
             }
@@ -2556,7 +2752,9 @@ impl<'a> Checker<'a> {
                     span,
                 );
                 self.scope.push(Vec::new());
-                let value = self.block(body);
+                // A task's body is an `async` block below (ADR-055 §6), which
+                // is a function too: `break` may not leave it either.
+                let value = self.past_a_boundary("task", |me| me.block(body));
                 self.scope.pop();
                 Ty::Named {
                     name: "TaskHandle".to_string(),
@@ -3164,7 +3362,9 @@ impl<'a> Checker<'a> {
             if let Some(how) = wrap_for(found, want, is_literal) {
                 self.checked
                     .nullable_args
-                    .insert((span.start, written.to_string(), at), how);
+                    .entry((span.start, written.to_string(), at))
+                    .or_default()
+                    .insert(given.get(at).map(argument_shape).unwrap_or_default(), how);
                 continue;
             }
             if self.fits_through_deref(found, want) {
@@ -3990,11 +4190,110 @@ impl<'a> Checker<'a> {
             .collect();
 
         self.scope.push(frame);
-        self.block(body);
+        // The other door into a lambda's body, and it needs the same boundary
+        // as the one in `expr`: which of the two a lambda arrives through is
+        // whether the callee's signature typed its parameters, and that has
+        // nothing to do with what a `break` in it may reach.
+        self.past_a_boundary("lambda", |me| me.block(body));
         self.scope.pop();
         // What a lambda hands back is not written down anywhere yet, and
         // claiming it here would be inventing one (ADR-029 D1).
         Ty::Unknown
+    }
+
+    /// Walk something the language below makes **a function of its own**.
+    ///
+    /// A lambda, a task, an `overlap` branch: three constructs that are one
+    /// block above and a closure or an `async` block below. A loop outside one
+    /// of them is not reachable from inside it, so the count starts again at
+    /// zero and the word for what stands in the way is carried for the message.
+    fn past_a_boundary<T>(&mut self, what: &'static str, walk: impl FnOnce(&mut Self) -> T) -> T {
+        let loops = std::mem::replace(&mut self.loops, 0);
+        let barrier = self.barrier.replace(what);
+        let value = walk(self);
+        self.loops = loops;
+        self.barrier = barrier;
+        value
+    }
+
+    /// `NK1133`: a statement after a `break` or a `continue`, in the same block.
+    ///
+    /// **The shape this is really about is `break i`**
+    /// ([ADR-084](../../../docs/specification/adr/adr-084.md) D3). A `break` in
+    /// Rust carries a value out of a `loop`; here a loop is a statement and
+    /// hands back nothing ([ADR-070](../../../docs/specification/adr/adr-070.md)
+    /// D2), so the word takes no value - and a value written after it parses as
+    /// a statement of its own. Without this the program compiles, the value is
+    /// dropped, and nothing says so.
+    ///
+    /// It is stated as what it is rather than as a guess at intent: the
+    /// statement is not reached. That covers `break i`, `continue x` and the
+    /// line somebody left below a `break` while editing, in one sentence and
+    /// with one caret.
+    fn nothing_follows_a_jump(&mut self, jump: &Stmt, span: &Span) {
+        let word = match jump {
+            Stmt::Break => "break",
+            _ => "continue",
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1133",
+            message: format!("nothing after a `{word}` in the same block is reached"),
+            notes: vec![format!(
+                "`{word}` takes no value: a loop is a statement here and hands back nothing, \
+                 so `{word} x` is two statements rather than one (Part I, 3.3)"
+            )],
+            help: Some(format!(
+                "delete it - or, where a value was meant, bind it before the `{word}`"
+            )),
+        });
+    }
+
+    /// `NK1132`: a `break` or a `continue` with no loop to act on.
+    ///
+    /// Two shapes and one code, because they are one mistake reached from two
+    /// sides - there is no loop, or there is one and a function boundary
+    /// stands between. The second is the one worth the code: it is a program
+    /// that *looks* right, and without this it would be refused by `rustc`
+    /// about the emitted file (Part III, C.1).
+    fn a_jump_with_nowhere_to_go(&mut self, word: &str, span: &Span) {
+        let does = match word {
+            "break" => "leaves the innermost loop around it",
+            _ => "starts the innermost loop's next turn",
+        };
+        let (message, note, help) = match self.barrier {
+            Some(what) => (
+                format!("`{word}` {does}, and the nearest loop is outside this {what}"),
+                format!(
+                    "{} is a function of its own in the language below, and a jump does \
+                     not leave a function",
+                    an(what)
+                ),
+                format!(
+                    "decide inside the {what} and act on the answer outside it - a `bool` it \
+                     hands back, tested by the loop"
+                ),
+            ),
+            None => (
+                format!("`{word}` {does}, and this is not in a loop"),
+                "a `while` or a `for` is what it acts on, and there is none here (Part I, 3.3)"
+                    .to_string(),
+                match word {
+                    "break" => "to leave the function rather than a loop, write `return`",
+                    _ => "to leave the function rather than start a turn, write `return`",
+                }
+                .to_string(),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1132",
+            message,
+            notes: vec![note],
+            help: Some(help),
+        });
     }
 
     /// Note where a method call in the function being walked went (ADR-028).
@@ -4444,6 +4743,19 @@ fn distance(a: &str, b: &str) -> usize {
     }
 
     d[a.len()][b.len()]
+}
+
+/// `a` or `an` in front of a word, which may be spelled in backticks.
+///
+/// Small and here because the alternative is worse: the three boundaries a
+/// jump may not cross are named in one place, and carrying the article beside
+/// each of them means the next one is added in two places or in one.
+fn an(what: &str) -> String {
+    let first = what.chars().find(|c| c.is_alphanumeric()).unwrap_or(' ');
+    match first.to_ascii_lowercase() {
+        'a' | 'e' | 'i' | 'o' | 'u' => format!("an {what}"),
+        _ => format!("a {what}"),
+    }
 }
 
 fn plural(n: usize, what: &str) -> String {

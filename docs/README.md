@@ -101,6 +101,15 @@ is normative and nothing may depend on it to know what a program means.
 * [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
   runtime that is already running, and the finding that only the completion
   path gets ADR-033 §8.5's zero.
+* [`break-continue-cost.md`](break-continue-cost.md) — `break` and `continue`
+  built and measured *before* they were decided, so that the question
+  [ADR-070](specification/adr/adr-070.md) D2 left open could be answered with
+  numbers: what a jump costs at run time (nothing) against what the shapes
+  standing in for it cost (a quarter of a `while`, and all of a `for` that
+  wanted to stop early), what two more rules cost the parser and why the answer
+  is per *block* rather than per statement, and the four constructs a jump may
+  not leave because each is a function in the language below. §7 says what
+  [ADR-084](specification/adr/adr-084.md) took from it and what it did not.
 * [`rc-or-arc.md`](rc-or-arc.md) — what an atomic reference count costs, whether
   `Rc` and `Arc` differ in anything a program can observe, and the prototype that
   asked ADR-037 D3's open question of a value instead of a build. The method, the

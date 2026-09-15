@@ -24,6 +24,7 @@ Rust's with different words:
 | `f"…"` interpolation | Part I 2.5, ADR-035 | the holes are **Nikaia expressions** and are highlighted as such; `"…"` has no holes at all, so a brace in it is a brace; `{{` is one brace; `\u{0041}` is an escape and not a hole; the first colon outside a call or an index is a format spec, so `{utils::double(21)}` keeps its path and `{Point(x: 1)}` its named argument |
 | the `;` config zone | Part I 5.1 | the `;` inside a parameter list or a call gets `punctuation.separator.config`, and what follows it is named arguments; a statement's `;` is a terminator instead |
 | `...args: Self::dsl` | ADR-007 D5 | the typed spread, with `Self::dsl` as a type rather than the `dsl` keyword |
+| `break`, `continue` | Part I 3.3, ADR-084 | `keyword.control.flow`, with `return` rather than with `while` and `for`: `keyword.control.loop` is the word that **opens** a loop and these two are words that **leave** one. Neither takes a value and neither takes a label, so in each case the word is the whole token and there is nothing after it to scope |
 | `throws`, `throw`, `catch`, `??` | Part I 7.1, ADR-023, ADR-025 | `catch` is an ordinary keyword in expression position; `throws` carries no type; `??` is the coalescing operator |
 | `sync` | Part II 12.1 | `storage.modifier.sync`, on either side of the return type |
 | `fn { … }` | Part I 5.2/5.3, ADR-022 | the one lambda form, including the trailing form outside the parentheses and a chain continuing after its `}` |

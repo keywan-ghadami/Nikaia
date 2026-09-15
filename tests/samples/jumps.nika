@@ -1,0 +1,59 @@
+// Kap 3.3: `break` and `continue`, in the shapes Part I documents
+// ([ADR-084](../../docs/specification/adr/adr-084.md)).
+//
+// Both act on the **innermost** loop, neither takes a value, and neither takes
+// a label. A `break` leaves the *loop*; a `return` leaves the *function*, and
+// keeping those two apart is the whole of what this file shows.
+
+// The search: `continue` skips a turn, `break` ends the loop, and the line
+// after the loop still runs - which is what makes it different from `return`.
+fn first_even(numbers: Vec[i64]) -> i64 {
+    let mut found = 0 - 1
+    for n in numbers {
+        if n % 2 != 0 {
+            continue
+        }
+        found = n
+        break
+    }
+    return found
+}
+
+// Nested, and the reason no label is needed for this shape: the inner `break`
+// ends the inner loop and the outer one keeps turning.
+fn triangle(rows: i64) -> i64 {
+    let mut cells = 0
+    for r in 0..rows {
+        for c in 0..rows {
+            if c > r {
+                break
+            }
+            cells += 1
+        }
+    }
+    return cells
+}
+
+// The unconditional loop (3.3, ADR-070 D1) with the exit it did not have until
+// ADR-084: `while true` is the form, and a `break` is how it ends.
+fn countdown(start: i64) -> i64 {
+    let mut n = start
+    let mut steps = 0
+    while true {
+        if n <= 0 {
+            break
+        }
+        n -= 1
+        steps += 1
+    }
+    return steps
+}
+
+fn main() {
+    let mut xs = Vec::new()
+    xs.push(3)
+    xs.push(7)
+    xs.push(8)
+    xs.push(10)
+    println(f"{first_even(xs)} {triangle(4)} {countdown(5)}")
+}

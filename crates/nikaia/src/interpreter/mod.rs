@@ -62,6 +62,12 @@ impl Interpreter {
             Stmt::Return(_) => {
                 println!("[Nikaia Runtime] Return (Skipped)");
             }
+            Stmt::Break => {
+                println!("[Nikaia Runtime] Break (Skipped)");
+            }
+            Stmt::Continue => {
+                println!("[Nikaia Runtime] Continue (Skipped)");
+            }
             Stmt::For { body, .. } => {
                 // No iteration yet: the loop body is walked once so that calls
                 // inside it are still visible.

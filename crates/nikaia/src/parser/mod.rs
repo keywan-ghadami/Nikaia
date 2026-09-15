@@ -1077,11 +1077,40 @@ grammar! {
           | f:for_stmt -> { Spanned::new(f, _span) }
           | a:assign_stmt -> { Spanned::new(a, _span) }
           | e:expr_stmt -> { Spanned::new(e, _span) }
+          | b:break_stmt -> { Spanned::new(b, _span) }
+          | c:continue_stmt -> { Spanned::new(c, _span) }
 
         rule return_stmt -> Stmt =
             KW_RETURN value:expr? ";"? -> {
                 Stmt::Return(value)
             }
+
+        // Kap 3.3 and [ADR-084](../../../docs/specification/adr/adr-084.md).
+        // **No value and no label**, which is why each of these is one keyword
+        // and a rule of two lines: `break` in a language whose loops are
+        // statements has nothing to carry out (D3), and the label is a second
+        // naming scheme for the one case the unlabelled form does not reach
+        // (D2).
+        //
+        // **Last in `stmt`, and that is measured rather than tidy** (D8). The
+        // alternation is tried in order, so arms here are reached only by a
+        // statement no earlier arm took - which, placed last, means the `}` that
+        // ends a block and nothing else. Beside `return_stmt`, where they read
+        // best, the two are tried and fail for *every* assignment and every bare
+        // expression: **740 instructions a statement** and +1.28% on a
+        // statement-dense file, against **665 per block** here, and a program has
+        // far fewer blocks than statements (`docs/break-continue-cost.md` §3).
+        //
+        // It is free to choose because both words are reserved (ADR-071 D1), so
+        // `NAME` cannot take one and no earlier arm can swallow a jump. The
+        // ordering costs reading order and is paid back at 740 instructions a
+        // statement, which is the whole reason this comment is here: an ordering
+        // with no reason attached is one the next person tidies.
+        rule break_stmt -> Stmt =
+            KW_BREAK ";"? -> { Stmt::Break }
+
+        rule continue_stmt -> Stmt =
+            KW_CONTINUE ";"? -> { Stmt::Continue }
 
         // Kap 7.1: `throw` is the only way an error originates. Without it a
         // program could propagate what `std` produced and never produce one of
@@ -1548,8 +1577,37 @@ grammar! {
 
         // The same set without the two brace-led forms, for the head of an
         // `if` or a `for`, where a `{` is the body.
+        //
+        // **The chain mirrors the ordinary one level for level**
+        // ([ADR-087](../../../../docs/specification/adr/adr-087.md) D1): `??`,
+        // range, `||`, `&&`, comparison, `+`, `*`, `as`, unary, postfix,
+        // primary. **Every level, with no exception** - the only difference
+        // between a head and any other position is in `head_primary`, which
+        // drops the forms a `{` begins, and those are reachable through
+        // parentheses like anything else (D2).
+        //
+        // A head that parses a *different language* from the body it introduces
+        // is the thing this shape must not become, and it had become exactly
+        // that four times over: `&&`, `||`, `??`, `as`, `null` and a tuple were
+        // each refused in a position the specification put no restriction on.
         rule head_expr -> Expr =
-            start:head_cmp end:head_range_tail? -> {
+            value:head_range fallback:head_coalesce_tail? -> {
+                match fallback {
+                    Some(fallback) => Expr::Coalesce {
+                        value: Box::new(value),
+                        fallback: Box::new(fallback),
+                    },
+                    None => value,
+                }
+            }
+
+        // Right-associative, like `coalesce_tail`
+        // ([ADR-066](../../../../docs/specification/adr/adr-066.md) D4).
+        rule head_coalesce_tail -> Expr =
+            "??" e:head_expr -> { e }
+
+        rule head_range -> Expr =
+            start:head_or end:head_range_tail? -> {
                 match end {
                     Some((inclusive, end)) => Expr::Range {
                         start: Box::new(start),
@@ -1561,8 +1619,23 @@ grammar! {
             }
 
         rule head_range_tail -> (bool, Expr) =
-            "..=" e:head_cmp -> { (true, e) }
-          | ".." e:head_cmp -> { (false, e) }
+            "..=" e:head_or -> { (true, e) }
+          | ".." e:head_or -> { (false, e) }
+
+        // **Neither connective can begin a block**, which is the whole of why
+        // they are safe here: the brace problem is about what may stand
+        // *immediately* before the `{`, and after `&&` comes a `head_cmp`,
+        // which descends to the same brace-free `head_primary` as everything
+        // else in this chain.
+        rule head_or -> Expr =
+            head:head_and tail:head_or_tail* -> { fold_binary(head, tail) }
+
+        rule head_or_tail -> (BinaryOp, Expr, Span) @= "||" e:head_and -> { (BinaryOp::Or, e, _span) }
+
+        rule head_and -> Expr =
+            head:head_cmp tail:head_and_tail* -> { fold_binary(head, tail) }
+
+        rule head_and_tail -> (BinaryOp, Expr, Span) @= "&&" e:head_cmp -> { (BinaryOp::And, e, _span) }
 
         rule head_cmp -> Expr =
             head:head_add tail:cmp_head_tail? -> {
@@ -1577,9 +1650,19 @@ grammar! {
         rule head_add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:head_mul -> { (op, e, _span) }
 
         rule head_mul -> Expr =
-            head:head_unary tail:head_mul_tail* -> { fold_binary(head, tail) }
+            head:head_cast tail:head_mul_tail* -> { fold_binary(head, tail) }
 
-        rule head_mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:head_unary -> { (op, e, _span) }
+        rule head_mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:head_cast -> { (op, e, _span) }
+
+        // `as` names a type ([ADR-054](../../../../docs/specification/adr/adr-054.md)),
+        // and a type is not brace-led either - `i64`, `&str`, `Vec[T]`, `T?`.
+        rule head_cast -> Expr =
+            head:head_unary casts:cast_tail* -> {
+                casts.into_iter().fold(head, |expr, ty| Expr::Cast {
+                    expr: Box::new(expr),
+                    ty,
+                })
+            }
 
         rule head_unary -> Expr =
             op:unary_op e:head_unary -> {
@@ -1590,6 +1673,17 @@ grammar! {
         rule head_postfix -> Expr =
             base:head_primary tail:postfix_tail* -> { fold_postfix(base, tail) }
 
+        // **`primary_expr` minus the forms a `{` begins, and nothing else**
+        // ([ADR-087](../../../../docs/specification/adr/adr-087.md) D1). What is
+        // absent is absent for that one reason and the list is short enough to
+        // give in full: `struct_lit`, `block_expr`, `if_expr`, `match_expr`,
+        // `overlap_expr`, a `dsl … { … } eod` and a `spawn`, whose lambda is a
+        // brace. Each of them is written in a head by putting it in parentheses,
+        // which `paren_expr` takes a whole `expr` inside (D2).
+        //
+        // `dsl_from_expr` is here although its sibling is not: `dsl X from y`
+        // has no brace, and the two are separate rules precisely because one of
+        // them is a block and the other is not.
         rule head_primary -> Expr =
             c:ctor_lit -> { c }
           | b:bool_lit -> { b }
@@ -1600,7 +1694,25 @@ grammar! {
           | c:char_lit -> { c }
           | f:float_lit -> { f }
           | i:int_lit -> { i }
+          // **After the common ones, and measured there** (D5). `primary_expr`
+          // lists `null` beside `false` because they read as a pair; nothing
+          // makes that an ordering constraint, since `null` is a reserved word
+          // and no other alternative can take one. Third in the list it was one
+          // failed match in front of every *name* in every head.
+          | n:null_lit -> { n }
+          // `(a, b)` before `(a)`, for the reason `primary_expr` gives: a tuple
+          // is a parenthesised expression until the comma.
+          | t:tuple_expr -> { t }
           | p:paren_expr -> { p }
+          // **Last, and measured there** (D5). In `primary_expr` this stands
+          // near the front because the brace-led forms around it constrain the
+          // order; here nothing does - `dsl` is a reserved word, so no other
+          // alternative can take one - and at the front it was tried and failed
+          // for *every* primary in *every* head, which is a keyword match and
+          // its bookkeeping per operand. It also cost the one thing a parse
+          // error has: `if { }` answered *"expected one of `!`, `-`, `dsl`,
+          // `false`, `true`, identifier"*, leading with the rarest of the six.
+          | d:dsl_from_expr -> { d }
 
         // `(a, b)` before `(a)`: a PEG keeps the first alternative that
         // matches, and a tuple is a parenthesised expression until the comma.
@@ -1831,7 +1943,7 @@ grammar! {
         // **The words nothing in the grammar uses yet**
         // ([ADR-071](../../../../docs/specification/adr/adr-071.md) for the
         // three control-flow ones,
-        // [ADR-073](../../../../docs/specification/adr/adr-073.md) D1 for
+        // [ADR-084](../../../../docs/specification/adr/adr-084.md) D1 for
         // `const`, which differs from them in being reserved *for* a construct
         // rather than against the possibility of one). They are
         // here for the reason `overlap` was here before its construct existed:

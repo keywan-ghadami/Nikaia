@@ -846,3 +846,151 @@ fn free() -> String? { return \"lit\".to_string() }
         "{rust}"
     );
 }
+
+// --- one statement, two wraps ------------------------------------------------
+//
+// Part I 2.3's wrap is recorded by the checker and written by the emitter, and
+// what joins the two is a key built out of what both can see — an argument
+// carries no span of its own. The key named the **parameter** and not the
+// *call*, so a
+// statement that called one function twice had one entry for two arguments and
+// the last one walked won. Found while writing a test for something else, in an
+// `f"…"`; it has nothing to do with strings.
+
+/// Two calls to one function in one statement, one argument needing the wrap
+/// and one already being it.
+///
+/// Compiled, because that is the whole question: `pick(Some(None))` is what the
+/// defect emitted and `rustc` is what refused it, about a file nobody wrote.
+#[test]
+fn two_calls_to_one_function_in_one_statement_get_their_own_wraps() {
+    let rust = compiled(
+        "two-calls",
+        "fn pick(a: i64?) -> i64 {\n\
+         \x20   return a ?? 7\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let r = pick(1) + pick(null)\n\
+         \x20   println(f\"{r}\")\n\
+         }\n",
+    );
+    assert!(rust.contains("pick(Some(1)) + pick(None)"), "{rust}");
+}
+
+/// **And in the other order**, because the entry that won was whichever was
+/// walked last: with the `null` first the defect wrapped *both*.
+#[test]
+fn the_order_of_two_calls_does_not_decide_their_wraps() {
+    let rust = compiled(
+        "two-calls-reversed",
+        "fn pick(a: i64?) -> i64 {\n\
+         \x20   return a ?? 7\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let r = pick(null) + pick(1)\n\
+         \x20   println(f\"{r}\")\n\
+         }\n",
+    );
+    assert!(rust.contains("pick(None) + pick(Some(1))"), "{rust}");
+}
+
+/// The shape it was found in: two holes of one `f"…"`. The holes are text until
+/// each pass parses them, so nothing about them is addressable — which is why
+/// the key has to be structural.
+#[test]
+fn two_holes_of_one_string_get_their_own_wraps() {
+    let rust = compiled(
+        "two-holes",
+        "fn pick(a: i64?) -> i64 {\n\
+         \x20   return a ?? 7\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{pick(1)}{pick(null)}\")\n\
+         }\n",
+    );
+    assert!(rust.contains("pick(Some(1)), pick(None)"), "{rust}");
+}
+
+/// The same key design, the same defect, in a struct literal: a statement may
+/// build two of them.
+#[test]
+fn two_struct_literals_in_one_statement_get_their_own_wraps() {
+    let rust = compiled(
+        "two-literals",
+        "struct P {\n\
+         \x20   x: i64?,\n\
+         }\n\
+         \n\
+         fn hold(p: P) -> i64 {\n\
+         \x20   return p.x ?? 9\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let r = hold(P { x: 2 }) + hold(P { x: null })\n\
+         \x20   println(f\"{r}\")\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("P { x: Some(2) }") && rust.contains("P { x: None }"),
+        "{rust}"
+    );
+}
+
+/// **Two structs, one field name, both written in the shorthand** — which the
+/// value cannot tell apart, because both are the name `x`. The type is in the
+/// key for this case.
+#[test]
+fn two_structs_sharing_a_field_name_get_their_own_wraps() {
+    let rust = compiled(
+        "two-structs",
+        "struct P {\n\
+         \x20   x: i64?,\n\
+         }\n\
+         \n\
+         struct Q {\n\
+         \x20   x: i64,\n\
+         }\n\
+         \n\
+         fn hold(a: P, b: Q) -> i64 {\n\
+         \x20   return (a.x ?? 0) + b.x\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let x = 1\n\
+         \x20   let r = hold(P { x }, Q { x })\n\
+         \x20   println(f\"{r}\")\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("P { x: Some(x) }") && rust.contains("Q { x }"),
+        "{rust}"
+    );
+}
+
+/// And the arithmetic is the point: the wraps are in the right places, so the
+/// program means what it says.
+#[test]
+fn a_statement_with_two_wraps_runs() {
+    let source = "struct P {\n\
+         \x20   x: i64?,\n\
+         }\n\
+         \n\
+         fn pick(a: i64?) -> i64 {\n\
+         \x20   return a ?? 7\n\
+         }\n\
+         \n\
+         fn hold(p: P) -> i64 {\n\
+         \x20   return p.x ?? 9\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let r = pick(1) + pick(null)\n\
+         \x20   let s = hold(P { x: 2 }) + hold(P { x: null })\n\
+         \x20   println(f\"{r} {s}\")\n\
+         }\n";
+    // 1 + 7, and 2 + 9.
+    assert_eq!(ran("two-wraps-run", source).trim(), "8 11");
+}

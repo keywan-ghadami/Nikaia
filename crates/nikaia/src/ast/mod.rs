@@ -224,6 +224,29 @@ pub enum Stmt {
     // Kap 7.1: return, return value
     Return(Option<Expr>),
 
+    /// Part I 3.3: `break`, and it leaves the **innermost** loop around it
+    /// ([ADR-084](../../../docs/specification/adr/adr-084.md) D1).
+    ///
+    /// A statement and not an expression, which is the whole of what makes it
+    /// cheap: Rust's `break` carries a value out of a `loop`, and that is what
+    /// makes `loop { … }` an expression there and forces a keyword of its own
+    /// ([ADR-070](../../../docs/specification/adr/adr-070.md) D2). Nikaia's
+    /// loops are statements and hand back nothing, so there is nothing for a
+    /// `break` to carry and no type for anyone to infer.
+    ///
+    /// **No label.** A label is a second thing - a name that is not a value,
+    /// scoped to a construct rather than to a block - and the unlabelled form
+    /// answers the cases the tree actually writes.
+    Break,
+
+    /// Part I 3.3: `continue`, which starts the innermost loop's next turn.
+    ///
+    /// One variant per word rather than one with a flag, for the reason
+    /// `LitInterpolated` is a variant: every analysis that walks a statement has
+    /// to say what it does with each, and the two are not the same statement -
+    /// one ends a loop and one does not.
+    Continue,
+
     // Ein "nackter" Ausdruck (z.B. Funktionsaufruf oder Return-Value)
     Expr(Expr),
 }

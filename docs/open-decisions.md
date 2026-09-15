@@ -6,7 +6,7 @@ entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
 the compiler does not do it yet, which needs work and not a ruling.
 
-The sixteen entries this file used to carry are gone that way, fourteen to
+The seventeen entries this file used to carry are gone that way, fifteen to
 their records and two because they were never questions for the owner at all —
 the second being whether a word-sized shared value drops its lock, which is a
 **performance idea** and is documented as one in
@@ -32,6 +32,11 @@ somebody to invent turned out to be maintained by the compiler) and
 keyword — `while true` is it, and Go is the precedent read carefully: it has no
 `while` at all, so what it shows is that *one* keyword is enough rather than that
 the form is unnecessary) and
+[ADR-084](specification/adr/adr-084.md) (`break` and `continue` join the
+language — the entry that was **built before it was answered**, because a keyword
+is the most expensive thing a language adds and *"what does it cost"* deserved
+numbers rather than an estimate; what decided it was not a percentage but a
+capability, since a `for` could not be stopped at all) and
 [ADR-069](specification/adr/adr-069.md) (`http` leaves `std` and becomes a
 package — the entry that asked what `std::http` should contain, when the question
 underneath was whether it is in `std` at all, which the specification had been
@@ -59,12 +64,6 @@ becomes a decision by something coming to rest on it.
 
 This file is a notes page: nothing here is normative. A decision taken from it is
 written down in [`specification/adr/`](specification/adr).
-
----
-
-
----
-
 
 ---
 

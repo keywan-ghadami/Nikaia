@@ -16,3 +16,17 @@ node_modules/
 
 # A stray rustc invocation without `-o` leaves one of these.
 /a.out
+
+# What `nikaia --input examples/x.nika` leaves beside the source it lowered: the
+# Rust, and the ledger of the one file it was pointed at. A project build writes
+# both into its own output directory, and a package's real ledger is committed
+# ([ADR-020](docs/specification/adr/adr-020.md)) - so these are listed by the
+# three directories where a bare `--input` is run by hand, and nowhere wider.
+# The committed Rust under `benches/*/src/` is not matched: a generated file
+# lands *beside* the `.nika` it came from, never in a `src/`.
+/examples/*.rs
+/examples/nikaia.contracts
+/benches/*.rs
+/benches/nikaia.contracts
+/tests/samples/*.rs
+/tests/samples/nikaia.contracts
