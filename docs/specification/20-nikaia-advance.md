@@ -81,6 +81,15 @@ fn parse_input(input: String) throws {
 > `NK1127` rather than a value computed later, which is D3's demand doing its one
 > job.
 >
+> **And what crosses is decided** ([ADR-079](adr/adr-079.md)): a result arrives in
+> its **view** form — `Vec[T]` as `&[T]`, `String` as `&str` — so what was built
+> with `push` is fixed once it has crossed, and a value that owns memory is
+> refused by its *type* rather than by its parse. A map that crosses is a **fixed**
+> map, because a closed key set is what a perfect hash needs and the crossing is
+> where it closes; how it is looked up is then the compiler's, the way a map's
+> hasher already is. None of that is built — what is missing is an evaluator that
+> can loop and `push`.
+>
 > **What the declaration will mean is decided** ([ADR-073](adr/adr-073.md)): it
 > stands where an item stands and inside a body, its type may be written and does
 > not have to be, and — the part the keyword exists for — **a `let` may fold and a
