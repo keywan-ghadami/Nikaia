@@ -1223,7 +1223,9 @@ fn std_ledger() -> &'static Ledger {
 /// So the answer here is the only one this compiler can write: a trait's method
 /// is a plain `fn` below, because `async fn` in a trait is something the
 /// emitter has no way to ask for. What that costs is a trait whose method
-/// genuinely pauses, which is `open-work.md` §1.1 with its reproduction.
+/// genuinely pauses — and that is **refused rather than mis-lowered**:
+/// `NK1129` names the implementation and why
+/// ([ADR-080](../../../docs/specification/adr/adr-080.md)).
 fn trait_method(
     parsed: &Parsed,
     trait_name: &str,

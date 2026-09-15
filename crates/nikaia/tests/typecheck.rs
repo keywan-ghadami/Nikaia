@@ -576,8 +576,10 @@ fn a_parameter_that_accepts_several_types_claims_none() {
 /// ever answered, this fixture is meant to be revisited with it.
 ///
 /// ADR-024 D4's erased generic would be the better source still — an absence the
-/// **language** decides — and it cannot be used yet: a generic function lowers
-/// without its `<T>` and does not compile at all (`open-work.md` §1.1).
+/// **language** decides — and it became usable when a generic function started
+/// lowering with its `<T>`
+/// ([ADR-074](../../../docs/specification/adr/adr-074.md)); before that it did
+/// not compile at all.
 #[test]
 fn a_value_from_a_signature_that_claims_nothing_fits_anywhere() {
     assert!(findings(

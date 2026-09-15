@@ -777,7 +777,8 @@ fn main() {
 /// that way. The stable source would be
 /// [ADR-024](../../../docs/specification/adr/adr-024.md) D4's erased generic,
 /// which is an absence the **language** decides; it cannot be used until a
-/// generic function lowers with its `<T>` (`open-work.md` §1.1). Whoever writes
+/// generic function lowers with its `<T>`, which it now does
+/// ([ADR-074](../../../docs/specification/adr/adr-074.md)). Whoever writes
 /// `String::clone` down should move this fixture rather than delete it — what it
 /// measures is the rule, not the ledger.
 #[test]

@@ -295,11 +295,14 @@ pub fn compile(source: &Path, args: &[&str]) -> Output {
 /// it still is one. What those tests measure is the *rule* that an unresolved
 /// call says nothing; which name is unresolved is an accident of the day.
 ///
-/// The better fixture is an absence the **language** decides rather than one
-/// the ledger merely has not filled — [ADR-024](../../../../docs/specification/adr/adr-024.md)
-/// D4's erased generic is one. It is unusable until a generic function lowers
-/// with its type parameters (`docs/open-work.md` §1.1), and this constant should
-/// go the day it does.
+/// The better fixture would have been an absence the **language** decides rather
+/// than one the ledger merely has not filled —
+/// [ADR-024](../../../../docs/specification/adr/adr-024.md) D4's erased generic.
+/// That road is closed rather than waiting:
+/// [ADR-074](../../../../docs/specification/adr/adr-074.md) D5 made a member on
+/// a parameter with no bound `NK1126`, so the erasure is now a **refusal** and
+/// not an unknown. This constant stays, and the day somebody writes
+/// `insert_str` down it moves rather than goes.
 pub const UNDESCRIBED_METHOD: &str = "insert_str";
 
 /// The same, as a call on a `String` receiver: `s.insert_str(0, "x")`.

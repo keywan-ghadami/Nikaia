@@ -491,6 +491,15 @@ struct Out {
 /// branch names an `overlap` uses.
 const REACHED: &str = "__nikaia_it";
 
+/// Kap 7.1: the name a `catch` handler sees the failure under.
+///
+/// One place, because the emitter writes it and
+/// [`contracts::order::block_mentions`](crate::contracts::order::block_mentions)
+/// is asked about it — and a second spelling of one name is a binding that goes
+/// unread while the walk looks for the other
+/// ([ADR-090](../../docs/specification/adr/adr-090.md)).
+const CAUGHT: &str = "error";
+
 impl Out {
     fn push(&mut self, text: &str) {
         self.buf.push_str(text);
@@ -3703,8 +3712,26 @@ impl<'p> Emitter<'p> {
                 }
                 let pad = "    ".repeat(depth + 1);
                 let close = "    ".repeat(depth);
+                // **A handler that does not read the error binds `_error`**
+                // ([ADR-090](../../docs/specification/adr/adr-090.md)). Kap 7.1
+                // gives the failure that name whether or not the handler wants
+                // it, so `catch { 1000 }` - the shape Part I 7.1 teaches first -
+                // used to get `warning: unused variable: error` about a binding
+                // that exists nowhere in the program, which is
+                // [Part III C.1](../../docs/specification/30-nikaia-tooling.md)
+                // one severity down.
+                //
+                // The question is `contracts::order`'s, already over-approximate
+                // and already asked of this very block for the ordering: a false
+                // *yes* keeps today's binding, and a false *no* would not
+                // compile.
+                let bound =
+                    match crate::contracts::order::block_mentions(self.parsed, handler, CAUGHT) {
+                        true => CAUGHT,
+                        false => "_error",
+                    };
                 out.push(&format!(
-                    " {{\n{pad}Ok(value) => value,\n{pad}Err(error) => "
+                    " {{\n{pad}Ok(value) => value,\n{pad}Err({bound}) => "
                 ));
                 // Kap 7.1 and ADR-034: the handler's last statement is the
                 // value of the `catch`, so a `return` in it is the *function's*

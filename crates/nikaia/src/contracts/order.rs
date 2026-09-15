@@ -952,6 +952,28 @@ fn literal_text(expr: &Expr) -> Option<String> {
     }
 }
 
+/// Whether a block mentions a name anywhere inside it.
+///
+/// **Asked by the emitter about a `catch` handler and the name `error`**
+/// ([ADR-090](../../../docs/specification/adr/adr-090.md)): Kap 7.1 says the
+/// handler sees the failure under that name, so the lowering binds it whether
+/// or not the handler reads one — and a handler that supplies a constant
+/// fallback, which is the shape Part I 7.1 teaches first, got
+/// *"unused variable: `error`"* about a binding that exists nowhere in the
+/// program.
+///
+/// [`names_in_block`]'s over-approximation is what makes this safe, and the
+/// direction matters: a false **yes** keeps today's binding and today's
+/// warning, which is where we already are; a false **no** would write `_error`
+/// under a handler that uses `error`, and that is a program which does not
+/// compile. Since the walk counts every word of an interpolated string's raw
+/// text, an `f"{error}"` is a yes.
+pub fn block_mentions(parsed: &Parsed, block: &crate::ast::Block, name: &str) -> bool {
+    let mut found = BTreeSet::new();
+    names_in_block(parsed, block, &mut found);
+    found.contains(name)
+}
+
 /// Every name an expression mentions.
 ///
 /// Deliberately over-approximate: a field access `a.b` contributes `a`, and a

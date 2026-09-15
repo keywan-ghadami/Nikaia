@@ -86,7 +86,14 @@ exactly what a `break` costs, so [ADR-084](specification/adr/adr-084.md) §4's
 and **a `??` whose fallback reached rightwards across every
 operator**, which was filed as a suspicion with the exact question that would
 decide it and turned out to be a silent wrong value
-([ADR-089](specification/adr/adr-089.md)).
+([ADR-089](specification/adr/adr-089.md)). And **a `catch` that ignored the error
+warning about a name the emitter wrote** — `catch { 1000 }` got
+*"unused variable: `error`"* about a binding that exists nowhere in the program,
+and the walk that answers *does this handler mention the name* was already
+there, doing the ordering ([ADR-090](specification/adr/adr-090.md)). Its
+over-approximation is what made it usable: the two failure modes are not
+symmetric, so a walk that only has to **lean** did work a precise analysis would
+have had to be **right** for.
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
@@ -140,7 +147,7 @@ strings in Part I 7 held holes that
 a way nothing notices, and `docs/README.md` §1's rule about a stale **Status**
 note turns out to apply to the code beside it just as much.
 
-### 1.1. A `catch` that ignores the error warns about a name the emitter wrote
+### 1.1. A `catch` on an expression that cannot fail does not compile
 
 ```nika
 fn energy(text: &str) -> i64 {
@@ -149,39 +156,38 @@ fn energy(text: &str) -> i64 {
 ```
 
 ```text
-warning: unused variable: `error`
-   --> n-body.rs:104:13
+error[E0308]: mismatched types
     |
-104 |         Err(error) => { 1000 },
+    |         Ok(value) => value,
+    |         ^^^^^^^^^ expected `i64`, found `Result<_, _>`
 ```
 
-The author wrote `catch { 1000 }`. The name `error` is the **emitter's**: Kap 7.1
-says a handler sees the failure under that name, so the `match` arm binds it
-whether or not the handler reads it. A handler that supplies a constant fallback
-— which is the common shape, and the one Part I 7.1 teaches first — therefore
-gets a warning about a binding that exists nowhere in the program.
+`text.len() as i64` cannot fail, so the `catch` lowers to a `match` over
+something that is not a `Result` and `rustc` answers about the generated file —
+[Part III C.1](specification/30-nikaia-tooling.md)'s class, naming a `match` and
+an `Ok` arm the author did not write.
 
-That is [Part III C.1](specification/30-nikaia-tooling.md)'s class exactly, one
-severity down, and it is the second half of what
-[ADR-074](specification/adr/adr-074.md)'s survey turned up.
+*Found while building a fixture* for the entry that used to stand here, which is
+why the reproduction is that entry's own opening line: the `catch` there was
+written to be ignored and turned out to be infallible as well. The two are
+independent — that one was about the **name** in the arm and is closed
+([ADR-090](specification/adr/adr-090.md)); this one is about the arm existing at
+all.
 
-*Why it is not the same as the two beside it:* the same survey found
-`unused variable: x` and `unused variable: k` in `tests/samples/`, and those are
-names the **user** wrote — a `let` and a `for` binding. The message is actionable
-and only the file it names is wrong, which is a smaller and different problem.
-This one is about something nobody wrote at all.
+*What closes it:* the checker knows whether an expression throws. `throws` is a
+contract column and `NK1113` already refuses a call that may fail outside a
+`catch`, so the question is asked in the other direction every day. A `catch`
+over an expression whose `throws` is empty is the mirror of that refusal, and it
+wants a code of its own because the repair is to **delete the `catch`** rather
+than to add one.
 
-*What closes it:* bind `_error` where the handler does not mention the name.
-`contracts::order::names_in_block` already answers *"does this block mention
-`error`"* and is deliberately over-approximate — it counts a word inside raw
-text, so an `f"{error}"` is a mention — which is the safe direction here: a false
-*"it is mentioned"* keeps today's binding and today's warning, and a false
-*"it is not"* would be a program that does not compile. The polarity has to be
-checked against a hole, a nested block and a handler that only passes `error` on.
+*The polarity to check is the reverse of the one above.* A `catch` over a call
+the ledger does not describe has to keep working: an unresolved call says
+nothing about whether it throws, and refusing it would be
+[Part III C.4](specification/30-nikaia-tooling.md) — a correct program refused.
+So the refusal fires on *known not to throw*, never on *not known to throw*.
 
-*And not with an `allow`*, for [ADR-074](specification/adr/adr-074.md) D3's
-reason: the warning is `rustc` reading the emitted code correctly, so the thing
-to change is the emitted code.
+*Evidence:* the reproduction above, through the release binary.
 
 ### 1.2. A grammar fold's `init`, `step` and `merge` are not checked at all
 
@@ -819,6 +825,37 @@ current while writing lambdas in the form
 A stale **Status** note is a defect in its own right
 ([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
 so this section being empty is a state to try to keep rather than a milestone.
+
+### 3.2. Six citations named an entry by its number and meant another one
+
+Found by reading, in the round that closed the `catch` binding. The page's own
+head says to cite by **subject** and not by number; six live sentences did not,
+and four of them had gone stale because entries closed and the ones below moved
+up:
+
+| where | said | meant |
+| :--- | :--- | :--- |
+| `contracts/mod.rs` | *"a trait whose method genuinely pauses, which is §1.1"* | that is `NK1129` now ([ADR-080](specification/adr/adr-080.md)) |
+| `tests/nullable.rs` | *"until a generic function lowers with its `<T>` (§1.1)"* | it does ([ADR-074](specification/adr/adr-074.md)) |
+| `tests/typecheck.rs` | the same | the same |
+| `tests/common/mod.rs` | the same | and the road is **closed**, not waiting: a member on an unbounded parameter is `NK1126` |
+| `spec-promises.md` | *"the qualified path is what fails (§1.1)"* | `http::Response(status: 400)` parses and lowers |
+| `spec-promises.md` | *"see §3.7"* | there is no §3.7; §3 runs 3.1, 3.5 |
+
+All six are fixed and now name a record or a subject. What is worth keeping is
+the shape: **two of them were not merely misnumbered but false**, and a reader
+had no way to tell, because a citation into a notes page is the one kind that
+cannot be checked mechanically — the entry it points at exists, it is simply a
+different entry. `check-adr-refs.py` covers ADR numbers and has nothing to say
+here.
+
+*A guard was measured and not built*, and the reasoning is in
+[the index](specification/adr/README.md#reserved-numbers): the one mechanical
+shape available produces a fifth false alarm, and a gate people learn to ignore
+is worse than none. So the remedy is the rule at the head of this page, and this
+entry is the evidence that it has to be applied rather than merely written.
+
+*Evidence:* the six sentences above, each read against the page as it stands.
 
 ### 3.5. Two examples write a postfix `??` the language does not have
 
