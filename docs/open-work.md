@@ -224,11 +224,10 @@ in the unit names. What it does **not** need is the bound question — that one 
 a decision — *how does a package receive a handler* on
 [`open-decisions.md`](open-decisions.md).
 
-### 1.2. A `sync` body is refused as pausing when the call crosses a package
+### 1.2. A `sync` body is refused as pausing when the call leaves the unit
 
 [ADR-078](specification/adr/adr-078.md) D4 makes a trait's methods `sync`, and
-`NK1129` refuses an `impl` whose body pauses. Across a package it refuses one
-that does not:
+`NK1129` refuses an `impl` whose body pauses. It refuses ones that do not:
 
 ```nika
 impl http::Handler for Fixed {
@@ -242,28 +241,66 @@ impl http::Handler for Fixed {
 error[NK1129]: `Fixed::handle` can pause, and `http::Handler` declares it as a method that cannot
 ```
 
-**The ledger the same build wrote disagrees with the refusal.** `http`'s own
-`nikaia.contracts` records `[fn."http::Response::not_found"] sync = "inferred"`,
-and the program's records `[fn."Fixed::handle"] sync = "inferred"` — so by the
-time anything is written down, both are known not to pause. Replacing the call
-with a struct literal makes the refusal go away, and the identical shape in one
-file compiles.
+**The cause is one level below where this entry first put it.** It was filed as
+a *package* boundary; it is a **unit** boundary, and the shorter reproduction is
+two files of **one** package with no packages in sight:
 
-So it is an **ordering** defect and not a `sync` one: the trait rule reads the
-column before `sync::infer` has filled it in for a callee that lives in another
-package, and a callee absent from that fixpoint is read as one that pauses.
-`tests/traits.rs` says in its own head that these rules need the *finished*
-column and that only the program-level entry point runs late enough — which is
-the single-unit version of this, already known and already handled there.
+```nika
+// helper.nika
+pub fn plain(n: i32) -> i32 { return n + 1 }
 
-*What it needs:* the trait check to run after the fixpoint has taken in every
-package's entries, or the package ledger to be folded in before it runs. A test
-belongs beside it that builds a two-package project, because
-`tests/traits.rs` builds one unit and cannot see this.
+// main.nika
+impl Simple for Thing {
+    fn go(&self) -> i32 { return plain(self.n) }   // NK1129
+}
+```
 
-*What it does not need:* a change to D4. A handler that genuinely pauses is still
-not declarable, and that is *how does a package receive a
-handler* on [`open-decisions.md`](open-decisions.md) rather than this defect.
+`Ledger::infer` is called once per **unit** (`modules::Program::of`), so
+`sync::infer`'s graph is that one file's. A callee outside it is in neither
+`own` nor `std`, and `reach_of` sets `blocked`. `Sync::No`'s own documentation
+says it means *"something it calls can pause, **or** something it calls cannot
+be resolved and therefore cannot be vouched for"* — and every reader takes the
+first meaning. `NK1129` is simply the first reader where that shows.
+
+*Measured, both ways:* the two-file program above is refused by the compiler as
+it stands, and a settling pass — re-running the assembly with the previous
+round's ledger as the library, until it stops changing — makes both it and the
+`http::Handler` program compile.
+
+**And that settling pass is why this is not the small fix the entry first
+claimed.** It was built and reverted, because it breaks
+`the_rules_that_come_with_a_path_dependency`:
+
+```
+error: app/src/main.nika:4:5: `i64` is not a future
+```
+
+With three packages — `app` → `http` → `deeper`, and `http::ok` calling
+`deeper::two` — **the two builds of `http` stop agreeing about it.** `http`'s own
+build settles and makes `ok` `sync`, so its crate declares a plain `fn`; `app`'s
+build cannot see `deeper` at all, so it still reads `ok` as pausing and writes
+an `.await`. Today they agree only because both are equally ignorant.
+
+*Why that is not a bug in the settling:* it is
+[ADR-053](specification/adr/adr-053.md) D3 working as decided. A transitive
+package is deliberately not in this program's ledger — *"nothing below it is in
+this program's ledger"* — so a consumer **cannot** reproduce what the dependency
+computed about itself. Any pass that improves a package's own answer diverges
+from what its consumer can derive, unless the consumer stops deriving it.
+
+*So what closes it is a question, and it is on
+[`open-decisions.md`](open-decisions.md)* — *does a consumer read a dependency's
+published ledger?* — which is what [ADR-020](specification/adr/adr-020.md)
+exists for and what nothing does yet. With that answered the settling pass is
+half a day; without it, every fix is a divergence.
+
+*What must not be done meanwhile:* relax `NK1129`. The refusal is right about
+what it reads; what it reads conflates two facts. Making it quieter would trade
+a false refusal for a silent miscompilation, which is the worse half of
+`docs/README.md`'s list.
+
+*Evidence:* the two programs above, the reverted pass, and the three-package
+test that fails under it — all run.
 
 
 ## 2. Decided and unbuilt

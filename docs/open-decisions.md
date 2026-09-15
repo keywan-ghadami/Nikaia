@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Four entries, and all of them are open.** Nothing answered lives here: an
+**Five entries, and all of them are open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -385,3 +385,64 @@ that refusal is the whole point, because today the same program is refused by
 entries take a lambda and the corpus calls them; nothing about `std` is blocked.
 What is blocked is a second author writing the same kind of function, which is
 exactly what a package is for.
+
+---
+
+## 5. Does a consumer read a dependency's published ledger, or derive it again?
+
+**Blocked by it:** `open-work.md`'s defect *a `sync` body is refused as pausing
+when the call leaves the unit* — `NK1129` refusing a body that plainly does not
+pause — and every fix for it.
+
+A program's ledger is assembled by inferring **each unit on its own**
+(`modules::Program::of`), so `sync::infer`'s graph stops at the file. A callee
+outside it is in neither `own` nor `std`, `reach_of` blocks on it, and
+`Sync::No` — which means *"can pause **or** could not be vouched for"* — is read
+by everything downstream as the first of those.
+
+**The obvious repair diverges, and it was built to find out.** Re-running the
+assembly with the previous round's ledger as the library, until it stops
+changing, fixes both reproductions — and breaks a three-package program:
+
+```
+app → http → deeper,    http::ok() calls deeper::two()
+error: app/src/main.nika:4:5: `i64` is not a future
+```
+
+`http`'s own build settles and emits `ok` as a plain `fn`; `app`'s build cannot
+see `deeper`, so it still reads `ok` as pausing and writes an `.await`. They
+agree today only because both are equally ignorant.
+
+**That is not a bug in the pass.** It is
+[ADR-053](specification/adr/adr-053.md) D3 as decided: a transitive package is
+not in this program's ledger, so a consumer **cannot** derive what a dependency
+derived about itself. The two answers can only agree if one of them stops being
+derived.
+
+**Why it is a question for the owner.** The two answers reshape different
+things:
+
+* **The consumer reads `nikaia.contracts`.** This is what
+  [ADR-020](specification/adr/adr-020.md) is for — a package publishes its
+  surface and consumers believe it — and it makes the divergence impossible by
+  construction, because there is one answer and it has one author. The cost is
+  that a dependency's ledger becomes a **build input**: it has to exist before
+  the consumer is checked, which orders the build, and `--locked` gains a thing
+  to compare. It also makes a stale committed ledger a way to be wrong, which
+  today cannot happen because nothing is believed.
+* **The program's ledger becomes transitive.** Bring a dependency's own
+  dependencies in as units read for inference and invisible to name resolution.
+  Cheaper to build — `emit` already skips a unit that belongs to a package — but
+  it re-opens D3: the reason a transitive package is invisible is that it is not
+  a dependency of the crate that would name it, and this puts it back in the
+  ledger while keeping it out of the language. Two notions of *visible* is the
+  shape that produced the `deep::Id`/`c::Id` defect D2 was written for.
+
+**What does not change either way**, so it is not part of the question:
+`NK1129` stays as it is. It is right about what it reads; what it reads
+conflates two facts. Relaxing it would trade a false refusal for a silent
+miscompilation.
+
+**What this is not.** It is not a question about `sync`. The same conflation
+reaches `throws`, `touches` and the sharing column — `NK1129` is only the first
+reader where it became visible, because a trait declaration asserts the answer.
