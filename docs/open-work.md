@@ -846,6 +846,24 @@ written by the build so that `cargo publish` is the whole of publishing.
 dependency; no package in the tree is published yet, so the first one is the
 test.
 
+### 2.18. A foreign crate is described before it is called
+
+[ADR-104](specification/adr/adr-104.md). A call into a crate no ledger
+describes is refused with the command in the message; `nikaia describe
+<crate>` writes `contracts/<crate>.contracts` for the functions the program
+calls, from rustdoc-JSON where the toolchain has it and from the crate's
+sources where it does not, translated by Part III 15.2's table with
+`touches` and `locks` fail-closed; the file is committed, hashed against the
+crate's version, and reviewed. **Nothing of it is built.**
+
+*Evidence:* `examples/foreign-runtime/` — four programs calling `hyper_shim`
+with no entry, silent today; they become described or the fixture for the
+refusal.
+
+*What it needs, in the record's order (§5):* the refusal; the draft from the
+sources; the file, its header and the hash rule; the rustdoc-JSON reader
+behind a toolchain check; the four examples.
+
 ---
 
 ## 3. Upkeep

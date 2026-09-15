@@ -35,6 +35,7 @@ When you create a new project (`nikaia new my_project`), the following structure
 * `nikaia test`: Runs unit tests and fuzzers.
 * `nikaia bench`: Runs performance benchmarks.
 * `nikaia fmt`: Automatically formats your code.
+* `nikaia describe <crate>`: Writes the draft ledger for a Rust crate the program calls (15.2, [ADR-104](adr/adr-104.md)).
 
 **Which backend a command uses.** `nikaia build` and `nikaia run` compile through
 the `rust` backend, the Stage 0 transpiler, and so does a single-file
@@ -631,6 +632,21 @@ The rule reaches exactly as far as the Rust signature is true. A Rust API that d
   ([ADR-061](adr/adr-061.md) D1 — the same refusal a lock gets, for the same
   sentence). **The way across is what is inside**: a view or a copy. A foreign
   library that means to keep the value clones it into a hull of its own anyway.
+
+**A crate is described before it is called** ([ADR-104](adr/adr-104.md)). A call
+into a Rust crate no ledger describes is refused, and the message names the
+command: `nikaia describe <crate>` reads the crate's `pub` signatures — from
+rustdoc-JSON where the toolchain offers it, from the sources where it does not —
+and writes a draft entry for every function the program calls and the types
+those signatures name, translated by the table below. The draft is committed as
+`contracts/<crate>.contracts`, believed while the crate's version and source
+hash hold, and **reviewed like code**: what a signature cannot say (`touches`,
+`locks`) is written fail-closed, what neither reader can read is written `?`,
+and a signature that lies is the reviewer's to correct. Every analysis then
+reads an entry at the boundary, never an absence.
+
+> **Status:** not built — a foreign call is silent today, and `nikaia describe`
+> does not exist. [ADR-104](adr/adr-104.md) §5 is the order of work.
 
 **Thread Safety (Send/Sync)**
 Nikaia decides whether a value may cross into foreign code from the **Nikaia type

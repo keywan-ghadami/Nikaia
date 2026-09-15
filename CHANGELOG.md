@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (a foreign crate is described before it is called)
+
+- **[ADR-104](docs/specification/adr/adr-104.md).** A call into a Rust crate no ledger describes is refused, and the message names `nikaia describe <crate>`, which writes a draft entry for every function the program calls and the types their signatures name — from rustdoc-JSON where the toolchain offers it, from the crate's sources where it does not — translated by Part III 15.2's table, with `touches` and `locks` fail-closed and what neither reader can read written `?`. The draft is `contracts/<crate>.contracts`, believed while the crate's version and hash hold, and reviewed like code, which is what `std`'s own Rust half already gets. Every analysis then reads an entry at the boundary, never an absence, and C.1's promise becomes keepable at the one place it was not.
+- **Nothing of it is built**; `open-work.md` carries the five steps, and `examples/foreign-runtime/` is the fixture either way.
+
 ### Decided (a package is found by version through Cargo, under `nikaia_<name>`)
 
 - **[ADR-103](docs/specification/adr/adr-103.md).** `http = "1.2"` in `nikaia.toml` resolves on crates.io as the crate `nikaia_http`, through Cargo's own dependency rename, so the prefix appears in one generated line and never in a `.nika` file or a `use`. `"1.2"` is Cargo's semver, the resolved version is the lockfile column ADR-021 already has, a `git` table with a `tag` is the same arm without an index, and the path arm stays. A published crate holds the manifest, the sources and the ledger, plus a stub `Cargo.toml` that exists only for the resolver; the consumer reads and emits it as it does a path dependency. A crate under the prefix without sources and ledger is refused by name.
