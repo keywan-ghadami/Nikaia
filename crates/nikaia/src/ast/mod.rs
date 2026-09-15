@@ -382,6 +382,19 @@ pub enum Expr {
         op: BinaryOp,
         lhs: Box<Expr>,
         rhs: Box<Expr>,
+        /// Where the operator and its right-hand side stand.
+        ///
+        /// **The first expression-level span in this AST**
+        /// ([ADR-081](../../../docs/specification/adr/adr-081.md) D1), and it
+        /// exists because an answer had to be keyed by *which* `+` rather than
+        /// by the statement around it: `a + b + c` is two of them, and a
+        /// statement-keyed channel — the shape every other answer the checker
+        /// hands the emitter uses — cannot tell them apart.
+        ///
+        /// The **tail's** span rather than the whole expression's, because that
+        /// is what the grammar has in hand where the node is built, and
+        /// uniqueness is the only property a key needs.
+        span: Span,
     },
 
     /// Part I 3.5: `x?.field`, safe navigation.

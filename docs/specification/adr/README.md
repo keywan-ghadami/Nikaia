@@ -207,6 +207,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 081 | A `+` over text is a call, and `Expr::Binary` gets a span to key it by | `claude/cia-documentation-cleanup-c7g501` |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.

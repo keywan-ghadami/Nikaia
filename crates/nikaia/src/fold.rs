@@ -78,7 +78,7 @@ pub fn constant_of(expr: &Expr, name_is: Lookup<'_>) -> Option<Constant> {
                 pinned: inner.pinned,
             })
         }
-        Expr::Binary { op, lhs, rhs } => {
+        Expr::Binary { op, lhs, rhs, .. } => {
             let lhs = constant_of(lhs, name_is)?;
             let rhs = constant_of(rhs, name_is)?;
             // Two operands that pin different types are a mismatch the type

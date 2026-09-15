@@ -22,7 +22,7 @@
 10-nikaia-light.md #30 compiles
 10-nikaia-light.md #32 error[E0425]
 10-nikaia-light.md #33 compiles
-10-nikaia-light.md #41 error[E0369]
+10-nikaia-light.md #41 compiles
 10-nikaia-light.md #43 error[E0433]
 10-nikaia-light.md #44 error[E0433]
 10-nikaia-light.md #47 compiles

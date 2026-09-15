@@ -189,6 +189,20 @@ pub struct Checked {
     /// a wrap that is not needed, which is the fail-closed direction
     /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1).
     pub nullable_sites: BTreeMap<usize, Wrap>,
+    /// The `+`s that join text, by the byte their **operator** starts at
+    /// ([ADR-081](../../docs/specification/adr/adr-081.md) D2).
+    ///
+    /// Keyed by the operator and not by the statement, which is the whole reason
+    /// `Expr::Binary` gained a span: `a + b + c` is two of them and the statement
+    /// they stand in is one. Every other answer in this channel is keyed by a
+    /// statement because every other answer is about one thing per statement.
+    ///
+    /// **Only text is in here.** A number's `+` stays exactly where it is,
+    /// because arithmetic that moved into `std` would silently lose
+    /// [ADR-043](../../docs/specification/adr/adr-043.md) D1's overflow abort -
+    /// `overflow-checks` is on per Nikaia crate and off for the profile, and
+    /// inlining does not carry the check across.
+    pub concatenations: BTreeSet<usize>,
     /// The `?.` reaches whose field is **itself** nullable, as the byte the
     /// statement starts at and the field's name (Part I 3.5).
     ///
@@ -441,6 +455,8 @@ pub struct Propagation {
     pub task_handles: BTreeSet<(usize, String)>,
     /// [`Checked::comptime_values`].
     pub comptime_values: BTreeMap<usize, (String, String)>,
+    /// [`Checked::concatenations`].
+    pub concatenations: BTreeSet<usize>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -475,6 +491,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
         comptime_values: checked.comptime_values,
+        concatenations: checked.concatenations,
     }
 }
 
@@ -2283,7 +2300,12 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Binary { op, lhs, rhs } => {
+            Expr::Binary {
+                op,
+                lhs,
+                rhs,
+                span: at,
+            } => {
                 let left = self.expr(lhs, span);
                 let right = self.expr(rhs, span);
                 self.divisor_is_not_zero(*op, rhs, span);
@@ -2299,12 +2321,27 @@ impl<'a> Checker<'a> {
                     | BinaryOp::Le
                     | BinaryOp::Gt
                     | BinaryOp::Ge => Ty::named("bool"),
+                    // **A `+` where either side is text is a concatenation**
+                    // ([ADR-081](../../docs/specification/adr/adr-081.md) D2),
+                    // and it comes to a `String` whichever side was owned. This
+                    // used to be the `_ => Ty::Unknown` below, with a comment
+                    // saying that guessing which side names the result was the
+                    // one guess this checker does not make. It was not a guess
+                    // that was missing but a **decision**: a concatenation makes
+                    // a new value, so `String` is the only thing it can be, and
+                    // saying `&str` - which is what two borrowed sides used to
+                    // come to - made `-> String` a false refusal (`NK1104`).
+                    //
+                    // Recorded by the operator's own span, because `a + b + c`
+                    // is two of them and the statement they stand in is one.
+                    BinaryOp::Add if is_text(&left) || is_text(&right) => {
+                        self.checked.concatenations.insert(at.start);
+                        Ty::named("String")
+                    }
                     // Arithmetic on two of the same thing is that thing, and
                     // a bare number is neither - so one known side decides. Two
-                    // known sides that disagree decide nothing: `a + b` over a
-                    // `String` and a `&str` is a concatenation in the language
-                    // below, and guessing which side names the result would be
-                    // the one guess this checker does not make.
+                    // known sides that disagree still decide nothing, now that
+                    // the one case anybody met is taken above.
                     _ => match (left.is_unknown(), right.is_unknown()) {
                         (true, _) => right,
                         (_, true) => left,
@@ -4387,6 +4424,15 @@ fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether a type is one this language calls text.
+///
+/// `String` and `&str`, and nothing else. A `T?` is deliberately **not** text:
+/// `maybe + "x"` is a member reached off a nullable, which Part I 2.3 answers
+/// and this must not quietly paper over.
+fn is_text(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, args, .. } if args.is_empty() && (name == "String" || name == "str"))
 }
 
 /// Every `{…}` group in a string, by the text between the braces.

@@ -538,7 +538,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // Pure structure over the values above. The arithmetic itself reaches
         // nothing, so what the statement touches is what its calls touch.
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => walk(parsed, expr, out),
-        Expr::Binary { op, lhs, rhs } => {
+        Expr::Binary { op, lhs, rhs, .. } => {
             // `&&` and `||` evaluate their right side only sometimes, and an
             // operation that only sometimes runs may not be started early
             // (ADR-033 D5).

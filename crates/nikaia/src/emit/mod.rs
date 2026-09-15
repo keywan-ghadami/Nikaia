@@ -834,6 +834,13 @@ struct Emitter<'p> {
     /// (`check::Checked::nullable_sites`,
     /// [ADR-068](../../../docs/specification/adr/adr-068.md)).
     nullable_sites: std::collections::BTreeMap<usize, crate::check::Wrap>,
+    /// The `+`s that join text, by the byte their operator starts at
+    /// ([ADR-081](../../docs/specification/adr/adr-081.md) D2).
+    ///
+    /// The one answer in this channel keyed by an **expression** rather than by
+    /// a statement, because `a + b + c` is two of them and the statement they
+    /// stand in is one.
+    concatenations: std::collections::BTreeSet<usize>,
     /// What each `comptime` is written as below - its type and its value - by the
     /// byte its statement starts at (`check::Checked::comptime_values`,
     /// [ADR-073](../../docs/specification/adr/adr-073.md) D3, D4).
@@ -1301,6 +1308,7 @@ impl<'p> Emitter<'p> {
             narrowing_casts: propagation.narrowing,
             shared,
             nullable_sites: propagation.nullable,
+            concatenations: propagation.concatenations,
             comptime_values: propagation.comptime_values,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
@@ -3505,7 +3513,12 @@ impl<'p> Emitter<'p> {
                 out.push(unary_op(*op));
                 self.nested(out, expr, u8::MAX, depth, flow)?;
             }
-            Expr::Binary { op, lhs, rhs } => {
+            Expr::Binary {
+                op,
+                lhs,
+                rhs,
+                span: at,
+            } => {
                 // **A constant sum takes the first type that holds it**, the
                 // way a constant does
                 // ([ADR-063](../../../docs/specification/adr/adr-063.md) D1).
@@ -3519,6 +3532,27 @@ impl<'p> Emitter<'p> {
                         _ => flow,
                     },
                 };
+                // **A `+` that joins text is a call**
+                // ([ADR-081](../../docs/specification/adr/adr-081.md) D2).
+                // Rust's operator takes `String + &str` and nothing else, so
+                // three of the four shapes a program can write went below and
+                // were refused there. `concat::plus` has an impl per shape and
+                // the language below picks, which is `index::at`'s arrangement
+                // a third time - and it keeps `String + &str` exactly as fast
+                // as it is today, which a `format!` for every shape would not.
+                //
+                // **Only where the checker said so**, by the operator's own
+                // span: a number's `+` may not move into `std`, where
+                // `overflow-checks` is off and inlining would not carry the
+                // abort across (ADR-043 D1).
+                if self.concatenations.contains(&at.start) {
+                    out.push("nikaia_std::concat::plus(");
+                    self.expr(out, lhs, depth, flow)?;
+                    out.push(", ");
+                    self.expr(out, rhs, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
+                }
                 // Parenthesised only where precedence needs it: the operators
                 // mean the same in both languages, so `value * 10 + n` should
                 // come out the way it went in.

@@ -250,12 +250,28 @@ pub fn params_of(
 }
 
 /// Left-associative: `a - b - c` is `(a - b) - c`.
-pub fn fold_binary(head: ast::Expr, tail: Vec<(ast::BinaryOp, ast::Expr)>) -> ast::Expr {
+/// **Every binary node carries a span, and it is the operator's own.**
+///
+/// The span of the *tail* - the operator and what stands to its right - rather
+/// than of the whole expression, because that is what the grammar has in hand
+/// and because uniqueness is the only property a key needs: two `+`s in one
+/// statement have two spans, which is exactly what a statement-keyed channel
+/// could not give ([ADR-081](../../../docs/specification/adr/adr-081.md) D1).
+///
+/// `contracts/sync.rs` has said *"expression-level spans are open work"* in its
+/// own words since it was written. This is the first of them, and it is here
+/// rather than on every expression because one variant needed it and a field
+/// nobody reads is a field that goes stale.
+pub fn fold_binary(
+    head: ast::Expr,
+    tail: Vec<(ast::BinaryOp, ast::Expr, ast::Span)>,
+) -> ast::Expr {
     tail.into_iter()
-        .fold(head, |lhs, (op, rhs)| ast::Expr::Binary {
+        .fold(head, |lhs, (op, rhs, span)| ast::Expr::Binary {
             op,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
+            span,
         })
 }
 
@@ -1258,19 +1274,19 @@ grammar! {
         rule or_expr -> Expr =
             head:and_expr tail:or_tail* -> { fold_binary(head, tail) }
 
-        rule or_tail -> (BinaryOp, Expr) = "||" e:and_expr -> { (BinaryOp::Or, e) }
+        rule or_tail -> (BinaryOp, Expr, Span) @= "||" e:and_expr -> { (BinaryOp::Or, e, _span) }
 
         rule and_expr -> Expr =
             head:cmp_expr tail:and_tail* -> { fold_binary(head, tail) }
 
-        rule and_tail -> (BinaryOp, Expr) = "&&" e:cmp_expr -> { (BinaryOp::And, e) }
+        rule and_tail -> (BinaryOp, Expr, Span) @= "&&" e:cmp_expr -> { (BinaryOp::And, e, _span) }
 
         rule cmp_expr -> Expr =
             head:add_expr tail:cmp_tail? -> {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
 
-        rule cmp_tail -> (BinaryOp, Expr) = op:cmp_op e:add_expr -> { (op, e) }
+        rule cmp_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:add_expr -> { (op, e, _span) }
 
         // `<=` before `<`: the shorter one would win otherwise and leave `=`
         // to be read as an assignment.
@@ -1285,7 +1301,7 @@ grammar! {
         rule add_expr -> Expr =
             head:mul_expr tail:add_tail* -> { fold_binary(head, tail) }
 
-        rule add_tail -> (BinaryOp, Expr) = op:add_op e:mul_expr -> { (op, e) }
+        rule add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:mul_expr -> { (op, e, _span) }
 
         rule add_op -> BinaryOp =
             "+" -> { BinaryOp::Add }
@@ -1294,7 +1310,7 @@ grammar! {
         rule mul_expr -> Expr =
             head:cast_expr tail:mul_tail* -> { fold_binary(head, tail) }
 
-        rule mul_tail -> (BinaryOp, Expr) = op:mul_op e:cast_expr -> { (op, e) }
+        rule mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:cast_expr -> { (op, e, _span) }
 
         rule cast_expr -> Expr =
             head:unary_expr casts:cast_tail* -> {
@@ -1556,17 +1572,17 @@ grammar! {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
 
-        rule cmp_head_tail -> (BinaryOp, Expr) = op:cmp_op e:head_add -> { (op, e) }
+        rule cmp_head_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:head_add -> { (op, e, _span) }
 
         rule head_add -> Expr =
             head:head_mul tail:head_add_tail* -> { fold_binary(head, tail) }
 
-        rule head_add_tail -> (BinaryOp, Expr) = op:add_op e:head_mul -> { (op, e) }
+        rule head_add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:head_mul -> { (op, e, _span) }
 
         rule head_mul -> Expr =
             head:head_unary tail:head_mul_tail* -> { fold_binary(head, tail) }
 
-        rule head_mul_tail -> (BinaryOp, Expr) = op:mul_op e:head_unary -> { (op, e) }
+        rule head_mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:head_unary -> { (op, e, _span) }
 
         rule head_unary -> Expr =
             op:unary_op e:head_unary -> {
