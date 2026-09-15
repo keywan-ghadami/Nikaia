@@ -3006,6 +3006,39 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("const {bound}: {below} = {written};"));
             }
 
+            // **A write through the brackets is not an index**
+            // ([ADR-080](../../docs/specification/adr/adr-080.md) D2). Rust's
+            // `Index` for a map is over whatever the key *borrows* as, so
+            // `scores["Player1"] = 100` left the key type unpinned and the
+            // program failed with `E0282` in a message naming `TrustedMap` and
+            // a type parameter `K` - three spellings the program never wrote.
+            // `index::set` is `insert` for a map and an indexed assignment for a
+            // sequence, chosen by the language below on the container's type,
+            // because this emitter does not know it (ADR-011 D2).
+            //
+            // Only the plain `=`: a compound `m[k] += 1` reads the slot as well
+            // as writing it, so it is an `Index` either way and a second rule
+            // would be needed to say what reading an absent key means. That is
+            // a question of its own and not this one.
+            Stmt::Assign {
+                target: box_index @ Expr::Index { .. },
+                op: None,
+                value,
+            } => {
+                let Expr::Index { base, index } = box_index else {
+                    unreachable!("matched as an index")
+                };
+                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+                out.push("nikaia_std::index::set(&mut ");
+                self.expr(out, base, depth, flow)?;
+                out.push(", nikaia_std::index::at(");
+                self.expr(out, index, depth, flow)?;
+                out.push("), ");
+                out.push(before);
+                self.expr(out, value, depth, flow)?;
+                out.push(after);
+                out.push(");");
+            }
             Stmt::Assign { target, op, value } => {
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
                 self.expr(out, target, depth, flow)?;

@@ -119,6 +119,67 @@ pub fn at<I: At>(index: I) -> I::Out {
     index.at()
 }
 
+/// **A write through the brackets is not an index**, and that is what this
+/// exists to say ([ADR-080](../../../docs/specification/adr/adr-080.md) D2).
+///
+/// `scores["Player1"] = 100` on a map used to lower to an indexed assignment,
+/// and Rust's `Index` for a map is over anything the key **borrows** as — so
+/// indexing a `HashMap<K, V>` with a `&str` leaves `K` unpinned and the program
+/// failed with
+///
+/// ```text
+/// error[E0282]: type annotations needed for
+///               `HashMap<_, i32, BuildHasherDefault<FxHasher>>`
+/// ```
+///
+/// naming `TrustedMap`, `BuildHasherDefault<FxHasher>` and a type parameter `K`:
+/// three spellings the program never wrote, which is Part III C.1's class at its
+/// worst. `insert` takes `K` by value and pins it exactly, and a sequence's
+/// write is still an indexed assignment — so the two are one trait for the same
+/// reason `At` above is one: **this emitter does not know types** (ADR-011 D2),
+/// and a rule applied everywhere cannot be applied to the wrong container.
+pub trait Set<K, V> {
+    fn set(&mut self, key: K, value: V);
+}
+
+impl<V> Set<usize, V> for Vec<V> {
+    #[track_caller]
+    fn set(&mut self, key: usize, value: V) {
+        self[key] = value;
+    }
+}
+
+impl<K, V, S> Set<K, V> for std::collections::HashMap<K, V, S>
+where
+    K: std::cmp::Eq + std::hash::Hash,
+    S: std::hash::BuildHasher,
+{
+    fn set(&mut self, key: K, value: V) {
+        self.insert(key, value);
+    }
+}
+
+impl<K, V> Set<K, V> for std::collections::BTreeMap<K, V>
+where
+    K: Ord,
+{
+    fn set(&mut self, key: K, value: V) {
+        self.insert(key, value);
+    }
+}
+
+/// The emitted spelling: `nikaia_std::index::set(&mut m, nikaia_std::index::at(k), v)`.
+///
+/// `#[track_caller]`, so a write past the end of a sequence is reported at the
+/// line that wrote it, the same as a read.
+#[track_caller]
+pub fn set<T, K, V>(target: &mut T, key: K, value: V)
+where
+    T: Set<K, V> + ?Sized,
+{
+    target.set(key, value);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

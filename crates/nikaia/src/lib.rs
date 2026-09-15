@@ -17,4 +17,5 @@ pub mod parser;
 pub mod project;
 pub mod specbook;
 pub mod sysroot;
+pub mod traits;
 pub mod views;

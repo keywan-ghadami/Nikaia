@@ -58,16 +58,28 @@ fn the_specifications_programs_are_the_ones_in_expected_txt() {
 /// to remember.
 #[test]
 fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
-    let tripped: Vec<String> = specbook::verdicts(&specbook::specification_dir())
-        .iter()
+    let tripped: Vec<_> = specbook::verdicts(&specbook::specification_dir())
+        .into_iter()
         .filter(|v| v.codes.contains("NK1111"))
-        .map(|v| format!("{}:{}", v.block.file, v.block.line))
         .collect();
     assert_eq!(
-        tripped,
-        vec!["10-nikaia-light.md:467".to_string()],
-        "a plain string holding a hole is a page written before ADR-035 D5; \
-         the one allowed is Part I 2.5, which is about the difference"
+        tripped.len(),
+        1,
+        "a plain string holding a hole is a page written before ADR-035 D5; the \
+         one allowed is Part I 2.5, which is about the difference: {:?}",
+        tripped
+            .iter()
+            .map(|v| format!("{} line {}", v.block.file, v.block.line))
+            .collect::<Vec<_>>()
+    );
+    // Recognised by what the block **says** rather than by where it is: a line
+    // number moves with every paragraph above it, which is the churn the report
+    // above was rebuilt to stop having.
+    assert!(
+        tripped[0].block.code.contains("the braces are braces"),
+        "and the one allowed is the block that explains the difference, not \
+         whichever one happens to trip it: {}",
+        tripped[0].block.code
     );
 }
 
@@ -120,7 +132,13 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
 fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
     let dir = common::scratch_dir("specification-compiles");
     let mut report = String::new();
+    let mut nth: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for v in specbook::verdicts(&specbook::specification_dir()) {
+        // Counted over **every** block and not only the ones that lower, so the
+        // ordinal means the same thing here as in the other baseline.
+        let at = nth.entry(v.block.file.clone()).or_insert(0);
+        *at += 1;
+        let ordinal = *at;
         if v.stage != Stage::Lowered {
             continue;
         }
@@ -157,7 +175,7 @@ fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
                 line.split(':').next().unwrap_or(line).to_string()
             }
         };
-        report.push_str(&format!("{}:{} {verdict}\n", v.block.file, v.block.line));
+        report.push_str(&format!("{} #{ordinal} {verdict}\n", v.block.file));
     }
     let _ = std::fs::remove_dir_all(&dir);
 

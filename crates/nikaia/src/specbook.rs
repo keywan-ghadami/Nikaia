@@ -308,9 +308,25 @@ fn reach(source: &str) -> (Stage, BTreeSet<String>) {
 }
 
 /// The report, one line per block, in a form a diff can be read from.
+///
+/// **A block is addressed by its ordinal in its page and not by its line**, and
+/// that is the difference between a baseline worth having and one nobody
+/// believes. A line number moves whenever a paragraph above the block gains a
+/// sentence, so every prose edit churned the whole tail of the file and the real
+/// changes were somewhere in the noise — measured, on a run where twenty-one
+/// lines moved and not one verdict did.
+///
+/// The ordinal moves only when a block is **added, removed or reordered**, which
+/// is a change worth seeing. What replaces the line as the thing a reader
+/// recognises is the block's own first line of code, which says more about which
+/// block it is than a number ever did.
 pub fn report(dir: &Path) -> String {
     let mut out = String::new();
+    let mut nth: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for v in verdicts(dir) {
+        let at = nth.entry(v.block.file.clone()).or_insert(0);
+        *at += 1;
+        let ordinal = *at;
         let mut notes: Vec<String> = Vec::new();
         if v.block.discusses_a_refusal {
             notes.push("about-a-refusal".to_string());
@@ -322,16 +338,32 @@ pub fn report(dir: &Path) -> String {
             notes.push(v.codes.iter().cloned().collect::<Vec<_>>().join(","));
         }
         out.push_str(&format!(
-            "{}:{} {} ({}){}\n",
+            "{} #{ordinal} {} ({}){}  {}\n",
             v.block.file,
-            v.block.line,
             v.stage.word(),
             v.reading,
             match notes.is_empty() {
                 true => String::new(),
                 false => format!(" [{}]", notes.join(" ")),
-            }
+            },
+            opening(&v.block.code),
         ));
     }
     out
+}
+
+/// The block's first line of code, as the thing a reader recognises it by.
+///
+/// Trimmed and cut, because this is an anchor and not the content: a long line
+/// would put the interesting part of the report off the edge of a terminal.
+fn opening(code: &str) -> String {
+    let line = code
+        .split('\n')
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("(empty)");
+    match line.chars().count() > 56 {
+        true => format!("{}…", line.chars().take(55).collect::<String>()),
+        false => line.to_string(),
+    }
 }

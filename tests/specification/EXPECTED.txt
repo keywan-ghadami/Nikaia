@@ -1,122 +1,122 @@
-10-nikaia-light.md:101 lowered (a body)
-10-nikaia-light.md:109 lowered (a body)
-10-nikaia-light.md:241 refused (a body) [NK1117]
-10-nikaia-light.md:255 refused (a body) [NK1117]
-10-nikaia-light.md:268 refused (a body) [NK1117]
-10-nikaia-light.md:355 lowered (a body) [about-a-refusal]
-10-nikaia-light.md:401 lowered (a body)
-10-nikaia-light.md:410 lowered (a body)
-10-nikaia-light.md:426 lowered (a body)
-10-nikaia-light.md:434 refused (a body) [about-a-refusal NK1116]
-10-nikaia-light.md:467 lowered (a body) [sketch NK1111]
-10-nikaia-light.md:477 lowered (a body)
-10-nikaia-light.md:518 lowered (a body)
-10-nikaia-light.md:535 lowered (a body)
-10-nikaia-light.md:551 lowered (a body)
-10-nikaia-light.md:562 lowered (a body)
-10-nikaia-light.md:581 lowered (as written)
-10-nikaia-light.md:613 lowered (a body)
-10-nikaia-light.md:641 refused (a body) [NK1117]
-10-nikaia-light.md:654 refused (a body) [NK1117]
-10-nikaia-light.md:724 lowered (as written)
-10-nikaia-light.md:744 lowered (as written)
-10-nikaia-light.md:763 lowered (as written) [about-a-refusal]
-10-nikaia-light.md:784 lowered (as written)
-10-nikaia-light.md:796 lowered (as written)
-10-nikaia-light.md:814 fragment (as written)
-10-nikaia-light.md:822 refused (a body) [NK1117]
-10-nikaia-light.md:830 lowered (a body)
-10-nikaia-light.md:841 lowered (items, then a body)
-10-nikaia-light.md:855 lowered (as written)
-10-nikaia-light.md:880 refused (as written) [about-a-refusal NK1126]
-10-nikaia-light.md:897 lowered (as written)
-10-nikaia-light.md:915 lowered (as written)
-10-nikaia-light.md:954 fragment (as written) [about-a-refusal sketch]
-10-nikaia-light.md:987 fragment (as written)
-10-nikaia-light.md:1022 refused (a body) [NK1117]
-10-nikaia-light.md:1047 refused (a body) [NK1117]
-10-nikaia-light.md:1054 refused (a body) [NK1117]
-10-nikaia-light.md:1060 refused (a body) [NK1117]
-10-nikaia-light.md:1090 fragment (as written)
-10-nikaia-light.md:1109 lowered (a body) [about-a-refusal]
-10-nikaia-light.md:1183 fragment (as written) [sketch]
-10-nikaia-light.md:1202 lowered (a body) [sketch]
-10-nikaia-light.md:1211 lowered (a body) [sketch]
-10-nikaia-light.md:1229 fragment (as written)
-10-nikaia-light.md:1297 fragment (as written) [sketch]
-10-nikaia-light.md:1338 lowered (as written) [sketch]
-10-nikaia-light.md:1354 lowered (as written)
-10-nikaia-light.md:1416 refused (as written) [sketch NK2605]
-10-nikaia-light.md:1451 fragment (as written) [sketch]
-10-nikaia-light.md:1468 lowered (as written)
-10-nikaia-light.md:1479 fragment (as written) [sketch]
-10-nikaia-light.md:1511 lowered (a body)
-10-nikaia-light.md:1546 lowered (as written)
-10-nikaia-light.md:1560 lowered (as written)
-10-nikaia-light.md:1585 refused (a body) [NK1117]
-10-nikaia-light.md:1594 lowered (as written)
-10-nikaia-light.md:1636 lowered (a body)
-10-nikaia-light.md:1652 fragment (as written)
-10-nikaia-light.md:1690 refused (a body) [NK1117]
-10-nikaia-light.md:1724 fragment (as written)
-10-nikaia-light.md:1814 fragment (as written)
-10-nikaia-light.md:1872 lowered (a body)
-10-nikaia-light.md:1879 lowered (a body) [about-a-refusal]
-10-nikaia-light.md:1902 lowered (a body)
-10-nikaia-light.md:2002 lowered (as written)
-10-nikaia-light.md:2009 lowered (as written)
-10-nikaia-light.md:2025 lowered (as written)
-10-nikaia-light.md:2132 lowered (as written)
-20-nikaia-advance.md:23 lowered (as written)
-20-nikaia-advance.md:53 refused (a body) [NK1127]
-20-nikaia-advance.md:62 refused (as written)
-20-nikaia-advance.md:108 fragment (as written)
-20-nikaia-advance.md:155 fragment (as written)
-20-nikaia-advance.md:201 fragment (as written)
-20-nikaia-advance.md:224 lowered (as written) [sketch]
-20-nikaia-advance.md:297 fragment (as written)
-20-nikaia-advance.md:315 fragment (as written)
-20-nikaia-advance.md:330 fragment (as written)
-20-nikaia-advance.md:354 fragment (as written)
-20-nikaia-advance.md:361 refused (a body) [NK1117,NK2605]
-20-nikaia-advance.md:456 fragment (as written) [about-a-refusal sketch]
-20-nikaia-advance.md:514 refused (items, then a body) [about-a-refusal NK1117]
-20-nikaia-advance.md:533 lowered (as written)
-20-nikaia-advance.md:555 refused (a body) [NK1117]
-20-nikaia-advance.md:561 refused (a body) [NK1117,NK2605]
-20-nikaia-advance.md:646 lowered (a body) [about-a-refusal]
-20-nikaia-advance.md:704 fragment (as written) [about-a-refusal sketch]
-20-nikaia-advance.md:771 fragment (as written)
-20-nikaia-advance.md:791 fragment (as written)
-20-nikaia-advance.md:806 fragment (as written)
-20-nikaia-advance.md:825 fragment (as written)
-20-nikaia-advance.md:891 refused (a body) [NK1117]
-30-nikaia-tooling.md:299 lowered (as written)
-30-nikaia-tooling.md:455 refused (a body) [NK1117]
-30-nikaia-tooling.md:468 fragment (as written)
-30-nikaia-tooling.md:486 fragment (as written)
-30-nikaia-tooling.md:498 fragment (as written)
-30-nikaia-tooling.md:538 fragment (as written)
-30-nikaia-tooling.md:557 fragment (as written)
-30-nikaia-tooling.md:638 fragment (as written)
-30-nikaia-tooling.md:677 lowered (as written)
-30-nikaia-tooling.md:722 refused (as written)
-30-nikaia-tooling.md:780 fragment (as written)
-30-nikaia-tooling.md:789 lowered (as written) [about-a-refusal]
-30-nikaia-tooling.md:844 refused (a body) [NK1117]
-30-nikaia-tooling.md:866 lowered (as written)
-30-nikaia-tooling.md:883 fragment (as written)
-30-nikaia-tooling.md:910 lowered (as written)
-30-nikaia-tooling.md:935 refused (a body) [NK1117,NK2605]
-30-nikaia-tooling.md:975 fragment (as written)
-30-nikaia-tooling.md:998 lowered (as written)
-30-nikaia-tooling.md:1021 fragment (as written)
-30-nikaia-tooling.md:1040 fragment (as written)
-30-nikaia-tooling.md:1084 fragment (as written) [sketch]
-30-nikaia-tooling.md:1095 fragment (as written)
-30-nikaia-tooling.md:1102 fragment (as written)
-30-nikaia-tooling.md:1115 fragment (as written)
-30-nikaia-tooling.md:1129 fragment (as written)
-30-nikaia-tooling.md:1167 refused (a body) [NK1109,NK1117,NK2605]
-30-nikaia-tooling.md:1235 fragment (as written)
-30-nikaia-tooling.md:1320 fragment (as written)
+10-nikaia-light.md #1 lowered (a body)  let x = 10
+10-nikaia-light.md #2 lowered (a body)  let mut y = 10
+10-nikaia-light.md #3 refused (a body) [NK1117]  let h = h.wrapping_mul(31).wrapping_add(c)        // a …
+10-nikaia-light.md #4 refused (a body) [NK1117]  let average = (total as f64) / (count as f64)     // wi…
+10-nikaia-light.md #5 refused (a body) [NK1117]  let small = big.truncating_i32()                  // ke…
+10-nikaia-light.md #6 lowered (a body) [about-a-refusal]  let strictly_string: String = "Hello".to_string()
+10-nikaia-light.md #7 lowered (a body)  let name = "Nikaia"  // Compiler knows this is a &str -…
+10-nikaia-light.md #8 lowered (a body)  let count = 42          // an i32: nothing asks, and an…
+10-nikaia-light.md #9 lowered (a body)  let c = 2000000000 + 2000000000   // an i64: nothing as…
+10-nikaia-light.md #10 refused (a body) [about-a-refusal NK1116]  let a = 2000000000        // an i32 - the first type th…
+10-nikaia-light.md #11 lowered (a body) [sketch NK1111]  let name = "Nikaia"
+10-nikaia-light.md #12 lowered (a body)  print("{}")               // prints {}
+10-nikaia-light.md #13 lowered (a body)  let result = {
+10-nikaia-light.md #14 lowered (a body)  let age = 18
+10-nikaia-light.md #15 lowered (a body)  let mut count = 0
+10-nikaia-light.md #16 lowered (a body)  // Iterates from 0 to 4 (5 is excluded)
+10-nikaia-light.md #17 lowered (as written)  fn tally() -> i64 throws {           // without `throws…
+10-nikaia-light.md #18 lowered (a body)  let value = 2
+10-nikaia-light.md #19 refused (a body) [NK1117]  match step.0 {
+10-nikaia-light.md #20 refused (a body) [NK1117]  // If find_user returns null, 'name' becomes null.
+10-nikaia-light.md #21 lowered (as written)  // file: users.nika
+10-nikaia-light.md #22 lowered (as written)  // file: users.nika
+10-nikaia-light.md #23 lowered (as written) [about-a-refusal]  // file: main.nika
+10-nikaia-light.md #24 lowered (as written)  // Defining behavior for the User struct
+10-nikaia-light.md #25 lowered (as written)  enum Message {
+10-nikaia-light.md #26 fragment (as written)  let numbers = [1, 2, 3, 4]
+10-nikaia-light.md #27 refused (a body) [NK1117]  names.sort()                                  // by name
+10-nikaia-light.md #28 lowered (a body)  let pair = ("*", 3)          // (&str, i64)
+10-nikaia-light.md #29 lowered (items, then a body)  use std::collections::HashMap
+10-nikaia-light.md #30 lowered (as written)  struct Box[T] {
+10-nikaia-light.md #31 refused (as written) [about-a-refusal NK1126]  fn shout[T](x: T) -> String {
+10-nikaia-light.md #32 lowered (as written)  trait Summarize {
+10-nikaia-light.md #33 lowered (as written)  trait Summarize {
+10-nikaia-light.md #34 fragment (as written) [about-a-refusal sketch]  // Definition
+10-nikaia-light.md #35 fragment (as written)  fn init {
+10-nikaia-light.md #36 refused (a body) [NK1117]  let complex = users.map fn(user) {
+10-nikaia-light.md #37 refused (a body) [NK1117]  let ids = users.map fn(user) { user.id }
+10-nikaia-light.md #38 refused (a body) [NK1117]  Server::new()
+10-nikaia-light.md #39 refused (a body) [NK1117]  // The count comes from the list, so a local may be cal…
+10-nikaia-light.md #40 fragment (as written)  let prefix = "User: "
+10-nikaia-light.md #41 lowered (a body) [about-a-refusal]  let prefix = "Log: "
+10-nikaia-light.md #42 fragment (as written) [sketch]  fn serve(db: &Connection) { … }
+10-nikaia-light.md #43 lowered (a body) [sketch]  let db = SharedMut(postgres::connect("…"))
+10-nikaia-light.md #44 lowered (a body) [sketch]  let db = Shared(postgres::connect("…"))
+10-nikaia-light.md #45 fragment (as written)  keep(Shared(connect(url)))                      // an a…
+10-nikaia-light.md #46 fragment (as written) [sketch]  let kasse: SharedMut[i32] = ...
+10-nikaia-light.md #47 lowered (as written) [sketch]  struct FileHandle {
+10-nikaia-light.md #48 lowered (as written)  impl Cleanup for BufferedFile {
+10-nikaia-light.md #49 refused (as written) [sketch NK2605]  fn report(config: &Config) {
+10-nikaia-light.md #50 fragment (as written) [sketch]  struct Token {
+10-nikaia-light.md #51 lowered (as written)  @borrowed
+10-nikaia-light.md #52 fragment (as written) [sketch]  @borrowed
+10-nikaia-light.md #53 lowered (a body)  let mut users = load_users()
+10-nikaia-light.md #54 lowered (as written)  fn fetch_config() throws -> String {
+10-nikaia-light.md #55 lowered (as written)  enum ConfigError {
+10-nikaia-light.md #56 refused (a body) [NK1117]  if !fs::exists(path) {
+10-nikaia-light.md #57 lowered (as written)  fn load() throws -> Config {
+10-nikaia-light.md #58 lowered (a body)  let config = load() catch {
+10-nikaia-light.md #59 fragment (as written)  let config = load() catch {
+10-nikaia-light.md #60 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
+10-nikaia-light.md #61 fragment (as written)  use std::panic
+10-nikaia-light.md #62 fragment (as written)  let (user, rights, prefs) = overlap {
+10-nikaia-light.md #63 lowered (a body)  spawn fn { println("I am running in the background!") }
+10-nikaia-light.md #64 lowered (a body) [about-a-refusal]  let message = "Hello"
+10-nikaia-light.md #65 lowered (a body)  let message = "Hello"
+10-nikaia-light.md #66 lowered (as written)  // file: src/parse.nika      (the same package as src/m…
+10-nikaia-light.md #67 lowered (as written)  // file: src/main.nika
+10-nikaia-light.md #68 lowered (as written)  use http
+10-nikaia-light.md #69 lowered (as written)  // file: network.nika
+20-nikaia-advance.md #1 lowered (as written)  grammar Json {
+20-nikaia-advance.md #2 refused (a body) [NK1127]  // The compiler runs the Json grammar at build time.
+20-nikaia-advance.md #3 refused (as written)  fn parse_input(input: String) throws {
+20-nikaia-advance.md #4 fragment (as written)  // Definition of the Macro
+20-nikaia-advance.md #5 fragment (as written)  pub macro CreateVar(name_str: String) -> AstExpr {
+20-nikaia-advance.md #6 fragment (as written)  use nikaia_sql::{Database, mysql}
+20-nikaia-advance.md #7 lowered (as written) [sketch]  impl SqlParser {
+20-nikaia-advance.md #8 fragment (as written)  rule expr -> Expr # "expression" =
+20-nikaia-advance.md #9 fragment (as written)  // If parsing fails inside the block, skip ahead to the…
+20-nikaia-advance.md #10 fragment (as written)  // Up to ";" - or to the end of the frame, whichever co…
+20-nikaia-advance.md #11 fragment (as written)  pub rule file -> Summary =
+20-nikaia-advance.md #12 refused (a body) [NK1117,NK2605]  let data = fs::map(path)
+20-nikaia-advance.md #13 fragment (as written) [about-a-refusal sketch]  fn process_image(path: String) -> Image { ... }
+20-nikaia-advance.md #14 refused (items, then a body) [about-a-refusal NK1117]  // 'sync' guarantees one thing: I will never pause.
+20-nikaia-advance.md #15 lowered (as written)  fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `…
+20-nikaia-advance.md #16 refused (a body) [NK1117]  counter.access fn(n) { n + xs.sort_by_key fn(x) { x } }…
+20-nikaia-advance.md #17 refused (a body) [NK1117,NK2605]  counter.access fn(n) { xs.map fn(x) { fs::read("log") }…
+20-nikaia-advance.md #18 lowered (a body) [about-a-refusal]  let counter = SharedMut(0)
+20-nikaia-advance.md #19 fragment (as written) [about-a-refusal sketch]  let account_a = SharedMut(Account(…))
+20-nikaia-advance.md #20 fragment (as written)  select {
+20-nikaia-advance.md #21 fragment (as written)  // Subject: 100 (capacity)
+20-nikaia-advance.md #22 fragment (as written)  let pixels = [/* 1 million pixels */]
+20-nikaia-advance.md #23 fragment (as written)  let data = [1, 2, 3]
+20-nikaia-advance.md #24 refused (a body) [NK1117]  // Subject: The Task (Lambda)
+30-nikaia-tooling.md #1 lowered (as written)  // build.nika
+30-nikaia-tooling.md #2 refused (a body) [NK1117]  test "Addition" {
+30-nikaia-tooling.md #3 fragment (as written)  fn divide(a: i32, b: i32) -> i32 {
+30-nikaia-tooling.md #4 fragment (as written)  struct User { name: String, age: i32 }
+30-nikaia-tooling.md #5 fragment (as written)  impl Generator for User {
+30-nikaia-tooling.md #6 fragment (as written)  bench "Sorting" {
+30-nikaia-tooling.md #7 fragment (as written)  extern "C" {
+30-nikaia-tooling.md #8 fragment (as written)  // Usage of a Rust crate
+30-nikaia-tooling.md #9 lowered (as written)  // main.nika
+30-nikaia-tooling.md #10 refused (as written)  use std::backend::x86
+30-nikaia-tooling.md #11 fragment (as written)  pub fn read_to_string() -> String throws   // all of it…
+30-nikaia-tooling.md #12 lowered (as written) [about-a-refusal]  fn tally() -> i64 throws {          // NK2701 without t…
+30-nikaia-tooling.md #13 refused (a body) [NK1117]  print(f"{name}: ")
+30-nikaia-tooling.md #14 lowered (as written)  use http
+30-nikaia-tooling.md #15 fragment (as written)  .route("/")         fn { "Hello World" }               …
+30-nikaia-tooling.md #16 lowered (as written)  fn main() throws {
+30-nikaia-tooling.md #17 refused (a body) [NK1117,NK2605]  // A request chose these bytes (ADR-010 D2), so they ma…
+30-nikaia-tooling.md #18 fragment (as written)  pub fn escape(text: &str) -> String        // for a tex…
+30-nikaia-tooling.md #19 lowered (as written)  fn row(name: &str, shade: &str) -> String {
+30-nikaia-tooling.md #20 fragment (as written)  <table>
+30-nikaia-tooling.md #21 fragment (as written)  // Subject: the path ; Config: options
+30-nikaia-tooling.md #22 fragment (as written) [sketch]  let data = fs::map(&path)
+30-nikaia-tooling.md #23 fragment (as written)  pub fn open(path: Path; write: bool = false, append: bo…
+30-nikaia-tooling.md #24 fragment (as written)  impl File {
+30-nikaia-tooling.md #25 fragment (as written)  pub fn map(path: Path) -> Mapped throws          // rea…
+30-nikaia-tooling.md #26 fragment (as written)  pub fn exists(path: Path) -> bool throws
+30-nikaia-tooling.md #27 refused (a body) [NK1109,NK1117,NK2605]  // A service that processes files uploaded by strangers:
+30-nikaia-tooling.md #28 fragment (as written)  use std::db::sqlite
+30-nikaia-tooling.md #29 fragment (as written)  // std::collections::List

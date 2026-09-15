@@ -15,11 +15,17 @@ use nikaia::contracts::{Ledger, Sync, STD};
 use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
+/// **`check_program` and not `check`**, because the trait rules read the
+/// ledger's *finished* `sync` column and only the program-level entry point runs
+/// after `sync::infer` has filled it in
+/// ([ADR-080](../../../docs/specification/adr/adr-080.md) §2). A test on the
+/// inner entry point would have found `NK1129` silent and concluded it was not
+/// built.
 fn findings(source: &str) -> Vec<check::Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
-    check::check(&parsed, &own, &library).findings
+    check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new()).findings
 }
 
 fn lowered(purpose: &str, source: &str) -> String {
@@ -286,5 +292,171 @@ fn trait_is_a_reserved_word() {
     assert!(
         parse_to_ast("fn main() {\n    let trait = 3\n}\n").is_err(),
         "`let trait = 3` does not parse"
+    );
+}
+
+/// `NK1129` ([ADR-080](../../../docs/specification/adr/adr-080.md) D1): the
+/// implementation pauses and the declaration has no way to say so.
+///
+/// *Reproduced before it was refused:* the trait lowered to
+/// `fn load(&self) -> Result<…>;` and the `impl` to `async fn load(&self) ->
+/// Result<…>`, and the language below answered `E0053` about a file nobody
+/// wrote.
+#[test]
+fn an_implementation_that_pauses_is_refused_where_the_trait_cannot_say_so() {
+    let found = findings(
+        r#"
+trait Loader {
+    fn load(&self) -> String throws
+}
+
+struct File {
+    path: String,
+}
+
+impl Loader for File {
+    fn load(&self) -> String throws {
+        return fs::read_to_string(self.path)
+    }
+}
+
+fn main() {
+    println("x")
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1129")
+        .unwrap_or_else(|| panic!("a pausing implementation is refused: {found:#?}"));
+    assert!(
+        refusal.message.contains("File::load") && refusal.message.contains("Loader"),
+        "it names the method and the trait: {}",
+        refusal.message
+    );
+}
+
+/// And a body that does **not** pause is not refused, which is every trait
+/// anybody has written so far.
+#[test]
+fn an_implementation_that_cannot_pause_is_left_alone() {
+    assert!(
+        findings(SUMMARIZE).is_empty(),
+        "the ordinary case stays ordinary"
+    );
+}
+
+/// `NK1130`, the direction that was `rustc`'s `E0046`: the `impl` leaves out a
+/// method the trait declares.
+#[test]
+fn an_impl_that_leaves_a_method_out_is_refused() {
+    let found = findings(
+        r#"
+trait Summarize {
+    fn summary(&self) -> String
+    fn title(&self) -> String
+}
+
+struct User {
+    name: String,
+}
+
+impl Summarize for User {
+    fn summary(&self) -> String {
+        return f"User: {self.name}"
+    }
+}
+
+fn main() {
+    println("x")
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1130")
+        .unwrap_or_else(|| panic!("an incomplete impl is refused: {found:#?}"));
+    assert!(
+        refusal.message.contains("title"),
+        "it names what is missing: {}",
+        refusal.message
+    );
+}
+
+/// The other direction, which was `E0407`: a method the trait does not declare.
+#[test]
+fn a_method_the_trait_does_not_declare_is_refused() {
+    let found = findings(
+        r#"
+trait Summarize {
+    fn summary(&self) -> String
+}
+
+struct User {
+    name: String,
+}
+
+impl Summarize for User {
+    fn summary(&self) -> String {
+        return f"User: {self.name}"
+    }
+
+    fn shout(&self) -> String {
+        return f"USER"
+    }
+}
+
+fn main() {
+    println("x")
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1130")
+        .unwrap_or_else(|| panic!("a method outside the trait is refused: {found:#?}"));
+    assert!(
+        refusal.message.contains("shout"),
+        "it names the method: {}",
+        refusal.message
+    );
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("impl User")),
+        "and says where it belongs: {:?}",
+        refusal.help
+    );
+}
+
+/// **A trait this unit does not declare is not checked against**, and that is
+/// the rule rather than a gap: `impl Error for ConfigError` names the one trait
+/// the compiler reads rather than one a `.nika` file wrote
+/// ([ADR-023](../../../docs/specification/adr/adr-023.md) D3), and a trait a
+/// package publishes cannot be reached at all yet. Silence is the only correct
+/// answer about a declaration that is not here.
+#[test]
+fn an_impl_of_a_trait_declared_elsewhere_is_left_alone() {
+    let found = findings(
+        r#"
+struct ConfigError {
+    path: String,
+}
+
+impl Error for ConfigError {
+    fn message(&self) -> String {
+        return f"no config at {self.path}"
+    }
+}
+
+fn main() {
+    println("x")
+}
+"#,
+    );
+    assert!(
+        !found.iter().any(|f| f.code == "NK1130"),
+        "nothing here declares `Error`, so nothing here can check against it: {found:#?}"
     );
 }
