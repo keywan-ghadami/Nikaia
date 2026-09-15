@@ -228,7 +228,7 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
     // not read.
     let (binds, value) = match stmt {
         Stmt::Let {
-            name, value, ty, ..
+            names, value, ty, ..
         } => {
             // A written type would have to be carried onto one element of a
             // tuple pattern. Nothing needs it yet.
@@ -237,6 +237,16 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
                     "a written type, which would have to be carried onto one half of a pattern",
                 );
             }
+            // **A tuple of names is opaque here**
+            // ([ADR-098](../../../../docs/specification/adr/adr-098.md)), the
+            // same answer a written type already gets and for the same reason:
+            // this analysis carries **one** bound name and reordering a
+            // statement that binds several would need all of them. Opaque is
+            // the safe direction - it declines to reorder rather than
+            // reordering wrongly.
+            let [name] = names.as_slice() else {
+                return Accounted::Opaque("several names bound at once");
+            };
             (Some(parsed.text(*name).to_string()), value)
         }
         Stmt::Expr(value) => (None, value),

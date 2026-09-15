@@ -949,8 +949,19 @@ impl<'a> Analysis<'a> {
     fn stmt(&mut self, function: &str, stmt: &Stmt, scope: &mut BTreeMap<String, Ty>) {
         match stmt {
             Stmt::Let {
-                name, ty, value, ..
+                names, ty, value, ..
             } => {
+                // **One name only** ([ADR-098](../../../../docs/specification/adr/adr-098.md)).
+                // A hull's count is decided per **value**, and what a tuple's
+                // parts are is the call's business rather than this walk's - so
+                // a destructure records no handle, which leaves each part at the
+                // atomic floor [ADR-037](../../../../docs/specification/adr/adr-037.md)
+                // D6 sets. Not recording is the safe direction: D7 may only ever
+                // take an atomic **away**, and it can only do that for a value it
+                // has an answer about.
+                let [name] = names.as_slice() else {
+                    return;
+                };
                 let name = self.parsed.text(*name).to_string();
                 let declared = ty.as_ref().map(|t| Ty::from_ast(self.parsed, t));
                 // An untyped `let` that names a `Shared` is a second handle on

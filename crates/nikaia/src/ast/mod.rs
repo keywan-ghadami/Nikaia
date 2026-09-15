@@ -177,7 +177,15 @@ pub struct Block {
 pub enum Stmt {
     // Kap 2.1: let mut x = 10
     Let {
-        name: Ident,
+        /// **One name, or a flat tuple of them**
+        /// ([ADR-098](../../../docs/specification/adr/adr-098.md)):
+        /// `let x = 1` and `let (tx, rx) = channel::bounded(100)`.
+        ///
+        /// A `Vec` rather than a second variant, because the two are one
+        /// statement and a walk that has to remember a second one is a walk
+        /// that will forget it. Never empty - the grammar has no way to write
+        /// `let () = …`.
+        names: Vec<Ident>,
         mutable: bool,
         ty: Option<Type>, // Type Inference macht dies optional
         value: Expr,

@@ -441,33 +441,7 @@ pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
 keyed the same way, saying whether it also closes a cycle, is the same shape
 again — the checker has the resolved call graph that `contracts::sync` builds.
 
-### 2.3. `let` takes one name, and the specification writes it taking several
-
-```nika
-let (user, rights, prefs) = overlap { … }          // Part I 8.1.2
-let (tx, rx) = channel::bounded(100)               // Part II 12.5
-```
-
-Neither parses. `let` takes **one** name, and a destructuring `let` is a form the
-specification uses twice, for two different constructs, and defines nowhere —
-Part I 2.1 introduces `let` with a name and says nothing about a pattern.
-
-*Evidence:* both lines above, in the specification. `overlap { … }` met this
-rather than made it: the construct is built and is reached by its tuple in the
-meantime (`let r = overlap { … }`, then `r.0`), which works and reads worse than
-what the page promises.
-
-*What it needs:* a flat tuple of names is all either site writes, so that is the
-whole of the work — `Stmt::Let`'s single `Ident` becomes several, and the twenty
-places that read it are made to look. Nesting and `_` are written nowhere and
-should be **refused with a sentence** rather than quietly accepted, which is this
-compiler's rule for a form nobody decided.
-
-*What it is not:* a pattern language. `match` has patterns already and this is
-not them; what the two sites need is destructuring a tuple whose arity is known,
-and a bigger answer would be a decision rather than this repair.
-
-### 2.4. Standard input is `async` and does not suspend
+### 2.3. Standard input is `async` and does not suspend
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -497,7 +471,7 @@ parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` —
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
 
-### 2.5. The lock is built and every rule around it is not
+### 2.4. The lock is built and every rule around it is not
 
 [ADR-057](specification/adr/adr-057.md) decided what the lock **is**,
 [ADR-059](specification/adr/adr-059.md) what a program writes to reach one, and
@@ -517,13 +491,13 @@ left is the section's own rules, every one of which is a refusal nothing raises:
   worth the extra words, because the bullet used to name the whole range and a
   reader would have gone looking for work that is done.
 
-### 2.6. Part II 12.8's supervision syntax
+### 2.5. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no
 supervisor. Listed so it is not mistaken for something the `spawn` work includes —
 it is not.
 
-### 2.7. `fortunes.nika` waits on two runtime pieces and one language question
+### 2.6. `fortunes.nika` waits on two runtime pieces and one language question
 
 The template half is built — [ADR-017](specification/adr/adr-017.md)'s `dsl html`
 compiles where it is written, every hole goes through `html::Render`, and the
@@ -556,7 +530,7 @@ what it meets after that.
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.8. There is no HTTP server, and three records now wait on it
+### 2.7. There is no HTTP server, and three records now wait on it
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal
@@ -604,7 +578,7 @@ bench that decided it (`benches/sendfile/`) and the write-up
 been built ahead of the server and deliberately was not, because D3's measurement
 makes it the mechanism that loses at the sizes a server sends most.
 
-### 2.9. There is no target that lets foreign code call in, and the record for one is written
+### 2.8. There is no target that lets foreign code call in, and the record for one is written
 
 [ADR-062](specification/adr/adr-062.md). Nothing of it is built and nothing of it
 **can** be: `extern "C"` is a parse error (Part III 15.1), `Target` has two values,
@@ -623,7 +597,7 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.10. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
+### 2.9. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
 
 [ADR-082](specification/adr/adr-082.md) D1: a grammar is entered by an ordinary
 call, `Json.value(input)`, and D2 makes every `pub` rule an entry. Accepted,
@@ -665,7 +639,7 @@ programs, each of which writes `catch` beside the entry.
 *Evidence:* the eight files, listed above, found by `grep` and confirmed by the
 refusal that ran over them.
 
-### 2.11. Nothing runs Nikaia code while the program is built
+### 2.10. Nothing runs Nikaia code while the program is built
 
 *Reproduced:* `comptime` is built and its evaluator is
 [`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
@@ -703,7 +677,7 @@ see 2.15.
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is 2.15's, and the reason is there.
 
-### 2.12. Running a grammar while the program is built is not interpretation
+### 2.11. Running a grammar while the program is built is not interpretation
 
 *The distinction, because it is the whole entry.* A grammar could be run at build
 time by interpreting the grammar tree the compiler already holds. **It must not
@@ -833,7 +807,36 @@ A stale **Status** note is a defect in its own right
 ([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
 so this section being empty is a state to try to keep rather than a milestone.
 
-### 3.2. Eight citations named an entry by its number and meant another one
+### 3.2. `_` is a name, and reaches the language below as its wildcard
+
+*Reproduced:* `let _ = f()` compiles today and lowers to Rust's `let _ = f();`.
+So does `let (a, _) = pair()`.
+
+`_` is not a reserved word here and not a construct; it parses as an ordinary
+name. **What it becomes below is not an ordinary binding**, though — Rust's `_`
+discards the value rather than binding it, and the two differ where it matters:
+a value bound to a name is dropped at the end of its scope, and a value bound to
+Rust's `_` is dropped **immediately**. For a lock guard or a file handle that is
+a different program.
+
+*Why it is upkeep and not a defect:* nothing in `examples/`, `tests/samples/` or
+`crates/nikaia-std/src/` writes one, so no program is wrong today — only the
+language is undecided about a spelling it already accepts. That is the same
+class as the postfix `??` below.
+
+*Found by* [ADR-098](specification/adr/adr-098.md): the tuple form made `_` look
+like a pattern feature, and checking whether to refuse it there turned up that
+the single-name form had been accepting it all along.
+
+*What it needs is a decision before any work:* whether `_` is a wildcard in this
+language. If it is, Part I 2.1 gains it and the drop timing is stated; if it is
+not, it is refused as a name, which is free today and breaking later — the
+polarity [ADR-051](specification/adr/adr-051.md) D1 states. Either way the
+compiler's answer stops being an accident of what the parser happens to accept.
+
+*Evidence:* the two lines above, through the release binary.
+
+### 3.3. Eight citations named an entry by its number and meant another one
 
 Found by reading, in the round that closed the `catch` binding and again in the
 one after it. The page's own head says to cite by **subject** and not by number;
@@ -870,7 +873,7 @@ entry is the evidence that it has to be applied rather than merely written.
 
 *Evidence:* the eight sentences above, each read against the page as it stands.
 
-### 3.5. Two examples write a postfix `??` the language does not have
+### 3.4. Two examples write a postfix `??` the language does not have
 
 Part I 3.5 defines `??` as **null coalescing** — `a ?? b`, a fallback when the
 left side is null — and nothing else. There is no postfix unwrap in that section,
@@ -899,9 +902,16 @@ to look up, because the section it would be defined in does not mention it.
 postfix unwrap at all. If it does, Part I 3.5 gains it and the parser follows —
 and it wants a name for what it does when the value **is** null, which for an
 abort is Part III A.2's territory. If it does not, the two examples are rewritten
-to use what 3.5 has. Part I 2.3's nullable types are themselves a parse error
-(§2.5), so nothing can be written either way yet, and that is the reason this is
-upkeep rather than a defect: no program is wrong today, only the page is.
+to use what Part I 3.5 has.
+
+*Two sentences that were here and are false, corrected rather than deleted.* It
+said the examples should be rewritten *"to use what 3.5 has"* and cited its own
+number for the section, which moves; and it said **Part I 2.3's nullable types
+are themselves a parse error** — `let a: i64? = 3` lowers and runs, measured
+through the release binary, and has for long enough that nobody noticed the
+sentence. That claim was the reason given for this being upkeep rather than a
+defect, and the reason holds for a different one: no program in the tree writes
+a postfix `??`, so nothing is wrong today except the page.
 
 The Part III 17.1 example was rewritten while this was found; ADR-018's stands,
 because an ADR is written once and the correction belongs to whatever answers

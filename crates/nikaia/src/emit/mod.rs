@@ -3087,13 +3087,35 @@ impl<'p> Emitter<'p> {
         let flow = flow.at(span.start);
         match stmt {
             Stmt::Let {
-                name,
+                names,
                 mutable,
                 ty,
                 value,
             } => {
                 let mutable = if *mutable { "mut " } else { "" };
-                let bound = self.text(*name);
+                // **A tuple of names is Rust's own tuple pattern**
+                // ([ADR-098](../../docs/specification/adr/adr-098.md)): the
+                // language below takes a tuple apart by position exactly as
+                // this one does, so there is nothing to translate. No count is
+                // looked up and no annotation is written, because a hull's
+                // count is decided per **value** and a destructure names none -
+                // which is the same answer `contracts::sharing` gives, and the
+                // two have to agree.
+                if let [_, _, ..] = names.as_slice() {
+                    let bound: Vec<String> = names
+                        .iter()
+                        .map(|n| escaped(self.text(*n)).into_owned())
+                        .collect();
+                    out.push(&format!("let {mutable}({}) = ", bound.join(", ")));
+                    let (before, after) =
+                        Self::around(self.nullable_sites.get(&span.start).copied());
+                    out.push(before);
+                    self.expr(out, value, depth, flow)?;
+                    out.push(after);
+                    out.push(";");
+                    return Ok(());
+                }
+                let bound = self.text(names[0]);
                 let count = self.count_at(flow.function, bound);
                 // A hull written by a call inside this value looks its count up
                 // by the name being bound (ADR-064 D2), and an expression has

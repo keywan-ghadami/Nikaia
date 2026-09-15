@@ -252,6 +252,7 @@ note: also possible here: `//`
 in COMMENT
 in item 1
 in WS
+in let_names
 in let_stmt
 in stmt
 in stmt_list

@@ -226,6 +226,56 @@ fn coalesce_fallback_note(rendered: &str) -> String {
         .to_string()
 }
 
+/// **A `let` taking apart something a flat tuple of names cannot**
+/// ([ADR-098](../../../docs/specification/adr/adr-098.md)).
+///
+/// `let (a, b) = …` binds names by position and nothing else: a **nested**
+/// tuple is written nowhere in the specification and is refused rather than
+/// quietly accepted, which is this compiler's rule for a form nobody decided.
+/// What a bare parse error says about it is a list of tokens, and a list of
+/// tokens does not tell a reader that the *shape* is the thing that is missing.
+///
+/// **`_` is not part of this**, and deliberately so: it parses as a name and
+/// has since long before this form existed (`let _ = f()` lowers today), so
+/// refusing it here would narrow something already accepted and would say
+/// nothing about the single-name spelling beside it. What it *means* - Rust's
+/// wildcard rather than a binding - is on `open-work.md` as its own finding.
+///
+/// Recognised from the rendering rather than from the grammar, for the reason
+/// [`coalesce_fallback_note`] has: the failure happens after `(` has already
+/// matched, so the backend's message is about the token it stopped at and the
+/// note is what supplies the sentence.
+fn let_names_note(rendered: &str) -> String {
+    const MARK: &str = "found unexpected token `";
+    let Some(after) = rendered.split(MARK).nth(1) else {
+        return String::new();
+    };
+    let Some(token) = after.split('`').next() else {
+        return String::new();
+    };
+    if token != "(" {
+        return String::new();
+    }
+    // The offending line, with a `let (` to the left of the caret, is what
+    // makes this the shape rather than an ordinary typo.
+    let source = rendered.lines().find(|l| l.contains(" | "));
+    let caret = rendered.lines().find(|l| l.trim_start().starts_with('^'));
+    let (Some(source), Some(caret)) = (source, caret) else {
+        return String::new();
+    };
+    let at = caret.find('^').unwrap_or(0);
+    let before = &source[..source.len().min(at)];
+    if !before.contains("let (") && !before.contains("let mut (") {
+        return String::new();
+    }
+    "\nnote: a `let` binds one name, or a flat tuple of them - `let (tx, rx) = …` \
+     (Part I, 2.1). It is not a pattern, so a tuple inside a tuple has no \
+     spelling here.\n\
+     help: bind the outer parts with one name each, and read the inner ones from \
+     the name that holds them."
+        .to_string()
+}
+
 pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // Generated parsers run on a `Stateful` stream: `LocatingSlice` supplies the
     // spans, `ParseContext` carries the shared parser state including the
@@ -248,9 +298,10 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         .map_err(|e| {
             let rendered = e.render(input);
             let note = format!(
-                "{}{}",
+                "{}{}{}",
                 reserved_word_note(&rendered),
-                coalesce_fallback_note(&rendered)
+                coalesce_fallback_note(&rendered),
+                let_names_note(&rendered)
             );
             crate::diagnostics::refuse(format!("Parse error:\n{rendered}{note}"))
         })?;
@@ -1233,19 +1284,40 @@ grammar! {
         rule let_stmt -> Stmt =
             KW_LET
             mutable:kw_mut?
-            name:NAME
+            names:let_names
             ty:type_annotation?
             "="
             val:expr
             ";"?
             -> {
                 Stmt::Let {
-                    name,
+                    names,
                     mutable: mutable.is_some(),
                     ty,
                     value: val
                 }
             }
+
+        // **One name, or a flat tuple of them**
+        // ([ADR-098](../../../../docs/specification/adr/adr-098.md)).
+        //
+        // Part I 8.1.2 writes `let (user, rights, prefs) = overlap { … }` and
+        // Part II 12.5 writes `let (tx, rx) = channel::bounded(100)`; Part I
+        // 2.1 introduces `let` with a name and says nothing about a pattern.
+        // So this is a tuple of **names** and not a pattern language: `match`
+        // has patterns already and these two sites need neither.
+        //
+        // Nesting and `_` do not parse, and the note beside a `let`'s parse
+        // error is what says so in a sentence rather than in a list of tokens.
+        rule let_names -> Vec<Symbol> =
+            one:NAME -> { vec![one] }
+          | "(" first:NAME rest:let_name_tail* ")" -> {
+                let mut names = vec![first];
+                names.extend(rest);
+                names
+            }
+
+        rule let_name_tail -> Symbol = "," n:NAME -> { n }
 
         rule type_annotation -> Type =
             ":" ty:type_ref -> { ty }

@@ -47,9 +47,14 @@ impl Interpreter {
 
     fn eval_stmt(&self, stmt: &Stmt) {
         match stmt {
-            Stmt::Let { name, value, .. } | Stmt::Comptime { name, value, .. } => {
+            Stmt::Let { names, value, .. } => {
                 // In a real implementation, we would store the result in a scope map.
                 // For now, we just print the binding.
+                let bound: Vec<&str> = names.iter().map(|n| self.text(n)).collect();
+                println!("[Nikaia Runtime] Bind: {} = <evaluated>", bound.join(", "));
+                self.eval_expr(value);
+            }
+            Stmt::Comptime { name, value, .. } => {
                 println!("[Nikaia Runtime] Bind: {} = <evaluated>", self.text(name));
                 self.eval_expr(value);
             }

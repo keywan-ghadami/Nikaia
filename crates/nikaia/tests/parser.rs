@@ -122,8 +122,8 @@ fn a_keyword_does_not_swallow_the_start_of_a_longer_word() {
         panic!("a function");
     };
     assert!(
-        matches!(&body.stmts[0].node, Stmt::Let { name, .. }
-            if parsed.text(*name) == "forx"),
+        matches!(&body.stmts[0].node, Stmt::Let { names, .. }
+            if names.len() == 1 && parsed.text(names[0]) == "forx"),
         "`forx` is one name and does not begin a `for`: {:?}",
         body.stmts[0].node
     );

@@ -180,7 +180,13 @@ struct Bindings {
 
 fn check_block(parsed: &Parsed, block: &Block, bound: &mut Bindings, out: &mut Vec<Finding>) {
     for stmt in &block.stmts {
-        if let Stmt::Let { name, value, .. } = &stmt.node {
+        // **One name only**: a deferred `dsl` block is one value, so a tuple
+        // destructure cannot be bound to one
+        // ([ADR-098](../../../docs/specification/adr/adr-098.md)).
+        if let Stmt::Let { names, value, .. } = &stmt.node {
+            let [name] = names.as_slice() else {
+                continue;
+            };
             let text = parsed.text(*name).to_string();
             match value {
                 Expr::Dsl {

@@ -524,7 +524,18 @@ impl Scanner<'_> {
         for (i, stmt) in block.stmts.iter().enumerate() {
             let returning = tail && i == last;
             match &stmt.node {
-                Stmt::Let { name, value, .. } | Stmt::Comptime { name, value, .. } => {
+                // **Every name**, because a view carried into a tuple reaches
+                // each part of it and this walk may not under-approximate
+                // ([ADR-098](../../../docs/specification/adr/adr-098.md)).
+                Stmt::Let { names, value, .. } => {
+                    if self.mentions(value) {
+                        for name in names {
+                            self.carriers.insert(self.parsed.text(*name).to_string());
+                        }
+                    }
+                    self.stores(value, &stmt.span);
+                }
+                Stmt::Comptime { name, value, .. } => {
                     if self.mentions(value) {
                         self.carriers.insert(self.parsed.text(*name).to_string());
                     }

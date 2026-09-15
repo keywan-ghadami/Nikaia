@@ -2002,14 +2002,23 @@ impl<'a> Checker<'a> {
     fn stmt(&mut self, stmt: &Stmt, span: &Span) -> Ty {
         match stmt {
             Stmt::Let {
-                name,
+                names,
                 mutable,
                 ty,
                 value,
             } => {
                 self.a_field_of_a_borrowed_subject(value, span, "bound");
                 let found = self.expr(value, span);
-                let name = self.parsed.text(*name).to_string();
+                // **A tuple of names takes the value apart**
+                // ([ADR-098](../../../docs/specification/adr/adr-098.md)). The
+                // parts come from the value's own type where it is a tuple of
+                // the right width, and are `?` otherwise - the same silence
+                // every other unanswered question here keeps, and never a guess
+                // that the widths match.
+                if let [_, _, ..] = names.as_slice() {
+                    return self.tuple_let(names, ty.as_ref(), &found, span);
+                }
+                let name = self.parsed.text(names[0]).to_string();
                 self.nameable(&name, span, "a `let`");
                 let bound = match ty {
                     Some(ty) => {
@@ -3769,8 +3778,12 @@ impl<'a> Checker<'a> {
         // already carries every branch's result, so `let x = …` inside one
         // would name a thing that leaves by two doors (D2).
         for stmt in &block.stmts {
-            if let Stmt::Let { name, .. } = &stmt.node {
-                let name = self.parsed.text(*name).to_string();
+            if let Stmt::Let { names, .. } = &stmt.node {
+                let bound: Vec<String> = names
+                    .iter()
+                    .map(|n| self.parsed.text(*n).to_string())
+                    .collect();
+                let name = bound.join("`, `");
                 self.checked.findings.push(Finding {
                     code: "NK2104",
                     severity: Severity::Error,
@@ -4328,6 +4341,63 @@ impl<'a> Checker<'a> {
                 "delete the `catch` and its handler: the expression is the value".to_string(),
             ),
         });
+    }
+
+    /// **A `let` that binds several names at once**
+    /// ([ADR-098](../../../docs/specification/adr/adr-098.md)).
+    ///
+    /// Part I 8.1.2 writes `let (user, rights, prefs) = overlap { … }` and Part
+    /// II 12.5 writes `let (tx, rx) = channel::bounded(100)`. Both take a value
+    /// apart by **position**, and neither writes a type - so this binds each
+    /// name to the part at its index where the value's type is a tuple of the
+    /// right width, and to `?` where it is not.
+    ///
+    /// **The widths are not compared**, and that is deliberate rather than
+    /// unfinished. A value whose type this compiler cannot see is `?`, and
+    /// refusing a destructure of one because it *looks* like the wrong width
+    /// would refuse a correct program
+    /// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)). What
+    /// a wrong width costs today is the language below saying so about a `let`
+    /// the author did write, which is a smaller and honest failure - and the
+    /// day the tuple's own width is known for certain is the day to refuse it
+    /// here.
+    ///
+    /// **A written type is refused**, because `let (a, b): T = …` would have to
+    /// say which name `T` is about and nothing decides that. Refused rather than
+    /// ignored: ignoring it takes something the author wrote and drops it.
+    fn tuple_let(
+        &mut self,
+        names: &[Ident],
+        ty: Option<&crate::ast::Type>,
+        found: &Ty,
+        span: &Span,
+    ) -> Ty {
+        if ty.is_some() {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1136",
+                message: "a `let` that binds several names takes no type".to_string(),
+                notes: vec![
+                    "the names are taken apart by position, and one written type cannot say \
+                     which of them it is about (Part I, 2.1)"
+                        .to_string(),
+                ],
+                help: Some(
+                    "take the type off, or bind one name and read the parts from it".to_string(),
+                ),
+            });
+        }
+        let parts = match found {
+            Ty::Tuple(parts) if parts.len() == names.len() => parts.clone(),
+            _ => vec![Ty::Unknown; names.len()],
+        };
+        for (name, part) in names.iter().zip(parts) {
+            let bound = self.parsed.text(*name).to_string();
+            self.nameable(&bound, span, "a `let`");
+            self.bind_with(bound, part, None);
+        }
+        Ty::Tuple(Vec::new())
     }
 
     /// **Every item-level `comptime`, in a frame that stays under the whole
