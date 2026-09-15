@@ -24,6 +24,14 @@
 # An absent `sync` means *not* sync - which is the promise this file exists to
 # make. An absent *entry* means nothing is known, and a caller may not assume.
 #
+# **`keeps` reads the same way** (ADR-094 D2): absent on a *present* entry says
+# the function keeps none of what it is given, so a caller may lend them. The
+# six entries below that carry one are the ones whose argument outlives the call
+# - `Vec::push`, `String::push`, `HashMap::entry`, `Entry::or_insert` and the
+# two `set` doors. Every other `std` function reads what it is handed, which is
+# what makes the column worth having: a caller that had to assume the worst
+# about `str::len` would have to own everything it ever passes.
+#
 # **Present, `sync` says which kind of promise it is** (ADR-027). `sync = true`
 # is one the source made and the compiler checked; `sync = "inferred"` is one
 # the body implies, derived from the calls it makes. A caller uses them
@@ -517,6 +525,7 @@ signature = "(f64) -> i64"
 pub = true
 sync = true
 touches = []
+keeps = ["key"]
 signature = "(&HashMap[$K, $V], key: ?) -> Entry[$V]"
 
 # `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
@@ -575,6 +584,7 @@ signature = "(Entry[$V], f: fn(&$V)) -> Entry[$V]"
 pub = true
 sync = true
 touches = []
+keeps = ["value"]
 signature = "(Entry[$V], value: ?) -> &$V"
 
 # Also runs its lambda, before it returns.
@@ -637,6 +647,7 @@ signature = "(&String) -> i64"
 pub = true
 sync = true
 touches = []
+keeps = ["c"]
 signature = "(&String, c: char)"
 
 [fn."String::push_str"]
@@ -667,6 +678,7 @@ signature = "() -> Vec[?]"
 pub = true
 sync = true
 touches = []
+keeps = ["value"]
 signature = "(&Vec[$T], value: ?)"
 
 [fn."Vec::sort"]
@@ -700,6 +712,7 @@ signature = "(&Locked[$T]) -> $T"
 pub = true
 touches = ["lock write"]
 sync = true
+keeps = ["value"]
 signature = "(&Locked[$T], value: $T)"
 
 # **Reads in place and may not change what it is handed** (ADR-059 D1): the one
@@ -748,6 +761,7 @@ signature = "(&SharedMut[$T]) -> $T"
 pub = true
 touches = ["lock write"]
 sync = true
+keeps = ["value"]
 signature = "(&SharedMut[$T], value: $T)"
 
 [fn."SharedMut::access"]

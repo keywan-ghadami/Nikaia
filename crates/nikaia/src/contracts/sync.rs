@@ -554,7 +554,7 @@ pub(crate) fn visit_stmt_blocks<'a>(stmt: &'a Stmt, f: &mut impl FnMut(&'a Block
 /// … }` is not deferred - so what it calls, the function around it calls. The
 /// one shape that is different is `spawn`, whose body runs later and elsewhere;
 /// it is a detached context (Part I, 5.4) and is not walked here.
-fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block)) {
+pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block)) {
     match expr {
         Expr::Block(block) | Expr::Overlap(block) | Expr::Closure { body: block, .. } => f(block),
         Expr::Call { func, args, config } => {
@@ -602,7 +602,7 @@ fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block)) {
 }
 
 /// Every expression inside one, excluding the bodies of nested blocks.
-fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
 
     // **A hole is a call like any other.** Its expression is parsed out of the

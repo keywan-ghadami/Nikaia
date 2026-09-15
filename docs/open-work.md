@@ -678,8 +678,8 @@ case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
 [ADR-094](specification/adr/adr-094.md). A parameter is a view unless its body
 keeps the value, a `keeps` column records which, the emitter writes the
 reference at the call, a `for` lends, a `let` over a place is a view, and
-`mut` on a parameter is where in-place change is written. **None of it is
-built**: every `&` in `examples/` is the caller's, `for x in xs` consumes `xs`,
+`mut` on a parameter is where in-place change is written. **The column is built
+and nothing else is**: every `&` in `examples/` is still the caller's, `for x in xs` consumes `xs`,
 and `xs.len()` on the next line is `rustc`'s *use of moved value* about a file
 nobody wrote — reproduced with a nine-line probe, and the review that found it
 is [`language-review.md`](language-review.md) §1.1.
@@ -689,12 +689,23 @@ is [`language-review.md`](language-review.md) §1.1.
 `examples/report.nika`'s comment explaining that `count` has to be read before
 `page(entries, total)` "consumes" them.
 
-*What it needs, in the record's own order (§5):* the `keeps` inference and
-column first, because it changes no program and can be diffed against the
-corpus; then the `for` and `let` half, which needs no ledger; then the emitter
-writing the argument off the column and refusing a written `&`; then `mut`
-parameters; then the cleanup-point narration of D5. Step 3 is the one that
-rewrites every example, so the examples are the test.
+**Step 1 is built.** `contracts::keeps` infers the column and the ledger
+records it beside `returns`; nothing reads it yet, which is what that step is
+for — the answer was diffed against the corpus before a call site changed. Of
+39 functions in `examples/`, **six keep a parameter** and 33 read what they are
+given; `report.nika`'s `page(entries, total)` is among the 33, and that file
+carries a comment explaining that `count` must be read first because `page`
+*"consumes"* the entries. It does not. Of `std`'s 94 entries, six keep — an
+absent `keeps` on a present entry means it keeps nothing, which is that file's
+own convention for `sync` said once more.
+
+*What is left, in the record's own order (§5):* the `for` and `let` half, which
+needs no ledger; then the emitter writing the argument off the column and
+refusing a written `&`; then `mut` parameters; then the cleanup-point narration
+of D5. **Step 3 is the one that rewrites every example**, so the examples are
+the test — and it is also where a *copy* type reported as kept stops being
+merely truthful and starts needing an answer: `self.min = temp` for an `i32`
+keeps, and keeping costs nothing there.
 
 *Why it is here and not in §1:* nothing is miscompiled. It is a message in the
 wrong words at every site the caller forgets the `&`, and a tax at every site

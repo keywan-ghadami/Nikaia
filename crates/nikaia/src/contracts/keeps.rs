@@ -1,0 +1,506 @@
+// crates/nikaia/src/contracts/keeps.rs
+//
+// Which parameters a body **keeps** ([ADR-094](../../../docs/specification/adr/adr-094.md) D2).
+//
+// The question the caller is asked today and should not be: `page(entries)` or
+// `page(&entries)`. Whether an argument is lent or handed over is a fact about
+// the *callee's body*, and the caller repeating it is 42 `&` in 913 non-comment
+// lines of `examples/` saying what the signature had already said — plus a
+// `rustc` error about a moved value wherever one is left out.
+//
+// *Keeps* means the value outlives the call: stored into a struct, assigned
+// into a place, handed back by value, given to a task, or passed to a callee
+// whose own parameter keeps it. Everything else is a read, and a read can be
+// lent.
+//
+// **Fail closed, and here that means *keeps*.** A use this walk cannot account
+// for counts as keeping, because the two wrong answers are not symmetric.
+// Saying *kept* of a value that is only read costs a caller an owned argument —
+// which is where every caller already is, so it costs nothing anybody has. Saying
+// *lent* of a value the body stores emits a `&T` parameter whose body moves it,
+// and that is `rustc`'s error about a file nobody wrote (Part III C.1). Same
+// polarity as `sync` ([ADR-027](../../../docs/specification/adr/adr-027.md)) and
+// as [ADR-010](../../../docs/specification/adr/adr-010.md) D1, pointing the
+// other way because the claim points the other way.
+//
+// **Nothing reads this column yet**, which is ADR-094 §5's first step on
+// purpose: the answer can be diffed against the corpus before one call site
+// changes.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::ast::{Block, Expr, Item, Stmt};
+use crate::parser::Parsed;
+
+use super::Ledger;
+
+/// What one function's body does with each of its parameters.
+#[derive(Debug, Default)]
+struct Uses {
+    /// Kept on this body's own evidence — stored, assigned, returned by value,
+    /// given to a task, or handed to a callee nothing describes.
+    kept: BTreeSet<String>,
+    /// Handed to a callee: this parameter, the callee as the ledger names it,
+    /// and which of that callee's parameters it landed in. Whether it is kept
+    /// is that callee's answer, which the fixpoint below waits for.
+    passed: BTreeSet<(String, String, usize)>,
+}
+
+/// Give every function in the ledger the `keeps` its body earns.
+///
+/// A **least** fixpoint, where [`super::sync::infer`]'s is a greatest one, and
+/// the difference is which direction is safe: `sync` is a promise and is taken
+/// away on doubt, `keeps` is a restriction and is added on doubt. So this
+/// starts from *nothing is kept* and adds until nothing changes, and two
+/// functions that pass each other a parameter neither stores keep neither —
+/// which a greatest fixpoint would have got wrong here exactly as a least one
+/// would have got mutual recursion wrong there.
+///
+/// The iteration walks `BTreeMap`s and repeats until nothing changes, so the
+/// answer does not depend on the order the source declared things in — which it
+/// must not, because Part III 13.5 makes this file a pure function of (source,
+/// toolchain) and `--locked` compares it byte for byte.
+pub fn infer(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
+    let mut graph: BTreeMap<String, Uses> = BTreeMap::new();
+
+    for parsed in units.iter().copied() {
+        for item in &parsed.program.items {
+            match &item.node {
+                Item::Fn { .. } => {
+                    if let Some((name, uses)) = uses_of(parsed, &item.node, None, ledger, library) {
+                        graph.insert(name, uses);
+                    }
+                }
+                Item::Impl {
+                    target, methods, ..
+                } => {
+                    let target = parsed.text(target.name).to_string();
+                    for method in methods {
+                        if let Some((name, uses)) =
+                            uses_of(parsed, &method.node, Some(&target), ledger, library)
+                        {
+                            graph.insert(name, uses);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut kept: BTreeMap<String, BTreeSet<String>> = graph
+        .iter()
+        .map(|(name, uses)| (name.clone(), uses.kept.clone()))
+        .collect();
+
+    loop {
+        let mut changed = false;
+        for (name, uses) in &graph {
+            for (parameter, callee, at) in &uses.passed {
+                if kept[name].contains(parameter) {
+                    continue;
+                }
+                if keeps_its(callee, *at, &kept, ledger, library) {
+                    kept.get_mut(name)
+                        .expect("every caller is in the map")
+                        .insert(parameter.clone());
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for (name, parameters) in kept {
+        if let Some(contract) = ledger.functions.get_mut(&name) {
+            contract.keeps = parameters.into_iter().collect();
+        }
+    }
+}
+
+/// Whether `callee` keeps whatever is passed in position `at`.
+///
+/// This package's own answer comes from the fixpoint in progress; anybody
+/// else's comes from their ledger, where **an absent `keeps` on a present entry
+/// means it keeps nothing** — `std.contracts`' own convention for `sync`, said
+/// once more for a second column. An entry that is *absent* is unknown, and
+/// unknown keeps.
+fn keeps_its(
+    callee: &str,
+    at: usize,
+    settling: &BTreeMap<String, BTreeSet<String>>,
+    ledger: &Ledger,
+    library: &Ledger,
+) -> bool {
+    let named = |contract: &super::FnContract| {
+        contract
+            .signature
+            .as_ref()
+            .and_then(|s| s.params.get(at))
+            .map(|(name, _)| name.clone())
+    };
+
+    if let Some(parameters) = settling.get(callee) {
+        let Some(contract) = ledger.functions.get(callee) else {
+            return true;
+        };
+        // A position the signature does not have is a call this walk read
+        // wrongly, and reading it wrongly is not a licence to assume.
+        return match named(contract) {
+            Some(parameter) => parameters.contains(&parameter),
+            None => true,
+        };
+    }
+
+    for source in [ledger, library] {
+        if let Some(contract) = source.functions.get(callee) {
+            return match named(contract) {
+                Some(parameter) => contract.keeps.contains(&parameter),
+                None => true,
+            };
+        }
+    }
+    true
+}
+
+/// One function's parameters, and what its body does with each.
+///
+/// `None` for a declaration with no body — a `trait`'s method, which keeps
+/// nothing because it does nothing, and whose `impl`s answer for themselves.
+fn uses_of(
+    parsed: &Parsed,
+    item: &Item,
+    target: Option<&str>,
+    ledger: &Ledger,
+    library: &Ledger,
+) -> Option<(String, Uses)> {
+    let Item::Fn {
+        name,
+        args,
+        body,
+        ret_type,
+        ..
+    } = item
+    else {
+        return None;
+    };
+
+    let own = match name {
+        Some(name) => parsed.text(*name).to_string(),
+        None => "new".to_string(),
+    };
+    let key = match target {
+        Some(target) => format!("{target}::{own}"),
+        None => own,
+    };
+
+    let mut parameters: BTreeSet<String> = args
+        .iter()
+        .map(|a| parsed.text(a.name).to_string())
+        .collect();
+    // A method's receiver is a parameter, and `self.field = x` is one of the
+    // shapes this analysis exists for — so it is in the set like any other.
+    if target.is_some() {
+        parameters.insert("self".to_string());
+    }
+    if parameters.is_empty() {
+        return Some((key, Uses::default()));
+    }
+
+    // **A result that is a view keeps nothing by returning.** `-> &str` hands
+    // back a view of a parameter, which `borrows` already records; it is
+    // `-> String` that moves the value out of the call.
+    let returns_a_view = ret_type.as_ref().is_some_and(super::holds_view);
+
+    let mut uses = Uses::default();
+    let mut walk = Walk {
+        parsed,
+        parameters: &parameters,
+        returns_a_view,
+        ledger,
+        library,
+        uses: &mut uses,
+    };
+    walk.block(body);
+    Some((key, uses))
+}
+
+struct Walk<'a> {
+    parsed: &'a Parsed,
+    parameters: &'a BTreeSet<String>,
+    returns_a_view: bool,
+    ledger: &'a Ledger,
+    library: &'a Ledger,
+    uses: &'a mut Uses,
+}
+
+impl Walk<'_> {
+    fn block(&mut self, block: &Block) {
+        for stmt in &block.stmts {
+            self.stmt(&stmt.node);
+        }
+    }
+
+    fn stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            // **An assignment keeps, whatever the target is.** `self.name = x`,
+            // `row.total = x` and `xs[i] = x` all put the value somewhere this
+            // call does not end.
+            Stmt::Assign { value, .. } => self.hand_over(value),
+            Stmt::Return(Some(value)) if !self.returns_a_view => self.hand_over(value),
+            // **A `let` does not keep.** It binds a second name to the same
+            // value *inside* this body, and what happens to that name is what
+            // decides — which the statements below say. What a `let` cannot do
+            // is make the value outlive the call.
+            _ => {}
+        }
+
+        // Then every expression of the statement, each classified where it
+        // stands. The scan is flat rather than recursive because
+        // [`super::sync::visit_stmt`] already reaches every sub-expression,
+        // holes in an `f"…"` included.
+        let (parsed, parameters, ledger, library) =
+            (self.parsed, self.parameters, self.ledger, self.library);
+        let uses = &mut *self.uses;
+        super::sync::visit_stmt(parsed, stmt, &mut |expr| {
+            classify(parsed, parameters, ledger, library, uses, expr);
+        });
+
+        // And the blocks it holds. A lambda's body is one of them — it runs
+        // during the call it is given to ([ADR-029](../../../docs/specification/adr/adr-029.md)
+        // D4), so what it does with a parameter is what this body does with it.
+        // A `spawn` is deliberately not among them and is handled in
+        // [`classify`], because its body runs later and elsewhere.
+        let mut blocks: Vec<&Block> = Vec::new();
+        super::sync::visit_stmt_blocks(stmt, &mut |block| blocks.push(block));
+        for block in blocks {
+            self.block(block);
+        }
+    }
+
+    /// This expression's value leaves the call, so a parameter standing at its
+    /// top is kept.
+    fn hand_over(&mut self, expr: &Expr) {
+        if let Some(name) = parameter_named(self.parsed, self.parameters, expr) {
+            self.uses.kept.insert(name);
+        }
+    }
+}
+
+/// What one expression does with a parameter, where it stands.
+///
+/// Called on every sub-expression of a statement, so each rule is about *this*
+/// node and never about what is under it.
+fn classify(
+    parsed: &Parsed,
+    parameters: &BTreeSet<String>,
+    ledger: &Ledger,
+    library: &Ledger,
+    uses: &mut Uses,
+    expr: &Expr,
+) {
+    match expr {
+        // **A struct literal keeps every field it is given.** The struct
+        // outlives the call wherever it goes, and where it goes is not this
+        // expression's question.
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                let Some(value) = field.value.as_ref() else {
+                    // `P { x }` is the field and the name in one, and the name
+                    // may be a parameter.
+                    if parameters.contains(parsed.text(field.name)) {
+                        uses.kept.insert(parsed.text(field.name).to_string());
+                    }
+                    continue;
+                };
+                if let Some(name) = parameter_named(parsed, parameters, value) {
+                    uses.kept.insert(name);
+                }
+            }
+        }
+        // **A task keeps everything it names**
+        // ([ADR-040](../../../docs/specification/adr/adr-040.md) D1): a body
+        // that may outlive the statement takes what it names by value.
+        Expr::Spawn { body, .. } => {
+            let mut found = Named::default();
+            match body.as_ref() {
+                // `spawn fn { … }` is the form the language writes
+                // ([ADR-049](../../../docs/specification/adr/adr-049.md)), so
+                // the body arrives as a lambda; `Expr::Block` is what a
+                // `spawn { … }` would be and is kept because both are shapes
+                // this walk can read to the bottom.
+                Expr::Closure { body, .. } => names_in_block(parsed, body, &mut found),
+                Expr::Block(block) => names_in_block(parsed, block, &mut found),
+                // A body shape this walk cannot read to the bottom. There is no
+                // third answer: every parameter is kept.
+                other => {
+                    names_in_expr(parsed, other, &mut found);
+                    found.exhaustive = false;
+                }
+            }
+            match found.exhaustive {
+                true => {
+                    for name in found.names {
+                        if parameters.contains(&name) {
+                            uses.kept.insert(name);
+                        }
+                    }
+                }
+                false => uses.kept.extend(parameters.iter().cloned()),
+            }
+        }
+        Expr::Call { func, args, .. } => {
+            let callee = resolve(parsed, ledger, library, func);
+            for (at, arg) in args.iter().enumerate() {
+                let Some(name) = parameter_named(parsed, parameters, arg) else {
+                    continue;
+                };
+                match &callee {
+                    // Recorded rather than decided: whether this keeps is the
+                    // callee's answer, and the callee may not have one yet.
+                    Some(callee) => {
+                        uses.passed.insert((name, callee.clone(), at));
+                    }
+                    // **A callee no ledger describes** — D2's fail-closed case,
+                    // and the one the whole polarity is written for.
+                    None => {
+                        uses.kept.insert(name);
+                    }
+                }
+            }
+        }
+        // **Which entry a method call goes to is the type checker's answer and
+        // not this file's** ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+        // A weaker question can be asked without types, the way
+        // [`Ledger::candidates`] already asks it for `touches`: if **no** entry
+        // named `::push` keeps its argument, this call keeps none whatever the
+        // receiver turns out to be. A name no entry carries at all is
+        // unresolved, and unresolved keeps.
+        Expr::MethodCall { method, args, .. } | Expr::SafeMethod { method, args, .. } => {
+            let method = parsed.text(*method);
+            for (at, arg) in args.iter().enumerate() {
+                let Some(name) = parameter_named(parsed, parameters, arg) else {
+                    continue;
+                };
+                // The receiver is the callee's first parameter, so an
+                // argument's own position is one further along.
+                if any_candidate_keeps(ledger, library, method, at + 1) {
+                    uses.kept.insert(name);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether any entry a bare method name could reach keeps position `at`.
+fn any_candidate_keeps(ledger: &Ledger, library: &Ledger, method: &str, at: usize) -> bool {
+    let candidates: Vec<_> = ledger
+        .candidates(method)
+        .into_iter()
+        .chain(library.candidates(method))
+        .collect();
+    if candidates.is_empty() {
+        return true;
+    }
+    candidates.iter().any(|(_, contract)| {
+        match contract
+            .signature
+            .as_ref()
+            .and_then(|s| s.params.get(at))
+            .map(|(parameter, _)| parameter.clone())
+        {
+            Some(parameter) => contract.keeps.contains(&parameter),
+            // An entry whose signature is shorter than this call is one this
+            // walk did not resolve, and that is fail-closed again.
+            None => true,
+        }
+    })
+}
+
+/// The parameter this expression **is**, where it is one.
+///
+/// A bare name and nothing else. `x.field` hands over the field rather than the
+/// parameter, and `f(x)` is the call's question rather than this position's.
+fn parameter_named(parsed: &Parsed, parameters: &BTreeSet<String>, expr: &Expr) -> Option<String> {
+    let Expr::Variable(ident) = expr else {
+        return None;
+    };
+    let name = parsed.text(*ident).to_string();
+    parameters.contains(&name).then_some(name)
+}
+
+/// The ledger key a plain call's callee resolves to, if any names it.
+fn resolve(parsed: &Parsed, ledger: &Ledger, library: &Ledger, func: &Expr) -> Option<String> {
+    let written = match func {
+        Expr::Variable(ident) => parsed.text(*ident).to_string(),
+        Expr::Path(segments) => segments
+            .iter()
+            .map(|s| parsed.text(*s).to_string())
+            .collect::<Vec<_>>()
+            .join("::"),
+        _ => return None,
+    };
+    ledger
+        .lookup(&written)
+        .or_else(|| library.lookup(&written))
+        .map(|(key, _)| key)
+}
+
+/// Every bare name a `spawn` body mentions, and whether the walk reached all of
+/// it.
+#[derive(Debug)]
+struct Named {
+    names: BTreeSet<String>,
+    /// **A `spawn` inside a `spawn` clears this.** The shared walkers do not
+    /// descend into a detached context — deliberately, for `sync`'s sake — so
+    /// this walk cannot claim to have read one, and a name it did not see is a
+    /// name it would wrongly call lent. The caller then keeps everything, which
+    /// is the answer that cannot be wrong.
+    exhaustive: bool,
+}
+
+impl Default for Named {
+    fn default() -> Self {
+        Named {
+            names: BTreeSet::new(),
+            exhaustive: true,
+        }
+    }
+}
+
+fn names_in_block(parsed: &Parsed, block: &Block, found: &mut Named) {
+    for stmt in &block.stmts {
+        super::sync::visit_stmt(parsed, &stmt.node, &mut |expr| {
+            note_name(parsed, expr, found);
+        });
+        let mut blocks: Vec<&Block> = Vec::new();
+        super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| blocks.push(inner));
+        for inner in blocks {
+            names_in_block(parsed, inner, found);
+        }
+    }
+}
+
+fn names_in_expr(parsed: &Parsed, expr: &Expr, found: &mut Named) {
+    super::sync::visit_expr(parsed, expr, &mut |inner| {
+        note_name(parsed, inner, found);
+    });
+    let mut blocks: Vec<&Block> = Vec::new();
+    super::sync::visit_expr_blocks(expr, &mut |block| blocks.push(block));
+    for block in blocks {
+        names_in_block(parsed, block, found);
+    }
+}
+
+fn note_name(parsed: &Parsed, expr: &Expr, found: &mut Named) {
+    match expr {
+        Expr::Variable(ident) => {
+            found.names.insert(parsed.text(*ident).to_string());
+        }
+        Expr::Spawn { .. } => found.exhaustive = false,
+        _ => {}
+    }
+}

@@ -25,6 +25,7 @@
 // compiler that infers more will write a different name there, and `--locked`
 // will say so rather than quietly accepting the weaker answer.
 
+pub mod keeps;
 pub mod order;
 pub mod send;
 pub mod sharing;
@@ -239,6 +240,26 @@ pub struct FnContract {
     /// `borrows(a | b)`, which is the spec's own spelling and is the widest
     /// contract the signature can support.
     pub borrows: Vec<String>,
+    /// The parameters this body **keeps** rather than reads
+    /// ([ADR-094](../../../../docs/specification/adr/adr-094.md) D2), sorted.
+    ///
+    /// *Keeps* means: stores it into something that outlives the call, hands it
+    /// back by value, gives it to a task, or passes it to a callee whose own
+    /// parameter keeps it. A parameter that is not in here is one the caller
+    /// may lend, which is what lets the compiler write the `&` at the call
+    /// instead of asking every caller to.
+    ///
+    /// **Absent means it keeps nothing**, the way an absent `sync` means *not*
+    /// `sync` — and, like that one, only for an entry that is *present*. A
+    /// function no ledger describes is unknown, and the inference counts an
+    /// unresolved use as keeping (D2's fail-closed): the wrong answer that way
+    /// is a caller refused in this compiler's words, and the wrong answer the
+    /// other way is a `&T` parameter whose body moves the value, which is
+    /// `rustc`'s error about a file nobody wrote.
+    ///
+    /// Sorted, because 13.5 makes the file a pure function of (source,
+    /// toolchain) and `--locked` compares it byte for byte.
+    pub keeps: Vec<String>,
     /// Which of its `Shared` positions are one allocation, and which reference
     /// count each of those classes gets
     /// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
@@ -931,6 +952,12 @@ impl Ledger {
         for parsed in units.iter().copied() {
             sharing::infer(&mut ledger, parsed, library);
         }
+        // **The fifth derived column** ([ADR-094](../../../docs/specification/adr/adr-094.md)
+        // D2). Last, because its fixpoint reads a callee's `signature` — which
+        // the item loop wrote — and a callee's own `keeps`, which is itself;
+        // nothing above produces anything it needs, and nothing above reads
+        // what it writes.
+        keeps::infer(&mut ledger, units, library);
         (ledger, checked)
     }
 
@@ -1046,6 +1073,15 @@ impl Ledger {
                         .map(|t| ty::Ty::from_ast(parsed, t).parameterise(&parameters)),
                 }),
                 borrows,
+                // What the *declaration* says is nothing again, and this one
+                // has no syntax at all: a parameter is a view unless the body
+                // keeps it, which is a question about the body
+                // ([ADR-094](../../../docs/specification/adr/adr-094.md) D2).
+                // `keeps::infer` answers it afterwards. Empty until then, and
+                // empty is the *permissive* answer here rather than the safe
+                // one — which is why nothing may read this column before that
+                // pass has run.
+                keeps: Vec::new(),
                 // `sharing::infer` reads the bodies afterwards, for the same
                 // reason `sync` does: the answer is about where a value goes
                 // and not about how it was declared. Empty until then, which is
@@ -1150,6 +1186,20 @@ impl Ledger {
                 out.push_str(&format!(
                     "returns = \"borrows({})\"\n",
                     contract.borrows.join(" | ")
+                ));
+            }
+            // Beside `returns`, which is the other thing a caller reads off a
+            // signature about where a value goes
+            // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D2).
+            if !contract.keeps.is_empty() {
+                out.push_str(&format!(
+                    "keeps = [{}]\n",
+                    contract
+                        .keeps
+                        .iter()
+                        .map(|p| format!("\"{p}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             if contract.touches_known {
@@ -1310,6 +1360,7 @@ impl Ledger {
                         "sync" => entry.sync = sync_of(value, at())?,
                         "throws" => entry.throws = throws_of(value, at())?,
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
+                        "keeps" => entry.keeps = string_list(value, at())?,
                         "touches" => {
                             entry.touches = string_list(value, at())?
                                 .iter()
