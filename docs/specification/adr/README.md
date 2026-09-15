@@ -226,6 +226,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 097 | a `comptime` binding at item level | `open-work.md`, *a `comptime` binding at item level has nowhere to stand* |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
