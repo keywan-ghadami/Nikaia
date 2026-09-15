@@ -122,8 +122,10 @@ fn every_by_value_position_is_refused() {
             refusal
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains(".clone()") && h.contains("(self)")),
-            "and names both ways out: {:?}",
+                .is_some_and(|h| h.contains("&self.name")
+                    && h.contains(".clone()")
+                    && h.contains("(self)")),
+            "and names all three ways out, the free one first: {:?}",
             refusal.help
         );
     }
@@ -242,5 +244,79 @@ fn main() {
     assert!(
         found.is_empty(),
         "nothing is borrowed in a free function: {found:#?}"
+    );
+}
+
+/// **The way out the message leads with**, run — and it is the one the entry
+/// that filed this said did not exist.
+///
+/// `&self.name` is [Part I 6.5](../../../docs/specification/10-nikaia-light.md)'s
+/// own spelling (`let name = &config.name`), and `NK1104`'s help had been saying
+/// *"write `&` to take a view of it"* the whole time. What is refused is
+/// `return self.name` **without** the `&` against a `-> &str`, which is a
+/// `String` in a `&str` slot — the same refusal a parameter gets (`NK1102`) and
+/// a `let` gets (`NK1103`), so the rule is uniform rather than special here.
+#[test]
+fn a_view_of_the_field_is_the_free_way_out() {
+    let printed = ran(
+        "a view of the field",
+        r#"
+struct Row {
+    name: String,
+    tags: Vec[i64],
+}
+
+impl Row {
+    fn name(&self) -> &str {
+        return &self.name
+    }
+
+    fn tags(&self) -> &Vec[i64] {
+        return &self.tags
+    }
+}
+
+fn main() {
+    let mut v = Vec::new()
+    v.push(7)
+    let r = Row { name: "a".to_string(), tags: v }
+    println(f"{r.name()} {r.tags()[0]}")
+}
+"#,
+    );
+    assert_eq!(printed.trim(), "a 7");
+}
+
+/// And the help names the **field's own** view type, not always `&str`.
+#[test]
+fn the_help_names_the_view_the_field_would_have() {
+    let found = findings(
+        r#"
+struct Row {
+    tags: Vec[i64],
+}
+
+impl Row {
+    fn t(&self) -> Vec[i64] {
+        return self.tags
+    }
+}
+
+fn main() {
+    println("x")
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1131")
+        .expect("a Vec field is moved too");
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("`&Vec[i64]`")),
+        "a `Vec` field's view is not `&str`: {:?}",
+        refusal.help
     );
 }

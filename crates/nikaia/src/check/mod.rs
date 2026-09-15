@@ -1272,8 +1272,11 @@ impl<'a> Checker<'a> {
                 ty.text()
             )],
             help: Some(format!(
-                "write `self.{field}.clone()` to hand out a copy, or declare the method \
-                 `fn …(self)` where it is meant to consume its subject"
+                "hand back a view and it costs nothing: declare the result `{}` and \
+                 write `return &self.{field}` (Part I, 6.5). Or `self.{field}.clone()` \
+                 for a copy, or `fn …(self)` where the method is meant to consume its \
+                 subject",
+                a_view_of(&ty)
             )),
         });
     }
@@ -4524,6 +4527,21 @@ fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// How this language spells a **view** of a value of this type.
+///
+/// `String` is the one that is not `&` plus its own name: Part I 2.2 writes a
+/// view of text as `&str`, which is the spelling
+/// [Part III 15.2](../../docs/specification/30-nikaia-tooling.md)'s mapping
+/// gives it. Everything else is `&` and the type, which `NK1131`'s help needs
+/// in order to name a way out that is right for the field it is about rather
+/// than only for text.
+fn a_view_of(ty: &Ty) -> String {
+    match ty {
+        Ty::Named { name, args, .. } if args.is_empty() && name == "String" => "&str".to_string(),
+        other => format!("&{}", other.text()),
+    }
 }
 
 /// Whether handing a value of this type out takes nothing away.

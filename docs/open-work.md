@@ -64,59 +64,33 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. An accessor cannot hand back a **view** of a field, which is the third way out `NK1131` should have
-
-*Reproduced:*
+**Empty, and the entry that was here was wrong on both of its claims.** It said an
+accessor cannot hand back a **view** of a field and that the lowering names no
+lifetime. Neither is true, and both were checkable in a minute:
 
 ```nika
-impl User {
-    fn name_of(&self) -> &str {
-        return self.username
-    }
-}
+fn name_of(&self) -> &str { return &self.name }   // compiles and runs
+fn tags(&self) -> &Vec[i64] { return &self.tags } // so does this
 ```
 
-is refused **twice** — here, because a `String` is not a `&str`:
+The spelling is the `&` [Part I 6.5](specification/10-nikaia-light.md) writes in
+its own example (`let name = &config.name`), and `NK1104`'s help had been saying
+*"write `&` to take a view of it"* the whole time. What I had actually found was
+`return self.name` — without the `&` — declared `-> &str`, which is refused
+because a `String` is not a `&str`, everywhere and not only in that position: the
+same program is `NK1102` at a parameter and `NK1103` at a `let`. The rule is
+uniform and the way out is written.
 
-```text
-error[NK1104]: this returns `String`, and the function declares `&str`
-```
+The `E0106` the entry also claimed was an artefact of my own scratch directory: a
+refused program writes **no file**, so `rustc` was reading a stale one from an
+earlier probe.
 
-and, taking the annotation at its word, by the language below, because the
-lowering names no lifetime:
+What was real and is fixed: `NK1131` named two ways out and not the free one.
+Its help now leads with the view — *declare the result `&str` and write
+`return &self.name`* — and names the type the field actually has, so it is right
+for a `Vec` field as well as for text.
 
-```text
-error[E0106]: missing lifetime specifier
-```
-
-*Why it matters now:* [ADR-083](specification/adr/adr-083.md)'s `NK1131` refuses
-handing a field out **by value** and names two ways out — `.clone()`, which
-copies, and a `self` receiver, which consumes the subject. The third way is the
-one every language in this family writes and the only one that costs nothing:
-hand back a **view**. This language has views (Part I 6.5, and
-[ADR-008](specification/adr/adr-008.md)'s whole tethering machinery) and no way
-to get one out of a field.
-
-*So the accessor a reader would write is the one shape that does not work*, and
-the two that do each cost something the reader did not ask for.
-
-*What it needs, and the halves are separable:* the checker has to read `-> &str`
-against a `String` field as a **borrow** rather than as a mismatch, which is a
-rule about what a view of a field is; and the emitter has to name the lifetime,
-which is `Lifetimes::INNER`'s job and is already how a method of a type carrying
-the input buffer is written. The second is machinery that exists; the first is a
-decision about the type language.
-
-*Found by* looking for `NK1131`'s third way out and finding it absent.
-
-**One entry, and it is the fourth thing one line of Part I 4.7 was hiding.** The
-page's `return "User: " + self.username` was refused twice over; taking the
-concatenation out ([ADR-081](specification/adr/adr-081.md)) left a move
-underneath it, and refusing that ([ADR-083](specification/adr/adr-083.md)) left
-the question of what an accessor should hand back at all — where the answer every
-reader would write, a **view** of the field, turns out to be the one shape this
-language cannot express. That is §1.1. Everything in this section was found the
-same way — by running the programs the specification prints,
+Everything this section has held was found the same way — by running the programs the specification prints,
 which is `crates/nikaia/tests/specification.rs` now rather than a habit: it takes
 every `nika` block in the three pages as far as it goes and hands the ones that
 lower to `rustc`, against two recorded baselines. Of 122 blocks, 52 are programs
