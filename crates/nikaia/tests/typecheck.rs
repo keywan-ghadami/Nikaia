@@ -518,11 +518,19 @@ fn a_generic_parameter_is_not_a_type() {
     .is_empty());
 }
 
-/// A struct whose fields are not written down anywhere is not checked - and an
-/// absent type is never an error.
+/// A type whose **fields** are not written down anywhere is not checked, so a
+/// field nobody can look up is never an error.
+///
+/// **The fixture had to move**, and how it moved is the point. It used to write
+/// `&Row` — a type nothing declares — which stopped being an absence the day
+/// `NK1135` started asking what declares a type
+/// ([ADR-096](../../../docs/specification/adr/adr-096.md)). What this test is
+/// actually about is the *fields*, so the receiver is now a type `std`
+/// publishes and whose fields its ledger does not record: the type resolves,
+/// the field cannot be looked up, and nothing is claimed about it.
 #[test]
 fn a_field_of_an_unknown_type_says_nothing() {
-    assert!(findings("fn label(r: &Row) -> &str { return r.nmae }").is_empty());
+    assert!(findings("fn label(r: &fs::Mapped) -> &str { return r.nmae }").is_empty());
 }
 
 /// `for (k, v) in map` takes apart a pair whose shape Stage 0 has no signature

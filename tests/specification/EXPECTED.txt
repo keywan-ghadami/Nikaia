@@ -24,7 +24,7 @@
 10-nikaia-light.md #24 refused (a body) [NK1117]  match step.0 {
 10-nikaia-light.md #25 refused (a body) [NK1117]  // If find_user returns null, 'name' becomes null.
 10-nikaia-light.md #26 lowered (as written)  // file: users.nika
-10-nikaia-light.md #27 lowered (as written)  // file: users.nika
+10-nikaia-light.md #27 refused (as written) [NK1135]  // file: users.nika
 10-nikaia-light.md #28 lowered (as written) [about-a-refusal]  // file: main.nika
 10-nikaia-light.md #29 lowered (as written)  // Defining behavior for the User struct
 10-nikaia-light.md #30 lowered (as written)  enum Message {
@@ -51,15 +51,15 @@
 10-nikaia-light.md #51 fragment (as written) [sketch]  let kasse: SharedMut[i32] = ...
 10-nikaia-light.md #52 lowered (as written) [sketch]  struct FileHandle {
 10-nikaia-light.md #53 lowered (as written)  impl Cleanup for BufferedFile {
-10-nikaia-light.md #54 refused (as written) [sketch NK2605]  fn report(config: &Config) {
+10-nikaia-light.md #54 refused (as written) [sketch NK1135,NK2605]  fn report(config: &Config) {
 10-nikaia-light.md #55 fragment (as written) [sketch]  struct Token {
 10-nikaia-light.md #56 lowered (as written)  @borrowed
 10-nikaia-light.md #57 fragment (as written) [sketch]  @borrowed
 10-nikaia-light.md #58 lowered (a body)  let mut users = load_users()
 10-nikaia-light.md #59 lowered (as written)  fn fetch_config() throws -> String {
-10-nikaia-light.md #60 lowered (as written)  enum ConfigError {
+10-nikaia-light.md #60 refused (as written) [NK1135]  enum ConfigError {
 10-nikaia-light.md #61 refused (a body) [NK1117]  if !fs::exists(path) {
-10-nikaia-light.md #62 lowered (as written)  fn load() throws -> Config {
+10-nikaia-light.md #62 refused (as written) [NK1135]  fn load() throws -> Config {
 10-nikaia-light.md #63 lowered (a body)  let config = load() catch {
 10-nikaia-light.md #64 fragment (as written)  let config = load() catch {
 10-nikaia-light.md #65 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
@@ -77,15 +77,15 @@
 20-nikaia-advance.md #3 refused (as written) [NK1117]  fn parse_input(input: String) throws {
 20-nikaia-advance.md #4 refused (as written) [NK1117]  fn describe[T: Struct](value: T) {
 20-nikaia-advance.md #5 fragment (as written)  use nikaia_sql::{Database, mysql}
-20-nikaia-advance.md #6 lowered (as written) [sketch]  impl SqlParser {
+20-nikaia-advance.md #6 refused (as written) [sketch NK1135]  impl SqlParser {
 20-nikaia-advance.md #7 fragment (as written)  rule expr -> Expr # "expression" =
 20-nikaia-advance.md #8 fragment (as written)  // If parsing fails inside the block, skip ahead to the…
 20-nikaia-advance.md #9 fragment (as written)  // Up to ";" - or to the end of the frame, whichever co…
 20-nikaia-advance.md #10 fragment (as written)  pub rule file -> Summary =
 20-nikaia-advance.md #11 refused (a body) [NK1117,NK2605]  let data = fs::map(path)
 20-nikaia-advance.md #12 fragment (as written) [about-a-refusal sketch]  fn process_image(path: String) -> Image { ... }
-20-nikaia-advance.md #13 refused (items, then a body) [about-a-refusal NK1117]  // 'sync' guarantees one thing: I will never pause.
-20-nikaia-advance.md #14 lowered (as written)  fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `…
+20-nikaia-advance.md #13 refused (items, then a body) [about-a-refusal NK1117,NK1135]  // 'sync' guarantees one thing: I will never pause.
+20-nikaia-advance.md #14 refused (as written) [NK1135]  fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `…
 20-nikaia-advance.md #15 refused (a body) [NK1117]  counter.access fn(n) { n + xs.sort_by_key fn(x) { x } }…
 20-nikaia-advance.md #16 refused (a body) [NK1117,NK2605]  counter.access fn(n) { xs.map fn(x) { fs::read("log") }…
 20-nikaia-advance.md #17 lowered (a body) [about-a-refusal]  let counter = SharedMut(0)

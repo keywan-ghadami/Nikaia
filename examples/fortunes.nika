@@ -53,7 +53,12 @@ pub struct Fortune {
 // error naming the position rather than a promise that quietly does not hold.
 // The `render` function below lowers and runs today; what this file still
 // waits on is [G6] alone.
-fn render(rows: List[Fortune]) -> String {
+// `Vec` and not `List`: Part I 2.2's prose calls the concept *List (Vector)*
+// and every program writes `Vec`, which is what `std`'s `ListExt` is implemented
+// for. This line said `List` until `NK1135` asked what declares it
+// ([ADR-096](../docs/specification/adr/adr-096.md)) - a name the language does
+// not have, in a file that never built for another reason and so never said so.
+fn render(rows: Vec[Fortune]) -> String {
     return dsl html {
         <!DOCTYPE html>
         <html>

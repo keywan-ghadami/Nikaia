@@ -362,6 +362,16 @@ pub fn check_program(
         .checked
         .findings
         .extend(crate::traits::check(parsed, own));
+    // Part I 2.2: a **type** nothing declares, which had nothing where a value
+    // has had `NK1117` since ADR-051
+    // ([ADR-096](../../docs/specification/adr/adr-096.md)). Separate for the
+    // same reason as the three above: it asks about a written *name* rather
+    // than about a value's type, so it needs the item tree and neither the
+    // scope stack nor the inference.
+    checker
+        .checked
+        .findings
+        .extend(crate::types::check(parsed, own, library));
     checker.checked.findings.sort_by_key(|f| f.span.start);
     // Only the calls that provably fail, and only where the name is not also a
     // call that does not: the emitter writes a `?` for each of these, and a `?`

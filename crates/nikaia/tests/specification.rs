@@ -95,6 +95,28 @@ fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
 /// loud.
 ///
 /// Raise it when it is beaten. That is the point of a floor.
+///
+/// **Lowered once, from 52 to 48**, and the reason is written here because a
+/// floor that moves down needs one. `NK1135`
+/// ([ADR-096](../../../docs/specification/adr/adr-096.md)) refuses a type
+/// nothing declares, and four blocks that used to lower name one. They are
+/// three different things and only the first is the sweep's own doing:
+///
+/// * **`impl User` and `-> Config`** declare their type in a *neighbouring*
+///   block, and this sweep compiles each block separately.
+/// * **`NotFound(Path)`** and, in a block already refused for another reason,
+///   `-> List[Row]`: `Path` and `List` are names the specification writes as
+///   types and `std` does not publish. `fs::map`'s parameter is `?` because
+///   Rust's is `impl AsRef<Path>`, and the language's sequence is `Vec`, which
+///   is what `ListExt` is implemented for.
+/// * **`fn total(p: &Player)`** names a type the specification declares
+///   **nowhere at all** — as do `Object` and `SqlParser`.
+///
+/// So the direction this guards against is not the direction it moved: these
+/// are not programs quietly turned back into fragments, they are fragments the
+/// compiler had been accepting because it could not read a type name. A count
+/// cannot tell those apart, which is why the number is a floor and the sentence
+/// beside it is the actual guard.
 #[test]
 fn most_of_a_third_of_the_specifications_blocks_are_programs() {
     let verdicts = specbook::verdicts(&specbook::specification_dir());
@@ -103,8 +125,8 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
         .filter(|v| v.stage == Stage::Lowered)
         .count();
     assert!(
-        lowered >= 52,
-        "{lowered} of {} blocks lower, and 52 did when this floor was set - \
+        lowered >= 48,
+        "{lowered} of {} blocks lower, and 48 did when this floor was last set - \
          raise it if it is beaten, and read the diff if it is not",
         verdicts.len()
     );

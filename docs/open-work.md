@@ -617,28 +617,7 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.11. A type nothing declares goes into the language below untranslated
-
-*Reproduced:* `let counter: SharedMut[i64] = 0` used to emit `SharedMut<i64>` and
-come back as `rustc`'s *"cannot find type `SharedMut` in this scope"* — about a
-name the program did write and Part I 6.2 does promise.
-[ADR-064](specification/adr/adr-064.md) fixed that name by building it; **the
-class is untouched.** Every misspelled type takes the same route.
-
-*Why it is a defect and not a gap:* a **value** nothing declares has had `NK1117`
-since [ADR-051](specification/adr/adr-051.md) — *"nothing declares `q`"*. A type
-has nothing, so Part III C.1's rule holds for one half of the language's names and
-not the other.
-
-*What it needs, and the reason it is not free:* the set of names that count as
-declared — the writable types of Part I 2.2, the three hulls, `std`'s, this
-package's structs and enums, a function's type parameters, `Self`. Getting that
-set wrong refuses a **correct** program, which is the one thing the checker may
-never do (Part III, C.4), so it wants the same polarity every other check here
-has: refuse only what is certainly wrong, and say nothing about a name it cannot
-account for.
-
-### 2.12. A `comptime` binding at item level has nowhere to stand
+### 2.11. A `comptime` binding at item level has nowhere to stand
 
 *Reproduced:* `comptime MAX = 1000` at the top of a file is a parse error; the same
 line inside a function body parses, folds and runs.
@@ -664,7 +643,7 @@ it crosses is [ADR-079](specification/adr/adr-079.md)'s.
 a restructure that removed the entry above it, and restored from its own commit.
 Nothing about it changed in between.
 
-### 2.13. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
+### 2.12. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
 
 [ADR-082](specification/adr/adr-082.md) D1: a grammar is entered by an ordinary
 call, `Json.value(input)`, and D2 makes every `pub` rule an entry. Accepted,
@@ -706,7 +685,7 @@ programs, each of which writes `catch` beside the entry.
 *Evidence:* the eight files, listed above, found by `grep` and confirmed by the
 refusal that ran over them.
 
-### 2.14. Nothing runs Nikaia code while the program is built
+### 2.13. Nothing runs Nikaia code while the program is built
 
 *Reproduced:* `comptime` is built and its evaluator is
 [`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
@@ -744,7 +723,7 @@ see 2.15.
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is 2.15's, and the reason is there.
 
-### 2.15. Running a grammar while the program is built is not interpretation
+### 2.14. Running a grammar while the program is built is not interpretation
 
 *The distinction, because it is the whole entry.* A grammar could be run at build
 time by interpreting the grammar tree the compiler already holds. **It must not

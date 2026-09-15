@@ -18,4 +18,5 @@ pub mod project;
 pub mod specbook;
 pub mod sysroot;
 pub mod traits;
+pub mod types;
 pub mod views;
