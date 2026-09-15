@@ -222,6 +222,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 092 | a grammar fold's `init`, `step` and `merge` walked by the whole checker | `open-work.md`, *a grammar fold's `init`, `step` and `merge` are not checked at all* |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
