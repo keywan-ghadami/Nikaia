@@ -193,12 +193,27 @@ answer is to invent syntax for it. This one has the other answer, the same one
 `--overlaps`, `--sharing` and `--trust` already give: `nikaia --comptime` prints
 what was unrolled, for the types actually used.
 
-> **Status.** **None of this is built.** A type's shape is not reachable as data —
-> `T.fields` is a member nothing provides — and no loop runs while the program is
-> built, which is the same missing piece [ADR-079](adr/adr-079.md) §3 and
-> [ADR-073](adr/adr-073.md) D5 wait on. What *is* built is the bound
-> ([ADR-078](adr/adr-078.md)) and `comptime` for literals and arithmetic over them
-> ([ADR-073](adr/adr-073.md)). `--comptime` does not exist.
+> **Status.** **None of this is built**, and the compiler says so one step earlier
+> than the page does. Run against the program above it answers
+>
+> ```text
+> error[NK1117]: nothing declares `T`
+>   --> describe.nika:2:5
+>    2 |     for field in T.fields {
+> ```
+>
+> because **a type is not a value here**: `T.fields` reads `T` in a place where a
+> value stands, and nothing declares one. That is the first of three things
+> missing, and the deepest — it is what Zig means when it says types are values at
+> build time. The second is the shape itself: `Struct` is not a trait anything
+> declares, so `[T: Struct]` names a bound that does not exist, and `T.fields`
+> would be a member nothing provides. The third is a loop that runs while the
+> program is built, which is the same missing piece [ADR-079](adr/adr-079.md) §3
+> and [ADR-073](adr/adr-073.md) D5 wait on.
+>
+> What *is* built is the bound **mechanism** ([ADR-078](adr/adr-078.md)) — bounds
+> work, this particular one does not exist — and `comptime` for literals and
+> arithmetic over them ([ADR-073](adr/adr-073.md)). `--comptime` does not exist.
 >
 > `macro`, `quote` and `with` are **reserved words and not constructs**
 > ([ADR-088](adr/adr-088.md) D7), so a program may not use them as names. The
