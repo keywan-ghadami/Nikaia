@@ -2084,6 +2084,9 @@ impl<'a> Checker<'a> {
                 }
                 let into = self.expr(target, span);
                 let found = self.expr(value, span);
+                // **A write to shared mutable state goes through a door**
+                // ([ADR-099](../../../docs/specification/adr/adr-099.md)).
+                self.a_write_that_skips_the_door(target, &into, value, span);
                 // Only a plain assignment: `n += 1` is whatever the operator
                 // makes of the two, and Stage 0 does not model operators.
                 if op.is_none() {
@@ -2364,6 +2367,11 @@ impl<'a> Checker<'a> {
                     });
                     return Ty::Unknown;
                 }
+                // **A `set` that reads the same container while computing what
+                // to store** ([ADR-099](../../../docs/specification/adr/adr-099.md)).
+                // Asked here rather than in `call_on`, because the rule is
+                // about the receiver's **name** and that arm is handed a type.
+                self.a_set_that_reads_what_it_writes(&on, receiver, *method, args, span);
                 self.call_on(on, *method, args, span)
             }
 
@@ -4341,6 +4349,170 @@ impl<'a> Checker<'a> {
                 "delete the `catch` and its handler: the expression is the value".to_string(),
             ),
         });
+    }
+
+    /// `NK2205`: a `set` whose argument reads the same container with `get`
+    /// ([ADR-039](../../../docs/specification/adr/adr-039.md) D10,
+    /// [ADR-099](../../../docs/specification/adr/adr-099.md)).
+    ///
+    /// `kasse.set(kasse.get() + 100)` takes the lock **twice** — once to read
+    /// and once to store — and between the two the value can change, so what is
+    /// stored is computed from a state that may no longer hold. Making a new
+    /// value out of the old one is what the third door is for, and it takes the
+    /// lock once.
+    ///
+    /// **Syntactic, on purpose** (D10's own line): it catches the `get`
+    /// written *inside* the `set`, which is the shape people write, and not the
+    /// same pair spread over two lines. The second is a question about what
+    /// happened between two statements, and nothing here answers that — so
+    /// widening this rule would mean guessing, and the narrow one is right
+    /// about what it does see.
+    fn a_set_that_reads_what_it_writes(
+        &mut self,
+        on: &Ty,
+        receiver: &Expr,
+        method: Ident,
+        args: &[Expr],
+        span: &Span,
+    ) {
+        if self.parsed.text(method) != "set" {
+            return;
+        }
+        let Ty::Named { name, .. } = on else {
+            return;
+        };
+        if !is_hull(name) {
+            return;
+        }
+        // **The same container**, which is the whole of the rule: reading one
+        // lock while writing another takes each of them once and is an ordinary
+        // program. Only a name, because two spellings of one container is a
+        // question about identity that nothing here answers.
+        let Expr::Variable(container) = receiver else {
+            return;
+        };
+        let container = self.parsed.text(*container).to_string();
+        let [argument] = args else {
+            return;
+        };
+        if !self.a_get_inside(argument, &container) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2205",
+            message: format!("this `set` reads `{container}` while computing what to store in it"),
+            notes: vec![
+                "`set` is for a value computed outside the lock, so this takes the lock \
+                 twice: once to read and once to store"
+                    .to_string(),
+                "making a new value out of the old one is what the third door is for, and \
+                 it takes the lock once"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `{container}.update fn(old) {{ … }}`, which is handed the old value \
+                 and returns the new one"
+            )),
+        });
+    }
+
+    /// Whether `container.get()` is written anywhere inside this expression.
+    ///
+    /// Walks the **whole** argument, because `kasse.get() + 100` puts the call
+    /// one operator down and a rule that read only the top of the expression
+    /// would miss the shape it exists for. The walk is the emitter's, shared
+    /// rather than copied: a second one over the same shape is a second thing
+    /// to keep in step with the AST.
+    fn a_get_inside(&self, expr: &Expr, container: &str) -> bool {
+        let mut found = false;
+        crate::emit::visit_expr(expr, &mut |part| {
+            if found {
+                return;
+            }
+            let Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } = part
+            else {
+                return;
+            };
+            if self.parsed.text(*method) != "get" || !args.is_empty() {
+                return;
+            }
+            if let Expr::Variable(name) = receiver.as_ref() {
+                found = self.parsed.text(*name) == container;
+            }
+        });
+        found
+    }
+
+    /// `NK2204`: an assignment straight into a `SharedMut`
+    /// ([ADR-039](../../../docs/specification/adr/adr-039.md) D10,
+    /// [ADR-099](../../../docs/specification/adr/adr-099.md)).
+    ///
+    /// `kasse = 42` looks like an ordinary assignment and is not: the lock has
+    /// to be taken for the write, and what takes it is a **door**. Without this
+    /// the program meets `rustc` about a type it never wrote — the hull, not
+    /// the value inside it — which is
+    /// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md).
+    ///
+    /// **The message names the door with the value in it**, because the repair
+    /// is mechanical and a help line that says *"use a door"* leaves the reader
+    /// to work out which of the four.
+    fn a_write_that_skips_the_door(&mut self, target: &Expr, into: &Ty, value: &Expr, span: &Span) {
+        let Ty::Named { name, .. } = into else {
+            return;
+        };
+        if name != SHARED_MUT {
+            return;
+        }
+        // The name, where the target is one. A field or an index into a hull is
+        // a shape nothing decides yet, and saying nothing is the direction that
+        // cannot refuse a program that is right.
+        let Expr::Variable(bound) = target else {
+            return;
+        };
+        let bound = self.parsed.text(*bound).to_string();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2204",
+            message: format!(
+                "`{bound}` holds shared mutable state, and this assigns to it directly"
+            ),
+            notes: vec![
+                "a write goes through a door, because the lock has to be taken for it \
+                 (Part II, 12.2)"
+                    .to_string(),
+            ],
+            help: Some(format!("write `{bound}.set({})`", self.written(value))),
+        });
+    }
+
+    /// The value as the author wrote it, where this compiler can say so.
+    ///
+    /// **An expression has no span** — [ADR-081](../../../docs/specification/adr/adr-081.md)
+    /// D2 gave one to `Binary` and to nothing else — so there is no source text
+    /// to quote back. What can be rebuilt is rebuilt, and the rest is an
+    /// ellipsis rather than a guess: a help line that quoted the wrong thing
+    /// would be worse than one that quotes nothing, and the shape the
+    /// specification's own example writes (`kasse = 42`) is a literal.
+    fn written(&self, value: &Expr) -> String {
+        match value {
+            Expr::LitInt(n) => n.to_string(),
+            Expr::LitBool(yes) => yes.to_string(),
+            Expr::LitStr(text) => format!("{text:?}"),
+            Expr::Variable(name) => self.parsed.text(*name).to_string(),
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => format!("-{}", self.written(expr)),
+            _ => "…".to_string(),
+        }
     }
 
     /// **A `let` that binds several names at once**

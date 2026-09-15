@@ -5597,7 +5597,13 @@ pub(crate) fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
     }
 }
 
-fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
+/// Every expression inside this one, this one included.
+///
+/// `pub(crate)` because the checker reads it too
+/// ([ADR-099](../../docs/specification/adr/adr-099.md)): `NK2205` asks whether
+/// a `get` is written anywhere inside a `set`'s argument, and a second walk
+/// over the same shape is a second thing to keep in step with the AST.
+pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match expr {
         Expr::Block(block) | Expr::Overlap(block) => visit_block(block, f),

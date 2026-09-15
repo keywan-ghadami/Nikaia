@@ -485,8 +485,14 @@ left is the section's own rules, every one of which is a refusal nothing raises:
 * the **re-entrancy check as a build switch** (ADR-039 D8), which the cache key
   already accounts for — and which ADR-057 D2 makes free at one thread and D3
   charges only on the values that actually cross;
-* `NK2201`, `NK2203`, `NK2204`, `NK2205` and `NK2503`, catalogued and not
-  emitted. **`NK2202` is the exception and is raised** — `sync::check` finds the
+* `NK2201`, `NK2203` and `NK2503`, catalogued and not emitted. **Two of the five
+  left this list** — `NK2204` and `NK2205`, the two that come with the doors
+  ([ADR-099](specification/adr/adr-099.md)) — and they went first because they
+  are **local**: each is one statement, while `NK2201` and `NK2203` need to know
+  what is *inside a door* and what a chain of calls reaches, and `NK2503` needs
+  the reachability walk [ADR-039](specification/adr/adr-039.md) D6 describes as
+  `NK2502`'s generalised.
+  **`NK2202` is a second exception and is raised** — `sync::check` finds the
   calls that contradict an assertion and `diagnostics` renders them — which is
   worth the extra words, because the bullet used to name the whole range and a
   reader would have gone looking for work that is done.
