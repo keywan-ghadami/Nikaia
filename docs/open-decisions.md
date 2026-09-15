@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Two entries, and both of them are open.** Nothing answered lives here: an
+**Three entries, and all of them are open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -193,3 +193,52 @@ guess.
 wrong. An entry exists because a program asked for it, and every entry named here
 was asked for; what is at issue is whether the entries that exist may say more
 than they do.
+
+---
+
+## 3. Is `dsl … from …` removed when the call form is built, or deprecated first?
+
+**Blocked by it:** nothing yet, and that is the point — it decides how the
+migration is shaped, and the migration has not started.
+
+[ADR-082](specification/adr/adr-082.md) D1 replaces `dsl Json from input` with
+`Json.value(input)`, and its §5 named the order: D1 and D2 together, *"then the
+old form is removed rather than deprecated"*. The reason it gave was
+
+> no program in the tree writes it and the free moment to take a form back is
+> while that is true
+
+**That fact has stopped being true, and the record now says so.** Eight programs
+write the old form on nine lines — `1brc`, `access-log`, `calc`, `config`,
+`inventory/stock`, `json`, `k-nucleotide`, `report` — plus a line in Part II 10.2
+and three test files. Counted while
+[ADR-091](specification/adr/adr-091.md) ran a new refusal across the corpus,
+which is the only reason anybody looked.
+
+**Why it is a question for the owner and not work.** The two answers cost
+different things and neither is obviously right:
+
+* **Remove, and migrate the eight in the same change.** One form in the language
+  at every moment, and nothing to take back later. The cost is that the change is
+  not separable: a mistake in the migration and a mistake in the new form arrive
+  together, and every one of those eight is a program somebody reads to learn
+  the language.
+* **Deprecate, migrate, then remove.** Each half can be reviewed and reverted on
+  its own, and the examples move one at a time under a compiler that still
+  accepts both. The cost is a window in which the language has two spellings for
+  one thing — which is exactly the state
+  [ADR-082](specification/adr/adr-082.md) §1 calls the defect: *"one keyword, two
+  namespaces"*, and a reader cannot tell which one this repository means.
+
+**What does not change either way**, so it is not part of the question: the
+entry call needs a `throws` in its contract. Today the checker is told in one
+line that a `dsl … from …` can fail
+([ADR-091](specification/adr/adr-091.md) D4), because it is not a call and has
+no contract to say so. As a call it is answered from one, and a generated entry
+rule carrying no `throws` meets `NK1134` at all eight of those programs — each
+of which writes `catch` beside the entry. That is work, and it is on
+[`open-work.md`](open-work.md) with the entry.
+
+**What this is not.** It is not D1 being reopened. A grammar is entered by a
+call; the question is only whether the old spelling stops working on the same
+day the new one starts.

@@ -2790,8 +2790,17 @@ impl<'a> Checker<'a> {
                 // lands in that handler. It is not a call and carries no
                 // contract, so `NK1134` had to be told
                 // ([ADR-091](../../../docs/specification/adr/adr-091.md)) - the
-                // six examples in `examples/` that write the shape are what
-                // said so, by being refused.
+                // examples that write the shape are what said so, by being
+                // refused.
+                //
+                // **This arm is on borrowed time**, and deliberately so:
+                // [ADR-082](../../../docs/specification/adr/adr-082.md) D1
+                // supersedes `dsl X from e` with `X.rule(e)`, which is decided
+                // and not built. When it is, the entry is an ordinary call and
+                // this line is *deleted* rather than edited - the answer comes
+                // from the callee's contract, as it does for every other call.
+                // A generated entry rule that carries no `throws` would meet
+                // `NK1134` at every one of those programs.
                 if let Some(guarded) = &mut self.guarded {
                     guarded.fallible = true;
                 }

@@ -615,7 +615,49 @@ it crosses is [ADR-079](specification/adr/adr-079.md)'s.
 a restructure that removed the entry above it, and restored from its own commit.
 Nothing about it changed in between.
 
-### 2.14. Nothing runs Nikaia code while the program is built
+### 2.14. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
+
+[ADR-082](specification/adr/adr-082.md) D1: a grammar is entered by an ordinary
+call, `Json.value(input)`, and D2 makes every `pub` rule an entry. Accepted,
+**Built: no** — *"a grammar name is not yet accepted as a callee"*.
+
+*Why it is here rather than in a subordinate clause:* it was in one. The entry
+about **running a grammar while the program is built** named it as *"the case
+ADR-082 rewrote the syntax for"*, and nothing else on this page did — which is the exact pattern the entry below this one was written about, two
+rounds ago: a record waiting on work that the list people read does not mention.
+
+*What it fixes, in the record's words:* the emitter picks the entry rule with
+
+```rust
+def.rules.iter().find(|r| r.is_public && par_fold_of(r).is_some())
+    .or_else(|| def.rules.iter().find(|r| r.is_public))
+```
+
+so a grammar with two `pub` rules gets one of them by source order, silently, and
+a `par_fold` one beats an earlier one. **That is a live defect and not merely an
+unbuilt decision** — it is filed here rather than in §1 only because the record
+that closes it is written and the repair is the migration, not a patch.
+
+*And the free moment has passed.* ADR-082 §5 gave *"no program in the tree writes
+it"* as the reason to **remove** the old form rather than deprecate it. Counted
+while [ADR-091](specification/adr/adr-091.md) ran a new refusal over the corpus:
+**eight programs write it on nine lines** — `1brc`, `access-log`, `calc`,
+`config`, `inventory/stock`, `json`, `k-nucleotide`, `report` — plus Part II 10.2
+and three test files. The record now carries the count; whether removal is still
+right is a decision and is in
+[`open-decisions.md`](open-decisions.md).
+
+*One thing the migration has to carry with it:* the entry call needs a `throws`
+in its contract. Today `dsl … from …` is told it is fallible by one line in the
+checker ([ADR-091](specification/adr/adr-091.md) D4), because it is not a call
+and has no contract. As a call it would be answered from one — and a generated
+entry rule carrying no `throws` would meet `NK1134` at all eight of those
+programs, each of which writes `catch` beside the entry.
+
+*Evidence:* the eight files, listed above, found by `grep` and confirmed by the
+refusal that ran over them.
+
+### 2.15. Nothing runs Nikaia code while the program is built
 
 *Reproduced:* `comptime` is built and its evaluator is
 [`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
@@ -653,7 +695,7 @@ see 2.15.
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is 2.15's, and the reason is there.
 
-### 2.15. Running a grammar while the program is built is not interpretation
+### 2.16. Running a grammar while the program is built is not interpretation
 
 *The distinction, because it is the whole entry.* A grammar could be run at build
 time by interpreting the grammar tree the compiler already holds. **It must not
@@ -783,12 +825,12 @@ A stale **Status** note is a defect in its own right
 ([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
 so this section being empty is a state to try to keep rather than a milestone.
 
-### 3.2. Six citations named an entry by its number and meant another one
+### 3.2. Eight citations named an entry by its number and meant another one
 
-Found by reading, in the round that closed the `catch` binding. The page's own
-head says to cite by **subject** and not by number; six live sentences did not,
-and four of them had gone stale because entries closed and the ones below moved
-up:
+Found by reading, in the round that closed the `catch` binding and again in the
+one after it. The page's own head says to cite by **subject** and not by number;
+eight live sentences did not, and six of them had gone stale because entries
+closed or were added and the ones below moved:
 
 | where | said | meant |
 | :--- | :--- | :--- |
@@ -798,9 +840,15 @@ up:
 | `tests/common/mod.rs` | the same | and the road is **closed**, not waiting: a member on an unbounded parameter is `NK1126` |
 | `spec-promises.md` | *"the qualified path is what fails (§1.1)"* | `http::Response(status: 400)` parses and lowers |
 | `spec-promises.md` | *"see §3.7"* | there is no §3.7; §3 runs 3.1, 3.5 |
+| `adr-077.md` | *"the item form (§2.14)"* | §2.14 was the build-time evaluator; the item form is a different entry |
+| `adr/README.md` | *"a `const` could not use a map (§2.13)"* | §2.13 is `comptime` at item level; what a `const` waits on is the evaluator |
 
-All six are fixed and now name a record or a subject. What is worth keeping is
-the shape: **two of them were not merely misnumbered but false**, and a reader
+All eight are fixed and now name a record or a subject. The last two were found
+by *adding* an entry rather than closing one, which is the half that is easy to
+forget: inserting §2.14 moved everything below it, and the two sentences that
+pointed into that range had **already** been wrong before the insertion — the
+renumber is what made anybody look. What is worth keeping is the shape:
+**two of them were not merely misnumbered but false**, and a reader
 had no way to tell, because a citation into a notes page is the one kind that
 cannot be checked mechanically — the entry it points at exists, it is simply a
 different entry. `check-adr-refs.py` covers ADR numbers and has nothing to say
@@ -812,7 +860,7 @@ shape available produces a fifth false alarm, and a gate people learn to ignore
 is worse than none. So the remedy is the rule at the head of this page, and this
 entry is the evidence that it has to be applied rather than merely written.
 
-*Evidence:* the six sentences above, each read against the page as it stands.
+*Evidence:* the eight sentences above, each read against the page as it stands.
 
 ### 3.5. Two examples write a postfix `??` the language does not have
 
