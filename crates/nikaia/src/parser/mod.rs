@@ -167,6 +167,66 @@ fn reserved_word_note(rendered: &str) -> String {
     )
 }
 
+/// The note a parse error gets when a `??`'s fallback reached for an operator.
+///
+/// **A refusal in the grammar cannot always say why**, and this is the case that
+/// proves it. `coalesce_fallback` takes one value, so `a ?? 0 > 3` fails — but
+/// it fails *after* the fallback has succeeded on `0`, in whatever rule was
+/// enclosing it, and that rule's message is about its own closing brace. The
+/// caret lands on a token the reader did not type wrong.
+///
+/// So the note is added from what a reader **sees**: a source line that has a
+/// `??` before the column the error points at, and a binary operator at it.
+/// Read off the rendered message for the same reason
+/// [`reserved_word_note`] is — what a reader needs is attached to what a reader
+/// sees, and a note that disappears is the safe way for this to be wrong, since
+/// it adds a sentence and corrects nothing
+/// ([ADR-089](../../../docs/specification/adr/adr-089.md) D2).
+fn coalesce_fallback_note(rendered: &str) -> String {
+    const MARK: &str = "found unexpected token `";
+    // **`=` is in the list and that is not a mistake.** The backend names the
+    // *first* character it could not use, so a `==` is reported as `=`. A line
+    // that has a `??` to the left of the caret and a stray `=` at it is this
+    // shape and not an assignment typo, which is what keeps the pair of
+    // conditions together rather than either alone.
+    const OPERATORS: &[&str] = &[
+        "==", "!=", "<=", ">=", "=", "<", ">", "&&", "|", "||", "..", "+", "-", "*", "/", "%",
+        "as",
+    ];
+    let Some(after) = rendered.split(MARK).nth(1) else {
+        return String::new();
+    };
+    let Some(token) = after.split('`').next() else {
+        return String::new();
+    };
+    // The message shows the offending line with a caret under it. A `??` on
+    // that line, to the left of the caret, is what makes this the shape rather
+    // than an ordinary typo — and where the rendering is not that shape, the
+    // note is simply absent.
+    let mut lines = rendered.lines();
+    let source = lines.find(|l| l.contains(" | "));
+    let caret = rendered.lines().find(|l| l.trim_start().starts_with('^'));
+    let (Some(source), Some(caret)) = (source, caret) else {
+        return String::new();
+    };
+    let at = caret.find('^').unwrap_or(0);
+    let before = &source[..source.len().min(at)];
+    if !before.contains("??") || !OPERATORS.contains(&token) {
+        return String::new();
+    }
+    // **The token is not written into the message**, and that is deliberate: the
+    // backend reports the first character it could not use, so a `==` arrives
+    // here as `=` and a help that quoted it back would read `(a ?? 0) = …`.
+    // The shape is the same whichever operator it was, so the message shows the
+    // shape.
+    let _ = token;
+    "\nnote: the fallback of a `??` is one value, or an expression in brackets \
+     (Part I, 3.5). Without them it reaches rightwards across the operator, so \
+     `a ?? 0 > 3` is `a ?? (0 > 3)` and not what the line looks like.\n\
+     help: put brackets around the side you mean - `(a ?? 0) > 3`, or `a ?? (0 > 3)`."
+        .to_string()
+}
+
 pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // Generated parsers run on a `Stateful` stream: `LocatingSlice` supplies the
     // spans, `ParseContext` carries the shared parser state including the
@@ -188,7 +248,11 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         // wrong, so it leaves without a backtrace (`diagnostics::Refused`).
         .map_err(|e| {
             let rendered = e.render(input);
-            let note = reserved_word_note(&rendered);
+            let note = format!(
+                "{}{}",
+                reserved_word_note(&rendered),
+                coalesce_fallback_note(&rendered)
+            );
             crate::diagnostics::refuse(format!("Parse error:\n{rendered}{note}"))
         })?;
 
@@ -1247,7 +1311,35 @@ grammar! {
         // is associative - and this is the reading every language with the
         // operator has, which is worth more than a coin toss.
         rule coalesce_tail -> Expr =
-            "??" e:coalesce_expr -> { e }
+            "??" e:coalesce_fallback -> { e }
+
+        // **A fallback is one value, or it is bracketed**
+        // ([ADR-089](../../../docs/specification/adr/adr-089.md) D1).
+        //
+        // `??` sits above the whole binary chain, so its fallback used to reach
+        // rightwards across every operator there is - and `a ?? 0 > 3` was
+        // `a ?? (0 > 3)` while looking like `(a ?? 0) > 3`. That is not a
+        // theory: with `a: bool?`, `a ?? x == y` type-checks **both** ways and
+        // the two answers differ, measured at `false` against `true`.
+        //
+        // Taking `unary_expr` rather than `coalesce_expr` is the whole fix: a
+        // literal, a name, a call, a field, a `-1` and a bracketed expression
+        // are all reachable from there, and no binary operator is. The
+        // recursive `coalesce_tail?` keeps `a ?? b ?? c` a chain
+        // ([ADR-066](../../../docs/specification/adr/adr-066.md) D4).
+        //
+        // The `#` label is what keeps the refusal in this language's words:
+        // without it the message lists every token that could have followed.
+        rule coalesce_fallback -> Expr # "one value, or an expression in brackets" =
+            head:unary_expr tail:coalesce_tail? -> {
+                match tail {
+                    Some(fallback) => Expr::Coalesce {
+                        value: Box::new(head),
+                        fallback: Box::new(fallback),
+                    },
+                    None => head,
+                }
+            }
 
         // Kap 5.2/5.3: a lambda, with its arguments named or implicit.
         rule closure_expr -> Expr =

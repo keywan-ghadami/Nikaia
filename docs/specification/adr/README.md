@@ -219,6 +219,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 089 | A `??`'s fallback is one value or an expression in brackets | `claude/cia-documentation-cleanup-c7g501` |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
