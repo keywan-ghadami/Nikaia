@@ -805,7 +805,7 @@ written by the build so that `cargo publish` is the whole of publishing.
 dependency; no package in the tree is published yet, so the first one is the
 test.
 
-### 2.18. A foreign crate is described before it is called
+### 2.17. A foreign crate is described before it is called
 
 [ADR-104](specification/adr/adr-104.md). A call into a crate no ledger
 describes is refused with the command in the message; `nikaia describe
@@ -823,7 +823,7 @@ refusal.
 sources; the file, its header and the hash rule; the rustdoc-JSON reader
 behind a toolchain check; the four examples.
 
-### 2.19. The ledger says `Seq[T]` and `Par[T]`
+### 2.18. The ledger says `Seq[T]` and `Par[T]`
 
 [ADR-105](specification/adr/adr-105.md). Two words join the ledger's type
 language: `Seq[T]` for what is produced step by step, with `sync`/`throws`
