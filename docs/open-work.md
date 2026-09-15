@@ -727,6 +727,33 @@ silence today.
 *What it needs:* error types lowered as enums, which [ADR-023](specification/adr/adr-023.md)
 D1's set already waits on; then the set written and diffed; then the note and
 the `--locked` failure, which are the `NK2401` machinery over one more column.
+The first of those is §2.15 and is the thing this entry waits on.
+
+### 2.15. An error type is lowered as the `enum` it is
+
+[ADR-023](specification/adr/adr-023.md) D1 records `throws` as a **set** of
+error types; [ADR-013](specification/adr/adr-013.md) D3 lowers every `throws`
+to one boxed error, so the set has no members to name — `std.contracts` writes
+`throws = ["?"]` on every entry, and Stage 0 writes `true` for a program's own.
+Part I 7.1's `enum ConfigError` with `impl Error for ConfigError` parses and
+lowers as a type; what does not exist is the lowering that makes it *the*
+error a function fails with, so that a `throw ConfigError::NotFound(path)`
+reaches a `catch` as that variant and the ledger can write the name down.
+
+*What waits on it:* the `throws` set (ADR-023 D1), the note over `catch` sites
+and the `--locked` failure (§2.14, [ADR-101](specification/adr/adr-101.md)),
+the reserved `NK2401` case for a `catch` that stops covering its arrivals, and
+`match error { … }` over a variant from a callee in another package.
+
+*What it needs:* a function's error type as the sum of what its body throws
+and what its callees throw — one generated `enum` per function where the set
+has more than one member, with the conversions the propagation needs — and the
+ledger writing the members. The whole-program inference is ADR-023 D1's; what
+is unbuilt is the emitter's half.
+
+*Evidence: none yet beyond the `["?"]` in every entry.* No program in the tree
+matches on an error variant that crossed a function boundary, because none
+can.
 
 ---
 
