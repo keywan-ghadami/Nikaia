@@ -54,63 +54,69 @@ Part I 4.5's own three-line example, which failed in a message naming this
 compiler's internal word for a map ([ADR-080](specification/adr/adr-080.md)), and **three of the four string
 concatenations** - which also took back a *false* refusal, since `"a" + s` was
 typed as a `&str` and made `-> String` an error
-([ADR-081](specification/adr/adr-081.md)).
+([ADR-081](specification/adr/adr-081.md)), and **a field of a borrowed subject
+handed out by value** - which Part I 6.8 had already decided in its own words, by
+promising that an ownership rule rejects in plain language and that a raw
+internal error reaching the user is a bug
+([ADR-083](specification/adr/adr-083.md)).
 
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-### 1.1. A `&self` method cannot hand back a field it owns
+### 1.1. An accessor cannot hand back a **view** of a field, which is the third way out `NK1131` should have
 
-*Reproduced*, with no concatenation anywhere near it:
+*Reproduced:*
 
 ```nika
 impl User {
-    fn name_of(&self) -> String {
+    fn name_of(&self) -> &str {
         return self.username
     }
 }
 ```
 
+is refused **twice** — here, because a `String` is not a `&str`:
+
 ```text
-error[E0507]: cannot move out of `self.username` which is behind a shared
-              reference
+error[NK1104]: this returns `String`, and the function declares `&str`
 ```
 
-about a file nobody wrote, which is
-[Part III C.1](specification/30-nikaia-tooling.md)'s class.
+and, taking the annotation at its word, by the language below, because the
+lowering names no lifetime:
 
-*Why it is bigger than it looks:* it is every accessor. A struct that owns a
-`String`, a `Vec` or any other value that is not `Copy` cannot hand one back from
-a method that takes `&self` — and `&self` is what Part I 4.2 writes for a method
-that only reads. The program is correct in this language's terms; what the
-language below objects to is a move this compiler wrote and the author did not.
+```text
+error[E0106]: missing lifetime specifier
+```
 
-*What it needs, and there are two shapes:* the emitter writes `.clone()` where a
-body hands back a field it borrows — which is the language below's own answer and
-costs an allocation the author cannot see — or the checker refuses it and says to
-declare the receiver `self`. The first keeps the program and hides a cost; the
-second keeps the cost visible and takes a program away. Part I 6's whole chapter
-on what a value costs argues for the second, and nothing here has measured how
-often the first would fire.
+*Why it matters now:* [ADR-083](specification/adr/adr-083.md)'s `NK1131` refuses
+handing a field out **by value** and names two ways out — `.clone()`, which
+copies, and a `self` receiver, which consumes the subject. The third way is the
+one every language in this family writes and the only one that costs nothing:
+hand back a **view**. This language has views (Part I 6.5, and
+[ADR-008](specification/adr/adr-008.md)'s whole tethering machinery) and no way
+to get one out of a field.
 
-*Found by* running Part I 4.7's `impl Summarize for User` after
-[ADR-081](specification/adr/adr-081.md) took the concatenation out of it. Two
-defects were standing on one line, and the second only became visible when the
-first was gone.
+*So the accessor a reader would write is the one shape that does not work*, and
+the two that do each cost something the reader did not ask for.
 
-*And the page still cannot write its own line.* `return "User: " + self.username`
-type-checks now and compiles no better, so Part I 4.7 keeps the interpolated
-form it was given — `f"User: {self.username}"`, which borrows and therefore
-works. **Closing this is the condition for putting the page's own sentence
-back**, and that is written here so it is not forgotten rather than left to be
-noticed again.
+*What it needs, and the halves are separable:* the checker has to read `-> &str`
+against a `String` field as a **borrow** rather than as a mismatch, which is a
+rule about what a view of a field is; and the emitter has to name the lifetime,
+which is `Lifetimes::INNER`'s job and is already how a method of a type carrying
+the input buffer is written. The second is machinery that exists; the first is a
+decision about the type language.
 
-**One entry, and it is the third one a single line of Part I 4.7 was hiding.**
-The page's `return "User: " + self.username` was refused twice over; taking the
-concatenation out ([ADR-081](specification/adr/adr-081.md)) left the move
-underneath it, which is §1.1 and has nothing to do with text. Everything in this
-section was found the same way — by running the programs the specification prints,
+*Found by* looking for `NK1131`'s third way out and finding it absent.
+
+**One entry, and it is the fourth thing one line of Part I 4.7 was hiding.** The
+page's `return "User: " + self.username` was refused twice over; taking the
+concatenation out ([ADR-081](specification/adr/adr-081.md)) left a move
+underneath it, and refusing that ([ADR-083](specification/adr/adr-083.md)) left
+the question of what an accessor should hand back at all — where the answer every
+reader would write, a **view** of the field, turns out to be the one shape this
+language cannot express. That is §1.1. Everything in this section was found the
+same way — by running the programs the specification prints,
 which is `crates/nikaia/tests/specification.rs` now rather than a habit: it takes
 every `nika` block in the three pages as far as it goes and hands the ones that
 lower to `rustc`, against two recorded baselines. Of 122 blocks, 52 are programs

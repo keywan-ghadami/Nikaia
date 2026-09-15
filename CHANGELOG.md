@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed (a field of a borrowed subject may not be handed out by value)
+
+- **[ADR-083](docs/specification/adr/adr-083.md), `NK1131`.** `return self.username` out of a `&self` method was `error[E0507]: cannot move out of `self.username` which is behind a shared reference` — about a file nobody wrote, and that is **every accessor** over a field that is not a number, since `&self` is what Part I 4.2 writes for a method that only reads.
+- **Part I 6.8 decides this and had already**, which is why it is a refusal rather than a judgement call: *"Ownership rules occasionally reject code […] every such error explains itself in plain language and tells you what to do next. You never need Rust knowledge to read a Nikaia error; if a raw internal (Rust) error ever reaches you, that is a Nikaia bug."* Both halves were being broken at once — the rule rejected, and it rejected in the wrong compiler's words.
+- **Not a `.clone()` the emitter writes.** That was the other option and it is against a decision already made: [ADR-064](docs/specification/adr/adr-064.md) D2 wrote *a hull you can see is one you write*, and a copy the author cannot see is the same thing one position over — an allocation in the hot path that nothing in the source accounts for, in a chapter whose whole argument is that a value's cost is visible. It would also buy nothing: both ways out are one word and the message names them.
+- **Measured as a class before anything was built.** A field of a borrowed subject leaks in exactly three positions — handed back, bound, passed — and three shapes work: a field that copies, a written `.clone()`, and a `self` receiver. The rule reads the **field's type** rather than counting `&self`s, and the positions are the three that were measured: a position missed leaves today's behaviour, and a position wrongly included breaks a program that works (C.4).
+- **A free call needed its own call site**, because it walks its arguments itself rather than going through `arguments_given` — found by the class measurement coming back two-of-three instead of three-of-three.
+- **And the third way out turns out not to exist**, which is filed as `open-work.md` §1.1: `fn name_of(&self) -> &str` is refused here as `NK1104` and below as `E0106`, so the accessor a reader would actually write is the one shape this language cannot express — it has views and no way to get one out of a field.
+
 ### Changed (a grammar is entered by a call)
 
 - **[ADR-082](docs/specification/adr/adr-082.md)** withdraws `dsl <grammar> from <expr>` for an ordinary call — `Json.value(input)`. The **block** form, `dsl <driver> { … } eod`, is untouched: its body must not be read as Nikaia at all, which no call can arrange, and that is what earns it a keyword.

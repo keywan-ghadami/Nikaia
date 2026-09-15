@@ -1,5 +1,5 @@
 //! A field of a borrowed subject, handed out by value
-//! ([ADR-082](../../../docs/specification/adr/adr-082.md)).
+//! ([ADR-083](../../../docs/specification/adr/adr-083.md)).
 //!
 //! **Part I 6.8 is what decides this**, and it decides it in the language's own
 //! words rather than in a judgement of mine:

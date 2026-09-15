@@ -559,7 +559,7 @@ struct Checker<'a> {
     ///
     /// `&self` and `&mut self` borrow it; a bare `self` owns it. What hangs on
     /// the difference is whether a field may be handed out by value at all
-    /// ([ADR-082](../../docs/specification/adr/adr-082.md)). `false` for a free
+    /// ([ADR-083](../../docs/specification/adr/adr-083.md)). `false` for a free
     /// function, which has no subject to borrow.
     borrowing_self: bool,
     /// The `[T]` of the `impl` whose methods are being walked, on its own.
@@ -1264,9 +1264,7 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1131",
-            message: format!(
-                "`self` is borrowed here, so `{field}` cannot be {what} by value"
-            ),
+            message: format!("`self` is borrowed here, so `{field}` cannot be {what} by value"),
             notes: vec![format!(
                 "`&self` is a loan of the subject, and `{field}` is a `{}` - giving it \
                  away would take a piece out of something this method does not own \
@@ -4540,7 +4538,11 @@ fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
 fn copies(ty: &Ty) -> bool {
     match ty {
         Ty::Named { name, view, .. } => {
-            *view || matches!(name.as_str(), "i32" | "i64" | "u8" | "f64" | "bool" | "char")
+            *view
+                || matches!(
+                    name.as_str(),
+                    "i32" | "i64" | "u8" | "f64" | "bool" | "char"
+                )
         }
         _ => false,
     }
