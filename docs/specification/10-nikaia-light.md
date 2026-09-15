@@ -606,6 +606,14 @@ expression — it may be given a name, passed, or indexed with — and it binds
 `n - 1` rather than a range with something subtracted from it. That is the
 reading a loop head wants and the only one that is ever useful.
 
+A `for` over a list **lends** it: the elements are looked at, and the list is
+still there when the loop is over. Taking them away is written,
+`for x in xs.drain()` ([ADR-094](adr/adr-094.md) D4, and 6.5 for the rule it
+is part of).
+
+> **Status:** not built — today `for x in xs` takes `xs` with it, and a use of
+> `xs` after the loop is refused by the language below. See 6.5.
+
 **Leaving a loop early: `break` and `continue`**
 
 `break` leaves the loop. `continue` skips the rest of this turn and starts the
@@ -1363,7 +1371,8 @@ error[NK1115]: `serve` takes a shared value, and `db` is not one
 number its type the way any other argument does.
 
 **This is the handle and nothing else.** Ordinary data — a string, a number, a
-struct of those — is still **moved** where it is handed on (8.3). An automatic
+struct of those — is still **moved** where it is handed on to something that
+keeps it (6.5, 8.3). An automatic
 duplication there would copy the whole of the data, which is a different thing at
 a different cost, so for data the `.clone()` stays something you write yourself
 ([ADR-040](adr/adr-040.md) D1).
@@ -1540,6 +1549,29 @@ Two things are guaranteed to *just work*:
 2.  **Returning borrowed values from functions.** A function like `fn first_word(s: &str) -> &str` needs no annotations. Even when the result could come from *several* inputs, the compiler figures out the connection on its own — across function boundaries, through your whole program (see 6.7).
 
 **The one rule you need to know:** a borrow may not outlive its owner. You will rarely be able to break this rule by accident, because of the next section.
+
+**Who writes the `&`: the declaration, never the call** ([ADR-094](adr/adr-094.md)).
+A parameter written with a plain type is a **view** unless the function's body
+keeps the value — stores it, hands it back, gives it to a task, or passes it to
+something that keeps it — and which of the two it is comes from the body, is
+written to the ledger (6.7), and is true for every caller. So the caller writes
+`serve(db)` and `fs::map(path)`, and the compiler writes the reference the
+callee asked for, the way it writes the pause and the failure a call carries
+(7.1, 8.1). A `&` in a parameter type is an assertion — *this is a view, hold
+me to it* — the way `sync` is (Part II, 12.1). A parameter the function changes
+in place says `mut` in the declaration (`fn fill(mut out: Vec[i64])`), which is
+`&mut self`'s rule for every parameter; the call shows nothing, as `xs.push(1)`
+shows nothing. A `for` **lends** its list, so the list is still there after the
+loop; iteration that takes the elements away is written, `for x in xs.drain()`.
+Nothing here inserts a copy: a value handed to a function that keeps it, and
+used again afterwards, is refused with `.clone()` named as the way out (8.3).
+
+> **Status:** decided and not built. Today the caller writes the `&` — every
+> example does — and `for x in xs` takes `xs` away, so `xs.len()` after the loop
+> is refused by the language below in its own words, which Part III C.1 calls a
+> bug. The rule above is the order of work in [ADR-094](adr/adr-094.md) §5, and
+> the examples move to it when it lands. Until then `&` at a call is what a
+> program writes.
 
 ### 6.6. Escaping References Are Tethered
 

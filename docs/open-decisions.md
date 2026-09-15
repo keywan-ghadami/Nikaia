@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Five entries, and all of them are open.** Nothing answered lives here: an
+**Six entries, and all of them are open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -446,3 +446,46 @@ miscompilation.
 **What this is not.** It is not a question about `sync`. The same conflation
 reaches `throws`, `touches` and the sharing column — `NK1129` is only the first
 reader where it became visible, because a trait declaration asserts the answer.
+
+---
+
+## 6. Is text one type whose state the compiler picks, or two the program picks between?
+
+**Blocked by it:** nothing half-built. What it blocks is 13 `.to_string()` in
+`examples/`, every one a literal or a view being put where a `String` is
+declared, and `NK1106` telling the author to allocate.
+[ADR-094](specification/adr/adr-094.md) closes the `&`-at-the-call row of the
+same count and names this as the axis it deliberately does not touch: that one
+is *mode* (lent or kept), this one is *representation* (a view or an owned
+buffer), and Part I 6.6 already lets the compiler choose among three states
+for a view. Text is the one type where the choice is still the program's, at
+the type.
+
+**Two ways out.**
+
+* **Leave it.** `String` owns, `&str` views, `.to_string()` says an allocation
+  happens here. Consistent with [ADR-005](specification/adr/adr-005.md) §3's
+  *no copy the user did not write* — and it costs 13 spellings in 913 lines,
+  and `Response(content_type: "text/plain".to_string())` in a language whose
+  README promises scripting-language readability.
+* **One text type, three states.** `String` (or a new name) is what `Bytes`
+  already is — a buffer that may be borrowed, tethered or owned — and a literal
+  stored in a field is a *tethered view of static text* that allocates nothing.
+  `.to_owned()` stays for a copy the program wants. `&str` leaves the writable
+  surface the way `usize` did ([ADR-048](specification/adr/adr-048.md) D1). The
+  cost: a text value is a pointer, a length and a handle rather than a pointer,
+  a length and a capacity; a text that views into a mapped file pins the
+  mapping, which is 6.6's documented cost applied to text; and `std`'s ledger
+  entries that say `&str` today say the one type instead.
+
+**What I would do: the second, after ADR-094's step 3 has rewritten the
+examples**, so that the two rewrites of the corpus are one. The argument that
+decides it is the one ADR-094 rests on: the compiler already chooses a view's
+state per use, and a program that has to say it for text and not for a slice
+is being asked the same question twice with two answers.
+
+**What it costs either way:** leaving it costs the 13 and every one after them;
+taking it costs a representation change in `std`, a record, and the one
+measurement this project would want first — what the handle costs on a text
+that is compared and hashed a billion times, which `benches/refcount` can be
+pointed at.

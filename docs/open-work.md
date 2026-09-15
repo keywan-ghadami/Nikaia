@@ -720,6 +720,33 @@ build-time call.
 case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
 [ADR-072](specification/adr/adr-072.md) built the permission for.
 
+### 2.12. The caller writes the `&`, and the record says the compiler does
+
+[ADR-094](specification/adr/adr-094.md). A parameter is a view unless its body
+keeps the value, a `keeps` column records which, the emitter writes the
+reference at the call, a `for` lends, a `let` over a place is a view, and
+`mut` on a parameter is where in-place change is written. **None of it is
+built**: every `&` in `examples/` is the caller's, `for x in xs` consumes `xs`,
+and `xs.len()` on the next line is `rustc`'s *use of moved value* about a file
+nobody wrote — reproduced with a nine-line probe, and the review that found it
+is [`language-review.md`](language-review.md) §1.1.
+
+*Evidence:* 42 `&` at calls and loop heads in 913 non-comment lines of
+`examples/`, each repeating what the callee's signature says;
+`examples/report.nika`'s comment explaining that `count` has to be read before
+`page(entries, total)` "consumes" them.
+
+*What it needs, in the record's own order (§5):* the `keeps` inference and
+column first, because it changes no program and can be diffed against the
+corpus; then the `for` and `let` half, which needs no ledger; then the emitter
+writing the argument off the column and refusing a written `&`; then `mut`
+parameters; then the cleanup-point narration of D5. Step 3 is the one that
+rewrites every example, so the examples are the test.
+
+*Why it is here and not in §1:* nothing is miscompiled. It is a message in the
+wrong words at every site the caller forgets the `&`, and a tax at every site
+they remember it.
+
 ---
 
 ## 3. Upkeep

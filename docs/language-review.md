@@ -69,7 +69,10 @@ Three shapes carry most of it:
   buffer. Text is the one type where that choice is still the programmer's.
 
 **Recommendation (the biggest single change in this review):** finish the
-"compiler decides" principle for ownership.
+"compiler decides" principle for ownership. *Decided since:*
+[ADR-094](specification/adr/adr-094.md) takes points 1 and 2 below, records
+how the `&` got there in the first place, and names the one semantic cost;
+point 3 is [`open-decisions.md`](open-decisions.md) §4.
 
 1. A parameter written `T` is a **view unless the body keeps it** — stored,
    returned, spawned — and which one it is goes into the ledger beside `sync`
@@ -112,7 +115,8 @@ its parameter's. But 13.5 already solved exactly that for `std` with
 **Recommendation:** add the function type `fn(A, B) -> R` to the type grammar,
 record `from(f)` for any function that runs its parameter during the call, and
 reserve `@detached` for one that stores or spawns it. The ledger already has
-the column.
+the column. The same question, measured against `examples/http/`, is
+[`open-decisions.md`](open-decisions.md) §4.
 
 ### 1.3 Traits reintroduce the colour the language removed
 
@@ -295,14 +299,14 @@ Ordered by how early a newcomer meets it. Each was reproduced unless marked
 | construct | today |
 | :--- | :--- |
 | `else if` | **parse error** — `expected '{'; found 'if'`. Every language has it; the examples work around it with nested blocks and sequential `if`s (`http/src/main.nika:status_line`). |
-| `let (a, b) = pair` | parse error. `for (k, v) in map` works, so the language destructures in one head and not the other. `open-work.md` §2.4 has it. |
+| `let (a, b) = pair` | was a parse error at `61849da`; **built since** by [ADR-098](specification/adr/adr-098.md), a flat tuple of names. |
 | `[1, 2, 3]` | parse error. A list literal is the first thing a scripting-language reader types. `Vec::new()` then `push`, four times, is what `n-body.nika` and `jumps.nika` do instead. |
 | `1_000_000`, `0xFF`, `0b1010` | `NK1117: nothing declares _000_000`. A language with `u8`, `Bytes`, `wrapping_shl`, an x86 DSL and a benchmark full of physical constants has no hex and no digit groups. |
 | tuple, or-, range-, guarded, nested patterns in `match` | parse error on `(1, y) =>`. `calc.nika` matches `step.0` because it cannot match `step`. Six pattern shapes, none composable. |
 | `..` rest in a struct pattern | parse error *(spec status)*. |
 | a bare `throw` as a match arm | parse error; must be `{ throw error }`. |
 | block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. |
-| a function that never returns | needs an unreachable `return 0` (`open-work.md` §2.12). |
+| a function that never returns | needed an unreachable `return 0` at `61849da`; **built since** by [ADR-093](specification/adr/adr-093.md). |
 
 None of these needs a decision. They need an afternoon each.
 
