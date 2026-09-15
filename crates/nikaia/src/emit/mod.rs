@@ -3188,7 +3188,8 @@ impl<'p> Emitter<'p> {
                 // two forms do not have the same *type* below. `while true { }`
                 // is `()`; `loop { }` diverges and is `!`, so
                 // `fn f() -> i32 { loop { } }` compiles and the `while` form is
-                // an `E0308`. `open-work.md` §2.12 wants a function that never
+                // an `E0308`. [ADR-093](../../docs/specification/adr/adr-093.md)
+                // wants a function that never
                 // returns to stop needing an unreachable `return`, and no
                 // checker change can deliver that while the lowering emits the
                 // form the language below refuses. This is that prerequisite.

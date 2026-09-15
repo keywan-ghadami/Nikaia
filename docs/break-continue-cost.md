@@ -456,7 +456,7 @@ meet it — `NK1133` refuses `break i` outright — so D1 stands as written and
 [ADR-071](specification/adr/adr-071.md) reserved it for and what
 [ADR-084](specification/adr/adr-084.md) D7 records.
 
-**[`open-work.md`](open-work.md) §2.12 was invalidated as written**, and this is
+**`open-work.md`'s unreachable-`return` entry was invalidated as written** — the one [ADR-093](specification/adr/adr-093.md) later closed — and this is
 the one place where building the construct made something else more expensive.
 It has since been rewritten; what follows is the argument that had to go.
 The entry proposes a diagnostic improvement — a `while true { … }` cannot be left,

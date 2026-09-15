@@ -638,62 +638,7 @@ never do (Part III, C.4), so it wants the same polarity every other check here
 has: refuse only what is certainly wrong, and say nothing about a name it cannot
 account for.
 
-### 2.12. A loop that cannot end still has to be followed by a `return`
-
-*Reproduced:*
-
-```nika
-fn forever() -> i32 {
-    while true {
-        let x = 1
-    }
-}
-```
-
-```
-error[NK1104]: this function hands back `()`, and it declares `i32`
-```
-
-so a function that genuinely never returns — an accept loop, an event loop, a
-supervisor — has to end with a `return 0` that cannot be reached, and a reader of
-that line cannot tell dead code from a mistake.
-
-*Why it is work and not a question:*
-[ADR-070](specification/adr/adr-070.md) D3 decided it. It is also the one real
-cost of D1's *no second keyword*, which is why the two were settled together.
-
-*What it needs, and what it did not need before
-[ADR-084](specification/adr/adr-084.md):* a `while` whose condition is the
-literal `true` can be left in exactly two ways — a `return`, and a `break` bound
-to **this** loop. So the test is *"the condition is the literal `true` **and** no
-`break` in the body is bound to this loop"*, which is a walk of the body rather
-than a look at the head.
-
-It is still small, and smaller than it sounds: the checker already keeps the loop
-count that answers it ([ADR-073](specification/adr/adr-073.md) D4's boundaries),
-so what this needs is to record, per loop, whether a jump reached it — not a new
-analysis.
-
-*And the half that was not the checker's is now in place.* This could not have
-been built at all while the lowering emitted `while true`, whatever the checker
-did: `while true { }` is `()` in the language below and `loop { }` is `!`, so a
-function whose body is an unconditional loop and whose declared type is `i32` was
-an `E0308` there. The checker would have stopped refusing and `rustc` would have
-refused instead, about a file nobody wrote.
-[ADR-074](specification/adr/adr-074.md) D1 emits `loop`, so what is left here is
-the checker's half alone.
-
-*What this entry said before, and why the correction is written rather than
-edited away:* the version before ADR-073 argued the work was small **because
-`break` and `continue` do not exist**, so *"the analysis other languages need for
-this question is, here, one test on the condition."* That was true and is not,
-and it is the kind of sentence that stays quoted long after its premise leaves.
-
-The polarity is unchanged and is the usual one: say *"cannot be reached"* only
-where the condition is the literal and no jump leaves it, never where the
-condition is a name that happens to be true.
-
-### 2.13. A `comptime` binding at item level has nowhere to stand
+### 2.12. A `comptime` binding at item level has nowhere to stand
 
 *Reproduced:* `comptime MAX = 1000` at the top of a file is a parse error; the same
 line inside a function body parses, folds and runs.
@@ -719,7 +664,7 @@ it crosses is [ADR-079](specification/adr/adr-079.md)'s.
 a restructure that removed the entry above it, and restored from its own commit.
 Nothing about it changed in between.
 
-### 2.14. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
+### 2.13. A grammar is entered by `dsl … from …`, and the record that replaced it is unbuilt
 
 [ADR-082](specification/adr/adr-082.md) D1: a grammar is entered by an ordinary
 call, `Json.value(input)`, and D2 makes every `pub` rule an entry. Accepted,
@@ -761,7 +706,7 @@ programs, each of which writes `catch` beside the entry.
 *Evidence:* the eight files, listed above, found by `grep` and confirmed by the
 refusal that ran over them.
 
-### 2.15. Nothing runs Nikaia code while the program is built
+### 2.14. Nothing runs Nikaia code while the program is built
 
 *Reproduced:* `comptime` is built and its evaluator is
 [`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
@@ -799,7 +744,7 @@ see 2.15.
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is 2.15's, and the reason is there.
 
-### 2.16. Running a grammar while the program is built is not interpretation
+### 2.15. Running a grammar while the program is built is not interpretation
 
 *The distinction, because it is the whole entry.* A grammar could be run at build
 time by interpreting the grammar tree the compiler already holds. **It must not

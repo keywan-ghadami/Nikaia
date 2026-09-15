@@ -723,6 +723,56 @@ struct Guarded {
     unanswered: bool,
 }
 
+/// Whether a body's last statement is a loop no jump leaves
+/// ([ADR-093](../../../docs/specification/adr/adr-093.md)).
+///
+/// [ADR-070](../../../docs/specification/adr/adr-070.md) D3: a function that
+/// genuinely never returns — an accept loop, an event loop, a supervisor — had
+/// to end with a `return 0` that cannot be reached, and a reader of that line
+/// could not tell dead code from a mistake.
+///
+/// **The literal `true` only**, never a name that happens to be true: the
+/// equivalence is D1's and it is about the written form. `emit` makes exactly
+/// this shape Rust's `loop`, which is `!` and fits any declared type
+/// ([ADR-085](../../../docs/specification/adr/adr-085.md)) — so the two halves
+/// agree by construction, and the checker could not have claimed this before
+/// that record, because `while true { }` is `()` below and the refusal would
+/// only have moved to `rustc`.
+///
+/// **And no `break` bound to this loop**, which is what
+/// [ADR-084](../../../docs/specification/adr/adr-084.md) added to the question:
+/// before it, the condition was the whole test. The walk over-approximates — it
+/// descends into a lambda, where a `break` is not bound to this loop at all —
+/// and that is the safe direction: a false *"a jump leaves it"* asks for the
+/// `return` this record removes, which is where every program already is, while
+/// a false *"nothing leaves it"* would let a body fall off its end and hand
+/// `rustc` a file nobody wrote.
+fn never_ends(body: &Block) -> bool {
+    let Some(last) = body.stmts.last() else {
+        return false;
+    };
+    let Stmt::While { cond, body } = &last.node else {
+        return false;
+    };
+    matches!(cond, Expr::LitBool(true)) && !a_jump_leaves(body, 0)
+}
+
+/// Whether a `break` in this block is bound to the loop **around** it rather
+/// than to one written inside.
+///
+/// A `continue` is not one: it starts the loop's next turn and never leaves.
+fn a_jump_leaves(block: &Block, loops: usize) -> bool {
+    block.stmts.iter().any(|stmt| match &stmt.node {
+        Stmt::Break => loops == 0,
+        Stmt::For { body, .. } | Stmt::While { body, .. } => a_jump_leaves(body, loops + 1),
+        other => {
+            let mut inner: Vec<&Block> = Vec::new();
+            crate::contracts::sync::visit_stmt_blocks(other, &mut |b| inner.push(b));
+            inner.iter().any(|b| a_jump_leaves(b, loops))
+        }
+    })
+}
+
 /// **What a `?.` reaches**, which Part I 3.5 calls a *member*
 /// ([ADR-066](../../../docs/specification/adr/adr-066.md)).
 ///
@@ -1064,8 +1114,11 @@ impl<'a> Checker<'a> {
         self.scope.pop();
 
         // The last expression of a body is what the function hands back, so it
-        // answers to the declared type exactly as a `return` does.
-        if let (Some(expected), Some(span)) = (&expected, tail_span) {
+        // answers to the declared type exactly as a `return` does - unless the
+        // body **cannot get there**
+        // ([ADR-093](../../../docs/specification/adr/adr-093.md)).
+        let ends = !never_ends(body);
+        if let (Some(expected), Some(span)) = (&expected, tail_span.filter(|_| ends)) {
             self.expect(&tail, expected, span, "returns", |found, want| {
                 format!("this function hands back `{found}`, and it declares `{want}`")
             });
