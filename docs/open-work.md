@@ -569,10 +569,19 @@ error: unknown start of token: `
   |           and `label` options. These options must be separated by a comma
 ```
 
-That is a `rustc` **diagnostic** about a malformed `#[diagnostic::on_unimplemented]`
-attribute. No such attribute exists anywhere in this repository, and the string
-is `rustc`'s own — so it is not something this compiler wrote, relayed or could
-have written.
+**It is line 7 of the input**, and lines 1 to 6 are the rest of a rendered
+diagnostic — an `error:` line, a `-->` line, a caret line. So what is on stdin is
+not a truncated source or a stray fragment: it is **another process's rendered
+stderr**, whole. That names the mechanism as two streams crossing rather than one
+being cut short, which is what the first two sightings looked like.
+
+The diagnostic itself is `rustc`'s own, about a malformed
+`#[diagnostic::on_unimplemented]`. Nothing in this repository writes that
+attribute — searched, and the only hits are this file and the CHANGELOG quoting
+it — so it is not something this compiler wrote or relayed. The producing crate
+is **not** identified: `serde` carries the attribute in the dependency graph, but
+in the form this toolchain accepts (`message = "…"` with a literal), so it is not
+the one complaining.
 
 **And it clusters in time rather than in the code.** On one commit, seven
 consecutive whole-suite runs passed — two of them immediately after a full
@@ -583,8 +592,10 @@ that moment and not of the tree, which is why this is here and not in §1.
 
 *What was ruled out, in order:* the tests (they pass alone), the wrapper's own
 code path (the probe run by hand exits 0), a stale binary, a rebuild immediately
-before, and now the caller's stdin. What is left to measure is what changes
-between the two windows on a machine where nothing in the repository does.
+before, and the caller's stdin. What is left is to find **which** invocation's
+stderr is crossing, which means capturing the streams of a failing run rather
+than reading one victim's message — and nothing in this repository decides
+whether that run fails.
 
 *Why it is kept at all:* if it comes back, this says what was already ruled out —
 it is not the tests, not the wrapper's own code path, and not a stale binary. It
