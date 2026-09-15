@@ -220,6 +220,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 090 | a `catch` that ignores the error warning about a name the emitter wrote | `open-work.md` §1.1 |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
