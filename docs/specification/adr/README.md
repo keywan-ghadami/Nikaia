@@ -223,6 +223,7 @@ its citations and its index row every time the other merged first.
 
 | ADR | Claimed for | Where |
 | :--- | :--- | :--- |
+| 093 | a loop that cannot end needs no unreachable `return` | `open-work.md`, *a loop that cannot end still has to be followed by a `return`* |
 
 A row here is a claim and nothing else: it says the number is spoken for, not
 what the decision is. Delete the row in the same commit that adds the record.
