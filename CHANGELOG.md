@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (a trait method may pause unless it says `sync`)
+
+- **[ADR-109](docs/specification/adr/adr-109.md).** A trait method reads like a function type, which is [ADR-102](docs/specification/adr/adr-102.md) D2's rule for a signature without a body: without `sync` it may pause, without `throws` it cannot fail, and an implementation is compared against that — `NK1129` becomes *`Disk::load` pauses, and `Source` declares `load` as `sync`*, and `NK1140` is the same for `throws`. The emitter writes the return-position form in the trait, with `Send` where `user_parallelism = yes` and not at `no`, and `async fn` in the `impl`. **The language below is Rust 1.75 or newer**, the release that made `async fn` in a trait writable: every generated `Cargo.toml` says `rust-version = "1.75"` from one constant, and the compiler compares `rustc --version` to it before `cargo` runs. The channel stays `rust-toolchain.toml`'s; the compiler's own floor is not claimed, because 1.75 cannot build it and nothing between has been measured.
+- **Nothing of it is built**; `open-work.md` carries the five steps.
+
 ### Decided (a path names its root at the call)
 
 - **[ADR-108](docs/specification/adr/adr-108.md).** Every `std` function that takes a path takes its root right after it, with no default — a subject and not an option, because Part I 5.1 gives every option a default and a default here is the hole. The root is an `fs::Root`: `Dir(store)`, under which the name is resolved and compared component by component and `fs::Outside` where it would leave, or `Anywhere`, the one way around the check, recorded per site and listed by `nikaia --trust`. No exception for a literal, since a relative name means whatever the working directory makes it mean. No provenance travels a path and no analysis follows one: the check is in the call, where the name and the directory are both in hand, and only `std`'s own comparison clears anything — the door Perl's taint mode left open, where any regex capture counted as the check. `fs::within` and the compile-time refusal of an `Untrusted` path do not exist; [ADR-058](docs/specification/adr/adr-058.md) D7 is `http::File` taking the same root, and [ADR-010](docs/specification/adr/adr-010.md) D8's lattice keeps its one consumer. `open-decisions.md`'s last entry leaves the file, and nothing in it is open.

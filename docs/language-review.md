@@ -148,7 +148,9 @@ this toolchain is well past.
 **Recommendation:** a trait method may pause unless the declaration says
 `sync`. The implementation is checked against the declaration the way `NK2202`
 already checks a body against its own `sync`. Emit `async fn` in the trait
-where the declaration allows a pause.
+where the declaration allows a pause. *Decided since:*
+[ADR-109](specification/adr/adr-109.md), with Rust 1.75 as the floor of the
+language below.
 
 ### 1.4 Two integer widths, and the default is the narrow one
 
