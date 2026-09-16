@@ -1132,6 +1132,20 @@ key came from the same map a line earlier.
 an output type per container; the checker typing the read as `T?` and
 refusing `+=`; the two example lines, Part I 4.5 and a test.
 
+### 2.28. An `overlap` keeps every failure
+
+[ADR-115](specification/adr/adr-115.md). Every error carries a `secondary`
+list; an `overlap`'s later failing branches join the winner's list in written
+order, a cleanup error while unwinding joins the same list, and a log or
+`nikaia explain` prints the list indented. `catch` is unchanged. **Nothing of
+it is built**: the block's join drops every failure but the first, and a
+cleanup error attached below cannot be read by a program.
+
+*What it needs, in the record's order (§5):* the list on the error carrier
+and the printer; the `overlap` join appending; the cleanup attachment
+through the list; Part I 8.1.2's example and a test with two failing
+branches.
+
 ---
 
 ## 3. Upkeep

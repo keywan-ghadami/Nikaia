@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (an `overlap` keeps every failure)
+
+- **[ADR-115](docs/specification/adr/adr-115.md).** Where two branches of an `overlap` fail, the first in written order still wins, and the others are no longer lost: every error carries a `secondary` list, the later failures join it in written order, and a cleanup error that fails while another is unwinding joins the same list — one mechanism for both, and a tree where the cases nest. The block keeps waiting for every branch, which is what makes the list a fact and not a race. A branch handles its own failure with `catch` and cannot see another's; combining is `catch` on the block, with `error.secondary` in hand. `catch` and `throws` are untouched.
+- **Nothing of it is built**; `open-work.md` carries the four steps.
+
 ### Decided (reading a map through the brackets is a `T?`)
 
 - **[ADR-114](docs/specification/adr/adr-114.md).** `scores[name]` on a map answers a `T?`, the same as `get`, because a key is data and may be absent — and a language that made `null` a type so that absence lives in the type had one spelling, on the container where absence is most ordinary, that went around it and aborted. `m[k] = v` still inserts; `m[k] += 1` is written `m[k] = (m[k] ?? 0) + 1`, which answers what [ADR-080](docs/specification/adr/adr-080.md) D2 had left open; a list's `xs[i]` keeps its abort, because an index is the program's own arithmetic and a wrong one is a bug. The read lowers to one `index::get` with an output type per container, as the write already does.
