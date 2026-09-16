@@ -4,6 +4,10 @@
 # no crate declares a `#![feature(…)]`, and the Rust the compiler emits uses no
 # unstable feature either. This file is the single source of truth for the
 # channel, and the channel is never repeated anywhere else.
+#
+# The *version floor* is a different fact and does not live here: Rust 1.75 is
+# what the emitted code needs, and the emitter writes it as `rust-version` into
+# every generated Cargo.toml (ADR-109 D4).
 [toolchain]
 channel = "stable"
 # rustfmt/clippy are needed by scripts/pre-commit.sh and CI.

@@ -949,6 +949,26 @@ path-taking entry's `signature`; the check in the Rust half of `fs`; the
 sites in `examples/`, its README and Part III 17.1; `--trust` listing
 `Anywhere` and a literal `"/"` root; `http::File` when it is built.
 
+### 2.22. A trait method may pause unless it says `sync`
+
+[ADR-109](specification/adr/adr-109.md). A trait method reads like a function
+type — without `sync` it may pause, without `throws` it cannot fail — an
+implementation is compared against that (`NK1129`, `NK1140`), the emitter
+writes the return-position form with `Send` by setting, and every generated
+`Cargo.toml` says `rust-version = "1.75"`, checked before `cargo` runs.
+**Nothing of it is built**: every trait method is `Asserted` `sync`, `NK1129`
+refuses every pausing implementation, and no generated manifest names a Rust
+version.
+
+*Evidence:* `docs/language-review.md` §1.3's probe — `trait Source { fn
+load(&self) -> String throws }` over `fs::read_to_string` — is `NK1129` today.
+
+*What it needs, in the record's order (§5):* the ledger and `sync::infer`
+reading the declaration's word; the two comparisons at the `impl`; the
+emitter's return-position form and `async fn` in the `impl`; the
+`rust-version` constant, the manifest line and the version check; Part I
+4.7's example and a test in `crates/nikaia/tests/traits.rs`.
+
 ---
 
 ## 3. Upkeep

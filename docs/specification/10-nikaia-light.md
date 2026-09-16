@@ -1062,12 +1062,20 @@ arguments `summary` takes, what they have to be, what it hands back, and whether
 it can fail or pause all come from the declaration. Several bounds are written
 `[T: Named + Aged]`.
 
+**A trait method reads like any signature** ([ADR-109](adr/adr-109.md)): without
+`sync` it may pause, without `throws` it cannot fail, and an implementation is
+checked against that — a body that pauses under a `sync` declaration is refused
+by name, and a body that does less than the declaration allows is fine. So a
+trait can describe I/O, `fn load(&self) -> String throws`, and a call through
+its bound pauses where the declaration says it may.
+
 > **Status:** the declaration, `[T: Bound]`, `[T: A + B]` and the lookup are
 > built ([ADR-078](adr/adr-078.md)), and so is what an `impl` owes its trait:
 > a method the trait does not declare, or one it declares that the `impl` leaves
-> out, is `NK1130`, and a method whose implementation **pauses** is `NK1129` —
-> a trait's methods are `sync`, and a word that says one may pause is not in
-> this language ([ADR-080](adr/adr-080.md)). **A differing signature is not
+> out, is `NK1130`, and a method whose implementation **pauses** where the
+> declaration says `sync` is `NK1129` ([ADR-080](adr/adr-080.md)). **A method
+> without the word may pause and is not lowered so yet**: the emitter still
+> writes a plain `fn` in every trait ([ADR-109](adr/adr-109.md) §5). **A differing signature is not
 > compared yet**, so a method with the wrong arity or result is still refused by
 > the language below. A **default body** has no syntax, a trait is not a type
 > (there is no `dyn` and no `fn f(x: Summarize)`). A bound takes a path —
