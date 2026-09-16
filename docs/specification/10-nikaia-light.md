@@ -129,8 +129,8 @@ uses, `const`, would say *this one does not change*, and 2.1 already gives that
 to every binding that does not say `mut`; what the declaration promises is a
 **time**, and `comptime` says so ([ADR-077](adr/adr-077.md)).
 
-**`with` is on the list for a construct that is coming**: a copy of a value with
-named fields changed, `p with x: 1` — its own record.
+**`with` is on the list for its construct**: a copy of a value with named
+fields changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
 
 **`break` and `continue` were reserved before they were constructs and are
 constructs now** (3.3, [ADR-084](adr/adr-084.md)) — which is what a reservation
@@ -884,6 +884,23 @@ impl User {
     }
 }
 ```
+
+**A copy with fields changed: `with`.** Every binding is immutable unless it
+says `mut`, so the value a program wants most often is the one it has with one
+field different. `with` writes that without naming the rest
+([ADR-118](adr/adr-118.md)):
+
+```nika
+let moved = p with { x: p.x + 1 }
+let stats = old with { count: old.count + 1, sum: old.sum + t }
+```
+
+The braces are the struct literal's, with its field list and its shorthand.
+Only the top level: a field of a field is `p with { pos: p.pos with { x: 1 } }`.
+The fields not named are **moved** from `p`, never copied unseen — where one of
+them is a text or a list and `p` is used afterwards, the refusal names the copy
+to write. Across a package, `with` names `pub` fields only, as a literal does.
+**Not built yet.**
 
 **Usage Example**
 External modules see `User` as a factory function.

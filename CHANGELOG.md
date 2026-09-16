@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (`with` is a copy of a value with named fields changed)
+
+- **[ADR-118](docs/specification/adr/adr-118.md).** `p with { x: p.x + 1 }` is a new value of the same type with the named fields changed and the rest taken from `p` — the construct an immutable-by-default language wants most and had no spelling for short of a literal naming every field. The braces, the field list, the shorthand and the privacy rule are the struct literal's; only the top level, so a field of a field is a nested `with`; the fields not named are moved, never copied unseen, and a value used again afterwards is refused with the copy to write. `with` on an enum value is left open and refused for now.
+- **Nothing of it is built**; `open-work.md` carries the four steps.
+
 ### Decided (`loop`, `const`, `macro` and `quote` are names)
 
 - **[ADR-117](docs/specification/adr/adr-117.md).** Four words on the reserved list were syntax nowhere and were kept so that a reader from another language could be told something. A name nothing declares is told the same thing now, by the help `NK1117` already gives `assert` and `unsafe` — *write `while true`*, *write `comptime`*, *Nikaia has no macros* — so the words are names: `for loop in loops`, `let quote = '"'`. `with` stays, for the copy-with-changes construct the language lacks, which is the next record. The list goes from 37 to 33. What the language below reserves is escaped and does not decide this; how a word is taken after release is a question of its own, noted and not answered.
