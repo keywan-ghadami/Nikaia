@@ -369,8 +369,10 @@ does for `assert` and `unsafe`.
 un-reserved (the direction ADR-051 says costs nothing); `const` and `loop` stay
 only while their reopening conditions are live. *Decided since:*
 [ADR-116](specification/adr/adr-116.md) — `from` is a name outright, not
-contextual, and the build-time read is `asset("…")`; the other words are each
-their own question.
+contextual, and the build-time read is `asset("…")`; and
+[ADR-117](specification/adr/adr-117.md) frees `loop`, `const`, `macro` and
+`quote`, moving their messages to `NK1117`'s help. `with` stays, for the
+copy-with-changes construct the language lacks — its own record.
 
 ### 3.3 Two spellings for one thing, several times over
 

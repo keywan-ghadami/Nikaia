@@ -1199,6 +1199,16 @@ language's words, where the old spelling was a parse fragment.
 table with the `dsl X from e` message matching the bare word; `asset("…")`
 when the second stage of `comptime` lands; the two `fs` entries.
 
+### 2.29. `loop`, `const`, `macro` and `quote` are names
+
+[ADR-117](specification/adr/adr-117.md). The four leave the reserved list,
+and what each used to be told a reserved word, the undeclared-name refusal
+tells a stray one: *write `while true`*, *write `comptime`*, *Nikaia has no
+macros*. **Nothing of it is built**: the four are in `parser::RESERVED_WORDS`.
+
+*What it needs, in the record's order (§5):* the four out of the parser's
+table; the three help texts on `NK1117` and a test per word.
+
 ---
 
 ## 3. Upkeep
