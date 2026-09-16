@@ -116,42 +116,33 @@ These words mean one thing wherever they appear, so a name may not be one of the
 ([ADR-051](adr/adr-051.md) D1):
 
 ```text
-as        break     catch     comptime  const     continue  dsl       else
-enum      false     fn        for       grammar   if        impl      in
-let       loop      macro     match     mut       null      overlap
-pub       quote     return    self      spawn     struct    sync      throw
-throws    trait     true      use       while     with
+as        break     catch     comptime  continue  dsl       else      enum
+false     fn        for       grammar   if        impl      in        let
+match     mut       null      overlap   pub       return    self      spawn
+struct    sync      throw     throws    trait     true      use       while
+with
 ```
 
-**`comptime` is on the list for the opposite reason to the two after it**: it is
-reserved *for* a construct rather than against the possibility of one, and the
-construct exists — a statement inside a function body (Part II, 10.2).
+**`comptime` is on the list because its construct exists** — a statement
+inside a function body (Part II, 10.2). The word every neighbouring language
+uses, `const`, would say *this one does not change*, and 2.1 already gives that
+to every binding that does not say `mut`; what the declaration promises is a
+**time**, and `comptime` says so ([ADR-077](adr/adr-077.md)).
 
-**`const` is reserved and is not that construct** ([ADR-077](adr/adr-077.md)).
-The word every neighbouring language uses would say *this one does not change*,
-and 2.1 already gives that to every binding that does not say `mut` — so it would
-distinguish nothing. What the declaration promises is a **time**, and `comptime`
-is what says so. `const` stays on the list rather than becoming an ordinary name,
-because it is the first thing a reader arriving from another language will type,
-and a reserved word can be given a message where a name cannot.
+**`with` is on the list for a construct that is coming**: a copy of a value with
+named fields changed, `p with x: 1` — its own record.
 
-**`loop` is on the list and is not a construct** ([ADR-071](adr/adr-071.md) D2).
-Reserving a word is not adding one: 3.3 and [ADR-070](adr/adr-070.md) D1 answered
-*no* to a `loop` keyword, and the word is reserved anyway, because that no has a
-written condition for reopening and the word has to still be free on the day it
-does. It is the same move [ADR-050](adr/adr-050.md) D2 made for `overlap`.
+**`break` and `continue` were reserved before they were constructs and are
+constructs now** (3.3, [ADR-084](adr/adr-084.md)) — which is what a reservation
+is for, and why their arrival cost no program a name.
 
-`break` and `continue` were reserved on the same terms and are now constructs
-(3.3, [ADR-084](adr/adr-084.md)) — which is what a reservation is for, and why
-their arrival cost no program a name.
-
-**`macro`, `quote` and `with` are on the list and the language expects never to
-make them constructs** ([ADR-088](adr/adr-088.md) D7). 10.3 used to describe a
-macro system built out of the three; what it wanted — generating code from a
-type's shape — is done with `comptime` and a **bound** and needs none of them. They
-are reserved anyway, on the same polarity as `const`: all three are words a reader
-arriving from another language will type, and a reserved word can be given a
-message where a name cannot.
+**`loop`, `const`, `macro`, `quote` and `from` are ordinary names**
+([ADR-116](adr/adr-116.md), [ADR-117](adr/adr-117.md)). Each was once reserved so
+that a reader arriving from another language could be told something; a name
+nothing declares is told the same thing now, by the refusal every stray name
+gets: `loop { … }` is answered with *write `while true`*, `const X = …` with
+*write `comptime`*, `macro` and `quote` with *Nikaia has no macros* — and a
+declared `loop`, `quote` or `from` is a name like any other.
 
 **`seq` has left the list**, which is the direction a reserved word may move
 without breaking anything: the construct is withdrawn

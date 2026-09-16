@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (`loop`, `const`, `macro` and `quote` are names)
+
+- **[ADR-117](docs/specification/adr/adr-117.md).** Four words on the reserved list were syntax nowhere and were kept so that a reader from another language could be told something. A name nothing declares is told the same thing now, by the help `NK1117` already gives `assert` and `unsafe` — *write `while true`*, *write `comptime`*, *Nikaia has no macros* — so the words are names: `for loop in loops`, `let quote = '"'`. `with` stays, for the copy-with-changes construct the language lacks, which is the next record. The list goes from 37 to 33. What the language below reserves is escaped and does not decide this; how a word is taken after release is a question of its own, noted and not answered.
+- **Nothing of it is built**; `open-work.md` carries the two steps.
+
 ### Decided (`from` is a name, and a file a build reads is `asset("…")`)
 
 - **[ADR-116](docs/specification/adr/adr-116.md).** `from` leaves the reserved list. It bought one phrase — `Json.value(from "config.json")`, the read of a file at build time, which is not built — and cost the pair every API reaches for: the specification's own `fs::rename(from: Path, to: Path, …)` could not be written in the language. The build-time read is now `asset("…")`, a call the compiler recognises in a `comptime` initialiser, with every rule of [ADR-072](docs/specification/adr/adr-072.md) — a literal, the project root, the allowlist — unchanged under it, and the word Part III already used for what these files are. Rust does not decide this list: what it reserves is escaped.
