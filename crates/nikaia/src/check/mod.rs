@@ -392,7 +392,7 @@ pub fn check_program(
             })
             .collect(),
         scope: Vec::new(),
-        not_mut: BTreeMap::new(),
+        said_mut: BTreeSet::new(),
         expected: None,
         type_parameters: BTreeMap::new(),
         struct_parameters: BTreeMap::new(),
@@ -666,7 +666,71 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
 /// is the fail-closed direction the refusal needs (ADR-010 D1): a name this
 /// checker cannot evaluate makes the whole expression unevaluable, and an
 /// unevaluable expression is never refused.
-type Local = (String, Ty, Option<i128>);
+struct Local {
+    name: String,
+    ty: Ty,
+    constant: Option<i128>,
+    /// Where the binding was written and what kind it is, when it did **not**
+    /// say `mut` — `None` for one a change to is nobody's business here.
+    ///
+    /// It lives on the binding rather than in a map of its own so that the
+    /// **scope** is the one `scope` already keeps: a `let` inside a block stops
+    /// being the answer when the block closes, and an outer `mut` name is the
+    /// answer again. A parallel map would have had to be pushed and popped at
+    /// twenty-eight places, and getting one of them wrong is a *correct
+    /// program refused* ([Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)).
+    immutable: Option<Immutable>,
+}
+
+/// A binding that did not say `mut`: where it was written, and which of the two
+/// kinds it is.
+///
+/// The two are one rule reached from two sides — *what is changed says `mut`* —
+/// and they are two codes because the way out is written in a different place
+/// and a reader is doing a different thing. `NK1138` is a **parameter**'s
+/// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), where the word also
+/// decides what the caller sees; `NK1139` is a **`let`**'s, which [Part I
+/// 2.1](../../docs/specification/10-nikaia-light.md) states outright and which
+/// `rustc` had been answering instead.
+#[derive(Clone)]
+struct Immutable {
+    at: Span,
+    kind: Kind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Parameter,
+    Let,
+}
+
+impl Local {
+    /// A binding nothing here refuses a change to: `self`, an option, a `for`
+    /// binding, a pattern's name. Each of those is either not a place a
+    /// program assigns to or one whose `mut` is a question of its own, and
+    /// silence is what [Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md) asks for.
+    /// The same binding again, for the one frame walked twice (a constructor's
+    /// parameters, checked once as written and once as `Type::new`).
+    fn again(local: &Local) -> Self {
+        Local {
+            name: local.name.clone(),
+            ty: local.ty.clone(),
+            constant: local.constant,
+            immutable: local.immutable.clone(),
+        }
+    }
+
+    fn free(name: String, ty: Ty) -> Self {
+        Local {
+            name,
+            ty,
+            constant: None,
+            immutable: None,
+        }
+    }
+}
 
 struct Checker<'a> {
     parsed: &'a Parsed,
@@ -799,20 +863,15 @@ struct Checker<'a> {
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
-    /// The parameters of the function being walked that were **not** declared
-    /// `mut`, with the span of each declaration
-    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3).
+    /// The bindings `NK1138` and `NK1139` have already been said about, by the
+    /// byte each declaration starts at.
     ///
-    /// A body that changes one of these is refused as `NK1138`: mutation of a
-    /// parameter is written where the parameter is, and a declaration without
-    /// the word lowers to a Rust parameter without one — which is `rustc`'s
-    /// *cannot borrow as mutable* about a file nobody wrote
-    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-    ///
-    /// A name a `let` binds leaves the set, because the mutation is then of the
-    /// **local** and not of the parameter. Across scopes that is imprecise in
-    /// the one direction imprecision is allowed here: it stops refusing.
-    not_mut: BTreeMap<String, Span>,
+    /// Said once per binding: a body that changes one usually does so several
+    /// times, and three carets on one declaration is noise rather than
+    /// information. It is not scoped, and must not be — two blocks that each
+    /// declare an `xs` have two spans, and one that is walked twice is one
+    /// span and one message.
+    said_mut: BTreeSet<usize>,
     checked: Checked,
 }
 
@@ -1053,7 +1112,7 @@ impl<'a> Checker<'a> {
                 // `expected`, which is the rule's declared type - what a fold's
                 // `init` and `step` build is the parser backend's arithmetic on
                 // the way to that type, not the type itself.
-                self.scope.push(frame.clone());
+                self.scope.push(frame.iter().map(Local::again).collect());
                 self.folds_in(&alt.pattern.node, &alt.pattern.span);
                 self.scope.pop();
                 let Some(action) = &alt.action else { continue };
@@ -1118,7 +1177,10 @@ impl<'a> Checker<'a> {
     fn bindings_of(&self, pattern: &ast::Pattern, out: &mut Vec<Local>) {
         match pattern {
             ast::Pattern::Bind { name, pat } => {
-                out.push((self.parsed.text(*name).to_string(), Ty::Unknown, None));
+                out.push(Local::free(
+                    self.parsed.text(*name).to_string(),
+                    Ty::Unknown,
+                ));
                 self.bindings_of(&pat.node, out);
             }
             ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
@@ -1210,26 +1272,22 @@ impl<'a> Checker<'a> {
                 Some(target) => Ty::named(target),
                 None => Ty::Unknown,
             };
-            frame.push(("self".to_string(), ty, None));
+            frame.push(Local::free("self".to_string(), ty));
         }
-        // **D3's set**: the parameters this declaration did *not* write `mut`
-        // on. Replaced rather than extended, because a nested item is another
-        // function and its parameters are its own.
-        let outer_not_mut = std::mem::replace(
-            &mut self.not_mut,
-            args.iter()
-                .filter(|a| !a.mutable)
-                .map(|a| (self.parsed.text(a.name).to_string(), a.span.clone()))
-                .collect(),
-        );
         for arg in args {
             let name = self.parsed.text(arg.name).to_string();
             self.nameable(&name, &arg.span, "a parameter");
-            frame.push((
+            frame.push(Local {
                 name,
-                self.declared(&arg.ty, &arg.span).erase(&parameters),
-                None,
-            ));
+                ty: self.declared(&arg.ty, &arg.span).erase(&parameters),
+                constant: None,
+                // **D3**: without the word, a body that changes this parameter
+                // is `NK1138`.
+                immutable: (!arg.mutable).then(|| Immutable {
+                    at: arg.span.clone(),
+                    kind: Kind::Parameter,
+                }),
+            });
         }
         // **An option is a parameter** (Part I 5.1): it stands after the `;`,
         // it is named at the call rather than passed by position, and it has a
@@ -1238,13 +1296,12 @@ impl<'a> Checker<'a> {
         // name was only refused in statement position: measured on
         // `examples/tally.nika`, whose `f"{lines}{separator}{blank}"` names one.
         for option in config {
-            frame.push((
+            frame.push(Local::free(
                 self.parsed.text(option.name).to_string(),
                 // Not `declared`: an option has no span of its own, and a
                 // caret on the wrong line is worse than no message. Its default
                 // is a literal (Part I 5.1), so a hull cannot stand here anyway.
                 Ty::from_ast(self.parsed, &option.ty).erase(&parameters),
-                None,
             ));
         }
 
@@ -1279,7 +1336,6 @@ impl<'a> Checker<'a> {
         self.throwing = outer_throwing;
         self.type_parameters = outer_declared;
         self.borrowing_self = outer_borrowing;
-        self.not_mut = outer_not_mut;
         self.current = outer_current;
     }
 
@@ -1831,45 +1887,66 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **`NK1138`: a parameter a body changes says `mut`**
-    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3).
+    /// **What is changed says `mut`** — `NK1138` for a parameter
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3) and `NK1139` for
+    /// a `let` ([Part I 2.1](../../docs/specification/10-nikaia-light.md)).
     ///
-    /// `fn fill(mut out: Vec[i64])` is a parameter the callee changes in place
-    /// and the caller's value is what changes — `&mut self`'s rule held for
-    /// every parameter. Without the word the parameter lowers to a Rust one
-    /// with no `mut` on it, and `out.push(1)` inside came back as `rustc`'s
-    /// *cannot borrow `*out` as mutable* about a file nobody wrote, which is
-    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md).
+    /// One rule reached from two sides, and two codes because the word goes in
+    /// a different place and a reader is doing a different thing. A parameter's
+    /// `mut` also decides what the **caller** sees — the value it hands over is
+    /// the one that changes — where a `let`'s is only about this body.
     ///
-    /// **Only where the change is certain.** A name a `let` has bound is the
-    /// local's and has left the set; a method whose entry no ledger has, or
-    /// whose candidates do not agree, is not one to refuse on. Answering *it
-    /// might change* here would refuse a correct program, which is C.4 and is
-    /// the worse of the two mistakes: the other one is a message `rustc` gives
-    /// instead, and this record's other half is closing that.
-    fn a_changed_parameter_says_mut(&mut self, name: &str, how: &str) {
-        let Some(declared) = self.not_mut.get(name) else {
+    /// **Both were `rustc`'s until now.** Part I 2.1 writes
+    /// `// x = 20  <-- This would cause a Compiler Error` and this compiler was
+    /// not the one giving it: the binding lowered without its `mut` and the
+    /// answer came back about a file nobody wrote, which is [Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md).
+    ///
+    /// **Only where the change is certain.** A method whose entry no ledger
+    /// has, or whose candidates do not agree, is not one to refuse on;
+    /// answering *it might change* would refuse a correct program, which is C.4
+    /// and the worse of the two mistakes.
+    fn a_changed_binding_says_mut(&mut self, name: &str, how: &str) {
+        let Some(at) = self
+            .binding(name)
+            .and_then(|local| local.immutable.clone())
+            .filter(|at| !self.said_mut.contains(&at.at.start))
+        else {
             return;
         };
-        let at = declared.clone();
+        let (code, what, where_the_word_goes, way_out) = match at.kind {
+            Kind::Parameter => (
+                "NK1138",
+                "a parameter",
+                "`mut` in the declaration is where in-place change is written, and \
+                 the caller's value is what changes, exactly as it is for `&mut self` \
+                 (ADR-094 D3)",
+                // D3 names both ways out, and the second is the one that keeps
+                // the caller's value as it was.
+                format!(
+                    "write `mut {name}` - or, if the caller's value should stay as it \
+                     was, take a copy with `let mut {name}_own = {name}`"
+                ),
+            ),
+            Kind::Let => (
+                "NK1139",
+                "a `let`",
+                "a binding changes only where it says so (Part I, 2.1), and this one \
+                 does not",
+                format!("write `let mut {name}`"),
+            ),
+        };
+        // Said once per binding: a body that changes one usually does so
+        // several times, and three carets on one declaration is noise.
+        self.said_mut.insert(at.at.start);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: at,
-            code: "NK1138",
-            message: format!("`{name}` is changed, and a parameter that is changed says `mut`"),
-            notes: vec![format!(
-                "{how} (ADR-094 D3) - `mut` in the declaration is where in-place change \
-                 is written, and the caller's value is what changes, exactly as it is \
-                 for `&mut self`"
-            )],
-            help: Some(format!(
-                "write `mut {name}` - or take a copy with `let mut {name} = {name}` if the \
-                 caller's value should stay as it was"
-            )),
+            span: at.at,
+            code,
+            message: format!("`{name}` is changed, and {what} that is changed says `mut`"),
+            notes: vec![format!("{how} - {where_the_word_goes}")],
+            help: Some(way_out),
         });
-        // Said once per parameter: a body that changes one usually does so
-        // several times, and three carets on one declaration is noise.
-        self.not_mut.remove(name);
     }
 
     /// **`NK1137`: the `&` is the compiler's to write**
@@ -2476,9 +2553,7 @@ impl<'a> Checker<'a> {
                 }
                 let name = self.parsed.text(names[0]).to_string();
                 self.nameable(&name, span, "a `let`");
-                // D3's set loses a name a `let` binds: what is changed after
-                // this line is the local, not the parameter it shadows.
-                self.not_mut.remove(&name);
+
                 let bound = match ty {
                     Some(ty) => {
                         let want = self.declared(ty, span);
@@ -2512,7 +2587,18 @@ impl<'a> Checker<'a> {
                     false => self.constant_of(value).map(|c| c.value),
                     true => None,
                 };
-                self.bind_with(name, bound, constant);
+                self.bind_local(Local {
+                    name,
+                    ty: bound,
+                    constant,
+                    // **Part I 2.1**: without the word, a change to this name
+                    // is `NK1139`. The span is the statement's, which is the
+                    // `let` itself — a binding has no narrower one.
+                    immutable: (!mutable).then(|| Immutable {
+                        at: span.clone(),
+                        kind: Kind::Let,
+                    }),
+                });
                 Ty::Tuple(Vec::new())
             }
 
@@ -2548,7 +2634,7 @@ impl<'a> Checker<'a> {
                         Expr::Variable(_) => "this assigns to it",
                         _ => "this assigns into it",
                     };
-                    self.a_changed_parameter_says_mut(&root, how);
+                    self.a_changed_binding_says_mut(&root, how);
                 }
                 let into = self.expr(target, span);
                 let found = self.expr(value, span);
@@ -2593,10 +2679,10 @@ impl<'a> Checker<'a> {
                 let element = element_of(&over, bindings.len());
                 let frame: Vec<Local> = bindings
                     .iter()
-                    .map(|b| (self.parsed.text(*b).to_string(), element.clone(), None))
+                    .map(|b| Local::free(self.parsed.text(*b).to_string(), element.clone()))
                     .collect();
-                for (name, _, _) in &frame {
-                    self.nameable(&name.clone(), span, "a `for` binding");
+                for local in &frame {
+                    self.nameable(&local.name.clone(), span, "a `for` binding");
                 }
                 self.scope.push(frame);
                 self.loops += 1;
@@ -2867,7 +2953,7 @@ impl<'a> Checker<'a> {
                     let changes = !candidates.is_empty()
                         && candidates.iter().all(|(_, contract)| contract.mutates);
                     if changes {
-                        self.a_changed_parameter_says_mut(
+                        self.a_changed_binding_says_mut(
                             &root,
                             &format!("`{name}` changes what it is called on"),
                         );
@@ -3079,10 +3165,10 @@ impl<'a> Checker<'a> {
             Expr::Closure { params, body } => {
                 let frame: Vec<Local> = params
                     .iter()
-                    .map(|p| (self.parsed.text(*p).to_string(), Ty::Unknown, None))
+                    .map(|p| Local::free(self.parsed.text(*p).to_string(), Ty::Unknown))
                     .collect();
-                for (name, _, _) in &frame {
-                    self.nameable(&name.clone(), span, "a lambda's argument");
+                for local in &frame {
+                    self.nameable(&local.name.clone(), span, "a lambda's argument");
                 }
                 self.scope.push(frame);
                 // Part I 3.3: a lambda is a closure below, and a jump does not
@@ -3255,7 +3341,7 @@ impl<'a> Checker<'a> {
                 self.caught = outer;
                 self.nothing_here_can_fail(guarded.unwrap_or_default(), span);
                 self.scope
-                    .push(vec![("error".to_string(), Ty::Unknown, None)]);
+                    .push(vec![Local::free("error".to_string(), Ty::Unknown)]);
                 self.block(handler);
                 self.scope.pop();
                 Ty::Unknown
@@ -3493,7 +3579,7 @@ impl<'a> Checker<'a> {
                 // What the element's type is, is a question about the
                 // collection, and this walk does not ask it: what it needs is
                 // that the name is *declared*.
-                .map(|name| (name, Ty::Unknown, None))
+                .map(|name| Local::free(name, Ty::Unknown))
                 .collect();
             self.scope.push(frame);
             self.expr(&hole, span);
@@ -4702,13 +4788,30 @@ impl<'a> Checker<'a> {
     /// Bind a name, with the constant it stands for where there is one
     /// (ADR-043 D5). Only [`Stmt::Let`] ever passes anything but `None`.
     fn bind_with(&mut self, name: String, ty: Ty, constant: Option<i128>) {
+        self.bind_local(Local {
+            name,
+            ty,
+            constant,
+            immutable: None,
+        });
+    }
+
+    fn bind_local(&mut self, local: Local) {
         if let Some(frame) = self.scope.last_mut() {
-            frame.push((name, ty, constant));
+            frame.push(local);
         }
     }
 
     fn lookup(&self, name: &str) -> Option<Ty> {
         self.local(name).map(|(ty, _)| ty)
+    }
+
+    /// The innermost binding of a name, whole.
+    fn binding(&self, name: &str) -> Option<&Local> {
+        self.scope
+            .iter()
+            .rev()
+            .find_map(|frame| frame.iter().rev().find(|local| local.name == name))
     }
 
     /// The innermost binding of a name: its type, and the constant it stands
@@ -4717,8 +4820,8 @@ impl<'a> Checker<'a> {
         self.scope
             .iter()
             .rev()
-            .find_map(|frame| frame.iter().rev().find(|(n, _, _)| n == name))
-            .map(|(_, ty, constant)| (ty.clone(), *constant))
+            .find_map(|frame| frame.iter().rev().find(|local| local.name == name))
+            .map(|local| (local.ty.clone(), local.constant))
     }
 
     /// A function by the name a call wrote: this unit's, then a constructor,
@@ -4769,7 +4872,7 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|p| self.parsed.text(*p).to_string())
             .enumerate()
-            .map(|(at, name)| (name, given.get(at).cloned().unwrap_or(Ty::Unknown), None))
+            .map(|(at, name)| Local::free(name, given.get(at).cloned().unwrap_or(Ty::Unknown)))
             .collect();
 
         self.scope.push(frame);
@@ -5384,12 +5487,15 @@ impl<'a> Checker<'a> {
             MatchPattern::Wildcard | MatchPattern::Literal(_) => Vec::new(),
             // A single segment binds; `Op::Times` names a variant.
             MatchPattern::Path(segments) if segments.len() == 1 => {
-                vec![(self.parsed.text(segments[0]).to_string(), Ty::Unknown, None)]
+                vec![Local::free(
+                    self.parsed.text(segments[0]).to_string(),
+                    Ty::Unknown,
+                )]
             }
             MatchPattern::Path(_) => Vec::new(),
             MatchPattern::Tuple { bindings, .. } | MatchPattern::Named { bindings, .. } => bindings
                 .iter()
-                .map(|b| (self.parsed.text(*b).to_string(), Ty::Unknown, None))
+                .map(|b| Local::free(self.parsed.text(*b).to_string(), Ty::Unknown))
                 .collect(),
         }
     }

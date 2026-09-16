@@ -183,8 +183,28 @@ there, so the message named a remedy the program **cannot write** —
 The same shape in one file compiles, which is what said it was one emitted line
 rather than a question about the language.
 
-**This section is empty again**, and the entry that was here is worth naming
-because of how long it took and why. **A `sync` body was refused as pausing when
+**This section is empty again.** The one out most recently was found rather
+than filed: **a binding that is changed and does not say `mut`**. Part I 2.1
+writes `// x = 20  <-- This would cause a Compiler Error` and this compiler was
+not the one giving it — `let xs = Vec::new()` then `xs.push(1)` lowered to a
+Rust binding with no `mut` on it, and the answer came back about the generated
+file. It had been there since `mut` existed, and no example wrote it, which is
+why nothing had noticed.
+
+**It came out of the neighbouring work rather than out of a search.**
+[ADR-094](specification/adr/adr-094.md) D3 gave a *parameter* the same rule and
+the same machinery (`NK1138`), and the `let` beside it was then plainly the same
+sentence with the word in a different place (`NK1139`). The answer lives on the
+binding in scope rather than in a set of its own, so the scope is the one the
+checker already keeps: an inner block's `xs` stops being the answer when the
+block closes. A set pushed and popped by hand at twenty-eight places would have
+been a *correct program refused* waiting to happen, which is the thing
+`docs/README.md` ranks second-worst.
+
+*And it found one in the tests:* `concatenation.rs` wrote `let xs` and then
+`xs.push(1)`, a program that had never compiled.
+
+**Before that**, and worth naming because of how long it took and why. **A `sync` body was refused as pausing when
 the call left the unit** — `NK1129` about a trait method whose only call is
 `n + 1` in the file next door, and about a handler whose body calls the package
 it implements against. It was a *false refusal*, the second-worst thing on

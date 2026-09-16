@@ -1,6 +1,8 @@
-//! `mut` on a parameter: in-place change is written in the declaration
-//! ([ADR-094](../../../docs/specification/adr/adr-094.md) D3) — the fourth of
-//! that record's five steps.
+//! **What is changed says `mut`**, in both of the two places a binding is
+//! written: a parameter ([ADR-094](../../../docs/specification/adr/adr-094.md)
+//! D3, the fourth of that record's five steps) and a `let`
+//! ([Part I 2.1](../../../docs/specification/10-nikaia-light.md), which had
+//! stated it all along and had `rustc` answering for it).
 //!
 //! `fn fill(mut out: Vec[i64])` is a parameter the callee changes in place, and
 //! the **caller's** value is what changes. It lowers to `&mut T`, and the call
@@ -41,7 +43,7 @@ fn lowered(source: &str) -> String {
 /// says they agree.
 fn ran(purpose: &str, source: &str) -> String {
     let rust = lowered(source);
-    let dir = common::scratch_dir(&format!("mut-params-{purpose}"));
+    let dir = common::scratch_dir(&format!("mut-bindings-{purpose}"));
     let path = dir.join("program.rs");
     std::fs::write(&path, &rust).expect("write the Rust");
     let binary = dir.join("program");
@@ -284,4 +286,128 @@ fn the_caret_is_on_the_parameter() {
         .find(|f| f.code == "NK1138")
         .expect("it is refused");
     assert_eq!(&source[at.span.start..at.span.start + 3], "out");
+}
+
+/// Whether the source is refused with `NK1139`.
+fn refused_let(source: &str) -> bool {
+    findings(source).iter().any(|f| f.code == "NK1139")
+}
+
+/// **`NK1139`: a `let` that is changed says `mut`** — the same rule one binding
+/// over, and the one [Part I 2.1](../../../docs/specification/10-nikaia-light.md)
+/// states outright: it writes `// x = 20  <-- This would cause a Compiler
+/// Error`, and this compiler was not the one giving it. The binding lowered
+/// without its `mut` and `rustc` answered about a file nobody wrote.
+#[test]
+fn a_changed_let_without_the_word_is_refused() {
+    // An assignment, which is Part I 2.1's own example.
+    assert!(refused_let(
+        "fn main() {\n\
+         \x20   let x = 10\n\
+         \x20   x = 20\n\
+         }\n"
+    ));
+
+    // And a method that changes its subject, which is the same change.
+    assert!(refused_let(
+        "fn main() {\n\
+         \x20   let xs = Vec::new()\n\
+         \x20   xs.push(1)\n\
+         }\n"
+    ));
+
+    // The same two with the word are programs.
+    assert!(!refused_let(
+        "fn main() {\n\
+         \x20   let mut x = 10\n\
+         \x20   x = 20\n\
+         }\n"
+    ));
+    assert!(!refused_let(
+        "fn main() {\n\
+         \x20   let mut xs = Vec::new()\n\
+         \x20   xs.push(1)\n\
+         }\n"
+    ));
+}
+
+/// **And it runs**, which is the half that says the refusal was standing in for
+/// `rustc` rather than adding a rule of its own.
+#[test]
+fn a_mut_let_compiles_and_runs() {
+    let printed = ran(
+        "mut-let",
+        "fn main() {\n\
+         \x20   let mut xs = Vec::new()\n\
+         \x20   xs.push(1)\n\
+         \x20   xs.push(2)\n\
+         \x20   let mut n = 0\n\
+         \x20   n += 1\n\
+         \x20   println(f\"{xs.len()} {n}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "2 1");
+}
+
+/// **The scope is the one `scope` already keeps**, which is why the answer lives
+/// on the binding rather than in a map of its own.
+///
+/// An inner block's `xs` stops being the answer when the block closes, and the
+/// outer `mut xs` is the answer again — a parallel map would have had to be
+/// pushed and popped at twenty-eight places, and getting one wrong is a correct
+/// program refused ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn an_inner_binding_does_not_answer_for_an_outer_one() {
+    assert!(!refused_let(
+        "fn main() {\n\
+         \x20   let mut xs = Vec::new()\n\
+         \x20   if true {\n\
+         \x20       let xs = 1\n\
+         \x20       println(f\"{xs}\")\n\
+         \x20   }\n\
+         \x20   xs.push(1)\n\
+         }\n"
+    ));
+}
+
+/// **And the two codes stay apart.** One rule, two places the word goes, and a
+/// reader doing a different thing at each: a parameter's `mut` also decides
+/// what the **caller** sees, where a `let`'s is only about this body.
+#[test]
+fn a_parameter_and_a_let_get_different_codes() {
+    let found = findings(
+        "fn fill(out: Vec[i64]) {\n\
+         \x20   out.push(1)\n\
+         }\n\
+         fn main() {\n\
+         \x20   let xs = Vec::new()\n\
+         \x20   xs.push(1)\n\
+         }\n",
+    );
+    assert!(found.iter().any(|f| f.code == "NK1138"), "{found:#?}");
+    assert!(found.iter().any(|f| f.code == "NK1139"), "{found:#?}");
+    let help: Vec<_> = found.iter().filter_map(|f| f.help.as_deref()).collect();
+    assert!(
+        help.iter().any(|h| h.contains("`mut out`")),
+        "a parameter's word goes in the declaration: {help:?}"
+    );
+    assert!(
+        help.iter().any(|h| h.contains("`let mut xs`")),
+        "a `let`'s goes on the `let`: {help:?}"
+    );
+}
+
+/// **A `for` binding, a lambda's argument and a `catch`'s `error` are not
+/// refused**, because each of those is either not a place a program assigns to
+/// or one whose `mut` is a question of its own — and silence is what C.4 asks
+/// for where nothing was decided.
+#[test]
+fn only_the_two_written_bindings_are_asked() {
+    assert!(!refused_let(
+        "fn main() {\n\
+         \x20   let mut xs = Vec::new()\n\
+         \x20   xs.push(1)\n\
+         \x20   for x in xs { println(f\"{x}\") }\n\
+         }\n"
+    ));
 }
