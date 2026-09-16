@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub mod dsl;
 pub mod emit;
 pub mod fold;
+pub mod foreign;
 pub mod interpreter;
 pub mod manifest;
 pub mod modules;

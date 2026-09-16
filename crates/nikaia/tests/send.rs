@@ -67,6 +67,9 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
         &parsed,
         &own,
         &BTreeSet::new(),
+        // A loose file declares no Rust crate, so ADR-104 D1 has nothing to
+        // ask about here.
+        &nikaia::project::Foreign::default(),
         Path::new("app.nika"),
         source,
         user_parallelism,

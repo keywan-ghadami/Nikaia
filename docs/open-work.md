@@ -1029,21 +1029,38 @@ describes is refused with the command in the message; `nikaia describe
 calls, from rustdoc-JSON where the toolchain has it and from the crate's
 sources where it does not, translated by Part III 15.2's table with
 `touches` and `locks` fail-closed; the file is committed, hashed against the
-crate's version, and reviewed. **Nothing of it is built.**
+crate's version, and reviewed. **Step 1 is built, and step 5 by hand.**
 
-*Evidence:* `examples/foreign-runtime/` — four programs calling `hyper_shim`
-with no entry, silent today; they become described or the fixture for the
-refusal.
+*The refusal is `NK2504`*, once per crate and with the command in the
+message — and only where the **manifest** declared the crate with
+`type = "rust"`, because refusing on a qualified name nobody declared is
+[Part III C.4](specification/30-nikaia-tooling.md)'s correct program refused.
+A written **type** from such a crate counts as much as a call does.
+`hyper-shim` in the manifest is `hyper_shim` in a program, which is the crate
+name Cargo makes of the key.
 
-*What it needs, in the record's order (§5):* the refusal; the draft from the
-sources; the file, its header and the hash rule; the rustdoc-JSON reader
-behind a toolchain check; the four examples.
+*And `examples/foreign-runtime/` is described rather than the fixture*, which
+is the half of step 5 that could be done without the command: the three
+projects carry a `contracts/hyper_shim.contracts` written by hand from the
+crate's `pub` signatures, which is what D5 says to expect. A fixture of the
+refusal lives in `crates/nikaia/tests/described.rs` instead, where it needs no
+network.
 
-*And something else waits on it.* The entry above about the crossing refusals
-being built and unreachable is unreachable **because** no type answers
-`MayNot` into our own code, and a described foreign type is the first thing
-that could. `NK2501` and `NK2502` are written and tested and wait on this
-file to have something to say.
+*What it needs, in the record's order (§5):* the draft from the sources; the
+file's header and the hash rule — the description records the crate source's
+SHA-256 today and **nothing compares it**; the rustdoc-JSON reader behind a
+toolchain check.
+
+*And something else waits on **one line** of it.* The entry above about the
+crossing refusals being built and unreachable is unreachable **because** no
+type answers `MayNot` into our own code, and a described foreign type is the
+first thing that could. The description ships **no** `crosses` on
+`hyper_shim::LocalHandle`, and that is the honest answer rather than a gap: the
+type is not `Send` because of its **fields**, and a reader of signatures does
+not have them — D3's table says `Send` *on a type* means it may cross, and the
+absence of the word is not the claim that it may not. So the crossing stays
+`Undecided`, and the day the describer reads fields is the day `NK2501` and
+`NK2502` have something to say.
 
 ### 2.18. The ledger says `Seq[T]` and `Par[T]`
 

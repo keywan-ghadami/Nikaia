@@ -1,0 +1,69 @@
+# The boundary of `hyper-shim`, described before it is called
+# ([ADR-104](../../../../docs/specification/adr/adr-104.md) D5).
+#
+# **Written by hand, which is what D5 expects.** `nikaia describe` is the
+# record's step 2 and does not exist; this is the file that command will write,
+# produced the way a reviewer would check it - from the crate's `pub` signatures
+# in `../../shim/src/lib.rs`, translated by Part III 15.2's table.
+#
+# crate: hyper-shim 0.1.0
+#
+# **What the signatures do not say is fail-closed** (D3). No `touches` on any
+# entry, which reads as *touches everything* (ADR-033); no `locks`, which is the
+# column's third answer, *may* - neither is something a Rust signature can tell
+# anybody, and reading silence as "nothing" is the polarity ADR-010 D1 forbids.
+#
+# **And no `crosses` on the type below, which is the honest answer rather than a
+# gap.** `LocalHandle` holds an `Rc<String>` and is not `Send` - but that follows
+# from its *fields*, and a reader of signatures does not have them. D3's table
+# says `Send` **on a type** means it may cross; the absence of the word is not
+# the claim that it may not. So the crossing stays `Undecided`, which is C.5's
+# third answer and is not permission. The day the describer reads fields, this
+# line is where `NK2501` and `NK2502` finally have something to say -
+# `docs/open-work.md` carries that.
+
+version = 2
+inference = "described-from-signatures"
+
+# The crate's source, so the description is believed while it holds and demanded
+# again when it moves (D5, on ADR-100 D3's rule). **Nothing compares it yet**:
+# the hash rule is the record's step 3.
+[sources]
+"src/lib.rs" = "7f0544e448f4f31e822dacff6abd32b3075826998b995b5d524a62fc336d046a"
+
+[fn."hyper_shim::serve_once"]
+pub = true
+sync = true
+signature = "(port: i64) -> String"
+
+# `String` by value is **kept** (D3's first row): the crate takes ownership, so
+# the caller may not lend it.
+[fn."hyper_shim::local_handle"]
+pub = true
+sync = true
+keeps = ["name"]
+signature = "(name: String) -> hyper_shim::LocalHandle"
+
+# `T: Describe + Send + 'static`. The bound is on the **parameter** and the
+# ledger's type language spells a variable `$T`; what the bound says about
+# crossing is a property of the argument the caller passes, which is the
+# caller's own to answer (Part III 15.2).
+[fn."hyper_shim::across_a_thread"]
+pub = true
+sync = true
+keeps = ["value"]
+signature = "(value: $T) -> String"
+
+# The same crossing with the bound removed - the hole `examples/foreign-runtime/`
+# exists to measure. It is described exactly as its signature reads, because a
+# description that quietly refused it would hide the thing being measured.
+[fn."hyper_shim::across_a_thread_unchecked"]
+pub = true
+sync = true
+keeps = ["value"]
+signature = "(value: $T) -> String"
+
+# **An empty field list means "nothing recorded" and not "nothing inside"**
+# (Part III 15.2). The fields are Rust's and no signature names them.
+[type."hyper_shim::LocalHandle"]
+pub = true

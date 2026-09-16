@@ -251,6 +251,26 @@ impl Manifest {
         &self.dependencies
     }
 
+    /// **The Rust crates this build declares**, under the name a program writes
+    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D1).
+    ///
+    /// `hyper-shim = { type = "rust", … }` is written `hyper_shim::serve_once`
+    /// in a program, because that is the crate name Cargo makes of the key and
+    /// the name the generated Rust carries. The manifest key is what a person
+    /// types and the underscore form is what a call names, so the translation
+    /// belongs here rather than at every reader.
+    ///
+    /// **Only `type = "rust"`.** A Nikaia package by path is read as part of
+    /// this program and has a ledger of its own; what this names is the set at
+    /// whose edge D1's question is asked.
+    pub fn foreign_crates(&self) -> std::collections::BTreeSet<String> {
+        self.dependencies
+            .iter()
+            .filter(|(_, declared)| matches!(declared, Dependency::Rust(_)))
+            .map(|(name, _)| name.replace('-', "_"))
+            .collect()
+    }
+
     /// The codegen table for one machine, empty where the manifest is silent.
     pub fn codegen_for(&self, target: &str) -> BTreeMap<String, toml::Value> {
         self.codegen.get(target).cloned().unwrap_or_default()

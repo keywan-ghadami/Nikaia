@@ -575,6 +575,10 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
         &parsed,
         &Ledger::infer(&parsed),
         &std::collections::BTreeSet::new(),
+        // Nothing declared and nothing described, which is a loose file's own
+        // state: ADR-104 D1 asks a question about the *build*'s boundary and
+        // this one has none.
+        &nikaia::project::Foreign::default(),
         &path,
         source,
         "no",

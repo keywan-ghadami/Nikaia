@@ -565,11 +565,21 @@ pub fn lower(
             // own: `utils::double` is a name `main.nika` may write, and the
             // type checker resolves it in the one place any name is resolved.
             let modules = program.package_names();
+            // **Read once per lowering and not per unit** (ADR-104 D1): the
+            // boundary is the build's, and every unit of it stands at the same
+            // one. `layout.root` is the project this input belongs to, and
+            // outside a project there is no manifest and therefore nothing
+            // declared.
+            let foreign = match layout.in_project {
+                true => Foreign::of(&layout.root),
+                false => Foreign::default(),
+            };
             for unit in &program.units {
                 check(
                     &unit.parsed,
                     &program.contracts,
                     &modules,
+                    &foreign,
                     &unit.path,
                     &unit.source,
                     &settings.user_parallelism,
@@ -622,6 +632,59 @@ pub const CONTRACTS: &str = "contracts";
 /// Types are reported before suspension because a call that passes the wrong
 /// thing is usually why the rest of the file reads strangely.
 ///
+/// **What this build links against, and what has been described**
+/// ([ADR-104](../../docs/specification/adr/adr-104.md) D1).
+///
+/// Two sets rather than one map, because the question is a difference: a crate
+/// the manifest declares and no ledger describes is the one D1 refuses. Both
+/// empty is a loose file with no project around it, where nothing was declared
+/// and therefore nothing is undescribed.
+#[derive(Debug, Default, Clone)]
+pub struct Foreign {
+    /// `[dependencies]` with `type = "rust"`, under the name a program writes
+    /// (`manifest::foreign_crates`).
+    pub declared: BTreeSet<String>,
+    /// The crates a `contracts/<crate>.contracts` was found for, beside the
+    /// project's own ledger (D5).
+    pub described: BTreeSet<String>,
+}
+
+impl Foreign {
+    /// What a build of `root` is at its boundary.
+    ///
+    /// A manifest that cannot be read is **no declarations**, not a failure: the
+    /// build has read it already and said so, and a second refusal from here
+    /// would be the same mistake twice.
+    pub fn of(root: &Path) -> Foreign {
+        let declared = crate::manifest::Manifest::read(&root.join("nikaia.toml"))
+            .map(|manifest| manifest.foreign_crates())
+            .unwrap_or_default();
+        let described = declared
+            .iter()
+            .filter(|name| described_at(root, name))
+            .cloned()
+            .collect();
+        Foreign {
+            declared,
+            described,
+        }
+    }
+}
+
+/// Whether `contracts/<crate>.contracts` is there **and parses as a ledger**.
+///
+/// Parsing is the test rather than existence, for
+/// [ADR-100](../../docs/specification/adr/adr-100.md) D3's reason one file over:
+/// a file that does not parse is not an answer, and treating it as one would
+/// let a boundary be described by something nobody can read.
+fn described_at(root: &Path, name: &str) -> bool {
+    let path = root.join("contracts").join(format!("{name}.contracts"));
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| Ledger::parse(&text).ok())
+        .is_some()
+}
+
 /// `user_parallelism` reaches this and reaches **nothing inside the analyses**.
 /// The verdict of every rule is a property of the program, so no switch may
 /// change it (ADR-005 §1 Group B); what the switch does change is whether a
@@ -631,6 +694,12 @@ pub fn check(
     parsed: &crate::parser::Parsed,
     own: &Ledger,
     modules: &BTreeSet<String>,
+    // **The Rust crates this build declares, and the ones a ledger describes**
+    // ([ADR-104](../../docs/specification/adr/adr-104.md) D1). Handed in rather
+    // than read here, because it is a fact about the *build* - what the manifest
+    // links against and what has been described beside it - and this function is
+    // handed one unit.
+    foreign: &Foreign,
     path: &Path,
     source: &str,
     user_parallelism: &str,
@@ -638,6 +707,15 @@ pub fn check(
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
 
     let mut all = check::check_program(parsed, own, &library, modules).findings;
+    // A separate walk, for the reason the three inside `check_program` are
+    // separate: it asks about the **boundary** of the build rather than about a
+    // type, and it needs the manifest rather than a ledger.
+    all.extend(crate::foreign::check(
+        parsed,
+        &foreign.declared,
+        &foreign.described,
+    ));
+    all.sort_by_key(|finding| finding.span.start);
     lint_where_nothing_crosses(&mut all, user_parallelism);
     let violations = sync::check(parsed, own, &library);
     if all.is_empty() && violations.is_empty() {
