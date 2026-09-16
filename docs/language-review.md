@@ -274,6 +274,12 @@ the statements and the receiver types), or drop `get` from `SharedMut` and keep
 it on `Locked`/copies only, so read-modify-write has no cheap spelling and
 `update` is the only door for it.
 
+*Decided since:* [ADR-111](specification/adr/adr-111.md), and neither of the
+two: the value is **stamped** `Seen[T]` on the way out, the stamp travels
+through calls, fields and time because types do, and a `set` given one — or
+under a condition made of one — is refused wherever the read was. No dataflow,
+nothing at run time, no way off the stamp.
+
 ### 2.4 `overlap` drops the second failure
 
 Part I 8.1.2: *"if two fail the first in written order wins."* The other error
