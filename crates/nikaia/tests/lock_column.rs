@@ -33,7 +33,7 @@ fn locks(source: &str, name: &str) -> Lock {
 #[test]
 fn a_body_that_opens_a_door_holds_a_lock() {
     let source = "fn bump(counter: SharedMut[i64]) {\n\
-                  \x20   counter.update fn(n) { n + 1 }\n\
+                  \x20   counter.update fn(mut n) { n += 1 }\n\
                   }\n\
                   fn plain(n: i64) -> i64 sync { return n + 1 }\n";
     assert_eq!(locks(source, "bump"), Lock::Holds);
@@ -50,7 +50,7 @@ fn a_body_that_opens_a_door_holds_a_lock() {
 #[test]
 fn it_travels_up_the_call_graph() {
     let source = "fn bump(counter: SharedMut[i64]) {\n\
-                  \x20   counter.update fn(n) { n + 1 }\n\
+                  \x20   counter.update fn(mut n) { n += 1 }\n\
                   }\n\
                   fn twice(counter: SharedMut[i64]) {\n\
                   \x20   bump(counter)\n\
@@ -109,7 +109,7 @@ fn a_call_nothing_describes_is_undecided() {
 fn certainty_overtakes_doubt() {
     let source = "struct Sink { n: i64 }\n\
                   fn murky(sink: Sink) { sink.swallow() }\n\
-                  fn sure(counter: SharedMut[i64]) { counter.update fn(n) { n + 1 } }\n\
+                  fn sure(counter: SharedMut[i64]) { counter.update fn(mut n) { n += 1 } }\n\
                   fn both(sink: Sink, counter: SharedMut[i64]) {\n\
                   \x20   murky(sink)\n\
                   \x20   sure(counter)\n\
@@ -125,7 +125,7 @@ fn certainty_overtakes_doubt() {
 #[test]
 fn a_spawned_body_does_not_give_its_caller_the_property() {
     let source = "fn start(counter: SharedMut[i64]) {\n\
-                  \x20   let h = spawn fn { counter.update fn(n) { n + 1 } }\n\
+                  \x20   let h = spawn fn { counter.update fn(mut n) { n += 1 } }\n\
                   }\n";
     assert_eq!(
         locks(source, "start"),
@@ -165,7 +165,7 @@ fn a_door_over_several_locks_counts() {
 fn the_column_renders_and_parses_back() {
     let parsed = parse_to_ast(
         "struct Sink { n: i64 }\n\
-         pub fn bump(counter: SharedMut[i64]) { counter.update fn(n) { n + 1 } }\n\
+         pub fn bump(counter: SharedMut[i64]) { counter.update fn(mut n) { n += 1 } }\n\
          pub fn murky(sink: Sink) { sink.swallow() }\n\
          pub fn plain(n: i64) -> i64 sync { return n + 1 }\n",
     )

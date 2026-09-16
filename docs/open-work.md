@@ -1035,22 +1035,32 @@ form; `v` is a copy where the value fits a machine word — run the block on the
 copy, compare-and-swap, retry on a collision — and the address in the lock
 otherwise, where the block runs once; nothing is moved out of the lock and no
 slot is ever empty. `update_all` takes one `mut` per lock. `access` reads.
-**Nothing of it is built**: `update` takes `T` and returns `T` in an `Option`,
-a failed block leaves the lock empty, and no compare-and-swap path exists.
+**D1, D4 and D6 are built, and D2's address row with them**: `fn(mut v)`
+parses, both doors are handed `&mut T`, the `Option` is gone and with it the
+empty slot — and the `emptied()` panic that named that state, because it cannot
+occur. **What is left is speed**: a copy and a compare-and-swap where the value
+fits a machine word. The block runs exactly once today, which D3 licenses
+outright (*may* run more than once is a permission, not a requirement).
 
-*Evidence:* Part I 6.3 said `access` appends and Part II said it may not;
-`crates/nikaia-std/src/lock.rs` `update` is `held.take()` and `emptied()`;
-`crates/nikaia/tests/lock_doors.rs` asserts `NK2205`'s help names
-`kasse.update fn(old)`; Part II 12.2's `counter.update fn(mut n) { n += 1 }`
-**stopped lowering** the day the page was rewritten, because a lambda's
-parameter does not take `mut` yet — the block is a fragment in
-`tests/specification/EXPECTED.txt` until step 1 is built, and comes back as a
-lowered body then.
+*And Part II 12.2's counter runs again.* `counter.update fn(mut n) { n += 1 }`
+had stopped lowering the day the page was rewritten to this form;
+`tests/specification/COMPILES.txt` carries it as a program rather than a
+fragment now.
 
-*What it needs, in the record's order (§5):* the checker's `NK1141` and
-`NK1138` at a door; `std`'s lock over `&mut T` and the compare-and-swap loop
-by type; the emitter's two lowerings and `explain` naming the row;
-`--sharing` on a large `get`; the examples, `NK2205`'s help and the tests.
+*One thing the record had not said, and the corpus settled it.* `NK1138` at a
+door is D1's, and the first build asked it of **every** lambda parameter, on the
+reasoning that one changed without `mut` is already broken Rust. It is not:
+`par_fold(…, fn(acc, m) { acc.record(m) })` in `examples/1brc.nika` changes
+`acc`, has no `mut`, and compiles — the **emitter** writes the word itself where
+it recognises a fold's accumulator, and `and_modify fn(tally) { tally.bump() }`
+in `k-nucleotide.nika` is the same shape one library over. So the question is
+asked at a door and nowhere else. **Widening it is work of its own**: it means
+taking that `mut` out of the emitter and making every such lambda say the word,
+which is a corpus migration rather than a rule change.
+
+*What it needs, in the record's order (§5):* the compare-and-swap loop for
+word-sized values and the second lowering, with `explain` naming which row a
+value fell in; `--sharing` on a large `get`.
 
 ---
 

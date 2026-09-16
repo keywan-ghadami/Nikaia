@@ -54,6 +54,7 @@ fn test_advanced_hello_world_compilation() {
                 if let Expr::Closure {
                     body: inner_block,
                     params,
+                    ..
                 } = &**spawn_body
                 {
                     assert!(params.is_empty(), "a task is handed nothing");

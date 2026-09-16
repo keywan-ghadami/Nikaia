@@ -98,7 +98,7 @@ fn a_set_that_reads_what_it_writes_names_the_third_door() {
         found[0]
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("kasse.update fn(old)")),
+            .is_some_and(|h| h.contains("kasse.update fn(mut v)")),
         "{:#?}",
         found[0]
     );

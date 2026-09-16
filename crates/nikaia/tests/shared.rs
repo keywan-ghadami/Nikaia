@@ -481,7 +481,7 @@ fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
 /// Part II 12.2's counter, which is the program `user_parallelism` exists for.
 const COUNTER: &str = "\
 fn zaehle(counter: SharedMut[i64]) {
-    counter.update fn(alt) { alt + 1 }
+    counter.update fn(mut alt) { alt += 1 }
 }
 
 fn main() {
@@ -577,7 +577,7 @@ fn a_shared_around_a_lock_is_refused_and_names_the_short_form() {
 const SHARED_WITH_A_TASK: &str = "\
 fn main() {
     let counter = SharedMut(0)
-    let t = spawn fn { counter.update fn(alt) { alt + 1 } }
+    let t = spawn fn { counter.update fn(mut alt) { alt += 1 } }
     t.join()
     println(f\"{counter.get()}\")
 }
@@ -634,7 +634,7 @@ fn a_lock_shared_by_four_tasks_counts_every_increment() {
 fn bump(counter: SharedMut[i64], times: i64) {
     let mut i = 0
     while i < times {
-        counter.update fn(old) { old + 1 }
+        counter.update fn(mut old) { old += 1 }
         i = i + 1
     }
 }
@@ -689,8 +689,9 @@ const TRANSFER: &str = "\
 fn main() {
     let konto_a = SharedMut(100)
     let konto_b = SharedMut(5)
-    update_all(konto_a, konto_b) fn(von, nach) {
-        return (von - 30, nach + 30)
+    update_all(konto_a, konto_b) fn(mut von, mut nach) {
+        von -= 30
+        nach += 30
     }
     access_all(konto_a, konto_b) fn(a, b) {
         println(f\"{a} {b}\")

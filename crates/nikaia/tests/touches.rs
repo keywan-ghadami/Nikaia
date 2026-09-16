@@ -59,7 +59,7 @@ fn what_a_callee_reaches_is_what_the_caller_reaches() {
 #[test]
 fn a_door_reaches_a_lock() {
     let (known, found) = touches(
-        "fn bump(k: SharedMut[i64]) { k.update fn(alt) { alt + 1 } }",
+        "fn bump(k: SharedMut[i64]) { k.update fn(mut alt) { alt += 1 } }",
         "bump",
     );
     assert!(known, "{found:?}");
@@ -79,7 +79,7 @@ fn a_door_reaches_a_lock() {
 #[test]
 fn a_print_inside_a_door_reaches_both() {
     let (known, found) = touches(
-        "fn noisy(k: SharedMut[i64]) { k.update fn(alt) { println(f\"{alt}\")\n alt + 1 } }",
+        "fn noisy(k: SharedMut[i64]) { k.update fn(mut alt) { println(f\"{alt}\")\n alt += 1 } }",
         "noisy",
     );
     assert!(known, "{found:?}");

@@ -430,6 +430,7 @@ pub fn check_program(
             })
             .collect(),
         scope: Vec::new(),
+        at_a_write_door: false,
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
@@ -568,6 +569,28 @@ pub enum Narrowing {
 /// It is built only where a wrap was recorded for this statement, callee and
 /// position - which is rare - so the cost is not on the path every argument
 /// takes.
+/// Whether an expression **can only** be a value: a name, a literal, an
+/// operator, a field, an index.
+///
+/// The half of `NK1141`'s question that is safe to answer from the shape. A
+/// call and a method call are deliberately not here: whether one comes to a
+/// value is a question about its callee, and answering it wrongly is a correct
+/// program refused ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+fn plainly_a_value(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Variable(_)
+            | Expr::LitInt(_)
+            | Expr::LitFloat(_)
+            | Expr::LitStr(_)
+            | Expr::LitBool(_)
+            | Expr::Binary { .. }
+            | Expr::Field { .. }
+            | Expr::Index { .. }
+            | Expr::Tuple(_)
+    )
+}
+
 pub fn argument_shape(expr: &Expr) -> String {
     format!("{expr:?}")
 }
@@ -916,6 +939,15 @@ struct Checker<'a> {
     /// A stack, because a task may `spawn` another: each body's bindings are
     /// its own.
     task_bindings: Vec<Vec<(String, Ty, usize)>>,
+    /// Whether the lambda being walked is a **write door**'s block — `update`
+    /// or `update_all` ([ADR-110](../../docs/specification/adr/adr-110.md) D1,
+    /// D6).
+    ///
+    /// It is what narrows `NK1138` at a lambda parameter to where D1 asks for
+    /// it. Everywhere else a parameter without the word is left alone, because
+    /// the emitter writes `mut` itself for a fold's accumulator and refusing
+    /// there would refuse a program that compiles.
+    at_a_write_door: bool,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -1937,6 +1969,93 @@ impl<'a> Checker<'a> {
             Expr::Field { base, .. } | Expr::SafeField { base, .. } => self.rooted_at(base),
             Expr::Index { base, .. } => self.rooted_at(base),
             _ => None,
+        }
+    }
+
+    /// **`NK1141`: an `update` block hands a value back**
+    /// ([ADR-110](../../docs/specification/adr/adr-110.md) D1).
+    ///
+    /// `update` used to take the value by value and put back what the block
+    /// returned; D1 hands it the address instead, so *there is nothing to
+    /// return*. Without this the old shape — `kasse.update fn(old) { old + 1 }`
+    /// — lowers to a closure whose value is an `i64` where `()` is wanted, and
+    /// the answer comes from `rustc` about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Asked of the shape and not of the type**, and only where the shape
+    /// says so outright: a last statement that is a call, a method call or an
+    /// assignment is left alone, because whether *those* come to a value is a
+    /// question this walk would have to type the call to answer, and answering
+    /// it wrongly refuses a correct program (C.4). What is refused is a last
+    /// statement that can only be a value — a name, a literal, an operator, a
+    /// field — and a `return` that carries one.
+    fn an_update_block_returns_nothing(&mut self, body: &Block, span: &Span) {
+        let hands_back = body.stmts.iter().any(|stmt| match &stmt.node {
+            Stmt::Return(Some(_)) => true,
+            Stmt::Expr(value) => {
+                // The last statement is the block's value; an expression
+                // statement anywhere else is evaluated and dropped.
+                std::ptr::eq(stmt, body.stmts.last().expect("there is one"))
+                    && plainly_a_value(value)
+            }
+            _ => false,
+        });
+        if !hands_back {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1141",
+            message: "an `update` changes its value; there is nothing to return".to_string(),
+            notes: vec![
+                "the block is handed the value where it lies and changes it in place \
+                 (ADR-110 D1), so what it comes to is not put anywhere"
+                    .to_string(),
+            ],
+            help: Some(
+                "change it instead: `fn(mut v) { v += 1 }` rather than `fn(v) { v + 1 }`"
+                    .to_string(),
+            ),
+        });
+    }
+
+    /// One lambda parameter, bound — and refusable where it is changed without
+    /// `mut` ([ADR-110](../../docs/specification/adr/adr-110.md) D1).
+    ///
+    /// `kasse.update fn(mut v) { v += 100 }` is where the word earns its place:
+    /// the block changes the value in place and the caller whose value changes
+    /// is the **lock**. D1 says a block that changes `v` without the word is
+    /// `NK1138`, and it says it **about a door** — which is where this asks it
+    /// and nowhere else.
+    ///
+    /// **Held for every lambda it would refuse correct programs**, and the
+    /// corpus is what said so: `par_fold(…, fn(acc, m) { acc.record(m) })` in
+    /// `examples/1brc.nika` changes `acc` and has no `mut`, and it compiles,
+    /// because the **emitter** writes the word itself where it recognises a
+    /// fold's accumulator; `and_modify fn(tally) { tally.bump() }` in
+    /// `k-nucleotide.nika` is the same shape one library over. So *a lambda
+    /// parameter changed without `mut` is already broken Rust* is false, and a
+    /// rule built on it would be [Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)'s correct program
+    /// refused. Widening it is a question for whoever takes that `mut` out of
+    /// the emitter, and it belongs with that work rather than ahead of it.
+    fn lambda_parameter(
+        &mut self,
+        name: winnow_grammar::Symbol,
+        mutable: &[winnow_grammar::Symbol],
+        ty: Ty,
+        span: &Span,
+    ) -> Local {
+        let asked = self.at_a_write_door && !mutable.contains(&name);
+        Local {
+            name: self.parsed.text(name).to_string(),
+            ty,
+            constant: None,
+            immutable: asked.then(|| Immutable {
+                at: span.clone(),
+                kind: Kind::Parameter,
+            }),
         }
     }
 
@@ -2995,6 +3114,19 @@ impl<'a> Checker<'a> {
                 // Asked here rather than in `call_on`, because the rule is
                 // about the receiver's **name** and that arm is handed a type.
                 self.a_set_that_reads_what_it_writes(&on, receiver, *method, args, span);
+                // **`update`'s block is a write door's**
+                // ([ADR-110](../../docs/specification/adr/adr-110.md) D1), and
+                // that is where a parameter without `mut` is refused. Set
+                // around the call and restored after it, so a lambda written
+                // inside the block is not one.
+                let at_a_door =
+                    self.parsed.text(*method) == "update" && locked_content_of(&on).is_some();
+                if at_a_door {
+                    if let Some(Expr::Closure { body, .. }) = args.last() {
+                        self.an_update_block_returns_nothing(body, span);
+                    }
+                }
+                let outer_door = std::mem::replace(&mut self.at_a_write_door, at_a_door);
                 // **D3**: a method that changes its subject, called on a
                 // parameter. Asked of the `mutates` column (D3's own, recorded
                 // because the ledger's `&T` cannot spell `&mut`), and only
@@ -3018,7 +3150,9 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
-                self.call_on(on, *method, args, span)
+                let value = self.call_on(on, *method, args, span);
+                self.at_a_write_door = outer_door;
+                value
             }
 
             // Part I 3.5: `x?.m(…)`. The receiver must be a `T?`, the call
@@ -3221,10 +3355,14 @@ impl<'a> Checker<'a> {
             // nothing to read off the body any more, so a `fn { … }` pushes an
             // empty frame - and a body reaching for `a` is then a body naming
             // something nothing declares, which `NK1117` refuses.
-            Expr::Closure { params, body } => {
+            Expr::Closure {
+                params,
+                mutable,
+                body,
+            } => {
                 let frame: Vec<Local> = params
                     .iter()
-                    .map(|p| Local::free(self.parsed.text(*p).to_string(), Ty::Unknown))
+                    .map(|p| self.lambda_parameter(*p, mutable, Ty::Unknown, span))
                     .collect();
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a lambda's argument");
@@ -3420,7 +3558,7 @@ impl<'a> Checker<'a> {
                 // value is a thing this checker already knows. So `spawn fn {
                 // work(21) }` is a `TaskHandle[i64]` and `handle.join()` is an
                 // `i64`, with nothing inferred that a signature did not say.
-                let Expr::Closure { params, body } = body.as_ref() else {
+                let Expr::Closure { params, body, .. } = body.as_ref() else {
                     self.expr(body, span);
                     return Ty::Unknown;
                 };
@@ -3435,6 +3573,10 @@ impl<'a> Checker<'a> {
                 self.a_task_takes_these(
                     &Expr::Closure {
                         params: params.clone(),
+                        // A task is handed nothing, so no parameter of one is
+                        // ever `mut` - `a_task_takes_no_arguments` above has
+                        // already refused the list that is not empty.
+                        mutable: Vec::new(),
                         body: body.clone(),
                     },
                     span,
@@ -3671,7 +3813,12 @@ impl<'a> Checker<'a> {
             self.no_door(door, "it takes the locks and then the block", span);
             return Ty::Unknown;
         };
-        let Expr::Closure { params, body } = last else {
+        let Expr::Closure {
+            params,
+            mutable,
+            body,
+        } = last
+        else {
             self.no_door(door, "the block comes last: `fn(a, b) { … }`", span);
             return Ty::Unknown;
         };
@@ -3731,7 +3878,17 @@ impl<'a> Checker<'a> {
                 span,
             );
         }
-        self.lambda(params, body, &held);
+        // D6 is D1 widened, so the same question is asked of this block.
+        // D6 is D1 widened, so the same two questions are asked of this block.
+        if matches!(door, MultiLock::Writing) {
+            self.an_update_block_returns_nothing(body, span);
+        }
+        let outer_door = std::mem::replace(
+            &mut self.at_a_write_door,
+            matches!(door, MultiLock::Writing),
+        );
+        self.lambda(params, mutable, body, &held, span);
+        self.at_a_write_door = outer_door;
         match door {
             // What a lambda hands back is not written down (ADR-029 D1).
             MultiLock::Reading => Ty::Unknown,
@@ -5054,9 +5211,14 @@ impl<'a> Checker<'a> {
         args.iter()
             .enumerate()
             .map(|(at, arg)| match (arg, expected.get(at)) {
-                (Expr::Closure { params, body }, Some(Ty::Fn { params: given })) => {
-                    self.lambda(params, body, given)
-                }
+                (
+                    Expr::Closure {
+                        params,
+                        mutable,
+                        body,
+                    },
+                    Some(Ty::Fn { params: given }),
+                ) => self.lambda(params, mutable, body, given, span),
                 _ => {
                     self.a_field_of_a_borrowed_subject(arg, span, "passed");
                     self.expr(arg, span)
@@ -5074,12 +5236,25 @@ impl<'a> Checker<'a> {
     /// bound here, in order, to whatever the signature says the lambda is
     /// handed. A body that mentions fewer of them simply leaves the later
     /// bindings unused.
-    fn lambda(&mut self, params: &[winnow_grammar::Symbol], body: &Block, given: &[Ty]) -> Ty {
+    fn lambda(
+        &mut self,
+        params: &[winnow_grammar::Symbol],
+        mutable: &[winnow_grammar::Symbol],
+        body: &Block,
+        given: &[Ty],
+        span: &Span,
+    ) -> Ty {
         let frame = params
             .iter()
-            .map(|p| self.parsed.text(*p).to_string())
             .enumerate()
-            .map(|(at, name)| Local::free(name, given.get(at).cloned().unwrap_or(Ty::Unknown)))
+            .map(|(at, p)| {
+                self.lambda_parameter(
+                    *p,
+                    mutable,
+                    given.get(at).cloned().unwrap_or(Ty::Unknown),
+                    span,
+                )
+            })
             .collect();
 
         self.scope.push(frame);
@@ -5217,8 +5392,8 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!(
-                "write `{container}.update fn(old) {{ … }}`, which is handed the old value \
-                 and returns the new one"
+                "write `{container}.update fn(mut v) {{ … }}`, which is handed the value \
+                 where it lies and changes it in place (ADR-110 D1)"
             )),
         });
     }

@@ -1194,6 +1194,21 @@ struct Flow<'a> {
     /// a block inside the lambda is still written inside the lambda. A function
     /// body starts a `Flow` of its own, which is the boundary it does not cross.
     in_lambda: bool,
+    /// The lambda parameters written **`mut`** that are in scope here
+    /// ([ADR-110](../../docs/specification/adr/adr-110.md) D1).
+    ///
+    /// `kasse.update fn(mut v) { v += 100 }` lowers to a closure whose
+    /// parameter is `&mut T`, because D1 hands the block the **address** in the
+    /// lock. So every mention of `v` in the body is written `(*v)`: `+=` and an
+    /// assignment need the dereference outright, and a method call and a field
+    /// read would get it from Rust anyway — writing it everywhere is one rule
+    /// rather than a list of positions, and a parenthesis nobody needs is a
+    /// warning about the generated file (Part III C.1), which is why the one
+    /// here is always needed.
+    ///
+    /// **It accumulates rather than replacing**, so a lambda written inside an
+    /// `update` block does not lose the dereference for a name it captures.
+    changed: &'a [Symbol],
     /// The name the statement being emitted **binds**, where it binds one.
     ///
     /// It is here for the reason `function` is: the count a `Shared` was given is
@@ -1245,6 +1260,7 @@ struct Flow<'a> {
 
 impl Flow<'_> {
     const PLAIN: Flow<'static> = Flow {
+        changed: &[],
         throws: false,
         origin: "",
         caught: false,
@@ -2285,6 +2301,7 @@ impl<'p> Emitter<'p> {
         key: &str,
     ) -> Result<()> {
         let flow = Flow {
+            changed: &[],
             throws,
             origin: key.rsplit("::").next().unwrap_or(key),
             caught: false,
@@ -2529,7 +2546,7 @@ impl<'p> Emitter<'p> {
     /// nothing, so the accumulator is threaded; a method that returns a new
     /// accumulator is left exactly as written.
     fn fold_step(&self, out: &mut Out, step: &Expr) -> Result<()> {
-        if let Expr::Closure { params, body } = step {
+        if let Expr::Closure { params, body, .. } = step {
             if let [accumulator, item] = params.as_slice() {
                 if let Some(Stmt::Expr(Expr::MethodCall {
                     receiver, method, ..
@@ -3559,6 +3576,11 @@ impl<'p> Emitter<'p> {
             // program `rustc` asks an annotation for, which is the honest
             // answer rather than one this compiler invented.
             Expr::LitNull => out.push("None"),
+            // **A `mut` lambda parameter is an address** (ADR-110 D1), so
+            // every mention of it is dereferenced.
+            Expr::Variable(name) if flow.changed.contains(name) => {
+                out.push(&format!("(*{})", self.name(*name)))
+            }
             Expr::Variable(name) => out.push(&self.name(*name)),
             // ADR-017: the template is compiled where it is written. What comes
             // out is the string building a hand-written renderer would do, with
@@ -3817,10 +3839,24 @@ impl<'p> Emitter<'p> {
             }
             // A lambda's arguments are the ones it names (ADR-049): nothing is
             // read off the body, so `fn { … }` is `||`.
-            Expr::Closure { params, body } => {
-                let params: Vec<String> =
+            Expr::Closure {
+                params,
+                mutable,
+                body,
+            } => {
+                let names: Vec<String> =
                     params.iter().map(|p| self.name(*p).into_owned()).collect();
-                out.push(&format!("|{}| ", params.join(", ")));
+                out.push(&format!("|{}| ", names.join(", ")));
+                // **The `mut` ones reach inward** (ADR-110 D1), and the list is
+                // the enclosing one plus this lambda's rather than this
+                // lambda's alone: a lambda written inside an `update` block
+                // still means the address when it names the outer `v`.
+                let mut changed: Vec<Symbol> = flow.changed.to_vec();
+                changed.extend(mutable.iter().copied());
+                let flow = Flow {
+                    changed: &changed,
+                    ..flow
+                };
                 // A lambda's `return` leaves the lambda, not the function
                 // around it, so it never carries the enclosing `Ok`. The
                 // statement is kept, because the checker's answers about the
@@ -3829,6 +3865,11 @@ impl<'p> Emitter<'p> {
                 let inside = Flow {
                     in_lambda: true,
                     statement: flow.statement,
+                    // **And the `mut` parameters with it**: the body starts
+                    // from `PLAIN` because a lambda's `return` leaves the
+                    // lambda, and that must not throw away what D1 needs to
+                    // write `(*v)`.
+                    changed: &changed,
                     ..Flow::PLAIN
                 };
                 self.block(out, body, depth, inside, Tail::Return)?;

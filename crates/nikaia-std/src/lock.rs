@@ -26,19 +26,18 @@ use std::sync::Mutex;
 
 /// The one message, so re-entering reads the same whichever shape a value got.
 ///
+/// **There used to be a second one beside this**, `emptied`, for a lock whose
+/// `update` had failed and left nothing behind. It is gone with the state it
+/// named: since [ADR-110](../../../docs/specification/adr/adr-110.md) D1 the
+/// block is handed the **address** in the lock, so nothing is ever moved out
+/// and no slot is ever empty. A panic in the block leaves the value changed as
+/// far as the block got, which is D4 rather than a state to report.
+///
 /// `#[track_caller]` out to the `access` that called it, so the location the
 /// panic hook is handed is the generated line that wrote the access and not a
 /// line of this file — without it
 /// [ADR-044](../../../docs/specification/adr/adr-044.md) D1's table has nothing
 /// to look up.
-#[cold]
-#[inline(never)]
-#[track_caller]
-fn emptied() -> ! {
-    panic!("this lock is empty: an `update` on it failed and left nothing behind")
-}
-
-/// The one message, so re-entering reads the same whichever shape a value got.
 #[cold]
 #[inline(never)]
 #[track_caller]
@@ -54,19 +53,23 @@ fn reentered() -> ! {
 /// save.
 #[derive(Debug, Default)]
 pub struct Local<T> {
-    /// **`Option`, so `update` can move the value out and back** without a
-    /// `Default` bound and without unsafe code
-    /// ([ADR-059](../../../docs/specification/adr/adr-059.md) D2). A lambda that
-    /// fails leaves it `None`, and that is reported as what it is rather than
-    /// read as something else - the same thing a poisoned mutex says at the
-    /// other setting.
-    inner: RefCell<Option<T>>,
+    /// **The value itself, and no `Option` around it**
+    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
+    ///
+    /// It used to be an `Option` so that `update` could move the value out and
+    /// back without a `Default` bound and without unsafe code, and a lambda
+    /// that failed left the slot `None` — a state every other door then had to
+    /// report. D1 takes the cause away rather than the symptom: `update` is
+    /// handed the **address**, so nothing is moved out and no slot is ever
+    /// empty. What a panicking block leaves behind is D4's, and for this shape
+    /// that is a value changed as far as the block got.
+    inner: RefCell<T>,
 }
 
 impl<T> Local<T> {
     pub fn new(value: T) -> Self {
         Self {
-            inner: RefCell::new(Some(value)),
+            inner: RefCell::new(value),
         }
     }
 
@@ -85,7 +88,7 @@ impl<T> Local<T> {
     #[track_caller]
     pub fn set(&self, value: T) {
         match self.inner.try_borrow_mut() {
-            Ok(mut held) => *held = Some(value),
+            Ok(mut held) => *held = value,
             Err(_) => reentered(),
         }
     }
@@ -98,17 +101,20 @@ impl<T> Local<T> {
         self.read(f)
     }
 
-    /// **Where locked data changes** (D2). The old value is moved out, the
-    /// lambda is handed it by value, and what it returns is moved back.
+    /// **Where locked data changes**
+    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1): the block is
+    /// handed the **address** in the lock, changes the value in place, and
+    /// returns nothing.
+    ///
+    /// Nothing is moved out and no slot is ever empty, which is what took the
+    /// `Option` away. D2's other row — a copy and a compare-and-swap, for a
+    /// value that fits a machine word — is a **speed** choice on top of this
+    /// one and is not built; the block runs exactly once here, which D3 allows
+    /// (*may* run more than once is a licence, not a requirement).
     #[track_caller]
-    pub fn update(&self, f: impl FnOnce(T) -> T) {
-        let old = match self.inner.try_borrow_mut() {
-            Ok(mut held) => held.take().unwrap_or_else(|| emptied()),
-            Err(_) => reentered(),
-        };
-        let new = f(old);
+    pub fn update(&self, f: impl FnOnce(&mut T)) {
         match self.inner.try_borrow_mut() {
-            Ok(mut held) => *held = Some(new),
+            Ok(mut held) => f(&mut held),
             Err(_) => reentered(),
         }
     }
@@ -125,10 +131,7 @@ impl<T> Local<T> {
     #[track_caller]
     fn read<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         match self.inner.try_borrow_mut() {
-            Ok(held) => match held.as_ref() {
-                Some(value) => f(value),
-                None => emptied(),
-            },
+            Ok(held) => f(&held),
             Err(_) => reentered(),
         }
     }
@@ -143,9 +146,9 @@ impl<T> Local<T> {
 /// `Mutex` (`docs/mutex-floor.md` §4.3).
 #[derive(Debug, Default)]
 pub struct Crossing<T> {
-    /// `Option` for the reason [`Local`]'s is
+    /// The value itself, for the reason [`Local`]'s is
     /// ([ADR-059](../../../docs/specification/adr/adr-059.md) D2).
-    inner: Mutex<Option<T>>,
+    inner: Mutex<T>,
     /// Which task holds it, or `0` for nobody.
     ///
     /// **An atomic and not a second `Mutex`**, which is a correctness point
@@ -165,7 +168,7 @@ pub struct Crossing<T> {
 impl<T> Crossing<T> {
     pub fn new(value: T) -> Self {
         Self {
-            inner: Mutex::new(Some(value)),
+            inner: Mutex::new(value),
             held_by: AtomicU64::new(NOBODY),
         }
     }
@@ -181,34 +184,31 @@ impl<T> Crossing<T> {
 
     #[track_caller]
     pub fn set(&self, value: T) {
-        self.hold(|slot| *slot = Some(value));
+        self.hold(|slot| *slot = value);
     }
 
     /// **Reading in place** ([ADR-059](../../../docs/specification/adr/adr-059.md)
     /// D1).
     #[track_caller]
     pub fn access<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        self.hold(|slot| match slot.as_ref() {
-            Some(value) => f(value),
-            None => emptied(),
-        })
+        self.hold(|slot| f(slot))
     }
 
-    /// **Where locked data changes** (D2): out by value, back by value, and the
-    /// lock is held across both so nothing sees the gap.
+    /// **Where locked data changes**
+    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1): the block is
+    /// handed the address under the guard, changes the value in place, and
+    /// returns nothing. The lock is held across the whole of it, so nothing
+    /// sees a gap — and there is no gap to see, because nothing is moved out.
     #[track_caller]
-    pub fn update(&self, f: impl FnOnce(T) -> T) {
-        self.hold(|slot| {
-            let old = slot.take().unwrap_or_else(|| emptied());
-            *slot = Some(f(old));
-        });
+    pub fn update(&self, f: impl FnOnce(&mut T)) {
+        self.hold(f);
     }
 
     /// The owner check and the guard, around whatever the door does with the
     /// slot — written once, because every door needs both and a door that
     /// forgot one would be the hang this shape carries the check to prevent.
     #[track_caller]
-    fn hold<R>(&self, f: impl FnOnce(&mut Option<T>) -> R) -> R {
+    fn hold<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         let me = current_task();
         // **Read before the acquisition**, because once that blocks there is
         // nothing left to report to - which is the whole reason this shape
@@ -273,13 +273,13 @@ mod tests {
         let local = Local::new(1_i64);
         assert_eq!(local.get(), 1);
         local.set(5);
-        local.update(|old| old + 100);
+        local.update(|old| *old += 100);
         assert_eq!(local.access(|n| *n), 105);
 
         let crossing = Crossing::new(1_i64);
         assert_eq!(crossing.get(), 1);
         crossing.set(5);
-        crossing.update(|old| old + 100);
+        crossing.update(|old| *old += 100);
         assert_eq!(crossing.access(|n| *n), 105);
     }
 
@@ -294,10 +294,7 @@ mod tests {
         start.extend([1_i64, 2, 3]);
         let local = Local::new(start);
         let before = local.access(|v| v.as_ptr());
-        local.update(|mut v| {
-            v.push(4);
-            v
-        });
+        local.update(|v| v.push(4));
         assert_eq!(local.access(|v| v.len()), 4);
         assert_eq!(
             local.access(|v| v.as_ptr()),
@@ -345,7 +342,7 @@ mod tests {
             let value = std::sync::Arc::clone(&value);
             threads.push(std::thread::spawn(move || {
                 for _ in 0..1000 {
-                    value.update(|n| n + 1);
+                    value.update(|n| *n += 1);
                 }
             }));
         }
@@ -385,9 +382,15 @@ pub trait Door {
     /// Read in place, the way `access` does.
     fn reading<R>(&self, f: impl FnOnce(&Self::Held) -> R) -> R;
 
-    /// Take the value out and put one back, the way `update` does — and hand a
+    /// Change the value in place, the way `update` does
+    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1) — and hand a
     /// result outward, which is what lets two of these nest.
-    fn taking<R>(&self, f: impl FnOnce(Self::Held) -> (Self::Held, R)) -> R;
+    ///
+    /// It used to take the value **out** and put one back, which is what made
+    /// an empty slot a state every other door had to report. D1 takes the cause
+    /// away: the block is handed the address, so nothing is moved and no slot
+    /// is ever empty.
+    fn changing<R>(&self, f: impl FnOnce(&mut Self::Held) -> R) -> R;
 }
 
 impl<T> Door for Local<T> {
@@ -403,17 +406,11 @@ impl<T> Door for Local<T> {
     }
 
     #[track_caller]
-    fn taking<R>(&self, f: impl FnOnce(T) -> (T, R)) -> R {
-        let old = match self.inner.try_borrow_mut() {
-            Ok(mut held) => held.take().unwrap_or_else(|| emptied()),
-            Err(_) => reentered(),
-        };
-        let (new, out) = f(old);
+    fn changing<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         match self.inner.try_borrow_mut() {
-            Ok(mut held) => *held = Some(new),
+            Ok(mut held) => f(&mut held),
             Err(_) => reentered(),
         }
-        out
     }
 }
 
@@ -430,13 +427,8 @@ impl<T> Door for Crossing<T> {
     }
 
     #[track_caller]
-    fn taking<R>(&self, f: impl FnOnce(T) -> (T, R)) -> R {
-        self.hold(|slot| {
-            let old = slot.take().unwrap_or_else(|| emptied());
-            let (new, out) = f(old);
-            *slot = Some(new);
-            out
-        })
+    fn changing<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        self.hold(f)
     }
 }
 
@@ -460,8 +452,8 @@ impl<D: Door> Door for std::rc::Rc<D> {
     }
 
     #[track_caller]
-    fn taking<R>(&self, f: impl FnOnce(Self::Held) -> (Self::Held, R)) -> R {
-        (**self).taking(f)
+    fn changing<R>(&self, f: impl FnOnce(&mut Self::Held) -> R) -> R {
+        (**self).changing(f)
     }
 }
 
@@ -478,8 +470,8 @@ impl<D: Door> Door for std::sync::Arc<D> {
     }
 
     #[track_caller]
-    fn taking<R>(&self, f: impl FnOnce(Self::Held) -> (Self::Held, R)) -> R {
-        (**self).taking(f)
+    fn changing<R>(&self, f: impl FnOnce(&mut Self::Held) -> R) -> R {
+        (**self).changing(f)
     }
 }
 
@@ -502,33 +494,26 @@ where
     }
 }
 
-/// **Both locks written, one new value each**
-/// ([ADR-065](../../../docs/specification/adr/adr-065.md) D2).
+/// **Both locks written, changed in place**
+/// ([ADR-065](../../../docs/specification/adr/adr-065.md) D2,
+/// [ADR-110](../../../docs/specification/adr/adr-110.md) D6).
 ///
-/// `update`'s rule, widened: the old values go in by value and the new ones come
-/// back as a pair, so no lambda is handed anything it may change and nothing sees
-/// either lock between the two writes. The same address order as above.
+/// D1 widened: **one `mut` per lock and nothing returned**. Both are held for
+/// the whole of the block, so nothing sees either between the two changes, and
+/// the same address order as above is what makes a cycle impossible.
+///
+/// It used to take the old values by value and hand back a pair. That is what
+/// made an empty slot a state — a block that panicked between the two left one
+/// lock without a value — and D1 takes the cause away rather than the symptom.
 #[track_caller]
-pub fn update_all<A, B>(a: &A, b: &B, f: impl FnOnce(A::Held, B::Held) -> (A::Held, B::Held))
+pub fn update_all<A, B>(a: &A, b: &B, f: impl FnOnce(&mut A::Held, &mut B::Held))
 where
     A: Door,
     B: Door,
 {
     match a.ordering() <= b.ordering() {
-        true => a.taking(|x| {
-            let held = b.taking(|y| {
-                let (x, y) = f(x, y);
-                (y, x)
-            });
-            (held, ())
-        }),
-        false => b.taking(|y| {
-            let held = a.taking(|x| {
-                let (x, y) = f(x, y);
-                (x, y)
-            });
-            (held, ())
-        }),
+        true => a.changing(|x| b.changing(|y| f(x, y))),
+        false => b.changing(|y| a.changing(|x| f(x, y))),
     }
 }
 
@@ -542,7 +527,10 @@ mod doors {
     fn a_transfer_moves_between_two_locks() {
         let a = Local::new(100i64);
         let b = Local::new(5i64);
-        update_all(&a, &b, |from, to| (from - 30, to + 30));
+        update_all(&a, &b, |from, to| {
+            *from -= 30;
+            *to += 30;
+        });
         assert_eq!(a.get(), 70);
         assert_eq!(b.get(), 35);
     }
@@ -572,13 +560,19 @@ mod doors {
         let (one, two) = (std::sync::Arc::clone(&a), std::sync::Arc::clone(&b));
         let left = std::thread::spawn(move || {
             for _ in 0..400 {
-                update_all(&*one, &*two, |x, y| (x - 1, y + 1));
+                update_all(&*one, &*two, |x, y| {
+                    *x -= 1;
+                    *y += 1;
+                });
             }
         });
         let (one, two) = (std::sync::Arc::clone(&a), std::sync::Arc::clone(&b));
         let right = std::thread::spawn(move || {
             for _ in 0..400 {
-                update_all(&*two, &*one, |y, x| (y - 1, x + 1));
+                update_all(&*two, &*one, |y, x| {
+                    *y -= 1;
+                    *x += 1;
+                });
             }
         });
         left.join().expect("the left task");

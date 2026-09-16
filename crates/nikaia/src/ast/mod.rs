@@ -390,6 +390,19 @@ pub enum Expr {
     // is a lambda of no arguments and nothing is read off the body.
     Closure {
         params: Vec<Ident>,
+        /// The parameters written **`mut`**, in declaration order
+        /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
+        ///
+        /// `kasse.update fn(mut v) { v += 100 }`: the block changes `v` in
+        /// place and returns nothing, and the caller whose value changes is the
+        /// **lock**. It is [ADR-094](../../../docs/specification/adr/adr-094.md)
+        /// D3's word with its meaning unchanged, one position over.
+        ///
+        /// A list beside `params` rather than a field inside it, which is the
+        /// arrangement `contracts::Signature` uses for the same question:
+        /// almost no parameter is one, and a bare `Ident` is what every reader
+        /// of `params` already has in hand.
+        mutable: Vec<Ident>,
         body: Block,
     },
 

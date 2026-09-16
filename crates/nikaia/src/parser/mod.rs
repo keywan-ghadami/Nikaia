@@ -149,6 +149,22 @@ pub const RESERVED_WORDS: [&str; 38] = [
 /// token is an ordinary name, the note is simply absent. A note that
 /// disappears is the safe way for this to be wrong - it adds a sentence and
 /// corrects nothing.
+/// A lambda's parameter list, split into the names and the ones written `mut`
+/// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
+///
+/// The grammar reads them together because that is how they are written; the
+/// AST holds them apart because almost no parameter is one, and a bare `Ident`
+/// is what every reader of `params` already has in hand — the same arrangement
+/// `contracts::Signature` uses for the same question.
+fn split_mut(params: Vec<(bool, Symbol)>) -> (Vec<Symbol>, Vec<Symbol>) {
+    let mutable = params
+        .iter()
+        .filter(|(mutable, _)| *mutable)
+        .map(|(_, name)| *name)
+        .collect();
+    (params.into_iter().map(|(_, name)| name).collect(), mutable)
+}
+
 fn reserved_word_note(rendered: &str) -> String {
     const MARK: &str = "found unexpected token `";
     let Some(after) = rendered.split(MARK).nth(1) else {
@@ -1452,10 +1468,8 @@ grammar! {
         rule closure_expr -> Expr =
             KW_FN "(" params:closure_params? ")" body:block
             -> {
-                Expr::Closure {
-                    params: params.unwrap_or_default(),
-                    body,
-                }
+                let (params, mutable) = split_mut(params.unwrap_or_default());
+                Expr::Closure { params, mutable, body }
             }
           // `fn { … }` takes **no arguments**, and used to take however many of
           // `a`, `b`, `c` its body mentioned (ADR-049 withdrew that). A body that
@@ -1463,17 +1477,26 @@ grammar! {
           // declares, which `NK1117` refuses - so the form needs no rule of its
           // own to be refused by.
           | KW_FN body:block -> {
-                Expr::Closure { params: Vec::new(), body }
+                Expr::Closure { params: Vec::new(), mutable: Vec::new(), body }
             }
 
-        rule closure_params -> Vec<Symbol> =
-            head:NAME tail:closure_param_tail* -> {
+        // **A lambda's parameter takes `mut`**
+        // ([ADR-110](../../../../docs/specification/adr/adr-110.md) D1):
+        // `kasse.update fn(mut v) { v += 100 }` changes `v` in place, and the
+        // caller whose value changes is the lock. It is
+        // [ADR-094](../../../../docs/specification/adr/adr-094.md) D3's word
+        // with its meaning unchanged, one position over.
+        rule closure_params -> Vec<(bool, Symbol)> =
+            head:closure_param tail:closure_param_tail* -> {
                 let mut params = vec![head];
                 params.extend(tail);
                 params
             }
 
-        rule closure_param_tail -> Symbol = "," p:NAME -> { p }
+        rule closure_param -> (bool, Symbol) =
+            mutable:kw_mut? name:NAME -> { (mutable.is_some(), name) }
+
+        rule closure_param_tail -> (bool, Symbol) = "," p:closure_param -> { p }
 
         // Kap 3.3. It binds looser than every operator below it, so `0..n - 1`
         // is a range ending at `n - 1` rather than a range subtracted from -
@@ -1646,13 +1669,11 @@ grammar! {
         // still wins at a `fn:`, because neither arm above it can match a colon.
         rule trailing_lambda -> Expr =
             KW_FN "(" params:closure_params? ")" body:block -> {
-                Expr::Closure {
-                    params: params.unwrap_or_default(),
-                    body,
-                }
+                let (params, mutable) = split_mut(params.unwrap_or_default());
+                Expr::Closure { params, mutable, body }
             }
           | KW_FN body:block -> {
-                Expr::Closure { params: Vec::new(), body }
+                Expr::Closure { params: Vec::new(), mutable: Vec::new(), body }
             }
             // ADR-022: `fn: expr` was removed, and a form that was in the
             // specification deserves a sentence rather than a parse error at
@@ -1663,6 +1684,7 @@ grammar! {
                            after it landed *inside* the lambda - silently") -> {
                 Expr::Closure {
                     params: Vec::new(),
+                    mutable: Vec::new(),
                     body: Block { stmts: Vec::new() },
                 }
             }
@@ -1963,6 +1985,7 @@ grammar! {
                 Expr::Spawn {
                     body: Box::new(Expr::Closure {
                         params: Vec::new(),
+                        mutable: Vec::new(),
                         body: Block { stmts: Vec::new() },
                     }),
                     is_move: false,

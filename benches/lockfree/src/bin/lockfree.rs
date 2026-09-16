@@ -209,14 +209,14 @@ fn main() {
     let cheap_series = Series::take("lock::Local<i64>", n, repeats, |n| {
         per_op(n, || {
             let c = black_box(&cheap);
-            c.update(|v| v + 1);
+            c.update(|v| *v += 1);
             1
         })
     });
     let crossing_series = Series::take("lock::Crossing<i64>", n, repeats, |n| {
         per_op(n, || {
             let c = black_box(&crossing);
-            c.update(|v| v + 1);
+            c.update(|v| *v += 1);
             1
         })
     });
@@ -260,14 +260,14 @@ fn main() {
     let first = Series::take("lock::Local<i64>, run A", n, repeats, |n| {
         per_op(n, || {
             let c = black_box(&cheap);
-            c.update(|v| v + 1);
+            c.update(|v| *v += 1);
             1
         })
     });
     let second = Series::take("lock::Local<i64>, run B", n, repeats, |n| {
         per_op(n, || {
             let c = black_box(&cheap);
-            c.update(|v| v + 1);
+            c.update(|v| *v += 1);
             1
         })
     });
@@ -281,7 +281,7 @@ fn main() {
     for round in 1..=2 {
         let locked = threaded(each, threads, |k| {
             for _ in 0..k {
-                black_box(&shared_lock).update(|v| v + 1);
+                black_box(&shared_lock).update(|v| *v += 1);
             }
         });
         let swapped = threaded(each, threads, |k| {
