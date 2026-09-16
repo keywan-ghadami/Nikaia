@@ -916,7 +916,7 @@ can.
 `sync` and `throws` after the result as a declaration writes them; a lambda
 that does less fits a type that allows more, the other direction is refused;
 whether the parameter is run or kept is inferred, and a kept one's promises
-are the type's. **Step 1 is built**: the type parses, the ledger writes it and
+are the type's. **Steps 1 and 2 are built**: the type parses, the ledger writes it and
 reads it back — a function type inside another one included — D2's reading is
 in the fit, and a **run** parameter lowers to a closure argument,
 `impl Fn(A) -> R`, with the `Result` a `throws` function's declaration has
@@ -928,13 +928,22 @@ does not name: in `fn make() -> fn(i64) -> i64 sync` the `sync` belongs to the
 **result type**, and a function whose own promise is meant writes it before
 the arrow.
 
-*What is left, in the record's order (§5):* D2's two refusals in words — a
-pausing lambda handed to a `fn() sync` is `NK2206` and a failing one handed to
-a type without `throws` is `NK2606`, where today both are the ordinary
-`NK1102`; D3's run-or-kept inference, which is ADR-094's `keeps` asked of a
-code parameter; and D5's lowering of a **kept** handler, which is *a lambda
-that pauses is refused* one entry up, with a callee that can now say which
-shape it wants.
+*Step 2 is built too.* `NK2206` for a lambda that pauses where the type says
+`sync`, `NK2606` for one that fails where the type declares none — each the
+shape of the refusal one level down, `NK2202` and `NK2605`. `NK2606` is the
+whole message: the function *around* the lambda is not the one that has to
+answer for a failure the type refuses.
+
+*What it needed first was [ADR-029](specification/adr/adr-029.md)'s own
+ordering*, which the **method** path had and the free path did not: a free call
+walked its arguments before it resolved its callee, so `hand(fn(n) { … })` left
+`n` with no type at all and the promises had nothing to be asked of. A free
+call's lambda parameters are typed now.
+
+*What is left, in the record's order (§5):* D3's run-or-kept inference, which
+is ADR-094's `keeps` asked of a code parameter; and D5's lowering of a **kept**
+handler, which is *a lambda that pauses is refused* one entry up, with a callee
+that can now say which shape it wants.
 
 *Until that last one lands, a function type is a **parameter** and nothing
 else.* A field, a result and a `let` are the positions where it can only be

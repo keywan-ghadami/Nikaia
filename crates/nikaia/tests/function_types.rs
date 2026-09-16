@@ -219,6 +219,83 @@ fn a_function_type_outside_a_parameter_is_refused_here() {
     assert!(!fine.iter().any(|f| f.code == "NK1142"), "{fine:#?}");
 }
 
+/// **`NK2206`: a lambda that pauses, handed to a `fn() sync`** (D2).
+///
+/// A type that says `sync` is the assertion
+/// [ADR-027](../../../docs/specification/adr/adr-027.md) makes about a
+/// declaration, made about somebody else's code: a caller who wrote it has
+/// promised their own callers something, and a handler that pauses takes the
+/// promise away without saying so.
+#[test]
+fn a_pausing_lambda_handed_to_a_sync_type_is_refused() {
+    let refused = findings(
+        "fn on_tick(handler: fn() sync) { }\n\
+         fn main() { on_tick(fn() { let t = io::read_to_string() }) }\n",
+    );
+    let about = refused
+        .iter()
+        .find(|f| f.code == "NK2206")
+        .unwrap_or_else(|| panic!("{refused:#?}"));
+    assert!(about.message.contains("`sync`"), "{}", about.message);
+
+    // …and the direction that is allowed is allowed: a lambda that does less
+    // fits a type that allows more.
+    let fine = findings(
+        "fn on_tick(handler: fn() sync) { }\nfn main() { on_tick(fn() { let n = 1 + 1 }) }\n",
+    );
+    assert!(fine.is_empty(), "{fine:#?}");
+}
+
+/// **`NK2606`: a lambda that fails, handed to a type that declares none** (D2).
+///
+/// And it is the **whole** message: the function *around* the lambda is not the
+/// one that has to answer for a failure the type refuses, so `NK2605` — *this
+/// function can fail because …* — does not stand beside it. Where the type
+/// **does** say `throws`, the failure travels to the caller by
+/// [ADR-029](../../../docs/specification/adr/adr-029.md) D3 and `NK2605` is
+/// right again.
+#[test]
+fn a_failing_lambda_handed_to_a_type_without_throws_is_refused() {
+    const ERROR: &str = "enum E { Bad }\n\
+                         impl Error for E { fn message(&self) -> String { return \"bad\".to_string() } }\n\
+                         fn risky() throws { throw E::Bad }\n";
+
+    let refused = findings(&format!(
+        "{ERROR}fn attempt(step: fn()) {{ }}\nfn main() {{ attempt(fn() {{ risky() }}) }}\n"
+    ));
+    assert!(refused.iter().any(|f| f.code == "NK2606"), "{refused:#?}");
+    assert!(
+        !refused.iter().any(|f| f.code == "NK2605"),
+        "one mistake, one message: {refused:#?}"
+    );
+
+    let allowed = findings(&format!(
+        "{ERROR}fn attempt(step: fn() throws) {{ }}\nfn main() {{ attempt(fn() {{ risky() }}) }}\n"
+    ));
+    assert!(!allowed.iter().any(|f| f.code == "NK2606"), "{allowed:#?}");
+    assert!(
+        allowed.iter().any(|f| f.code == "NK2605"),
+        "the failure does reach `main` here: {allowed:#?}"
+    );
+}
+
+/// **A free call resolves its callee before it walks its arguments**, which is
+/// [ADR-029](../../../docs/specification/adr/adr-029.md)'s ordering — the
+/// *method* path was given it when that record landed and this one was not.
+///
+/// It is what makes the two refusals above possible at all: a lambda's
+/// promises are read off the parameter's type, and the type is not in hand
+/// until the callee is. It also types the lambda's **parameters**, which is
+/// what `hand(fn(n) { … })` had never had.
+#[test]
+fn a_free_calls_lambda_is_typed_from_the_signature() {
+    // Nothing is refused, and that is the claim: the walk reaches the body
+    // through the door that carries types rather than the one that does not.
+    let source = "fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n\
+                  fn main() { println(f\"{twice(2, fn(n) { return n * 3 })}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+}
+
 /// **The trailing words are greedy**, which settles the one ambiguity D1 does
 /// not name: in `fn make() -> fn(i64) -> i64 sync` the `sync` belongs to the
 /// *result type*. A function whose own promise is meant writes it before the

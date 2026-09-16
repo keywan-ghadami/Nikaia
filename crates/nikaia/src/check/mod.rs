@@ -468,6 +468,7 @@ pub fn check_program(
         fallible_methods: BTreeSet::new(),
         pausing_methods: BTreeSet::new(),
         settled_methods: BTreeSet::new(),
+        handed_over: None,
         moved_into_a_task: Vec::new(),
         read_at: Vec::new(),
         written_at: Vec::new(),
@@ -927,6 +928,23 @@ struct Checker<'a> {
     /// established. The difference is the answer.
     pausing_methods: BTreeSet<(usize, String)>,
     settled_methods: BTreeSet<(usize, String)>,
+    /// **What the lambda being walked has been seen to do**
+    /// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+    ///
+    /// A function type carries two promises and the defaults are the
+    /// language's: without `sync` the code may pause, without `throws` it
+    /// cannot fail. A lambda handed to one has to keep them, and *keeping* is
+    /// a question about its body — so the body is walked with this in hand and
+    /// the calls it makes put their answers in it.
+    ///
+    /// **It does not cross a boundary.** A lambda written inside another one
+    /// is a function of its own: what its body does happens when *its* callee
+    /// runs it, not when this one does. So [`Checker::past_a_boundary`] clears
+    /// it and puts the outer one back, the way it does with the loop count.
+    ///
+    /// `None` where nothing is being asked — outside a lambda, and inside one
+    /// whose parameter's type nothing describes.
+    handed_over: Option<Handed>,
     /// **What a task took with it** (`NK2101`): the name, its type, and the byte
     /// the `spawn`'s statement starts at.
     ///
@@ -1010,6 +1028,26 @@ struct Checker<'a> {
     /// span and one message.
     said_mut: BTreeSet<usize>,
     checked: Checked,
+}
+
+/// What a lambda's body was seen to do
+/// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+#[derive(Debug, Clone, Copy)]
+struct Handed {
+    pauses: bool,
+    fails: bool,
+    /// What the type it was handed to allows, kept beside what it was seen to
+    /// do so that the one message about a mismatch is the one that is said.
+    promised: Promises,
+}
+
+/// What a function type **allows** the code it names to do (D2), which is the
+/// reading a declaration already has: without `sync` it may pause, without
+/// `throws` it cannot fail.
+#[derive(Debug, Clone, Copy)]
+struct Promises {
+    may_pause: bool,
+    may_fail: bool,
 }
 
 /// One argument as [`Checker::the_compiler_writes_the_reference`] reads it:
@@ -2389,6 +2427,7 @@ impl<'a> Checker<'a> {
         // `std` entry blocked its thread and awaiting one would have
         // been awaiting a value rather than a future.
         self.method_pauses(method, !contract.sync.is_sync(), span);
+        self.a_call_that_may_pause(contract);
         // A method call is a written call, so the rule reaches it too
         // (`NK2605`) - and here the receiver's type was known and a
         // ledger described the method, which is the only case this
@@ -4181,7 +4220,25 @@ impl<'a> Checker<'a> {
         );
         // Both kinds hold their locks open across the block, so both are one.
         let outer_inside = std::mem::replace(&mut self.inside_a_door, true);
-        self.lambda(params, mutable, body, &held, span);
+        // **Nothing is asked of this block's promises**
+        // ([ADR-102](../../docs/specification/adr/adr-102.md) D2), and that is
+        // deliberate rather than an omission: `access_all` and `update_all` are
+        // not ledger entries at all ([ADR-065](../../docs/specification/adr/adr-065.md)
+        // D1), so there is no written type here to read a promise off. What
+        // Part II 12.2 requires of the block — `sync`, and no lock — is
+        // `NK2202`'s and `NK2203`'s, and a second refusal saying the same thing
+        // in other words would be two rules for one mistake.
+        self.lambda(
+            params,
+            mutable,
+            body,
+            &held,
+            Promises {
+                may_pause: true,
+                may_fail: true,
+            },
+            span,
+        );
         self.at_a_write_door = outer_door;
         self.inside_a_door = outer_inside;
         match door {
@@ -4355,28 +4412,14 @@ impl<'a> Checker<'a> {
                 self.a_lock_inside_a_lock(&name, holds, span);
             }
         }
-        let found: Vec<Ty> = args
-            .iter()
-            .map(|a| {
-                // A **free** call walks its arguments here rather than through
-                // `arguments_given`, which is the method path - so the same
-                // question is asked in both, or `takes(self.name)` slips past
-                // `NK1131` while `x.takes(self.name)` does not.
-                self.a_field_of_a_borrowed_subject(a, span, "passed");
-                self.expr(a, span)
-            })
-            .collect();
-        let passed: Vec<(String, Ty)> = config
-            .iter()
-            .map(|a| {
-                self.a_field_of_a_borrowed_subject(&a.value, span, "passed");
-                (
-                    self.parsed.text(a.name).to_string(),
-                    self.expr(&a.value, span),
-                )
-            })
-            .collect();
-
+        // **The callee is named and resolved before the arguments are walked**
+        // ([ADR-029](../../docs/specification/adr/adr-029.md), the free half).
+        // A lambda's parameters are typed from the callee's signature, so the
+        // signature has to be in hand first — which is exactly the ordering the
+        // *method* path was given when that record landed, and which this one
+        // did not have: `hand(fn(n) { … })` left `n` with no type at all, and
+        // [ADR-102](../../docs/specification/adr/adr-102.md) D2's promises had
+        // nothing to be asked of.
         let name = match func {
             Expr::Variable(name) => self.parsed.text(*name).to_string(),
             // `unaliased`: `h::serve()` is `http::serve()` where the file wrote
@@ -4396,11 +4439,39 @@ impl<'a> Checker<'a> {
         };
 
         // A tuple variant of an enum declared here - `Op::Plus(1)` - is a value
-        // of that enum, not a call to a function.
-        if let Some((ty, variant)) = name.split_once("::") {
-            if self.is_variant(ty, variant) {
-                return Ty::named(ty);
-            }
+        // of that enum, not a call to a function. Its arguments are still
+        // walked, below, with the rest.
+        let variant = name
+            .split_once("::")
+            .filter(|(ty, variant)| self.is_variant(ty, variant))
+            .map(|(ty, _)| ty.to_string());
+        // Neither a variant nor a hull is a ledger entry, so neither has a
+        // signature to type an argument from.
+        let resolved = match variant.is_some() || is_hull(&name) {
+            true => None,
+            false => self.resolve(&name),
+        };
+        let expected: Vec<Ty> = resolved
+            .as_ref()
+            .map(|(_, contract)| expected_arguments(contract))
+            .unwrap_or_default();
+        // The same walk the method path uses, so the same questions are asked
+        // in both - or `takes(self.name)` slips past `NK1131` while
+        // `x.takes(self.name)` does not.
+        let found = self.arguments_given(args, &expected, span);
+        let passed: Vec<(String, Ty)> = config
+            .iter()
+            .map(|a| {
+                self.a_field_of_a_borrowed_subject(&a.value, span, "passed");
+                (
+                    self.parsed.text(a.name).to_string(),
+                    self.expr(&a.value, span),
+                )
+            })
+            .collect();
+
+        if let Some(ty) = variant {
+            return Ty::named(&ty);
         }
 
         // **A hull you can observe, you write**
@@ -4413,7 +4484,7 @@ impl<'a> Checker<'a> {
             return self.hull(&name, args, &found, span);
         }
 
-        let Some((key, contract)) = self.resolve(&name) else {
+        let Some((key, contract)) = resolved else {
             // A call nothing describes is a call this compiler cannot see the
             // end of, and a thread of its own is among the things it may do
             // (ADR-038 D7). What it is handed is therefore handed across.
@@ -4426,6 +4497,7 @@ impl<'a> Checker<'a> {
         };
         self.reachable(&name, contract, span);
         self.may_fail_here(&key, contract, span);
+        self.a_call_that_may_pause(contract);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
         // whatever its declaration says about `Self`.
@@ -4726,6 +4798,27 @@ impl<'a> Checker<'a> {
             if let Some(guarded) = &mut self.guarded {
                 guarded.fallible = true;
             }
+            // **And the lambda this may be inside**
+            // ([ADR-102](../../docs/specification/adr/adr-102.md) D2). Here for
+            // the same reason the line above is here: this is the one place
+            // every written call — free or method — has its callee's contract
+            // in hand, and a `catch` further out does not change what the
+            // *lambda* was seen to do.
+            if let Some(handed) = &mut self.handed_over {
+                handed.fails = true;
+                // **And `NK2606` is then the whole message.** Where the type
+                // the lambda was handed to declares no failure, the function
+                // *around* the lambda is not the one that has to answer for it
+                // — the type is the contract, and telling the reader to write
+                // `throws` on a function that does not fail would be a second
+                // message for one mistake, in the wrong place. Where the type
+                // **does** allow failing, the failure travels to the caller by
+                // [ADR-029](../../docs/specification/adr/adr-029.md) D3 and
+                // `NK2605` is right.
+                if !handed.promised.may_fail {
+                    return;
+                }
+            }
         }
         if contract.throws.is_empty() || self.throwing || self.caught {
             return;
@@ -4760,6 +4853,99 @@ impl<'a> Checker<'a> {
                  call, `… catch {{ … }}` (Part I, 7.1)"
             )),
         });
+    }
+
+    /// **`NK2206` and `NK2606`: a handler that does more than its type allows**
+    /// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+    ///
+    /// A lambda that does **less** fits a type that allows more: one that never
+    /// pauses goes where pausing is allowed, one that cannot fail goes where
+    /// failing is. The other direction is the assertion
+    /// [ADR-027](../../docs/specification/adr/adr-027.md) makes about a
+    /// declaration, made about somebody else's code — a caller who writes
+    /// `fn() sync` in a signature has promised their own callers something, and
+    /// a handler that pauses takes the promise away without saying so.
+    ///
+    /// **Two codes and not one**, because the reader is doing two different
+    /// things: `NK2206` is the shape `NK2202` has one level over — a body that
+    /// pauses where the word says it does not — and `NK2606` is `NK2605`'s, a
+    /// failure with nowhere declared to go.
+    ///
+    /// **Only where the ledger answered.** A call whose callee nothing
+    /// describes leaves both flags where they were, which is the silence every
+    /// other rule here keeps about an absent claim
+    /// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)): a
+    /// refusal on a guess is a correct program refused, and it is the worse of
+    /// the two mistakes.
+    fn a_handler_that_does_more_than_the_type_allows(
+        &mut self,
+        promised: Promises,
+        seen: Handed,
+        span: &Span,
+    ) {
+        if seen.pauses && !promised.may_pause {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2206",
+                message: "this lambda can pause, and the parameter it is given to says `sync`"
+                    .to_string(),
+                notes: vec![
+                    "a function type says what the code it names may do, and `sync` is the \
+                     same assertion a declaration makes - made about somebody else's code \
+                     (ADR-102 D2, ADR-027)"
+                        .to_string(),
+                    "a lambda that does less fits a type that allows more, never the other \
+                     way round"
+                        .to_string(),
+                ],
+                help: Some(
+                    "keep what pauses outside the lambda and hand its answer in - or take \
+                     the `sync` off the parameter's type, which tells this function's own \
+                     callers what changed"
+                        .to_string(),
+                ),
+            });
+        }
+        if seen.fails && !promised.may_fail {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2606",
+                message: "this lambda can fail, and the parameter it is given to does not say \
+                          `throws`"
+                    .to_string(),
+                notes: vec![
+                    "nothing marks a failing call, so a failure leaves at a call exactly as \
+                     it leaves at a block's closing brace (ADR-023 D8) - and here there is \
+                     nowhere for it to go, because the type it was handed to declares none \
+                     (ADR-102 D2)"
+                        .to_string(),
+                ],
+                help: Some(
+                    "handle it here, `… catch { … }` - or write `throws` on the parameter's \
+                     type, which is what says the callee has to answer for it"
+                        .to_string(),
+                ),
+            });
+        }
+    }
+
+    /// **What a lambda's body was seen to do, one call at a time**
+    /// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+    ///
+    /// The failing half is recorded in [`Self::may_fail_here`], where every
+    /// written call already has its callee's contract in hand. This is the
+    /// pausing half, and it needs its own line because only the *method* path
+    /// records pausing for the emitter — a free call's `.await` is written from
+    /// the name, which the emitter can resolve itself (ADR-028).
+    fn a_call_that_may_pause(&mut self, contract: &FnContract) {
+        if contract.sync.is_sync() {
+            return;
+        }
+        if let Some(handed) = &mut self.handed_over {
+            handed.pauses = true;
+        }
     }
 
     /// Where a method call stands in ADR-023 D8's propagation, for the emitter
@@ -5534,8 +5720,23 @@ impl<'a> Checker<'a> {
                         mutable,
                         body,
                     },
-                    Some(Ty::Fn { params: given, .. }),
-                ) => self.lambda(params, mutable, body, given, span),
+                    Some(Ty::Fn {
+                        params: given,
+                        is_sync,
+                        throws,
+                        ..
+                    }),
+                ) => self.lambda(
+                    params,
+                    mutable,
+                    body,
+                    given,
+                    Promises {
+                        may_pause: !is_sync,
+                        may_fail: *throws,
+                    },
+                    span,
+                ),
                 _ => {
                     self.a_field_of_a_borrowed_subject(arg, span, "passed");
                     self.expr(arg, span)
@@ -5559,6 +5760,7 @@ impl<'a> Checker<'a> {
         mutable: &[winnow_grammar::Symbol],
         body: &Block,
         given: &[Ty],
+        promised: Promises,
         span: &Span,
     ) -> Ty {
         let frame = params
@@ -5579,8 +5781,19 @@ impl<'a> Checker<'a> {
         // as the one in `expr`: which of the two a lambda arrives through is
         // whether the callee's signature typed its parameters, and that has
         // nothing to do with what a `break` in it may reach.
-        self.past_a_boundary("lambda", |me| me.block(body));
+        let seen = self.past_a_boundary("lambda", |me| {
+            me.handed_over = Some(Handed {
+                pauses: false,
+                fails: false,
+                promised,
+            });
+            me.block(body);
+            me.handed_over.take()
+        });
         self.scope.pop();
+        if let Some(seen) = seen {
+            self.a_handler_that_does_more_than_the_type_allows(promised, seen, span);
+        }
         // What a lambda hands back is not written down anywhere yet, and
         // claiming it here would be inventing one (ADR-029 D1).
         Ty::Unknown
@@ -5595,7 +5808,14 @@ impl<'a> Checker<'a> {
     fn past_a_boundary<T>(&mut self, what: &'static str, walk: impl FnOnce(&mut Self) -> T) -> T {
         let loops = std::mem::replace(&mut self.loops, 0);
         let barrier = self.barrier.replace(what);
+        // **And what a lambda was seen to do stops here too**
+        // ([ADR-102](../../docs/specification/adr/adr-102.md) D2), for the same
+        // reason the loop count does: what a body written *inside* this one
+        // does happens when its own callee runs it. `lambda` sets its own
+        // accumulator inside the walk and reads it back there.
+        let handed = self.handed_over.take();
         let value = walk(self);
+        self.handed_over = handed;
         self.loops = loops;
         self.barrier = barrier;
         value

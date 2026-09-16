@@ -898,7 +898,13 @@ mod tests {
         while runtime.pending() == 0 && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert_eq!(runtime.pending(), 1, "the readiness wait is queued");
+        // **At least one and not exactly one.** `pending` is the *process's*
+        // count and the harness runs these tests side by side, so another
+        // test's read may be in flight at the same instant — and what this
+        // asserts is that **something** is, which is the whole of what the park
+        // is then asked about. An exact count was a claim about the other
+        // tests' scheduling and went red the day one was added.
+        assert!(runtime.pending() >= 1, "the readiness wait is queued");
 
         let moved = io::park_for(io::generation(), Some(std::time::Duration::from_millis(50)));
         match runtime.files() {
