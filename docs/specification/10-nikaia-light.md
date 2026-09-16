@@ -204,8 +204,13 @@ Nikaia provides basic types to represent simple values.
 * **Booleans:** Logic values.
     * `bool`: Can only be `true` or `false`.
 * **Text:**
-    * `String`: A piece of text that can be modified and owns its memory.
-    * `&str`: A "String Slice". A read-only view into an existing string.
+    * `String`: text. Whether a value of it is a view into text that is
+      already there, or text of its own, is the compiler's to pick per use
+      (6.6, [ADR-107](adr/adr-107.md)); a literal is a view of the program's
+      own text and allocates nothing.
+    * `&str`: the same text with a promise attached — *this is a borrowed
+      view, no copy and no handle* — and the compiler holds the program to
+      it. Written where allocating would be a mistake.
     * `char`: One character — a Unicode scalar value, not a byte. Written
       between single quotes, with the escapes a string uses: `'a'`, `'\n'`,
       `'\''`. It is what iterating a text yields (`for c in name.chars()`) and
@@ -369,9 +374,14 @@ let mut maybe_string: &str? = null // Valid
 maybe_string = "World"             // Valid (`mut`, as in 2.1)
 ```
 
-A literal is a **view** of text the program was compiled with, not a `String` — see 6.6, where
+A literal is a **view** of text the program was compiled with — see 6.6, where
 an allocation happens only where you wrote that you wanted one, and [ADR-024](adr/adr-024.md) D5.
-`.to_string()` is how you say you want one.
+It stands wherever a `String` is wanted, because a `String` may be a view
+([ADR-107](adr/adr-107.md)); `.to_owned()` is how you say you want a copy.
+
+> **Status:** not built — `String` and `&str` are two types in the checker today,
+> and a literal in a `String` slot is `NK1106` until [ADR-107](adr/adr-107.md) §5
+> lands.
 
 > **Status:** built ([ADR-052](adr/adr-052.md)). `T?` lowers to the language
 > below's `Option<T>` — the mapping Part III 15.2 writes the other way round —

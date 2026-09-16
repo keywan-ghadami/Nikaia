@@ -861,6 +861,24 @@ the `NK1129` that ADR-100 D2 has since removed.
 the `trait` table and method entries; the `impl` table and the union in the
 bound check; the resolution at a call through a bound.
 
+### 2.20. Text is one type, and `&str` is the assertion
+
+[ADR-107](specification/adr/adr-107.md). `String` is the one text type and
+its state — borrowed, tethered, owned — is the compiler's per use; `&str` is
+the promise that a value is a borrowed view, held to at the line that would
+break it; a copy is `.to_owned()` or a refusal, never inserted. **Nothing of
+it is built**: two types in the checker, a literal in a `String` slot is
+`NK1106`, and no text carries a handle.
+
+*Evidence:* 13 `.to_string()` in `examples/`, each a literal or a view put
+where a `String` was declared; `Response(content_type:
+"text/plain".to_string(), …)` in `examples/http/`.
+
+*What it needs, in the record's order (§5):* the checker's acceptance in both
+directions with D2's refusal; text represented as `Bytes` is, with the state
+from the tether analysis; `NK1106`'s help and the thirteen sites; the
+foreign-boundary copy once crates are described; `--tethers` over text.
+
 ---
 
 ## 3. Upkeep

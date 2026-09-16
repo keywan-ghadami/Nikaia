@@ -627,8 +627,9 @@ The rule reaches exactly as far as the Rust signature is true. A Rust API that d
 **Mapping Types**
 * Rust `i32` -> Nikaia `i32`
 * Rust `i64`, `u8` -> Nikaia `i64`, `u8` — the rest of the numeric surface (Part I, 2.2)
-* Rust `String` -> Nikaia `String`, and Rust `&str` -> Nikaia `&str`, which is a
-  **view** and not a lifetime (Part II, 10.6)
+* Rust `&str` and Rust `String` -> Nikaia `String`, whose state the compiler
+  picks ([ADR-107](adr/adr-107.md)): a Nikaia `String` crosses to Rust `&str`
+  for free, and to Rust `String` only by a `.to_owned()` the program writes
 * Rust `Option<T>` -> Nikaia `T?` (Nullable)
 * Rust `Vec<T>` -> Nikaia `Vec[T]`, and `HashMap<K, V>` -> `HashMap[K, V]`
 * Rust `Rc<T>` **or** `Arc<T>` -> Nikaia `Shared[T]`. **One Nikaia type, two Rust
