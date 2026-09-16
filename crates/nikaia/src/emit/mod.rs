@@ -868,6 +868,16 @@ struct Emitter<'p> {
     /// is, so only the type checker can say what it calls (ADR-028). Nothing
     /// here resolves a receiver.
     fallible_methods: std::collections::BTreeSet<(usize, String)>,
+    /// The `set` calls that carry a **witness**
+    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5), by the byte
+    /// their statement starts at (`check::Checked::witnessed_sets`).
+    ///
+    /// `kasse.set(neu; after: stand)` lowers to `set_after(neu, stand)`, which
+    /// compares and stores while the lock is open once. Whether the receiver is
+    /// a lock at all is the type checker's answer and not this file's (ADR-028),
+    /// which is why it arrives rather than being worked out — a user-defined
+    /// `set` with an `after:` option of its own is left alone.
+    witnessed_sets: std::collections::BTreeSet<usize>,
     /// The method calls that **pause**, by the byte their statement starts at
     /// and the name written (`check::Checked::pausing_methods`).
     ///
@@ -1468,6 +1478,7 @@ impl<'p> Emitter<'p> {
             fallible_loops: propagation.loops,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
+            witnessed_sets: propagation.witnessed_sets,
             narrowing_casts: propagation.narrowing,
             shared,
             nullable_sites: propagation.nullable,
@@ -5070,8 +5081,28 @@ impl<'p> Emitter<'p> {
         // A name and not a rule, for `len`'s reason one paragraph down: it
         // encodes a fact about *Rust's* library rather than about this
         // language.
+        // **D5's one door for a stamped value**
+        // ([ADR-111](../../docs/specification/adr/adr-111.md)).
+        // `kasse.set(neu; after: stand)` is written `set_after(neu, stand)`:
+        // the compare and the store happen while the lock is open **once**,
+        // which is the whole of what the door is for and what a `get` followed
+        // by a `set` cannot do.
+        //
+        // Two questions and not one. The type checker's, that this receiver is
+        // a lock (`witnessed_sets`, ADR-028); and this file's, that the `after:`
+        // is written *here* — because the set is keyed by the statement, and a
+        // statement may hold a second `set` that carries none.
+        let witness =
+            match self.text(method) == "set" && self.witnessed_sets.contains(&flow.statement) {
+                true => config
+                    .iter()
+                    .find(|a| self.text(a.name) == "after")
+                    .map(|a| &a.value),
+                false => None,
+            };
         let written = match self.text(method) {
             "drain" if args.is_empty() => "into_iter",
+            "set" if witness.is_some() => "set_after",
             other => other,
         };
         let length = is_length(self.text(method), args);
@@ -5100,7 +5131,30 @@ impl<'p> Emitter<'p> {
         out.push("(");
         let takes = self.takes_a_handle(self.text(method));
         self.args(out, self.text(method), args, &takes, depth, flow)?;
-        self.dsl_parameters(out, self.text(method), args.len(), config, depth, flow)?;
+        match witness {
+            // The witness is an **argument** of the door and not an option of
+            // it, so it is written where the signature puts it — after the
+            // value, and never through `dsl_parameters`.
+            //
+            // **The `&` is written here rather than looked up**, and that is
+            // the one place this file decides a reference for itself. `lends`
+            // withholds its claim on every *method* argument, because the
+            // emitter cannot resolve a receiver
+            // ([ADR-028](../../docs/specification/adr/adr-028.md)) — and this
+            // position needs no resolving: the checker has already said this
+            // call is the door, and the door's witness is `seen: &$T` in the
+            // ledger, always. A written `&` is `NK1137` before it gets here.
+            Some(seen) => {
+                out.push(", &");
+                // Parenthesised exactly where a postfix would be: `&` binds
+                // tighter than every binary operator, so `&a + b` is `(&a) + b`
+                // and a witness that is an expression would mean something
+                // else. A name gets no parentheses, which is where every
+                // witness anybody writes lands.
+                self.postfix_base(out, seen, depth, flow)?;
+            }
+            None => self.dsl_parameters(out, self.text(method), args.len(), config, depth, flow)?,
+        }
         out.push(")");
 
         // ADR-023 D8, the method half. The same three conditions the

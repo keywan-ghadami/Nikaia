@@ -71,10 +71,16 @@ use super::{Ledger, Lock};
 const DOORS: &[&str] = &[
     "Locked::get",
     "Locked::set",
+    // The witness door ([ADR-111](../../../../docs/specification/adr/adr-111.md)
+    // D5), under the key it is written with. It opens a lock exactly as `set`
+    // does — a program that reaches it inside another lock is `NK2203` for the
+    // same reason.
+    "Locked::set(after)",
     "Locked::access",
     "Locked::update",
     "SharedMut::get",
     "SharedMut::set",
+    "SharedMut::set(after)",
     "SharedMut::access",
     "SharedMut::update",
 ];

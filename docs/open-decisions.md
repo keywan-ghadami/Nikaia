@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**One entry is open**, below. Nothing answered lives here: an
+**Two entries are open**, below. Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -146,6 +146,53 @@ is the worst failure this runtime can have — so it wants the same treatment
 `park`'s own `false` got: a loud panic rather than a wait, and a test that a
 worker reply wakes a ring park. Option 1's risk is that the second read shape is
 written twice when option 2 lands anyway.
+
+## 2. Whether a `catch` may name the error it takes
+
+**What is blocked.** Nothing is blocked *today*, and the entry is here because
+an accepted record writes a program the language cannot parse.
+[ADR-111](specification/adr/adr-111.md) D5 says `Overtaken` is *"an error like
+any other: caught or declared, retried in a loop with `catch Overtaken
+{ continue }`"* — and there is one `catch` in this language, which takes
+everything. So the retry loop that record writes is not writable: a program can
+catch the overtaking, and it cannot catch the overtaking *and let a disk error
+past*.
+
+**It is not an oversight of D5.** The word appears once in the whole
+specification, in that one line, and every other `catch` in the three pages and
+in the corpus takes what comes. What D5 needed was for the failure to be an
+ordinary error, which it is; the spelling beside it was written as if a typed
+`catch` existed.
+
+**The options.**
+
+1. **`catch Overtaken { … }`, a typed handler**, with an untyped `catch` still
+   meaning *everything*. *Cost:* the type has to be matched at run time, so the
+   failure channel stops being a `Box<dyn Error>` a handler never looks inside
+   and becomes one that is downcast — which is the mechanism, not a design
+   change. And it raises the question the handler chain always raises: what an
+   error that matches no arm does (propagate, presumably, which is what a `?`
+   would have done).
+2. **Leave `catch` as it is and correct D5's line**, so that the retry is
+   written with the untyped handler: `catch { continue }` in a loop, which
+   retries a disk error too, or a `match` inside the handler once errors carry
+   something to match on.
+3. **A `match` on the error rather than a second `catch` form**: `catch { match
+   error { … } }` — one keyword, and the language already has the other half.
+   *Cost:* `error` is a `Box<dyn Error>` and there is nothing to match it
+   against, so this is option 1's downcast wearing a different syntax.
+
+**What I would do: option 2 now, and option 1 when something needs it.** No
+program in the corpus catches one error and lets another past, and the door
+D5 exists for is complete without it — a `set(…; after:)` whose only failure is
+`Overtaken` is served by `catch { continue }` exactly. What the record should
+carry meanwhile is the honest spelling, and `docs/open-work.md` has the entry.
+
+**What either direction costs if it is wrong.** Option 1 built early is a
+handler form nobody writes, and a downcast in the failure path of every
+program. Option 2 left too long is a language where a program that wants to
+retry *one* failure has to retry all of them — and that is a silent wrong
+behaviour rather than a refusal, which is the worse kind.
 
 ---
 

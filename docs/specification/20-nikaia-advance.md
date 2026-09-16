@@ -694,6 +694,7 @@ A change to locked data has four shapes, and each has its own door. Only two of 
 | :--- | :--- | :--- |
 | `kasse.get()` | taking a copy out | — |
 | `kasse.set(value)` | replacing; the value is computed outside | yes, outside |
+| `kasse.set(neu; after: stand)` | the same, **if nothing moved** since `stand` was seen | yes, outside |
 | `kasse.update fn(mut v) { v += 100 }` | changing it, under the lock | no |
 | `kasse.access fn(state) { … }` | reading in place, large values | no |
 
@@ -701,11 +702,31 @@ Each is shaped by what it is for:
 
 * **`set` needs no block** because arguments are evaluated before the call: whatever producing the new value costs, including waiting for I/O, is paid outside, and the lock is open for the duration of one store. `get` is the same in the other direction — one load.
 * **`update` is handed the value as `mut v`, changes it, and returns nothing.** It is **where locked data changes**, small or large: `v += 100` on a counter, `v.push(entry)` on a list. What `v` is, is the compiler's by type — a **copy** where the value fits a machine word, so the block can run on the copy and be swapped in, and run again if another task got there first; the **address** in the lock otherwise, where the block runs once. Nothing is moved out of the lock in either case, and a ten-thousand-entry list is not copied to append one ([ADR-110](adr/adr-110.md) D1–D3). A block that hands a value back is refused (`NK1141`).
+* **`set` takes a witness where the new value came out of the lock.** `after:` is not an option that tunes the store — it changes what the store *is*: compare, and store only if the lock still holds what was seen. It is a definition and not a new rule, because `kasse.set(neu; after: stand)` **is** `kasse.update fn(mut v) { if v == stand { v = neu } else { throw Overtaken } }` ([ADR-111](adr/adr-111.md) D5), and like every `update` it takes the lock once. The comparison is of the whole value, so a program holding something large writes the `update` block with a version field of its own instead.
 * **`access` is for reading in place** — it is the one door that hands your block the value where it lies, and it **may not change it**. Without it, asking that ten-thousand-entry list for its length would copy the list; with it, nothing is copied to answer a question about a large value (D1).
 
 **So exactly one lambda in this language is handed something it may change**, and it carries the word every changed parameter carries: `mut`. A change to locked data is written in `update`, where the word is on the line that makes it ([ADR-059](adr/adr-059.md) D3).
 
-Two mistakes are refused at the doors. **Assigning to a `SharedMut` directly** is refused, and the message names `set`: the value lives behind a lock, so replacing it is a call and not an assignment. And **a `set` given a value that was seen in a lock, or standing under a condition that was** is refused, and the message names `update`, the door for a new value computed from the old one, and `after:`, the door for a value computed outside. The check reads the **stamp**: what a lock hands out is a `Seen[T]`, the stamp travels with the value through `let`, arithmetic, calls to lock-free functions, declared fields and time, and it never comes off — so the pair spread over two lines, two functions or two requests is refused like the one written inline ([ADR-111](adr/adr-111.md)). A third refusal closes the back door: an `update` block that assigns to `v` without reading it (`NK2207`). `kasse.set(neu; after: stand)` stores only if the lock still holds `stand` and throws `Overtaken` otherwise — by definition `kasse.update fn(mut v) { if v == stand { v = neu } else { throw Overtaken } }`.
+Two mistakes are refused at the doors. **Assigning to a `SharedMut` directly** is refused, and the message names `set`: the value lives behind a lock, so replacing it is a call and not an assignment. And **a `set` given a value that was seen in a lock, or standing under a condition that was** is refused, and the message names `update`, the door for a new value computed from the old one, and `after:`, the door for a value computed outside. The check reads the **stamp**: what a lock hands out is a `Seen[T]`, the stamp travels with the value through `let`, arithmetic, calls to lock-free functions, declared fields and time, and it never comes off — so the pair spread over two lines, two functions or two requests is refused like the one written inline ([ADR-111](adr/adr-111.md)). A third refusal closes the back door: an `update` block that assigns to `v` without reading it (`NK2207`). And `set_after`, which is how `after:` is written in the language below, is not a second way in (`NK2208`).
+
+**`after:` is the way through for a stamped value**, and `Overtaken` is an error like any other:
+
+```nika
+fn charge(kasse: SharedMut[i64], wieviel: i64) throws {
+    let stand = kasse.get()
+    // Computed outside the lock, which is what `set` is for - and stored only
+    // if nothing moved while it was being computed.
+    kasse.set(stand + wieviel; after: stand)
+}
+
+fn main() {
+    let kasse = SharedMut(100)
+    charge(kasse, 23) catch { println("somebody got there first") }
+    println(f"{kasse.get()}")
+}
+```
+
+Retrying is a loop and a `catch`, and handing the failure to the caller is what a server does with it — in HTTP that is the honest 409. What `Overtaken` carries is nothing: the value in the lock *now* is not in it, because reading it would be a second acquisition, and a caller that wants it takes the door again and gets a fresh stamp.
 
 **The `sync` Rule (No Pausing While Holding a Lock)**
 Holding a lock while the program pauses is dangerous *either way*: with threads it can block a whole CPU core; without them it can freeze other tasks that need the same data. Nikaia rules this out **at compile time**, using a keyword the language already has:

@@ -45,6 +45,26 @@ fn reentered() -> ! {
     panic!("this lock is already held by the same task: `access` cannot be re-entered")
 }
 
+/// **What a `set(neu; after: seen)` failed with**
+/// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5): the lock no
+/// longer holds the value that was seen.
+///
+/// An error like any other — caught, declared, retried, or handed to the
+/// caller, which in a server is the honest 409. It carries **nothing**: the
+/// value that is in the lock now is not in it, because reading it would be a
+/// second acquisition and a caller that wants it takes the door again and gets
+/// a fresh stamp. What the name has to say is *somebody got there first*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overtaken;
+
+impl std::fmt::Display for Overtaken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the lock no longer holds the value that was seen")
+    }
+}
+
+impl std::error::Error for Overtaken {}
+
 /// A lock for a value the analysis proved never crosses a thread.
 ///
 /// A borrow flag, which is one non-atomic write and a branch. It is what every
@@ -115,6 +135,51 @@ impl<T> Local<T> {
     pub fn update(&self, f: impl FnOnce(&mut T)) {
         match self.inner.try_borrow_mut() {
             Ok(mut held) => f(&mut held),
+            Err(_) => reentered(),
+        }
+    }
+
+    /// **The one door for a stamped value**
+    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5).
+    ///
+    /// `kasse.set(neu; after: stand)` is, by definition,
+    /// `update fn(mut v) { if v == stand { v = neu } else { throw Overtaken } }`
+    /// — and this is that block, written once. The witness is the value
+    /// itself: *store `neu` if the lock still holds what I saw*. If it does,
+    /// every decision taken on what was seen still holds; if it does not, the
+    /// caller is told rather than overwriting somebody else's work.
+    ///
+    /// **The comparison is of the whole value**, which is what `PartialEq`
+    /// buys and what makes this honest for a large one: a ten-thousand-entry
+    /// list is compared entry by entry, and a program that minds writes the
+    /// `update` block with a version field of its own
+    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
+    /// [ADR-110](../../../docs/specification/adr/adr-110.md) D2's
+    /// compare-and-swap is the same operation for a word-sized value and is
+    /// the speed row that is not built.
+    ///
+    /// **One lock acquisition and not two.** A `get` followed by a `set` is
+    /// the mistake D4 refuses; the compare and the store happen while the lock
+    /// is open, which is the whole of what this door is for.
+    ///
+    /// **The witness is a view and the value is not**, which is the difference
+    /// between them: the value is stored and the witness is only read. A
+    /// witness taken by value would be *moved* out of the caller, and reading
+    /// what was seen after asking whether it still holds is an ordinary thing
+    /// to write — so the ledger says `seen: &$T` and the caller keeps it.
+    #[track_caller]
+    pub fn set_after(&self, value: T, seen: &T) -> Result<(), Overtaken>
+    where
+        T: PartialEq,
+    {
+        match self.inner.try_borrow_mut() {
+            Ok(mut held) => match *held == *seen {
+                true => {
+                    *held = value;
+                    Ok(())
+                }
+                false => Err(Overtaken),
+            },
             Err(_) => reentered(),
         }
     }
@@ -202,6 +267,25 @@ impl<T> Crossing<T> {
     #[track_caller]
     pub fn update(&self, f: impl FnOnce(&mut T)) {
         self.hold(f);
+    }
+
+    /// **The one door for a stamped value**
+    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5), the
+    /// crossing shape. [`Local::set_after`] carries the reasoning; what is
+    /// different here is only that the lock is a mutex, so the compare and the
+    /// store happen under the guard the owner check already took.
+    #[track_caller]
+    pub fn set_after(&self, value: T, seen: &T) -> Result<(), Overtaken>
+    where
+        T: PartialEq,
+    {
+        self.hold(|slot| match *slot == *seen {
+            true => {
+                *slot = value;
+                Ok(())
+            }
+            false => Err(Overtaken),
+        })
     }
 
     /// The owner check and the guard, around whatever the door does with the
@@ -578,6 +662,63 @@ mod doors {
         left.join().expect("the left task");
         right.join().expect("the right task");
         assert_eq!(a.get() + b.get(), 2_000, "nothing is created or lost");
+    }
+
+    /// **The witness door stores when nothing moved and refuses when
+    /// something did** ([ADR-111](../../../docs/specification/adr/adr-111.md)
+    /// D5), in both shapes — the two are one surface
+    /// ([ADR-057](../../../docs/specification/adr/adr-057.md) D4), so a door
+    /// that behaved differently in one of them would be the thing D4 refuses.
+    #[test]
+    fn the_witness_door_compares_before_it_stores() {
+        let local = Local::new(100i64);
+        let seen = local.get();
+        assert_eq!(local.set_after(seen + 23, &seen), Ok(()));
+        assert_eq!(local.get(), 123);
+        // The witness is stale now, and the value stays what somebody else
+        // made it rather than being overwritten.
+        assert_eq!(local.set_after(0, &seen), Err(Overtaken));
+        assert_eq!(local.get(), 123);
+
+        let crossing = Crossing::new(100i64);
+        let seen = crossing.get();
+        assert_eq!(crossing.set_after(seen + 23, &seen), Ok(()));
+        assert_eq!(crossing.get(), 123);
+        assert_eq!(crossing.set_after(0, &seen), Err(Overtaken));
+        assert_eq!(crossing.get(), 123);
+    }
+
+    /// **The comparison is of the whole value**, which is what makes the door
+    /// honest for something larger than a word — and what the message in
+    /// [ADR-111](../../../docs/specification/adr/adr-111.md) D5 says a program
+    /// that minds should write an `update` block with a version field for.
+    #[test]
+    fn a_large_value_is_compared_entry_by_entry() {
+        let list = Local::new(vec![1i64, 2, 3]);
+        let seen = list.get();
+        assert_eq!(list.set_after(vec![1, 2, 3, 4], &seen), Ok(()));
+        assert_eq!(list.set_after(vec![9], &seen), Err(Overtaken));
+        assert_eq!(list.get(), vec![1, 2, 3, 4]);
+    }
+
+    /// **Two threads, one witness**: exactly one of them stores, which is the
+    /// property the whole door exists for. A `get` and a `set` here would let
+    /// both through and lose one of the two updates.
+    #[test]
+    fn only_one_of_two_racing_writers_gets_through() {
+        let kasse = std::sync::Arc::new(Crossing::new(0i64));
+        let seen = kasse.get();
+        let one = std::sync::Arc::clone(&kasse);
+        let left = std::thread::spawn(move || one.set_after(1, &seen));
+        let two = std::sync::Arc::clone(&kasse);
+        let right = std::thread::spawn(move || two.set_after(2, &seen));
+        let outcomes = [left.join().expect("left"), right.join().expect("right")];
+        assert_eq!(
+            outcomes.iter().filter(|o| o.is_ok()).count(),
+            1,
+            "one stored and one was overtaken: {outcomes:?}"
+        );
+        assert!(kasse.get() == 1 || kasse.get() == 2);
     }
 
     /// A lock of one type beside a lock of another, which is the case a door

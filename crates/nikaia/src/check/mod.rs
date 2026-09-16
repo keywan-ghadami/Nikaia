@@ -182,6 +182,23 @@ pub struct Checked {
     /// fail-quietly this module's other answers keep: the set never claims a
     /// call fails that does not.
     pub fallible_methods: BTreeSet<(usize, String)>,
+    /// The `set` calls that carry a **witness**
+    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D5), by the byte
+    /// their statement starts at.
+    ///
+    /// `kasse.set(neu; after: stand)` is a different door from `set` — it
+    /// compares, and it can fail — and only a type checker knows that this
+    /// receiver is a lock, which is what `Locked::set(after)` in the ledger is
+    /// keyed on. The emitter writes `set_after(neu, stand)` for a call in here
+    /// and the ordinary `set` for one that is not, so a user-defined `set` with
+    /// an option of its own is untouched.
+    ///
+    /// The statement and not the call, which is `fallible_methods`' shape and
+    /// carries its limit: two `set`s in one statement, one witnessed and one
+    /// not, is a program this cannot tell apart. The emitter asks for the
+    /// written `after:` as well, so what that costs is bounded by the pair
+    /// being written at all.
+    pub witnessed_sets: BTreeSet<usize>,
     /// The method calls that **pause**, keyed the same way and narrowed the same
     /// way ([ADR-055](../../docs/specification/adr/adr-055.md) D2).
     ///
@@ -639,6 +656,8 @@ pub struct Propagation {
     pub methods: BTreeSet<(usize, String)>,
     /// [`Checked::pausing_methods`].
     pub pausing_methods: BTreeSet<(usize, String)>,
+    /// [`Checked::witnessed_sets`].
+    pub witnessed_sets: BTreeSet<usize>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
@@ -688,6 +707,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         loops: checked.fallible_loops,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
+        witnessed_sets: checked.witnessed_sets,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
@@ -2312,7 +2332,16 @@ impl<'a> Checker<'a> {
     ///
     /// `on` is the receiver's type - for a `?.` the type **inside** the `T?`,
     /// which is the whole of what that operator changes here.
-    fn call_on(&mut self, on: Ty, method: Ident, args: &[Expr], span: &Span) -> Ty {
+    ///
+    /// `entry` is the name the **ledger** knows this call by, which is the
+    /// written one everywhere but at
+    /// [ADR-111](../../docs/specification/adr/adr-111.md) D5's witness door:
+    /// `kasse.set(neu; after: stand)` is `set(after)`, a different operation
+    /// from `set` and a different entry. `method` stays the name the *program*
+    /// wrote, and everything the **emitter** is handed stays keyed by that —
+    /// an argument it has to put a `&` in front of is found under `set`,
+    /// because `set` is what is written on the line.
+    fn call_on(&mut self, on: Ty, method: Ident, args: &[Expr], entry: &str, span: &Span) -> Ty {
         let Ty::Named { name, .. } = &on else {
             // The receiver's type is not known, so neither is what this
             // calls. Recorded, because "I could not find out" is an
@@ -2325,7 +2354,7 @@ impl<'a> Checker<'a> {
             self.method_pauses(method, false, span);
             return Ty::Unknown;
         };
-        let key = format!("{name}::{}", self.parsed.text(method));
+        let key = format!("{name}::{entry}");
         let Some((key, contract)) = self.method(&key) else {
             // The type is known and no ledger describes this method of
             // it - `HashMap::entry` until something writes it down.
@@ -2335,16 +2364,12 @@ impl<'a> Checker<'a> {
             // asked again on the trait and everything about it - arity,
             // argument types, `sync`, `throws` - is answered from the
             // declaration, exactly as it would be from a written-down receiver.
-            if let Some(bound) = self.bound_that_answers(name, self.parsed.text(method)) {
-                return self.call_on(bound, method, args, span);
+            if let Some(bound) = self.bound_that_answers(name, entry) {
+                return self.call_on(bound, method, args, entry, span);
             }
             // Unless the type is a **parameter**, where nothing will ever
             // describe it and saying so now is the whole of `NK1126`.
-            self.nothing_says_what_a_parameter_can_do(
-                name,
-                Reached::Method(self.parsed.text(method)),
-                span,
-            );
+            self.nothing_says_what_a_parameter_can_do(name, Reached::Method(entry), span);
             args.iter().for_each(|a| {
                 self.expr(a, span);
             });
@@ -2386,16 +2411,13 @@ impl<'a> Checker<'a> {
             .map(|ty| ty::substitute(ty, &bound))
             .collect();
         let found = self.arguments_given(args, &expected, span);
-        self.a_set_that_reads_what_it_writes(&on, method, &found, span);
-        let result = self.arguments(
-            &key,
-            self.parsed.text(method),
-            contract,
-            args,
-            &found,
-            &[],
-            span,
-        );
+        self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
+        // **The source's own name and not the ledger's**, because what
+        // `arguments` records is read back by the emitter off the line as it is
+        // written: a `&` the compiler owes the witness is looked up under
+        // `set`, which is the word on the page.
+        let written = self.parsed.text(method).to_string();
+        let result = self.arguments(&key, &written, contract, args, &found, &[], span);
         // The receiver first (ADR-031), then whatever the arguments can still
         // say (ADR-074 D2) - `or_insert` on a map that bound `$V` already has
         // its answer, and `bind` does not overwrite one.
@@ -3198,12 +3220,26 @@ impl<'a> Checker<'a> {
                 args,
                 config,
             } => {
+                // **`after:` on a `set` is a witness and not an option**
+                // ([ADR-111](../../docs/specification/adr/adr-111.md) D5): it
+                // is walked below as an *argument*, where the door's signature
+                // is what says it has to be a `$T`. Found here by name, and
+                // confirmed to be the door once the receiver's type is in hand
+                // - a `set` on something that is not a lock takes this back.
+                let witness = match self.parsed.text(*method) == "set" {
+                    true => config
+                        .iter()
+                        .position(|a| self.parsed.text(a.name) == "after"),
+                    false => None,
+                };
                 // ADR-007 D5: a DSL's deferred parameters stand here. They are
                 // expressions like any other, so they are walked - what checks
                 // that they are the *right* names is `dsl::check`, which knows
                 // which statement the receiver came from.
-                config.iter().for_each(|a| {
-                    self.expr(&a.value, span);
+                config.iter().enumerate().for_each(|(at, a)| {
+                    if Some(at) != witness {
+                        self.expr(&a.value, span);
+                    }
                 });
                 // **A grammar is entered by an ordinary call**
                 // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), so
@@ -3211,7 +3247,15 @@ impl<'a> Checker<'a> {
                 // and a method naming one of its `pub` rules. Answered before
                 // the receiver is typed, because a grammar name is not a value
                 // and typing it would be asking the wrong question.
+                // **Both ways out of here owe the witness its walk.** It was
+                // held back above so that the door can walk it as an argument,
+                // and neither of these reaches the door: a grammar rule is not
+                // a lock, and a `T?` receiver is answered before the call is.
+                // A value that nothing walks is a mistake nothing reports.
                 if let Some(entered) = self.grammar_entry(receiver, *method) {
+                    if let Some(at) = witness {
+                        self.expr(&config[at].value, span);
+                    }
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
@@ -3223,10 +3267,41 @@ impl<'a> Checker<'a> {
                     args.iter().for_each(|a| {
                         self.expr(a, span);
                     });
+                    if let Some(at) = witness {
+                        self.expr(&config[at].value, span);
+                    }
                     return Ty::Unknown;
                 }
-                // **A `set` given a stamped value**
-                // ([ADR-111](../../docs/specification/adr/adr-111.md) D4). The
+                // **The witness door, now that the receiver is typed**
+                // ([ADR-111](../../docs/specification/adr/adr-111.md) D5).
+                // `kasse.set(neu; after: stand)` is `Locked::set(after)` in the
+                // ledger — a key no program can write as a method name, which
+                // is what keeps D5's *one door* one (`NK2208` is what a program
+                // that tries meets). The witness joins the arguments, so
+                // everything a call is checked for reaches it through the one
+                // path: the fit against `$T`, the lend, the stamp.
+                //
+                // **Before `NK2203`**, which names the entry it refuses and
+                // would otherwise name `set` for a call that is not one.
+                let door = witness
+                    .filter(|_| locked_content_of(&on).is_some())
+                    .map(|at| &config[at].value);
+                if let (Some(at), None) = (witness, door) {
+                    // Not a lock after all, so it was an option like any other
+                    // and the walk above owed it a visit.
+                    self.expr(&config[at].value, span);
+                }
+                let given: Vec<Expr>;
+                let (args, written) = match door {
+                    Some(seen) => {
+                        self.the_witness_takes_no_reference(seen, span);
+                        self.checked.witnessed_sets.insert(span.start);
+                        given = args.iter().chain([seen]).cloned().collect();
+                        (&given[..], "set(after)".to_string())
+                    }
+                    None => (&args[..], self.parsed.text(*method).to_string()),
+                };
+                // **A `set` given a stamped value** (D4). The
                 // rule wants the receiver's **name** for its message and the
                 // argument's **type** for its answer, and those are known in
                 // two different places — so the name is carried the way the
@@ -3239,12 +3314,13 @@ impl<'a> Checker<'a> {
                         _ => Some("this lock".to_string()),
                     },
                 );
+                self.a_door_that_is_not_written(&on, &written, span);
                 // **`NK2203`, the method half**: which entry `other.get()` goes
                 // to is the type checker's answer (ADR-028), so it is asked
                 // here where the receiver's type is in hand.
                 if self.inside_a_door {
                     if let Ty::Named { name, .. } = &on {
-                        let key = format!("{name}::{}", self.parsed.text(*method));
+                        let key = format!("{name}::{written}");
                         if let Some((key, contract)) = self.method(&key) {
                             let (key, holds) = (key.clone(), contract.touches_a_lock);
                             self.a_lock_inside_a_lock(&key, holds, span);
@@ -3296,7 +3372,7 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
-                let value = self.call_on(on, *method, args, span);
+                let value = self.call_on(on, *method, args, &written, span);
                 self.at_a_write_door = outer_door;
                 self.inside_a_door = outer_inside;
                 self.set_receiver = outer_receiver;
@@ -3321,8 +3397,25 @@ impl<'a> Checker<'a> {
                 args,
                 config,
             } => {
-                config.iter().for_each(|a| {
-                    self.expr(&a.value, span);
+                // **The witness is held back here too**
+                // ([ADR-111](../../docs/specification/adr/adr-111.md) D5), for
+                // the reason a `?.` is one arm and not two: it decides
+                // *whether* the call happens and never *what* a call is. A
+                // `SharedMut[i64]?` reached with `?.set(neu; after: stand)` is
+                // the same door, and the witness that stayed an option here
+                // would have been **dropped in the lowering** rather than
+                // compared — a silent wrong value, which is worse than
+                // anything a refusal costs.
+                let witness = match self.parsed.text(*method) == "set" {
+                    true => config
+                        .iter()
+                        .position(|a| self.parsed.text(a.name) == "after"),
+                    false => None,
+                };
+                config.iter().enumerate().for_each(|(at, a)| {
+                    if Some(at) != witness {
+                        self.expr(&a.value, span);
+                    }
                 });
                 let on = self.expr(receiver, span);
                 let name = self.parsed.text(*method).to_string();
@@ -3334,14 +3427,35 @@ impl<'a> Checker<'a> {
                     args.iter().for_each(|a| {
                         self.expr(a, span);
                     });
+                    if let Some(at) = witness {
+                        self.expr(&config[at].value, span);
+                    }
                     return Ty::Unknown;
                 };
                 // **The same call, on the value inside.** Everything a method
                 // call is checked for - what it may throw, whether it pauses,
                 // what its arguments have to be, what the receiver's own type
                 // binds - is unchanged by the reach: a `?.` decides *whether*
-                // the call happens and never *what* a call is.
-                match self.call_on(*inner, *method, args, span) {
+                // the call happens and never *what* a call is. The door is one
+                // of those things, so it is resolved here exactly as it is
+                // there, off the type **inside** the `T?`.
+                let door = witness
+                    .filter(|_| locked_content_of(&inner).is_some())
+                    .map(|at| &config[at].value);
+                if let (Some(at), None) = (witness, door) {
+                    self.expr(&config[at].value, span);
+                }
+                let given: Vec<Expr>;
+                let (args, written) = match door {
+                    Some(seen) => {
+                        self.the_witness_takes_no_reference(seen, span);
+                        self.checked.witnessed_sets.insert(span.start);
+                        given = args.iter().chain([seen]).cloned().collect();
+                        (&given[..], "set(after)".to_string())
+                    }
+                    None => (&args[..], self.parsed.text(*method).to_string()),
+                };
+                match self.call_on(*inner, *method, args, &written, span) {
                     // The `and_then` case, recorded by name for the emitter
                     // exactly as a nullable field is (ADR-028: the emitter has
                     // no types and this is a question about one).
@@ -5646,6 +5760,94 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **The witness takes no `&`, and a written one is `NK1137`**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1, at
+    /// [ADR-111](../../docs/specification/adr/adr-111.md) D5's door).
+    ///
+    /// The ledger declares `seen: &$T` — the witness is read and never stored,
+    /// so the caller keeps it — and the `&` that says so is the compiler's, as
+    /// it is everywhere else. It is refused here rather than through `lends`
+    /// because `lends` withholds its claim on every *method* argument
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md): the emitter cannot
+    /// resolve a receiver), and this one position the emitter is told about
+    /// outright. Without the refusal a written `&` would come out `&&`, which
+    /// is `rustc`'s words about a file nobody wrote (Part III C.1).
+    fn the_witness_takes_no_reference(&mut self, seen: &Expr, span: &Span) {
+        if !matches!(
+            seen,
+            Expr::Unary {
+                op: ast::UnaryOp::Ref,
+                ..
+            }
+        ) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1137",
+            message: "the `&` here is the compiler's to write".to_string(),
+            notes: vec![
+                "`after:` is a witness the door only reads, so the reference is what the \
+                 call already means (ADR-094 D1, ADR-111 D5)"
+                    .to_string(),
+            ],
+            help: Some("take the `&` off".to_string()),
+        });
+    }
+
+    /// **`NK2208`: the lowering of a door, written as a door**
+    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D5).
+    ///
+    /// `kasse.set(neu; after: stand)` lowers to `set_after(neu, stand)`, and
+    /// what is below is reachable by name from above: `kasse.set_after(a, b)`
+    /// is a Rust method that exists, takes two arguments, and hands back a
+    /// `Result`. Nothing in the ledger describes it, so nothing would refuse it
+    /// and nothing would write the `?` — the failure would be **dropped**, and
+    /// `rustc` would then warn about an unused `Result` in a file nobody wrote
+    /// (Part III C.1).
+    ///
+    /// **So it is refused by name**, which is the cheap half of D5's *one
+    /// door*: a program has one way to ask for a compare-and-store, the message
+    /// says what it is, and the stamp discipline has no second entrance. The
+    /// receiver has to be a lock — `set_after` on a type of the program's own
+    /// is that program's own method and nothing to do with this.
+    fn a_door_that_is_not_written(&mut self, on: &Ty, written: &str, span: &Span) {
+        if written != "set_after" {
+            return;
+        }
+        let Ty::Named { name, .. } = on else {
+            return;
+        };
+        if !is_hull(name) {
+            return;
+        }
+        let container = match &self.set_receiver {
+            Some(name) => name.clone(),
+            None => "this lock".to_string(),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2208",
+            message: format!(
+                "`{container}` has no `set_after`; it is how `set(…; after: …)` is written below"
+            ),
+            notes: vec![
+                "the compare and the store happen while the lock is open once, and the door \
+                 that asks for that is `set` with a witness (ADR-111 D5)"
+                    .to_string(),
+                "written this way the failure would be dropped rather than propagated, \
+                 because nothing in the contracts describes this name"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `{container}.set(neu; after: seen)`, where `seen` is what the lock \
+                 handed out"
+            )),
+        });
+    }
+
     /// **`NK2205`: a `set` given a stamped value, or standing under a stamped
     /// condition** ([ADR-111](../../docs/specification/adr/adr-111.md) D4).
     ///
@@ -5672,11 +5874,15 @@ impl<'a> Checker<'a> {
     fn a_set_that_reads_what_it_writes(
         &mut self,
         on: &Ty,
-        method: Ident,
+        written: &str,
         found: &[Ty],
         span: &Span,
     ) {
-        if self.parsed.text(method) != "set" {
+        // **`set(after)` is not `set`**, and that is D5's whole point: the
+        // witness covers both shapes, so neither is refused there. It is the
+        // ledger's name that decides rather than a flag, because the name is
+        // what already says which operation this is.
+        if written != "set" {
             return;
         }
         let Ty::Named { name, .. } = on else {

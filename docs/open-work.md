@@ -136,8 +136,10 @@ for a `Vec` field as well as for text.
 Everything this section has held was found the same way — by running the programs the specification prints,
 which is `crates/nikaia/tests/specification.rs` now rather than a habit: it takes
 every `nika` block in the three pages as far as it goes and hands the ones that
-lower to `rustc`, against two recorded baselines. Of 127 blocks, 53 are programs
-this compiler takes and 31 of those compile below.
+lower to `rustc`, against two recorded baselines. Of 127 blocks, 50 are programs
+this compiler takes and 32 of those compile below — the newest of them being
+Part II 12.2's `set(neu; after: stand)`
+([ADR-111](specification/adr/adr-111.md) D5), which lowers and compiles.
 
 What left: a trait whose method **pauses** is `NK1129`, an `impl` that disagrees
 with its trait about which methods exist is `NK1130`, Part I 4.5's map example
@@ -1066,34 +1068,25 @@ which is a corpus migration rather than a rule change.
 word-sized values and the second lowering, with `explain` naming which row a
 value fell in; `--sharing` on a large `get`.
 
-### 2.23. `set(neu; after: seen)` is the one door for a stamped value
+### 2.23. `catch` takes everything, and one record writes a `catch` that does not
 
-[ADR-111](specification/adr/adr-111.md) D5, and the only part of that record
-left. **D1 to D4 are built**: `get` and `access` hand out a `Seen[T]`, the
-stamp sticks through arithmetic and through calls to entries whose `touches`
-names no lock, the emitter erases the type, and all three refusals are raised
-— `NK2205` in both shapes and `NK2207`.
+[ADR-111](specification/adr/adr-111.md) D5 is **built**: `kasse.set(neu; after:
+stand)` is `Locked::set(after)` in the ledger, the witness is an argument of
+it, `throws = ["Overtaken"]` carries the failure the way every other one
+travels, and `NK2208` keeps the lowering from being a second door. What is left
+of that record is one **sentence** of it: it writes `catch Overtaken
+{ continue }`, and this language has one `catch` and it takes everything.
 
-*What is left is the way through.* `set(neu; after: stand)` is, by definition,
-`update fn(mut v) { if v == stand { v = neu } else { throw Overtaken } }`: the
-witness is the value itself, so with `after:` the stored value may be stamped
-and the call may stand under a stamped condition. `T` must be comparable,
-`Overtaken` is an error like any other — caught, declared, retried with
-`catch Overtaken { continue }`, or handed to the caller, which in a server is
-the honest 409.
+*It is not work so much as a question*, which is why it is in
+[`open-decisions.md`](open-decisions.md) with a recommendation rather than
+here with steps. Whichever way it goes, the line in D5 §2 is what changes
+first: either a typed handler exists and the line is right, or it does not and
+the line should say `catch { continue }`.
 
-*Until it lands*, a stamped value has one way through and it is `update`,
-which decides inside the lock. That is not a gap so much as the smaller
-surface: `after:` is what makes the *optimistic* form writable, and nothing in
-the corpus writes one.
-
-*Evidence:* Part II 12.2 said in as many words that the check *"catches what
-people write on one line and not the same thing spread over two"* — which is
-no longer true and has been rewritten.
-
-*What it needs, in the record's order (§5):* `after:` as a configuration
-parameter on `set`, the lowering to D5's `update`, `Overtaken` as a declared
-error, and the specification's example.
+*What is not built and belongs to another record:*
+[ADR-110](specification/adr/adr-110.md) D2's compare-and-swap, which would make
+the door one instruction for a word-sized value instead of one lock
+acquisition. It is that record's speed row and §2.22 carries it.
 
 ### 2.24. A cleanup the deadline cut off names the resource
 

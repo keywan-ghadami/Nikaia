@@ -742,6 +742,32 @@ keeps = ["value"]
 locks = true
 signature = "(&Locked[$T], value: $T)"
 
+
+# **The one door for a stamped value** (ADR-111 D5). `kasse.set(neu; after:
+# stand)` is a different operation from `set` - it compares and may fail - so it
+# is a different entry, and its key is spelled the way it is *written* rather
+# than the way it lowers: `set(after)` is not a method name a program can write,
+# which is what keeps D5's "one door" one. The witness is an ordinary parameter
+# here, because this ledger's options must carry a default (Part I 5.1) and
+# there is no value a missing witness could stand for.
+#
+# `throws = ["Overtaken"]` and not `["?"]`: this one failure *has* a name a
+# program reads, and a caller that has to declare `throws` is owed it.
+#
+# **The witness is a view and the value is not.** The value is stored and the
+# witness is only read, so `seen: &$T` - a witness taken by value would be moved
+# out of the caller, and reading what was seen after asking whether it still
+# holds is an ordinary thing to write. `keeps = ["value"]` says the same thing
+# from the other side.
+[fn."Locked::set(after)"]
+pub = true
+touches = ["lock write"]
+sync = true
+throws = ["Overtaken"]
+keeps = ["value"]
+locks = true
+signature = "(&Locked[$T], value: $T, seen: &$T)"
+
 # **Reads in place and may not change what it is handed** (ADR-059 D1): the one
 # door that answers a question about a large value without copying it.
 [fn."Locked::access"]
@@ -770,8 +796,8 @@ signature = "(&Locked[$T], f: fn($T))"
 # two hulls below** (ADR-064 D1) - the count and the lock - and the name is what
 # the checker, this ledger and every message carry; only the emitter expands it.
 #
-# **The four doors are the same four**, so these entries are `Locked`'s with one
-# name changed. They are here rather than reached through a `deref` because there
+# **The four doors are the same four** — and the witness door with them
+# (ADR-111 D5) — so these entries are `Locked`'s with one name changed. They are here rather than reached through a `deref` because there
 # is no `&` straight through a lock (Part I 6.2): you get in by opening it, and
 # then what the lambda sees is an ordinary view.
 #
@@ -794,6 +820,15 @@ sync = true
 keeps = ["value"]
 locks = true
 signature = "(&SharedMut[$T], value: $T)"
+
+[fn."SharedMut::set(after)"]
+pub = true
+touches = ["lock write"]
+sync = true
+throws = ["Overtaken"]
+keeps = ["value"]
+locks = true
+signature = "(&SharedMut[$T], value: $T, seen: &$T)"
 
 [fn."SharedMut::access"]
 pub = true
