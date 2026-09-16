@@ -1155,7 +1155,7 @@ and the printer; the `overlap` join appending; the cleanup attachment
 through the list; Part I 8.1.2's example and a test with two failing
 branches.
 
-### 2.29. `from` is a name, and a file a build reads is `asset("…")`
+### 2.28. `from` is a name, and a file a build reads is `asset("…")`
 
 [ADR-116](specification/adr/adr-116.md). `from` leaves the reserved list, so
 `fs::rename(from:, to:)` parses as Part III writes it; the build-time read is
