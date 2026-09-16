@@ -480,10 +480,34 @@ on its own.
 [ADR-064](specification/adr/adr-064.md) gave the shared mutable type its name, its
 constructor and its single spelling. **Part II 12.2's counter compiles and runs at
 both settings.** So the type is no longer what anything here waits on — what is
-left is the section's own rules, every one of which is a refusal nothing raises:
+left is the section's own rules. **The first of them is built**; the rest are
+refusals nothing raises:
 
-* the **lock-touching** derived property (ADR-039 D3, D7): no function carries it,
-  so nothing tells a spawned body from a scope's;
+* the **lock-touching** derived property (ADR-039 D3) is **built** —
+  `contracts::locks`, a least fixpoint over the call graph `sync` uses, with a
+  `spawn`'s body excluded and a trailing lambda's counted, recorded as `locks`
+  beside `keeps`. D7's *stored* lambda is not, and is the one part of D3 left.
+
+  *It has three values and not two, and the corpus is what bought the third.*
+  D3 says fail-closed, and it says it about `sync`, where the cost of doubt is
+  a caller writing `.await`. Taken literally here it gave the property to **16
+  of 59** functions in `examples/` — almost all of them `main`, and **not one
+  of those programs opens a lock**. A refusal reading that column would have
+  refused correct programs. So `Undecided` is its own answer, exactly as it is
+  in [`contracts::send`](../crates/nikaia/src/contracts/send.rs): not
+  permission, and not a refusal either. The corpus now reads **0 hold, 24
+  undecided, 35 clear**, and what shrinks the middle is entries existing for
+  the methods it calls — the entry below about describing a foreign crate —
+  rather than a change here.
+
+  *Nothing reads the column yet*, which is why it landed alone: the number
+  above is what a refusal has to be read against, and finding it out afterwards
+  would have meant finding it out from a program somebody wrote.
+
+  *One thing the record had not said*, and a test caught it: the checker's
+  record of a method call did not know which side of a `spawn` the call was on,
+  and D3 turns on exactly that. `check::MethodCalls` carries the task half
+  separately now.
 * the **re-entrancy check as a build switch** (ADR-039 D8), which the cache key
   already accounts for — and which ADR-057 D2 makes free at one thread and D3
   charges only on the values that actually cross;
@@ -498,6 +522,11 @@ left is the section's own rules, every one of which is a refusal nothing raises:
   calls that contradict an assertion and `diagnostics` renders them — which is
   worth the extra words, because the bullet used to name the whole range and a
   reader would have gone looking for work that is done.
+
+  *`NK2201` and `NK2203` are now the next step here*, and the reason they are
+  is that what a chain of calls reaches is the column above: what is left for
+  each is knowing what is **inside a door**, which is one walk over a body
+  rather than an analysis.
 
 ### 2.5. Part II 12.8's supervision syntax
 

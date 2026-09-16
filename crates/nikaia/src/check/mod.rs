@@ -108,6 +108,31 @@ pub struct MethodCalls {
     /// absence of an answer, and an analysis that claims a property must treat
     /// it as such (ADR-027 D2).
     pub unresolved: bool,
+    /// Which of `resolved` were reached from inside a **`spawn`** body, and
+    /// whether any unresolvable call was
+    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D3).
+    ///
+    /// A task started with `spawn` runs **later and elsewhere**, so what it
+    /// does is not what the surrounding function does — where a trailing
+    /// lambda's body *is*, because it runs during the call
+    /// ([ADR-029](../../docs/specification/adr/adr-029.md) D4). An analysis
+    /// that asks about the calling function's own reach subtracts this; one
+    /// that asks what the whole text mentions does not, which is why it is a
+    /// second set rather than a narrowing of the first.
+    pub in_a_task: CallsInATask,
+}
+
+/// The half of [`MethodCalls`] that is inside a `spawn` body.
+///
+/// A type of its own rather than a second [`MethodCalls`], which would nest
+/// forever — and a name that says which half it is, so that a reader of
+/// `calls.in_a_task.resolved` does not have to hold the nesting in their head.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CallsInATask {
+    /// The ledger keys resolved inside a task's body.
+    pub resolved: BTreeSet<String>,
+    /// A call inside a task's body that could not be resolved.
+    pub unresolved: bool,
 }
 
 /// What one pass of the checker learned.
@@ -5562,12 +5587,22 @@ impl<'a> Checker<'a> {
         let Some(current) = &self.current else {
             return;
         };
+        // **Which side of a `spawn` this call is on** (ADR-039 D3). The stack
+        // is the one the task walk already keeps, so "inside a task" is
+        // exactly what it says.
+        let inside_a_task = !self.task_bindings.is_empty();
         let entry = self.checked.methods.entry(current.clone()).or_default();
         match key {
             Some(key) => {
                 entry.resolved.insert(key.to_string());
+                if inside_a_task {
+                    entry.in_a_task.resolved.insert(key.to_string());
+                }
             }
-            None => entry.unresolved = true,
+            None => {
+                entry.unresolved = true;
+                entry.in_a_task.unresolved |= inside_a_task;
+            }
         }
     }
 

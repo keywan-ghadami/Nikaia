@@ -26,6 +26,7 @@
 // will say so rather than quietly accepting the weaker answer.
 
 pub mod keeps;
+pub mod locks;
 pub mod order;
 pub mod send;
 pub mod sharing;
@@ -281,6 +282,27 @@ pub struct FnContract {
     /// all: it is the **declaration**, `&mut self`, which is the one thing D3
     /// says mutation is written in.
     pub mutates: bool,
+    /// Whether this function **touches a lock**
+    /// ([ADR-039](../../../../docs/specification/adr/adr-039.md) D3): it opens
+    /// one of D10's doors, or calls something that does.
+    ///
+    /// The second derived property propagated over the call graph `sync` uses,
+    /// and with the **opposite** lattice — a least fixpoint, so nobody has it
+    /// until something gives it to them, where `sync` starts from everyone
+    /// having the claim and takes it away. `keeps` is the same polarity for the
+    /// same reason: a restriction is added on doubt.
+    ///
+    /// **Coarse on purpose** (D4): it says *a lock*, not *which lock*. The
+    /// precise version needs alias analysis, and the cost of that is not
+    /// compile time — whether a program compiles would depend on whether two
+    /// handles are *provably* distinct, so an unrelated line elsewhere could
+    /// decide it.
+    ///
+    /// **Absent means it does not**, which is `keeps`' convention and `sync`'s
+    /// before it. An unresolvable call sets it, which is D3's own sentence: the
+    /// same doubt that takes the `sync` claim away gives this one, so one
+    /// polarity decision serves both.
+    pub touches_a_lock: Lock,
     /// Which of its `Shared` positions are one allocation, and which reference
     /// count each of those classes gets
     /// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
@@ -302,6 +324,55 @@ pub struct FnContract {
     /// business but its own function's, and putting one here would churn the
     /// file on a rename.
     pub sharing: Vec<sharing::Class>,
+}
+
+/// Whether a function **touches a lock**
+/// ([ADR-039](../../../../docs/specification/adr/adr-039.md) D3).
+///
+/// **Three answers and not two**, which is
+/// [`super::send::Crossing`]'s design borrowed for the same reason it was
+/// written there. `Undecided` is not `No`:
+/// [ADR-010](../../../../docs/specification/adr/adr-010.md) D1 says an analysis
+/// that fails open is a vulnerability generator, and *nothing is written down
+/// about this call* is the absence of an answer rather than a promise. But it
+/// is not `Holds` either, because the one thing this compiler may never do is
+/// reject a program that is correct
+/// ([Part III C.4](../../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **The corpus is what made the third arm necessary.** With two, an
+/// unresolvable call had to set the property — D3's own fail-closed sentence,
+/// written for `sync`, where the cost is a caller writing `.await`. Measured,
+/// that gave the property to **16 of 59** functions in `examples/`, almost all
+/// of them `main`, and **not one of those programs opens a lock**. A refusal
+/// reading that column would have refused correct programs, which is the worse
+/// of the two mistakes: the deadlock it would have caught is where every
+/// program already is, and a false refusal is not.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Lock {
+    /// Nothing it reaches opens a door, and this compiler saw all of it.
+    #[default]
+    No,
+    /// It opens one of D10's doors, or reaches something that does.
+    Holds,
+    /// A call on the way is one nothing describes. **Not permission.**
+    Undecided,
+}
+
+impl Lock {
+    /// Whether a refusal may be raised on this: `Holds` and nothing else.
+    pub fn holds(self) -> bool {
+        matches!(self, Lock::Holds)
+    }
+
+    /// The worse of two answers, which is what a caller takes from a callee:
+    /// `Holds` beats `Undecided` beats `No`.
+    pub fn or(self, other: Lock) -> Lock {
+        match (self, other) {
+            (Lock::Holds, _) | (_, Lock::Holds) => Lock::Holds,
+            (Lock::Undecided, _) | (_, Lock::Undecided) => Lock::Undecided,
+            _ => Lock::No,
+        }
+    }
 }
 
 /// A function's parameters and result.
@@ -1063,6 +1134,9 @@ impl Ledger {
         // nothing above produces anything it needs, and nothing above reads
         // what it writes.
         keeps::infer(&mut ledger, units, library, &resolved);
+        // Beside `keeps`, and for the same reason it runs here: it reads the
+        // checker's method answers and the entries the item loop wrote.
+        locks::infer(&mut ledger, units, library, &resolved);
         (ledger, checked)
     }
 
@@ -1201,6 +1275,13 @@ impl Ledger {
                 // it is declared, so there is nothing to infer: `&mut self` is
                 // the claim, and a receiver written `&self` or `self` is not.
                 mutates: matches!(item, Item::Fn { receiver: Some(r), .. } if r.is_mut && r.is_ref),
+                // **And this one is the body**, which `locks::infer` reads
+                // afterwards for `keeps`' reason: it is a question about what
+                // the whole call graph reaches, and nothing here has seen it
+                // yet. `false` until then, and `false` is the *permissive*
+                // answer, which is why nothing may read the column before that
+                // pass has run.
+                touches_a_lock: Lock::No,
                 // `sharing::infer` reads the bodies afterwards, for the same
                 // reason `sync` does: the answer is about where a value goes
                 // and not about how it was declared. Empty until then, which is
@@ -1326,6 +1407,15 @@ impl Ledger {
             // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3).
             if contract.mutates {
                 out.push_str("mutates = true\n");
+            }
+            // Beside `touches`, which is the other column about what a body
+            // reaches ([ADR-039](../../../../docs/specification/adr/adr-039.md) D3).
+            match contract.touches_a_lock {
+                Lock::No => {}
+                Lock::Holds => out.push_str("locks = true\n"),
+                // `"?"` is the absence of a claim, which is what it means in
+                // `throws` (ADR-024 D1) said once more.
+                Lock::Undecided => out.push_str("locks = \"?\"\n"),
             }
             if contract.touches_known {
                 out.push_str(&format!(
@@ -1487,6 +1577,13 @@ impl Ledger {
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
                         "keeps" => entry.keeps = string_list(value, at())?,
                         "mutates" => entry.mutates = value == "true",
+                        "locks" => {
+                            entry.touches_a_lock = match value.trim() {
+                                "true" => Lock::Holds,
+                                "\"?\"" => Lock::Undecided,
+                                _ => Lock::No,
+                            }
+                        }
                         "touches" => {
                             entry.touches = string_list(value, at())?
                                 .iter()

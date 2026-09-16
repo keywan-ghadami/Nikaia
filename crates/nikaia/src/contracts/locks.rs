@@ -1,0 +1,273 @@
+// crates/nikaia/src/contracts/locks.rs
+//
+// Whether a function **touches a lock** ([ADR-039](../../../../docs/specification/adr/adr-039.md)
+// D3), propagated over the same call graph `sync` uses and with the opposite
+// lattice.
+//
+// ## One traversal and two lattices
+//
+// | | starts from | rule |
+// | :--- | :--- | :--- |
+// | `sync` | everyone is `sync` | **greatest** fixpoint — take the claim from whoever reaches a non-holder |
+// | this | nobody touches one | **least** fixpoint — give the property to whoever reaches a holder |
+//
+// So mutual recursion between pure functions keeps `sync`
+// ([ADR-027](../../../../docs/specification/adr/adr-027.md) D1) and correctly
+// gets nothing here, for the mirrored reason — the same shape `keeps` has
+// beside it, and for the same reason: a restriction is added on doubt where a
+// promise is taken away on doubt.
+//
+// ## What a base case is, and why the checker answers it
+//
+// A **door** is `get`, `set`, `access` or `update` on a `Locked` or a
+// `SharedMut`, and `access_all` or `update_all` over several
+// ([ADR-039](../../../../docs/specification/adr/adr-039.md) D10,
+// [ADR-065](../../../../docs/specification/adr/adr-065.md)). Which of those a
+// call goes to is a question about the **receiver's type**, and this file has
+// none: `kasse.set(42)` names `set`, and so does a `Config::set` somebody
+// wrote. So the base case is read from `check::MethodCalls::resolved`, which is
+// the type checker's answer ([ADR-028](../../../../docs/specification/adr/adr-028.md))
+// — the same arrangement `keeps` uses for its receivers, and for the same
+// reason.
+//
+// **Guessing by name would make the column worthless rather than merely
+// coarse.** `set` and `get` are among the most common method names a program
+// writes; a column that answered *touches a lock* for every one of them would
+// be set almost everywhere, and a refusal reading it would refuse correct
+// programs — which is the one thing Part III C.4 forbids.
+//
+// ## Fail-closed, and what that costs here
+//
+// An **unresolvable** call sets the property, which is D3's own sentence: it
+// takes the `sync` claim away *and* sets this, so one polarity decision serves
+// both. That is the safe direction for a refusal about deadlock — the wrong
+// answer the other way is a program that hangs.
+//
+// **It is also why nothing reads this column yet.** The measurement comes
+// first: a property that lands on most of the corpus is one whose refusals
+// would be noise, and that is a thing to find out before `NK2201` and `NK2203`
+// are written against it, not after.
+//
+// ## A scope's tasks count and a `spawn` does not
+//
+// A scope waits for its tasks, so they run **during** the call and their bodies
+// belong to the surrounding function — the same reason a trailing lambda's body
+// does ([ADR-029](../../../../docs/specification/adr/adr-029.md) D4). A task
+// started with `spawn` runs later and elsewhere, so taking a lock in one is the
+// ordinary case and its body is not walked.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::ast::{Block, Expr, Item};
+use crate::parser::Parsed;
+
+use super::{Ledger, Lock};
+
+/// The `std` entries that open a lock, by their ledger keys.
+///
+/// A closed list, like `touch::KINDS` and `send`'s table and for the same
+/// reason: a name this file does not know is answered *no*, and a name it knew
+/// wrongly would be a claim about a program nobody made.
+const DOORS: &[&str] = &[
+    "Locked::get",
+    "Locked::set",
+    "Locked::access",
+    "Locked::update",
+    "SharedMut::get",
+    "SharedMut::set",
+    "SharedMut::access",
+    "SharedMut::update",
+];
+
+/// The doors over **several** locks, which are free calls rather than methods
+/// ([ADR-065](../../../../docs/specification/adr/adr-065.md)) and so are named
+/// here rather than found among the resolved receivers.
+const MULTI: &[&str] = &["access_all", "update_all"];
+
+/// What one body reaches, before the fixpoint.
+#[derive(Debug, Default)]
+struct Reaches {
+    /// What the body says on its own: a door it opens, or the doubt an
+    /// unresolvable call leaves.
+    itself: Lock,
+    /// The functions it calls, by the key the ledger records them under.
+    callees: BTreeSet<String>,
+}
+
+/// Give every function of this package its `touches_a_lock`.
+///
+/// `resolved` is the checker's answer about method calls, keyed by the same
+/// function names the ledger uses.
+pub fn infer(
+    ledger: &mut Ledger,
+    units: &[&Parsed],
+    library: &Ledger,
+    resolved: &BTreeMap<String, crate::check::MethodCalls>,
+) {
+    let mut graph: BTreeMap<String, Reaches> = BTreeMap::new();
+
+    for parsed in units.iter().copied() {
+        for item in &parsed.program.items {
+            match &item.node {
+                Item::Fn { .. } => {
+                    if let Some((name, reaches)) = reaches_of(parsed, &item.node, None, resolved) {
+                        graph.insert(name, reaches);
+                    }
+                }
+                Item::Impl {
+                    target, methods, ..
+                } => {
+                    let target = parsed.text(target.name).to_string();
+                    for method in methods {
+                        if let Some((name, reaches)) =
+                            reaches_of(parsed, &method.node, Some(&target), resolved)
+                        {
+                            graph.insert(name, reaches);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut touches: BTreeMap<String, Lock> = graph
+        .iter()
+        .map(|(name, reaches)| (name.clone(), reaches.itself))
+        .collect();
+
+    // The least fixpoint: give the property to whoever reaches a holder, until
+    // nothing changes. `BTreeMap`s throughout, so the answer does not depend on
+    // the order the source declared things in - Part III 13.5 makes this file a
+    // pure function of (source, toolchain) and `--locked` compares it byte for
+    // byte.
+    loop {
+        let mut changed = false;
+        for (name, reaches) in &graph {
+            if touches[name].holds() {
+                continue;
+            }
+            let reached = reaches.callees.iter().fold(Lock::No, |so_far, callee| {
+                let theirs = touches.get(callee).copied().unwrap_or_else(|| {
+                    library
+                        .functions
+                        .get(callee)
+                        .map(|contract| contract.touches_a_lock)
+                        // A callee no ledger describes is the same doubt an
+                        // unresolvable method is, reached from the other side.
+                        .unwrap_or(Lock::Undecided)
+                });
+                so_far.or(theirs)
+            });
+            let grown = touches[name].or(reached);
+            if grown != touches[name] {
+                touches.insert(name.clone(), grown);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for (name, holds) in touches {
+        if let Some(contract) = ledger.functions.get_mut(&name) {
+            contract.touches_a_lock = holds;
+        }
+    }
+}
+
+/// What one function's body reaches, and the key the ledger records it under.
+fn reaches_of(
+    parsed: &Parsed,
+    item: &Item,
+    target: Option<&str>,
+    resolved: &BTreeMap<String, crate::check::MethodCalls>,
+) -> Option<(String, Reaches)> {
+    let Item::Fn { name, body, .. } = item else {
+        return None;
+    };
+    // The same key the ledger uses, arrived at the same way - the anonymous
+    // constructor of Part I 4.2 included, which a caller reaches as `Type::new`.
+    let own = match name {
+        Some(name) => parsed.text(*name).to_string(),
+        None => "new".to_string(),
+    };
+    let key = match target {
+        Some(target) => format!("{target}::{own}"),
+        None => own,
+    };
+
+    let mut reaches = Reaches::default();
+    // **The base case is the checker's answer** (ADR-028): which entry
+    // `kasse.set(42)` goes to is a question about the receiver's type.
+    if let Some(calls) = resolved.get(&key) {
+        // **What a `spawn` body did is not what this body did** (D3): it runs
+        // later and elsewhere, so a lock taken in one is the ordinary case. The
+        // checker records which side of the `spawn` each call was on, because
+        // only it knows - `resolved` is keyed by function and a task's body is
+        // written inside one.
+        let outside = |name: &String| !calls.in_a_task.resolved.contains(name);
+        if calls.unresolved && !calls.in_a_task.unresolved {
+            reaches.itself = reaches.itself.or(Lock::Undecided);
+        }
+        if calls
+            .resolved
+            .iter()
+            .filter(|to| outside(to))
+            .any(|to| DOORS.contains(&to.as_str()))
+        {
+            reaches.itself = reaches.itself.or(Lock::Holds);
+        }
+        reaches
+            .callees
+            .extend(calls.resolved.iter().filter(|to| outside(to)).cloned());
+    }
+    walk(parsed, body, &mut reaches);
+    Some((key, reaches))
+}
+
+/// Every free call a body makes, the blocks it holds included.
+fn walk(parsed: &Parsed, block: &Block, reaches: &mut Reaches) {
+    for stmt in &block.stmts {
+        super::sync::visit_stmt(parsed, &stmt.node, &mut |expr| {
+            // A `spawn`'s body runs later and elsewhere, so a lock taken in one
+            // is the ordinary case (D3). `visit_stmt` hands the `spawn` itself
+            // here and `visit_stmt_blocks` does not descend into it, so there
+            // is nothing to exclude - this arm exists to say so.
+            if matches!(expr, Expr::Spawn { .. }) {
+                return;
+            }
+            if let Some(name) = free_call(parsed, expr) {
+                // **A door over several locks is a free call** (ADR-065), so it
+                // is named here where every other free call is.
+                if MULTI.contains(&name.as_str()) {
+                    reaches.itself = reaches.itself.or(Lock::Holds);
+                }
+                reaches.callees.insert(name);
+            }
+        });
+        let mut blocks: Vec<&Block> = Vec::new();
+        super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| blocks.push(inner));
+        for inner in blocks {
+            walk(parsed, inner, reaches);
+        }
+    }
+}
+
+/// The name a free call names, unaliased, or nothing where this is not one.
+fn free_call(parsed: &Parsed, expr: &Expr) -> Option<String> {
+    let Expr::Call { func, .. } = expr else {
+        return None;
+    };
+    let name = match func.as_ref() {
+        Expr::Variable(name) => parsed.text(*name).to_string(),
+        Expr::Path(segments) => segments
+            .iter()
+            .map(|s| parsed.text(*s))
+            .collect::<Vec<_>>()
+            .join("::"),
+        _ => return None,
+    };
+    Some(parsed.unaliased(&name))
+}
