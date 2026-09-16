@@ -844,6 +844,23 @@ language's parser; the `std` entries rewritten (`keys`, `values`, `chars`,
 `count`, `nth`, `par_iter`); the once-only refusal, which is `keeps` asked
 of a `Seq`; the `sync` demand on a `Par[T]`'s lambda.
 
+### 2.19. A bound takes a path, and the ledger records traits and `impl`s
+
+[ADR-106](specification/adr/adr-106.md). `[H: http::Handler]` parses; `use`
+is unchanged; the ledger gains a `trait` table whose methods are ordinary
+`fn` entries, and an `impl` table written where the `impl` stands, so that
+*does `T` implement `A`* is the union over every ledger a program reads. A
+call through a bound resolves to the implementing type's own entry.
+**Nothing of it is built.**
+
+*Evidence:* the three refusals a cross-package `Handler` bound met against
+`examples/http/` — a parse error at the path, `NK1126` after `use http`, and
+the `NK1129` that ADR-100 D2 has since removed.
+
+*What it needs, in the record's order (§5):* the path in the bound's grammar;
+the `trait` table and method entries; the `impl` table and the union in the
+bound check; the resolution at a call through a bound.
+
 ---
 
 ## 3. Upkeep

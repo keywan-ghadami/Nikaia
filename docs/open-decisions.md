@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Three entries, and all of them are open.** Nothing answered lives here: an
+**Two entries, and all of them are open.** Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -59,7 +59,10 @@ Cargo, under the crate name `nikaia_<name>` — the registry, the version
 grammar and the lockfile were already in the tool every build runs) and
 [ADR-105](specification/adr/adr-105.md) (the ledger says `Seq[T]` for what is
 produced step by step and `Par[T]` where the steps run at once — the word the
-type language lacked, and the 35 silent calls behind it). Each record
+type language lacked, and the 35 silent calls behind it) and
+[ADR-106](specification/adr/adr-106.md) (a bound takes a path, `use` stays as it
+is, and the ledger records a trait and each `impl` where they were written —
+the one position that named a type without allowing a path). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.
@@ -83,43 +86,7 @@ written down in [`specification/adr/`](specification/adr).
 
 ---
 
-## 1. Can a bound name a trait in another package?
-
-**Blocked by it:** a generic function in one package constrained by a trait
-declared in another. `fn dispatch[H: http::Handler](…)` is a parse error — a
-bound is one name — and `fn dispatch[H: Handler](…)` after `use http` is
-`NK1126`, because `use` brings no name in and a bound has no way to say where
-the trait lives. The `impl` side already crosses the boundary
-([ADR-095](specification/adr/adr-095.md)); the bound side does not.
-
-Handing a package a *handler* is not this question any more:
-[ADR-102](specification/adr/adr-102.md) gives a parameter a function type,
-and `examples/http/`'s `route` is written with one. What is left is the trait
-door for its own sake — a `Repository` bound, a `Render` bound — across a
-package.
-
-**Two ways out.**
-
-* **A qualified bound**: `[H: http::Handler]`, resolved the way a qualified
-  type in a parameter already is, and the ledger carrying a package's `traits`
-  so the lookup has something to read. The smaller change, and the one the
-  `impl` side already made for its half.
-* **Leave it until a program needs it.** No program in the tree writes a
-  cross-package bound; the handler that motivated it is answered elsewhere.
-
-**What I would do: the first, when the first such program arrives.** It is a
-lookup and a ledger column, not a language question — but it is also the
-neighbour of what a package publishes ([ADR-103](specification/adr/adr-103.md)
-D3), and that is the reason not to decide it on nothing.
-
-**What it costs:** the first costs the `traits` column and the qualified
-bound's parse; the second costs a refusal a library author meets, which is
-where it belongs until then.
-
----
-
-
-## 2. Is text one type whose state the compiler picks, or two the program picks between?
+## 1. Is text one type whose state the compiler picks, or two the program picks between?
 
 **Blocked by it:** nothing half-built. What it blocks is 13 `.to_string()` in
 `examples/`, every one a literal or a view being put where a `String` is
@@ -162,7 +129,7 @@ pointed at.
 
 ---
 
-## 3. Is an untrusted path a **refusal**, or is the taint analysis a feature this language should not have?
+## 2. Is an untrusted path a **refusal**, or is the taint analysis a feature this language should not have?
 
 **Blocked by it:** [ADR-058](specification/adr/adr-058.md) D7, which
 [`open-work.md`](open-work.md) has been carrying as *"the one piece that does

@@ -1060,8 +1060,10 @@ it can fail or pause all come from the declaration. Several bounds are written
 > this language ([ADR-080](adr/adr-080.md)). **A differing signature is not
 > compared yet**, so a method with the wrong arity or result is still refused by
 > the language below. A **default body** has no syntax, a trait is not a type
-> (there is no `dyn` and no `fn f(x: Summarize)`), and a trait cannot be named
-> from another package.
+> (there is no `dyn` and no `fn f(x: Summarize)`). A bound takes a path —
+> `[H: http::Handler]` — and the ledger records a trait and each `impl` where
+> they were written ([ADR-106](adr/adr-106.md)); neither is built, so today a
+> trait cannot be named from another package.
 
 ---
 
