@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Decided (text is one type, and `&str` is the assertion)
+
+- **[ADR-107](docs/specification/adr/adr-107.md).** `String` is the one text type; whether a value of it is borrowed, tethered or owned is the compiler's per use, by Part I 6.6's rule and as `Bytes` already behaves — so a literal stored where a `String` is declared is a view of static text and allocates nothing. `&str` stays, as the promise that a value is a borrowed view with no copy and no handle, held to at the line that would break it: the same door `sync` and `@borrowed` already are, for the loop where average is not good enough. A copy is `.to_owned()` or a refusal, never inserted; `--tethers` reports what was chosen; at a foreign boundary a Rust `String` is a copy the program writes. `open-decisions.md`'s entry on one text type leaves the file.
+- **Nothing of it is built**; `open-work.md` carries the five steps, and the thirteen `.to_string()` in `examples/` are the fixture.
+
+### Decided (a bound takes a path, and the ledger records traits and `impl`s)
+
+- **[ADR-106](docs/specification/adr/adr-106.md).** `[H: http::Handler]` parses, because a bound names a type and every other position that names one takes a path; `use` is unchanged, no name comes in for a trait either. The ledger gains a `trait` table whose methods are ordinary `fn` entries, and an `impl` table written where the `impl` stands — so whether `T` implements `A` is the union over every ledger a program reads plus its own, and no ledger claims a complete list, which would make absence an answer. A call through a bound resolves to the implementing type's own entry, since there is no `dyn`. `open-decisions.md`'s entry on the cross-package bound leaves the file.
+- **Nothing of it is built**; `open-work.md` carries the four steps.
+
 ### Decided (the ledger says `Seq[T]` and `Par[T]`)
 
 - **[ADR-105](docs/specification/adr/adr-105.md).** The ledger's type language gains `Seq[T]` — elements produced step by step, with `sync`/`throws` after it saying what a step may do, as after a function type — and `Par[T]` for what `par_iter()` hands back, whose lambdas must be `sync`. A `Seq` is consumed by walking, so a second walk is refused in our words; a container keeps its name and is walked by view. Neither word is in a program's grammar. What it closes: nine `std` entries that said `-> ?`, and the 35 unanswered method calls in the corpus that were all downstream of one. `open-decisions.md`'s entry on the ledger's type language leaves the file.

@@ -380,6 +380,8 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
 | `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
+| `trait."…"` | table | a trait, with its methods as ordinary `fn` entries — signature, `sync`, `throws` — and no `fields`; a bound and an `impl … for` must name one ([ADR-106](adr/adr-106.md) D3). *Specified, not implemented.* |
+| `impl."A for T"` | table | an `impl`, in the ledger of the package that wrote it; whether `T` implements `A` is the union over every ledger a program reads plus its own, and no ledger claims completeness ([ADR-106](adr/adr-106.md) D4). *Specified, not implemented.* |
 | `crosses` | type | a value of this type **may cross a thread** ([ADR-005](adr/adr-005.md) §1 Group B, `NK25xx`). Written by hand and never inferred, because it only ever answers for a type whose parts this compiler cannot walk: a Nikaia `struct` records its `fields`, and the check walks those. Its absence is "nobody said" and not "it may not" — and "nobody said" is not permission, so the compiler will not put such a value on a thread of its own choosing |
 | `touches` | fn | which resources it reaches and whether it reads or writes them — `["file(path) write", "stdout write"]` ([ADR-033](adr/adr-033.md)). **Absent means it touches everything**, so a function nobody has described orders against everything and stays where it was written. *Specified, not implemented.* |
 | `locks` | fn | whether the body may **acquire a lock**, anywhere it reaches: the property that decides whether a call may appear inside an open lock ([ADR-039](adr/adr-039.md) D3). Propagated over the same call graph as `sync` and from the opposite end — nobody touches a lock until something reached says it does. **An absent entry means it touches a lock**, which is the one inverted key in this file; see below. It is coarse on purpose: it says "a lock", never *which* lock, so it can never answer an ordering question. That is `touches`'s line above, and the two must not be mistaken for one another ([ADR-039](adr/adr-039.md) D4). *Specified, not implemented.* |
@@ -625,8 +627,9 @@ The rule reaches exactly as far as the Rust signature is true. A Rust API that d
 **Mapping Types**
 * Rust `i32` -> Nikaia `i32`
 * Rust `i64`, `u8` -> Nikaia `i64`, `u8` — the rest of the numeric surface (Part I, 2.2)
-* Rust `String` -> Nikaia `String`, and Rust `&str` -> Nikaia `&str`, which is a
-  **view** and not a lifetime (Part II, 10.6)
+* Rust `&str` and Rust `String` -> Nikaia `String`, whose state the compiler
+  picks ([ADR-107](adr/adr-107.md)): a Nikaia `String` crosses to Rust `&str`
+  for free, and to Rust `String` only by a `.to_owned()` the program writes
 * Rust `Option<T>` -> Nikaia `T?` (Nullable)
 * Rust `Vec<T>` -> Nikaia `Vec[T]`, and `HashMap<K, V>` -> `HashMap[K, V]`
 * Rust `Rc<T>` **or** `Arc<T>` -> Nikaia `Shared[T]`. **One Nikaia type, two Rust
