@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Three entries are open**, below. Nothing answered lives here: an
+**Four entries are open**, below. Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -244,6 +244,72 @@ every `map`-shaped call a *user's* library writes — `std`'s own entries are
 unaffected, since they are Rust and their signatures are hand-written. Option 2
 wrong is that `examples/fortunes.nika`'s route handler still cannot be written,
 which is the program this has been waiting on for three records.
+
+## 4. What `extern "C"` costs the language, and in which order
+
+**What is blocked.** Talking to C. [Part III 15.1](specification/30-nikaia-tooling.md)
+writes the whole thing out — an `extern "C"` block, a call inside `unsafe { … }`
+— and it is the direction the roadmap asks for first, ahead of letting C call
+*in* ([ADR-062](specification/adr/adr-062.md), which is the other one and is
+about threads rather than about syntax).
+
+**What the page writes and the language does not have.** Three things, each
+checked rather than recalled:
+
+| written in 15.1 | what happens today |
+| :--- | :--- |
+| `extern "C" { … }` | *expected end of input; found `extern`* — the word is not reserved (Part I 2.1) and the item is not in the grammar |
+| `unsafe { … }` | parses as a name and a block, and is `NK1117`, *nothing declares `unsafe`* |
+| `Pointer[u8]` | `NK1135`, *nothing declares the type `Pointer`* |
+
+`usize` is **not** on that list and is fine: it is writable although `as usize`
+is `NK1122`, which is [ADR-054](specification/adr/adr-054.md) D1's own
+distinction between what `as` may name and what may be written.
+
+**So this is not one decision but three, and two of them are the expensive
+kind.** `extern` and `unsafe` are **reserved words**, and
+[ADR-084](specification/adr/adr-084.md) calls a keyword the most expensive thing
+a language adds — [ADR-117](specification/adr/adr-117.md) has just taken four
+*off* the list, and a record that puts two back is going the other way and
+should say why in numbers rather than in intent. `Pointer[T]` is a **type**, and
+Part I 2.2's surface is a closed set on purpose.
+
+**The options.**
+
+1. **Two words and a type**, as 15.1 writes it. *Cost:* `extern` and `unsafe`
+   stop being names — a search of the corpus says how many programs that costs,
+   which is the measurement [ADR-084](specification/adr/adr-084.md) took for
+   `break` — and `Pointer[T]` joins the surface with a lifetime story of its
+   own, because a pointer that outlives what it points at is the one thing this
+   language has been built not to allow.
+2. **One word.** `extern "C"` becomes an *attribute* on an ordinary
+   declaration — `@foreign fn malloc(size: usize) -> Pointer[u8]` — the way
+   `@borrowed` already is, so only `unsafe` is reserved. *Cost:* the page is
+   rewritten, and an attribute is a weaker signal than a block for something a
+   reader must see.
+3. **No new word at all.** A foreign declaration is a **ledger** entry rather
+   than source — which is exactly what
+   [ADR-104](specification/adr/adr-104.md) decides for a Rust crate, one section
+   further down the same page: `nikaia describe` writes the entry, the file is
+   reviewed like code, and the *program* writes an ordinary call. C is the same
+   shape with a narrower translation table. *Cost:* no `unsafe` marker at the
+   call site, so the boundary is visible in the ledger and not in the body.
+
+**What I would do: option 3, and measure before option 1.** The machinery ADR-104
+builds for Rust is the machinery C needs — a described boundary, hashed, reviewed,
+fail-closed on `touches` and `locks` — and C's table is *smaller* than Rust's, not
+larger. It also answers the `Pointer[T]` question by not asking it yet: a
+described C function's parameter types are whatever the table can name, and what
+it cannot name is `?`, which is [ADR-024](specification/adr/adr-024.md) D1's own
+answer for an absent claim.
+
+**What either direction costs if it is wrong.** Option 3 wrong is that a reader
+cannot see at the call that they are crossing into C, which is the thing `unsafe`
+exists to show — and the way back is option 1, unchanged, so nothing is spent.
+Option 1 wrong is two reserved words that a later record would have to take off
+the list again, which [ADR-117](specification/adr/adr-117.md) has just shown is
+possible but is not free: every program that used the name in between is a
+program that broke.
 
 ---
 

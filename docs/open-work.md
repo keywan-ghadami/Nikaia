@@ -659,12 +659,20 @@ input is the small end of the same question. Nothing here can be an
 
 ### 2.8. There is no target that lets foreign code call in, and the record for one is written
 
-[ADR-062](specification/adr/adr-062.md). Nothing of it is built and nothing of it
-**can** be: `extern "C"` is a parse error (Part III 15.1), `Target` has two values,
-and this repository has no notion of a linkable artifact — no `cdylib`, no
-`staticlib`, no `.so`. So this entry is not in the ordered list above; it is not
-waiting its turn, it is waiting on scope
-([`project_status_and_roadmap.md`](project_status_and_roadmap.md)).
+[ADR-062](specification/adr/adr-062.md). Nothing of it is built: `extern "C"` is
+a parse error (Part III 15.1), `Target` has two values, and this repository has
+no notion of a linkable artifact — no `cdylib`, no `staticlib`, no `.so`.
+
+**The owner has since named it as open**, so it is no longer waiting on scope
+([`project_status_and_roadmap.md`](project_status_and_roadmap.md)) — it is
+waiting on the question one direction over. **Talking *to* C comes first** and is
+15.1's, and what that costs the language is
+[`open-decisions.md`](open-decisions.md)'s newest entry: 15.1's own example
+writes three things the language does not have — `extern` and `unsafe`, neither
+reserved, and `Pointer[T]`, which no record decides — and two of them are
+keywords, which [ADR-084](specification/adr/adr-084.md) calls the most expensive
+thing a language adds. Letting C call *in*, which is this record, is the second
+direction and the one that takes the threads away.
 
 *Why it is written down anyway:* it is the one direction that touches
 `user_parallelism` at its root. A target added without it answers "who owns the
@@ -1261,7 +1269,7 @@ macros*. **Nothing of it is built**: the four are in `parser::RESERVED_WORDS`.
 *What it needs, in the record's order (§5):* the four out of the parser's
 table; the three help texts on `NK1117` and a test per word.
 
-### 2.31. `with` is a copy of a value with named fields changed
+### 2.30. `with` is a copy of a value with named fields changed
 
 [ADR-118](specification/adr/adr-118.md). `p with { x: p.x + 1 }` is a new
 value of the same type; the braces are the literal's, only the top level, the
