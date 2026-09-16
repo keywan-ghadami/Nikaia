@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (a grammar's vocabulary is one page, and an action is the block after the pattern)
+
+- **[ADR-120](docs/specification/adr/adr-120.md).** The grammar is the language's best-designed part and had no page: the specification showed five built-ins and the examples used fourteen, and what uppercase names, `WS`, `=>` and `# "…"` mean lived in example comments. Part II 10.8 now lists every element a grammar may write, one line each, and is complete by rule. A rule's action is the block after its pattern — the one `->` is the result type, as a function's — and the two names that were the engine's spelling for what the grammar already says, `tag("x")` and `digit1`, are refused with `"x"` and `digit+`. The conventions stay, with precedent: uppercase is lexical as in ANTLR, `WS` steers skipping as pest's `WHITESPACE`, `=>` is the cut.
+- **Nothing of it is built**; `open-work.md` carries the three steps, and the specification's grammar blocks are fragments until the parser takes the new form.
+
 ### Decided (a target without an operating system)
 
 - **[ADR-119](docs/specification/adr/adr-119.md).** Bare metal is a **target**, not a second language: the model — a pausing function is a state machine, one executor drives them — is the one embedded Rust runs on microcontrollers, and what a control unit lacks is the OS half of `std`, which the availability table already decides per target. On the target `user_parallelism` is `no`, the emitted Rust is `no_std` with abort and no unwinding, the executor is the target's with interrupts as wakers, and an interrupt handler is a `fn() sync` that touches no lock — so a handler that could pause or deadlock is a refusal, not a convention. A heap by default; `allocation = "startup"` refuses allocation after the executor starts, over a derived `allocates` column. A lock is a critical section the length of its block. The record says what the compiler promises about time (no hidden thread, allocation or lock; deterministic order for a given wake-up sequence) and what it does not (WCET, latency), and where the certification line is, without claiming it. After the HTTP server.

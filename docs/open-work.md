@@ -1327,6 +1327,23 @@ has one Rust half. Scheduled after the HTTP server.
 profile; build-time settings and the deadline; the availability rows and a
 first program.
 
+### 2.33. A grammar's action is the block after the pattern, and two borrowed names go
+
+[ADR-120](specification/adr/adr-120.md). Part II 10.8 is the normative page
+of everything a grammar may write. A rule's action is `{ … }` after its
+pattern with no second arrow; `tag("x")` is `"x"` and `digit1` is `digit+`,
+both refused with the spelling. **Nothing of it is built**: grammars write
+`-> { … }`, and the engine's names pass through.
+
+*Evidence:* 53 action arrows in `examples/` (`json.nika` 18, `calc.nika` 11,
+`config.nika` 8, `k-nucleotide.nika` 5, `access-log.nika` 4, `report.nika`
+4, `1brc.nika` 3), and the grammar blocks of Part II 10.1, 10.6 and 10.7,
+which now write the new form and are fragments until the parser takes it.
+
+*What it needs, in the record's order (§5):* the parser's block-after-pattern
+with the arrow form refused; the emitter writing the engine's arrow; the two
+names refused; the examples rewritten.
+
 ---
 
 ## 3. Upkeep
