@@ -1119,6 +1119,22 @@ not exist, so today nothing expires and nothing is reported.
 status and the message on expiry; a test that expires a deadline and reads
 the status.
 
+### 2.26. `?.` reaches through a view
+
+[ADR-113](specification/adr/adr-113.md). `?.` takes nothing: it reaches
+through a view of its receiver, and the result is a copy where the member
+copies and a view of the receiver otherwise, kept alive as any view of a
+place is. **Nothing of it is built**: `x?.a` lowers to `x.map(|it| it.a)`, a
+method reach to a `match` over `x` by value, and a receiver used again is
+refused below with the note ADR-052 D8 used to translate.
+
+*Evidence:* `let name = user?.name` then `println(user)` is *"use of moved
+value"* today.
+
+*What it needs, in the record's order (§5):* the two lowerings over
+`as_ref()`; the tether analysis reading the result as a view; the translation
+removed and a test that uses the receiver again.
+
 ---
 
 ## 3. Upkeep

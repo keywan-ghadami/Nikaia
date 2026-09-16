@@ -311,7 +311,8 @@ the specification has written down as a rule.
 
 **Recommendation:** lower `?.` through `as_ref()` (a view) unless the member's
 type is a copy; the result is a `T?` of a view, which 6.6 already knows how to
-keep alive.
+keep alive. *Decided since:* [ADR-113](specification/adr/adr-113.md), as
+recommended; ADR-052 D8's translation of the move goes with the move.
 
 ### 2.7 A map index that reads panics and one that writes inserts
 

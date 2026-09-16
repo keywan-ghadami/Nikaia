@@ -818,11 +818,11 @@ let shown = nickname ?? name ?? "Guest"
 > **`?.` through something that cannot be absent is refused** as `NK1121`, and
 > the way out is the plain `.` — a type that is not `T?` always has a value.
 >
-> **And `?.` takes the value it reaches through**, so using the receiver again is
-> refused by the language below with *"use of moved value"* on this line. That is
-> a real rule and not an accident of the lowering; what was translated is the
-> note that explained it, which used to name the machinery instead of the
-> operator ([ADR-052](adr/adr-052.md) D8).
+> **`?.` takes nothing.** It reaches through a view of its receiver, so `user`
+> is usable on the line after `user?.name`; what comes out is a copy where the
+> member copies and a view of the receiver otherwise, as a field read is (6.6)
+> ([ADR-113](adr/adr-113.md)). **Not built yet**: today the lowering takes the
+> receiver, and using it again is refused below with *"use of moved value"*.
 >
 > **`?.` reaches a method too**, because the sentence above says *member* and a
 > method is one ([ADR-066](adr/adr-066.md)): `find(1)?.greet("Hallo")` calls it
