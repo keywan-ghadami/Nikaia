@@ -303,6 +303,8 @@ So, in order, and each says below why it sits where it does:
 
 ### 2.1. The crossing refusals are built and nothing can reach them
 
+**Answered by [ADR-123](specification/adr/adr-123.md):** `crosses` takes `false`, the describer writes it for a type whose fields hold what cannot be sent, and the refusals fire on it. The entry stays until they do.
+
 [ADR-055](specification/adr/adr-055.md) §2 D6's third sharp edge, and the last
 thing that record decided which the compiler does not do.
 
@@ -458,6 +460,8 @@ wider. `crates/nikaia/tests/recursive_methods.rs` holds the two cycles and the
 three shapes that must *not* box.
 
 ### 2.3. Standard input is `async` and does not suspend
+
+**Answered by [ADR-124](specification/adr/adr-124.md):** the defect is the ring's park, which cannot hear a worker's bell; an eventfd on the ring makes every worker operation awaitable, standard input included, and the proposal below to wire standard input to readiness is withdrawn. The entry stays until the input suspends.
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -679,7 +683,7 @@ no notion of a linkable artifact — no `cdylib`, no `staticlib`, no `.so`.
 **The owner has since named it as open**, so it is no longer waiting on scope
 ([`project_status_and_roadmap.md`](project_status_and_roadmap.md)). **Talking
 *to* C came first** and is 15.1's, and it is built:
-[ADR-121](specification/adr/adr-121.md) reserved `extern` and `unsafe` *with
+[ADR-124](specification/adr/adr-124.md) reserved `extern` and `unsafe` *with
 their constructs* — the number that allowed two words was zero — and an
 `extern "C"` block, an `unsafe { … }` and `NK1143` are all there. What that
 record left open is `Pointer[T]`, and what **this** one still waits on is a
@@ -1189,26 +1193,6 @@ which is a corpus migration rather than a rule change.
 word-sized values and the second lowering, with `explain` naming which row a
 value fell in; `--sharing` on a large `get`.
 
-### 2.23. `catch` takes everything, and one record writes a `catch` that does not
-
-[ADR-111](specification/adr/adr-111.md) D5 is **built**: `kasse.set(neu; after:
-stand)` is `Locked::set(after)` in the ledger, the witness is an argument of
-it, `throws = ["Overtaken"]` carries the failure the way every other one
-travels, and `NK2208` keeps the lowering from being a second door. What is left
-of that record is one **sentence** of it: it writes `catch Overtaken
-{ continue }`, and this language has one `catch` and it takes everything.
-
-*It is not work so much as a question*, which is why it is in
-[`open-decisions.md`](open-decisions.md) with a recommendation rather than
-here with steps. Whichever way it goes, the line in D5 §2 is what changes
-first: either a typed handler exists and the line is right, or it does not and
-the line should say `catch { continue }`.
-
-*What is not built and belongs to another record:*
-[ADR-110](specification/adr/adr-110.md) D2's compare-and-swap, which would make
-the door one instruction for a word-sized value instead of one lock
-acquisition. It is that record's speed row and §2.22 carries it.
-
 ### 2.24. A cleanup the deadline cut off names the resource
 
 [ADR-112](specification/adr/adr-112.md). **Steps 2 and 3 are built**: an
@@ -1317,7 +1301,7 @@ and a test.
 
 ### 2.31. A target without an operating system
 
-[ADR-121](specification/adr/adr-121.md). A bare-metal target with
+[ADR-124](specification/adr/adr-124.md). A bare-metal target with
 `user_parallelism` pinned to `no`; `no_std` emission with a target prelude
 and abort; the target's executor over described crates with interrupts as
 wakers and `irq::on(vector, fn() sync)`; a heap by default and an
@@ -1348,12 +1332,49 @@ which now write the new form and are fragments until the parser takes it.
 with the arrow form refused; the emitter writing the engine's arrow; the two
 names refused; the examples rewritten.
 
+### 2.34. The ring's park hears the bell
+
+[ADR-124](specification/adr/adr-124.md). An eventfd on the ring, always
+armed, that `ring_the_bell` writes to; its completion carries its own user
+data and is not an operation's; the test that a worker reply does not wake a
+ring park is inverted; `io::read`, `io::read_to_string`, `io::lines` and
+`rt::io::wait` are awaited. **Nothing of it is built.**
+
+*What it needs, in the record's order (§5):* the eventfd and its re-arming;
+the bell writing to it; the tests; the four entries awaited.
+
+### 2.35. A function-typed parameter lowers by its type
+
+[ADR-122](specification/adr/adr-122.md). Without `sync` the future shape, run
+or kept; with `sync` a plain closure; the refusal of a pausing lambda at a run
+parameter goes; the box on the common case is measured before the record is
+closed. **Nothing of it is built**: a run parameter lowers to `impl Fn`.
+
+*Evidence:* `examples/fortunes.nika:120`'s route handler.
+
+*What it needs, in the record's order (§5):* the emitter by type; the
+refusal removed and its test inverted; the measurement, with the number
+written into the record; `fortunes.nika`.
+
+### 2.36. `crosses` says *no* as well as *yes*
+
+[ADR-123](specification/adr/adr-123.md). `crosses = false` is the claim a
+type may not cross a thread; absent stays *nothing recorded*; the describer
+writes it from a foreign type's fields. **Nothing of it is built**: the column
+is a boolean.
+
+*Evidence:* `examples/foreign-runtime/`'s `LocalHandle` over an `Rc<String>`.
+
+*What it needs, in the record's order (§5):* the column three-valued; the
+verdict reading `false`; the describer and the example's description; the
+refusals' tests firing.
+
 ---
 
 
 ### 2.33. A C declaration cannot name a pointer
 
-[ADR-121](specification/adr/adr-121.md) §4, and the only part of that record
+[ADR-124](specification/adr/adr-124.md) §4, and the only part of that record
 left. `extern` and `unsafe` are reserved words with constructs, an
 `extern "C"` block is a program, `unsafe { … }` is how a call to one is
 written, `NK1143` is what a call outside one meets, and the whole thing

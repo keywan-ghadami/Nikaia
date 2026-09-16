@@ -44,7 +44,7 @@ const RESERVED_BELOW: &[&str] = &[
 /// is the free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
 ///
 /// **`extern` and `unsafe` joined them** with their constructs
-/// ([ADR-121](../../../docs/specification/adr/adr-121.md) D1) — the two words
+/// ([ADR-124](../../../docs/specification/adr/adr-124.md) D1) — the two words
 /// Part III 15.1 writes, reserved on a measurement that came to zero. They are
 /// the first two here that Rust reserves *and* this language now does, which is
 /// why the escape can never fire for them either.

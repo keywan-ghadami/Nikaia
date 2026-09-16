@@ -160,7 +160,7 @@ fn item_types(
             }
         }
         // **An `extern "C"` declaration's types are written types**
-        // ([ADR-121](../../docs/specification/adr/adr-121.md) D1), and the
+        // ([ADR-124](../../docs/specification/adr/adr-124.md) D1), and the
         // reason this arm has to exist is Part III 15.1's own example:
         // `Pointer[u8]` is a type nothing declares, and without this it reached
         // `rustc` intact and came back about a file nobody wrote — which is the

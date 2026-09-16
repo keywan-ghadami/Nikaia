@@ -115,7 +115,7 @@ pub enum Item {
     },
 
     /// Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D1).
+    /// ([ADR-124](../../../docs/specification/adr/adr-124.md) D1).
     ///
     /// **Signatures and nothing else**, which is `Trait`'s reason one item
     /// over: a declaration has no body, so `Item::Fn` cannot serve. The
@@ -520,7 +520,7 @@ pub enum Expr {
     },
 
     /// Part III 15.1: `unsafe { … }`
-    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D3).
+    /// ([ADR-124](../../../docs/specification/adr/adr-124.md) D3).
     ///
     /// **A block with a value, and no other rule.** What is inside is checked
     /// exactly as anything else is; what the word buys is that the boundary is
