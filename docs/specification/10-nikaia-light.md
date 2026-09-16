@@ -188,10 +188,12 @@ have:
 Nikaia provides basic types to represent simple values.
 
 * **Integers:** Whole numbers without fractions.
-    * `i32`: A standard integer (32-bit). Used for most numbers.
-    * `i64`: A large integer (64-bit). Used for very large numbers, and what a
+    * `i64`: A large integer (64-bit). Used for most numbers, and what a
       **length** is: `xs.len()` hands back an `i64`, and an index is one
       ([ADR-048](adr/adr-048.md) D1).
+    * `i32`: A standard integer (32-bit). Used where the layout matters — a
+      struct that has to be small, a wire format, a C header — and a number
+      that meets an `i64` there is widened where you say so, with `as i64`.
     * `u8`: One byte. What reading a file hands back a list of
       (`fs::read` → `Vec[u8]`), which is why it is named here — a type a program
       meets has to be a type the specification offers. It has the same
