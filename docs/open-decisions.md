@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Four entries are open**, below. Nothing answered lives here: an
+**Five entries are open**, below. Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -310,6 +310,60 @@ Option 1 wrong is two reserved words that a later record would have to take off
 the list again, which [ADR-117](specification/adr/adr-117.md) has just shown is
 possible but is not free: every program that used the name in between is a
 program that broke.
+
+## 5. Whether `crosses` says *no* as well as *yes*
+
+**What is blocked.** `NK2501` and `NK2502`, which are built, tested, and cannot
+fire — [`open-work.md`](open-work.md)'s oldest open entry. `Crossing::MayNot`
+has exactly one producer, a lock at a **foreign** destination
+([ADR-045](specification/adr/adr-045.md) D3), so at `Destination::Ours` — where
+a task goes — no type answers it. That entry said what would reach it first: a
+type from outside this language, described by
+[ADR-104](specification/adr/adr-104.md).
+
+**The type is here and the file cannot say it.** `examples/foreign-runtime/`
+now ships a description of `hyper_shim`, and its `LocalHandle` holds an
+`Rc<String>` — a value that provably does not cross a thread, which is the whole
+point of that experiment. But the ledger's `crosses` is a **boolean**:
+`crosses = true` answers `May`, and its absence answers `Undecided`. Two answers
+feeding a verdict that has three, and the missing one is the only one that
+refuses anything.
+
+**The precedent is one column over and it is recent.** `locks` was going to be a
+boolean and is three-valued — `No`, `Holds`, `Undecided`
+([ADR-039](specification/adr/adr-039.md) D3) — because the corpus showed that
+reading *nothing said* as *no* refuses correct programs and reading it as *yes*
+is a promise that fails open. `crosses` is the same shape with the same two
+mistakes available.
+
+**The options.**
+
+1. **`crosses` takes three values**, written `crosses = true` / `crosses =
+   false` / absent, where `false` is the claim *this does not cross* and absence
+   stays *nothing recorded*. *Cost:* one column's type, its render and parse,
+   and every reader of it — there are few. Every ledger already written keeps
+   its meaning, because absence is unchanged and `true` is unchanged.
+2. **A second column**, `sends = "no"` beside `crosses = true`. *Cost:* two
+   columns for one question, and the pair can contradict itself.
+3. **Leave it, and let `MayNot` stay the lock's alone.** *Cost:* `NK2501` and
+   `NK2502` stay unreachable — a refusal that is written, tested and silent is
+   a claim the compiler makes and cannot keep — and a described foreign type
+   that does not cross is answered *undecided*, which is not permission but is
+   also not the message the reader is owed.
+
+**What I would do: option 1.** It is the shape this repository already chose for
+the same problem, the migration is free because absence keeps its meaning, and
+what it buys is the first thing that can make two built refusals fire. What it
+needs beside the column is the **describer** filling it, which is ADR-104's
+step 2 — a `Send` bound absent from a type whose fields hold an `Rc` is
+something a field reader can see, and a reviewer can see it today.
+
+**What either direction costs if it is wrong.** Option 1 wrong is a column that
+says *no* about a type that does cross — which is a **refusal** of a correct
+program, C.4's worse mistake, and the reason the answer must come from fields
+rather than from the absence of a word. Option 3 wrong is what is true now: two
+refusals in the catalogue that no program can reach, which every later reader has
+to discover for themselves.
 
 ---
 

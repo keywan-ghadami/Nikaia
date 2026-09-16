@@ -329,13 +329,26 @@ for `Send` of the whole thing. The rule is
 destination ([ADR-045](specification/adr/adr-045.md) D3) — so at
 `Destination::Ours`, which is where a task goes, **no type answers it**.
 `NK2501` is therefore silent in both its halves, and will be until
-`contracts::send` gains a second producer. What reaches it first is a type from
-outside this language, which is
-[ADR-104](specification/adr/adr-104.md)'s `nikaia describe` — the entry here
-about a foreign crate being described before it is called.
+`contracts::send` gains a second producer.
 
-*So this entry is now about `send.rs` rather than about the checker*, and it
-stays open for that reason rather than for the one it was filed under.
+*The second producer has arrived and cannot speak.*
+[ADR-104](specification/adr/adr-104.md)'s described crate is here — the entry
+below is built, and `examples/foreign-runtime/` ships a description of
+`hyper_shim`, whose `LocalHandle` holds an `Rc<String>` and provably does not
+cross. **The file has no way to say it.** `crosses` is a **boolean**:
+`crosses = true` answers `May` and its absence answers `Undecided`, so the
+column has two answers where the verdict it feeds has three, and *it does not
+cross* is the one it cannot spell.
+
+*That is a sharp, small question and it is in*
+[`open-decisions.md`](open-decisions.md): whether `crosses` becomes
+three-valued, the way `locks` did ([ADR-039](specification/adr/adr-039.md) D3)
+and for the same reason — a two-answer column feeding a three-answer verdict
+loses exactly the answer that refuses something.
+
+*So this entry is now about one column in `send.rs`* rather than about the
+checker, and it stays open for that reason rather than for the one it was filed
+under.
 
 *Why it is here and not in §1:* nothing is miscompiled and no correct program is
 refused. It is a message in the wrong words, which is the same class as every
