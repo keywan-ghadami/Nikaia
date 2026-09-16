@@ -1085,6 +1085,40 @@ which is a corpus migration rather than a rule change.
 word-sized values and the second lowering, with `explain` naming which row a
 value fell in; `--sharing` on a large `get`.
 
+### 2.24. What leaves a lock is stamped `Seen[T]`
+
+[ADR-111](specification/adr/adr-111.md). `get` and `access` hand out a
+`Seen[T]`; the stamp sticks through arithmetic and through calls to entries
+whose `touches` names no lock, is declared at a struct field and at a
+parameter of a lock-touching function, and never comes off; `set` given a
+stamped value or under a stamped condition is `NK2205` wherever the read was,
+an `update` block that does not read `v` is `NK2207`, and `set(neu; after:
+seen)` is the defined door with `Overtaken`. The emitter erases the type.
+**Nothing of it is built**: `get` returns `T`, `NK2205` sees the inline `get`
+only, and `set` has no `after:`.
+
+*Evidence:* Part II 12.2 said in as many words that the check *"catches what
+people write on one line and not the same thing spread over two"*;
+`crates/nikaia/tests/lock_doors.rs` asserts the inline shape.
+
+*What it needs, in the record's order (§5):* `Seen[T]` in the checker and the
+ledger's type language with the emitter erasing it; the pass-through over
+`touches` and the two declared places; `NK2205`'s two shapes and `NK2207`;
+`after:` and `Overtaken`; the examples and the tests.
+
+### 2.25. An expired `cleanup-deadline` is exit 70 on the panic path
+
+[ADR-112](specification/adr/adr-112.md). A cleanup the deadline cut off is a
+failure of the program: exit status 70, the resources named on standard error
+and through the panic hook, never on standard output, and no setting that
+makes it a `0`. **Nothing of it is built**, because the drain it ends is not:
+the parked-cleanup queue of [ADR-006](specification/adr/adr-006.md) D3 does
+not exist, so today nothing expires and nothing is reported.
+
+*What it needs, in the record's order (§5):* ADR-006's queue and drain; the
+status and the message on expiry; a test that expires a deadline and reads
+the status.
+
 ---
 
 ## 3. Upkeep

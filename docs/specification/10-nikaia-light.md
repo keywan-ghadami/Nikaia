@@ -1470,11 +1470,24 @@ Because `update` and `access` run your code while the lock is open, that code
 must be able to run straight through: no I/O, and no second lock. The compiler
 checks both (Part II, 12.2 and 12.3).
 
-Two mistakes are refused by name. Assigning to a `SharedMut` directly —
-`kasse = 0` — is refused, and the message names `set`. And a `set` whose
-argument reads the same container, `kasse.set(kasse.get() + 100)`, is refused,
-and the message names `update`, which is the door for a new value computed from
-the old one ([ADR-039](adr/adr-039.md) D10).
+**What you take out of a lock is stamped.** `kasse.get()` is a `Seen[i64]`,
+and so is what `access` computes. A `Seen` reads like the value it carries —
+print it, compare it, send it in a response, hand it to any function that
+touches no lock — and the stamp goes with it through arithmetic, calls,
+struct fields (declared `Seen[…]`) and time. What it may not do is go back into
+a lock **blind**: `kasse.set(stand + 100)` is refused wherever `stand` was
+read, and so is `if stand > 100 { kasse.set(0) }`, because the decision is
+stale even where the value is not. The doors for what was seen are `update`,
+which decides inside the lock, and `set(neu; after: stand)`, which stores only
+if the lock still holds what was seen and throws `Overtaken` otherwise
+([ADR-111](adr/adr-111.md)). There is no word that removes the stamp.
+
+Three mistakes are refused by name. Assigning to a `SharedMut` directly —
+`kasse = 0` — is refused, and the message names `set`. A `set` given a stamped
+value, or standing under a stamped condition, is refused, and the message names
+`update` and `after:` ([ADR-039](adr/adr-039.md) D10, [ADR-111](adr/adr-111.md)
+D4). And an `update` block that assigns to `v` without reading it is a `set`
+through the back door, refused as one.
 
 > **Status:** not built. None of the four doors exists: `get`, `set`, `update`,
 > `access` and `access_all` have no entry in `std`, nothing lowers them, and
@@ -1546,7 +1559,7 @@ Two refinements:
 
 **One restriction, told straight:** a `sync` function can never pause — so a resource with a pausable `cleanup` must not go out of scope inside one. The compiler catches this (`NK2602`) and names the ways out: return the resource to your caller, close it before the `sync` part, or use a non-buffering variant.
 
-**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and **on a target that traps rather than unwinds, a panic ends the process immediately, so no destructors run at all** (Part III, Appendix A). What *does* still run on every panic is the **Panic Hook** (7.2) — your registered last-moment handler for dumps and crash reports. Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
+**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3b; a cleanup the deadline cut off is a failure of the program, exit status 70 with the resource named on the panic path, [ADR-112](adr/adr-112.md)). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and **on a target that traps rather than unwinds, a panic ends the process immediately, so no destructors run at all** (Part III, Appendix A). What *does* still run on every panic is the **Panic Hook** (7.2) — your registered last-moment handler for dumps and crash reports. Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
 
 > **Design Note: Why no `defer`?**
 > Unlike languages like Go or Zig, Nikaia does not need a `defer` keyword.
