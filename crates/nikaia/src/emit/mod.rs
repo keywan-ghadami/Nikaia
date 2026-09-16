@@ -3047,6 +3047,32 @@ impl<'p> Emitter<'p> {
             return format!("({})", parts.join(", "));
         }
 
+        // **`Seen[T]` is erased**
+        // ([ADR-111](../../docs/specification/adr/adr-111.md) D1): it is a type
+        // here and in the ledger and **not** one in the language below, so a
+        // `Seen[i64]` is an `i64`, a field declared `Seen[i64]` is an `i64`
+        // field, and a signature with `Seen` in it is one without. No counter,
+        // no marker, no check at run time, no bytes.
+        //
+        // Written where the name is read rather than at every position that
+        // takes a type, so that a `Vec[Seen[i64]]` and a `Seen[i64]?` come out
+        // right for the same reason `Shared` does one paragraph down.
+        if self.text(ty.name) == crate::contracts::ty::SEEN {
+            let inner = ty.generics.first().cloned().unwrap_or_else(|| Type {
+                name: ty.name,
+                generics: Vec::new(),
+                is_view: false,
+                is_nullable: false,
+                is_tuple: false,
+            });
+            let inner = Type {
+                is_nullable: ty.is_nullable || inner.is_nullable,
+                is_view: ty.is_view || inner.is_view,
+                ..inner
+            };
+            return self.ty_counted(&inner, lifetimes, count);
+        }
+
         // Part I 2.3: `T?` is an `Option<T>`, which is the mapping Part III 15.2
         // writes the other way round. The `?` is peeled and the rest of this
         // function renders the type it is nullable *of* - so `&str?` is an

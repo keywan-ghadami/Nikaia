@@ -80,9 +80,8 @@ fn a_value_that_cannot_be_rebuilt_is_an_ellipsis() {
     );
 }
 
-/// **`NK2205`: the shape people write**, which D10 says is syntactic on
-/// purpose — the `get` written *inside* the `set`, not the same pair spread
-/// over two lines.
+/// **`NK2205`: the shape people write**, and the message names the door that
+/// takes the lock once.
 #[test]
 fn a_set_that_reads_what_it_writes_names_the_third_door() {
     let found = coded(&program("    kasse.set(kasse.get() + 100)"), "NK2205");
@@ -90,7 +89,7 @@ fn a_set_that_reads_what_it_writes_names_the_third_door() {
     assert!(
         found[0]
             .message
-            .contains("reads `kasse` while computing what to store in it"),
+            .contains("stores a value that was read from a lock"),
         "{:#?}",
         found[0]
     );
@@ -122,26 +121,76 @@ fn the_read_is_found_however_deep_it_is_written() {
     }
 }
 
-/// **The three shapes that must stay quiet**, which is the half that decides
-/// whether these refusals cost anything.
+/// **What must stay quiet**, which is the half that decides whether these
+/// refusals cost anything.
 ///
-/// A value computed outside the lock is what `set` is **for**; reading one
-/// container while writing another takes each lock once and is an ordinary
-/// program; and the same pair spread over two lines is a question about what
-/// happened between two statements, which D10 says this rule does not ask.
+/// A value computed outside the lock is what `set` is **for**: a starting
+/// value, a configuration that arrived from outside, a reset an operator asked
+/// for ([ADR-111](../../../docs/specification/adr/adr-111.md) D4).
 #[test]
 fn what_is_not_the_shape_is_left_alone() {
-    for body in [
-        "    kasse.set(42)",
-        "    let other = SharedMut(1)\n    kasse.set(other.get() + 1)",
-        "    let old = kasse.get()\n    kasse.set(old + 1)",
-    ] {
+    for body in ["    kasse.set(42)", "    let n = 7\n    kasse.set(n * 6)"] {
         assert!(
             coded(&program(body), "NK2205").is_empty(),
             "`{body}` is a program:\n{:#?}",
             findings(&program(body))
         );
     }
+}
+
+/// **And the two shapes that used to be quiet and are not.**
+///
+/// `NK2205` used to ask whether the argument contained a `get` **on the same
+/// container**, which caught the one line and nothing else. ADR-111 widened it
+/// to *the value carries where it came from*, and two things follow that the
+/// old rule let through:
+///
+/// * the same pair **spread over two lines**, which the old rule called a
+///   question about what happened between two statements and D4 answers
+///   outright: *whether `stand` was read on the line above, in another
+///   function, or in another request*;
+/// * a value read from **another** lock, because `set`'s own `touches` names
+///   one (D2), so it takes a `Seen` only where its signature says `Seen` — and
+///   it does not. The stamp does not record **which** lock, and that is the
+///   design rather than a limit: the whole point is that no analysis follows
+///   the value.
+#[test]
+fn a_stamp_from_anywhere_is_refused() {
+    for body in [
+        "    let old = kasse.get()\n    kasse.set(old + 1)",
+        "    let other = SharedMut(1)\n    kasse.set(other.get() + 1)",
+    ] {
+        assert_eq!(
+            coded(&program(body), "NK2205").len(),
+            1,
+            "`{body}` stores what a lock handed out"
+        );
+    }
+}
+
+/// **A decision read from a lock is stale too**
+/// ([ADR-111](../../../docs/specification/adr/adr-111.md) D4's second shape):
+/// the value stored is plain, and what may have changed is the condition.
+#[test]
+fn a_set_under_a_stamped_condition_is_refused() {
+    for body in [
+        "    let stand = kasse.get()\n    if stand > 100 { kasse.set(0) }",
+        "    let stand = kasse.get()\n    if stand > 100 { if true { kasse.set(0) } }",
+    ] {
+        assert_eq!(
+            coded(&program(body), "NK2205").len(),
+            1,
+            "`{body}` decides on what the lock said"
+        );
+    }
+
+    // And a plain condition is not one, which is the half that says the rule
+    // reads the condition rather than the `if`.
+    assert!(coded(
+        &program("    let n = 7\n    if n > 3 { kasse.set(0) }"),
+        "NK2205"
+    )
+    .is_empty());
 }
 
 /// **And an ordinary variable is not a hull**, which keeps `NK2204` off every

@@ -163,6 +163,16 @@ pub struct Touch {
 }
 
 impl Touch {
+    /// Whether this touch is a **lock**
+    /// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D2).
+    ///
+    /// What hangs on it is whether a callee could write a stamped value into
+    /// the lock it reaches: one that touches none cannot, so a `Seen` passes
+    /// through it and comes out stamped.
+    pub fn names_a_lock(&self) -> bool {
+        self.kind == "lock"
+    }
+
     /// Read one back from the text a ledger writes.
     pub fn parse(text: &str) -> Result<Touch> {
         let text = text.trim();

@@ -1066,26 +1066,34 @@ which is a corpus migration rather than a rule change.
 word-sized values and the second lowering, with `explain` naming which row a
 value fell in; `--sharing` on a large `get`.
 
-### 2.23. What leaves a lock is stamped `Seen[T]`
+### 2.23. `set(neu; after: seen)` is the one door for a stamped value
 
-[ADR-111](specification/adr/adr-111.md). `get` and `access` hand out a
-`Seen[T]`; the stamp sticks through arithmetic and through calls to entries
-whose `touches` names no lock, is declared at a struct field and at a
-parameter of a lock-touching function, and never comes off; `set` given a
-stamped value or under a stamped condition is `NK2205` wherever the read was,
-an `update` block that does not read `v` is `NK2207`, and `set(neu; after:
-seen)` is the defined door with `Overtaken`. The emitter erases the type.
-**Nothing of it is built**: `get` returns `T`, `NK2205` sees the inline `get`
-only, and `set` has no `after:`.
+[ADR-111](specification/adr/adr-111.md) D5, and the only part of that record
+left. **D1 to D4 are built**: `get` and `access` hand out a `Seen[T]`, the
+stamp sticks through arithmetic and through calls to entries whose `touches`
+names no lock, the emitter erases the type, and all three refusals are raised
+— `NK2205` in both shapes and `NK2207`.
+
+*What is left is the way through.* `set(neu; after: stand)` is, by definition,
+`update fn(mut v) { if v == stand { v = neu } else { throw Overtaken } }`: the
+witness is the value itself, so with `after:` the stored value may be stamped
+and the call may stand under a stamped condition. `T` must be comparable,
+`Overtaken` is an error like any other — caught, declared, retried with
+`catch Overtaken { continue }`, or handed to the caller, which in a server is
+the honest 409.
+
+*Until it lands*, a stamped value has one way through and it is `update`,
+which decides inside the lock. That is not a gap so much as the smaller
+surface: `after:` is what makes the *optimistic* form writable, and nothing in
+the corpus writes one.
 
 *Evidence:* Part II 12.2 said in as many words that the check *"catches what
-people write on one line and not the same thing spread over two"*;
-`crates/nikaia/tests/lock_doors.rs` asserts the inline shape.
+people write on one line and not the same thing spread over two"* — which is
+no longer true and has been rewritten.
 
-*What it needs, in the record's order (§5):* `Seen[T]` in the checker and the
-ledger's type language with the emitter erasing it; the pass-through over
-`touches` and the two declared places; `NK2205`'s two shapes and `NK2207`;
-`after:` and `Overtaken`; the examples and the tests.
+*What it needs, in the record's order (§5):* `after:` as a configuration
+parameter on `set`, the lowering to D5's `update`, `Overtaken` as a declared
+error, and the specification's example.
 
 ### 2.24. An expired `cleanup-deadline` is exit 70 on the panic path
 

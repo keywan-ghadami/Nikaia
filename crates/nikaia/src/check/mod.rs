@@ -431,6 +431,8 @@ pub fn check_program(
             .collect(),
         scope: Vec::new(),
         at_a_write_door: false,
+        set_receiver: None,
+        stamped_condition: None,
         inside_a_door: false,
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
@@ -949,6 +951,22 @@ struct Checker<'a> {
     /// the emitter writes `mut` itself for a fold's accumulator and refusing
     /// there would refuse a program that compiles.
     at_a_write_door: bool,
+    /// The name the `set` being typed was called on, for `NK2205`'s message
+    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D4).
+    ///
+    /// The rule wants the receiver's **name** and the argument's **type**, and
+    /// those are known in two different places: the name where the method call
+    /// is walked, the types after `arguments_given` has run. Carried rather
+    /// than passed, the way the door flags beside it are.
+    set_receiver: Option<String>,
+    /// Where the condition this stands under was read from a lock, if it was
+    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D4's second shape).
+    ///
+    /// `if stand > 100 { kasse.set(0) }` stores a plain value; the **decision**
+    /// is the stale thing. A `while`, a `match` and a nested `if` are
+    /// conditions alike, which is why this is a flag over a block rather than a
+    /// question asked of one statement.
+    stamped_condition: Option<usize>,
     /// Whether what is being walked is **inside a door's block** — `access`,
     /// `update`, `access_all` or `update_all`
     /// ([ADR-039](../../docs/specification/adr/adr-039.md) D10).
@@ -2368,6 +2386,7 @@ impl<'a> Checker<'a> {
             .map(|ty| ty::substitute(ty, &bound))
             .collect();
         let found = self.arguments_given(args, &expected, span);
+        self.a_set_that_reads_what_it_writes(&on, method, &found, span);
         let result = self.arguments(
             &key,
             self.parsed.text(method),
@@ -2384,7 +2403,8 @@ impl<'a> Checker<'a> {
         for (name, ty) in from_arguments(contract, &found) {
             bound.entry(name).or_insert(ty);
         }
-        ty::substitute(&result, &bound)
+        let result = ty::substitute(&result, &bound);
+        self.stamped_through(contract, &found, result)
     }
 
     /// Part I 2.2: **`as` names a type this language offers**
@@ -3114,8 +3134,17 @@ impl<'a> Checker<'a> {
             } => {
                 let cond_ty = self.expr(cond, span);
                 self.expect_bool(&cond_ty, span, "an `if` decides on a `bool`");
+                // **A decision taken on what a lock said is stale too**
+                // ([ADR-111](../../docs/specification/adr/adr-111.md) D4's
+                // second shape). It reaches inward and **accumulates**: a
+                // nested `if` under a stamped one is still under it, and a
+                // plain condition inside does not clear the outer one.
+                let outer_condition = self.stamped_condition;
+                if cond_ty.is_seen() {
+                    self.stamped_condition = Some(span.start);
+                }
                 let then = self.block(then_branch);
-                match else_branch {
+                let branches = match else_branch {
                     Some(otherwise) => {
                         let other = self.block(otherwise);
                         // Only when both arms agree is there something to say.
@@ -3127,11 +3156,18 @@ impl<'a> Checker<'a> {
                     }
                     // An `if` with no `else` is a statement's worth of value.
                     None => Ty::Unknown,
-                }
+                };
+                self.stamped_condition = outer_condition;
+                branches
             }
 
             Expr::Match { value, arms } => {
-                self.expr(value, span);
+                let on = self.expr(value, span);
+                // **A `match` is a condition too** (ADR-111 D4).
+                let outer_condition = self.stamped_condition;
+                if on.is_seen() {
+                    self.stamped_condition = Some(span.start);
+                }
                 let mut result: Option<Ty> = None;
                 let mut agree = true;
                 for arm in arms {
@@ -3145,6 +3181,7 @@ impl<'a> Checker<'a> {
                         Some(_) => agree = false,
                     }
                 }
+                self.stamped_condition = outer_condition;
                 // Every arm of a `match` is a value of the same type, but what
                 // that type is, is only known when every arm says the same.
                 match result {
@@ -3188,11 +3225,20 @@ impl<'a> Checker<'a> {
                     });
                     return Ty::Unknown;
                 }
-                // **A `set` that reads the same container while computing what
-                // to store** ([ADR-099](../../../docs/specification/adr/adr-099.md)).
-                // Asked here rather than in `call_on`, because the rule is
-                // about the receiver's **name** and that arm is handed a type.
-                self.a_set_that_reads_what_it_writes(&on, receiver, *method, args, span);
+                // **A `set` given a stamped value**
+                // ([ADR-111](../../docs/specification/adr/adr-111.md) D4). The
+                // rule wants the receiver's **name** for its message and the
+                // argument's **type** for its answer, and those are known in
+                // two different places — so the name is carried the way the
+                // door flags above are, and the rule itself runs in `call_on`
+                // where the arguments have been typed.
+                let outer_receiver = std::mem::replace(
+                    &mut self.set_receiver,
+                    match receiver.as_ref() {
+                        Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+                        _ => Some("this lock".to_string()),
+                    },
+                );
                 // **`NK2203`, the method half**: which entry `other.get()` goes
                 // to is the type checker's answer (ADR-028), so it is asked
                 // here where the receiver's type is in hand.
@@ -3213,8 +3259,9 @@ impl<'a> Checker<'a> {
                 let at_a_door =
                     self.parsed.text(*method) == "update" && locked_content_of(&on).is_some();
                 if at_a_door {
-                    if let Some(Expr::Closure { body, .. }) = args.last() {
+                    if let Some(Expr::Closure { params, body, .. }) = args.last() {
                         self.an_update_block_returns_nothing(body, span);
+                        self.an_update_block_reads_what_it_writes(params, body, span);
                     }
                 }
                 let outer_door = std::mem::replace(&mut self.at_a_write_door, at_a_door);
@@ -3223,6 +3270,8 @@ impl<'a> Checker<'a> {
                 // lock is open in either.
                 let holding = matches!(self.parsed.text(*method), "update" | "access")
                     && locked_content_of(&on).is_some();
+                // Kept for the stamp below, since `call_on` takes `on` by value.
+                let on_for_the_stamp = on.clone();
                 let outer_inside = std::mem::replace(&mut self.inside_a_door, holding);
                 // **D3**: a method that changes its subject, called on a
                 // parameter. Asked of the `mutates` column (D3's own, recorded
@@ -3250,6 +3299,14 @@ impl<'a> Checker<'a> {
                 let value = self.call_on(on, *method, args, span);
                 self.at_a_write_door = outer_door;
                 self.inside_a_door = outer_inside;
+                self.set_receiver = outer_receiver;
+                // **And what `access` hands back came out of a lock** (D1).
+                let value = match self.parsed.text(*method) == "access"
+                    && locked_content_of(&on_for_the_stamp).is_some()
+                {
+                    true => Ty::seen(value.unseen()),
+                    false => value,
+                };
                 value
             }
 
@@ -3503,7 +3560,15 @@ impl<'a> Checker<'a> {
                 let left = self.expr(lhs, span);
                 let right = self.expr(rhs, span);
                 self.divisor_is_not_zero(*op, rhs, span);
-                match op {
+                // **The stamp sticks**
+                // ([ADR-111](../../docs/specification/adr/adr-111.md) D2):
+                // `stand + 100` is a `Seen[i64]` and `stand > 100` a
+                // `Seen[bool]`. An operator cannot put a value back into the
+                // lock it came from, so what it makes still carries where it
+                // came from — which is what lets `set` refuse it and every
+                // other sink take it.
+                let stamped = left.is_seen() || right.is_seen();
+                let outcome = match op {
                     BinaryOp::And | BinaryOp::Or => {
                         self.expect_bool(&left, span, "`&&` and `||` join two `bool`s");
                         self.expect_bool(&right, span, "`&&` and `||` join two `bool`s");
@@ -3542,6 +3607,10 @@ impl<'a> Checker<'a> {
                         _ if left == right => left,
                         _ => Ty::Unknown,
                     },
+                };
+                match stamped {
+                    true => Ty::seen(outcome.unseen()),
+                    false => outcome,
                 }
             }
 
@@ -3990,6 +4059,7 @@ impl<'a> Checker<'a> {
         // D6 is D1 widened, so the same two questions are asked of this block.
         if matches!(door, MultiLock::Writing) {
             self.an_update_block_returns_nothing(body, span);
+            self.an_update_block_reads_what_it_writes(params, body, span);
         }
         let outer_door = std::mem::replace(
             &mut self.at_a_write_door,
@@ -4001,8 +4071,12 @@ impl<'a> Checker<'a> {
         self.at_a_write_door = outer_door;
         self.inside_a_door = outer_inside;
         match door {
-            // What a lambda hands back is not written down (ADR-029 D1).
-            MultiLock::Reading => Ty::Unknown,
+            // What a lambda hands back is not written down (ADR-029 D1) — but
+            // that it came **out of a lock** is
+            // ([ADR-111](../../docs/specification/adr/adr-111.md) D1), and the
+            // stamp is what a `set` reads. `Seen[?]` is the honest pair: the
+            // type is unknown and where it came from is not.
+            MultiLock::Reading => Ty::seen(Ty::Unknown),
             MultiLock::Writing => Ty::Tuple(Vec::new()),
         }
     }
@@ -4256,7 +4330,8 @@ impl<'a> Checker<'a> {
         // parameters are typed from the signature (ADR-029), so the signature
         // has to reach them unsubstituted.
         let bound = from_arguments(contract, &found);
-        constructed.unwrap_or_else(|| ty::substitute(&result, &bound))
+        let result = constructed.unwrap_or_else(|| ty::substitute(&result, &bound));
+        self.stamped_through(contract, &found, result)
     }
 
     /// The count and the types of what a call passes, against what it takes.
@@ -5475,12 +5550,130 @@ impl<'a> Checker<'a> {
     /// happened between two statements, and nothing here answers that — so
     /// widening this rule would mean guessing, and the narrow one is right
     /// about what it does see.
+    /// **The stamp passes through a call the callee cannot put it back with**
+    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D2).
+    ///
+    /// A call whose argument is stamped is allowed where the callee's `touches`
+    /// column names no lock — it cannot write the value into one — and **its
+    /// result is stamped**. That is what makes `kasse.set(bumped(stand))` the
+    /// same answer as `kasse.set(stand + 1)` without an analysis following the
+    /// value through `bumped`.
+    ///
+    /// **A callee that touches a lock, or that nothing describes, does not
+    /// pass one on.** An absent `touches` reads as *touches everything*
+    /// ([ADR-033](../../docs/specification/adr/adr-033.md)), so a call nobody
+    /// wrote down hands back a plain value rather than a stamped one: the
+    /// wrong answer that way costs a refusal that is not raised, and the wrong
+    /// answer the other way refuses a program (C.4).
+    fn stamped_through(&self, contract: &FnContract, given: &[Ty], result: Ty) -> Ty {
+        if result.is_seen() || !given.iter().any(|ty| ty.is_seen()) {
+            return result;
+        }
+        let reaches_a_lock =
+            !contract.touches_known || contract.touches.iter().any(|t| t.names_a_lock());
+        match reaches_a_lock {
+            true => result,
+            false => Ty::seen(result.unseen()),
+        }
+    }
+
+    /// **`NK2207`: an `update` block that assigns to its `mut v` without
+    /// reading it** ([ADR-111](../../docs/specification/adr/adr-111.md) D4).
+    ///
+    /// `update fn(mut v) { v = n }` is a `set` through the back door and is
+    /// refused as one: nothing about it decides *inside* the lock, which is
+    /// what the door is for. A block that **reads** `v` — `v += n`,
+    /// `v.push(e)`, `if v > 100 { v = 0 }` — is the door working.
+    ///
+    /// **Read means mentioned anywhere but as the whole target**, which is the
+    /// safe direction for a refusal: `v += n` mentions it, `v.f = n` mentions
+    /// it, and only `v = …` does not. Asking a narrower question would refuse a
+    /// block that reads `v` in a way this walk did not recognise, and that is
+    /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s correct
+    /// program refused.
+    fn an_update_block_reads_what_it_writes(
+        &mut self,
+        params: &[winnow_grammar::Symbol],
+        body: &Block,
+        span: &Span,
+    ) {
+        for name in params {
+            let name = self.parsed.text(*name).to_string();
+            let mut assigned = false;
+            let mut read = false;
+            for stmt in &body.stmts {
+                // A whole-name assignment is the shape the rule is about; a
+                // mention anywhere else is a read.
+                if let Stmt::Assign { target, op, value } = &stmt.node {
+                    if op.is_none()
+                        && matches!(target, Expr::Variable(n) if self.parsed.text(*n) == name)
+                    {
+                        assigned = true;
+                        // **And the value being stored is still a read**:
+                        // `v = v + 1` mentions `v`, and it decides inside the
+                        // lock exactly as `v += 1` does.
+                        let mentioned = crate::contracts::send::names_used(self.parsed, value);
+                        read |= mentioned.contains(&name);
+                        continue;
+                    }
+                }
+                let mentioned = crate::contracts::send::names_used_in_stmt(self.parsed, &stmt.node);
+                read |= mentioned.contains(&name);
+            }
+            if !assigned || read {
+                continue;
+            }
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2207",
+                message: format!(
+                    "this `update` block replaces `{name}` without reading it, which is a `set`"
+                ),
+                notes: vec![
+                    "the door exists to decide **inside** the lock; a block that only stores \
+                     takes the lock for nothing the `set` door does not already do \
+                     (ADR-111 D4)"
+                        .to_string(),
+                ],
+                help: Some(
+                    "use `set` if the value is computed outside - or read the old value \
+                     here, which is what the block is for: `v += n`, `v.push(e)`, \
+                     `if v > 100 { v = 0 }`"
+                        .to_string(),
+                ),
+            });
+        }
+    }
+
+    /// **`NK2205`: a `set` given a stamped value, or standing under a stamped
+    /// condition** ([ADR-111](../../docs/specification/adr/adr-111.md) D4).
+    ///
+    /// `kasse.set(stand + 100)` is a read-modify-write through two doors: the
+    /// lock is taken once to read and once to store, and anything may happen
+    /// between. It is refused **whether `stand` was read on the line above, in
+    /// another function, or in another request** — which is what the stamp
+    /// buys, since the value carries where it came from and no analysis has to
+    /// follow it.
+    ///
+    /// **The second shape is the condition.** `if stand > 100 { kasse.set(0) }`
+    /// stores a plain value, and the *decision* is the stale thing. A `while`,
+    /// a `match` and a nested `if` are conditions alike.
+    ///
+    /// **There is no way around either** (D4): no `.value`, no `overwrite`, no
+    /// word that takes a stamp off. `set` is for a starting value, a
+    /// configuration that arrived from outside, a reset an operator asked for —
+    /// and `set(neu; after: seen)` is the one door for a stamped one, which is
+    /// D5 and is not built.
+    ///
+    /// **It used to ask a narrower question**: whether the argument contained a
+    /// `get` **on the same container**, which caught the one line and nothing
+    /// else. The stamp is what widened it, and widened it without an analysis.
     fn a_set_that_reads_what_it_writes(
         &mut self,
         on: &Ty,
-        receiver: &Expr,
         method: Ident,
-        args: &[Expr],
+        found: &[Ty],
         span: &Span,
     ) {
         if self.parsed.text(method) != "set" {
@@ -5492,70 +5685,61 @@ impl<'a> Checker<'a> {
         if !is_hull(name) {
             return;
         }
-        // **The same container**, which is the whole of the rule: reading one
-        // lock while writing another takes each of them once and is an ordinary
-        // program. Only a name, because two spellings of one container is a
-        // question about identity that nothing here answers.
-        let Expr::Variable(container) = receiver else {
-            return;
-        };
-        let container = self.parsed.text(*container).to_string();
-        let [argument] = args else {
-            return;
-        };
-        if !self.a_get_inside(argument, &container) {
+        let container = self
+            .set_receiver
+            .clone()
+            .unwrap_or_else(|| "this lock".to_string());
+
+        // **The value**, wherever it was read.
+        if found.iter().any(|ty| ty.is_seen()) {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2205",
+                message: format!(
+                    "this `set` stores a value that was read from a lock, so `{container}` is \
+                     taken twice"
+                ),
+                notes: vec![
+                    "`set` is for a value computed outside the lock; a value a lock handed \
+                     out is stale the moment the lock is let go, and anything may happen \
+                     between the read and the store (ADR-111 D4)"
+                        .to_string(),
+                    "the stamp travels with the value, so this is the same answer whether it \
+                     was read on the line above, in another function, or in another request"
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "write `{container}.update fn(mut v) {{ … }}`, which decides inside the \
+                     lock (ADR-110 D1)"
+                )),
+            });
             return;
         }
-        self.checked.findings.push(Finding {
-            severity: Severity::Error,
-            span: span.clone(),
-            code: "NK2205",
-            message: format!("this `set` reads `{container}` while computing what to store in it"),
-            notes: vec![
-                "`set` is for a value computed outside the lock, so this takes the lock \
-                 twice: once to read and once to store"
-                    .to_string(),
-                "making a new value out of the old one is what the third door is for, and \
-                 it takes the lock once"
-                    .to_string(),
-            ],
-            help: Some(format!(
-                "write `{container}.update fn(mut v) {{ … }}`, which is handed the value \
-                 where it lies and changes it in place (ADR-110 D1)"
-            )),
-        });
-    }
 
-    /// Whether `container.get()` is written anywhere inside this expression.
-    ///
-    /// Walks the **whole** argument, because `kasse.get() + 100` puts the call
-    /// one operator down and a rule that read only the top of the expression
-    /// would miss the shape it exists for. The walk is the emitter's, shared
-    /// rather than copied: a second one over the same shape is a second thing
-    /// to keep in step with the AST.
-    fn a_get_inside(&self, expr: &Expr, container: &str) -> bool {
-        let mut found = false;
-        crate::emit::visit_expr(expr, &mut |part| {
-            if found {
-                return;
-            }
-            let Expr::MethodCall {
-                receiver,
-                method,
-                args,
-                ..
-            } = part
-            else {
-                return;
-            };
-            if self.parsed.text(*method) != "get" || !args.is_empty() {
-                return;
-            }
-            if let Expr::Variable(name) = receiver.as_ref() {
-                found = self.parsed.text(*name) == container;
-            }
-        });
-        found
+        // **And the decision.** The value stored is plain; what is stale is the
+        // condition this stands under.
+        if let Some(at) = self.stamped_condition {
+            let _ = at;
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2205",
+                message: format!(
+                    "this `set` stands under a condition read from a lock, so `{container}` is \
+                     taken twice"
+                ),
+                notes: vec![
+                    "the value stored is plain and the **decision** is not: what the lock \
+                     said may have changed before this line runs (ADR-111 D4)"
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "write `{container}.update fn(mut v) {{ … }}` and take the decision inside \
+                     the lock (ADR-110 D1)"
+                )),
+            });
+        }
     }
 
     /// `NK2204`: an assignment straight into a `SharedMut`

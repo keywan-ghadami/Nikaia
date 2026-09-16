@@ -101,6 +101,10 @@ pub enum Ty {
     Nullable(Box<Ty>),
 }
 
+/// The stamp a lock puts on what it hands out
+/// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D1).
+pub const SEEN: &str = "Seen";
+
 impl Ty {
     pub fn named(name: impl Into<String>) -> Ty {
         Ty::Named {
@@ -115,6 +119,52 @@ impl Ty {
             name: name.into(),
             args: Vec::new(),
             view: true,
+        }
+    }
+
+    /// **What a lock handed out**
+    /// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D1).
+    ///
+    /// `Seen[T]` is a type here and in the ledger's type language, and it is
+    /// **not** a type in the language below: the emitter erases it, so a
+    /// `Seen[i64]` is an `i64`, a field declared `Seen[i64]` is an `i64` field,
+    /// and a signature with `Seen` in it is one without. No counter, no marker,
+    /// no check at run time, no bytes.
+    ///
+    /// What it buys is that the **shape** of a read-modify-write through two
+    /// doors is visible: the value a `set` is given carries where it came from.
+    pub fn seen(inner: Ty) -> Ty {
+        Ty::Named {
+            name: SEEN.to_string(),
+            args: vec![inner],
+            view: false,
+        }
+    }
+
+    /// Whether a lock handed this out, at any depth a stamp can be at.
+    ///
+    /// A nullable of a stamped value is stamped: `kasse.get()` through a `?.`
+    /// is still what the lock said.
+    pub fn is_seen(&self) -> bool {
+        match self {
+            Ty::Named { name, .. } if name == SEEN => true,
+            Ty::Nullable(inner) => inner.is_seen(),
+            _ => false,
+        }
+    }
+
+    /// The type under the stamp, or this type where there is none.
+    ///
+    /// **There is no word for this in the language** (D4): a program cannot
+    /// take a stamp off, and this exists for the emitter, which erases the
+    /// whole thing, and for a fit that has to compare what is underneath.
+    pub fn unseen(&self) -> Ty {
+        match self {
+            Ty::Named { name, args, .. } if name == SEEN => {
+                args.first().cloned().unwrap_or(Ty::Unknown)
+            }
+            Ty::Nullable(inner) => Ty::Nullable(Box::new(inner.unseen())),
+            other => other.clone(),
         }
     }
 
@@ -146,6 +196,18 @@ impl Ty {
     pub fn fits(&self, expected: &Ty) -> bool {
         match (self, expected) {
             (Ty::Unknown, _) | (_, Ty::Unknown) => true,
+            // **A stamp passes through**
+            // ([ADR-111](../../../../docs/specification/adr/adr-111.md) D2): a
+            // `Seen[i64]` goes wherever an `i64` goes, and what it reaches is
+            // stamped in turn. That covers every sink a program has — `f"…"`,
+            // `println`, a file's data, a response body — so *a `Seen` reaches
+            // the world without a word written for it*.
+            //
+            // **What it does not pass is a `set`**, and that is a refusal of its
+            // own (`NK2205`) rather than a hole in the fit: a type that could
+            // not be handed on would need a word to take the stamp off, and D4
+            // says there is none.
+            (a, b) if a.is_seen() || b.is_seen() => a.unseen().fits(&b.unseen()),
             (Ty::Tuple(a), Ty::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.fits(b))
             }

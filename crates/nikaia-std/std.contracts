@@ -732,7 +732,7 @@ pub = true
 touches = ["lock read"]
 sync = true
 locks = true
-signature = "(&Locked[$T]) -> $T"
+signature = "(&Locked[$T]) -> Seen[$T]"
 
 [fn."Locked::set"]
 pub = true
@@ -785,7 +785,7 @@ pub = true
 touches = ["lock read"]
 sync = true
 locks = true
-signature = "(&SharedMut[$T]) -> $T"
+signature = "(&SharedMut[$T]) -> Seen[$T]"
 
 [fn."SharedMut::set"]
 pub = true
