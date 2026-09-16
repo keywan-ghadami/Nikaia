@@ -156,12 +156,14 @@ signature = "(&Args, at: i64) -> String?"
 pub = true
 sync = true
 touches = ["stderr write"]
+locks = true
 signature = "(text: ?)"
 
 [fn."eprintln"]
 pub = true
 sync = true
 touches = ["stderr write"]
+locks = true
 signature = "(text: ?)"
 
 [fn."fs::map"]
@@ -206,12 +208,14 @@ signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
 pub = true
 sync = true
 touches = ["stdout write"]
+locks = true
 signature = "(text: ?)"
 
 [fn."println"]
 pub = true
 sync = true
 touches = ["stdout write"]
+locks = true
 signature = "(text: ?)"
 
 [fn."html::escape"]
@@ -727,6 +731,7 @@ signature = "(&Vec[?])"
 pub = true
 touches = ["lock read"]
 sync = true
+locks = true
 signature = "(&Locked[$T]) -> $T"
 
 [fn."Locked::set"]
@@ -734,6 +739,7 @@ pub = true
 touches = ["lock write"]
 sync = true
 keeps = ["value"]
+locks = true
 signature = "(&Locked[$T], value: $T)"
 
 # **Reads in place and may not change what it is handed** (ADR-059 D1): the one
@@ -742,6 +748,7 @@ signature = "(&Locked[$T], value: $T)"
 pub = true
 touches = ["lock read"]
 sync = "from(f)"
+locks = true
 signature = "(&Locked[$T], f: fn(&$T)) -> ?"
 
 # **Where locked data changes** (D2). The old value goes in by value and the new
@@ -755,6 +762,7 @@ sync = "from(f)"
 # `fn($T)` and not `fn($T) -> $T`: this ledger's type language has no result on a
 # lambda, which is a limit of the ledger rather than of the door. What it is read
 # for here is the arity and the `sync` column.
+locks = true
 signature = "(&Locked[$T], f: fn($T))"
 
 # `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-039 D9): a value
@@ -776,6 +784,7 @@ signature = "(&Locked[$T], f: fn($T))"
 pub = true
 touches = ["lock read"]
 sync = true
+locks = true
 signature = "(&SharedMut[$T]) -> $T"
 
 [fn."SharedMut::set"]
@@ -783,12 +792,14 @@ pub = true
 touches = ["lock write"]
 sync = true
 keeps = ["value"]
+locks = true
 signature = "(&SharedMut[$T], value: $T)"
 
 [fn."SharedMut::access"]
 pub = true
 touches = ["lock read"]
 sync = "from(f)"
+locks = true
 signature = "(&SharedMut[$T], f: fn(&$T)) -> ?"
 
 [fn."SharedMut::update"]

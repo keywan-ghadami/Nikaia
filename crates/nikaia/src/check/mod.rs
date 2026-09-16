@@ -431,6 +431,7 @@ pub fn check_program(
             .collect(),
         scope: Vec::new(),
         at_a_write_door: false,
+        inside_a_door: false,
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
@@ -948,6 +949,19 @@ struct Checker<'a> {
     /// the emitter writes `mut` itself for a fold's accumulator and refusing
     /// there would refuse a program that compiles.
     at_a_write_door: bool,
+    /// Whether what is being walked is **inside a door's block** — `access`,
+    /// `update`, `access_all` or `update_all`
+    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D10).
+    ///
+    /// `at_a_write_door` above is the narrower question `NK1138` and `NK1141`
+    /// ask; this is the one `NK2203` asks, because *a lock taken while a lock
+    /// is held* is about **any** door being open and not about which
+    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D2).
+    ///
+    /// `get` and `set` are doors and are **not** here, and D10 says why: while
+    /// the lock is open in either of them no code of the program's runs, so
+    /// there is nothing that could take a second one.
+    inside_a_door: bool,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -1970,6 +1984,71 @@ impl<'a> Checker<'a> {
             Expr::Index { base, .. } => self.rooted_at(base),
             _ => None,
         }
+    }
+
+    /// The name a free call names, unaliased — or nothing where this is not one.
+    fn free_callee(&self, func: &Expr) -> Option<String> {
+        let name = match func {
+            Expr::Variable(name) => self.parsed.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| self.parsed.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => return None,
+        };
+        Some(self.parsed.unaliased(&name))
+    }
+
+    /// **`NK2203`: a lock taken while a lock is held**
+    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D2, D3).
+    ///
+    /// Part II 12.3 called manual nesting an anti-pattern and *"often a
+    /// compile-time error"*; D2 makes *often* into **always**, and with that no
+    /// program exists in which a lock's two representations behave differently
+    /// — which is the whole reason the switch may pick one.
+    ///
+    /// **Written one inside the other, or reached through a chain of calls**,
+    /// and the second is what needs the column: `contracts::locks` propagates
+    /// *touches a lock* over the call graph, so a callee three deep is the same
+    /// answer as one written here.
+    ///
+    /// **`Holds` and nothing else.** `Undecided` is not permission
+    /// ([ADR-010](../../docs/specification/adr/adr-010.md) D1) and not a
+    /// refusal either, because Stage 0 knows the type of rather less than half
+    /// of what a program writes, and refusing on doubt is [Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)'s correct program
+    /// refused. What a silent `Undecided` costs is the runtime check, which is
+    /// where every program already is.
+    ///
+    /// **A `println` is one of these**, and that is the case
+    /// [ADR-067](../../docs/specification/adr/adr-067.md) D1 was written about:
+    /// it never pauses, so `sync` says nothing about it, and it takes standard
+    /// output's own lock while yours is open. Two conditions and not one.
+    fn a_lock_inside_a_lock(&mut self, called: &str, holds: crate::contracts::Lock, span: &Span) {
+        if !self.inside_a_door || !holds.holds() {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2203",
+            message: format!("`{called}` takes a lock, and this runs with one already held"),
+            notes: vec![
+                "a door's block runs with the lock open, so a second one taken inside it \
+                 is a lock inside a lock - which is a deadlock rather than a risk \
+                 (ADR-039 D2)"
+                    .to_string(),
+                "what a function reaches is its own column in the ledger (13.5), so this \
+                 is answered through a chain of calls as well as for one written here"
+                    .to_string(),
+            ],
+            help: Some(
+                "ask for both at once - `access_all(a, b) fn(x, y) { … }` - or compute \
+                 outside the block and hand the value in"
+                    .to_string(),
+            ),
+        });
     }
 
     /// **`NK1141`: an `update` block hands a value back**
@@ -3114,6 +3193,18 @@ impl<'a> Checker<'a> {
                 // Asked here rather than in `call_on`, because the rule is
                 // about the receiver's **name** and that arm is handed a type.
                 self.a_set_that_reads_what_it_writes(&on, receiver, *method, args, span);
+                // **`NK2203`, the method half**: which entry `other.get()` goes
+                // to is the type checker's answer (ADR-028), so it is asked
+                // here where the receiver's type is in hand.
+                if self.inside_a_door {
+                    if let Ty::Named { name, .. } = &on {
+                        let key = format!("{name}::{}", self.parsed.text(*method));
+                        if let Some((key, contract)) = self.method(&key) {
+                            let (key, holds) = (key.clone(), contract.touches_a_lock);
+                            self.a_lock_inside_a_lock(&key, holds, span);
+                        }
+                    }
+                }
                 // **`update`'s block is a write door's**
                 // ([ADR-110](../../docs/specification/adr/adr-110.md) D1), and
                 // that is where a parameter without `mut` is refused. Set
@@ -3127,6 +3218,12 @@ impl<'a> Checker<'a> {
                     }
                 }
                 let outer_door = std::mem::replace(&mut self.at_a_write_door, at_a_door);
+                // **And `access` holds one open too** (ADR-039 D10): `get` and
+                // `set` do not, because no code of the program's runs while the
+                // lock is open in either.
+                let holding = matches!(self.parsed.text(*method), "update" | "access")
+                    && locked_content_of(&on).is_some();
+                let outer_inside = std::mem::replace(&mut self.inside_a_door, holding);
                 // **D3**: a method that changes its subject, called on a
                 // parameter. Asked of the `mutates` column (D3's own, recorded
                 // because the ledger's `&T` cannot spell `&mut`), and only
@@ -3152,6 +3249,7 @@ impl<'a> Checker<'a> {
                 }
                 let value = self.call_on(on, *method, args, span);
                 self.at_a_write_door = outer_door;
+                self.inside_a_door = outer_inside;
                 value
             }
 
@@ -3583,10 +3681,20 @@ impl<'a> Checker<'a> {
                 );
                 self.scope.push(Vec::new());
                 self.task_bindings.push(Vec::new());
+                // **A task started with `spawn` runs later and elsewhere**
+                // ([ADR-039](../../docs/specification/adr/adr-039.md) D3), so
+                // taking a lock inside one is the ordinary case and not this
+                // door's reach. `contracts::locks` makes the same split when it
+                // builds the column; this is it at the refusal.
+                //
+                // A **scope**'s tasks are the other way round and are not this:
+                // a scope waits for them, so they run during the call.
+                let outer_inside = std::mem::replace(&mut self.inside_a_door, false);
                 // A task's body is an `async` block below (ADR-055 §6), which
                 // is a function too: `break` may not leave it either.
                 let value = self.past_a_boundary("task", |me| me.block(body));
                 self.scope.pop();
+                self.inside_a_door = outer_inside;
                 let bound = self.task_bindings.pop().unwrap_or_default();
                 // **After** the walk, because the question needs both halves of
                 // what the walk found: the types of what the body bound, and
@@ -3887,8 +3995,11 @@ impl<'a> Checker<'a> {
             &mut self.at_a_write_door,
             matches!(door, MultiLock::Writing),
         );
+        // Both kinds hold their locks open across the block, so both are one.
+        let outer_inside = std::mem::replace(&mut self.inside_a_door, true);
         self.lambda(params, mutable, body, &held, span);
         self.at_a_write_door = outer_door;
+        self.inside_a_door = outer_inside;
         match door {
             // What a lambda hands back is not written down (ADR-029 D1).
             MultiLock::Reading => Ty::Unknown,
@@ -4037,6 +4148,23 @@ impl<'a> Checker<'a> {
         if let Expr::Variable(name) = func {
             if let Some(door) = MultiLock::named(self.parsed.text(*name)) {
                 return self.locks(door, args, span);
+            }
+        }
+        // **`NK2203`**: a free call inside a door's block, to something that
+        // takes a lock (ADR-039 D2). `println` is the one every program writes,
+        // and ADR-067 D1 is where it was pinned down: it never pauses, so
+        // `sync` says nothing about it, and it takes standard output's own lock
+        // while yours is open.
+        if self.inside_a_door {
+            if let Some(name) = self.free_callee(func) {
+                let holds = self
+                    .own
+                    .functions
+                    .get(&name)
+                    .or_else(|| self.library.functions.get(&name))
+                    .map(|c| c.touches_a_lock)
+                    .unwrap_or_default();
+                self.a_lock_inside_a_lock(&name, holds, span);
             }
         }
         let found: Vec<Ty> = args

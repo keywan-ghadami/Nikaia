@@ -693,9 +693,8 @@ fn main() {
         von -= 30
         nach += 30
     }
-    access_all(konto_a, konto_b) fn(a, b) {
-        println(f\"{a} {b}\")
-    }
+    let stand = access_all(konto_a, konto_b) fn(a, b) { f\"{a} {b}\" }
+    println(stand)
 }
 ";
 

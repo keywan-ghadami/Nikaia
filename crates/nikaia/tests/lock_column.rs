@@ -188,16 +188,20 @@ fn the_column_renders_and_parses_back() {
     assert!(!Ledger::infer(&plain).render().contains("locks"));
 }
 
-/// **Nothing in `examples/` holds one**, which is the measurement this column
-/// landed on its own to make — and the number a later refusal will be read
-/// against.
+/// **What the corpus holds, and the number a refusal is read against.**
 ///
-/// 24 of the 59 are `Undecided` and 35 are clear. That is a lot of doubt and it
-/// costs nothing: `Undecided` refuses nothing, and what shrinks it is entries
-/// existing for the methods the corpus calls
-/// ([ADR-104](../../../docs/specification/adr/adr-104.md)), not a change here.
+/// **18 hold, 7 are undecided, 34 are clear**, of 59 — and every one of the 18
+/// is `println`. [ADR-067](../../../docs/specification/adr/adr-067.md) D1 is
+/// where that was pinned down: a print never pauses, so `sync` says nothing
+/// about it, and it takes standard output's **own lock** while yours is open.
+/// Two conditions and not one, and this column answers the second.
+///
+/// **No example opens a lock of its own**, which is the other half of the same
+/// measurement: nothing in `examples/` writes `SharedMut` or `Locked`, so
+/// `NK2203` refuses nothing there and the number above is what it *would* be
+/// read against the day one does.
 #[test]
-fn no_example_holds_a_lock() {
+fn what_the_corpus_holds_is_the_prints() {
     let mut held = Vec::new();
     for entry in std::fs::read_dir("../../examples").expect("the examples are there") {
         let path = entry.expect("an entry").path();
@@ -215,7 +219,23 @@ fn no_example_holds_a_lock() {
         }
     }
     assert!(
-        held.is_empty(),
-        "no example opens a lock, so none should hold the property: {held:?}"
+        !held.is_empty(),
+        "a print takes standard output's lock, so the `main` of every example \
+         that prints holds one - an empty answer here means the column stopped \
+         propagating"
     );
+    // And none of them is a lock the program itself opened: nothing in
+    // `examples/` writes `SharedMut` or `Locked`.
+    for path in std::fs::read_dir("../../examples").expect("the examples are there") {
+        let path = path.expect("an entry").path();
+        if path.extension().is_none_or(|e| e != "nika") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read it");
+        assert!(
+            !text.contains("SharedMut(") && !text.contains("Locked("),
+            "{} opens a lock, so the measurement above has to be re-read",
+            path.display()
+        );
+    }
 }

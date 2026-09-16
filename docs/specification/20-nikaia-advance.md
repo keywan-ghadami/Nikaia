@@ -720,8 +720,9 @@ let counter = SharedMut(0)
 // OK: pure computation
 counter.update fn(mut n) { n += 1 }
 
-// Compiler Error: I/O inside a lock
-// counter.access fn(n) { fs::write("log", "{n}") }
+// Compiler Error (NK2203): a lock inside a lock. `println` takes standard
+// output's own, and `fs::write` can pause besides (NK2202).
+// counter.access fn(n) { println(f"{n}") }
 ```
 
 ```text

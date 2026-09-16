@@ -511,13 +511,36 @@ refusals nothing raises:
 * the **re-entrancy check as a build switch** (ADR-039 D8), which the cache key
   already accounts for — and which ADR-057 D2 makes free at one thread and D3
   charges only on the values that actually cross;
-* `NK2201`, `NK2203` and `NK2503`, catalogued and not emitted. **Two of the five
+* `NK2201` and `NK2503`, catalogued and not emitted. **Three of the five have
   left this list** — `NK2204` and `NK2205`, the two that come with the doors
-  ([ADR-099](specification/adr/adr-099.md)) — and they went first because they
-  are **local**: each is one statement, while `NK2201` and `NK2203` need to know
-  what is *inside a door* and what a chain of calls reaches, and `NK2503` needs
-  the reachability walk [ADR-039](specification/adr/adr-039.md) D6 describes as
-  `NK2502`'s generalised.
+  ([ADR-099](specification/adr/adr-099.md)), and now `NK2203`. The first two
+  went early because they are **local**: each is one statement. `NK2203` needed
+  the column above and one more thing the record had not named — *what is
+  inside a door* — which turned out to be a flag on the walk rather than an
+  analysis, because the checker already knows which method it is in.
+  `NK2503` still needs the reachability walk
+  [ADR-039](specification/adr/adr-039.md) D6 describes as `NK2502`'s
+  generalised.
+
+  *What `NK2203` refuses, and what it does not.* A second lock written inside
+  the block, one reached through a chain of calls, and a **`println`** — which
+  is [ADR-067](specification/adr/adr-067.md) D1's case: it never pauses, so
+  `sync` says nothing about it, and it takes standard output's own lock while
+  yours is open. Not refused: a `spawn` started inside the block, because its
+  body runs later and elsewhere; `get` and `set`, which hold nothing open
+  (D10); and anything the column answers `Undecided` about, because doubt is
+  not permission and not a refusal either.
+
+  *It refuses nothing in `examples/`*, since nothing there opens a lock — and
+  one test in `crates/nikaia/tests/shared.rs` had to move its `println` out of
+  an `access_all` block, which is the first migration this rule has asked for.
+
+  *`NK2201` is the one left, and it is not obvious what is left of it.* The
+  catalogue calls it *no I/O while holding locked data*, and ADR-067 D1 split
+  that sentence in two: what **pauses** is `NK2202`'s and what **takes a lock**
+  is `NK2203`'s. A `println` is the second. What a third code would add is I/O
+  that neither pauses nor takes a lock, and whether any exists is a question to
+  answer before writing one.
   **`NK2202` is a second exception and is raised** — `sync::check` finds the
   calls that contradict an assertion and `diagnostics` renders them — which is
   worth the extra words, because the bullet used to name the whole range and a
