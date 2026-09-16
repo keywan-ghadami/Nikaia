@@ -916,7 +916,7 @@ can.
 `sync` and `throws` after the result as a declaration writes them; a lambda
 that does less fits a type that allows more, the other direction is refused;
 whether the parameter is run or kept is inferred, and a kept one's promises
-are the type's. **Steps 1 and 2 are built**: the type parses, the ledger writes it and
+are the type's. **Steps 1 to 3 are built**: the type parses, the ledger writes it and
 reads it back — a function type inside another one included — D2's reading is
 in the fit, and a **run** parameter lowers to a closure argument,
 `impl Fn(A) -> R`, with the `Result` a `throws` function's declaration has
@@ -940,28 +940,35 @@ walked its arguments before it resolved its callee, so `hand(fn(n) { … })` lef
 `n` with no type at all and the promises had nothing to be asked of. A free
 call's lambda parameters are typed now.
 
-*What is left, in the record's order (§5):* D3's run-or-kept inference, which
-is ADR-094's `keeps` asked of a code parameter; and D5's lowering of a **kept**
+*Step 3 is built too.* A parameter the body **runs** gives the function
+`sync = "from(f)"` — *the lambda decides* — and one it **keeps** is answered
+from the type, so a kept `fn() sync` cannot pause and a kept `fn()` takes the
+claim away; a body that stores *and* runs gets the kept answer, which is the
+record's §4 and the safe one. `twice` used to lower to an `async fn` every call
+awaited and is an ordinary function now.
+
+*`Sync::From` is an outcome of **inference** now*, where before only a written
+`std` entry produced one — a value arriving in the greatest fixpoint where
+every other outcome is a promise being taken away. It is sound for
+[ADR-029](specification/adr/adr-029.md) D3's reason and for one fact of this
+compiler: `visit_expr_blocks` walks the body of a lambda passed as an
+**argument** and not only a trailing one, so every lambda a caller writes is
+counted in the caller whichever parameter the column names.
+
+*And the shortcut that was not one:* reading a call to a run parameter as *does
+not pause* would have made `twice` `sync = "inferred"`, a promise that fails
+open the moment a caller hands it a pausing lambda —
+[ADR-010](specification/adr/adr-010.md) D1's polarity exactly.
+
+*One thing the record had not said, and an ordering settled it.* D3 says the
+run-or-kept answer is `keeps` asked one level over, and `keeps::infer` runs
+**after** `sync::infer`. So it is asked here in the small — the name is
+mentioned, and every mention is the **callee** of a call — which fails closed
+and agrees with the column on every shape either can see.
+
+*What is left, in the record's order (§5):* D5's lowering of a **kept**
 handler, which is *a lambda that pauses is refused* one entry up, with a callee
 that can now say which shape it wants.
-
-*What step 3 turns out to need, measured rather than guessed.* **The
-run-or-kept half is already there**: `contracts::keeps` answers it for a code
-parameter exactly as for any other, and
-`fn twice(x: i64, f: fn(i64) -> i64) { return f(f(x)) }` records no `keeps` for
-`f` — which is the column saying *run*. What is missing is the **use** of it,
-and it is one change with a sharp edge: `sync = "from(f)"` is a value the
-ledger can *carry* and only a **written** `std` entry has ever produced, so
-step 3 makes `Sync::From` an outcome of **inference**, in the greatest fixpoint
-where every other outcome is a promise being taken away. `twice` comes out
-today with no `sync` at all — the pessimistic answer, so nothing is unsound —
-and it lowers to an `async fn` that every caller awaits.
-
-*And there is no shortcut through it.* Reading a call to a run parameter as
-*does not pause* would make `twice` `sync = "inferred"`, which is a promise
-that fails open the moment a caller hands it a pausing lambda —
-[ADR-010](specification/adr/adr-010.md) D1's polarity exactly. `From` is what
-carries the question to the caller, and carrying it is the work.
 
 *Until that last one lands, a function type is a **parameter** and nothing
 else.* A field, a result and a `let` are the positions where it can only be

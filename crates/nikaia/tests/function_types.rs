@@ -296,6 +296,85 @@ fn a_free_calls_lambda_is_typed_from_the_signature() {
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
 }
 
+/// **D3: whether a code parameter is run or kept is inferred**, and it decides
+/// which rule applies.
+///
+/// A lambda the callee **runs during the call** adds nothing to the caller's
+/// own answers — the lambda's body is walked as part of the function that
+/// writes it, so its calls are already counted there
+/// ([ADR-029](../../../docs/specification/adr/adr-029.md) D3) — and the ledger
+/// says so by name: `sync = "from(f)"`. Until this, a function that took a
+/// lambda had to commit to the pessimistic answer for every caller, and
+/// `twice` lowered to an `async fn` that every call awaited.
+#[test]
+fn a_run_parameter_makes_the_callee_from_the_lambda() {
+    let parsed = parse_to_ast("fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n")
+        .expect("the source parses");
+    assert_eq!(
+        Ledger::infer(&parsed).functions["twice"].sync.from(),
+        Some("f")
+    );
+    // …and the caller of one is `sync` or not by what *it* handed over, which
+    // is the whole point: the lambda's body is counted where it is written.
+    let rust = lowered(
+        "fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n\
+         fn main() { println(f\"{twice(2, fn(n) { return n * 3 })}\") }\n",
+    );
+    assert!(rust.contains("fn twice("), "{rust}");
+    assert!(!rust.contains("async fn twice("), "{rust}");
+}
+
+/// **A kept one is answered from the type** (D3), and a body that stores *and*
+/// runs gets the kept answer, which is the safe one and what ADR-102 §4 says it
+/// gets.
+#[test]
+fn a_kept_parameter_is_answered_from_the_type() {
+    let sync_of = |source: &str, of: &str| {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        Ledger::infer(&parsed).functions[of].sync.clone()
+    };
+    // Stored and run, and the type allows pausing: the claim is off.
+    assert!(
+        !sync_of(
+            "fn keep(g: fn()) { }\nfn both(f: fn()) { keep(f)\n    f() }\n",
+            "both"
+        )
+        .is_sync(),
+        "a wrapper that stores and runs gets the kept answer"
+    );
+    // The same body, with a type that says the code never pauses.
+    assert!(
+        sync_of(
+            "fn keep(g: fn() sync) { }\nfn both(f: fn() sync) { keep(f)\n    f() }\n",
+            "both"
+        )
+        .is_sync(),
+        "a kept `fn() sync` cannot pause, so neither does this"
+    );
+    // And a body that only hands it on keeps its own answer: storing code is
+    // not running it.
+    assert!(
+        sync_of(
+            "fn keep(g: fn()) { }\nfn hold(f: fn()) { keep(f) }\n",
+            "hold"
+        )
+        .is_sync(),
+        "handing it on is not running it"
+    );
+}
+
+/// **A promise is still taken away by anything else the body does.** `from` is
+/// *this call adds no pausing of its own*, not *this call cannot pause*.
+#[test]
+fn a_body_that_also_pauses_keeps_no_claim() {
+    let parsed = parse_to_ast(
+        "fn twice(x: i64, f: fn(i64) -> i64) -> i64 { let t = io::read_to_string()\n\
+         \x20   return f(x) }\n",
+    )
+    .expect("the source parses");
+    assert!(!Ledger::infer(&parsed).functions["twice"].sync.is_sync());
+}
+
 /// **The trailing words are greedy**, which settles the one ambiguity D1 does
 /// not name: in `fn make() -> fn(i64) -> i64 sync` the `sync` belongs to the
 /// *result type*. A function whose own promise is meant writes it before the

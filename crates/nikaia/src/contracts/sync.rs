@@ -97,6 +97,20 @@ struct Reach {
     /// [ADR-100](../../../docs/specification/adr/adr-100.md) D2. Its claim holds
     /// only while all of theirs do.
     calls: BTreeSet<String>,
+    /// **The code parameter it runs**
+    /// ([ADR-102](../../../docs/specification/adr/adr-102.md) D3), where there
+    /// is one: the answer is *the lambda decides*, which is `sync = "from(f)"`.
+    ///
+    /// A lambda the callee **runs during the call** adds nothing to the
+    /// caller's own answers, because the lambda's body is walked as part of the
+    /// function that writes it and its calls are already counted there
+    /// ([ADR-029](../../../docs/specification/adr/adr-029.md) D3). So the claim
+    /// holds here and the question travels to the caller with the name.
+    ///
+    /// **Only the first**, where a body runs two. The ledger's spelling names
+    /// one parameter and no `std` entry or written signature has ever had two;
+    /// a second would want a spelling before it wants an inference.
+    runs: Option<String>,
 }
 
 /// Give every function in the ledger the `sync` its body earns.
@@ -222,6 +236,7 @@ pub fn infer(
                             Reach {
                                 blocked: !method.node.is_sync,
                                 calls: BTreeSet::new(),
+                                runs: None,
                             },
                         );
                     }
@@ -267,10 +282,79 @@ pub fn infer(
         }
         if let Some(contract) = ledger.functions.get_mut(name) {
             if contract.sync == Sync::No {
-                contract.sync = Sync::Inferred;
+                // **`from(f)` where a code parameter is what decides**
+                // ([ADR-102](../../../docs/specification/adr/adr-102.md) D3,
+                // [ADR-029](../../../docs/specification/adr/adr-029.md) D3), and
+                // `inferred` otherwise. A caller reads both the same way — *this
+                // call adds no pausing of its own* — and the difference is that
+                // `from` says **whose** answer it is, which is what a reader of
+                // the ledger and a second build of the same package need.
+                contract.sync = match graph.get(name).and_then(|reach| reach.runs.clone()) {
+                    Some(parameter) => Sync::From(parameter),
+                    None => Sync::Inferred,
+                };
             }
         }
     }
+}
+
+/// Whether the body **runs** this parameter during the call rather than keeping
+/// it ([ADR-102](../../../docs/specification/adr/adr-102.md) D3).
+///
+/// The question the `keeps` column asks, in the small and one pass earlier: the
+/// name is mentioned, and every mention of it is the **callee** of a call. A
+/// mention anywhere else — stored in a field, handed back, given to a task,
+/// passed on — is a keeping, and the answer is the pessimistic one.
+fn run_during_the_call(parsed: &Parsed, body: &Block, name: &str) -> bool {
+    let mut called = 0usize;
+    let mut mentioned = 0usize;
+    count_mentions(parsed, body, name, &mut called, &mut mentioned);
+    called > 0 && called == mentioned
+}
+
+fn count_mentions(
+    parsed: &Parsed,
+    block: &Block,
+    name: &str,
+    called: &mut usize,
+    mentioned: &mut usize,
+) {
+    for stmt in &block.stmts {
+        visit_stmt(parsed, &stmt.node, &mut |expr| {
+            if let Expr::Call { func, .. } = expr {
+                if matches!(func.as_ref(), Expr::Variable(n) if parsed.text(*n) == name) {
+                    *called += 1;
+                }
+            }
+            if matches!(expr, Expr::Variable(n) if parsed.text(*n) == name) {
+                *mentioned += 1;
+            }
+        });
+        visit_stmt_blocks(&stmt.node, &mut |inner| {
+            count_mentions(parsed, inner, name, called, mentioned)
+        });
+    }
+}
+
+/// Which of [ADR-102](../../../docs/specification/adr/adr-102.md) D3's two
+/// cases a parameter that is **code** turned out to be.
+///
+/// **Decided here and not from the `keeps` column**, which is what D3 names —
+/// and the reason is an ordering: `keeps::infer` runs *after* this pass, so the
+/// column it would read does not exist yet. What is asked instead is the
+/// column's own question in the small: a parameter the body **calls** and
+/// mentions nowhere else is run during the call; anything else is kept. It
+/// fails closed, which is the direction a greatest fixpoint has to fail in
+/// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1) — a wrapper that
+/// stores *and* runs gets the kept answer, which is the safe one and is what
+/// ADR-102 §4 says it gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Parameter {
+    /// The body calls it and does not keep it.
+    Run,
+    /// Stored, handed back, given to a task — and `may_pause` is what its type
+    /// says, since that is all a caller of *this* function can be told.
+    Kept { may_pause: bool },
 }
 
 /// One function's calls, split into what settles the question now and what
@@ -286,7 +370,10 @@ fn reach_of(
     library: &Ledger,
     resolved: &BTreeMap<String, MethodCalls>,
 ) -> Option<(String, Reach)> {
-    let Item::Fn { name, body, .. } = item else {
+    let Item::Fn {
+        name, body, args, ..
+    } = item
+    else {
         return None;
     };
     let own_name = match name {
@@ -298,8 +385,27 @@ fn reach_of(
         None => own_name,
     };
 
+    // **The parameters that are code**
+    // ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), and which of
+    // D3's two cases each is. Built before the walk because the walk is what
+    // reads it: a call to one of these names is not a name nothing describes.
+    let code: BTreeMap<String, Parameter> = args
+        .iter()
+        .filter_map(|arg| {
+            let declared = arg.ty.code.as_ref()?;
+            let name = parsed.text(arg.name).to_string();
+            let kind = match run_during_the_call(parsed, body, &name) {
+                true => Parameter::Run,
+                false => Parameter::Kept {
+                    may_pause: !declared.is_sync,
+                },
+            };
+            Some((name, kind))
+        })
+        .collect();
+
     let mut reach = Reach::default();
-    collect_reach(parsed, body, own, library, &mut reach);
+    collect_reach(parsed, body, own, library, &code, &mut reach);
 
     // What the walk above left to somebody else: every method call this
     // function makes, as the type checker resolved it (ADR-028). The two are
@@ -333,6 +439,7 @@ fn collect_reach(
     block: &Block,
     own: &Ledger,
     library: &Ledger,
+    code: &BTreeMap<String, Parameter>,
     reach: &mut Reach,
 ) {
     for stmt in &block.stmts {
@@ -342,6 +449,26 @@ fn collect_reach(
             &mut |expr| match reached(parsed, expr, own, library) {
                 Some(Reached::Own(name)) => {
                     reach.calls.insert(name);
+                }
+                // **A call to a parameter that is code**
+                // ([ADR-102](../../../docs/specification/adr/adr-102.md) D3).
+                // It is not a name nothing describes: the *declaration*
+                // describes it, and which of D3's two cases it is decides which
+                // rule applies. `code` carries `true` for a **run** parameter —
+                // one the body calls and does not otherwise mention — and
+                // `false` for one it keeps, whose promise is then the type's.
+                Some(Reached::Opaque(Some(name))) if code.contains_key(&name) => {
+                    match code[&name] {
+                        // **Run**: the answer is the lambda's, carried to the
+                        // caller by name.
+                        Parameter::Run => {
+                            reach.runs.get_or_insert(name.clone());
+                        }
+                        // **Kept**: the type's promise is what this function's
+                        // own column is computed with, because the lambda runs
+                        // where nobody counted it.
+                        Parameter::Kept { may_pause } => reach.blocked |= may_pause,
+                    }
                 }
                 Some(Reached::Library { sync: false, .. }) | Some(Reached::Opaque(_)) => {
                     reach.blocked = true
@@ -355,7 +482,7 @@ fn collect_reach(
         // The same walk the check uses: a nested block, and the body of a
         // trailing lambda, are part of the function that writes them.
         visit_stmt_blocks(&stmt.node, &mut |inner| {
-            collect_reach(parsed, inner, own, library, reach)
+            collect_reach(parsed, inner, own, library, code, reach)
         });
     }
 }
