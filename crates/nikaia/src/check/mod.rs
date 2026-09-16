@@ -469,6 +469,18 @@ pub fn check_program(
         pausing_methods: BTreeSet::new(),
         settled_methods: BTreeSet::new(),
         handed_over: None,
+        foreign_names: parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Extern { declarations, .. } => Some(declarations),
+                _ => None,
+            })
+            .flatten()
+            .map(|d| parsed.text(d.node.name).to_string())
+            .collect(),
+        inside_unsafe: false,
         moved_into_a_task: Vec::new(),
         read_at: Vec::new(),
         written_at: Vec::new(),
@@ -945,6 +957,20 @@ struct Checker<'a> {
     /// `None` where nothing is being asked — outside a lambda, and inside one
     /// whose parameter's type nothing describes.
     handed_over: Option<Handed>,
+    /// **The names an `extern "C"` block declares**
+    /// ([ADR-119](../../docs/specification/adr/adr-119.md) D3).
+    ///
+    /// Collected from the item tree rather than read off the ledger, because
+    /// the ledger records what a name *is* and this asks where it **came
+    /// from**: a Nikaia function and a C declaration are both entries, and only
+    /// one of them has to be called inside an `unsafe` block.
+    foreign_names: BTreeSet<String>,
+    /// Whether what is being walked stands inside one.
+    ///
+    /// It reaches inward the way `caught` and `in_lambda` do, and it stops at
+    /// nothing: a lambda written inside an `unsafe` block runs later, and D3
+    /// asks about where the **call** is written rather than about when it runs.
+    inside_unsafe: bool,
     /// **What a task took with it** (`NK2101`): the name, its type, and the byte
     /// the `spawn`'s statement starts at.
     ///
@@ -3154,7 +3180,22 @@ impl<'a> Checker<'a> {
             // A `seq` block is a block for every purpose but one: what it says
             // is about the *order* its statements run in (ADR-033 D7), not
             // about what any of them mean or what it hands back.
+            // **`unsafe { … }` is a block with a value and no other rule**
+            // ([ADR-119](../../docs/specification/adr/adr-119.md) D3): what is
+            // inside is checked exactly as anything else is.
             Expr::Block(block) => self.block(block),
+
+            // **`unsafe { … }` is a block with a value and no other rule**
+            // ([ADR-119](../../docs/specification/adr/adr-119.md) D3): what is
+            // inside is checked exactly as anything else is. The one thing it
+            // changes is that a call to an `extern` name is allowed here, which
+            // is the whole of what the word buys.
+            Expr::Unsafe(block) => {
+                let outer = std::mem::replace(&mut self.inside_unsafe, true);
+                let value = self.block(block);
+                self.inside_unsafe = outer;
+                value
+            }
 
             // **Part I 8.1.2: each statement is a branch, and the block's value
             // is the tuple of their results in written order**
@@ -4437,6 +4478,12 @@ impl<'a> Checker<'a> {
                 return Ty::Unknown;
             }
         };
+
+        // **A call to an `extern` name is written inside `unsafe { … }`**
+        // ([ADR-119](../../docs/specification/adr/adr-119.md) D3), and this is
+        // where that is asked: the name is in hand and the block is a flag the
+        // walk carries.
+        self.a_foreign_call_outside_unsafe(&name, span);
 
         // A tuple variant of an enum declared here - `Op::Plus(1)` - is a value
         // of that enum, not a call to a function. Its arguments are still
@@ -6013,6 +6060,46 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("take the `&` off".to_string()),
+        });
+    }
+
+    /// **`NK1143`: a call to an `extern` name outside an `unsafe` block**
+    /// ([ADR-119](../../docs/specification/adr/adr-119.md) D3).
+    ///
+    /// That is the whole of what the word buys, and it is why it is a word
+    /// rather than an attribute on the declaration: the boundary is visible
+    /// **at the call**, in the body somebody reads, rather than in a file
+    /// beside it.
+    ///
+    /// **This compiler's refusal and not the language below's.** Rust makes the
+    /// functions of an `extern` block `unsafe fn`, so the program would be
+    /// refused either way — with a message about a generated file, which is
+    /// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class.
+    ///
+    /// **Only a name this file declared.** A Nikaia function and a C
+    /// declaration are both ledger entries, and only one of them is this; the
+    /// set comes from the item tree, so a name nothing here declared is not
+    /// this refusal's business.
+    fn a_foreign_call_outside_unsafe(&mut self, name: &str, span: &Span) {
+        if self.inside_unsafe || !self.foreign_names.contains(name) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1143",
+            message: format!(
+                "`{name}` is declared `extern` and this call is not in an `unsafe` block"
+            ),
+            notes: vec![
+                "C is not memory-safe, so the boundary is written where it is crossed \
+                 rather than once beside the declaration (Part III, 15.1; ADR-119 D3)"
+                    .to_string(),
+                "the block makes no other rule: what is inside it is checked exactly as \
+                 anything else is"
+                    .to_string(),
+            ],
+            help: Some(format!("write `unsafe {{ {name}(…) }}`")),
         });
     }
 

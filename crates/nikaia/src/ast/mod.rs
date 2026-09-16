@@ -114,6 +114,24 @@ pub enum Item {
         is_public: bool,
     },
 
+    /// Part III 15.1: `extern "C" { fn getpid() -> i32 }`
+    /// ([ADR-119](../../../docs/specification/adr/adr-119.md) D1).
+    ///
+    /// **Signatures and nothing else**, which is `Trait`'s reason one item
+    /// over: a declaration has no body, so `Item::Fn` cannot serve. The
+    /// declarations are `TraitMethod`s because a signature without a body is
+    /// the same shape wherever it stands; what differs is how it **reads**,
+    /// and that is D2's, not the AST's — an `extern` declaration is `sync` and
+    /// carries no `throws`, where a trait method without `sync` may pause.
+    ///
+    /// `abi` is the string the source wrote. Only `"C"` is accepted today and
+    /// the field carries what was written anyway, so a second one is a check
+    /// rather than a shape.
+    Extern {
+        abi: String,
+        declarations: Vec<Spanned<TraitMethod>>,
+    },
+
     // Part III, Kap 14.1: test "Name" { ... }
     Test {
         name: String,
@@ -500,6 +518,15 @@ pub enum Expr {
         bindings: Vec<AsmBinding>, // Block 1
         code: String,              // Block 2 (Roher Text)
     },
+
+    /// Part III 15.1: `unsafe { … }`
+    /// ([ADR-119](../../../docs/specification/adr/adr-119.md) D3).
+    ///
+    /// **A block with a value, and no other rule.** What is inside is checked
+    /// exactly as anything else is; what the word buys is that the boundary is
+    /// visible *at the call*, in the body somebody reads, which is why it is a
+    /// word rather than an attribute on the declaration.
+    Unsafe(Block),
 
     // Kap 7.1: Error Handling ?{ ... }
     TryCatch {

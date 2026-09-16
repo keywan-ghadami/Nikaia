@@ -1936,7 +1936,7 @@ impl<'p> Emitter<'p> {
                 for method in methods {
                     out.from(&method.span, |out| {
                         out.push("    ");
-                        self.trait_method(out, &method.node)
+                        self.trait_method(out, &method.node, method.node.is_sync)
                     })?;
                 }
                 out.push("}\n");
@@ -1988,6 +1988,33 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("{vis}const {bound}: {below} = {written};\n"));
                 Ok(())
             }
+            // **Rust's own `extern` block**
+            // ([ADR-119](../../docs/specification/adr/adr-119.md) D1), which is
+            // the whole of the lowering: the form means the same thing on both
+            // sides, and a declaration is `trait_method`'s shape with `sync`
+            // said by the caller (D2).
+            //
+            // **Only `"C"`**, and refusing a second ABI is a check rather than a
+            // shape: the grammar takes any string so that the message about an
+            // unknown one is this compiler's rather than the backend's about a
+            // file nobody wrote (Part III C.1).
+            Item::Extern { abi, declarations } => {
+                if abi != "C" {
+                    return Err(refused!(
+                        "`extern \"{abi}\"` names an ABI this compiler does not write. \
+                         The one it writes is `extern \"C\"` (Part III 15.1)"
+                    ));
+                }
+                out.push(&format!("extern \"{abi}\" {{\n"));
+                for declaration in declarations {
+                    out.from(&declaration.span, |out| {
+                        out.push("    ");
+                        self.trait_method(out, &declaration.node, true)
+                    })?;
+                }
+                out.push("}\n");
+                Ok(())
+            }
             other => Err(refused!("cannot emit item yet: {other:?}")),
         }
     }
@@ -1999,7 +2026,20 @@ impl<'p> Emitter<'p> {
     /// for whether the call can fail, and every one of those answers is about a
     /// *body* - which a declaration does not have. A second, smaller writer says
     /// what a declaration is instead of what a definition happens to omit.
-    fn trait_method(&self, out: &mut Out, method: &crate::ast::TraitMethod) -> Result<()> {
+    ///
+    /// `sync` is the caller's rather than the declaration's, because the same
+    /// shape reads two ways: a **trait** method without the word may pause
+    /// ([ADR-109](../../docs/specification/adr/adr-109.md) D1), and an
+    /// **`extern "C"`** declaration never can
+    /// ([ADR-119](../../docs/specification/adr/adr-119.md) D2) — C has no
+    /// suspension point, and a C function that sleeps blocks a thread, which is
+    /// `println`'s question and not this one.
+    fn trait_method(
+        &self,
+        out: &mut Out,
+        method: &crate::ast::TraitMethod,
+        is_sync: bool,
+    ) -> Result<()> {
         let mut params: Vec<String> = Vec::new();
         if let Some(receiver) = &method.receiver {
             params.push(
@@ -2053,7 +2093,7 @@ impl<'p> Emitter<'p> {
         // demand would refuse them. It is a requirement of the executor this
         // program is built for, written here — not a claim about a type, which
         // is `contracts::send`'s and is the same at both settings.
-        let ret = match (method.is_sync, method.ret_type.is_some() || method.throws) {
+        let ret = match (is_sync, method.ret_type.is_some() || method.throws) {
             (false, _) => {
                 let send = match self.build.user_parallelism {
                     UserParallelism::Yes => " + Send",
@@ -3673,8 +3713,10 @@ impl<'p> Emitter<'p> {
                 self.expr(out, expr, depth, flow)?;
                 // `if x { … };` is legal and noisy; a block-shaped statement
                 // ends where its brace does.
-                let block_shaped =
-                    matches!(expr, Expr::If { .. } | Expr::Block(_) | Expr::Overlap(_));
+                let block_shaped = matches!(
+                    expr,
+                    Expr::If { .. } | Expr::Block(_) | Expr::Unsafe(_) | Expr::Overlap(_)
+                );
                 if !tail.is_value() && !block_shaped {
                     out.push(";");
                 }
@@ -3769,6 +3811,14 @@ impl<'p> Emitter<'p> {
             // own value, and a `return` inside it leaves the function around
             // it - so it is not written as the block's value (`Tail`).
             Expr::Block(block) => self.block(out, block, depth, flow, Tail::Value)?,
+            // **Rust's own `unsafe`**
+            // ([ADR-119](../../docs/specification/adr/adr-119.md) D3), which is
+            // the whole of the lowering: the word means the same thing on both
+            // sides and the block inside it is an ordinary one.
+            Expr::Unsafe(block) => {
+                out.push("unsafe ");
+                self.block(out, block, depth, flow, Tail::Value)?;
+            }
 
             // **Part I 8.1.2: every branch in flight, and the value is their
             // results in written order** (ADR-050 D2).
@@ -5266,6 +5316,7 @@ impl<'p> Emitter<'p> {
                     // It lowers to a `match`, so it needs what a `match` needs.
                     | Expr::SafeMethod { .. }
                     | Expr::Block(_)
+                    | Expr::Unsafe(_)
                     | Expr::Closure { .. }
                     | Expr::TryCatch { .. }
                     | Expr::Dsl { .. }
@@ -6122,7 +6173,7 @@ pub(crate) fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
 pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match expr {
-        Expr::Block(block) | Expr::Overlap(block) => visit_block(block, f),
+        Expr::Block(block) | Expr::Unsafe(block) | Expr::Overlap(block) => visit_block(block, f),
         Expr::If {
             cond,
             then_branch,

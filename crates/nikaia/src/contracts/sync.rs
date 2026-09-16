@@ -754,7 +754,13 @@ pub(crate) fn visit_stmt_blocks<'a>(stmt: &'a Stmt, f: &mut impl FnMut(&'a Block
 /// it is a detached context (Part I, 5.4) and is not walked here.
 pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block)) {
     match expr {
-        Expr::Block(block) | Expr::Overlap(block) | Expr::Closure { body: block, .. } => f(block),
+        // An `unsafe` block is part of the function that writes it
+        // ([ADR-119](../../../docs/specification/adr/adr-119.md) D3): it makes
+        // no boundary of its own, so what it calls, the function calls.
+        Expr::Block(block)
+        | Expr::Unsafe(block)
+        | Expr::Overlap(block)
+        | Expr::Closure { body: block, .. } => f(block),
         Expr::Call { func, args, config } => {
             visit_expr_blocks(func, f);
             args.iter().for_each(|a| visit_expr_blocks(a, f));

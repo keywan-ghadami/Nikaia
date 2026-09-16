@@ -27,9 +27,8 @@ use nikaia::parser::parse_to_ast;
 /// that takes its input from the code under test cannot notice the code losing
 /// an entry.
 const RESERVED_BELOW: &[&str] = &[
-    "abstract", "async", "await", "become", "box", "do", "dyn", "extern", "final", "mod", "move",
-    "override", "priv", "ref", "static", "try", "type", "typeof", "unsafe", "unsized", "virtual",
-    "where", "yield",
+    "abstract", "async", "await", "become", "box", "do", "dyn", "final", "mod", "move", "override",
+    "priv", "ref", "static", "try", "type", "typeof", "unsized", "virtual", "where", "yield",
 ];
 
 /// The words that have left the sweep since: reserved words of **this** language
@@ -41,9 +40,15 @@ const RESERVED_BELOW: &[&str] = &[
 /// side effect nobody was looking for.
 ///
 /// They stay in the emitter's list on purpose — that list says what the language
-/// *below* reserves, which is still true of both, and un-reserving here is the
-/// free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
-const RESERVED_HERE_TOO: &[&str] = &["trait", "macro"];
+/// *below* reserves, which is still true of all of them, and un-reserving here
+/// is the free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
+///
+/// **`extern` and `unsafe` joined them** with their constructs
+/// ([ADR-119](../../../docs/specification/adr/adr-119.md) D1) — the two words
+/// Part III 15.1 writes, reserved on a measurement that came to zero. They are
+/// the first two here that Rust reserves *and* this language now does, which is
+/// why the escape can never fire for them either.
+const RESERVED_HERE_TOO: &[&str] = &["trait", "macro", "extern", "unsafe"];
 
 /// The words Rust takes as identifiers, which must therefore **not** be escaped.
 ///
@@ -129,7 +134,7 @@ fn rejected(purpose: &str, rust: &str) -> Option<String> {
     (!out.status.success()).then_some(complaint)
 }
 
-/// **The sweep.** Twenty-four words, every position, compiled.
+/// **The sweep.** Twenty-one words, every position, compiled.
 #[test]
 fn a_name_the_language_below_reserves_compiles_in_every_position() {
     let mut leaked = Vec::new();

@@ -1067,9 +1067,10 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
                 }
             }
         }
-        Expr::Block(block) | Expr::Overlap(block) | Expr::Closure { body: block, .. } => {
-            names_in_block(parsed, block, out)
-        }
+        Expr::Block(block)
+        | Expr::Unsafe(block)
+        | Expr::Overlap(block)
+        | Expr::Closure { body: block, .. } => names_in_block(parsed, block, out),
         Expr::If {
             cond,
             then_branch,

@@ -982,6 +982,36 @@ impl Ledger {
                     // D3). The same key shape an `impl`'s methods get, because a
                     // bound and a receiver ask the same question: what does a value
                     // of this thing have.
+                    // **An `extern "C"` declaration is an entry like any
+                    // other, and reads unlike a trait method**
+                    // ([ADR-119](../../../docs/specification/adr/adr-119.md)
+                    // D2). Two things are turned around, and only one of them
+                    // by this record. It is **`sync`**, asserted rather than
+                    // inferred, which is the shape `std`'s own hand-written
+                    // entries have for the same reason: the body is in another
+                    // language and this compiler does not read it. C has no
+                    // suspension point at all, and a C function that sleeps
+                    // *blocks* — `println`'s question (ADR-067 D1) and not this
+                    // one. And it carries **no `throws`**, which is what a
+                    // body-less declaration carries anyway: C has no failure
+                    // channel this language reads.
+                    //
+                    // `touches` and `locks` are absent, which is D4 and is
+                    // fail-closed: absent `touches` reads as *touches
+                    // everything* (ADR-033) and absent `locks` is that column's
+                    // third answer. A C signature says **less** than a Rust
+                    // one, not more.
+                    Item::Extern { declarations, .. } => {
+                        for declaration in declarations {
+                            let (_, mut contract) =
+                                trait_method(parsed, "", &declaration.node, false);
+                            contract.sync = Sync::Asserted;
+                            contract.throws = Vec::new();
+                            ledger
+                                .functions
+                                .insert(parsed.text(declaration.node.name).to_string(), contract);
+                        }
+                    }
                     Item::Trait {
                         name,
                         methods,

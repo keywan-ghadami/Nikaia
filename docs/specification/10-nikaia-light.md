@@ -117,10 +117,10 @@ These words mean one thing wherever they appear, so a name may not be one of the
 
 ```text
 as        break     catch     comptime  continue  dsl       else      enum
-false     fn        for       grammar   if        impl      in        let
-match     mut       null      overlap   pub       return    self      spawn
-struct    sync      throw     throws    trait     true      use       while
-with
+extern    false     fn        for       grammar   if        impl      in
+let       match     mut       null      overlap   pub       return    self
+spawn     struct    sync      throw     throws    trait     true      unsafe
+use       while     with
 ```
 
 **`comptime` is on the list because its construct exists** — a statement
@@ -131,6 +131,14 @@ to every binding that does not say `mut`; what the declaration promises is a
 
 **`with` is on the list for its construct**: a copy of a value with named
 fields changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
+
+**`extern` and `unsafe` are on it with their constructs**, which is the
+condition rather than an accident of timing: an `extern "C"` block and the
+`unsafe { … }` a call to one is written in arrived in the same change
+([ADR-119](adr/adr-119.md), Part III 15.1). The number that allowed two words is
+**zero** — nothing in the corpus, the tests or these pages wrote either as a
+name, and nothing is released, which is [ADR-084](adr/adr-084.md)'s own
+standard.
 
 **`break` and `continue` were reserved before they were constructs and are
 constructs now** (3.3, [ADR-084](adr/adr-084.md)) — which is what a reservation

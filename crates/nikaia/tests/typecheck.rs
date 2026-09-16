@@ -1432,9 +1432,18 @@ fn a_divisor_that_is_not_a_proven_zero_is_not_mentioned() {
 ///   `_000`, and the reading is right; being *accepted* was not.
 #[test]
 fn a_word_this_language_does_not_know_is_refused() {
+    // **`unsafe` used to be one of these and is a construct now**
+    // ([ADR-119](../../../docs/specification/adr/adr-119.md) D1): the word
+    // joined Part I 2.1's list the way that list says one does, with its rule
+    // in the same change. It is here as the shape it left, because a word
+    // moving *onto* the list is the direction that breaks programs and the one
+    // worth a line.
+    assert!(
+        parse_to_ast("fn main() {\n    unsafe { println(\"x\") }\n}").is_ok(),
+        "`unsafe` and a block is a construct now, not a name nothing declares"
+    );
     for (source, name) in [
         ("fn main() {\n    let c = true\n    assert c\n}", "assert"),
-        ("fn main() {\n    unsafe { println(\"x\") }\n}", "unsafe"),
         (
             "fn main() {\n    let n = 1_000\n    println(f\"{n}\")\n}",
             "_000",

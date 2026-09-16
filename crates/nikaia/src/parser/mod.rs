@@ -133,11 +133,11 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 38] = [
-    "as", "break", "catch", "comptime", "const", "continue", "dsl", "else", "enum", "false", "fn",
-    "for", "from", "grammar", "if", "impl", "in", "let", "loop", "macro", "match", "mut", "null",
-    "overlap", "pub", "quote", "return", "self", "spawn", "struct", "sync", "throw", "throws",
-    "trait", "true", "use", "while", "with",
+pub const RESERVED_WORDS: [&str; 40] = [
+    "as", "break", "catch", "comptime", "const", "continue", "dsl", "else", "enum", "extern",
+    "false", "fn", "for", "from", "grammar", "if", "impl", "in", "let", "loop", "macro", "match",
+    "mut", "null", "overlap", "pub", "quote", "return", "self", "spawn", "struct", "sync", "throw",
+    "throws", "trait", "true", "unsafe", "use", "while", "with",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -496,7 +496,24 @@ grammar! {
           | t:trait_item -> { Spanned::new(t, _span) }
           | u:use_item -> { Spanned::new(u, _span) }
           | c:comptime_item -> { Spanned::new(c, _span) }
+          | e:extern_item -> { Spanned::new(e, _span) }
           | i:fn_item -> { Spanned::new(i, _span) }
+
+        // Part III 15.1: `extern "C" { fn getpid() -> i32 }`
+        // ([ADR-119](../../../../docs/specification/adr/adr-119.md) D1).
+        //
+        // **The declarations are `trait_method`s**, because a signature without
+        // a body is the same shape wherever it stands. What differs is how one
+        // *reads* - D2 makes an `extern` declaration `sync` and gives it no
+        // `throws`, where a trait method without `sync` may pause - and that is
+        // the ledger's business rather than the grammar's.
+        //
+        // The ABI is the string the source wrote. Only `"C"` means anything
+        // today, and refusing a second one is a **check** rather than a shape,
+        // so the grammar takes any string and the ledger pass says which.
+        rule extern_item -> Item =
+            KW_EXTERN abi:STRING "{" declarations:trait_method* "}"
+            -> { Item::Extern { abi, declarations } }
 
         // Kap 4.2: behaviour lives in an `impl`, never in the struct.
         // Kap 4.2 and 4.7: `impl User` gives a type behaviour of its own,
@@ -1761,6 +1778,13 @@ grammar! {
           // taken for shorthand fields - or as a variable followed by a block
           // of its own, which is the trap the `while` rule records.
           | o:overlap_expr -> { o }
+          // Part III 15.1's other half, and it sits here for `overlap`'s reason
+          // ([ADR-119](../../../../docs/specification/adr/adr-119.md) D3): a
+          // keyword and a block, which a PEG would otherwise read as a struct
+          // literal called `unsafe`. `unsafe` is a reserved word now, so it
+          // could not be one - but the ordering is the rule and not the
+          // accident.
+          | u:unsafe_expr -> { u }
           | s:struct_lit -> { s }
           | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
@@ -2117,6 +2141,7 @@ grammar! {
         rule KW_DSL = "dsl" not(ident)
         rule KW_ELSE = "else" not(ident)
         rule KW_ENUM = "enum" not(ident)
+        rule KW_EXTERN = "extern" not(ident)
         rule KW_FALSE = "false" not(ident)
         rule KW_FN = "fn" not(ident)
         rule KW_FOLD = "fold" not(ident)
@@ -2147,6 +2172,7 @@ grammar! {
         rule KW_TRAIT = "trait" not(ident)
         rule KW_TRUE = "true" not(ident)
         rule KW_UNCHECKED = "unchecked" not(ident)
+        rule KW_UNSAFE = "unsafe" not(ident)
         rule KW_USE = "use" not(ident)
         rule KW_WHILE = "while" not(ident)
         rule KW_WITH = "with" not(ident)
@@ -2248,6 +2274,15 @@ grammar! {
           | KW_MACRO -> { 0 }
           | KW_QUOTE -> { 0 }
           | KW_WITH -> { 0 }
+          // **Reserved with their constructs**
+          // ([ADR-119](../../../../docs/specification/adr/adr-119.md) D1), which
+          // is what tells them from the four above: a word reserved so that a
+          // reader can be told something is one `NK1117`'s help can tell them
+          // about instead ([ADR-117](../../../../docs/specification/adr/adr-117.md)).
+          // The number that allowed it is **zero** - nothing in `examples/`, in
+          // `tests/` or in the three pages writes either as a name.
+          | KW_EXTERN -> { 0 }
+          | KW_UNSAFE -> { 0 }
 
 
         // The compiler's identifier.
@@ -2318,6 +2353,14 @@ grammar! {
         // mean.
         rule overlap_expr -> Expr =
             KW_OVERLAP b:block -> { Expr::Overlap(b) }
+
+        // Part III 15.1: `unsafe { … }`, the one place a call to an `extern`
+        // name may stand ([ADR-119](../../../../docs/specification/adr/adr-119.md)
+        // D3). A block with a value and no other rule - what is inside is
+        // checked exactly as anything else is, and what the word buys is that
+        // the boundary is visible *at the call*.
+        rule unsafe_expr -> Expr =
+            KW_UNSAFE b:block -> { Expr::Unsafe(b) }
 
         rule struct_lit -> Expr =
             name:type_name "{" fields:field_inits "}" -> {

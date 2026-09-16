@@ -159,6 +159,34 @@ fn item_types(
                 }
             }
         }
+        // **An `extern "C"` declaration's types are written types**
+        // ([ADR-119](../../docs/specification/adr/adr-119.md) D1), and the
+        // reason this arm has to exist is Part III 15.1's own example:
+        // `Pointer[u8]` is a type nothing declares, and without this it reached
+        // `rustc` intact and came back about a file nobody wrote — which is the
+        // whole class `NK1135` was built for.
+        //
+        // `Position::Parameter` for the arguments, as a function's are: a
+        // declaration is a signature, and the run-or-kept question `NK1142`
+        // asks is about where the type stands rather than about whose body it
+        // is in.
+        Item::Extern { declarations, .. } => {
+            for declaration in declarations {
+                for arg in &declaration.node.args {
+                    written_at(
+                        parsed,
+                        &arg.ty,
+                        known,
+                        Position::Parameter,
+                        &declaration.span,
+                        out,
+                    );
+                }
+                if let Some(ret) = &declaration.node.ret_type {
+                    written(parsed, ret, known, &declaration.span, out);
+                }
+            }
+        }
         Item::Trait { methods, .. } => {
             for method in methods {
                 let mut here = known.clone();

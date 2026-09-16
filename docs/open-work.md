@@ -677,15 +677,19 @@ a parse error (Part III 15.1), `Target` has two values, and this repository has
 no notion of a linkable artifact — no `cdylib`, no `staticlib`, no `.so`.
 
 **The owner has since named it as open**, so it is no longer waiting on scope
-([`project_status_and_roadmap.md`](project_status_and_roadmap.md)) — it is
-waiting on the question one direction over. **Talking *to* C comes first** and is
-15.1's, and what that costs the language is
-[`open-decisions.md`](open-decisions.md)'s newest entry: 15.1's own example
-writes three things the language does not have — `extern` and `unsafe`, neither
-reserved, and `Pointer[T]`, which no record decides — and two of them are
-keywords, which [ADR-084](specification/adr/adr-084.md) calls the most expensive
-thing a language adds. Letting C call *in*, which is this record, is the second
-direction and the one that takes the threads away.
+([`project_status_and_roadmap.md`](project_status_and_roadmap.md)). **Talking
+*to* C came first** and is 15.1's, and it is built:
+[ADR-119](specification/adr/adr-119.md) reserved `extern` and `unsafe` *with
+their constructs* — the number that allowed two words was zero — and an
+`extern "C"` block, an `unsafe { … }` and `NK1143` are all there. What that
+record left open is `Pointer[T]`, and what **this** one still waits on is a
+**target**: `Target` has two values and there is no linkable artifact anywhere in
+the repository.
+
+*What it needs, in the record's order:* the target and its artifact kind (§4
+leaves both open), and then the analysis taking the exported entry points as
+roots seeded at the floor — which is the same order of work as the crossing
+roots it already seeds, and which D3 says needs no change to any check.
 
 *Why it is written down anyway:* it is the one direction that touches
 `user_parallelism` at its root. A target added without it answers "who owns the
@@ -1312,6 +1316,25 @@ lowering to a struct expression with a base; `examples/1brc.nika`'s `Stats`
 and a test.
 
 ---
+
+### 2.31. A C declaration cannot name a pointer
+
+[ADR-119](specification/adr/adr-119.md) §4, and the only part of that record
+left. `extern` and `unsafe` are reserved words with constructs, an
+`extern "C"` block is a program, `unsafe { … }` is how a call to one is
+written, `NK1143` is what a call outside one meets, and the whole thing
+compiles and runs — `extern "C" { fn getpid() -> i32 }` prints a process id.
+
+*What is left is the example on the page.* Part III 15.1 writes
+`fn malloc(size: usize) -> Pointer[u8]`, and `Pointer[T]` is a type nothing
+declares. **A pointer that outlives what it points at is the one thing this
+language is built not to allow**, so a type for one wants a record with a
+lifetime story rather than a name — which is why that record leaves it open
+rather than adding it.
+
+*What is writable meanwhile* is every C function whose signature names types
+this language already has: most of `libc`'s arithmetic and process surface, and
+none of its memory surface.
 
 ## 3. Upkeep
 

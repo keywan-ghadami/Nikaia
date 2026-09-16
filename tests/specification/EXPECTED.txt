@@ -103,7 +103,7 @@
 30-nikaia-tooling.md #4 fragment (as written)  struct User { name: String, age: i32 }
 30-nikaia-tooling.md #5 fragment (as written)  impl Generator for User {
 30-nikaia-tooling.md #6 fragment (as written)  bench "Sorting" {
-30-nikaia-tooling.md #7 fragment (as written)  extern "C" {
+30-nikaia-tooling.md #7 refused (as written) [NK1135]  extern "C" {
 30-nikaia-tooling.md #8 fragment (as written)  // Usage of a Rust crate
 30-nikaia-tooling.md #9 lowered (as written)  // main.nika
 30-nikaia-tooling.md #10 refused (as written)  use std::backend::x86

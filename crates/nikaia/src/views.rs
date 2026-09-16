@@ -882,10 +882,9 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
             blocks.extend(else_branch.as_ref());
         }
         Expr::Block(block)
+        | Expr::Unsafe(block)
         | Expr::Overlap(block)
-        | Expr::Closure { body: block, .. } => {
-            blocks.push(block)
-        }
+        | Expr::Closure { body: block, .. } => blocks.push(block),
         Expr::TryCatch { expr, handler } => {
             children.push(expr);
             blocks.push(handler);
