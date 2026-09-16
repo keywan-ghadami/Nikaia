@@ -294,9 +294,14 @@ A build switch is **not** an operating property and does not belong here:
 `nikaia.toml` (ADR-037 D5).
 
 > **Status:** built, and its four settings reach the runtime. What reads them is
-> `nikaia_std::rt`; `cleanup-deadline` bounds the drain of pending I/O, and the
-> parked-cleanup queue [ADR-006](adr/adr-006.md) D3 describes does not exist
-> yet, because `Cleanup` does not. **The file's name and search path are not
+> `nikaia_std::rt`; `cleanup-deadline` bounds the drain of pending I/O, and an
+> expiry ends the program with **70** on the panic path exactly as written above
+> ([ADR-112](adr/adr-112.md)). The parked-cleanup queue
+> [ADR-006](adr/adr-006.md) D3 describes does not exist yet, because `Cleanup`
+> does not — so what the message counts today is the I/O operations that were
+> abandoned, and it names resources when that queue lands. Under
+> `panic = "abort"` the process is gone with the abort's own status before the
+> exit code can be set: that profile keeps the message and loses the number. **The file's name and search path are not
 > decided by an ADR** — D5 names the four settings and says "read at startup",
 > and this spelling is the implementation's choice until a record makes it.
 

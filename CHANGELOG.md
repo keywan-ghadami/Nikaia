@@ -20,7 +20,7 @@
 ### Decided (an expired `cleanup-deadline` is a failure of the program)
 
 - **[ADR-112](docs/specification/adr/adr-112.md).** A cleanup the deadline cut off — an unflushed file, a transaction left open — ends the program with **exit status 70** (`EX_SOFTWARE`), and the message naming every such resource goes the panic path, standard error and the panic hook, never standard output. The specification had said *"exits with a warning"* and no status, and an unsaid status is `0`, which is what systemd, cron and a pipeline under `set -e` read. No setting turns it back into success; `cleanup-deadline = "0"` does not drain and never expires.
-- **Nothing of it is built**, because [ADR-006](docs/specification/adr/adr-006.md) D3's parked-cleanup queue is not; `open-work.md` carries it.
+- **Steps 2 and 3 are built** — see *Changed*, below. What is left is [ADR-006](docs/specification/adr/adr-006.md) D3's parked-cleanup queue, which is what lets the message name the resources instead of counting the I/O operations; `open-work.md` carries it.
 
 ### Decided (what leaves a lock is stamped `Seen[T]`)
 
@@ -69,6 +69,13 @@
 - **Four things are not lent**, each of them the record's polarity being spent rather than a gap: a parameter the `keeps` column names; a value that **copies**, where a `&i64` costs a dereference at every use and buys nothing; an argument that is **already a view**; and a **method's** argument, for the reason `touches` gives for asking a weaker question — which entry `acc.record(m)` goes to is the type checker's answer and the emitter has none ([ADR-028](docs/specification/adr/adr-028.md)), so a call the checker does not walk would hand a value into a `&T`.
 - **Three things the record had not said, each found on the corpus.** **Which fit to ask depends on the parameter's kind**: a parameter written `&str` is a view in the declaration already, so what has to fit it is the argument *with* the reference the compiler writes — asking the other question refused `count(dna)` in `k-nucleotide.nika`, and asking this one everywhere refused `record(Stats(2))`. **The refusal goes after the fit and never on a type nothing pinned**: a `&i64` handed to a `&Request` stays `NK1102`, and `Ty::Unknown` fits everything, which is the right answer for an absent claim ([ADR-024](docs/specification/adr/adr-024.md) D1) and no ground to refuse punctuation on. **But `Unknown` may not skip the writing** — a guard placed one line too early took the `&` off `inventory/main.nika`'s `render(entries, total)` while leaving its parameter a view.
 - **`NK1137` now covers both positions**, the `for` head and the call, and its catalogue text says where it lands and where it stays quiet.
+
+### Changed (an expired `cleanup-deadline` is exit 70, said on the panic path)
+
+- **[ADR-112](docs/specification/adr/adr-112.md), steps 2 and 3.** A drain whose deadline expires no longer ends the program with a warning and a `0`. It ends it with **exit status 70** (`EX_SOFTWARE`), and the message goes the panic path — raised as a panic so the program's **panic hook** runs, caught, and then the status — never on standard output, which belongs to the program's own output.
+- **The test is a second process**, because a status is only a status once the process is over: the test binary runs itself with a configuration file whose deadline is `50ms` and one readiness wait that will never finish, and reads back both the number and standard error. Either half alone would have passed while the decision was half built.
+- **Step 1 is [ADR-006](docs/specification/adr/adr-006.md) D3's and is not built**, which bounds what the message can *say*: with no parked-cleanup queue, what expires is the drain of pending **I/O operations** and the message counts those rather than naming the resources. The names join the same message on the same path when the queue lands.
+- **Under `panic = "abort"` that profile keeps the message and loses the number** — the process is gone with the abort's own status before the exit code can be set. Named in the record rather than left to be discovered.
 
 ### Changed (what leaves a lock is stamped `Seen[T]`)
 

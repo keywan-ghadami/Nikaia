@@ -1095,20 +1095,28 @@ no longer true and has been rewritten.
 parameter on `set`, the lowering to D5's `update`, `Overtaken` as a declared
 error, and the specification's example.
 
-### 2.24. An expired `cleanup-deadline` is exit 70 on the panic path
+### 2.24. A cleanup the deadline cut off names the resource
 
-[ADR-112](specification/adr/adr-112.md). A cleanup the deadline cut off is a
-failure of the program: exit status 70, the resources named on standard error
-and through the panic hook, never on standard output, and no setting that
-makes it a `0`. **Nothing of it is built**, because the drain it ends is not:
-the parked-cleanup queue of [ADR-006](specification/adr/adr-006.md) D3 does
-not exist, so today nothing expires and nothing is reported.
+[ADR-112](specification/adr/adr-112.md). **Steps 2 and 3 are built**: an
+expired `cleanup-deadline` ends the program with exit status 70, and the
+message goes the panic path — standard error and the program's panic hook,
+never standard output — with a test that runs a second process, expires its
+deadline and reads both. `cleanup-deadline = "0"` does not drain and
+therefore never expires, which is D3 and needed no code.
 
-*What it needs, in the record's order (§5):* ADR-006's queue and drain; the
-status and the message on expiry; a test that expires a deadline and reads
-the status.
+*What is left is step 1, and it is [ADR-006](specification/adr/adr-006.md)
+D3's.* The parked-cleanup queue does not exist, so what expires today is the
+drain of pending **I/O operations**: the message counts them rather than
+naming the resources whose cleanup was cut off, which is what D2 asks for.
+When the queue lands the names go in the same message on the same path, and
+nothing about the status changes.
 
-### 2.26. `?.` reaches through a view
+*One limit of the build, named rather than left to be found:* under
+`panic = "abort"` the process is gone with the abort's own status before the
+exit code can be set. The hook has already run and said what happened, so
+that profile loses the status and not the message.
+
+### 2.25. `?.` reaches through a view
 
 [ADR-113](specification/adr/adr-113.md). `?.` takes nothing: it reaches
 through a view of its receiver, and the result is a copy where the member
@@ -1124,7 +1132,7 @@ value"* today.
 `as_ref()`; the tether analysis reading the result as a view; the translation
 removed and a test that uses the receiver again.
 
-### 2.27. Reading a map through the brackets is a `T?`
+### 2.26. Reading a map through the brackets is a `T?`
 
 [ADR-114](specification/adr/adr-114.md). `m[k]` on a map answers a `T?`,
 `get` says the same, `m[k] = v` still inserts, `m[k] += 1` is written
@@ -1140,7 +1148,7 @@ key came from the same map a line earlier.
 an output type per container; the checker typing the read as `T?` and
 refusing `+=`; the two example lines, Part I 4.5 and a test.
 
-### 2.28. An `overlap` keeps every failure
+### 2.27. An `overlap` keeps every failure
 
 [ADR-115](specification/adr/adr-115.md). Every error carries a `secondary`
 list; an `overlap`'s later failing branches join the winner's list in written
