@@ -1450,18 +1450,19 @@ let kasse: SharedMut[i32] = ...
 
 let stand = kasse.get()              // take a copy out
 kasse.set(hole_neuen_stand())        // replace it; the new value comes from outside
-kasse.update fn(old) { old + 100 }   // new value from the old one
+kasse.update fn(mut v) { v += 100 }   // change it, under the lock
 
-// Where the value is large, change it in place rather than copying it out and back.
+// Where the value is large, `update` changes it where it lies, and `access` reads it there.
 let protokoll: SharedMut[Log] = ...
-protokoll.access fn(log) { log.add("gebucht") }
+protokoll.update fn(mut log) { log.add("gebucht") }
+let n = protokoll.access fn(log) { log.len() }
 ```
 
 Each door is shaped for what it is for:
 
 * **`get` and `set` take no block at all.** `get` copies the value out. `set`'s argument is computed *before* the call, so everything slow about producing the new value — including waiting for I/O — happens outside, and the lock is open for one store.
-* **`update` is handed a copy of the old value and returns the new one.** Nothing that points inside the lock ever exists, so there is nothing that could outlive the block.
-* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to append one. It hands your block the value itself.
+* **`update` is handed the value as `mut v` and changes it.** It returns nothing: the change *is* the result, and `mut` is the word every changed parameter carries (4.3). Whether `v` is a copy of a small value or the address of a large one is the compiler's to decide, and a block may be run more than once where that is free — which is why it may not do I/O or take another lock ([ADR-110](adr/adr-110.md)).
+* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to be asked its length. It hands your block the value where it lies, to **read**; it may not change it.
 
 Because `update` and `access` run your code while the lock is open, that code
 must be able to run straight through: no I/O, and no second lock. The compiler

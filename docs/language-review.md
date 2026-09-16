@@ -235,6 +235,9 @@ door is needed after all: `update fn(old) { let mut v = old; v.push(x); v }` is
 a move in and out of the lock, which is what ADR-059 D2 argues, but it is three
 lines for `push` and it moves the value out of the lock for the duration of the
 block — a panic inside leaves the lock empty at `no` and poisoned at `yes`.
+*Decided since:* [ADR-110](specification/adr/adr-110.md) — `update fn(mut v)`,
+one form, copy or address by type, and the retry permitted where the copy is
+free.
 
 ### 2.3 The lost update has a one-line refusal and a two-line hole
 
