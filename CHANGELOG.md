@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Decided (reading a map through the brackets is a `T?`)
+
+- **[ADR-114](docs/specification/adr/adr-114.md).** `scores[name]` on a map answers a `T?`, the same as `get`, because a key is data and may be absent — and a language that made `null` a type so that absence lives in the type had one spelling, on the container where absence is most ordinary, that went around it and aborted. `m[k] = v` still inserts; `m[k] += 1` is written `m[k] = (m[k] ?? 0) + 1`, which answers what [ADR-080](docs/specification/adr/adr-080.md) D2 had left open; a list's `xs[i]` keeps its abort, because an index is the program's own arithmetic and a wrong one is a bug. The read lowers to one `index::get` with an output type per container, as the write already does.
+- **Nothing of it is built**; `open-work.md` carries the three steps, and two example lines gain a `??`.
+
+### Decided (`?.` reaches through a view)
+
+- **[ADR-113](docs/specification/adr/adr-113.md).** `?.` takes nothing. `let name = user?.name` followed by `println(user)` is an ordinary program: the reach is through a view of the receiver, and what comes out is a copy where the member copies and a view of the receiver otherwise, kept alive by the rules a field read already follows. The move Part I 3.5 called a rule was `Option::map` taking its receiver, which is the `&`-at-every-call shape again — a Stage-0 choice turned sentence — and [ADR-052](docs/specification/adr/adr-052.md) D8's translation of the move goes with the move. Nothing is copied that the program did not write.
+- **Nothing of it is built**; `open-work.md` carries the three steps.
+
 ### Decided (an expired `cleanup-deadline` is a failure of the program)
 
 - **[ADR-112](docs/specification/adr/adr-112.md).** A cleanup the deadline cut off — an unflushed file, a transaction left open — ends the program with **exit status 70** (`EX_SOFTWARE`), and the message naming every such resource goes the panic path, standard error and the panic hook, never standard output. The specification had said *"exits with a warning"* and no status, and an unsaid status is `0`, which is what systemd, cron and a pipeline under `set -e` read. No setting turns it back into success; `cleanup-deadline = "0"` does not drain and never expires.

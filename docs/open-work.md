@@ -1100,6 +1100,38 @@ not exist, so today nothing expires and nothing is reported.
 status and the message on expiry; a test that expires a deadline and reads
 the status.
 
+### 2.26. `?.` reaches through a view
+
+[ADR-113](specification/adr/adr-113.md). `?.` takes nothing: it reaches
+through a view of its receiver, and the result is a copy where the member
+copies and a view of the receiver otherwise, kept alive as any view of a
+place is. **Nothing of it is built**: `x?.a` lowers to `x.map(|it| it.a)`, a
+method reach to a `match` over `x` by value, and a receiver used again is
+refused below with the note ADR-052 D8 used to translate.
+
+*Evidence:* `let name = user?.name` then `println(user)` is *"use of moved
+value"* today.
+
+*What it needs, in the record's order (§5):* the two lowerings over
+`as_ref()`; the tether analysis reading the result as a view; the translation
+removed and a test that uses the receiver again.
+
+### 2.27. Reading a map through the brackets is a `T?`
+
+[ADR-114](specification/adr/adr-114.md). `m[k]` on a map answers a `T?`,
+`get` says the same, `m[k] = v` still inserts, `m[k] += 1` is written
+`m[k] = (m[k] ?? 0) + 1`, and a list's `xs[i]` keeps its abort. **Nothing of
+it is built**: a map read lowers to Rust's `Index` and panics on an absent
+key.
+
+*Evidence:* `&report.paths[path]` in `examples/access-log.nika` and
+`&totals.stations[name]` in `examples/1brc.nika`, both safe only because the
+key came from the same map a line earlier.
+
+*What it needs, in the record's order (§5):* `nikaia_std::index::get` with
+an output type per container; the checker typing the read as `T?` and
+refusing `+=`; the two example lines, Part I 4.5 and a test.
+
 ---
 
 ## 3. Upkeep

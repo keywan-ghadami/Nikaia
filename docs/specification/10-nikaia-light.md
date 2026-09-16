@@ -818,11 +818,11 @@ let shown = nickname ?? name ?? "Guest"
 > **`?.` through something that cannot be absent is refused** as `NK1121`, and
 > the way out is the plain `.` — a type that is not `T?` always has a value.
 >
-> **And `?.` takes the value it reaches through**, so using the receiver again is
-> refused by the language below with *"use of moved value"* on this line. That is
-> a real rule and not an accident of the lowering; what was translated is the
-> note that explained it, which used to name the machinery instead of the
-> operator ([ADR-052](adr/adr-052.md) D8).
+> **`?.` takes nothing.** It reaches through a view of its receiver, so `user`
+> is usable on the line after `user?.name`; what comes out is a copy where the
+> member copies and a view of the receiver otherwise, as a field read is (6.6)
+> ([ADR-113](adr/adr-113.md)). **Not built yet**: today the lowering takes the
+> receiver, and using it again is refused below with *"use of moved value"*.
 >
 > **`?.` reaches a method too**, because the sentence above says *member* and a
 > method is one ([ADR-066](adr/adr-066.md)): `find(1)?.greet("Hallo")` calls it
@@ -980,6 +980,12 @@ Nikaia includes built-in types for storing groups of data.
     let mut scores = HashMap::new()
     scores["Player1"] = 100
     ```
+    Reading through the brackets answers a `T?`, because a key is data and may
+    be absent: `scores["Player1"] ?? 0`, or `scores[name]?.rank ?? 0`
+    ([ADR-114](adr/adr-114.md)); `get` says the same. A list's `xs[i]` stays a
+    `T`, because an index is the program's own arithmetic and a wrong one is a
+    bug (Part III, Appendix A). **Not built yet**: today a missing key aborts.
+
     A map is hashed according to where its keys came from: keys derived from data a remote peer supplied are hashed with a random per-run key, so nobody can pick keys that make your program crawl, and keys from data you supplied are hashed with the fast function. You do not configure this and, in the ordinary case, you do not think about it — see Part III, 17.1, for the cases where you want the last word. One consequence is worth remembering here: **the order you get when iterating a map is not guaranteed** and may differ between runs.
 
 > **Status:** the **list literal is not built** — `[1, 2, 3]` is a parse error at
