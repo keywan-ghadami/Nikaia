@@ -822,6 +822,65 @@ pub mod io {
 mod tests {
     use super::*;
 
+    /// **A worker's reply cannot wake the executor on the completion path**,
+    /// which is the reason standard input does not suspend — and not the one
+    /// `docs/open-work.md` had recorded.
+    ///
+    /// The bell exists for the **fallback**: one private reply channel per
+    /// operation and no way to wait for *whichever finishes first*, so a worker
+    /// bumps a count and the park hook watches it. On the completion path the
+    /// hook waits on the **ring** instead, and `Ring::park` answers off
+    /// `unreaped` — which counts ring jobs. A worker operation is not one, so
+    /// the hook says *there is nothing to wait for* while something is plainly
+    /// in flight.
+    ///
+    /// What follows is that no future may be fed from a worker reply while the
+    /// ring is the park: `exec::block_on` either spins (`main` alone) or panics
+    /// with *a future returned `Pending` without arranging for its waker to be
+    /// called*. So wiring standard input to `Op::Readiness` — which is what
+    /// that entry proposed — would have produced exactly that, and the choice
+    /// in `docs/open-decisions.md` is which way out to take.
+    #[test]
+    fn a_worker_operation_does_not_wake_the_completion_park() {
+        let runtime = handle();
+        // A pipe with nothing in it: the readiness wait will not finish, so the
+        // operation is still in flight while this thread asks about the park.
+        let (reader, _writer) = std::io::pipe().expect("a pipe");
+        let waiting = std::thread::spawn(move || {
+            let _ = io::wait(
+                &reader,
+                Interest::Readable,
+                Some(std::time::Duration::from_secs(2)),
+            );
+        });
+        // Until the worker has taken it, there is nothing to say.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while runtime.pending() == 0 && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(runtime.pending(), 1, "the readiness wait is queued");
+
+        let moved = io::park_for(io::generation(), Some(std::time::Duration::from_millis(50)));
+        match runtime.files() {
+            // **The finding.** Something is in flight and the park says there
+            // is nothing to wait for.
+            Files::Completion => assert!(
+                !moved,
+                "the ring park saw a worker operation; if this is true now, the \
+                 entry in docs/open-decisions.md about standard input has been \
+                 answered by something and should be re-read"
+            ),
+            // On the fallback the bell *is* the park, so the same operation
+            // is waited for properly - which is what says the finding is about
+            // the **path** and not about readiness. Nothing is asserted here:
+            // whether this particular 50ms park returns is a timing answer, and
+            // a test that turned one into a claim would be flaky rather than
+            // informative.
+            Files::Blocking => {}
+        }
+        let _ = waiting.join();
+    }
+
     /// D4, from the only angle a test can see it: the runtime a `std` call
     /// finds is already there, and it is the same one every call finds.
     #[test]

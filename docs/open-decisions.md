@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**No entry is open.** Nothing answered lives here: an
+**One entry is open**, below. Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -87,6 +87,67 @@ binding `std::db` would use is undecided and blocks nothing, because `std::db`
 does not exist in any form. That is **scope**, and
 [`project_status_and_roadmap.md`](project_status_and_roadmap.md) holds it; scope
 becomes a decision by something coming to rest on it.
+
+## 1. What wakes the executor when the work is on a worker thread
+
+**What is blocked.** Standard input does not suspend: `io::read`,
+`io::read_to_string` and `io::lines` are `async fn` whose bodies are the
+blocking read they always were
+([`open-work.md`](open-work.md)'s entry on it). Behind it, and larger:
+`rt::io::wait` — the readiness half of
+[ADR-038](specification/adr/adr-038.md) D3, built for sockets — **cannot be
+awaited**, only blocked on. That is what an HTTP server needs, so the entry
+about there being no HTTP server rests on this too.
+
+**The finding, and it is not what the work entry had recorded.** That entry
+proposed wiring standard input to `Op::Readiness`. It would not have worked, and
+the reason is the park hook rather than readiness:
+
+* The **bell** (`rt::FINISHED` + `BELL`) exists for the *fallback* path. Its own
+  comment says why: one private reply channel per operation and no way to wait
+  for whichever finishes first, so a worker bumps a count and the hook watches
+  it.
+* On the **completion** path the hook waits on the ring instead, and
+  `Ring::park` answers off `unreaped`, which counts ring jobs. **A worker
+  operation is not one.**
+
+So while the ring is the park, a worker's reply cannot wake the executor, and no
+future may be fed from one: `exec::block_on` either spins (`main` alone) or
+panics with its own *a future returned `Pending` without arranging for its waker
+to be called*. `a_worker_operation_does_not_wake_the_completion_park` in
+`crates/nikaia-std/src/rt/mod.rs` holds this, and is written to go red the day
+it stops being true.
+
+**The options.**
+
+1. **Put standard input on the ring** (Linux), with the worker as the fallback —
+   the two paths files already have. *Cost:* a second read shape, because stdin
+   has no size to `stat` and the read is a loop until zero rather than one
+   transfer; and it fixes standard input only. `rt::io::wait` stays
+   un-awaitable, so the HTTP server still has nothing.
+2. **Make the ring park hear the bell**, by registering an eventfd on the ring
+   that `ring_the_bell` writes to. *Cost:* one fd and one always-armed
+   submission, plus the care that a read of the eventfd is not mistaken for a
+   completion. *What it buys:* **every** worker operation becomes awaitable at
+   once — standard input, socket readiness, and whatever a later `Op` carries —
+   and the two paths stop differing in what they can feed.
+3. **Leave it**, and correct the work entry to say that standard input holds its
+   thread by design until something needs otherwise.
+
+**What I would do: option 2.** The asymmetry is the defect, not standard input:
+the runtime has two ways to finish an operation and only one of them can wake
+the thing that waits. Option 1 pays a special case for one caller and leaves
+`rt::io::wait` where it is, which is the piece the next thing in the file wants.
+Option 3 is honest and costs nothing today, and it is the right answer only if
+the HTTP server is further off than it looks.
+
+**What either direction costs if it is wrong.** Option 2's risk is a hang, which
+is the worst failure this runtime can have — so it wants the same treatment
+`park`'s own `false` got: a loud panic rather than a wait, and a test that a
+worker reply wakes a ring park. Option 1's risk is that the second read shape is
+written twice when option 2 lands anyway.
+
+---
 
 This file is a notes page: nothing here is normative. A decision taken from it is
 written down in [`specification/adr/`](specification/adr).

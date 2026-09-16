@@ -446,13 +446,32 @@ the thread. Something can now: at `user_parallelism = yes` a task is on a thread
 of its own, so a `main` blocked in `io::lines()` is a thread the pool could have
 had.
 
-*What it needs:* `Op::Readiness` against standard input's descriptor, and a
-`Lines` whose step is a future. The second half is the larger one and is a
+*What it needs is not what this entry used to say.* It proposed
+`Op::Readiness` against standard input's descriptor. **That would not have
+worked**, and the reason is the park hook rather than readiness: the bell a
+worker rings is the *fallback* path's, and on the completion path the executor
+parks on the **ring**, whose `park` answers off a count of ring jobs. A worker
+operation is not one, so a worker's reply cannot wake the executor and no future
+may be fed from one — `exec::block_on` spins or panics with its own *a future
+returned `Pending` without arranging for its waker to be called*.
+`a_worker_operation_does_not_wake_the_completion_park` in
+`crates/nikaia-std/src/rt/mod.rs` holds the finding and goes red the day it
+stops being true.
+
+**So the first half is a decision and it is in
+[`open-decisions.md`](open-decisions.md)**: put standard input on the ring, or
+make the ring park hear the bell. The second is the larger one and stays a
 question of its own: a `for` over a **stream** is `while let Some(x) =
 s.next().await` in the language below, and Rust has no stable trait for one. The
 parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` — a
 property of the *type*, recorded in the ledger, that makes the emitter write the
 step differently — so the shape to copy exists.
+
+*And something larger rests on the same answer.* `rt::io::wait` is D3's
+readiness half, built for sockets, and it **cannot be awaited** either — only
+blocked on, for exactly this reason. That is what an HTTP server needs, so the
+entry below about there being no HTTP server waits on this decision and not only
+on its own.
 
 ### 2.4. The lock is built and every rule around it is not
 
@@ -556,6 +575,14 @@ bench that decided it (`benches/sendfile/`) and the write-up
 ([`zero-copy-send.md`](zero-copy-send.md)); `send_file` beside the ring could have
 been built ahead of the server and deliberately was not, because D3's measurement
 makes it the mechanism that loses at the sizes a server sends most.
+
+**And there is a runtime piece underneath all of it.** A server waits on
+sockets, and `rt::io::wait` — the readiness half this would rest on —
+**cannot be awaited**, only blocked on: on the completion path the executor
+parks on the ring, and a worker's reply does not reach it. That is the entry in
+[`open-decisions.md`](open-decisions.md), and the entry above about standard
+input is the small end of the same question. Nothing here can be an
+`async fn` that actually pauses until it is answered.
 
 ### 2.8. There is no target that lets foreign code call in, and the record for one is written
 
