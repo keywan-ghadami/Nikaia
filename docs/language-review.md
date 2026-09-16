@@ -167,6 +167,20 @@ it; Go, Swift, Kotlin and every scripting language default to 64 bits.
 a C header — and the cast is then written where a layout decision is being
 made, which is where it belongs.
 
+*Withdrawn after measuring.* The second sentence above is false: a name does
+**not** pin a literal against a later use. `let mut total = 0` followed by
+`total = total + text.len()` compiles, and the emitter itself writes
+`text.len() as i64` with `total` becoming an `i64` from that use — Part I
+2.4's rule, *the use is asked first and the size second*, holds. The three
+casts in the corpus have other causes: `1brc.nika` **declares** the
+temperature and `min`/`max` as `i32` (`rule TENTHS -> i32`, a 24-byte `Stats`),
+so the cast stands where a layout decision meets a sum, which is where the
+recommendation itself wanted it; `json.nika`'s `count() as i64` is a ledger
+gap — `count` has no entry — which `Seq[T]` (ADR-105) closes. What remained
+was one sentence of guidance, *"`i32`: used for most numbers"*, and Part I
+2.2 now says `i64` for most numbers and `i32` where layout matters. No record
+is needed and none is written.
+
 ---
 
 ## 2. Where data integrity is at risk
