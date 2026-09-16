@@ -945,6 +945,24 @@ is ADR-094's `keeps` asked of a code parameter; and D5's lowering of a **kept**
 handler, which is *a lambda that pauses is refused* one entry up, with a callee
 that can now say which shape it wants.
 
+*What step 3 turns out to need, measured rather than guessed.* **The
+run-or-kept half is already there**: `contracts::keeps` answers it for a code
+parameter exactly as for any other, and
+`fn twice(x: i64, f: fn(i64) -> i64) { return f(f(x)) }` records no `keeps` for
+`f` — which is the column saying *run*. What is missing is the **use** of it,
+and it is one change with a sharp edge: `sync = "from(f)"` is a value the
+ledger can *carry* and only a **written** `std` entry has ever produced, so
+step 3 makes `Sync::From` an outcome of **inference**, in the greatest fixpoint
+where every other outcome is a promise being taken away. `twice` comes out
+today with no `sync` at all — the pessimistic answer, so nothing is unsound —
+and it lowers to an `async fn` that every caller awaits.
+
+*And there is no shortcut through it.* Reading a call to a run parameter as
+*does not pause* would make `twice` `sync = "inferred"`, which is a promise
+that fails open the moment a caller hands it a pausing lambda —
+[ADR-010](specification/adr/adr-010.md) D1's polarity exactly. `From` is what
+carries the question to the caller, and carrying it is the work.
+
 *Until that last one lands, a function type is a **parameter** and nothing
 else.* A field, a result and a `let` are the positions where it can only be
 kept, and they are `NK1142` here rather than `impl Fn(…)` in a Rust field,
