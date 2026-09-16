@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Two entries are open**, below. Nothing answered lives here: an
+**Three entries are open**, below. Nothing answered lives here: an
 answer is an [ADR](specification/adr/), and the moment a question is answered its
 entry leaves this file rather than staying with a note on it. What is merely
 **unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
@@ -193,6 +193,57 @@ handler form nobody writes, and a downcast in the failure path of every
 program. Option 2 left too long is a language where a program that wants to
 retry *one* failure has to retry all of them — and that is a silent wrong
 behaviour rather than a refusal, which is the worse kind.
+
+## 3. Which shape a declaration commits to for a handler that may pause
+
+**What is blocked.** Two entries in [`open-work.md`](open-work.md) that turned
+out to be one: *a lambda that pauses is refused at the build*, and
+[ADR-102](specification/adr/adr-102.md)'s remaining step. A lambda whose body
+pauses has no lowering — Rust has no stable `async` closure — and the way out
+has been known all along: a closure that **returns** a future,
+`|| async move { … }`. What was missing was a *callee's* parameter being able to
+say it takes one, and D1's function type is now that claim. What is not settled
+is which shape the **declaration** commits to.
+
+**It is a question because D5 answers half of it.** A **kept** parameter that
+may pause lowers to a boxed closure over a boxed future — that is written down.
+A **run** parameter lowers *"as `std`'s do today, a closure argument"* — which
+is `impl Fn(A) -> R`, and a lambda that pauses cannot be written into one. So
+the case the whole entry exists for, a run parameter handed a pausing lambda,
+falls between the two sentences.
+
+**The options.**
+
+1. **The type decides.** A parameter whose type allows pausing lowers to the
+   future shape always; one that says `sync` lowers to a plain closure. *Cost:*
+   a run parameter handed a lambda that does not pause pays a `Box::pin` and a
+   dynamic call it does not need — and `fn(A) -> R` without `sync` is the
+   *default*, so that is the common case paying for the rare one. *What it
+   buys:* one rule, readable off the signature, with nothing inferred behind it.
+2. **The run-or-kept inference decides**, which step 3 already computes: a run
+   parameter stays a plain closure and a kept one gets the future shape, and a
+   lambda that pauses handed to a *run* parameter is still refused. *Cost:* the
+   refusal the entry was written about does not go away, and the emitter has to
+   read a ledger column it does not read today. *What it buys:* nobody pays for
+   a box they do not use.
+3. **Both, keyed by the type**: `fn(A) -> R sync` is a plain closure, and
+   everything else is the future shape — which is option 1 — *plus* `sync` on a
+   run parameter becoming the thing a library author writes for speed. *Cost:*
+   it makes `sync` a performance word as well as a promise, which is a meaning
+   it does not have anywhere else in this language.
+
+**What I would do: option 1.** The cost is a box on a call that already pays for
+a closure, and the thing it buys is that a reader can tell what a signature
+costs by reading it. Option 2 keeps the refusal this entry exists to remove,
+which makes it the wrong answer to the question being asked; and a measurement
+would settle the cost, which is what [ADR-009](specification/adr/adr-009.md)
+D4's own standard asks for before a shape is chosen on a guess.
+
+**What either direction costs if it is wrong.** Option 1 wrong is a box in
+every `map`-shaped call a *user's* library writes — `std`'s own entries are
+unaffected, since they are Rust and their signatures are hand-written. Option 2
+wrong is that `examples/fortunes.nika`'s route handler still cannot be written,
+which is the program this has been waiting on for three records.
 
 ---
 

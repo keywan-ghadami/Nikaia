@@ -404,8 +404,26 @@ may pause, so a lambda handed to one can be written as a closure that **returns*
 a future — `|| async move { … }`, which is stable Rust and is how a handler is
 taken in practice. Step 3 showed the shape works: `task::interleave` takes
 futures where `task::both` takes closures, and the emitter chooses between them
-per group. What is left is that a *callee's* parameter has to say which it wants,
-and the ledger has no column for it. Not a new mechanism — a claim to record.
+per group. What was left is that a *callee's* parameter has to say which it
+wants, and the ledger had no column for it. Not a new mechanism — a claim to
+record.
+
+**The claim exists now.** [ADR-102](specification/adr/adr-102.md) D1's function
+type *is* it: `fn(Request) -> Response` says the code may pause and
+`fn() sync` says it never does, the ledger writes and reads the whole spelling,
+and D2's fit already refuses a pausing lambda handed to a `sync` one
+(`NK2206`). So what is left here is the **lowering**, and it is the same
+remaining step that record has — D5's boxed closure over a boxed future — which
+is why the two entries are now one piece of work rather than two waiting on
+each other.
+
+*What that piece still has to settle, and no record says it yet:* the shape a
+declaration commits to. D5 gives the **kept** case a boxed closure over a boxed
+future and says a **run** parameter lowers *"as `std`'s do today, a closure
+argument"* — which cannot take a lambda that pauses. So either the *type*
+decides the shape (may-pause ⇒ the future shape always, and a run parameter
+handed a plain lambda pays a box), or the run-or-kept inference does, and the
+emitter learns to read it per parameter. That is a question rather than work.
 
 **A recursive pausing *method* is boxed now**, and what it took was asking a
 question the emitter already had the answer to. §6 step 2 boxed a call that
