@@ -1259,6 +1259,8 @@ What the bootstrap compiler's analysis is, exactly, so that a later one is not m
 ### 17.2. Availability by Target and by `user_parallelism`
 Some modules are only available, or behave restrictively, depending on the machine and on how much of your code may run at once.
 
+**A target without an operating system** ([ADR-119](adr/adr-119.md)) is one more column of this section: `user_parallelism` is `no` on it, `fs`, `net`, `process`, threads, memory mapping and `http` do not exist, and everything the language itself is — `overlap`, `spawn` as a coroutine, the four doors, `Cleanup`, `Seen`, grammars, `comptime`, Chapter 16's assembly — carries over. The emitted Rust is `no_std`, the executor is the target's with interrupts as wakers, an interrupt handler is a `fn() sync` that touches no lock, a lock is a critical section the length of its block, and a build may forbid allocation after start. What the compiler promises about time and what it leaves to analysis is D6 of that record. **Not built.**
+
 * **`std::process`**: Spawning child processes.
 * **`std::thread` / `spawn`**:
     * **At `user_parallelism = yes`:** Supports full concurrency. The primary mechanism is `spawn`.

@@ -1311,6 +1311,22 @@ the checker's field resolution and refusals, the enum operand refused; the
 lowering to a struct expression with a base; `examples/1brc.nika`'s `Stats`
 and a test.
 
+### 2.32. A target without an operating system
+
+[ADR-119](specification/adr/adr-119.md). A bare-metal target with
+`user_parallelism` pinned to `no`; `no_std` emission with a target prelude
+and abort; the target's executor over described crates with interrupts as
+wakers and `irq::on(vector, fn() sync)`; a heap by default and an
+`allocation = "startup"` profile over a derived `allocates` column; locks as
+critical sections; runtime settings baked at build time. **Nothing of it is
+built**: the compiler knows `x86_64-linux` and `wasm32-unknown`, and `std`
+has one Rust half. Scheduled after the HTTP server.
+
+*What it needs, in the record's order (§5):* the target and the pin;
+`no_std` emission; the `std` half over described crates; `allocates` and the
+profile; build-time settings and the deadline; the availability rows and a
+first program.
+
 ---
 
 ## 3. Upkeep
