@@ -147,6 +147,7 @@ signature = "() -> Args"
 [fn."Args::nth"]
 pub = true
 sync = true
+mutates = true
 touches = ["args read"]
 provenance = "trusted"
 signature = "(&Args, at: i64) -> String?"
@@ -524,6 +525,7 @@ signature = "(f64) -> i64"
 [fn."HashMap::entry"]
 pub = true
 sync = true
+mutates = true
 touches = []
 keeps = ["key"]
 signature = "(&HashMap[$K, $V], key: ?) -> Entry[$V]"
@@ -646,6 +648,7 @@ signature = "(&String) -> i64"
 [fn."String::push"]
 pub = true
 sync = true
+mutates = true
 touches = []
 keeps = ["c"]
 signature = "(&String, c: char)"
@@ -653,6 +656,7 @@ signature = "(&String, c: char)"
 [fn."String::push_str"]
 pub = true
 sync = true
+mutates = true
 touches = []
 signature = "(&String, text: ?)"
 
@@ -692,6 +696,7 @@ signature = "(HashMap[$K, $V]) -> ?"
 [fn."Vec::push"]
 pub = true
 sync = true
+mutates = true
 touches = []
 keeps = ["value"]
 signature = "(&Vec[$T], value: ?)"
@@ -699,6 +704,7 @@ signature = "(&Vec[$T], value: ?)"
 [fn."Vec::sort"]
 pub = true
 sync = true
+mutates = true
 touches = []
 signature = "(&Vec[?])"
 
@@ -815,6 +821,7 @@ sync = "from(f)"
 [fn."Vec::sort_by_key"]
 pub = true
 sync = "from(f)"
+mutates = true
 signature = "(&Vec[$T], f: fn(&$T)) -> ?"
 
 [fn."str::chars"]

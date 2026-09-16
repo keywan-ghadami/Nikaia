@@ -362,3 +362,79 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
 
     assert_eq!(ran("unknown-argument", source).trim(), "4");
 }
+
+/// **A parameter a method *changes* is not lent**
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3's half of D1's
+/// rule), and this is the one the corpus could not have found.
+///
+/// The ledger's type language spells a view `&T` and has no second spelling for
+/// a mutable one, so `Vec::push` and `Vec::len` write the same receiver type.
+/// That was harmless while nothing read it. The moment D1 began writing a `&`
+/// off the column it stopped being harmless: `fill(out)` lent `out`, the
+/// declaration became `&Vec<i64>`, and `out.push(1)` inside it came back as
+/// `rustc`'s *cannot borrow `*out` as mutable* — about a file nobody wrote,
+/// which is [Part III C.1](../../../docs/specification/30-nikaia-tooling.md).
+///
+/// No example does this, because every mutating call in `examples/` is on
+/// `self` or on a local. The claim lives in its own column now, `mutates`.
+/// **What this test does not assert** is that the program *runs*: a by-value
+/// parameter a body changes needs `mut` in the Rust declaration too, and that
+/// is D3's own half, unbuilt. This one holds the lending decision, which is the
+/// part `mutates` decides and the part that regressed.
+#[test]
+fn a_parameter_a_method_changes_in_place_is_not_lent() {
+    let rust = lowered(
+        "fn fill(out: Vec[i64]) -> i64 {\n\
+         \x20   out.push(1)\n\
+         \x20   return out.len() as i64\n\
+         }\n\
+         fn main() { let mut xs = Vec::new() println(f\"{fill(xs)}\") }\n",
+    );
+    assert!(rust.contains("fn fill(out: Vec<i64>)"), "{rust}");
+    assert!(!rust.contains("&Vec<i64>"), "{rust}");
+
+    // And the reading twin beside it, which is the half that says the column
+    // is about *changing* the receiver and not about calling a method on one.
+    let rust = lowered(
+        "fn width(xs: Vec[i64]) -> i64 { return xs.len() as i64 }\n\
+         fn main() { let xs = Vec::new() println(f\"{width(xs)}\") }\n",
+    );
+    assert!(rust.contains("fn width(xs: &Vec<i64>)"), "{rust}");
+}
+
+/// **The column survives the round trip**, which `--locked` needs: it compares
+/// bytes, so a column that rendered differently than it parsed would fail a
+/// build that changed nothing. And `std` carries it by hand, so it has to parse
+/// out of a file this compiler did not write.
+#[test]
+fn the_mutates_column_renders_and_parses_back() {
+    let ledger = nikaia::contracts::Ledger::infer(
+        &parse_to_ast(
+            "struct Stats { min: i64 }\n\
+             impl Stats {\n\
+             \x20   fn add(&mut self, temp: i64) sync { self.min = temp }\n\
+             \x20   fn read(&self) -> i64 sync { return self.min }\n\
+             }",
+        )
+        .expect("the source parses"),
+    );
+    assert!(ledger.functions["Stats::add"].mutates);
+    assert!(
+        !ledger.functions["Stats::read"].mutates,
+        "`&self` is not a claim to change anything"
+    );
+
+    let rendered = ledger.render();
+    assert!(rendered.contains("mutates = true"), "{rendered}");
+    let read = nikaia::contracts::Ledger::parse(&rendered).expect("its own output parses");
+    assert!(read.functions["Stats::add"].mutates);
+    assert_eq!(read.render(), rendered);
+
+    // `std` says which of its own change their subject, and it is seven of
+    // ninety-four - the same ratio `keeps` has and for the same reason: a file
+    // that claimed every method might would leave the language where it was.
+    let library =
+        nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std ships a ledger");
+    assert!(library.functions["Vec::push"].mutates);
+    assert!(!library.functions["Vec::len"].mutates);
+}

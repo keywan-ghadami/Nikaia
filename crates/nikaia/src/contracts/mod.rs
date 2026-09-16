@@ -260,6 +260,27 @@ pub struct FnContract {
     /// Sorted, because 13.5 makes the file a pure function of (source,
     /// toolchain) and `--locked` compares it byte for byte.
     pub keeps: Vec<String>,
+    /// Whether this function **changes its receiver in place** — its receiver
+    /// is `&mut self` ([ADR-094](../../../../docs/specification/adr/adr-094.md)
+    /// D3).
+    ///
+    /// The ledger's type language spells a view `&T` and has no second
+    /// spelling for a mutable one, so `Vec::push` and `Vec::len` write the same
+    /// receiver type. That was harmless while nothing read it; it stopped being
+    /// harmless the moment D1 began writing a `&` off `keeps`, because a
+    /// parameter handed to `push` would have been lent and `rustc` would have
+    /// answered *cannot borrow as mutable* about a file nobody wrote
+    /// ([Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Absent means it does not**, which is `keeps`' convention and `sync`'s
+    /// before it — and, like both, only for an entry that is *present*. A
+    /// method no ledger describes is unknown, and `keeps`' walk already counts
+    /// an unresolved receiver as kept.
+    ///
+    /// For a function this compiler reads the body of, it is not inferred at
+    /// all: it is the **declaration**, `&mut self`, which is the one thing D3
+    /// says mutation is written in.
+    pub mutates: bool,
     /// Which of its `Shared` positions are one allocation, and which reference
     /// count each of those classes gets
     /// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
@@ -1128,6 +1149,11 @@ impl Ledger {
                 // one — which is why nothing may read this column before that
                 // pass has run.
                 keeps: Vec::new(),
+                // **And this one is the declaration and not the body.** D3's
+                // whole sentence is that mutation of a subject is written where
+                // it is declared, so there is nothing to infer: `&mut self` is
+                // the claim, and a receiver written `&self` or `self` is not.
+                mutates: matches!(item, Item::Fn { receiver: Some(r), .. } if r.is_mut && r.is_ref),
                 // `sharing::infer` reads the bodies afterwards, for the same
                 // reason `sync` does: the answer is about where a value goes
                 // and not about how it was declared. Empty until then, which is
@@ -1247,6 +1273,12 @@ impl Ledger {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
+            }
+            // Beside `keeps`, because the two together are what a caller has to
+            // know before it may hand a name over rather than lend it
+            // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3).
+            if contract.mutates {
+                out.push_str("mutates = true\n");
             }
             if contract.touches_known {
                 out.push_str(&format!(
@@ -1407,6 +1439,7 @@ impl Ledger {
                         "throws" => entry.throws = throws_of(value, at())?,
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
                         "keeps" => entry.keeps = string_list(value, at())?,
+                        "mutates" => entry.mutates = value == "true",
                         "touches" => {
                             entry.touches = string_list(value, at())?
                                 .iter()

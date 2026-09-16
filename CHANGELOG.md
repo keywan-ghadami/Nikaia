@@ -30,6 +30,12 @@
 - **Three things the record had not said, each found on the corpus.** **Which fit to ask depends on the parameter's kind**: a parameter written `&str` is a view in the declaration already, so what has to fit it is the argument *with* the reference the compiler writes — asking the other question refused `count(dna)` in `k-nucleotide.nika`, and asking this one everywhere refused `record(Stats(2))`. **The refusal goes after the fit and never on a type nothing pinned**: a `&i64` handed to a `&Request` stays `NK1102`, and `Ty::Unknown` fits everything, which is the right answer for an absent claim ([ADR-024](docs/specification/adr/adr-024.md) D1) and no ground to refuse punctuation on. **But `Unknown` may not skip the writing** — a guard placed one line too early took the `&` off `inventory/main.nika`'s `render(entries, total)` while leaving its parameter a view.
 - **`NK1137` now covers both positions**, the `for` head and the call, and its catalogue text says where it lands and where it stays quiet.
 
+### Fixed (a method that changes its subject is a column now)
+
+- **The ledger had no way to say `&mut self`.** Its type language spells a view `&T` and has no second spelling for a mutable one, so `Vec::push` and `Vec::len` wrote the same receiver type. Harmless while nothing read it; the moment [ADR-094](docs/specification/adr/adr-094.md) D1 began writing a `&` off the `keeps` column, `fn fill(out: Vec[i64]) { out.push(1) }` lent `out` and `rustc` answered *cannot borrow `*out` as mutable* about a file nobody wrote.
+- **`mutates` is the claim**, seven of `std`'s ninety-four entries — `Vec::push`, `Vec::sort`, `Vec::sort_by_key`, `String::push`, `String::push_str`, `HashMap::entry`, `Args::nth`. For a function this compiler reads the body of it is not inferred at all: `&mut self` is the declaration, which is D3's sentence one position over. `Locked::set` and the other hull doors are `&self` in the language below and are untouched.
+- **No example could have found it**: every mutating call in `examples/` is on `self` or on a local, never on a parameter. The test is in `crates/nikaia/tests/lent_arguments.rs`, beside its reading twin.
+
 ### Fixed (three holes this step walked into, each older than it)
 
 - **`contracts::sync` never walked into a `throw`.** `throw ConfigError::NotFound(path)` was a statement the walk stepped over, so the `path` inside it was neither read nor kept — and the moment callers stopped writing their own `&`, the argument was handed over by value. Walking it then exposed the second one.

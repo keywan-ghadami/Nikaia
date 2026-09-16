@@ -643,7 +643,10 @@ are built**, which is the whole of D1, D2 and D4: the column is inferred, a
 `xs.drain()` takes the elements away, and a parameter the callee only reads is
 declared `&T` and given its `&` at every call. **What is left is D3 and D5** —
 `mut` in a declaration as the one place in-place change is written, and the
-ledger narrating a kept value's moved cleanup point.
+ledger narrating a kept value's moved cleanup point. **D3 is the more urgent
+of the two**: a body that changes an owned parameter lowers to a Rust
+declaration with no `mut` on it, which is `rustc` about a file nobody wrote —
+a defect older than this record and the one `mutates` leaves standing.
 
 *Evidence:* `fill(xs)` says nothing about `xs` changing and `keep(file)` says
 nothing about the file being flushed inside, which §3 of the record names as
@@ -682,6 +685,18 @@ positions. Not lent, each of them the polarity being spent: a kept parameter, a
 value that copies, an argument already a view, and a method's argument, which
 is `touches`' reason for asking a weaker question — the emitter cannot resolve
 which entry `acc.record(m)` goes to.
+
+*One hole that step made and closed in the same change*, because it is the
+reason a new column exists: the ledger's type language spells a view `&T` and
+has no second spelling for a mutable one, so `Vec::push` and `Vec::len` wrote
+the same receiver type. Once the `&` was written off `keeps`,
+`fn fill(out: Vec[i64]) { out.push(1) }` lent `out` and `rustc` answered
+*cannot borrow as mutable*. **`mutates`** is the claim now — seven of `std`'s
+ninety-four entries, and for a Nikaia function the declaration `&mut self`
+rather than an inference. It leaves such a parameter taken **by value**, which
+compiles once D3 gives it its `mut`; until then a body that changes an owned
+parameter still needs the `mut` the language below wants, and that is the first
+thing step 4 has to do.
 
 *One limit two of those steps share, and it is a limit of the same kind.* Both
 the `let` half and the refusal at a call act only where the checker could

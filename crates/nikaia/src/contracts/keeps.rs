@@ -557,11 +557,18 @@ fn classify(
                 let consumed = unresolved
                     || candidates.is_empty()
                     || candidates.iter().any(|(_, contract)| {
-                        !contract
-                            .signature
-                            .as_ref()
-                            .and_then(|s| s.params.first())
-                            .is_some_and(|(name, ty)| name == "self" && ty.is_a_view())
+                        // **A method that changes its subject needs a `&mut`,
+                        // and this compiler writes none** (D3). The ledger's
+                        // type language spells both receivers `&T`, so the
+                        // claim is its own column: without it `out.push(1)` on
+                        // a lent parameter reached `rustc` as *cannot borrow as
+                        // mutable*, about a file nobody wrote.
+                        contract.mutates
+                            || !contract
+                                .signature
+                                .as_ref()
+                                .and_then(|s| s.params.first())
+                                .is_some_and(|(name, ty)| name == "self" && ty.is_a_view())
                     });
                 if consumed {
                     uses.kept.insert(name);
