@@ -836,20 +836,34 @@ compares each of them byte for byte. §1's defect closed with them.
 *What is left:* if `rustc` reports, at a call across a package boundary, that a
 value *is not a future* or that a `Result` was not expected, the driver should
 say *the ledger of `<package>` does not match its sources* and name the package
-to rebuild. Today it reaches the user in the backend's words about the generated
-file, which is [Part III C.1](specification/30-nikaia-tooling.md)'s class.
+to rebuild. Today it would reach the user in the backend's words about the
+generated file, which is [Part III C.1](specification/30-nikaia-tooling.md)'s
+class.
 
-*Why it is small and still worth doing:* it is a **safety net and not the
-mechanism**. D3 establishes the agreement, and the one way past D3 is a hash
-edited by hand — so this is the message for a case nothing in a normal build
-reaches. That is also why it is last: the same sentence says it is the least
-urgent thing in this record and the only one that can still surprise somebody.
+**It is not small work waiting to be done; it is work with nothing to fire
+on, and the evidence the entry asked for is now here.** The way to get some was
+to edit a hash, and editing one says the case does not arise: `drive` lowers
+every member **dependencies-first** and writes each one's `nikaia.contracts`
+*before* the member that depends on it is lowered (D5), so an edited ledger is
+overwritten by that package's own build in the same run. Under `--locked`
+nothing is overwritten and the comparison fails with D4's narrated diff, which
+is the message that case is owed. So **every ledger a build reads today is
+re-derived from sources in the same run**, and there is no believed-and-unchecked
+ledger for D6 to be about.
 
-*Evidence: none, and the way to get some is to edit a hash.* No program in the
-repository can produce it, which is the state
-[ADR-055](specification/adr/adr-055.md) §2 D6's refusal was in before it was
-built and the reason it was built anyway: a message costs nothing before there
-is something to say it about.
+*Evidence, and it is a test now:*
+`a_hand_edited_dependency_ledger_is_repaired_before_it_is_read` in
+`crates/nikaia/tests/project.rs` takes `sync` off a package's `hello` — the
+claim that would make its consumer `.await` an `i64` — leaves the source hashes
+alone so D3's belief still stands, and watches the build repair it and print
+`1`.
+
+*What it waits on:* a ledger the build **cannot** re-derive — which is *a
+package is found by version through Cargo* below, where the sources are not
+there to derive from ([ADR-103](specification/adr/adr-103.md)), or *a foreign
+crate is described before it is called*, where there is nothing to derive it
+*from* ([ADR-104](specification/adr/adr-104.md)). Either makes D6 writable and
+testable in the same change, and the test above is what says the day has come.
 
 ### 2.13. An error that newly reaches a `catch` is named once
 

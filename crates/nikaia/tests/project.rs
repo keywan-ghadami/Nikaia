@@ -1576,3 +1576,74 @@ fn a_trait_a_package_publishes_can_be_implemented_and_called() {
     // is no `.rs` on disk to read. What this test has instead is the stronger
     // thing - the program runs, which it cannot do without the import.
 }
+
+/// **A dependency's ledger is re-derived before its consumer reads it**, which
+/// is why [ADR-100](../../../docs/specification/adr/adr-100.md) D6's message
+/// has nothing to fire on today.
+///
+/// D6 asks for a sentence to say when a *hand-edited* ledger makes the backend
+/// complain at a package boundary — *the ledger of `<package>` does not match
+/// its sources*. Getting there needs a ledger the build believed and could not
+/// check, and a project build has none: `drive` lowers every member
+/// dependencies-first and writes each one's `nikaia.contracts` **before** the
+/// member that depends on it is lowered (D5), so an edit is overwritten by the
+/// package's own build in the same run. Under `--locked` nothing is
+/// overwritten and the comparison fails with D4's narrated diff, which is the
+/// message that case is owed.
+///
+/// So the edit here is the strongest one available — `sync` taken off a
+/// function that has it, which is the claim that would make the consumer
+/// `.await` an `i64` — and the build repairs it and runs. **The day a ledger
+/// can be believed without being checked** (a registry package's,
+/// [ADR-103](../../../docs/specification/adr/adr-103.md); a hand-written
+/// description of a foreign crate,
+/// [ADR-104](../../../docs/specification/adr/adr-104.md)) this test is what
+/// says so, and D6 becomes writable and testable in the same change.
+#[test]
+fn a_hand_edited_dependency_ledger_is_repaired_before_it_is_read() {
+    let dir = a_program_and_a_package(
+        "package-edited-ledger",
+        "lib",
+        &[
+            (
+                "lib/src/main.nika",
+                "pub fn hello() -> i64 {\n    return 1\n}\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use lib\n\nfn main() {\n    println(f\"{lib::hello()}\")\n}\n",
+            ),
+        ],
+    );
+
+    // One build to get a ledger beside the package, which is where a consumer
+    // reads it from (D1).
+    let first = nikaia(&["build"], &dir.join("app"));
+    assert!(first.status.success(), "{}", said(&first));
+    let shipped = dir.join("lib/nikaia.contracts");
+    let written = std::fs::read_to_string(&shipped).expect("the package's ledger");
+    assert!(
+        written.contains("sync = \"inferred\""),
+        "`hello` calls nothing that pauses: {written}"
+    );
+
+    // The edit: the promise taken away, with the source hashes left alone so
+    // the belief in D3 still stands.
+    std::fs::write(&shipped, written.replace("sync = \"inferred\"\n", "")).expect("edit it");
+
+    let again = nikaia(&["run"], &dir.join("app"));
+    assert!(
+        again.status.success(),
+        "the edit was repaired rather than believed: {}",
+        said(&again)
+    );
+    assert_eq!(String::from_utf8_lossy(&again.stdout).trim(), "1");
+    assert!(
+        std::fs::read_to_string(&shipped)
+            .expect("the ledger")
+            .contains("sync = \"inferred\""),
+        "the package's own build wrote its answer back over the edit"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
