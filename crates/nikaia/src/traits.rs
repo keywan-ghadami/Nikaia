@@ -77,57 +77,82 @@ pub fn check(parsed: &Parsed, own: &Ledger) -> Vec<Finding> {
     found
 }
 
-/// **`NK1129`: the implementation pauses and the declaration cannot say so.**
+/// **`NK1129`: the implementation pauses and the declaration says `sync`**
+/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D2), and **`NK1140`**:
+/// it fails and the declaration has no `throws`.
 ///
-/// [ADR-078](../../../docs/specification/adr/adr-078.md) D4 asserts `sync` for a
-/// trait's methods, and had to: a declaration has no body for `sync::infer` to
-/// read, so `No` would have stood — and `No` means *pauses*, which made every
-/// call through a bound an `.await` and `fn shout[T: Summarize]` an `async fn`
-/// awaiting a `String`.
+/// Both are [ADR-027](../../../docs/specification/adr/adr-027.md)'s `NK2202`
+/// asked of **somebody else's** signature — a body is checked against the word
+/// the trait wrote, exactly as it is checked against its own.
 ///
-/// That is right for every trait whose methods do not pause and wrong for one
-/// whose method does: the declaration lowers to `fn load(&self) -> …;` and the
-/// `impl` to `async fn load(&self) -> …`, and the language below answers
-/// *"method `load` has an incompatible type for trait"* about a file nobody
-/// wrote — [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
-/// class.
+/// **The other direction fits and says nothing.** A body that never pauses
+/// under a declaration that may, or one that cannot fail under `throws`, is
+/// correct: the declaration is the wider claim and a narrower body honours it.
 ///
-/// **Refused rather than lowered**, because `async fn` in a trait is a thing the
-/// emitter has no way to ask for, and a message in this language's words about
-/// the line the author wrote is the whole of what C.1 is asking for. What it
-/// costs is a trait that describes I/O, which is named as the reopening
-/// condition rather than left to be rediscovered.
+/// **This used to refuse every pausing implementation**, and the reason is
+/// worth keeping: [ADR-078](../../../docs/specification/adr/adr-078.md) D4
+/// asserted `sync` for every trait method because a declaration has no body for
+/// `sync::infer` to read, and `async fn` in a trait was a thing the emitter had
+/// no way to ask for. ADR-109 D3 takes that cause away — the declaration is
+/// lowered `-> impl Future<Output = …>` and the `impl` writes `async fn`, which
+/// satisfies it — so the word can mean what it says, and the refusal is a
+/// comparison rather than a blanket.
 fn pausing(
     own: &Ledger,
     trait_name: &str,
     target: &str,
     method: &str,
     span: &Span,
-) -> Option<Finding> {
-    let contract = own.functions.get(&format!("{target}::{method}"))?;
-    if contract.sync.is_sync() {
-        return None;
+) -> Vec<Finding> {
+    let Some(contract) = own.functions.get(&format!("{target}::{method}")) else {
+        return Vec::new();
+    };
+    let Some(declared) = own.functions.get(&format!("{trait_name}::{method}")) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    if declared.sync.is_sync() && !contract.sync.is_sync() {
+        found.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1129",
+            message: format!(
+                "`{target}::{method}` pauses, and `{trait_name}` declares `{method}` as `sync`"
+            ),
+            notes: vec![
+                "a declaration's `sync` is a promise its implementations keep, the way a \
+                 function's own is (ADR-109 D2) - and the other direction fits: a body \
+                 that never pauses under a declaration that may is correct"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "take `sync` off `{trait_name}`'s `{method}`, or give the body nothing that \
+                 pauses - a file read, a sleep, a `.join()`"
+            )),
+        });
     }
-    Some(Finding {
-        severity: Severity::Error,
-        span: span.clone(),
-        code: "NK1129",
-        message: format!(
-            "`{target}::{method}` can pause, and `{trait_name}` declares it as a method that \
-             cannot"
-        ),
-        notes: vec![
-            "a trait's methods are `sync` because a declaration has no body to read one \
-             from, and a method that pauses would have to be declared as one - which this \
-             compiler has no way to write (ADR-078 D4). Refused here rather than in the \
-             language below, where it is a mismatch about a file nobody wrote"
-                .to_string(),
-        ],
-        help: Some(format!(
-            "give the body nothing that pauses - a file read, a sleep, a `.join()` - or take \
-             `{method}` out of `{trait_name}` and call it on the type directly"
-        )),
-    })
+    if declared.throws.is_empty() && !contract.throws.is_empty() {
+        found.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1140",
+            message: format!(
+                "`{target}::{method}` can fail, and `{trait_name}` declares `{method}` without \
+                 `throws`"
+            ),
+            notes: vec![
+                "a declaration without `throws` is the claim that it cannot fail, and an \
+                 implementation keeps it (ADR-109 D2) - the other direction fits, since a \
+                 body that cannot fail under `throws` is correct"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `throws` on `{trait_name}`'s `{method}`, or handle the failure in the \
+                 body with `catch`"
+            )),
+        });
+    }
+    found
 }
 
 /// **`NK1130`: the `impl` and the `trait` do not agree on which methods exist.**

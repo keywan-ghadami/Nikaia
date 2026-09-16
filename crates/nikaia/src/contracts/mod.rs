@@ -1705,19 +1705,25 @@ pub fn std_library() -> Ledger {
 /// say: whether it pauses, whether it can fail, and what its parameters and
 /// result are.
 ///
-/// **`sync` is asserted, and that is a decision rather than a default**
-/// ([ADR-078](../../../docs/specification/adr/adr-078.md) D4). For a function the
-/// word says `Asserted`, its absence says `No`, and `sync::infer` then raises
-/// `No` to `Inferred` by reading the body. A declaration has no body, so `No`
-/// would stand — and `No` means *pauses*, which makes every call through a bound
-/// an `.await` and the emitted `async fn shout` await a `String`.
+/// **`sync` is the declaration's own word**
+/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D1): a trait method
+/// reads like a function type, so without `sync` it **may pause**, exactly as a
+/// function without the word may.
 ///
-/// So the answer here is the only one this compiler can write: a trait's method
-/// is a plain `fn` below, because `async fn` in a trait is something the
-/// emitter has no way to ask for. What that costs is a trait whose method
-/// genuinely pauses — and that is **refused rather than mis-lowered**:
-/// `NK1129` names the implementation and why
-/// ([ADR-080](../../../docs/specification/adr/adr-080.md)).
+/// **It used to be asserted whatever the declaration said**
+/// ([ADR-078](../../../docs/specification/adr/adr-078.md) D4), and that was a
+/// decision rather than a default: `async fn` in a trait was something the
+/// emitter had no way to ask for, so a plain `fn` was the only thing it could
+/// write, and a trait whose method genuinely pauses was **refused** rather than
+/// mis-lowered (`NK1129`). ADR-109 D3 takes the cause away: the trait declares
+/// the **return-position** form, `fn load(&self) -> impl Future<Output = …>`,
+/// and the `impl` writes `async fn`, which satisfies it. So the word can mean
+/// what it says.
+///
+/// For a function the word says `Asserted`, its absence says `No`, and
+/// `sync::infer` raises `No` to `Inferred` by reading the body. A declaration
+/// has no body, so `No` stands — and `No` means *may pause*, which is D1's
+/// sentence.
 fn trait_method(
     parsed: &Parsed,
     trait_name: &str,
@@ -1741,7 +1747,12 @@ fn trait_method(
         format!("{trait_name}::{}", parsed.text(method.name)),
         FnContract {
             public,
-            sync: Sync::Asserted,
+            // ADR-109 D1: the declaration's own word, and its absence is the
+            // claim that it may pause.
+            sync: match method.is_sync {
+                true => Sync::Asserted,
+                false => Sync::No,
+            },
             throws: if method.throws {
                 vec![UNNAMED_ERROR.to_string()]
             } else {

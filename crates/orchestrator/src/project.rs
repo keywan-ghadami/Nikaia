@@ -23,7 +23,7 @@
 //!   [`record_extra_dependencies`] puts the real ones back, and without it a
 //!   changed source would not rebuild.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::io::Read;
@@ -36,6 +36,17 @@ pub struct Package {
     pub name: String,
     pub version: String,
     pub edition: String,
+    /// The oldest Rust the **emitted** code compiles under
+    /// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4), written
+    /// where Cargo reads it.
+    ///
+    /// It is a different fact from the channel: `rust-toolchain.toml` names
+    /// that and stays the only place that does
+    /// ([ADR-001](../../../docs/specification/adr/adr-001.md) D1), while this
+    /// is a version the lowering needs. It rises only by a record — a later
+    /// feature of the language below that some lowering asks for — and never
+    /// silently.
+    pub rust_version: Option<String>,
 }
 
 /// The Cargo profile the build switches and the codegen table decide.
@@ -99,6 +110,9 @@ impl CargoProject {
         out.push_str(&format!("name = {}\n", string(&self.package.name)));
         out.push_str(&format!("version = {}\n", string(&self.package.version)));
         out.push_str(&format!("edition = {}\n", string(&self.package.edition)));
+        if let Some(floor) = &self.package.rust_version {
+            out.push_str(&format!("rust-version = {}\n", string(floor)));
+        }
 
         match self.kind {
             CrateKind::Bin => out.push_str("\n[[bin]]\n"),
@@ -279,6 +293,53 @@ pub struct Cargo {
     /// Handed to the wrapper, since Cargo owns its argument list and nothing
     /// else can reach it.
     pub env: Vec<(String, OsString)>,
+}
+
+/// **Refuse an old toolchain in this compiler's words**
+/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4).
+///
+/// Cargo's own answer is *package `x` requires rustc 1.75 or newer*, naming a
+/// package the author never wrote — [Part III
+/// C.1](../../../docs/specification/30-nikaia-tooling.md)'s class. So the
+/// comparison happens before Cargo is handed anything.
+///
+/// **A version this cannot read is not a refusal.** `rustc --version` that
+/// fails to run, or prints something this does not parse, says nothing: the
+/// build goes on and Cargo answers if it must. Refusing on a reading failure
+/// would refuse a correct toolchain, which is the worse of the two mistakes
+/// (C.4).
+pub fn toolchain_is_new_enough(floor: &str) -> Result<()> {
+    let Some(found) = installed_rustc() else {
+        return Ok(());
+    };
+    let Some(floor_parts) = version_parts(floor) else {
+        return Ok(());
+    };
+    if found >= floor_parts {
+        return Ok(());
+    }
+    let (major, minor) = found;
+    Err(anyhow!(
+        "this toolchain is rustc {major}.{minor}, and the Rust this compiler emits needs \
+         {floor} or newer.\n\
+         A trait method that may pause is written `-> impl Future<…>` (ADR-109 D3), which \
+         is stable from {floor}. Install a newer toolchain - `rustup update stable` - or \
+         pin one with `rust-toolchain.toml` (ADR-001 D1)."
+    ))
+}
+
+/// `rustc --version`'s major and minor, where both can be read.
+fn installed_rustc() -> Option<(u32, u32)> {
+    let out = Command::new("rustc").arg("--version").output().ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    // `rustc 1.86.0 (05f9846f8 2025-03-31)`
+    version_parts(text.split_whitespace().nth(1)?)
+}
+
+/// `1.75` and `1.86.0` alike, as a pair that compares.
+fn version_parts(text: &str) -> Option<(u32, u32)> {
+    let mut parts = text.split(['.', '-']);
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
 }
 
 impl Cargo {
@@ -603,6 +664,7 @@ mod tests {
                 name: "hyper-core".into(),
                 version: "0.1.0".into(),
                 edition: "2021".into(),
+                rust_version: None,
             },
             kind: CrateKind::Bin,
             bin_name: "hyper-core".into(),
@@ -617,6 +679,7 @@ mod tests {
                 name: name.into(),
                 version: "0.1.0".into(),
                 edition: "2021".into(),
+                rust_version: None,
             },
             kind: CrateKind::Lib,
             bin_name: name.replace('-', "_"),

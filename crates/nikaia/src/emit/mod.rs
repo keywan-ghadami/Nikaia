@@ -1134,6 +1134,42 @@ impl Tail {
     }
 }
 
+/// Which type a method belongs to, and which trait declared it.
+///
+/// `target` is what makes the ledger key — `Counter::record` rather than
+/// `record` — and the key is what a `Shared` position looks its count up by
+/// ([`crate::contracts::sharing`]).
+///
+/// `declared_by` is the trait an `impl` names, where it names one, and it
+/// exists because [ADR-109](../../docs/specification/adr/adr-109.md) D2 makes
+/// the **declaration** the wider claim: a trait method without `sync` may
+/// pause, so its implementations are `async fn` whether or not their own
+/// bodies do. A body that never pauses under such a declaration is correct and
+/// still has to hand back a future.
+#[derive(Clone, Copy)]
+struct MethodOf<'a> {
+    target: &'a str,
+    declared_by: Option<&'a str>,
+}
+
+/// **The oldest Rust the emitted code compiles under**
+/// ([ADR-109](../../docs/specification/adr/adr-109.md) D4).
+///
+/// 1.75 is where `-> impl Trait` in a trait's method became stable, which is
+/// the form D3 writes for a method that may pause. Every generated
+/// `Cargo.toml` carries it, and the build compares `rustc --version` against
+/// it before handing anything to `cargo` — because Cargo's own *package
+/// requires rustc 1.75 or newer* is a message about a generated file, which
+/// [Part III C.1](../../docs/specification/30-nikaia-tooling.md) forbids.
+///
+/// **It is a different fact from the channel.** `rust-toolchain.toml` names
+/// that and stays the only place that does
+/// ([ADR-001](../../docs/specification/adr/adr-001.md) D1); this is a version
+/// the lowering needs, so it lives here. It rises only by a record — a later
+/// feature of the language below that some lowering asks for — and never
+/// silently.
+pub const RUST_FLOOR: &str = "1.75";
+
 /// What surrounds the statements being emitted.
 #[derive(Debug, Clone, Copy)]
 struct Flow<'a> {
@@ -1852,7 +1888,17 @@ impl<'p> Emitter<'p> {
                     let carries = self.carries_input.get(&method.span.start);
                     out.from(&method.span, |out| {
                         out.push("    ");
-                        self.function(out, &method.node, 1, lifetimes, carries, Some(&target_name))
+                        self.function(
+                            out,
+                            &method.node,
+                            1,
+                            lifetimes,
+                            carries,
+                            Some(MethodOf {
+                                target: &target_name,
+                                declared_by: trait_name.map(|t| self.text(t)),
+                            }),
+                        )
                     })?;
                 }
                 out.push("}\n");
@@ -1975,12 +2021,37 @@ impl<'p> Emitter<'p> {
             Some(ty) => self.ty(ty, Lifetimes::ELIDED),
             None => "()".to_string(),
         };
-        let ret = if method.throws {
-            format!(" -> Result<{returned}, Box<dyn std::error::Error>>")
-        } else if method.ret_type.is_some() {
-            format!(" -> {returned}")
+        let outcome = if method.throws {
+            format!("Result<{returned}, Box<dyn std::error::Error>>")
         } else {
-            String::new()
+            returned
+        };
+        // **A method that may pause is declared in the return-position form**
+        // ([ADR-109](../../docs/specification/adr/adr-109.md) D3): `-> impl
+        // Future<Output = …>`, which an `async fn` in the `impl` satisfies.
+        //
+        // **The sugar `async fn` is not written here**, and that is the reason
+        // the long form is: `async_fn_in_trait` warns on a public trait whose
+        // future carries no `Send` bound, and a warning about the generated file
+        // is a defect in this project (Part III C.1).
+        //
+        // **`+ Send` follows the executor, not the type.** At
+        // `user_parallelism = yes` a task crosses threads and a spawn needs a
+        // `Send` future; at `no` nothing crosses, the counts are plain
+        // ([ADR-037](../../docs/specification/adr/adr-037.md) D7) and a `Send`
+        // demand would refuse them. It is a requirement of the executor this
+        // program is built for, written here — not a claim about a type, which
+        // is `contracts::send`'s and is the same at both settings.
+        let ret = match (method.is_sync, method.ret_type.is_some() || method.throws) {
+            (false, _) => {
+                let send = match self.build.user_parallelism {
+                    UserParallelism::Yes => " + Send",
+                    UserParallelism::No => "",
+                };
+                format!(" -> impl std::future::Future<Output = {outcome}>{send}")
+            }
+            (true, true) => format!(" -> {outcome}"),
+            (true, false) => String::new(),
         };
         let generics: Vec<String> = method.generics.iter().map(|g| self.bounded(g)).collect();
         out.push(&format!(
@@ -2036,7 +2107,17 @@ impl<'p> Emitter<'p> {
             let carries = self.carries_input.get(&method.span.start);
             out.from(&method.span, |out| {
                 out.push("    ");
-                self.function(out, &method.node, 1, lifetimes, carries, Some(target))
+                self.function(
+                    out,
+                    &method.node,
+                    1,
+                    lifetimes,
+                    carries,
+                    Some(MethodOf {
+                        target,
+                        declared_by: None,
+                    }),
+                )
             })?;
         }
         out.push("}\n");
@@ -2067,7 +2148,7 @@ impl<'p> Emitter<'p> {
         // The type this is a method of, where it is one. It is what makes the
         // ledger key - `Counter::record` rather than `record` - and the key is
         // what a `Shared` position looks its count up by (`contracts::sharing`).
-        owner: Option<&str>,
+        owner: Option<MethodOf<'_>>,
     ) -> Result<()> {
         let Item::Fn {
             name,
@@ -2103,7 +2184,7 @@ impl<'p> Emitter<'p> {
             None => "new".to_string(),
         };
         let key = match owner {
-            Some(owner) => format!("{owner}::{own_name}"),
+            Some(owner) => format!("{}::{own_name}", owner.target),
             None => own_name.clone(),
         };
 
@@ -2273,7 +2354,28 @@ impl<'p> Emitter<'p> {
         // ADR-055 D1: a function that can pause is an `async fn`, and one the
         // ledger's `sync` column says cannot is a plain `fn`. The property is
         // ADR-027 D1's, already inferred; this reads it.
-        let pausing = if self.pauses(&key) { "async " } else { "" };
+        //
+        // **And a trait's declaration is the wider claim**
+        // ([ADR-109](../../docs/specification/adr/adr-109.md) D2): a method
+        // declared without `sync` is lowered `-> impl Future<…>`, so every
+        // implementation of it hands back a future — whether or not its own
+        // body pauses. A body that never pauses under such a declaration is
+        // correct and says nothing, which is D2's own sentence; what it cannot
+        // do is hand back an `i64` where a future was promised.
+        let declared_pausing = owner
+            .and_then(|owner| owner.declared_by)
+            .map(|t| format!("{t}::{name}"))
+            .is_some_and(|key| {
+                self.own_contracts
+                    .functions
+                    .get(&key)
+                    .is_some_and(|c| !c.sync.is_sync())
+            });
+        let pausing = if self.pauses(&key) || declared_pausing {
+            "async "
+        } else {
+            ""
+        };
         out.push(&format!(
             "{vis}{pausing}fn {emitted}{}({}){ret} ",
             angled(&declared),

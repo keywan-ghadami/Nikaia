@@ -137,11 +137,15 @@ pub fn infer(
                     }
                 }
                 Item::Impl {
-                    target, methods, ..
+                    trait_name,
+                    target,
+                    methods,
+                    ..
                 } => {
                     let target = parsed.text(target.name).to_string();
+                    let declared_by = trait_name.map(|t| parsed.text(t).to_string());
                     for method in methods {
-                        if let Some((name, reach)) = reach_of(
+                        if let Some((name, mut reach)) = reach_of(
                             parsed,
                             &method.node,
                             Some(&target),
@@ -149,27 +153,74 @@ pub fn infer(
                             library,
                             resolved,
                         ) {
+                            // **A declaration is the wider claim, and its
+                            // implementations carry it**
+                            // ([ADR-109](../../../docs/specification/adr/adr-109.md)
+                            // D2): a trait method without `sync` is lowered
+                            // `-> impl Future<…>`, so every `impl` of it hands
+                            // back a future whether or not its own body pauses
+                            // — and a caller writing `t.go()` on the concrete
+                            // type has to `.await` it.
+                            //
+                            // **An edge and not a correction afterwards**, so
+                            // the fixpoint carries it the rest of the way: the
+                            // `main` that calls `t.go()` is `async` for the
+                            // same reason `t.go()` is.
+                            //
+                            // **Only where this unit declares the trait.** A
+                            // `impl Error for ConfigError` names a trait the
+                            // compiler reads rather than one a `.nika` file
+                            // wrote, and an edge to a name the graph has no
+                            // entry for is read as *pauses* by
+                            // `unwrap_or(false)` — which would make every error
+                            // type's methods `async`. Silence about a
+                            // declaration that is not here is the rule rather
+                            // than a gap, and `traits::check` says the same.
+                            if let Some(declared_by) = &declared_by {
+                                if let Some(own) = name.rsplit("::").next() {
+                                    let declared = format!("{declared_by}::{own}");
+                                    // **Either ledger**, because a trait a
+                                    // *dependency* publishes is declared just
+                                    // as much as one written here — the
+                                    // `handler::Handler` an app implements is
+                                    // the case (ADR-100 D1: a consumer reads a
+                                    // dependency's contracts).
+                                    if ledger.functions.contains_key(&declared)
+                                        || library.functions.contains_key(&declared)
+                                    {
+                                        reach.calls.insert(declared);
+                                    }
+                                }
+                            }
                             graph.insert(name, reach);
                         }
                     }
                 }
                 // Kap 4.7: a trait's methods are in this package's ledger, so a body
                 // that reaches one through a bound names a callee the graph has to
-                // know about ([ADR-078](../../../docs/specification/adr/adr-078.md)
-                // D4). A **leaf that is not blocked**: a declaration has no body,
-                // so it reaches nothing, and D4 asserts its `sync` because a plain
-                // `fn` is the only thing the emitter can write in a trait.
+                // know about. **A leaf** — a declaration has no body, so it reaches
+                // nothing — and its `blocked` is the **word it was written with**
+                // ([ADR-109](../../../docs/specification/adr/adr-109.md) D1): a
+                // trait method reads like a function type, so without `sync` it may
+                // pause, and a body that calls it through a bound pauses with it.
                 //
-                // Without this the callee was simply absent from `holds` and
-                // `unwrap_or(false)` read that as *pauses* - so `fn shout[T:
-                // Summarize]` came out `async` and awaited a `String`.
+                // **It used to be `blocked: false` whatever the declaration said**
+                // ([ADR-078](../../../docs/specification/adr/adr-078.md) D4),
+                // because a plain `fn` was the only thing the emitter could write
+                // in a trait and `No` would have made every call through a bound an
+                // `.await`. ADR-109 D3 takes that cause away with the
+                // return-position form, so the word is read rather than overridden.
+                //
+                // Without the entry at all the callee is absent from `holds` and
+                // `unwrap_or(false)` reads that as *pauses* — which is why a leaf
+                // is inserted either way rather than left out.
                 Item::Trait { name, methods, .. } => {
                     let own = parsed.text(*name).to_string();
                     for method in methods {
                         graph.insert(
                             format!("{own}::{}", parsed.text(method.node.name)),
                             Reach {
-                                blocked: false,
+                                blocked: !method.node.is_sync,
                                 calls: BTreeSet::new(),
                             },
                         );

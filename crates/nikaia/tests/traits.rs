@@ -102,6 +102,13 @@ fn a_trait_is_declared_bound_and_run() {
 
 /// D1: the method is a **signature**, so the lowering writes a `;` where an
 /// `impl`'s writes a body.
+///
+/// **And the form is the return-position one**
+/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D3), because
+/// `Summarize` does not say `sync` and so may pause. The sugar `async fn` is
+/// not written: `async_fn_in_trait` warns on a public trait whose future
+/// carries no `Send` bound, and a warning about the generated file is
+/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class.
 #[test]
 fn a_trait_method_is_a_signature() {
     let rust = lowered("a trait declaration", SUMMARIZE);
@@ -110,8 +117,38 @@ fn a_trait_method_is_a_signature() {
         "the trait reaches the generated file:\n{rust}"
     );
     assert!(
-        rust.contains("fn summary(&self) -> String;"),
-        "its method is a signature and not a body:\n{rust}"
+        rust.contains("fn summary(&self) -> impl std::future::Future<Output = String>"),
+        "its method is a signature and not a body, in the return-position form:\n{rust}"
+    );
+    assert!(
+        !rust.contains("async fn summary(&self) -> String;"),
+        "and the sugar `async fn` is not written in the trait:\n{rust}"
+    );
+}
+
+/// **A declaration that says `sync` is a plain `fn` below**, which is the other
+/// half of D3 and the one every trait had before ADR-109.
+#[test]
+fn a_sync_declaration_is_a_plain_signature() {
+    let rust = lowered(
+        "a sync trait",
+        r#"
+trait Named {
+    fn name(&self) -> String sync
+}
+
+struct User { username: String }
+
+impl Named for User {
+    fn name(&self) -> String sync { return self.username.clone() }
+}
+
+fn main() { println(User { username: "Ada".to_string() }.name()) }
+"#,
+    );
+    assert!(
+        rust.contains("fn name(&self) -> String;"),
+        "no future where nothing may pause:\n{rust}"
     );
 }
 
@@ -253,15 +290,18 @@ fn main() {
     );
 }
 
-/// D4: a trait's method is `sync` in the ledger, because a declaration has no
-/// body for `sync::infer` to read and a plain `fn` is the only thing the emitter
-/// can write in a trait.
+/// **A trait method's `sync` is the declaration's own word**
+/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D1): it reads like a
+/// function type, so without the word it **may pause**.
 ///
-/// **This is what stopped `fn shout` from being `async`.** Before it, the callee
-/// was simply absent from the fixpoint's map and *absent* read as *pauses*, so
-/// the lowering awaited a `String`.
+/// **It used to be asserted whatever the declaration said**
+/// ([ADR-078](../../../docs/specification/adr/adr-078.md) D4), and had to be: a
+/// plain `fn` was the only thing the emitter could write in a trait, so a
+/// pausing declaration had no lowering and `No` would have made every call
+/// through a bound an `.await` on a `String`. ADR-109 D3 takes the cause away
+/// with the return-position form.
 #[test]
-fn a_trait_method_is_sync_and_so_is_a_body_that_reaches_one() {
+fn a_trait_method_carries_the_word_it_was_written_with() {
     let parsed = parse_to_ast(SUMMARIZE).expect("the source parses");
     let own = Ledger::infer(&parsed);
     assert_eq!(
@@ -269,20 +309,28 @@ fn a_trait_method_is_sync_and_so_is_a_body_that_reaches_one() {
             .get("Summarize::summary")
             .expect("the declaration is in the ledger")
             .sync,
-        Sync::Asserted,
+        Sync::No,
+        "`Summarize` does not say `sync`, so its method may pause",
     );
     assert!(
-        own.functions
+        !own.functions
             .get("shout")
             .expect("the bounded function is in the ledger")
             .sync
             .is_sync(),
-        "a body that only reaches a trait's method cannot pause",
+        "and a body that calls it through a bound pauses with it",
     );
-    let rust = lowered("a sync body", SUMMARIZE);
-    assert!(
-        !rust.contains("async fn shout"),
-        "and it is not lowered as pausing:\n{rust}"
+
+    // The word, where it is written.
+    let with = parse_to_ast(
+        "trait Named {\n\
+         \x20   fn name(&self) -> String sync\n\
+         }\n",
+    )
+    .expect("the source parses");
+    assert_eq!(
+        Ledger::infer(&with).functions["Named::name"].sync,
+        Sync::Asserted,
     );
 }
 
@@ -300,19 +348,22 @@ fn trait_is_a_reserved_word() {
     );
 }
 
-/// `NK1129` ([ADR-080](../../../docs/specification/adr/adr-080.md) D1): the
-/// implementation pauses and the declaration has no way to say so.
+/// `NK1129` ([ADR-109](../../../docs/specification/adr/adr-109.md) D2): the
+/// implementation pauses and the declaration **says `sync`**.
 ///
-/// *Reproduced before it was refused:* the trait lowered to
-/// `fn load(&self) -> Result<…>;` and the `impl` to `async fn load(&self) ->
-/// Result<…>`, and the language below answered `E0053` about a file nobody
-/// wrote.
+/// **It used to refuse every pausing implementation**
+/// ([ADR-080](../../../docs/specification/adr/adr-080.md) D1), because a trait
+/// method had no way to say it may pause: the trait lowered to `fn load(&self)
+/// -> Result<…>;` and the `impl` to `async fn load(&self) -> Result<…>`, and
+/// the language below answered `E0053` about a file nobody wrote. ADR-109 D3's
+/// return-position form takes that away, so what is left is a **comparison** —
+/// which is `NK2202` asked of somebody else's signature.
 #[test]
-fn an_implementation_that_pauses_is_refused_where_the_trait_cannot_say_so() {
+fn an_implementation_that_pauses_is_refused_where_the_trait_says_sync() {
     let found = findings(
         r#"
 trait Loader {
-    fn load(&self) -> String throws
+    fn load(&self) -> String sync throws
 }
 
 struct File {
@@ -321,7 +372,7 @@ struct File {
 
 impl Loader for File {
     fn load(&self) -> String throws {
-        return fs::read_to_string(self.path)
+        return fs::read_to_string(self.path.clone())
     }
 }
 
@@ -464,4 +515,168 @@ fn main() {
         !found.iter().any(|f| f.code == "NK1130"),
         "nothing here declares `Error`, so nothing here can check against it: {found:#?}"
     );
+}
+
+/// **`NK1140`: the implementation can fail and the declaration has no
+/// `throws`** ([ADR-109](../../../docs/specification/adr/adr-109.md) D2) —
+/// `NK1129`'s twin one column over, and the same `NK2202` asked of somebody
+/// else's signature.
+#[test]
+fn an_implementation_that_fails_is_refused_where_the_trait_says_it_cannot() {
+    let found = findings(
+        r#"
+trait Loader {
+    fn load(&self) -> String
+}
+
+struct File {
+    path: String,
+}
+
+impl Loader for File {
+    fn load(&self) -> String throws {
+        return fs::read_to_string(self.path.clone())
+    }
+}
+
+fn main() {
+    println("x")
+}
+"#,
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1140"),
+        "a failing implementation under a declaration without `throws`: {found:#?}"
+    );
+}
+
+/// **The other direction fits and says nothing.** A declaration is the wider
+/// claim: a body that never pauses under one that may, or one that cannot fail
+/// under `throws`, is correct ([ADR-109](../../../docs/specification/adr/adr-109.md)
+/// D2).
+///
+/// It is the half that says these two are comparisons rather than a demand that
+/// the words match.
+#[test]
+fn a_body_that_does_less_than_the_declaration_allows_is_a_program() {
+    let found = findings(
+        r#"
+trait Loader {
+    fn load(&self) -> String throws
+}
+
+struct Fixed {
+    text: String,
+}
+
+impl Loader for Fixed {
+    fn load(&self) -> String sync {
+        return self.text.clone()
+    }
+}
+
+fn main() {
+    println("x")
+}
+"#,
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|f| f.code == "NK1129" || f.code == "NK1140"),
+        "a narrower body honours a wider declaration: {found:#?}"
+    );
+}
+
+/// **`docs/language-review.md` §1.3's probe**, which is what the work entry
+/// named as the evidence: a trait over a file read, refused as `NK1129` before
+/// ADR-109 and a program now — compiled and run.
+#[test]
+fn a_trait_over_a_file_read_is_a_program() {
+    let printed = ran(
+        "a pausing trait",
+        r#"
+trait Source {
+    fn load(&self) -> String throws
+    fn name(&self) -> String sync
+}
+
+struct Fixed {
+    text: String,
+}
+
+impl Source for Fixed {
+    fn load(&self) -> String throws {
+        return self.text.clone()
+    }
+    fn name(&self) -> String sync { return "fixed".to_string() }
+}
+
+fn main() throws {
+    let s = Fixed { text: "loaded".to_string() }
+    let text = s.load() catch { "".to_string() }
+    println(f"{s.name()}: {text}")
+}
+"#,
+    );
+    assert_eq!(printed.trim(), "fixed: loaded");
+}
+
+/// **`+ Send` follows the executor, not the type**
+/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D3).
+///
+/// At `user_parallelism = yes` a task crosses threads and a spawn needs a
+/// `Send` future; at `no` nothing crosses, the counts are plain
+/// ([ADR-037](../../../docs/specification/adr/adr-037.md) D7) and a `Send`
+/// demand would refuse them. It is a requirement of the executor this program
+/// is built for — not a claim about a type, which is `contracts::send`'s and is
+/// the same at both settings.
+#[test]
+fn the_send_bound_follows_the_setting() {
+    use nikaia::emit::{emit_program, Build, UserParallelism};
+
+    let parsed = parse_to_ast(SUMMARIZE).expect("the source parses");
+    for (setting, expected) in [(UserParallelism::Yes, true), (UserParallelism::No, false)] {
+        let rust = emit_program(
+            &parsed,
+            Build {
+                user_parallelism: setting,
+                ..Build::default()
+            },
+        )
+        .expect("it lowers")
+        .rust;
+        assert_eq!(
+            rust.contains("Output = String> + Send"),
+            expected,
+            "at {setting:?}:\n{rust}"
+        );
+    }
+}
+
+/// **The floor is written where Cargo reads it**
+/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4), from one
+/// constant in the emitter.
+///
+/// 1.75 is where `-> impl Trait` in a trait's method became stable, which is
+/// the form D3 writes. The build compares `rustc --version` against it before
+/// handing anything to Cargo, because Cargo's own *package requires rustc 1.75
+/// or newer* names a package the author never wrote — [Part III
+/// C.1](../../../docs/specification/30-nikaia-tooling.md)'s class.
+///
+/// **A version this cannot read is not a refusal**: a `rustc --version` that
+/// fails to run or prints something unparsable says nothing, because refusing
+/// on a reading failure would refuse a correct toolchain (C.4).
+#[test]
+fn the_rust_floor_is_one_constant_and_this_toolchain_clears_it() {
+    assert_eq!(nikaia::emit::RUST_FLOOR, "1.75");
+    assert!(
+        orchestrator::project::toolchain_is_new_enough(nikaia::emit::RUST_FLOOR).is_ok(),
+        "the toolchain the tests run on clears the floor the emitter writes"
+    );
+    // A floor nothing could satisfy is refused, which is the half that says the
+    // comparison happens at all.
+    assert!(orchestrator::project::toolchain_is_new_enough("999.0").is_err());
+    // And one this cannot read says nothing.
+    assert!(orchestrator::project::toolchain_is_new_enough("stable").is_ok());
 }

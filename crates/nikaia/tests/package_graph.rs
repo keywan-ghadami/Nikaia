@@ -144,14 +144,18 @@ fn a_trait_method_calling_the_file_next_door_is_not_refused() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// **And the refusal is still there for the body it was written about.**
+/// **And the refusal is still there where the declaration says `sync`.**
 ///
-/// The fix is that the graph reaches the file next door, not that a trait
-/// method stopped being `sync` — so a neighbour that genuinely pauses still
-/// takes the claim away, and `NK1129` still says so. Without this test the
-/// change above is indistinguishable from relaxing the rule, which
-/// `open-work.md` names as the one thing that must not be done here: it would
-/// trade a false refusal for a silent miscompilation.
+/// The fix was that the graph reaches the file next door, not that a trait
+/// method stopped being compared — so a neighbour that genuinely pauses still
+/// takes the claim away and `NK1129` still says so. Without this test the
+/// change above is indistinguishable from relaxing the rule, which would trade
+/// a false refusal for a silent miscompilation.
+///
+/// **The `sync` on the declaration is what makes it a refusal**, since
+/// [ADR-109](../../../docs/specification/adr/adr-109.md) D1: a trait method
+/// without the word *may* pause, so the same `impl` under a wordless
+/// declaration is a program — which the test below holds.
 #[test]
 fn a_trait_method_that_really_pauses_in_the_file_next_door_is_still_refused() {
     let (dir, entry) = project(
@@ -166,7 +170,7 @@ fn a_trait_method_that_really_pauses_in_the_file_next_door_is_still_refused() {
             (
                 "main.nika",
                 "trait Simple {\n\
-                 \x20   fn go(&self) -> i64\n\
+                 \x20   fn go(&self) -> i64 sync\n\
                  }\n\
                  \n\
                  struct Thing {\n\

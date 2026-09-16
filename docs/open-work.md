@@ -183,8 +183,8 @@ there, so the message named a remedy the program **cannot write** —
 The same shape in one file compiles, which is what said it was one emitted line
 rather than a question about the language.
 
-**This section is empty again.** The one out most recently was found rather
-than filed: **a binding that is changed and does not say `mut`**. Part I 2.1
+**This section is empty again.** The most recent thing out of it was found
+rather than filed: **a binding that is changed and does not say `mut`**. Part I 2.1
 writes `// x = 20  <-- This would cause a Compiler Error` and this compiler was
 not the one giving it — `let xs = Vec::new()` then `xs.push(1)` lowered to a
 Rust binding with no `mut` on it, and the answer came back about the generated
@@ -620,7 +620,8 @@ A name the request chose reaching the filesystem is
 [ADR-108](specification/adr/adr-108.md): the root is an argument of the call,
 `http::File(path, root)` exactly as `fs::map(path, root)`, and there is no
 provenance on a path and no refusal to build before the server. The `fs` half
-is §2.21 below, and `http::File` inherits it the day it exists.
+is the entry below about a path naming its root at the call, and `http::File`
+inherits it the day it exists.
 
 Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
 bench that decided it (`benches/sendfile/`) and the write-up
@@ -1031,27 +1032,7 @@ path-taking entry's `signature`; the check in the Rust half of `fs`; the
 sites in `examples/`, its README and Part III 17.1; `--trust` listing
 `Anywhere` and a literal `"/"` root; `http::File` when it is built.
 
-### 2.22. A trait method may pause unless it says `sync`
-
-[ADR-109](specification/adr/adr-109.md). A trait method reads like a function
-type — without `sync` it may pause, without `throws` it cannot fail — an
-implementation is compared against that (`NK1129`, `NK1140`), the emitter
-writes the return-position form with `Send` by setting, and every generated
-`Cargo.toml` says `rust-version = "1.75"`, checked before `cargo` runs.
-**Nothing of it is built**: every trait method is `Asserted` `sync`, `NK1129`
-refuses every pausing implementation, and no generated manifest names a Rust
-version.
-
-*Evidence:* `docs/language-review.md` §1.3's probe — `trait Source { fn
-load(&self) -> String throws }` over `fs::read_to_string` — is `NK1129` today.
-
-*What it needs, in the record's order (§5):* the ledger and `sync::infer`
-reading the declaration's word; the two comparisons at the `impl`; the
-emitter's return-position form and `async fn` in the `impl`; the
-`rust-version` constant, the manifest line and the version check; Part I
-4.7's example and a test in `crates/nikaia/tests/traits.rs`.
-
-### 2.23. An `update` block says `mut`, may run more than once, and the compiler picks the lock
+### 2.22. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 
 [ADR-110](specification/adr/adr-110.md). `update fn(mut v) { … }` is the one
 form; `v` is a copy where the value fits a machine word — run the block on the
@@ -1085,7 +1066,7 @@ which is a corpus migration rather than a rule change.
 word-sized values and the second lowering, with `explain` naming which row a
 value fell in; `--sharing` on a large `get`.
 
-### 2.24. What leaves a lock is stamped `Seen[T]`
+### 2.23. What leaves a lock is stamped `Seen[T]`
 
 [ADR-111](specification/adr/adr-111.md). `get` and `access` hand out a
 `Seen[T]`; the stamp sticks through arithmetic and through calls to entries
@@ -1106,7 +1087,7 @@ ledger's type language with the emitter erasing it; the pass-through over
 `touches` and the two declared places; `NK2205`'s two shapes and `NK2207`;
 `after:` and `Overtaken`; the examples and the tests.
 
-### 2.25. An expired `cleanup-deadline` is exit 70 on the panic path
+### 2.24. An expired `cleanup-deadline` is exit 70 on the panic path
 
 [ADR-112](specification/adr/adr-112.md). A cleanup the deadline cut off is a
 failure of the program: exit status 70, the resources named on standard error

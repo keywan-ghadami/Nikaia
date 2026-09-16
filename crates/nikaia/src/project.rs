@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
 use orchestrator::project::{
-    record_extra_dependencies, resolved_versions, write_if_changed, Cargo, CargoProject, CrateKind,
-    Invocation, Package, Profile, Workspace,
+    record_extra_dependencies, resolved_versions, toolchain_is_new_enough, write_if_changed, Cargo,
+    CargoProject, CrateKind, Invocation, Package, Profile, Workspace,
 };
 
 use crate::contracts::{sync, Ledger, STD};
@@ -1123,6 +1123,9 @@ impl Project {
                 version: member.manifest.package_version().to_string(),
                 // What the emitter writes, and what the tests compile it as.
                 edition: "2021".to_string(),
+                // ADR-109 D4: the floor the lowering needs, from one constant
+                // in the emitter.
+                rust_version: Some(crate::emit::RUST_FLOOR.to_string()),
             },
             kind,
             // A `[lib] name` has to be an identifier; a package name does not.
@@ -1298,6 +1301,11 @@ impl Project {
             &switches,
             &format!("{}\n{}\n", choices.build, choices.backend),
         )?;
+
+        // **Before Cargo is handed anything** (ADR-109 D4): its own answer
+        // about the floor names a package the author never wrote, which is
+        // Part III C.1's class.
+        toolchain_is_new_enough(crate::emit::RUST_FLOOR)?;
 
         let manifest = self
             .cargo_workspace(&members, &rust)?
