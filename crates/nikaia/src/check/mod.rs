@@ -309,6 +309,19 @@ pub struct Checked {
     /// sentence — a language that hides mutation through a receiver and shows
     /// it through an argument has two rules for one thing.
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// What each `spawn` body **binds and then holds across a pause**, by the
+    /// byte the `spawn` starts at and the name
+    /// ([ADR-055](../../docs/specification/adr/adr-055.md) §2 D6).
+    ///
+    /// **Written down because it is a computation and not a lookup.** The
+    /// refusal beside it (`NK2501`) is silent today and will be until a type
+    /// answers `MayNot` at `Destination::Ours` — no type does, and
+    /// `contracts::send` says why. So the *liveness* half, which is an
+    /// over-approximation that can be wrong, would otherwise be code nothing
+    /// can see the answer of. `contracts::send::held_across_a_pause` is the
+    /// rule itself and is tested on its own; this is what the walk feeding it
+    /// found in a real program.
+    pub held_across_a_pause: BTreeSet<(usize, String)>,
     /// The `let` statements whose initialiser is a **place** holding a value
     /// that would have to move, by the byte the statement starts at
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
@@ -392,6 +405,7 @@ pub fn check_program(
             })
             .collect(),
         scope: Vec::new(),
+        task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
         type_parameters: BTreeMap::new(),
@@ -863,6 +877,20 @@ struct Checker<'a> {
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
+    /// The `let`s made inside each enclosing `spawn` body, innermost last: the
+    /// name, its type, and the byte its statement starts at
+    /// ([ADR-055](../../docs/specification/adr/adr-055.md) D6).
+    ///
+    /// **`NK2501` asks about what a task *captures*; this is what it *binds*.**
+    /// A value bound inside the body and still live at a suspension point
+    /// further down is held **inside the future**, so it crosses a thread just
+    /// as a captured one does — and the pool's starter asks for `Send` of the
+    /// whole future. Nothing in the frame `scope` pushes for the body survives
+    /// the walk, so the types are collected here while they are known.
+    ///
+    /// A stack, because a task may `spawn` another: each body's bindings are
+    /// its own.
+    task_bindings: Vec<Vec<(String, Ty, usize)>>,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -2587,6 +2615,12 @@ impl<'a> Checker<'a> {
                     false => self.constant_of(value).map(|c| c.value),
                     true => None,
                 };
+                // **What a task binds for itself** (ADR-055 D6): recorded
+                // where the type is known, because the frame goes when the body
+                // does.
+                if let Some(task) = self.task_bindings.last_mut() {
+                    task.push((name.clone(), bound.clone(), span.start));
+                }
                 self.bind_local(Local {
                     name,
                     ty: bound,
@@ -3381,10 +3415,16 @@ impl<'a> Checker<'a> {
                     span,
                 );
                 self.scope.push(Vec::new());
+                self.task_bindings.push(Vec::new());
                 // A task's body is an `async` block below (ADR-055 §6), which
                 // is a function too: `break` may not leave it either.
                 let value = self.past_a_boundary("task", |me| me.block(body));
                 self.scope.pop();
+                let bound = self.task_bindings.pop().unwrap_or_default();
+                // **After** the walk, because the question needs both halves of
+                // what the walk found: the types of what the body bound, and
+                // which of its method calls pause (`pausing_methods`).
+                self.a_task_holds_these_across_a_pause(body, &bound, span);
                 Ty::Named {
                     name: "TaskHandle".to_string(),
                     args: vec![value],
@@ -4669,6 +4709,148 @@ impl<'a> Checker<'a> {
                 notes: notes.into_iter().flatten().collect(),
                 help: crossing.way_out(),
             });
+        }
+    }
+
+    /// **What a task holds across a pause** ([ADR-055](../../docs/specification/adr/adr-055.md)
+    /// §2 D6's third sharp edge), which is `NK2501`'s question asked of what a
+    /// body **binds** rather than of what it captures.
+    ///
+    /// A task's body is an `async` block below, and a value bound inside it and
+    /// still live at a suspension point further down is held **inside the
+    /// future**. The pool's starter asks for `Send` of that whole future, so
+    /// such a value crosses a thread exactly as a captured one does — and until
+    /// now the only thing that said so was the backend, about the generated
+    /// file, which [Part III C.1](../../docs/specification/30-nikaia-tooling.md)
+    /// calls a bug in this compiler.
+    ///
+    /// **Live is over-approximated, and the over-approximation is bounded by
+    /// the verdict rather than by the walk.** *Bound before a pause and named
+    /// after it* is all this asks; Rust's own answer is narrower. That would be
+    /// a *correct program refused* ([Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)) if the refusal
+    /// stood on it alone — it does not. It stands on `contracts::send`'s
+    /// `MayNot`, which is a claim about a **type** and is never `Undecided`'s
+    /// silence, so a name this walk is too generous about is refused only if a
+    /// value of its type could not have crossed from anywhere.
+    ///
+    /// **It reports nothing today, and that is why it is built now.** No type
+    /// answers `MayNot` at `Destination::Ours`: `Shared` stopped being one when
+    /// [ADR-037](../../docs/specification/adr/adr-037.md) D6 gave it one
+    /// representation at both settings, and a lock is `MayNot` only at a
+    /// *foreign* destination. A refusal costs nothing before there are programs
+    /// it would reject, and the same refusal added afterwards breaks them. What
+    /// reaches it first is a type from outside this language, which is what
+    /// [ADR-104](../../docs/specification/adr/adr-104.md) is for.
+    fn a_task_holds_these_across_a_pause(
+        &mut self,
+        body: &Block,
+        bound: &[(String, Ty, usize)],
+        span: &Span,
+    ) {
+        if bound.is_empty() {
+            return;
+        }
+        let (pauses, named) = self.what_the_body_does(body);
+        let places: Vec<(String, usize)> = bound
+            .iter()
+            .map(|(name, _, at)| (name.clone(), *at))
+            .collect();
+        let held = send::held_across_a_pause(&places, &pauses, &named);
+        self.checked.held_across_a_pause.extend(
+            held.iter()
+                .map(|name| (span.start, name.clone()))
+                .collect::<Vec<_>>(),
+        );
+        for (name, ty, _) in bound.iter().filter(|(name, ..)| held.contains(name)) {
+            let crossing = send::crossing(ty, self.own, self.library, send::Destination::Ours);
+            if crossing.refused().is_none() {
+                continue;
+            }
+            let notes = [
+                Some(
+                    "a task's body is one function below, so a value it binds and still \
+                     uses after a pause is held inside it - and the task runs on a thread \
+                     of its own (Part II, 11.2)"
+                        .to_string(),
+                ),
+                crossing.note(),
+                Some(SAME_AT_BOTH.to_string()),
+            ];
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2501",
+                message: format!(
+                    "`{name}` may not cross into a task, and this task holds it across a pause"
+                ),
+                notes: notes.into_iter().flatten().collect(),
+                help: crossing.way_out(),
+            });
+        }
+    }
+
+    /// Where a block **pauses**, and where each name it mentions was last
+    /// mentioned — both by the byte a statement starts at, and both reaching
+    /// through the blocks a statement holds.
+    ///
+    /// A method call is answered from [`Checked::pausing_methods`], which the
+    /// walk that just ran filled: which entry `db.load()` goes to is the type
+    /// checker's answer ([ADR-028](../../docs/specification/adr/adr-028.md)). A
+    /// free call is answered from the ledgers directly, the way
+    /// [`contracts::sync`] answers it.
+    fn what_the_body_does(&self, body: &Block) -> (Vec<usize>, BTreeMap<String, usize>) {
+        let mut pauses = Vec::new();
+        let mut named: BTreeMap<String, usize> = BTreeMap::new();
+        self.walk_the_body(body, &mut pauses, &mut named);
+        (pauses, named)
+    }
+
+    fn walk_the_body(
+        &self,
+        body: &Block,
+        pauses: &mut Vec<usize>,
+        named: &mut BTreeMap<String, usize>,
+    ) {
+        for stmt in &body.stmts {
+            let at = stmt.span.start;
+            crate::contracts::sync::visit_stmt(self.parsed, &stmt.node, &mut |expr| {
+                if self.pauses_here(expr, at) {
+                    pauses.push(at);
+                }
+                for name in crate::contracts::send::names_used(self.parsed, expr) {
+                    let last = named.entry(name).or_insert(at);
+                    *last = (*last).max(at);
+                }
+            });
+            // The blocks a statement holds - an `if`, a loop, a lambda. Their
+            // statements have spans of their own, so the order is the source's.
+            crate::contracts::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
+                self.walk_the_body(inner, pauses, named);
+            });
+        }
+    }
+
+    /// Whether this one expression is a suspension point.
+    fn pauses_here(&self, expr: &Expr, at: usize) -> bool {
+        match crate::contracts::sync::reached(self.parsed, expr, self.own, self.library) {
+            Some(crate::contracts::sync::Reached::Method) => match expr {
+                Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => self
+                    .pausing_methods
+                    .contains(&(at, self.parsed.text(*method).to_string())),
+                _ => false,
+            },
+            Some(crate::contracts::sync::Reached::Own(name)) => self
+                .own
+                .functions
+                .get(&name)
+                .is_some_and(|c| !c.sync.is_sync()),
+            Some(crate::contracts::sync::Reached::Library { sync, .. }) => !sync,
+            // A call this compiler cannot name may do anything, pausing
+            // included - which is the fail-closed direction for a question
+            // whose wrong answer here is a value silently crossing a thread.
+            Some(crate::contracts::sync::Reached::Opaque(_)) => true,
+            None => false,
         }
     }
 

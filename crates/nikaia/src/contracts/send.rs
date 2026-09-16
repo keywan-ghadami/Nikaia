@@ -309,6 +309,42 @@ pub fn names_used(parsed: &Parsed, body: &Expr) -> BTreeSet<String> {
     out
 }
 
+/// Which of a task body's **own** bindings are held across a pause
+/// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §2 D6).
+///
+/// A task's body is an `async` block below, and a value bound inside it and
+/// still live at a suspension point further down is held **inside the future**.
+/// The pool's starter asks for `Send` of that whole future, so such a value
+/// crosses a thread exactly as a captured one does — which is why the same
+/// verdict is asked of it.
+///
+/// Everything is a byte position and the rule is one line: **bound before a
+/// pause, and named after it.** `named` is the *last* place each name was
+/// mentioned, so a name read once, before the pause, is not held.
+///
+/// **Live is over-approximated** and Rust's own answer is narrower — a value
+/// whose last use is inside a branch the pause is not in, say. That would be a
+/// *correct program refused* if a refusal stood on this alone. It does not:
+/// what refuses is [`crossing`]'s `MayNot`, which is a claim about a **type**
+/// and never `Undecided`'s silence, so a name this is too generous about is
+/// refused only where a value of its type could not have crossed from
+/// anywhere.
+pub fn held_across_a_pause(
+    bound: &[(String, usize)],
+    pauses: &[usize],
+    named: &std::collections::BTreeMap<String, usize>,
+) -> BTreeSet<String> {
+    bound
+        .iter()
+        .filter(|(name, at)| {
+            pauses
+                .iter()
+                .any(|pause| pause > at && named.get(name).is_some_and(|last| last > pause))
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 /// Whether a value of `ty` may go to `into`.
 ///
 /// `own` is the program's ledger and `library` is `std`'s: between them they

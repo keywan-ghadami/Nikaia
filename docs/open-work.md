@@ -299,7 +299,7 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 4. **Supervision.** Last because nothing else waits on it.
 
-### 2.1. A task that may not cross a thread is refused by `rustc`, not by this compiler
+### 2.1. The crossing refusals are built and nothing can reach them
 
 [ADR-055](specification/adr/adr-055.md) §2 D6's third sharp edge, and the last
 thing that record decided which the compiler does not do.
@@ -313,20 +313,27 @@ lock its type, [ADR-045](specification/adr/adr-045.md) D2's lock in a task is a
 program: four tasks bumping one `SharedMut[i64]` on four threads print every
 increment (`a_lock_shared_by_four_tasks_counts_every_increment`).
 
-**What is missing is the diagnostic.** The pool's starter asks for `Send`,
-because a task may be polled on a thread that did not start it — so a task
-holding something that may not cross is refused where it should be, in the
-backend's words about the generated file, which [Part III C.1](specification/30-nikaia-tooling.md)
-calls a bug in this compiler.
+**The diagnostic is built now, in both halves.** The structural check
+[ADR-005](specification/adr/adr-005.md) §1 Group B ran on what a task
+**captures** ([`contracts::send`](../crates/nikaia/src/contracts/send.rs),
+`NK2501` and `NK2502`); it is now also asked of what a body **binds** — a value
+bound inside the task and still live at a suspension point further down, which a
+task's `async` block holds *inside the future*, where the pool's starter asks
+for `Send` of the whole thing. The rule is
+`send::held_across_a_pause`: **bound before a pause, and named after it.**
 
-*What it needs:* the structural check [ADR-005](specification/adr/adr-005.md) §1
-Group B already runs on what a task **captures**
-([`contracts::send`](../crates/nikaia/src/contracts/send.rs), `NK2501` and
-`NK2502`). What it has never been asked about is what a body holds **across a
-pause** — a value bound inside the task, still live at an `.await` further down.
-The checker knows where the suspension points are (`Checked::pausing_methods` and
-the ledger's `sync` column), so the input exists and what is owed is the liveness
-question between the two.
+*What remains is not a missing diagnostic but a verdict nothing produces.*
+`Crossing::MayNot` has exactly one producer — a lock at a **foreign**
+destination ([ADR-045](specification/adr/adr-045.md) D3) — so at
+`Destination::Ours`, which is where a task goes, **no type answers it**.
+`NK2501` is therefore silent in both its halves, and will be until
+`contracts::send` gains a second producer. What reaches it first is a type from
+outside this language, which is
+[ADR-104](specification/adr/adr-104.md)'s `nikaia describe` — the entry here
+about a foreign crate being described before it is called.
+
+*So this entry is now about `send.rs` rather than about the checker*, and it
+stays open for that reason rather than for the one it was filed under.
 
 *Why it is here and not in §1:* nothing is miscompiled and no correct program is
 refused. It is a message in the wrong words, which is the same class as every
@@ -343,11 +350,27 @@ compiled and run to check it. Everything else a program can write — a number, 
 `bool`, a `char`, a view, a struct of those — crosses anyway.
 
 So no program this compiler can lower produces a task future that is not `Send`,
-and **that is the reason to build the refusal now rather than a reason not to**:
+and **that was the reason to build the refusal rather than a reason not to**:
 a refusal costs nothing before there are programs it would reject, and the same
-refusal added afterwards breaks them. What would reach it first is a type from
-outside this language — a foreign value bound inside a task body and still live
-at a suspension point, where `NK2501`'s capture check never looks.
+refusal added afterwards breaks them.
+
+*What a silent refusal costs is that nothing can check it*, and the liveness
+half is a **computation** rather than a lookup — it can be wrong where the
+verdict cannot. So the answer is written down (`Checked::held_across_a_pause`)
+and `crates/nikaia/tests/held_across_a_pause.rs` holds it on real programs: a
+value used after a pause is held, one finished with before it is not, a body
+that never pauses holds nothing, and a call nothing describes counts as a pause
+(fail-closed, [ADR-010](specification/adr/adr-010.md) D1). One test holds the
+*silence* itself — that no type answers `MayNot` into our own code — because the
+day that stops being true is the day these programs start being refused, and
+that should be a test going red rather than a discovery.
+
+*And the liveness answer is deliberately generous.* **Bound before a pause and
+named after it** is wider than Rust's own liveness, which would be a correct
+program refused if the refusal stood on it alone. It does not: what refuses is
+`MayNot`, a claim about a **type** and never `Undecided`'s silence, so a name
+this walk is too generous about is refused only where a value of its type could
+not have crossed from anywhere.
 
 **And [ADR-040](specification/adr/adr-040.md) D1's task half is closed rather
 than waiting:** the analysis names a `spawn` body's handle as a duplication site,
@@ -843,6 +866,12 @@ refusal.
 *What it needs, in the record's order (§5):* the refusal; the draft from the
 sources; the file, its header and the hash rule; the rustdoc-JSON reader
 behind a toolchain check; the four examples.
+
+*And something else waits on it.* The entry above about the crossing refusals
+being built and unreachable is unreachable **because** no type answers
+`MayNot` into our own code, and a described foreign type is the first thing
+that could. `NK2501` and `NK2502` are written and tested and wait on this
+file to have something to say.
 
 ### 2.18. The ledger says `Seq[T]` and `Par[T]`
 
