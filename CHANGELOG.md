@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Decided (four of the owner's five open questions)
+
+- **[ADR-121](docs/specification/adr/adr-121.md).** The runtime's two completion paths differed in one thing: a worker's reply could not wake an executor parked on the ring, so standard input could not suspend and `rt::io::wait` could not be awaited. An eventfd on the ring, always armed, that the bell writes to, makes every worker operation awaitable at once; a hang is the failure this may not have, so the test that a worker reply does not wake a ring park is inverted and kept.
+- **[ADR-122](docs/specification/adr/adr-122.md).** A function-typed parameter lowers by its type — the future shape unless it says `sync`, run or kept — so a lambda that pauses fits a run parameter and the refusal `open-work.md` carried goes. The box this puts on the common case is measured before the record is closed. `examples/fortunes.nika`'s route handler is the program.
+- **[ADR-123](docs/specification/adr/adr-123.md).** `crosses` takes `false`, the claim a type may not cross a thread, written by `nikaia describe` from a foreign type's fields; absent stays *nothing recorded*. The two crossing refusals, built and tested, can fire for the first time.
+- **[ADR-111](docs/specification/adr/adr-111.md) D5 corrected.** It wrote `catch Overtaken { continue }`, and this language has one `catch` that takes everything; the retry is `catch { continue }`, exact where `Overtaken` is the only failure, and a typed handler is a record of its own the day a program needs to retry one failure and not another.
+- `open-decisions.md` keeps one entry: what `extern "C"` costs the language.
+
 ### Decided (a grammar's vocabulary is one page, and an action is the block after the pattern)
 
 - **[ADR-120](docs/specification/adr/adr-120.md).** The grammar is the language's best-designed part and had no page: the specification showed five built-ins and the examples used fourteen, and what uppercase names, `WS`, `=>` and `# "…"` mean lived in example comments. Part II 10.8 now lists every element a grammar may write, one line each, and is complete by rule. A rule's action is the block after its pattern — the one `->` is the result type, as a function's — and the two names that were the engine's spelling for what the grammar already says, `tag("x")` and `digit1`, are refused with `"x"` and `digit+`. The conventions stay, with precedent: uppercase is lexical as in ANTLR, `WS` steers skipping as pest's `WHITESPACE`, `=>` is the cut.
