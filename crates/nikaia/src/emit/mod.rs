@@ -878,6 +878,15 @@ struct Emitter<'p> {
     /// which is why it arrives rather than being worked out — a user-defined
     /// `set` with an `after:` option of its own is left alone.
     witnessed_sets: std::collections::BTreeSet<usize>,
+    /// The lambda arguments written as a closure returning a **boxed future**
+    /// ([ADR-122](../../../docs/specification/adr/adr-122.md) D1), by the byte
+    /// their statement starts at and the argument's position
+    /// (`check::Checked::future_lambdas`).
+    ///
+    /// Which shape a parameter takes is a question about its **type**, and this
+    /// file has none ([ADR-028](../../../docs/specification/adr/adr-028.md)) —
+    /// the same arrangement `lent_args` and `nullable_args` arrive by.
+    future_lambdas: std::collections::BTreeSet<(usize, usize)>,
     /// The method calls that **pause**, by the byte their statement starts at
     /// and the name written (`check::Checked::pausing_methods`).
     ///
@@ -1162,6 +1171,33 @@ struct MethodOf<'a> {
     declared_by: Option<&'a str>,
 }
 
+/// What the declaration a body belongs to says about that body.
+///
+/// These four travel together because the statements inside a body cannot see
+/// any of them: the `Ok` a `throws` function's value is wrapped in, whether
+/// there is a value at all, which of its parameters a call has to await, and
+/// the ledger key the body is filed under. They are one argument rather than
+/// four for the same reason `Argument` is one - a function that takes eight
+/// loose values is a function whose callers are easy to get wrong.
+#[derive(Clone, Copy)]
+struct Declared<'a> {
+    /// The function may fail, so its value is handed back as an `Ok`.
+    throws: bool,
+    /// The function hands back a value at all, so its last statement is that
+    /// value rather than a statement like any other.
+    returns_value: bool,
+    /// The code parameters of this declaration whose type may pause
+    /// ([ADR-122](../../docs/specification/adr/adr-122.md) D1): a call to one
+    /// of these carries an `.await`.
+    awaited: &'a [Symbol],
+    /// The ledger key of the function these statements are in: `main`, or
+    /// `Counter::record` for a method. Two things read it - a `Shared` value's
+    /// count is filed under it (`contracts::sharing`), and a `throw` raised
+    /// here reports the function's **own** name, which is the key's last
+    /// segment (ADR-023 D6: a `throw` in `main` says `main`).
+    key: &'a str,
+}
+
 /// **The oldest Rust the emitted code compiles under**
 /// ([ADR-109](../../docs/specification/adr/adr-109.md) D4).
 ///
@@ -1255,6 +1291,21 @@ struct Flow<'a> {
     /// **It accumulates rather than replacing**, so a lambda written inside an
     /// `update` block does not lose the dereference for a name it captures.
     changed: &'a [Symbol],
+    /// The **code parameters whose type may pause**
+    /// ([ADR-122](../../../docs/specification/adr/adr-122.md) D1) that are in
+    /// scope here.
+    ///
+    /// Such a parameter lowers to a closure returning a boxed future, so a call
+    /// to it is a call that hands back a future and carries an `.await`. The
+    /// emitter can answer this one itself — the type is written in the
+    /// declaration it is standing in, which is not the case for anything
+    /// `pausing_key` looks up ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    ///
+    /// **It does not accumulate the way `changed` does.** A lambda written
+    /// inside the body has parameters of its own, and a name it binds is not
+    /// this function's parameter any more; the list is the declaration's and
+    /// stops at every boundary that starts a `Flow::PLAIN`.
+    awaited: &'a [Symbol],
     /// The name the statement being emitted **binds**, where it binds one.
     ///
     /// It is here for the reason `function` is: the count a `Shared` was given is
@@ -1307,6 +1358,7 @@ struct Flow<'a> {
 impl Flow<'_> {
     const PLAIN: Flow<'static> = Flow {
         changed: &[],
+        awaited: &[],
         throws: false,
         origin: "",
         caught: false,
@@ -1479,6 +1531,7 @@ impl<'p> Emitter<'p> {
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
             witnessed_sets: propagation.witnessed_sets,
+            future_lambdas: propagation.future_lambdas,
             narrowing_casts: propagation.narrowing,
             shared,
             nullable_sites: propagation.nullable,
@@ -2432,7 +2485,25 @@ impl<'p> Emitter<'p> {
             angled(&declared),
             params.join(", ")
         ));
-        self.function_body(out, body, depth, *throws, ret_type.is_some(), &key)?;
+        // **The parameters a call has to await**
+        // ([ADR-122](../../docs/specification/adr/adr-122.md) D1): those whose
+        // type is code and does not say `sync`, which is the default.
+        let awaited: Vec<Symbol> = args
+            .iter()
+            .filter(|arg| arg.ty.code.as_ref().is_some_and(|code| !code.is_sync))
+            .map(|arg| arg.name)
+            .collect();
+        self.function_body(
+            out,
+            body,
+            depth,
+            Declared {
+                throws: *throws,
+                returns_value: ret_type.is_some(),
+                awaited: &awaited,
+                key: &key,
+            },
+        )?;
         out.push("\n");
         Ok(())
     }
@@ -2444,17 +2515,17 @@ impl<'p> Emitter<'p> {
         out: &mut Out,
         body: &Block,
         depth: usize,
-        throws: bool,
-        returns_value: bool,
-        // The ledger key of the function these statements are in: `main`, or
-        // `Counter::record` for a method. Two things read it - a `Shared` value's
-        // count is filed under it (`contracts::sharing`), and a `throw` raised
-        // here reports the function's **own** name, which is the key's last
-        // segment (ADR-023 D6: a `throw` in `main` says `main`).
-        key: &str,
+        declared: Declared<'_>,
     ) -> Result<()> {
+        let Declared {
+            throws,
+            returns_value,
+            awaited,
+            key,
+        } = declared;
         let flow = Flow {
             changed: &[],
+            awaited,
             throws,
             origin: key.rsplit("::").next().unwrap_or(key),
             caught: false,
@@ -3116,16 +3187,38 @@ impl<'p> Emitter<'p> {
                 .iter()
                 .map(|g| self.ty_counted(g, lifetimes, count))
                 .collect();
-            let result = match (&code.result, code.throws) {
-                (Some(r), false) => format!(" -> {}", self.ty_counted(r, lifetimes, count)),
+            let outcome = match (&code.result, code.throws) {
+                (Some(r), false) => self.ty_counted(r, lifetimes, count),
                 (Some(r), true) => format!(
-                    " -> Result<{}, Box<dyn std::error::Error>>",
+                    "Result<{}, Box<dyn std::error::Error>>",
                     self.ty_counted(r, lifetimes, count)
                 ),
-                (None, true) => " -> Result<(), Box<dyn std::error::Error>>".to_string(),
-                (None, false) => String::new(),
+                (None, true) => "Result<(), Box<dyn std::error::Error>>".to_string(),
+                (None, false) => "()".to_string(),
             };
-            return format!("impl Fn({}){result}", params.join(", "));
+            // **The type decides the shape**
+            // ([ADR-122](../../docs/specification/adr/adr-122.md) D1), and
+            // nothing inferred stands behind it: a parameter whose type may
+            // pause — which is the **default**, since `sync` is what says
+            // otherwise — is a closure returning a **boxed future**, whether the
+            // callee runs it or keeps it. A reader can tell what a signature
+            // costs by reading it, and a library author who wants no box writes
+            // `sync`, which is what that word already promises.
+            //
+            // Rust has no stable `async` closure, so the future is named rather
+            // than inferred: `Pin<Box<dyn Future<Output = …>>>` is the shape a
+            // handler is taken in in practice and the one `|a| Box::pin(async
+            // move { … })` produces.
+            let shape = match code.is_sync {
+                true => match (&code.result, code.throws) {
+                    (None, false) => String::new(),
+                    _ => format!(" -> {outcome}"),
+                },
+                false => {
+                    format!(" -> std::pin::Pin<Box<dyn std::future::Future<Output = {outcome}>>>")
+                }
+            };
+            return format!("impl Fn({}){shape}", params.join(", "));
         }
 
         // **`Seen[T]` is erased**
@@ -4344,6 +4437,13 @@ impl<'p> Emitter<'p> {
         if let Some(key) = pausing.as_deref().filter(|_| flow.in_lambda) {
             return Err(pausing_in_a_lambda(key));
         }
+        // **A call to a code parameter whose type may pause**
+        // ([ADR-122](../../docs/specification/adr/adr-122.md) D1). It hands back
+        // a boxed future, so it is awaited — and it is never *boxed* here: a
+        // parameter is not a name the recursion graph knows, and what it holds
+        // is already behind a pointer.
+        let awaits_a_parameter =
+            matches!(func, Expr::Variable(name) if flow.awaited.contains(name));
         let boxed = pausing
             .as_deref()
             .is_some_and(|key| self.closes_a_pausing_cycle(flow.function, key));
@@ -4360,7 +4460,7 @@ impl<'p> Emitter<'p> {
         // **ADR-055 D2: the `.await` goes before the `?`**, and the order is not
         // a choice: the future is what can fail, so it has to be driven before
         // there is a `Result` to propagate. `f().await?` and never `f()?.await`.
-        if pausing.is_some() {
+        if pausing.is_some() || awaits_a_parameter {
             out.push(".await");
         }
 
@@ -5478,6 +5578,18 @@ impl<'p> Emitter<'p> {
                 .mut_args
                 .get(&key)
                 .is_some_and(|shapes| shapes.contains(&shape));
+            // **A lambda handed to a parameter whose type may pause**
+            // ([ADR-122](../../docs/specification/adr/adr-122.md) D1): a
+            // closure that returns a **boxed future**, which is what a callee
+            // declared `impl Fn(A) -> Pin<Box<dyn Future<…>>>` takes. Rust has
+            // no stable `async` closure, so the shape is written out.
+            //
+            // `move`, because the future outlives the closure body it is made
+            // in and what it captures has to go with it — which is Part I 5.4's
+            // detached case, arrived at from the lowering rather than from a
+            // word.
+            let future = matches!(arg, Expr::Closure { .. })
+                && self.future_lambdas.contains(&(flow.statement, i));
             out.push(before);
             if change {
                 out.push("&mut ");
@@ -5493,7 +5605,39 @@ impl<'p> Emitter<'p> {
                 true => flow.inferred(),
                 false => flow,
             };
-            self.expr(out, arg, depth, inside)?;
+            match (future, arg) {
+                // `|a| Box::pin(async move { … })`, which is what a parameter
+                // declared `impl Fn(A) -> Pin<Box<dyn Future<…>>>` takes
+                // ([ADR-122](../../docs/specification/adr/adr-122.md) D1).
+                //
+                // **`in_lambda` is deliberately not set**, and that is D2: the
+                // refusal of a pausing body inside a lambda existed because the
+                // lowering had no shape for one. This *is* the shape, so a body
+                // that pauses is an ordinary body here — the `async` block is
+                // where its `.await`s belong.
+                (
+                    true,
+                    Expr::Closure {
+                        params,
+                        mutable,
+                        body,
+                    },
+                ) => {
+                    let names: Vec<String> =
+                        params.iter().map(|p| self.name(*p).into_owned()).collect();
+                    out.push(&format!("|{}| Box::pin(async move ", names.join(", ")));
+                    let mut changed: Vec<Symbol> = inside.changed.to_vec();
+                    changed.extend(mutable.iter().copied());
+                    let body_flow = Flow {
+                        changed: &changed,
+                        statement: inside.statement,
+                        ..Flow::PLAIN
+                    };
+                    self.block(out, body, depth, body_flow, Tail::Return)?;
+                    out.push(")");
+                }
+                _ => self.expr(out, arg, depth, inside)?,
+            }
             if count {
                 out.push(")");
             }

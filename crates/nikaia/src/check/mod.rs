@@ -198,6 +198,16 @@ pub struct Checked {
     /// not, is a program this cannot tell apart. The emitter asks for the
     /// written `after:` as well, so what that costs is bounded by the pair
     /// being written at all.
+    /// The lambda arguments that lower to a closure returning a **boxed
+    /// future** ([ADR-122](../../docs/specification/adr/adr-122.md) D1), by the
+    /// byte their statement starts at and the argument's position.
+    ///
+    /// The parameter's **type** decides the shape — it may pause unless it says
+    /// `sync` — and a type is what the emitter has none of
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)), so the answer is
+    /// computed where it is known and looked up where it is needed. The same
+    /// arrangement `lent_args` and `nullable_args` have.
+    pub future_lambdas: BTreeSet<(usize, usize)>,
     pub witnessed_sets: BTreeSet<usize>,
     /// The method calls that **pause**, keyed the same way and narrowed the same
     /// way ([ADR-055](../../docs/specification/adr/adr-055.md) D2).
@@ -671,6 +681,8 @@ pub struct Propagation {
     pub pausing_methods: BTreeSet<(usize, String)>,
     /// [`Checked::witnessed_sets`].
     pub witnessed_sets: BTreeSet<usize>,
+    /// [`Checked::future_lambdas`].
+    pub future_lambdas: BTreeSet<(usize, usize)>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
@@ -721,6 +733,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
         witnessed_sets: checked.witnessed_sets,
+        future_lambdas: checked.future_lambdas,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
@@ -2475,7 +2488,8 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|ty| ty::substitute(ty, &bound))
             .collect();
-        let found = self.arguments_given(args, &expected, span);
+        let found =
+            self.arguments_given(args, &expected, self.own.functions.contains_key(&key), span);
         self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
         // **The source's own name and not the ledger's**, because what
         // `arguments` records is read back by the emitter off the line as it is
@@ -4505,7 +4519,14 @@ impl<'a> Checker<'a> {
         // The same walk the method path uses, so the same questions are asked
         // in both - or `takes(self.name)` slips past `NK1131` while
         // `x.takes(self.name)` does not.
-        let found = self.arguments_given(args, &expected, span);
+        let found = self.arguments_given(
+            args,
+            &expected,
+            resolved
+                .as_ref()
+                .is_some_and(|(key, _)| self.own.functions.contains_key(key)),
+            span,
+        );
         let passed: Vec<(String, Ty)> = config
             .iter()
             .map(|a| {
@@ -5757,7 +5778,20 @@ impl<'a> Checker<'a> {
     /// the callee is known - which is why the resolution moved ahead of the
     /// walk (ADR-029). An argument whose parameter says nothing is walked
     /// exactly as it was before.
-    fn arguments_given(&mut self, args: &[Expr], expected: &[Ty], span: &Span) -> Vec<Ty> {
+    ///
+    /// `declared_here` says whether the signature came from **this program's**
+    /// ledger rather than from `std`'s. It decides one thing and
+    /// [ADR-122](../../docs/specification/adr/adr-122.md) D3 is why: a `std`
+    /// entry's lambda type is a hand-written description of a **Rust**
+    /// signature, which takes a plain closure whatever its `sync` column says,
+    /// so the future shape must not be written for one.
+    fn arguments_given(
+        &mut self,
+        args: &[Expr],
+        expected: &[Ty],
+        declared_here: bool,
+        span: &Span,
+    ) -> Vec<Ty> {
         args.iter()
             .enumerate()
             .map(|(at, arg)| match (arg, expected.get(at)) {
@@ -5773,17 +5807,30 @@ impl<'a> Checker<'a> {
                         throws,
                         ..
                     }),
-                ) => self.lambda(
-                    params,
-                    mutable,
-                    body,
-                    given,
-                    Promises {
-                        may_pause: !is_sync,
-                        may_fail: *throws,
-                    },
-                    span,
-                ),
+                ) => {
+                    // **A lambda handed to a parameter whose type may pause is
+                    // written as a closure returning a boxed future**
+                    // ([ADR-122](../../docs/specification/adr/adr-122.md) D1).
+                    // Recorded here because it is a question about the
+                    // parameter's **type**, which the emitter has no way to ask
+                    // ([ADR-028](../../docs/specification/adr/adr-028.md)) — the
+                    // same arrangement `lent_args` and `nullable_args` have, and
+                    // keyed the same way.
+                    if !is_sync && declared_here {
+                        self.checked.future_lambdas.insert((span.start, at));
+                    }
+                    self.lambda(
+                        params,
+                        mutable,
+                        body,
+                        given,
+                        Promises {
+                            may_pause: !is_sync,
+                            may_fail: *throws,
+                        },
+                        span,
+                    )
+                }
                 _ => {
                     self.a_field_of_a_borrowed_subject(arg, span, "passed");
                     self.expr(arg, span)

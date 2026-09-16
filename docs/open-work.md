@@ -395,17 +395,24 @@ than waiting:** the analysis names a `spawn` body's handle as a duplication site
 and used again afterwards is not refused, which `tasks.rs` says about a program
 that does it.
 
-### 2.2. A lambda that pauses is refused at the build
+### 2.2. A lambda that pauses is refused where `std` takes it
 
 [ADR-055](specification/adr/adr-055.md) §6's remainder, and a limit of this
 compiler rather than of the language — so it is here and not in §1, where a
 defect is the compiler being *wrong*. **The other half of this entry, a
 recursive pausing method not being boxed, is built**; what it took is below.
 
-**A lambda whose body calls something that can pause is refused at the build.**
-Rust has no stable `async` closure, so the lowering has nothing to write. The
-refusal is by the lowering and not by the checker on purpose: refusing it in the
-type checker would refuse a correct program (Part III, C.4).
+**A lambda whose body calls something that can pause is refused at the build —
+where the parameter it is handed to is `std`'s.** Rust has no stable `async`
+closure, so the lowering has nothing to write for a `std` entry that takes one.
+The refusal is by the lowering and not by the checker on purpose: refusing it in
+the type checker would refuse a correct program (Part III, C.4).
+
+**Where the parameter is declared in *this* language it is not refused any
+more** ([ADR-122](specification/adr/adr-122.md) D1, D2): the type says the code
+may pause, the declaration is a closure returning a boxed future, and the lambda
+is `|a| Box::pin(async move { … })` — a body that pauses is an ordinary body
+inside it.
 
 *Evidence:* `examples/fortunes.nika:120` — `.route("/fortunes") fn { fortunes(db) }`,
 a route handler that queries a database. It type-checks clean and no build reaches
@@ -423,22 +430,20 @@ per group. What was left is that a *callee's* parameter has to say which it
 wants, and the ledger had no column for it. Not a new mechanism — a claim to
 record.
 
-**The claim exists now.** [ADR-102](specification/adr/adr-102.md) D1's function
-type *is* it: `fn(Request) -> Response` says the code may pause and
-`fn() sync` says it never does, the ledger writes and reads the whole spelling,
-and D2's fit already refuses a pausing lambda handed to a `sync` one
-(`NK2206`). So what is left here is the **lowering**, and it is the same
-remaining step that record has — D5's boxed closure over a boxed future — which
-is why the two entries are now one piece of work rather than two waiting on
-each other.
+**This is closed.** [ADR-102](specification/adr/adr-102.md) D1's function type
+was the claim it was waiting for, and
+[ADR-122](specification/adr/adr-122.md) D1 said which shape a declaration
+commits to: the **type** decides, so a parameter that may pause is a closure
+returning a boxed future and a lambda handed to one is
+`|a| Box::pin(async move { … })`. A body that pauses is an ordinary body inside
+it, which is D2 — *"the build-time refusal has no case left"*.
 
-*What that piece still has to settle, and no record says it yet:* the shape a
-declaration commits to. D5 gives the **kept** case a boxed closure over a boxed
-future and says a **run** parameter lowers *"as `std`'s do today, a closure
-argument"* — which cannot take a lambda that pauses. So either the *type*
-decides the shape (may-pause ⇒ the future shape always, and a run parameter
-handed a plain lambda pays a box), or the run-or-kept inference does, and the
-emitter learns to read it per parameter. That is a question rather than work.
+*Except where `std` is*, which is the one thing that keeps the refusal alive:
+`std`'s lambda-taking entries describe **Rust** signatures that take a plain
+closure, so a pausing lambda handed to `map` still has no shape and is still
+refused at the lowering. That is D3's own exemption read from the other side,
+and it is what is left of this entry: a `std` entry whose lambda may genuinely
+pause would have to be written in Nikaia or described as taking a future.
 
 **A recursive pausing *method* is boxed now**, and what it took was asking a
 question the emitter already had the answer to. §6 step 2 boxed a call that
@@ -1348,13 +1353,28 @@ the bell writing to it; the tests; the four entries awaited.
 [ADR-122](specification/adr/adr-122.md). Without `sync` the future shape, run
 or kept; with `sync` a plain closure; the refusal of a pausing lambda at a run
 parameter goes; the box on the common case is measured before the record is
-closed. **Nothing of it is built**: a run parameter lowers to `impl Fn`.
+closed. **D1, D2 and D3 are built.** A parameter whose type may pause is
+`impl Fn(A) -> Pin<Box<dyn Future<Output = R>>>`, a call to one carries an
+`.await`, and a lambda handed to one is `|a| Box::pin(async move { … })`.
 
-*Evidence:* `examples/fortunes.nika:120`'s route handler.
+*The number is §3's:* **15.1 ns per call against 0.33 ns**, about ×45, with the
+control tying (`benches/handler`). Large as a ratio and small as a number, and
+which of the two matters is D1's whole argument: a handler answering a request
+spends microseconds, and a lambda run a million times over a list is what
+`sync` is the door out of.
 
-*What it needs, in the record's order (§5):* the emitter by type; the
-refusal removed and its test inverted; the measurement, with the number
-written into the record; `fortunes.nika`.
+*One thing the record had not said, and the corpus said it in one line.* D3's
+*`std`'s own entries are untouched* is a **condition on the check** rather than
+a remark: `HashMap::and_modify` describes a *Rust* signature, which takes a
+plain closure whatever the ledger's `sync` says, and writing the future shape
+for it produced *expected `()`, found `Pin<Box<…>>`* against
+`examples/access-log.nika`. The shape is written only where the signature was
+declared in this language.
+
+*What is left is step 4*, `fortunes.nika` as the corpus program: the handler is
+writable now, and what it waits on is `examples/http/` declaring `route` — which
+is ADR-102's consequence and needs the package rewritten rather than the
+compiler changed.
 
 ### 2.36. `crosses` says *no* as well as *yes*
 

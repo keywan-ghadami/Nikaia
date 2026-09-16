@@ -8,6 +8,7 @@ members = [
     "benches/refcount",
     "benches/lockfloor",
     "benches/lockfree",
+    "benches/handler",
     "benches/sendfile",
 ]
 

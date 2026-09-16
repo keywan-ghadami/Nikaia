@@ -175,16 +175,69 @@ fn a_run_parameter_lowers_to_a_closure_argument() {
 /// makes a lambda that fails fit it.
 #[test]
 fn throws_on_the_type_is_the_result_a_throws_function_has() {
-    let rust = lowered("fn load(reader: fn(Path) -> Bytes throws) { }\nfn main() { }\n");
+    // With `sync`, the plain closure: the `Result` is the whole of what the
+    // word adds.
+    let plain = lowered("fn load(reader: fn(Path) -> Bytes sync throws) { }\nfn main() { }\n");
     assert!(
-        rust.contains("impl Fn(Path) -> Result<Bytes, Box<dyn std::error::Error>>"),
-        "{rust}"
+        plain.contains("impl Fn(Path) -> Result<Bytes, Box<dyn std::error::Error>>"),
+        "{plain}"
     );
-    let nothing = lowered("fn attempt(step: fn() throws) { }\nfn main() { }\n");
+    // Without it, the same `Result` is what the **future** hands back
+    // ([ADR-122](../../../docs/specification/adr/adr-122.md) D1).
+    let future = lowered("fn load(reader: fn(Path) -> Bytes throws) { }\nfn main() { }\n");
+    assert!(
+        future.contains(
+            "Pin<Box<dyn std::future::Future<Output = Result<Bytes, Box<dyn std::error::Error>>>>>"
+        ),
+        "{future}"
+    );
+    let nothing = lowered("fn attempt(step: fn() sync throws) { }\nfn main() { }\n");
     assert!(
         nothing.contains("impl Fn() -> Result<(), Box<dyn std::error::Error>>"),
         "{nothing}"
     );
+}
+
+/// **A lambda that pauses is an ordinary program now**
+/// ([ADR-122](../../../docs/specification/adr/adr-122.md) D2), where it used to
+/// be refused at the build: Rust has no stable `async` closure, so the lowering
+/// had no shape for one. D1 *is* the shape — a closure returning a boxed
+/// future — so there is nothing left to refuse.
+#[test]
+fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
+    let source = "fn run(f: fn() -> String) -> String { return f() }\n\
+                  fn main() { let said = run(fn() { return io::read_to_string() })\n\
+                  \x20   println(f\"{said}\") }\n";
+    // It lowers, which is what "refused at the build" meant: the emitter used
+    // to return an error here rather than write anything.
+    let rust = lowered(source);
+    assert!(
+        rust.contains("|| Box::pin(async move {"),
+        "the lambda is a closure returning a future: {rust}"
+    );
+    assert!(
+        rust.contains("io::read_to_string().await"),
+        "and its body may await inside it: {rust}"
+    );
+}
+
+/// **`std`'s own entries are untouched** (D3), and this is the corpus case that
+/// said so out loud: `and_modify` is a hand-written description of a **Rust**
+/// signature, which takes a plain closure whatever the ledger's `sync` column
+/// says. Writing the future shape for one produced
+/// *expected `()`, found `Pin<Box<…>>`* against `examples/access-log.nika`.
+///
+/// So the shape is written only where the signature was **declared here**.
+#[test]
+fn a_std_entrys_lambda_keeps_its_plain_closure() {
+    let rust = lowered(
+        "fn main() {\n\
+         \x20   let xs = Vec::new()\n\
+         \x20   let doubled = xs.map fn(n) { n * 2 }\n\
+         \x20   println(f\"{doubled.len()}\")\n\
+         }\n",
+    );
+    assert!(!rust.contains("Box::pin"), "{rust}");
 }
 
 /// **`NK1142`: only a parameter yet.** D1 says a function type may stand
@@ -296,32 +349,56 @@ fn a_free_calls_lambda_is_typed_from_the_signature() {
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
 }
 
-/// **D3: whether a code parameter is run or kept is inferred**, and it decides
-/// which rule applies.
+/// **The type decides, and nothing inferred stands behind it**
+/// ([ADR-122](../../../docs/specification/adr/adr-122.md) D1).
 ///
-/// A lambda the callee **runs during the call** adds nothing to the caller's
-/// own answers — the lambda's body is walked as part of the function that
-/// writes it, so its calls are already counted there
-/// ([ADR-029](../../../docs/specification/adr/adr-029.md) D3) — and the ledger
-/// says so by name: `sync = "from(f)"`. Until this, a function that took a
-/// lambda had to commit to the pessimistic answer for every caller, and
-/// `twice` lowered to an `async fn` that every call awaited.
+/// This test used to assert the opposite, and the record it asserted is the one
+/// ADR-122 answers: [ADR-102](../../../docs/specification/adr/adr-102.md) D3
+/// gave a **run** parameter `sync = "from(f)"` — *the lambda decides* — on
+/// [ADR-029](../../../docs/specification/adr/adr-029.md) D3's reasoning that
+/// the lambda's body is counted in the caller. That reasoning holds while the
+/// lambda is a plain closure. It stops holding the moment the parameter's type
+/// may pause, because then the lambda is a **future the callee awaits**, and a
+/// function that awaits is `async` whatever its caller handed over.
+///
+/// So the column follows the type: `sync` on the parameter and the callee keeps
+/// its claim; nothing on it and the callee pauses, run or kept.
 #[test]
-fn a_run_parameter_makes_the_callee_from_the_lambda() {
-    let parsed = parse_to_ast("fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n")
-        .expect("the source parses");
-    assert_eq!(
-        Ledger::infer(&parsed).functions["twice"].sync.from(),
-        Some("f")
+fn the_parameters_type_decides_whether_the_callee_pauses() {
+    let sync_of = |source: &str, of: &str| {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        Ledger::infer(&parsed).functions[of].sync.clone()
+    };
+    assert!(
+        sync_of(
+            "fn twice(x: i64, f: fn(i64) -> i64 sync) -> i64 { return f(f(x)) }\n",
+            "twice"
+        )
+        .is_sync(),
+        "a plain closure's call adds nothing"
     );
-    // …and the caller of one is `sync` or not by what *it* handed over, which
-    // is the whole point: the lambda's body is counted where it is written.
-    let rust = lowered(
+    assert!(
+        !sync_of(
+            "fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n",
+            "twice"
+        )
+        .is_sync(),
+        "a call to a parameter that may pause is an await, and this function does it"
+    );
+    // …and the two lowerings say the same thing, which is the half a reader
+    // sees: one is a function, the other is an `async fn` whose call is awaited.
+    let plain = lowered(
+        "fn twice(x: i64, f: fn(i64) -> i64 sync) -> i64 { return f(f(x)) }\n\
+         fn main() { println(f\"{twice(2, fn(n) { return n * 3 })}\") }\n",
+    );
+    assert!(plain.contains("fn twice("), "{plain}");
+    assert!(!plain.contains("async fn twice("), "{plain}");
+    let future = lowered(
         "fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n\
          fn main() { println(f\"{twice(2, fn(n) { return n * 3 })}\") }\n",
     );
-    assert!(rust.contains("fn twice("), "{rust}");
-    assert!(!rust.contains("async fn twice("), "{rust}");
+    assert!(future.contains("async fn twice("), "{future}");
+    assert!(future.contains("f(f(x).await).await"), "{future}");
 }
 
 /// **A kept one is answered from the type** (D3), and a body that stores *and*
