@@ -466,7 +466,7 @@ three shapes that must *not* box.
 
 ### 2.3. Standard input is `async` and does not suspend
 
-**Answered by [ADR-124](specification/adr/adr-124.md):** the defect is the ring's park, which cannot hear a worker's bell; an eventfd on the ring makes every worker operation awaitable, standard input included, and the proposal below to wire standard input to readiness is withdrawn. The entry stays until the input suspends.
+**Answered by [ADR-121](specification/adr/adr-121.md):** the defect is the ring's park, which cannot hear a worker's bell; an eventfd on the ring makes every worker operation awaitable, standard input included, and the proposal below to wire standard input to readiness is withdrawn. The entry stays until the input suspends.
 
 [ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
 an `async fn`, and made **files** actually suspend: a read is a slot on the ring
@@ -1306,7 +1306,7 @@ and a test.
 
 ### 2.31. A target without an operating system
 
-[ADR-124](specification/adr/adr-124.md). A bare-metal target with
+[ADR-119](specification/adr/adr-119.md). A bare-metal target with
 `user_parallelism` pinned to `no`; `no_std` emission with a target prelude
 and abort; the target's executor over described crates with interrupts as
 wakers and `irq::on(vector, fn() sync)`; a heap by default and an
@@ -1339,7 +1339,7 @@ names refused; the examples rewritten.
 
 ### 2.34. The ring's park hears the bell
 
-[ADR-124](specification/adr/adr-124.md). An eventfd on the ring, always
+[ADR-121](specification/adr/adr-121.md). An eventfd on the ring, always
 armed, that `ring_the_bell` writes to; its completion carries its own user
 data and is not an operation's; the test that a worker reply does not wake a
 ring park is inverted; `io::read`, `io::read_to_string`, `io::lines` and
