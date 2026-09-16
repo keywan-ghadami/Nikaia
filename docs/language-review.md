@@ -286,7 +286,10 @@ Part I 8.1.2: *"if two fail the first in written order wins."* The other error
 is gone. The language already has the mechanism for exactly this case — a
 cleanup failure while an error is unwinding is *attached as a secondary error*
 (6.4) — and `overlap` should use it. An operator reading a log wants to know
-that two of three loads failed, not one.
+that two of three loads failed, not one. *Decided since:*
+[ADR-115](specification/adr/adr-115.md) — one `secondary` list on every
+error, for both cases, in written order, with the block as the place failures
+are combined.
 
 ### 2.5 `cleanup-deadline` expiry is a warning
 

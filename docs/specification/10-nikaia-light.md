@@ -1888,8 +1888,11 @@ written at the handler, and a handler that matches on `error` is told the same a
 
 **What an error brings without anyone attaching it.** The **site** it was raised from, and the chain
 beneath it where another error joined on the way — a cleanup that failed while the stack was
-unwinding is attached to the original as a *secondary* error rather than replacing it (6.4). The
-site costs nothing at run time: the compiler knew it and wrote it into the binary as text.
+unwinding is attached to the original as a *secondary* error rather than replacing it (6.4), and so
+are the other failing branches of an `overlap` (8.1.2). The list is `error.secondary`, in the order
+the errors joined, each with its own site; a `catch` still catches one error and chooses by its
+type ([ADR-115](adr/adr-115.md)). The site costs nothing at run time: the compiler knew it and
+wrote it into the binary as text.
 
 **A stack trace is not among them.** Errors here are the *expected* kind — a missing file, a line
 that does not parse — and capturing a trace for each one costs far more than raising it, so a
@@ -2044,7 +2047,12 @@ and the message names the resource.
 
 **A branch that fails makes the block fail**, and if two fail the first **in
 written order** wins, so the result is reproducible — written order is the only
-order the source has. Per-branch handling is `catch` inside the branch.
+order the source has. The others are not lost: they are attached to the winner
+as its `secondary` list, in written order, and a log or `nikaia explain` shows
+them under it ([ADR-115](adr/adr-115.md)). Per-branch handling is `catch` inside
+the branch; combining failures is `catch` on the block, where a handler has the
+winner and `error.secondary`. A branch cannot see another branch's failure,
+because branches meet on nothing.
 
 **A branch is an expression.** Several steps in one branch are a block expression
 inside it; where two branches would both be multi-line blocks doing the same shape
