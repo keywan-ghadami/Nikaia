@@ -601,6 +601,19 @@ pub struct TraitMethod {
 pub struct FnArg {
     pub name: Ident,
     pub ty: Type,
+    /// `mut out: Vec[i64]`: the callee changes this parameter **in place**, and
+    /// the caller's value is what changes
+    /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3). It lowers to
+    /// `&mut T`.
+    ///
+    /// `&mut self`'s rule, held for every parameter: the call shows nothing,
+    /// exactly as `xs.push(1)` shows nothing. A language that hides mutation
+    /// through a receiver and shows it through an argument has two rules for
+    /// one thing.
+    ///
+    /// A callee that wants a mutable *copy* of an owned parameter writes
+    /// `let mut v = x` inside, which is what it writes for any other value.
+    pub mutable: bool,
     /// Where the parameter is written.
     ///
     /// **A declaration needs one of its own**, which a statement's span cannot

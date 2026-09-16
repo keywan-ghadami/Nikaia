@@ -294,6 +294,21 @@ pub struct Checked {
     /// a statement may call one function twice, and `f(a) + f(b)` has two
     /// arguments in one position.
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// The call arguments the compiler writes a **`&mut`** for
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
+    /// [`Checked::lent_args`] is.
+    ///
+    /// The third state beside *lent* and *handed over*, and the one that is a
+    /// **declaration** rather than an inference: `mut out: Vec[i64]` is the
+    /// claim, and a parameter without the word does not become one whatever its
+    /// body does. `keeps::lends` withholds its own answer on such a position,
+    /// so the two never both write a reference.
+    ///
+    /// What the caller has to do is what it already does to call `xs.push(1)`:
+    /// write `let mut xs`. The call itself shows nothing, which is D3's whole
+    /// sentence — a language that hides mutation through a receiver and shows
+    /// it through an argument has two rules for one thing.
+    pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// The `let` statements whose initialiser is a **place** holding a value
     /// that would have to move, by the byte the statement starts at
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
@@ -377,6 +392,7 @@ pub fn check_program(
             })
             .collect(),
         scope: Vec::new(),
+        not_mut: BTreeMap::new(),
         expected: None,
         type_parameters: BTreeMap::new(),
         struct_parameters: BTreeMap::new(),
@@ -578,6 +594,8 @@ pub struct Propagation {
     pub lent_lets: BTreeSet<usize>,
     /// [`Checked::lent_args`].
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// [`Checked::mut_args`].
+    pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -615,6 +633,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
         lent_args: checked.lent_args,
+        mut_args: checked.mut_args,
     }
 }
 
@@ -780,6 +799,20 @@ struct Checker<'a> {
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
+    /// The parameters of the function being walked that were **not** declared
+    /// `mut`, with the span of each declaration
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3).
+    ///
+    /// A body that changes one of these is refused as `NK1138`: mutation of a
+    /// parameter is written where the parameter is, and a declaration without
+    /// the word lowers to a Rust parameter without one — which is `rustc`'s
+    /// *cannot borrow as mutable* about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// A name a `let` binds leaves the set, because the mutation is then of the
+    /// **local** and not of the parameter. Across scopes that is imprecise in
+    /// the one direction imprecision is allowed here: it stops refusing.
+    not_mut: BTreeMap<String, Span>,
     checked: Checked,
 }
 
@@ -1179,6 +1212,16 @@ impl<'a> Checker<'a> {
             };
             frame.push(("self".to_string(), ty, None));
         }
+        // **D3's set**: the parameters this declaration did *not* write `mut`
+        // on. Replaced rather than extended, because a nested item is another
+        // function and its parameters are its own.
+        let outer_not_mut = std::mem::replace(
+            &mut self.not_mut,
+            args.iter()
+                .filter(|a| !a.mutable)
+                .map(|a| (self.parsed.text(a.name).to_string(), a.span.clone()))
+                .collect(),
+        );
         for arg in args {
             let name = self.parsed.text(arg.name).to_string();
             self.nameable(&name, &arg.span, "a parameter");
@@ -1236,6 +1279,7 @@ impl<'a> Checker<'a> {
         self.throwing = outer_throwing;
         self.type_parameters = outer_declared;
         self.borrowing_self = outer_borrowing;
+        self.not_mut = outer_not_mut;
         self.current = outer_current;
     }
 
@@ -1641,6 +1685,26 @@ impl<'a> Checker<'a> {
                     .as_ref()
                     .is_some_and(|s| s.takes_a_receiver()),
             );
+        // **`mut` is asked first, and it is a declaration** (D3): the
+        // parameter lowers to `&mut T` and the argument gains a `&mut`, both
+        // off the word the author wrote. `lends` withholds its claim on such a
+        // position, so exactly one of the two answers.
+        let changes = contract
+            .signature
+            .as_ref()
+            .and_then(|s| s.params.get(position).map(|(name, _)| (s, name)))
+            .is_some_and(|(s, name)| s.mutable.iter().any(|m| m == name));
+        if changes {
+            let Some(given) = given else {
+                return false;
+            };
+            self.checked
+                .mut_args
+                .entry((span.start, written.to_string(), at))
+                .or_default()
+                .insert(argument_shape(given));
+            return true;
+        }
         if !crate::contracts::keeps::lends(contract, position) {
             return false;
         }
@@ -1750,6 +1814,62 @@ impl<'a> Checker<'a> {
             .or_default()
             .insert(argument_shape(given));
         true
+    }
+
+    /// The name a place is **rooted** at: `out` for `out`, `out.f` and
+    /// `out[i].f`, and nothing for anything that is not a place.
+    ///
+    /// A field of a parameter is the parameter's, which is why the whole chain
+    /// is followed rather than only its last step: `row.total = 0` changes
+    /// `row` ([ADR-094](../../docs/specification/adr/adr-094.md) D3).
+    fn rooted_at(&self, place: &Expr) -> Option<String> {
+        match place {
+            Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+            Expr::Field { base, .. } | Expr::SafeField { base, .. } => self.rooted_at(base),
+            Expr::Index { base, .. } => self.rooted_at(base),
+            _ => None,
+        }
+    }
+
+    /// **`NK1138`: a parameter a body changes says `mut`**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3).
+    ///
+    /// `fn fill(mut out: Vec[i64])` is a parameter the callee changes in place
+    /// and the caller's value is what changes — `&mut self`'s rule held for
+    /// every parameter. Without the word the parameter lowers to a Rust one
+    /// with no `mut` on it, and `out.push(1)` inside came back as `rustc`'s
+    /// *cannot borrow `*out` as mutable* about a file nobody wrote, which is
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md).
+    ///
+    /// **Only where the change is certain.** A name a `let` has bound is the
+    /// local's and has left the set; a method whose entry no ledger has, or
+    /// whose candidates do not agree, is not one to refuse on. Answering *it
+    /// might change* here would refuse a correct program, which is C.4 and is
+    /// the worse of the two mistakes: the other one is a message `rustc` gives
+    /// instead, and this record's other half is closing that.
+    fn a_changed_parameter_says_mut(&mut self, name: &str, how: &str) {
+        let Some(declared) = self.not_mut.get(name) else {
+            return;
+        };
+        let at = declared.clone();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: at,
+            code: "NK1138",
+            message: format!("`{name}` is changed, and a parameter that is changed says `mut`"),
+            notes: vec![format!(
+                "{how} (ADR-094 D3) - `mut` in the declaration is where in-place change \
+                 is written, and the caller's value is what changes, exactly as it is \
+                 for `&mut self`"
+            )],
+            help: Some(format!(
+                "write `mut {name}` - or take a copy with `let mut {name} = {name}` if the \
+                 caller's value should stay as it was"
+            )),
+        });
+        // Said once per parameter: a body that changes one usually does so
+        // several times, and three carets on one declaration is noise.
+        self.not_mut.remove(name);
     }
 
     /// **`NK1137`: the `&` is the compiler's to write**
@@ -2356,6 +2476,9 @@ impl<'a> Checker<'a> {
                 }
                 let name = self.parsed.text(names[0]).to_string();
                 self.nameable(&name, span, "a `let`");
+                // D3's set loses a name a `let` binds: what is changed after
+                // this line is the local, not the parameter it shadows.
+                self.not_mut.remove(&name);
                 let bound = match ty {
                     Some(ty) => {
                         let want = self.declared(ty, span);
@@ -2417,6 +2540,15 @@ impl<'a> Checker<'a> {
                 if let Expr::Variable(name) = target {
                     self.written_at
                         .push((self.parsed.text(*name).to_string(), span.start));
+                }
+                // **D3**: an assignment into a parameter, or into a place
+                // rooted at one, changes the caller's value and says `mut`.
+                if let Some(root) = self.rooted_at(target) {
+                    let how = match target {
+                        Expr::Variable(_) => "this assigns to it",
+                        _ => "this assigns into it",
+                    };
+                    self.a_changed_parameter_says_mut(&root, how);
                 }
                 let into = self.expr(target, span);
                 let found = self.expr(value, span);
@@ -2718,6 +2850,29 @@ impl<'a> Checker<'a> {
                 // Asked here rather than in `call_on`, because the rule is
                 // about the receiver's **name** and that arm is handed a type.
                 self.a_set_that_reads_what_it_writes(&on, receiver, *method, args, span);
+                // **D3**: a method that changes its subject, called on a
+                // parameter. Asked of the `mutates` column (D3's own, recorded
+                // because the ledger's `&T` cannot spell `&mut`), and only
+                // where **every** candidate for the name agrees — one that does
+                // not is a name this compiler cannot resolve, and refusing on
+                // it would refuse a correct program (C.4).
+                if let Some(root) = self.rooted_at(receiver) {
+                    let name = self.parsed.text(*method);
+                    let candidates: Vec<_> = self
+                        .own
+                        .candidates(name)
+                        .into_iter()
+                        .chain(self.library.candidates(name))
+                        .collect();
+                    let changes = !candidates.is_empty()
+                        && candidates.iter().all(|(_, contract)| contract.mutates);
+                    if changes {
+                        self.a_changed_parameter_says_mut(
+                            &root,
+                            &format!("`{name}` changes what it is called on"),
+                        );
+                    }
+                }
                 self.call_on(on, *method, args, span)
             }
 

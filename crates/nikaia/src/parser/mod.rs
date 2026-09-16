@@ -842,7 +842,14 @@ grammar! {
 
         rule fn_arg_def_tail -> FnArg = "," arg:fn_arg_def -> { arg }
 
-        rule fn_arg_def -> FnArg @= name:NAME ":" ty:type_ref -> { FnArg { name, ty, span: _span } }
+        // `mut out: Vec[i64]` is a parameter the callee changes **in place**,
+        // and the caller's value is what changes
+        // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3) - which
+        // is `&mut self`'s rule held for every parameter. The call shows
+        // nothing, exactly as `xs.push(1)` shows nothing.
+        rule fn_arg_def -> FnArg @= mutable:kw_mut? name:NAME ":" ty:type_ref -> {
+            FnArg { name, ty, mutable: mutable.is_some(), span: _span }
+        }
 
         rule return_type_arrow -> Type =
             "->" ty:type_ref -> { ty }

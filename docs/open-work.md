@@ -632,25 +632,25 @@ build-time call.
 case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
 [ADR-072](specification/adr/adr-072.md) built the permission for.
 
-### 2.11. `mut` on a parameter, and the cleanup point the ledger should narrate
+### 2.11. The cleanup point the ledger should narrate
 
 [ADR-094](specification/adr/adr-094.md). A parameter is a view unless its body
 keeps the value, a `keeps` column records which, the emitter writes the
 reference at the call, a `for` lends, a `let` over a place is a view, and
-`mut` on a parameter is where in-place change is written. **Steps 1, 2 and 3
-are built**, which is the whole of D1, D2 and D4: the column is inferred, a
-`for` lends, a `let` over a place is a view where the value would move,
-`xs.drain()` takes the elements away, and a parameter the callee only reads is
-declared `&T` and given its `&` at every call. **What is left is D3 and D5** —
-`mut` in a declaration as the one place in-place change is written, and the
-ledger narrating a kept value's moved cleanup point. **D3 is the more urgent
-of the two**: a body that changes an owned parameter lowers to a Rust
-declaration with no `mut` on it, which is `rustc` about a file nobody wrote —
-a defect older than this record and the one `mutates` leaves standing.
+`mut` on a parameter is where in-place change is written. **Steps 1–4 are
+built**, which is D1, D2, D3 and D4: the column is inferred, a `for` lends, a
+`let` over a place is a view where the value would move, `xs.drain()` takes the
+elements away, a parameter the callee only reads is declared `&T` and given its
+`&` at every call, and `mut out: Vec[i64]` is the third state and lowers to
+`&mut T`. **What is left is D5** — the ledger diff that narrates a kept value's
+moved cleanup point.
 
-*Evidence:* `fill(xs)` says nothing about `xs` changing and `keep(file)` says
-nothing about the file being flushed inside, which §3 of the record names as
-the reader's cost and D3 and D5 as where it is paid.
+*Evidence:* `keep(file)` says nothing about the file being flushed inside the
+callee, and nothing tells a caller when a callee *starts* keeping a value whose
+teardown has an effect. §3 of the record names that as the one semantic cost and
+D5 as where it is paid: a change to a parameter's `keeps`, on a type with a
+`Drop` or a `Cleanup`, is a ledger diff that names the callers whose cleanup
+moved — the `NK2401` shape, one more thing it narrates.
 
 **Step 1 is built.** `contracts::keeps` infers the column and the ledger
 records it beside `returns`; nothing reads it yet, which is what that step is
@@ -693,10 +693,19 @@ the same receiver type. Once the `&` was written off `keeps`,
 `fn fill(out: Vec[i64]) { out.push(1) }` lent `out` and `rustc` answered
 *cannot borrow as mutable*. **`mutates`** is the claim now — seven of `std`'s
 ninety-four entries, and for a Nikaia function the declaration `&mut self`
-rather than an inference. It leaves such a parameter taken **by value**, which
-compiles once D3 gives it its `mut`; until then a body that changes an owned
-parameter still needs the `mut` the language below wants, and that is the first
-thing step 4 has to do.
+rather than an inference. It leaves such a parameter taken **by value**, and D3
+is what gives it its `mut`.
+
+**Step 4 is D3, and it is the only one of the three states an author writes.**
+`fn fill(mut out: Vec[i64])` lowers to `&mut Vec<i64>` and `fill(xs)` gains its
+`&mut`; the word rides in the signature, because that is the one key a caller
+across a package boundary reads a parameter's kind off. It closes a hole older
+than the record: a body that changed an owned parameter lowered to a Rust
+declaration with no `mut` on it, and the answer came from `rustc`. **`NK1138`**
+is that answer in this compiler's words, raised only where the change is
+certain — an assignment into the parameter, or a method every candidate entry
+marks `mutates`. One block in the specification itself was written the old way
+and says `mut` now; `examples/` had none.
 
 *One limit two of those steps share, and it is a limit of the same kind.* Both
 the `let` half and the refusal at a call act only where the checker could

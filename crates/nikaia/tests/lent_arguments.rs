@@ -377,21 +377,25 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
 ///
 /// No example does this, because every mutating call in `examples/` is on
 /// `self` or on a local. The claim lives in its own column now, `mutates`.
-/// **What this test does not assert** is that the program *runs*: a by-value
-/// parameter a body changes needs `mut` in the Rust declaration too, and that
-/// is D3's own half, unbuilt. This one holds the lending decision, which is the
-/// part `mutates` decides and the part that regressed.
+/// **And the word D3 gives it is `mut`**, which is what makes the program run:
+/// `&mut Vec<i64>` in the declaration and `&mut xs` at the call, both off the
+/// one word. Without the column this test compiled to `&Vec<i64>`.
 #[test]
 fn a_parameter_a_method_changes_in_place_is_not_lent() {
-    let rust = lowered(
-        "fn fill(out: Vec[i64]) -> i64 {\n\
+    let printed = ran(
+        "mutated-receiver",
+        "fn fill(mut out: Vec[i64]) -> i64 {\n\
          \x20   out.push(1)\n\
+         \x20   out.push(2)\n\
          \x20   return out.len() as i64\n\
          }\n\
-         fn main() { let mut xs = Vec::new() println(f\"{fill(xs)}\") }\n",
+         \n\
+         fn main() {\n\
+         \x20   let mut xs = Vec::new()\n\
+         \x20   println(f\"{fill(xs)} {xs.len()}\")\n\
+         }\n",
     );
-    assert!(rust.contains("fn fill(out: Vec<i64>)"), "{rust}");
-    assert!(!rust.contains("&Vec<i64>"), "{rust}");
+    assert_eq!(printed.trim(), "2 2");
 
     // And the reading twin beside it, which is the half that says the column
     // is about *changing* the receiver and not about calling a method on one.

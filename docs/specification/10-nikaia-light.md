@@ -1594,9 +1594,11 @@ used again afterwards, is refused with `.clone()` named as the way out (8.3).
 > and take an owned argument as before: a parameter the body **keeps**, a value
 > that **copies**, an argument that is **already a view**, and a **method's**
 > argument, where this compiler cannot resolve which entry the call goes to.
-> **Not built:** `mut` on a parameter is not a declaration this compiler reads,
-> so a function that changes its argument in place still takes it by value and
-> hands it back. And where the type of an argument is not known — a value a
+> **`mut` is read too**: `fn fill(mut out: Vec[i64])` lowers to `&mut Vec<i64>`
+> and `fill(xs)` gains its `&mut`, and a parameter a body *changes* without the
+> word is refused (`NK1138`) rather than handed to the compiler below.
+> **Not built:** the ledger diff that narrates a kept value's moved cleanup
+> point. And where the type of an argument is not known — a value a
 > `catch` handed back, a place inside a lambda — a `&` written at the call is
 > left alone rather than refused, because there is nothing to refuse it on.
 

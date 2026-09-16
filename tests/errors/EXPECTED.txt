@@ -236,7 +236,7 @@ Parse error:
 expected `)`; found unexpected token `{` at line 1, column 10
    1 | fn main( {
                 ^
-note: also possible here: `&`, `//`, `;`, `self`, identifier
+note: also possible here: `&`, `//`, `;`, `mut`, `self`, identifier
 in fn_params
 in fn_item
 in item

@@ -945,6 +945,12 @@ struct Emitter<'p> {
     /// this argument is already a view.
     lent_args:
         std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
+    /// **The arguments the compiler writes a `&mut` for**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
+    /// `lent_args` is. The third state, and the one that is a declaration
+    /// rather than an inference.
+    mut_args:
+        std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
     /// Part I 2.3: the call arguments where a plain value stands in a nullable
     /// parameter, by statement, callee as written, and position
     /// (`check::Checked::nullable_args`).
@@ -1419,6 +1425,7 @@ impl<'p> Emitter<'p> {
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
+            mut_args: propagation.mut_args,
             nullable_args: propagation.nullable_in_args,
             task_handles: propagation.task_handles,
             pausing_reach: reach,
@@ -2126,11 +2133,22 @@ impl<'p> Emitter<'p> {
                 .and_then(|c| c.signature.as_ref())
                 .and_then(|s| s.params.get(at))
                 .is_some_and(|(_, ty)| ty.is_a_view());
-            let reference = match lent.is_some_and(|c| crate::contracts::keeps::lends(c, at))
+            // **`mut` is a third state and comes first**
+            // ([ADR-094](../../docs/specification/adr/adr-094.md) D3): a
+            // parameter the callee changes in place lowers to `&mut T`, and the
+            // caller's value is what changes. `lends` withholds its own claim
+            // on such a position, so the two never both answer.
+            let changes = lent
+                .and_then(|c| c.signature.as_ref())
+                .is_some_and(|s| s.mutable.iter().any(|m| m == name));
+            let reference = if changes {
+                "&mut "
+            } else if lent.is_some_and(|c| crate::contracts::keeps::lends(c, at))
                 && !written_as_a_view
             {
-                true => "&",
-                false => "",
+                "&"
+            } else {
+                ""
             };
             format!(
                 "{}: {reference}{}",
@@ -5101,12 +5119,24 @@ impl<'p> Emitter<'p> {
             // and where the source wrote one itself, `NK1137` has already
             // refused the program rather than letting a `&&T` reach the
             // language below.
+            let shape = crate::check::argument_shape(arg);
+            let key = (flow.statement, callee.to_string(), i);
             let lend = self
                 .lent_args
-                .get(&(flow.statement, callee.to_string(), i))
-                .is_some_and(|shapes| shapes.contains(&crate::check::argument_shape(arg)));
+                .get(&key)
+                .is_some_and(|shapes| shapes.contains(&shape));
+            // **And `&mut` for a parameter the callee declared `mut`** (D3),
+            // which is the one of the three states the *author* wrote rather
+            // than the inference. The two maps are disjoint by construction:
+            // `lends` withholds its claim on a `mut` position.
+            let change = self
+                .mut_args
+                .get(&key)
+                .is_some_and(|shapes| shapes.contains(&shape));
             out.push(before);
-            if lend {
+            if change {
+                out.push("&mut ");
+            } else if lend {
                 out.push("&");
             }
             if count {

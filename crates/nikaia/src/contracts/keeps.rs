@@ -76,7 +76,12 @@ pub fn lends(contract: &super::FnContract, at: usize) -> bool {
     //
     // A free function has neither half of that problem: the emitter resolves
     // its callee by name, exactly as it resolves everything else.
-    !signature.takes_a_receiver()
+    // **A `mut` parameter is a third state and not this one**
+    // ([ADR-094](../../../docs/specification/adr/adr-094.md) D3): it lowers to
+    // `&mut T`, written off the declaration rather than off this column, and
+    // both answering would put two references on one parameter.
+    !signature.mutable.contains(name)
+        && !signature.takes_a_receiver()
         && name != "self"
         && (ty.is_a_view() || (moves(ty) && !contract.keeps.contains(name)))
 }

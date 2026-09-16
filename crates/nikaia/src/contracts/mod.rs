@@ -310,6 +310,22 @@ pub struct Signature {
     /// Name and type, in order. A `self` receiver is the first of them where
     /// there is one, named `self`.
     pub params: Vec<(String, ty::Ty)>,
+    /// The parameters written **`mut`**: the callee changes them in place and
+    /// the caller's value is what changes
+    /// ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3). They
+    /// lower to `&mut T`.
+    ///
+    /// A list beside `params` rather than a third column inside it, for the
+    /// reason `borrows` and `keeps` are lists of names: almost no parameter is
+    /// one, and a pair is what every reader of `params` already destructures.
+    /// It is written *into* the signature text — `(mut out: Vec[i64])` — because
+    /// that is the one key a caller across a package boundary reads a
+    /// parameter's kind off.
+    ///
+    /// In declaration order, which is `params`' order and not sorted: the
+    /// signature text is rendered from the two together, so a different order
+    /// would render a different signature.
+    pub mutable: Vec<String>,
     /// Kap 5.1: what stands after the `;` - options, named at the call.
     ///
     /// A caller needs all three parts: the name, so it can be written; the
@@ -380,7 +396,11 @@ impl Signature {
                 if name == "self" {
                     ty.text()
                 } else {
-                    format!("{name}: {}", ty.text())
+                    let mutable = match self.mutable.iter().any(|m| m == name) {
+                        true => "mut ",
+                        false => "",
+                    };
+                    format!("{mutable}{name}: {}", ty.text())
                 }
             })
             .collect();
@@ -417,10 +437,26 @@ impl Signature {
             (positional, None) => (positional, ""),
         };
 
+        let mut mutable: Vec<String> = Vec::new();
         let params = ty::split_args(positional)
             .iter()
             .map(|part| match part.split_once(':') {
-                Some((name, ty)) => (name.trim().to_string(), ty::Ty::parse(ty)),
+                Some((name, ty)) => {
+                    // **`mut` is part of the parameter and not of its type**
+                    // (ADR-094 D3): it says who changes the value, which is
+                    // what `&mut T` says below and what no type in this
+                    // language's own grammar can.
+                    let name = name.trim();
+                    let name = match name.strip_prefix("mut ") {
+                        Some(rest) => {
+                            let rest = rest.trim().to_string();
+                            mutable.push(rest.clone());
+                            rest
+                        }
+                        None => name.to_string(),
+                    };
+                    (name, ty::Ty::parse(ty))
+                }
                 // A bare type is the receiver, which is what `&mut self` is.
                 None => ("self".to_string(), ty::Ty::parse(part)),
             })
@@ -450,6 +486,7 @@ impl Signature {
 
         Ok(Signature {
             params,
+            mutable,
             config,
             result,
         })
@@ -959,6 +996,7 @@ impl Ledger {
                                     public: true,
                                     throws: vec![UNNAMED_ERROR.to_string()],
                                     signature: Some(Signature {
+                                        mutable: Vec::new(),
                                         // The input, as every entry takes it: the
                                         // text to parse. `?` because a mapping, an
                                         // owned string and a view all reach the
@@ -1127,6 +1165,15 @@ impl Ledger {
                 },
                 signature: Some(Signature {
                     params,
+                    // **The declaration and not an inference** (ADR-094 D3):
+                    // `mut out: Vec[i64]` is the claim that the caller's value
+                    // changes, and a parameter without the word does not make
+                    // it whatever its body does.
+                    mutable: args
+                        .iter()
+                        .filter(|a| a.mutable)
+                        .map(|a| parsed.text(a.name).to_string())
+                        .collect(),
                     config: config
                         .iter()
                         .map(|c| ConfigContract {
@@ -1605,6 +1652,12 @@ fn trait_method(
             },
             signature: Some(Signature {
                 params,
+                mutable: method
+                    .args
+                    .iter()
+                    .filter(|a| a.mutable)
+                    .map(|a| parsed.text(a.name).to_string())
+                    .collect(),
                 config: method
                     .config
                     .iter()

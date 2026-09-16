@@ -584,7 +584,7 @@ This effectively creates two worlds: the flexible **Async World** (Default) and 
 
 ```nika
 // 'sync' guarantees one thing: I will never pause.
-fn calculate_physics(obj: Object) sync {
+fn calculate_physics(mut obj: Object) sync {   // `mut`: it changes the caller's value (6.5)
     obj.x += obj.velocity
     // fs::read("log.txt") // Compiler Error: that call can pause, and this cannot
 }
