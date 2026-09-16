@@ -297,7 +297,9 @@ own reasoning — *the page is worth nothing if it did not land* — applies. Th
 exit status is unspecified, so a supervisor sees success.
 
 **Recommendation:** a non-zero exit, and the warning goes to the panic hook's
-path, not stdout.
+path, not stdout. *Decided since:* [ADR-112](specification/adr/adr-112.md) —
+exit status 70, the message on the panic path, and no setting that makes it a
+`0`.
 
 ### 2.6 `?.` consumes its receiver
 

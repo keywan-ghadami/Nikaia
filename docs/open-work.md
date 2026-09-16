@@ -1083,6 +1083,19 @@ ledger's type language with the emitter erasing it; the pass-through over
 `touches` and the two declared places; `NK2205`'s two shapes and `NK2207`;
 `after:` and `Overtaken`; the examples and the tests.
 
+### 2.25. An expired `cleanup-deadline` is exit 70 on the panic path
+
+[ADR-112](specification/adr/adr-112.md). A cleanup the deadline cut off is a
+failure of the program: exit status 70, the resources named on standard error
+and through the panic hook, never on standard output, and no setting that
+makes it a `0`. **Nothing of it is built**, because the drain it ends is not:
+the parked-cleanup queue of [ADR-006](specification/adr/adr-006.md) D3 does
+not exist, so today nothing expires and nothing is reported.
+
+*What it needs, in the record's order (§5):* ADR-006's queue and drain; the
+status and the message on expiry; a test that expires a deadline and reads
+the status.
+
 ---
 
 ## 3. Upkeep

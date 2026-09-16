@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (an expired `cleanup-deadline` is a failure of the program)
+
+- **[ADR-112](docs/specification/adr/adr-112.md).** A cleanup the deadline cut off — an unflushed file, a transaction left open — ends the program with **exit status 70** (`EX_SOFTWARE`), and the message naming every such resource goes the panic path, standard error and the panic hook, never standard output. The specification had said *"exits with a warning"* and no status, and an unsaid status is `0`, which is what systemd, cron and a pipeline under `set -e` read. No setting turns it back into success; `cleanup-deadline = "0"` does not drain and never expires.
+- **Nothing of it is built**, because [ADR-006](docs/specification/adr/adr-006.md) D3's parked-cleanup queue is not; `open-work.md` carries it.
+
 ### Decided (what leaves a lock is stamped `Seen[T]`)
 
 - **[ADR-111](docs/specification/adr/adr-111.md).** The two-line lost update — `let stand = kasse.get()`, a pause, `kasse.set(stand + 100)` — and its quieter twin, `if stand > 100 { kasse.set(0) }`, cannot be written any more: what a lock hands out is a `Seen[T]`, the stamp sticks through arithmetic, through calls to anything whose `touches` names no lock, through declared fields and time, and never comes off, so a `set` given a stamped value or under a stamped condition is `NK2205` wherever the read was, in the next line or the next request. An `update` block that assigns to `v` without reading it is the same mistake through the back door, `NK2207`. `set(neu; after: seen)` is the one door for a stamped value, defined as the `update` that compares and throws `Overtaken`. The emitter erases the type, so nothing exists at run time — the witness-at-run-time and the dataflow passes were weighed and are in the record's §1. Perl's lesson from [ADR-108](docs/specification/adr/adr-108.md) holds here too: there is no `.value`, because a stamp that comes off with one word comes off early.

@@ -275,8 +275,10 @@ io-method = "auto"
 # How long the runtime waits at program end for pending resource cleanups
 # (flushes, rollbacks, connection shutdowns — see Part I, 6.4 and ADR-006 D5).
 # Generous default: "30s". On expiry, remaining cleanups are cancelled (their
-# synchronous fallback runs) and the program exits with a warning naming every
-# resource that did not finish cleanly. "0" disables draining. This deadline
+# synchronous fallback runs) and the program ends with exit status 70 and a
+# message naming every resource that did not finish cleanly, on stderr and
+# through the panic hook — never on stdout, and never as a 0 (ADR-112). "0"
+# disables draining. This deadline
 # cannot hang: the timer runs in the runtime itself, and cancelling a cleanup
 # always terminates (the fallback cannot pause).
 cleanup-deadline = "30s"
@@ -1317,6 +1319,8 @@ Errors indicating an inconsistent program state (Index Out of Bounds, Division b
 | :--- | :--- | :--- |
 | **`no`** | **Abort** | The process terminates immediately. There is no second piece of your code in flight to isolate the failure from, so unwinding would buy nothing and is not done — which also leaves a smaller binary. |
 | **`yes`** | **Task Poisoning** | Only the affected task is terminated. The worker thread catches the panic (Fault Isolation). Resources (`SharedMut[T]`) held by the task are marked "poisoned" so no other thread reads state a half-finished task left behind. |
+
+**One end that is not a panic and is not success either.** A `cleanup-deadline` that expires ends the program with **exit status 70** (`EX_SOFTWARE`) and a message naming every resource whose cleanup was cut off, delivered on the panic path — standard error and the panic hook — because a flush that did not happen is a failure the thing that started the program has to see, and it reads the status, not a log ([ADR-112](adr/adr-112.md)). No setting turns that into a `0`; `cleanup-deadline = "0"` does not drain and therefore never expires.
 
 The `target` decides this independently where the machine leaves no choice: on
 `wasm32-unknown` a panic is a **trap** and the module is done, whatever
