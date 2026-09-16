@@ -1028,6 +1028,30 @@ emitter's return-position form and `async fn` in the `impl`; the
 `rust-version` constant, the manifest line and the version check; Part I
 4.7's example and a test in `crates/nikaia/tests/traits.rs`.
 
+### 2.23. An `update` block says `mut`, may run more than once, and the compiler picks the lock
+
+[ADR-110](specification/adr/adr-110.md). `update fn(mut v) { … }` is the one
+form; `v` is a copy where the value fits a machine word — run the block on the
+copy, compare-and-swap, retry on a collision — and the address in the lock
+otherwise, where the block runs once; nothing is moved out of the lock and no
+slot is ever empty. `update_all` takes one `mut` per lock. `access` reads.
+**Nothing of it is built**: `update` takes `T` and returns `T` in an `Option`,
+a failed block leaves the lock empty, and no compare-and-swap path exists.
+
+*Evidence:* Part I 6.3 said `access` appends and Part II said it may not;
+`crates/nikaia-std/src/lock.rs` `update` is `held.take()` and `emptied()`;
+`crates/nikaia/tests/lock_doors.rs` asserts `NK2205`'s help names
+`kasse.update fn(old)`; Part II 12.2's `counter.update fn(mut n) { n += 1 }`
+**stopped lowering** the day the page was rewritten, because a lambda's
+parameter does not take `mut` yet — the block is a fragment in
+`tests/specification/EXPECTED.txt` until step 1 is built, and comes back as a
+lowered body then.
+
+*What it needs, in the record's order (§5):* the checker's `NK1141` and
+`NK1138` at a door; `std`'s lock over `&mut T` and the compare-and-swap loop
+by type; the emitter's two lowerings and `explain` naming the row;
+`--sharing` on a large `get`; the examples, `NK2205`'s help and the tests.
+
 ---
 
 ## 3. Upkeep

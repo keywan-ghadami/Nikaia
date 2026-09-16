@@ -138,6 +138,11 @@ choice is already made per value.
 
 ## 6. What this is, and what it is not
 
+**Decided since:** [ADR-110](specification/adr/adr-110.md) D3 permits the
+retry — an `update` block may run more than once — and D2 says where: on a
+copy, for a value that fits a machine word. The block's form is `fn(mut v)`
+either way; what changes is what `v` is. The shape question below is unchanged.
+
 **It is a performance idea, and it is not a question waiting on the owner.** It
 was on [`open-decisions.md`](open-decisions.md) for a while and has been taken off
 deliberately, because that page is for questions whose answer somebody has to

@@ -694,16 +694,16 @@ A change to locked data has four shapes, and each has its own door. Only two of 
 | :--- | :--- | :--- |
 | `kasse.get()` | taking a copy out | — |
 | `kasse.set(value)` | replacing; the value is computed outside | yes, outside |
-| `kasse.update fn(old) { old + 100 }` | new from old, small values | no |
+| `kasse.update fn(mut v) { v += 100 }` | changing it, under the lock | no |
 | `kasse.access fn(state) { … }` | reading in place, large values | no |
 
 Each is shaped by what it is for:
 
 * **`set` needs no block** because arguments are evaluated before the call: whatever producing the new value costs, including waiting for I/O, is paid outside, and the lock is open for the duration of one store. `get` is the same in the other direction — one load.
-* **`update` is handed the old value and returns the new one.** No handle into the inside ever exists, so the question of whether a handle can outlive the block does not arise for that form at all. It is also **where locked data changes**, including a large value: `old` is an ordinary immutable parameter, and a new value made by changing the old one is written the way this language writes that everywhere — `let mut v = old`, then hand `v` back. That is a **move** and not a copy, so a list of ten thousand entries is not copied to append one ([ADR-059](adr/adr-059.md) D2).
+* **`update` is handed the value as `mut v`, changes it, and returns nothing.** It is **where locked data changes**, small or large: `v += 100` on a counter, `v.push(entry)` on a list. What `v` is, is the compiler's by type — a **copy** where the value fits a machine word, so the block can run on the copy and be swapped in, and run again if another task got there first; the **address** in the lock otherwise, where the block runs once. Nothing is moved out of the lock in either case, and a ten-thousand-entry list is not copied to append one ([ADR-110](adr/adr-110.md) D1–D3). A block that hands a value back is refused (`NK1141`).
 * **`access` is for reading in place** — it is the one door that hands your block the value where it lies, and it **may not change it**. Without it, asking that ten-thousand-entry list for its length would copy the list; with it, nothing is copied to answer a question about a large value (D1).
 
-**So no lambda in this language is handed something it may change**, and none needs a spelling that says it may be. A change to locked data is written in `update`, where the word is on the line that makes it.
+**So exactly one lambda in this language is handed something it may change**, and it carries the word every changed parameter carries: `mut`. A change to locked data is written in `update`, where the word is on the line that makes it ([ADR-059](adr/adr-059.md) D3).
 
 Two mistakes are refused at the doors. **Assigning to a `SharedMut` directly** is refused, and the message names `set`: the value lives behind a lock, so replacing it is a call and not an assignment. And **a `set` whose argument contains a `get` on the same container** is refused, and the message names `update`, which is the door for a new value computed from the old one. The second check is syntactic: it catches what people write on one line and not the same thing spread over two.
 
@@ -718,7 +718,7 @@ A `sync` lambda (see 12.1) can never pause, and a lambda that touches no lock ca
 let counter = SharedMut(0)
 
 // OK: pure computation
-counter.update fn(old) { old + 1 }
+counter.update fn(mut n) { n += 1 }
 
 // Compiler Error: I/O inside a lock
 // counter.access fn(n) { fs::write("log", "{n}") }
@@ -791,17 +791,18 @@ access_all(account_a, account_b) fn(a, b) {
     a.balance + b.balance
 }
 
-// And the transfer, which is a write on both: the old values go in, and the
-// block hands back **one new value per lock** ([ADR-065](adr/adr-065.md) D2).
-update_all(account_a, account_b) fn(von, nach) {
-    return (von - 30, nach + 30)
+// And the transfer, which is a write on both: one `mut` per lock, and the
+// block changes them ([ADR-065](adr/adr-065.md) D2, [ADR-110](adr/adr-110.md) D6).
+update_all(account_a, account_b) fn(mut von, mut nach) {
+    von -= 30
+    nach += 30
 }
 ```
 
-**`update_all` is `update`'s rule widened, not a second rule.** No block in this
-language is handed something it may change, nothing sees either lock between the
-two writes, and the block stays a pure function of what it was given — which is
-what leaves the door open to an implementation that *retries* instead of locking.
+**`update_all` is `update`'s rule widened, not a second rule.** One `mut` per
+lock, nothing returned, nothing sees either lock between the two writes — and
+whether the block runs on copies and is retried or on the addresses under the
+locks is the compiler's by the pair of types, as it is for one.
 
 > **Status: built** ([ADR-065](adr/adr-065.md)). Both doors run at both settings,
 > and two tasks transferring in opposite directions neither deadlock nor lose
@@ -814,8 +815,8 @@ what leaves the door open to an implementation that *retries* instead of locking
 > **Status: the transfer has a door, and it is `update_all`**
 > ([ADR-065](adr/adr-065.md)). `access_all` reads several locks at once, because
 > [ADR-059](adr/adr-059.md) D1 made `access` a read and the same reading applies
-> to it; `update` writes one; `update_all` writes several and hands back one new
-> value each. 12.3 writes both.
+> to it; `update` writes one; `update_all` writes several, one `mut` each. 12.3
+> writes both.
 
 **How the compiler sees a chain.** A nesting written one line inside the other is visible where it stands; a chain is not — your block calls a function of yours, which calls another, and the third one opens a lock. So every function carries a second derived property beside `sync` (12.1): **does it touch a lock.** It is inferred over the same call graph, never written by hand, and inside a blocking door (`update`, `access`, `access_all`) a call to anything that carries it is refused. That is what catches chains and self-calls, and it is what makes the rule above complete rather than only local ([ADR-039](adr/adr-039.md) D3).
 
