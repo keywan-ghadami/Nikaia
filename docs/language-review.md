@@ -321,6 +321,9 @@ aborts; `.get(k)` hands back a `T?`. Three behaviours behind one bracket. Not
 new — Rust and Python do it — but a language that made `null` a type of its own
 so that absence is visible at the type has no reason to keep an abort behind
 `[]`. Recommend `m[k]` yields `T?` on a map, or is refused in favour of `get`.
+*Decided since:* [ADR-114](specification/adr/adr-114.md) — `m[k]` on a map is
+a `T?`, a list keeps its abort, and `+=` on a map slot is written out with
+`??`.
 
 ---
 

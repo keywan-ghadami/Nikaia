@@ -1135,6 +1135,22 @@ value"* today.
 `as_ref()`; the tether analysis reading the result as a view; the translation
 removed and a test that uses the receiver again.
 
+### 2.27. Reading a map through the brackets is a `T?`
+
+[ADR-114](specification/adr/adr-114.md). `m[k]` on a map answers a `T?`,
+`get` says the same, `m[k] = v` still inserts, `m[k] += 1` is written
+`m[k] = (m[k] ?? 0) + 1`, and a list's `xs[i]` keeps its abort. **Nothing of
+it is built**: a map read lowers to Rust's `Index` and panics on an absent
+key.
+
+*Evidence:* `&report.paths[path]` in `examples/access-log.nika` and
+`&totals.stations[name]` in `examples/1brc.nika`, both safe only because the
+key came from the same map a line earlier.
+
+*What it needs, in the record's order (§5):* `nikaia_std::index::get` with
+an output type per container; the checker typing the read as `T?` and
+refusing `+=`; the two example lines, Part I 4.5 and a test.
+
 ---
 
 ## 3. Upkeep
