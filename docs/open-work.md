@@ -1171,6 +1171,10 @@ every rule the allowlist record already states. **Nothing of it is built**:
 `from` is in `parser::RESERVED_WORDS`, and the read is unbuilt in either
 spelling.
 
+*Evidence:* Part II 10.6's `Json.value(asset("config.json"))` parses and is
+refused as `NK1117` and `NK1127` — the page ahead of the compiler, in this
+language's words, where the old spelling was a parse fragment.
+
 *What it needs, in the record's order (§5):* the word out of the parser's
 table with the `dsl X from e` message matching the bare word; `asset("…")`
 when the second stage of `comptime` lands; the two `fs` entries.
