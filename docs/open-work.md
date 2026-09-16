@@ -1155,6 +1155,23 @@ and the printer; the `overlap` join appending; the cleanup attachment
 through the list; Part I 8.1.2's example and a test with two failing
 branches.
 
+### 2.29. `from` is a name, and a file a build reads is `asset("…")`
+
+[ADR-116](specification/adr/adr-116.md). `from` leaves the reserved list, so
+`fs::rename(from:, to:)` parses as Part III writes it; the build-time read is
+`asset("…")`, a call the compiler recognises in a `comptime` initialiser under
+every rule the allowlist record already states. **Nothing of it is built**:
+`from` is in `parser::RESERVED_WORDS`, and the read is unbuilt in either
+spelling.
+
+*Evidence:* Part II 10.6's `Json.value(asset("config.json"))` parses and is
+refused as `NK1117` and `NK1127` — the page ahead of the compiler, in this
+language's words, where the old spelling was a parse fragment.
+
+*What it needs, in the record's order (§5):* the word out of the parser's
+table with the `dsl X from e` message matching the bare word; `asset("…")`
+when the second stage of `comptime` lands; the two `fs` entries.
+
 ---
 
 ## 3. Upkeep

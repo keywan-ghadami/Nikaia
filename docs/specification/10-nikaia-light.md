@@ -117,8 +117,8 @@ These words mean one thing wherever they appear, so a name may not be one of the
 
 ```text
 as        break     catch     comptime  const     continue  dsl       else
-enum      false     fn        for       from      grammar   if        impl
-in        let       loop      macro     match     mut       null      overlap
+enum      false     fn        for       grammar   if        impl      in
+let       loop      macro     match     mut       null      overlap
 pub       quote     return    self      spawn     struct    sync      throw
 throws    trait     true      use       while     with
 ```

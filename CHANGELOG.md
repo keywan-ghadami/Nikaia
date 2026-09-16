@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (`from` is a name, and a file a build reads is `asset("…")`)
+
+- **[ADR-116](docs/specification/adr/adr-116.md).** `from` leaves the reserved list. It bought one phrase — `Json.value(from "config.json")`, the read of a file at build time, which is not built — and cost the pair every API reaches for: the specification's own `fs::rename(from: Path, to: Path, …)` could not be written in the language. The build-time read is now `asset("…")`, a call the compiler recognises in a `comptime` initialiser, with every rule of [ADR-072](docs/specification/adr/adr-072.md) — a literal, the project root, the allowlist — unchanged under it, and the word Part III already used for what these files are. Rust does not decide this list: what it reserves is escaped.
+- **Nothing of it is built**; `open-work.md` carries the three steps.
+
 ### Decided (an `overlap` keeps every failure)
 
 - **[ADR-115](docs/specification/adr/adr-115.md).** Where two branches of an `overlap` fail, the first in written order still wins, and the others are no longer lost: every error carries a `secondary` list, the later failures join it in written order, and a cleanup error that fails while another is unwinding joins the same list — one mechanism for both, and a tree where the cases nest. The block keeps waiting for every branch, which is what makes the list a fact and not a race. A branch handles its own failure with `catch` and cannot see another's; combining is `catch` on the block, with `error.secondary` in hand. `catch` and `throws` are untouched.

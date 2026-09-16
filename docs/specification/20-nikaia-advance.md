@@ -56,9 +56,9 @@ In a `comptime` binding the parser runs *during the build*. If the input is
 invalid, compilation fails. The result is embedded in the binary with zero runtime
 cost.
 
-Three visible steps, each decided on its own: `comptime` says **when**, `from "…"`
-says **where the bytes come from** ([ADR-072](adr/adr-072.md)), and the call says
-**what is done with them**. The older spelling put all three in one line whose
+Three visible steps, each decided on its own: `comptime` says **when**,
+`asset("…")` says **where the bytes come from** ([ADR-072](adr/adr-072.md),
+[ADR-116](adr/adr-116.md)), and the call says **what is done with them**. The older spelling put all three in one line whose
 meaning depended on where it stood — at run time `dsl Json from "config.json"`
 parsed the eleven characters of the name, in a binding it was meant to parse the
 file.
@@ -66,7 +66,7 @@ file.
 ```nika
 // The compiler runs the Json grammar at build time.
 // If "config.json" is malformed, the build stops.
-comptime CONFIG: Json::Value = Json.value(from "config.json")
+comptime CONFIG: Json::Value = Json.value(asset("config.json"))
 ```
 
 **B. Dynamic Parsing (Runtime)**
@@ -90,7 +90,7 @@ fn parse_input(input: String) throws {
 >
 > What the initialiser may hold is D5's first stage: an integer — a literal,
 > arithmetic over literals and over other constants — and `true` or `false`. **A
-> call is not in it**, so the `dsl … from "…"` above still runs at runtime
+> call is not in it**, so the `Json.value(asset("…"))` above still runs at runtime
 > wherever it is written. A `comptime` binding this compiler cannot evaluate is
 > `NK1127` rather than a value computed later, which is D3's demand doing its one
 > job.
