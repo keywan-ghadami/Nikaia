@@ -231,7 +231,7 @@ fn longest(value: &Json) -> i64 {
         Json::Object(fields) => {
             let mut best = 0
             for field in fields {
-                let n = longest(&field.value)
+                let n = longest(field.value)
                 if n > best { best = n }
             }
             return best
@@ -257,7 +257,7 @@ fn main() throws {
         return
     }
 
-    let widest = longest(&document)
+    let widest = longest(document)
 
     show(document, 0)
     println("")

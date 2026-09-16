@@ -34,6 +34,97 @@ use crate::parser::Parsed;
 
 use super::Ledger;
 
+/// Whether a callee **lends** the parameter at `at`, so that the compiler
+/// writes the reference and the caller does not
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1, D2).
+///
+/// One answer with three readers — the emitter writing the declaration, the
+/// emitter writing the call, and the checker refusing a `&` somebody wrote —
+/// because two of the three disagreeing is a `&&T` or a moved value, and both
+/// are `rustc`'s words about a file nobody wrote (Part III C.1).
+///
+/// **The position has to exist and not be the receiver** — `&self` and `self`
+/// are D6's and are untouched — and then one of two things has to hold.
+///
+/// *The type is written as a view.* `&str` and `&Vec[Row]` in a declaration
+/// are the assertion D2 keeps: the parameter is a view whatever the body does,
+/// so the argument gains a `&` at the call and the declaration is left exactly
+/// as it was written. `keeps` is not consulted, because it has nothing to say
+/// about a parameter whose kind the author wrote down.
+///
+/// *Or the value **moves** and the callee does not **keep** it.* That is the
+/// inferred half, and both halves of the condition are load-bearing. A number,
+/// a `bool`, a `char` and a hull are copied, so lending them buys nothing and
+/// costs a dereference at every use; a type this compiler cannot name — `?`, a
+/// type variable, a function type — is the absence of an answer, and a
+/// reference written on a guess is a guess the language below reports. The
+/// `keeps` clause is the column itself.
+pub fn lends(contract: &super::FnContract, at: usize) -> bool {
+    let Some(signature) = contract.signature.as_ref() else {
+        return false;
+    };
+    let Some((name, ty)) = signature.params.get(at) else {
+        return false;
+    };
+    // **A method's arguments are not lent yet**, and the reason is the one
+    // `touches` gives for asking a weaker question: which entry `acc.record(m)`
+    // goes to is the type checker's answer and the emitter has none
+    // ([ADR-028](../../../docs/specification/adr/adr-028.md)). The declaration
+    // is written off this column and the call is not, so a call the checker
+    // does not walk — a grammar action's fold lambda, say — would pass a value
+    // into a `&T` parameter and `rustc` would say so about a file nobody wrote.
+    //
+    // A free function has neither half of that problem: the emitter resolves
+    // its callee by name, exactly as it resolves everything else.
+    !signature.takes_a_receiver()
+        && name != "self"
+        && (ty.is_a_view() || (moves(ty) && !contract.keeps.contains(name)))
+}
+
+/// Whether a value of this type is **moved** when it is handed on, rather than
+/// copied — and whether this compiler can say so at all.
+///
+/// The same question `NK2101` asks about a task
+/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1), asked one
+/// position over and answered more narrowly in one place: `Unknown`, a type
+/// variable and a function type answer **no** here, because what hangs on it is
+/// a reference this compiler would *write* rather than a refusal it would
+/// withhold. A refusal on a guess is refusing a correct program; a reference on
+/// a guess is a program that does not compile.
+pub fn moves(ty: &super::ty::Ty) -> bool {
+    use super::ty::Ty;
+    match ty {
+        Ty::Named { name, view, .. } => {
+            !view
+                && !matches!(
+                    name.as_str(),
+                    "i8" | "i16"
+                        | "i32"
+                        | "i64"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "f32"
+                        | "f64"
+                        | "bool"
+                        | "char"
+                        // A hull is a handle: handing one on duplicates the
+                        // count rather than taking the value away
+                        // (ADR-040 D1, D5).
+                        | "Shared"
+                        | "SharedMut"
+                        | "Locked"
+                )
+        }
+        // A nullable of data is still data: `Option<String>` moves.
+        Ty::Nullable(inner) => moves(inner),
+        // A tuple moves where any part does; one of copied parts is copied.
+        Ty::Tuple(parts) => parts.iter().any(moves),
+        _ => false,
+    }
+}
+
 /// What one function's body does with each of its parameters.
 #[derive(Debug, Default)]
 struct Uses {
@@ -60,14 +151,21 @@ struct Uses {
 /// answer does not depend on the order the source declared things in — which it
 /// must not, because Part III 13.5 makes this file a pure function of (source,
 /// toolchain) and `--locked` compares it byte for byte.
-pub fn infer(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
+pub fn infer(
+    ledger: &mut Ledger,
+    units: &[&Parsed],
+    library: &Ledger,
+    resolved: &BTreeMap<String, crate::check::MethodCalls>,
+) {
     let mut graph: BTreeMap<String, Uses> = BTreeMap::new();
 
     for parsed in units.iter().copied() {
         for item in &parsed.program.items {
             match &item.node {
                 Item::Fn { .. } => {
-                    if let Some((name, uses)) = uses_of(parsed, &item.node, None, ledger, library) {
+                    if let Some((name, uses)) =
+                        uses_of(parsed, &item.node, None, ledger, library, resolved)
+                    {
                         graph.insert(name, uses);
                     }
                 }
@@ -76,9 +174,14 @@ pub fn infer(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
                 } => {
                     let target = parsed.text(target.name).to_string();
                     for method in methods {
-                        if let Some((name, uses)) =
-                            uses_of(parsed, &method.node, Some(&target), ledger, library)
-                        {
+                        if let Some((name, uses)) = uses_of(
+                            parsed,
+                            &method.node,
+                            Some(&target),
+                            ledger,
+                            library,
+                            resolved,
+                        ) {
                             graph.insert(name, uses);
                         }
                     }
@@ -175,6 +278,7 @@ fn uses_of(
     target: Option<&str>,
     ledger: &Ledger,
     library: &Ledger,
+    resolved: &BTreeMap<String, crate::check::MethodCalls>,
 ) -> Option<(String, Uses)> {
     let Item::Fn {
         name,
@@ -215,10 +319,17 @@ fn uses_of(
     let returns_a_view = ret_type.as_ref().is_some_and(super::holds_view);
 
     let mut uses = Uses::default();
+    // **Whether this body's method calls resolved at all.** A receiver whose
+    // method nothing describes may be a `self`-by-value method, and a parameter
+    // handed to one is moved out of — so the fail-closed answer for a *whole
+    // body* is the one the type checker already computed
+    // ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    let unresolved = resolved.get(&key).is_some_and(|m| m.unresolved);
     let mut walk = Walk {
         parsed,
         parameters: &parameters,
         returns_a_view,
+        unresolved,
         ledger,
         library,
         uses: &mut uses,
@@ -231,6 +342,8 @@ struct Walk<'a> {
     parsed: &'a Parsed,
     parameters: &'a BTreeSet<String>,
     returns_a_view: bool,
+    /// Whether any method call in this body went to an entry no ledger has.
+    unresolved: bool,
     ledger: &'a Ledger,
     library: &'a Ledger,
     uses: &'a mut Uses,
@@ -263,9 +376,10 @@ impl Walk<'_> {
         // holes in an `f"…"` included.
         let (parsed, parameters, ledger, library) =
             (self.parsed, self.parameters, self.ledger, self.library);
+        let unresolved = self.unresolved;
         let uses = &mut *self.uses;
         super::sync::visit_stmt(parsed, stmt, &mut |expr| {
-            classify(parsed, parameters, ledger, library, uses, expr);
+            classify(parsed, parameters, ledger, library, unresolved, uses, expr);
         });
 
         // And the blocks it holds. A lambda's body is one of them — it runs
@@ -293,11 +407,13 @@ impl Walk<'_> {
 ///
 /// Called on every sub-expression of a statement, so each rule is about *this*
 /// node and never about what is under it.
+#[allow(clippy::too_many_arguments)]
 fn classify(
     parsed: &Parsed,
     parameters: &BTreeSet<String>,
     ledger: &Ledger,
     library: &Ledger,
+    unresolved: bool,
     uses: &mut Uses,
     expr: &Expr,
 ) {
@@ -318,6 +434,35 @@ fn classify(
                 if let Some(name) = parameter_named(parsed, parameters, value) {
                     uses.kept.insert(name);
                 }
+            }
+        }
+        // **And three more shapes the *lowering* consumes**, which is the same
+        // clause one position over: `a ?? b` is `unwrap_or_else`, `x?.f` takes
+        // the value it reaches through (Part I 3.5's own Status note), and `x?`
+        // unwraps one. Each moves the value in the language below, so a
+        // parameter standing there is kept whatever the body looks like here.
+        Expr::Coalesce { value, .. } | Expr::SafeField { base: value, .. } | Expr::Try(value) => {
+            if let Some(name) = parameter_named(parsed, parameters, value) {
+                uses.kept.insert(name);
+            }
+        }
+        // **A parameter a `match` takes apart counts as kept**, and this one is
+        // an over-approximation the fail-closed clause of D2 licenses in as
+        // many words: *a use the inference cannot resolve counts as keeping*.
+        //
+        // What cannot be resolved here is the **lowering**, not the body. Rust
+        // matches through a reference with its default binding modes, so
+        // `Json::Bool(b)` over a `&Json` binds `b: &bool` and `if b` stops
+        // compiling — and this compiler writes no `*`. Lending a matched
+        // parameter would therefore hand `rustc` a file nobody wrote
+        // (Part III C.1) for every arm that uses a copied payload.
+        //
+        // `examples/json.nika`'s `show` is where that was met. It is a limit of
+        // the emitter and is written down as one; when a deref can be written,
+        // this arm goes and nothing else changes.
+        Expr::Match { value, .. } => {
+            if let Some(name) = parameter_named(parsed, parameters, value) {
+                uses.kept.insert(name);
             }
         }
         // **A task keeps everything it names**
@@ -378,8 +523,50 @@ fn classify(
         // named `::push` keeps its argument, this call keeps none whatever the
         // receiver turns out to be. A name no entry carries at all is
         // unresolved, and unresolved keeps.
-        Expr::MethodCall { method, args, .. } | Expr::SafeMethod { method, args, .. } => {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        }
+        | Expr::SafeMethod {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
             let method = parsed.text(*method);
+            // **A receiver a method takes by value is moved out of.**
+            // `account.access fn(to) { … }` where `access` takes `self` leaves
+            // nothing behind, so a parameter standing there is kept.
+            //
+            // Which entry the call goes to is the type checker's answer
+            // ([ADR-028](../../../docs/specification/adr/adr-028.md)), and the
+            // weaker question this walk can ask is the one `touches` asks —
+            // with one addition: where **any** method call in this body went to
+            // an entry no ledger has, the candidates are not the whole list and
+            // may not be believed. `crates/nikaia/tests/lambdas.rs`'s `Account`
+            // is exactly that: its `access` is a Rust stand-in taking `self`,
+            // and the two `::access` entries `std` does carry both take `&self`.
+            if let Some(name) = parameter_named(parsed, parameters, receiver) {
+                let candidates: Vec<_> = ledger
+                    .candidates(method)
+                    .into_iter()
+                    .chain(library.candidates(method))
+                    .collect();
+                let consumed = unresolved
+                    || candidates.is_empty()
+                    || candidates.iter().any(|(_, contract)| {
+                        !contract
+                            .signature
+                            .as_ref()
+                            .and_then(|s| s.params.first())
+                            .is_some_and(|(name, ty)| name == "self" && ty.is_a_view())
+                    });
+                if consumed {
+                    uses.kept.insert(name);
+                }
+            }
             for (at, arg) in args.iter().enumerate() {
                 let Some(name) = parameter_named(parsed, parameters, arg) else {
                     continue;

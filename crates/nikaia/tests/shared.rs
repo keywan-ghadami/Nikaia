@@ -41,8 +41,8 @@ fn serve(db: &Connection) {
 
 fn main() {
     let db = Shared(connect(\"localhost\".to_string()))
-    serve(&db)
-    serve(&db)
+    serve(db)
+    serve(db)
 }
 ";
 
@@ -282,11 +282,11 @@ fn keep(db: Shared[Conn]) -> Pool {
 
 fn main() {
     let db = Shared(connect(\"localhost\".to_string()))
-    serve(&db)
-    peek(&db)
+    serve(db)
+    peek(db)
     let pool = keep(db)
     println(f\"kept {pool.db.host}\")
-    serve(&db)
+    serve(db)
 }
 ";
     let (printed, rust) = run("shared-duplicated", source, &[]);
@@ -369,7 +369,7 @@ fn keep(db: Shared[Conn]) -> Pool {
 
 fn main() {
     let db = Shared(connect(\"localhost\".to_string()))
-    serve(&db)
+    serve(db)
     let pool = keep(db)
     println(f\"{pool.db.host}\")
 }
@@ -405,8 +405,8 @@ fn peek(db: &Shared[Conn]) { }
 
 fn main() {
     let db = Shared(connect(\"localhost\".to_string()))
-    serve(&db)
-    peek(&db)
+    serve(db)
+    peek(db)
 }
 ";
     let printed = report(source);

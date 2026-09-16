@@ -1180,7 +1180,7 @@ fn a_field_a_package_does_not_publish_is_refused() {
         app.join("src/main.nika"),
         "use http\n\nfn main() {\n    \
              let r = http::get(7)\n    \
-             println(f\"{r.id} {http::method_of(&r)}\")\n\
+             println(f\"{r.id} {http::method_of(r)}\")\n\
          }\n",
     )
     .expect("the program");
@@ -1241,7 +1241,7 @@ fn every_abort_names_the_nikaia_line() {
                  let mut xs = Vec::new()\n    \
                  xs.push(1)\n    \
                  let zero = 0\n    \
-                 println(f\"{pick(&xs, zero - 1)}\")\n\
+                 println(f\"{pick(xs, zero - 1)}\")\n\
              }\n",
             "index out of bounds: the index is -1",
         ),
@@ -1253,7 +1253,7 @@ fn every_abort_names_the_nikaia_line() {
                  let mut xs = Vec::new()\n    \
                  xs.push(1)\n    \
                  let far = 5\n    \
-                 println(f\"{pick(&xs, far)}\")\n\
+                 println(f\"{pick(xs, far)}\")\n\
              }\n",
             "index out of bounds: the len is 1",
         ),
@@ -1360,7 +1360,7 @@ fn a_package_may_be_given_another_name() {
                  fn main() {\n    \
                      let made: h::Request = h::get(7)\n    \
                      let built = h::Request(id: 35)\n    \
-                     println(f\"{h::id_of(&made)} {built.id}\")\n\
+                     println(f\"{h::id_of(made)} {built.id}\")\n\
                  }\n",
             ),
         ],
@@ -1557,7 +1557,7 @@ fn a_trait_a_package_publishes_can_be_implemented_and_called() {
                  \n\
                  fn main() {\n\
                  \x20   let f = Fixed(n: 1)\n\
-                 \x20   println(f\"{handler::render(&f.handle())}\")\n\
+                 \x20   println(f\"{handler::render(f.handle())}\")\n\
                  }\n",
             ),
         ],

@@ -932,7 +932,7 @@ fn a_view_of_a_generic_type_fits_the_same_view() {
     assert!(
         findings(
             "fn total(xs: &Vec[i64]) -> i64 { return 1 }\n\
-             fn probe(xs: Vec[i64]) -> i64 { return total(&xs) }"
+             fn probe(xs: Vec[i64]) -> i64 { return total(xs) }"
         )
         .is_empty(),
         "a view of the declared type must fit"
@@ -948,7 +948,7 @@ fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
     assert!(
         findings(
             "fn count(text: &str) -> i64 { return 1 }\n\
-             fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(&m) }"
+             fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(m) }"
         )
         .is_empty(),
         "a mapped file must fit a text view"
@@ -972,7 +972,7 @@ fn a_view_of_a_view_is_the_view() {
     assert!(
         findings(
             "fn count(text: &str) -> i64 { return 1 }\n\
-             fn probe(text: &str) -> i64 { return count(&text) }"
+             fn probe(text: &str) -> i64 { return count(text) }"
         )
         .is_empty(),
         "a view of a view must still fit"
@@ -1077,7 +1077,7 @@ fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
             "struct Conn { host: String }\n\
              fn serve(db: &Conn) { }\n\
              fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
-             fn main() { let db = Shared(connect())\n serve(&db) }"
+             fn main() { let db = Shared(connect())\n serve(db) }"
         )
         .is_empty(),
         "a function that only uses the value takes an ordinary view"

@@ -1,0 +1,364 @@
+//! The compiler writes the `&` at the call
+//! ([ADR-094](../../../docs/specification/adr/adr-094.md) D1 and D2 together) —
+//! the third of that record's five steps, and the one the first two were built
+//! for.
+//!
+//! Step 1 inferred the `keeps` column and let nothing read it. Step 2 made a
+//! `for` lend. This step joins the two ends: a parameter the callee only
+//! **reads** is declared `&T` below and given its `&` at every call, so
+//! `page(entries)` is the line and `page(&entries)` is refused. **One answer in
+//! two positions** — `contracts::keeps::lends`, read by the emitter when it
+//! writes the declaration and by the checker when it writes the argument —
+//! because the two disagreeing is a `&&T` or a moved value in the language
+//! below, which is `rustc` talking about a file nobody wrote
+//! ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+//!
+//! **Most of this file is about the claim being withheld.** The rule is a
+//! rewrite of what every existing call means, so the tests that matter are the
+//! ones where it must not fire: a kept parameter, a copy type, an argument
+//! that is already a view, a method's argument, a callee no ledger describes.
+//! A version of this rule that lent everywhere would compile this file's first
+//! test and break the language.
+
+mod common;
+
+use std::process::Command;
+
+use nikaia::emit::{emit_program, Build};
+use nikaia::parser::parse_to_ast;
+
+/// The Rust this source lowers to.
+fn lowered(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit_program(&parsed, Build::default())
+        .expect("the source lowers")
+        .rust
+}
+
+/// Compile the lowering and run it. The declaration and the call are written by
+/// two different passes off one column, and the only proof that they agree is
+/// the language below accepting both at once.
+fn ran(purpose: &str, source: &str) -> String {
+    let rust = lowered(source);
+    let dir = common::scratch_dir(&format!("lent-args-{purpose}"));
+    let path = dir.join("program.rs");
+    std::fs::write(&path, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &path,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "{purpose} did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let out = Command::new(&binary).output().expect("run it");
+    assert!(
+        out.status.success(),
+        "{purpose} failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let printed = String::from_utf8_lossy(&out.stdout).to_string();
+    std::fs::remove_dir_all(&dir).ok();
+    printed
+}
+
+/// Every finding the checker has about a source.
+fn findings(source: &str) -> Vec<nikaia::check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let library =
+        nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std ships a ledger");
+    nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
+        .findings
+}
+
+/// Whether the source is refused with `NK1137`.
+fn refused(source: &str) -> bool {
+    findings(source).iter().any(|f| f.code == "NK1137")
+}
+
+/// **The line the record was written for.** `width(text)` reads `text` and
+/// hands it back, and the caller still has it on the next line — no `&`
+/// anywhere in the source, and the value never moved.
+#[test]
+fn a_parameter_that_is_only_read_is_lent_at_the_call() {
+    let printed = ran(
+        "reads",
+        "fn width(text: String) -> i64 { return text.len() as i64 }\n\
+         \n\
+         fn main() {\n\
+         \x20   let text = \"hello\".to_string()\n\
+         \x20   println(f\"{width(text)} {text}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "5 hello");
+}
+
+/// **Both halves off one column.** The declaration gains its `&` and so does
+/// the argument, which is the invariant the whole step rests on: either half
+/// alone is a type error below.
+#[test]
+fn the_declaration_and_the_call_gain_the_reference_together() {
+    let rust = lowered(
+        "fn width(text: String) -> i64 { return text.len() as i64 }\n\
+         fn main() { let t = \"hi\".to_string() println(f\"{width(t)}\") }\n",
+    );
+    assert!(rust.contains("fn width(text: &String)"), "{rust}");
+    assert!(rust.contains("width(&t)"), "{rust}");
+}
+
+/// **`NK1137`: the `&` is the compiler's to write**, at a call now and not only
+/// in a `for` head. Left alone it is a `&&String`, which does not fit.
+#[test]
+fn a_written_ampersand_at_a_lending_call_is_refused() {
+    assert!(refused(
+        "fn width(text: String) -> i64 { return text.len() as i64 }\n\
+         fn main() { let t = \"hi\".to_string() println(f\"{width(&t)}\") }\n"
+    ));
+
+    // And the same call without it is not refused, which is the half that says
+    // the rule is about the `&` and not about the call.
+    assert!(!refused(
+        "fn width(text: String) -> i64 { return text.len() as i64 }\n\
+         fn main() { let t = \"hi\".to_string() println(f\"{width(t)}\") }\n"
+    ));
+}
+
+/// **A parameter the body keeps is not lent**, so the `&` a caller writes there
+/// is the program's own and stays. `keeps` is a restriction and doubt adds it
+/// (D2), and this is the position where that polarity is spent.
+#[test]
+fn a_kept_parameter_keeps_its_owned_argument() {
+    let rust = lowered(
+        "struct Row { name: String }\n\
+         fn wrap(name: String) -> Row { return Row { name: name } }\n\
+         fn main() { let n = \"a\".to_string() let r = wrap(n) println(f\"{r.name}\") }\n",
+    );
+    assert!(rust.contains("fn wrap(name: String)"), "{rust}");
+    assert!(!rust.contains("wrap(&n)"), "{rust}");
+
+    // And nothing is refused there, because nothing would have been written.
+    assert!(!refused(
+        "struct Row { name: String }\n\
+         fn wrap(name: String) -> Row { return Row { name: name } }\n\
+         fn main() { let n = \"a\".to_string() let r = wrap(n) println(f\"{r.name}\") }\n"
+    ));
+}
+
+/// **A value that copies is not lent.** A `&i64` parameter costs a dereference
+/// at every use and buys nothing, and the borrow it takes out is one a caller
+/// mutating the same place would collide with — `E0502` about a file nobody
+/// wrote, which is the shape `examples/n-body.nika` met in D4's step.
+#[test]
+fn a_copy_type_is_not_lent() {
+    let rust = lowered(
+        "fn twice(n: i64) -> i64 { return n * 2 }\n\
+         fn main() { println(f\"{twice(21)}\") }\n",
+    );
+    assert!(rust.contains("fn twice(n: i64)"), "{rust}");
+    assert!(!rust.contains("&i64"), "{rust}");
+}
+
+/// **A `String` reaching a `&str` is still the one rewrite Part I 6.5 makes.**
+///
+/// The parameter is a view in the declaration already, so what has to fit is
+/// the argument *with* the reference the compiler writes. Asking the other
+/// question refused `count(dna)` for a `dna` every caller had been writing
+/// `count(&dna)` for — `examples/k-nucleotide.nika`, where that was met.
+#[test]
+fn an_owned_string_reaches_a_view_parameter_without_a_written_ampersand() {
+    let printed = ran(
+        "string-to-str",
+        "fn count(dna: &str) -> i64 { return dna.len() as i64 }\n\
+         \n\
+         fn main() {\n\
+         \x20   let dna = \"acgt\".to_string()\n\
+         \x20   println(f\"{count(dna)} {dna}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "4 acgt");
+}
+
+/// **An argument that is already a view gets no second one.** The declaration
+/// and the argument agree without it, and a `&&Vec<i64>` does not fit.
+#[test]
+fn an_argument_that_is_already_a_view_is_passed_through() {
+    let printed = ran(
+        "already-a-view",
+        "fn total(xs: &Vec[i64]) -> i64 {\n\
+         \x20   let mut sum = 0\n\
+         \x20   for x in xs { sum += x }\n\
+         \x20   return sum\n\
+         }\n\
+         \n\
+         fn hand(xs: &Vec[i64]) -> i64 { return total(xs) }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut xs = Vec::new()\n\
+         \x20   xs.push(4)\n\
+         \x20   xs.push(5)\n\
+         \x20   println(f\"{hand(xs)}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "9");
+}
+
+/// **A method's argument is not lent**, which is `touches`' reason for asking a
+/// weaker question said once more: which entry `acc.record(m)` goes to is the
+/// type checker's answer and the emitter has none
+/// ([ADR-028](../../../docs/specification/adr/adr-028.md)). The declaration is
+/// written off the column and the call would not be, so a call the checker does
+/// not walk — a grammar action's fold lambda — would hand a value into a `&T`.
+#[test]
+fn a_method_argument_is_not_lent() {
+    let rust = lowered(
+        "struct Sink { n: i64 }\n\
+         impl Sink {\n\
+         \x20   fn measure(&mut self, text: String) sync { self.n = text.len() as i64 }\n\
+         }\n\
+         fn main() {\n\
+         \x20   let mut s = Sink { n: 0 }\n\
+         \x20   let t = \"abc\".to_string()\n\
+         \x20   s.measure(t)\n\
+         \x20   println(f\"{s.n}\")\n\
+         }\n",
+    );
+    assert!(rust.contains("text: String"), "{rust}");
+    assert!(!rust.contains("text: &String"), "{rust}");
+}
+
+/// **And a `&` written at a method call is left alone**, for the same reason:
+/// the compiler is not writing one there, so taking the program's own away
+/// would leave the line with no way to say what it means.
+#[test]
+fn a_written_ampersand_at_a_method_call_is_left_alone() {
+    assert!(!refused(
+        "struct Sink { n: i64 }\n\
+         impl Sink {\n\
+         \x20   fn measure(&mut self, text: &String) sync { self.n = text.len() as i64 }\n\
+         }\n\
+         fn main() {\n\
+         \x20   let mut s = Sink { n: 0 }\n\
+         \x20   let t = \"abc\".to_string()\n\
+         \x20   s.measure(&t)\n\
+         }\n"
+    ));
+}
+
+/// **A `&` in front of an argument whose type this compiler could not work out
+/// is the program's own.** `fs::write(path: ?)` is the absence of a claim
+/// ([ADR-024](../../../docs/specification/adr/adr-024.md) D1), and refusing the
+/// `&` there would take away the only way to say what the line means before an
+/// inference that could answer exists — [Part III
+/// C.4](../../../docs/specification/30-nikaia-tooling.md), a correct program
+/// refused.
+#[test]
+fn an_argument_no_signature_describes_keeps_its_written_ampersand() {
+    assert!(!refused(
+        "fn main() {\n\
+         \x20   let out = \"/tmp/x\".to_string()\n\
+         \x20   let text = \"hi\".to_string()\n\
+         \x20   fs::write(&out, &text) catch { return }\n\
+         }\n"
+    ));
+}
+
+/// **A `&` in front of a genuinely wrong argument is `NK1102` and stays one.**
+///
+/// Saying *the `&` here is the compiler's* about an argument that is the wrong
+/// value would send the reader to fix the punctuation of a line whose type is
+/// wrong — so the refusal lands only where the call would be right with the
+/// reference in it.
+#[test]
+fn a_wrong_argument_is_a_type_error_and_not_this_one() {
+    let found = findings(
+        "struct Request { path: String }\n\
+         fn route(r: Request) -> i64 { return r.path.len() as i64 }\n\
+         fn main() {\n\
+         \x20   let t = \"hi\".to_string()\n\
+         \x20   let n = route(&t)\n\
+         \x20   println(f\"{n}\")\n\
+         }\n",
+    );
+    assert!(!found.iter().any(|f| f.code == "NK1137"), "{found:#?}");
+    assert!(
+        found.iter().any(|f| f.code == "NK1102"),
+        "the wrong value is still refused: {found:#?}"
+    );
+}
+
+/// **It travels through the call graph**, because the column does: `measure`
+/// lends `text` onward only because `width` lends it, and both declarations and
+/// both calls are written off the one answer.
+#[test]
+fn a_parameter_passed_on_to_a_lending_callee_is_lent_too() {
+    let printed = ran(
+        "through",
+        "fn width(text: String) -> i64 { return text.len() as i64 }\n\
+         fn measure(text: String) -> i64 { return width(text) + 1 }\n\
+         \n\
+         fn main() {\n\
+         \x20   let t = \"hello\".to_string()\n\
+         \x20   println(f\"{measure(t)} {t}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "6 hello");
+}
+
+/// **A type the checker could not pin still gets its `&` at the call**, which
+/// is the invariant the two halves rest on rather than a nicety.
+///
+/// The *declaration* is written off `lends` alone, so any condition the checker
+/// adds before recording the argument is a call whose callee takes a `&T` and
+/// whose argument does not have one — `rustc` about a file nobody wrote
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)). `Unknown`
+/// is the one that nearly got in: it fits everything, so it reaches the
+/// recording, and a guard placed one line too early took `&entries` off
+/// `examples/inventory/main.nika`'s `render` while leaving its parameter a view.
+///
+/// **What `Unknown` may do is silence the refusal**, and that half is here too:
+/// a written `&` over a value nothing pinned is left where it is, and it lowers
+/// to the same character.
+#[test]
+fn an_argument_whose_type_is_not_known_is_still_lent() {
+    let source = "struct Entry { count: i64 }\n\
+                  \n\
+                  fn read(data: &str) -> Vec[Entry] throws {\n\
+                  \x20   let mut out = Vec::new()\n\
+                  \x20   out.push(Entry { count: data.len() as i64 })\n\
+                  \x20   return out\n\
+                  }\n\
+                  \n\
+                  fn total(entries: Vec[Entry]) -> i64 {\n\
+                  \x20   let mut sum = 0\n\
+                  \x20   for e in entries { sum += e.count }\n\
+                  \x20   return sum\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let data = \"abcd\".to_string()\n\
+                  \x20   let entries = read(data) catch { return }\n\
+                  \x20   println(f\"{total(entries)}\")\n\
+                  }\n";
+
+    // A `catch` hands back a value this compiler does not name, and the
+    // declaration lends all the same - so the call must too.
+    let rust = lowered(source);
+    assert!(rust.contains("fn total(entries: &Vec<Entry>)"), "{rust}");
+    assert!(rust.contains("total(&entries)"), "{rust}");
+
+    // And the same program that writes its own `&` is not refused, because
+    // nothing here was checked to refuse it on.
+    assert!(!refused(
+        &source.replace("total(entries)", "total(&entries)")
+    ));
+
+    assert_eq!(ran("unknown-argument", source).trim(), "4");
+}

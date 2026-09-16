@@ -118,6 +118,20 @@ impl Ty {
         }
     }
 
+    /// Whether this type **is** a view — `&str`, `&Vec[Row]`, `&$V`.
+    ///
+    /// What hangs on it is whether a second `&` would be written in front of
+    /// one ([ADR-094](../../../docs/specification/adr/adr-094.md) D1), so a
+    /// nullable of a view counts and a tuple does not: `&(A, B)` is not a
+    /// spelling this language has.
+    pub fn is_a_view(&self) -> bool {
+        match self {
+            Ty::Named { view, .. } | Ty::Var { view, .. } => *view,
+            Ty::Nullable(inner) => inner.is_a_view(),
+            _ => false,
+        }
+    }
+
     pub fn is_unknown(&self) -> bool {
         matches!(self, Ty::Unknown)
     }

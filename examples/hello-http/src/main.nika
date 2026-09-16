@@ -5,5 +5,5 @@ use http
 
 fn main() {
     let answer = http::Response::text("Hello from a package".to_string())
-    print(http::render(&answer))
+    print(http::render(answer))
 }

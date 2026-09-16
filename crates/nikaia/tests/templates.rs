@@ -178,7 +178,9 @@ fn a_loop_repeats_its_body() {
              return dsl html { <table><for r in :rows><tr><td>{r.n}</td></tr></for></table> } eod\n\
          }",
     );
-    assert!(emitted.contains("for r in &rows {"), "{emitted}");
+    // `.iter()` and not `&`, which is the ordinary `for`'s rule (ADR-094 D4):
+    // since D1 a parameter the body only reads is already a view.
+    assert!(emitted.contains("for r in rows.iter() {"), "{emitted}");
     assert!(
         emitted.contains("::nikaia_std::html::Render::render(&r.n)"),
         "{emitted}"

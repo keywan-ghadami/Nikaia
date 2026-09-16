@@ -458,6 +458,28 @@ pub(crate) fn reached(
         });
     }
 
+    // **A variant of a type this file declares is a constructor, not a call.**
+    // `ConfigError::NotFound(path)` builds a value; it runs no body, so it can
+    // neither pause nor fail nor reach anything — and reading it as a callee
+    // nothing describes made every function that throws one `async`.
+    //
+    // Found the day `visit_expr` learned to walk a `throw`'s expression: the
+    // hole had been hiding this one. Answered off the **declarations** rather
+    // than off `own.types`, because an enum gets no `TypeContract` — and the
+    // walk is over items, on the path where a call resolved to nothing, which
+    // is the rare one.
+    if let Some((declared, _)) = name.split_once("::") {
+        let is_a_type = parsed.program.items.iter().any(|item| {
+            matches!(
+                &item.node,
+                Item::Enum { name, .. } | Item::Struct { name, .. } if parsed.text(*name) == declared
+            )
+        });
+        if is_a_type && !own.functions.contains_key(&name) {
+            return None;
+        }
+    }
+
     Some(Reached::Opaque(Some(name)))
 }
 
@@ -644,9 +666,17 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
             visit_expr(parsed, lhs, f);
             visit_expr(parsed, rhs, f);
         }
-        Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Cast { expr, .. } => {
-            visit_expr(parsed, expr, f)
-        }
+        // **`throw` holds an expression, and it was not walked** — so every
+        // derived column was blind to whatever built the error.
+        // `throw wrap(io::read())` left its function looking `sync`, and it is
+        // this walk that says otherwise. Found by `keeps`
+        // ([ADR-094](../../../docs/specification/adr/adr-094.md) D2) reading a
+        // parameter as lent because the `throw` that stores it was invisible;
+        // the same hole was `sync`'s, `throws`' and `touches`'.
+        Expr::Unary { expr, .. }
+        | Expr::Try(expr)
+        | Expr::Throw(expr)
+        | Expr::Cast { expr, .. } => visit_expr(parsed, expr, f),
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr(parsed, base, f),
         Expr::Index { base, index } => {
             visit_expr(parsed, base, f);

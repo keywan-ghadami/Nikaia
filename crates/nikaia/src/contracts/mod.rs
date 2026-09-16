@@ -328,6 +328,12 @@ pub struct ConfigContract {
 }
 
 impl Signature {
+    /// Whether the first parameter is the receiver, which is what makes an
+    /// argument's position differ from its position in the contract.
+    pub fn takes_a_receiver(&self) -> bool {
+        matches!(self.params.first(), Some((name, _)) if name == "self")
+    }
+
     /// The arguments a *call* passes, which is the parameters after a receiver.
     pub fn arguments(&self) -> &[(String, ty::Ty)] {
         match self.params.first() {
@@ -997,7 +1003,7 @@ impl Ledger {
         // the item loop wrote — and a callee's own `keeps`, which is itself;
         // nothing above produces anything it needs, and nothing above reads
         // what it writes.
-        keeps::infer(&mut ledger, units, library);
+        keeps::infer(&mut ledger, units, library, &resolved);
         (ledger, checked)
     }
 

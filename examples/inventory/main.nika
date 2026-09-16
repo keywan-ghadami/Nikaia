@@ -44,14 +44,14 @@ fn main() throws {
         return
     }
 
-    let mut entries = read(&data) catch {
+    let mut entries = read(data) catch {
         eprintln(f"{path}: {error}")
         return
     }
 
     entries.sort_by_key fn (entry) { -entry.count }
 
-    let total = total(&entries)
+    let total = total(entries)
     let count = entries.len()
     let markup = render(entries, total)
 

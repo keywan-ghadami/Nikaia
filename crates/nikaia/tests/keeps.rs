@@ -194,8 +194,42 @@ fn a_call_nothing_describes_keeps_what_it_is_given() {
              fn hand(text: String, sink: Sink) { sink.swallow(text) }",
             "hand"
         ),
-        ["text"],
-        "a method no ledger has an entry for is not one to assume about"
+        ["sink", "text"],
+        "a method no ledger has an entry for is not one to assume about — and \
+         that goes for the receiver as much as for the argument"
+    );
+}
+
+/// **A receiver a method takes by value is moved out of**, so a parameter
+/// standing there is kept.
+///
+/// And which entry the call goes to is the type checker's answer
+/// ([ADR-028](../../../docs/specification/adr/adr-028.md)), so where **any**
+/// method call in a body went to an entry no ledger has, the candidate list is
+/// not the whole list and may not be believed. `crates/nikaia/tests/lambdas.rs`
+/// is where that was met: its `Account::access` is a Rust stand-in taking
+/// `self`, and the two `::access` entries `std` carries both take `&self`.
+#[test]
+fn a_receiver_is_kept_where_the_method_might_consume_it() {
+    // Every method here resolves, and every one of them reads its receiver.
+    assert!(keeps(
+        "fn width(text: String) -> i64 { return text.len() as i64 }",
+        "width"
+    )
+    .is_empty());
+
+    // One unresolvable call in the body, and every receiver in it is kept —
+    // including the one whose own method resolves perfectly well.
+    assert_eq!(
+        keeps(
+            "struct Sink { n: i64 }\n\
+             fn hand(text: String, sink: Sink) -> i64 {\n\
+             \x20   sink.swallow()\n\
+             \x20   return text.len() as i64\n\
+             }",
+            "hand"
+        ),
+        ["sink", "text"]
     );
 }
 

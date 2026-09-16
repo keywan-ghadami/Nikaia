@@ -632,23 +632,22 @@ build-time call.
 case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
 [ADR-072](specification/adr/adr-072.md) built the permission for.
 
-### 2.11. The caller writes the `&`, and the record says the compiler does
+### 2.11. `mut` on a parameter, and the cleanup point the ledger should narrate
 
 [ADR-094](specification/adr/adr-094.md). A parameter is a view unless its body
 keeps the value, a `keeps` column records which, the emitter writes the
 reference at the call, a `for` lends, a `let` over a place is a view, and
-`mut` on a parameter is where in-place change is written. **Steps 1 and 2 are
-built**: the column is inferred, a `for` over a place lends it, a `let` over a
-place is a view where the value would move, and `xs.drain()` is how a loop
-takes the elements away. **What is left is the call**: every `&` at a call in
-`examples/` is still the caller's, and a value handed to a callee that does not
-keep it is still moved.
+`mut` on a parameter is where in-place change is written. **Steps 1, 2 and 3
+are built**, which is the whole of D1, D2 and D4: the column is inferred, a
+`for` lends, a `let` over a place is a view where the value would move,
+`xs.drain()` takes the elements away, and a parameter the callee only reads is
+declared `&T` and given its `&` at every call. **What is left is D3 and D5** —
+`mut` in a declaration as the one place in-place change is written, and the
+ledger narrating a kept value's moved cleanup point.
 
-*Evidence:* what remains of the 42 `&` at calls and loop heads in 913
-non-comment lines of `examples/` — the loop heads are gone and the calls are
-not; `examples/report.nika`'s comment explaining that `count` has to be read
-before `page(entries, total)` "consumes" them, which the `keeps` column now
-contradicts.
+*Evidence:* `fill(xs)` says nothing about `xs` changing and `keep(file)` says
+nothing about the file being flushed inside, which §3 of the record names as
+the reader's cost and D3 and D5 as where it is paid.
 
 **Step 1 is built.** `contracts::keeps` infers the column and the ledger
 records it beside `returns`; nothing reads it yet, which is what that step is
@@ -674,25 +673,29 @@ may already be a view and `&&Vec<T>` does not iterate; `drain()` had to be
 and a `let` over a place that *copies* must not lend, because a borrow held
 across a loop that writes the same field is `E0502`.
 
-*One limit that step left, and it is the next thing here.* The `let` half lends
-only where the checker could **type** the place; where it could not — a place
-inside a lambda, where the parameter's type is unknown — it says nothing and
-the written `&` stays the program's only way to say what the line means. So
-`NK1137` covers the `for` position and not the `let` one, and two sites in
-`examples/` still write that `&`. Closing it is either a better answer for a
-lambda's parameter type or the refusal narrowed to *where the compiler writes
-one*.
+**Step 3 is built, and it is the one that rewrote every example.** A parameter
+the callee only reads is declared `&T` and given its `&` at every call off the
+one column — `contracts::keeps::lends`, called by the emitter for the
+declaration and by the checker for the argument, because the two disagreeing is
+a `&&T` or a moved value in the language below. `NK1137` now covers both
+positions. Not lent, each of them the polarity being spent: a kept parameter, a
+value that copies, an argument already a view, and a method's argument, which
+is `touches`' reason for asking a weaker question — the emitter cannot resolve
+which entry `acc.record(m)` goes to.
 
-*What is left of the record, in its own order (§5):* the emitter writing the
-argument off the column and refusing a written `&` at a call; then `mut`
-parameters; then the cleanup-point narration of D5. **Step 3 is the one that
-rewrites every example**, so the examples are the test — and it is also where a
-*copy* type reported as kept stops being merely truthful and starts needing an
-answer: `self.min = temp` for an `i32` keeps, and keeping costs nothing there.
+*One limit two of those steps share, and it is a limit of the same kind.* Both
+the `let` half and the refusal at a call act only where the checker could
+**type** the value. Where it could not — a place inside a lambda, a value a
+`catch` handed back — the `let` does not lend, the refusal stays quiet, and the
+written `&` is the program's own. The *writing* has no such limit, and must
+not: the declaration is written off `lends` alone, so anything the checker
+skips before recording the argument is a callee taking a `&T` and a caller not
+passing one. Closing it is a better answer for those types, not a change to
+either rule.
 
-*Why it is here and not in §1:* nothing is miscompiled. It is a message in the
-wrong words at every site the caller forgets the `&`, and a tax at every site
-they remember it.
+*Why it is here and not in §1:* nothing is miscompiled. `fill(xs)` reads as
+though it does not change `xs`, which is a message in the wrong words rather
+than a wrong program.
 
 ### 2.12. The boundary translation for a hand-edited hash
 

@@ -934,6 +934,17 @@ struct Emitter<'p> {
         (usize, String, String),
         std::collections::BTreeMap<String, crate::check::Wrap>,
     >,
+    /// **The arguments the compiler writes a `&` for**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1), keyed exactly
+    /// as `nullable_args` is and for the same reason: a statement may call one
+    /// function twice.
+    ///
+    /// The *declaration* side of this answer is read straight from the ledger
+    /// (`contracts::keeps::lends`), because that half is a question about the
+    /// callee alone. This half needed the checker, because it also asks whether
+    /// this argument is already a view.
+    lent_args:
+        std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
     /// Part I 2.3: the call arguments where a plain value stands in a nullable
     /// parameter, by statement, callee as written, and position
     /// (`check::Checked::nullable_args`).
@@ -1407,6 +1418,7 @@ impl<'p> Emitter<'p> {
             comptime_values: propagation.comptime_values,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
+            lent_args: propagation.lent_args,
             nullable_args: propagation.nullable_in_args,
             task_handles: propagation.task_handles,
             pausing_reach: reach,
@@ -2090,14 +2102,38 @@ impl<'p> Emitter<'p> {
             true => lifetimes.of_the_input(),
             false => lifetimes,
         };
-        params.extend(args.iter().map(|a| {
+        // **A parameter the body does not keep is a view**
+        // ([ADR-094](../../docs/specification/adr/adr-094.md) D2). The `&` is
+        // written here, in the declaration, and at the call — one answer read
+        // twice (`contracts::keeps::lends`), because the two disagreeing is a
+        // `&&T` or a moved value in the language below.
+        let lent = self.own_contracts.functions.get(&key);
+        params.extend(args.iter().enumerate().map(|(at, a)| {
             // The **source** name is what a `Shared` position is counted by
             // (`count_at`), and the **escaped** one is what is written: two uses
             // of one name that must not be collapsed, or the lookup misses on
             // exactly the programs the escape is for (ADR-076 D2).
             let name = self.text(a.name);
+            // The receiver is a parameter of the contract and not of `args`, so
+            // the position in the signature is one further along where there is
+            // one.
+            let at = at + usize::from(receiver.is_some());
+            // **And only where the written type does not already carry one.**
+            // `&Vec[Entry]` in a declaration is the assertion D2 keeps: the
+            // parameter is a view either way, and what D1 changes is the
+            // *call*, where the reference is written for both kinds alike.
+            let written_as_a_view = lent
+                .and_then(|c| c.signature.as_ref())
+                .and_then(|s| s.params.get(at))
+                .is_some_and(|(_, ty)| ty.is_a_view());
+            let reference = match lent.is_some_and(|c| crate::contracts::keeps::lends(c, at))
+                && !written_as_a_view
+            {
+                true => "&",
+                false => "",
+            };
             format!(
-                "{}: {}",
+                "{}: {reference}{}",
                 escaped(name),
                 self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name))
             )
@@ -2710,7 +2746,14 @@ impl<'p> Emitter<'p> {
                     collection,
                     body,
                 } => {
-                    out.push(&format!("{pad}for {binding} in &{collection} {{\n"));
+                    // **`.iter()` and not `&`**, for the reason the ordinary
+                    // `for` has it ([ADR-094](../../docs/specification/adr/adr-094.md)
+                    // D4): the captured name may already *be* a view — since
+                    // D1 a parameter the body only reads is one — and
+                    // `&entries` is then a `&&Vec<Entry>`, which Rust does not
+                    // iterate. `.iter()` reads the same through any number of
+                    // references.
+                    out.push(&format!("{pad}for {binding} in {collection}.iter() {{\n"));
                     self.template_segments(out, body, depth + 1, flow)?;
                     out.push(&format!("{pad}}}\n"));
                 }
@@ -4154,14 +4197,31 @@ impl<'p> Emitter<'p> {
         self.expr(out, func, depth, flow)?;
         out.push("(");
         let takes = self.takes_a_handle_at(func);
-        // The written callee, which is what the checker keyed the wrap by: a
-        // bare name for a free call, and nothing for anything else, where
-        // nothing can have been recorded either.
+        // The written callee, which is what the checker keyed its answers by —
+        // and **a qualified name is one of them**. It used to be a bare name or
+        // nothing, on the reasoning that nothing could have been recorded for
+        // anything else; the checker keys by the name as written, so
+        // `http::route(r)` recorded under `http::route` and was looked up under
+        // the empty string. Found by ADR-094 D1's `&` going missing at a call
+        // into a package; it was `nullable_args` and `lent_args` both, so a
+        // plain value in a **qualified** callee's nullable parameter had been
+        // reaching the language below unwrapped.
         let callee = match func {
-            Expr::Variable(name) => self.text(*name),
-            _ => "",
+            Expr::Variable(name) => self.text(*name).to_string(),
+            // **Unaliased, because that is what the checker keyed by**:
+            // `h::id_of()` is `http::id_of()` where the file wrote
+            // `use http as h` ([ADR-046](../../docs/specification/adr/adr-046.md)
+            // D3), and a key built from the source's own word never matched.
+            Expr::Path(segments) => self.parsed.unaliased(
+                &segments
+                    .iter()
+                    .map(|s| self.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            ),
+            _ => String::new(),
         };
-        self.args(out, callee, args, &takes, depth, flow)?;
+        self.args(out, &callee, args, &takes, depth, flow)?;
 
         if let Expr::Variable(name) = func {
             self.dsl_parameters(out, self.text(*name), args.len(), config, depth, flow)?;
@@ -5034,7 +5094,21 @@ impl<'p> Emitter<'p> {
             // `cannot infer type` about a generated file is what Part III C.1
             // forbids. Rust's own inference already gives a literal the `usize`.
             let count = is_count(callee, i) && !only_literals(arg);
+            // **The caller writes no `&`** ([ADR-094](../../docs/specification/adr/adr-094.md)
+            // D1): where the callee reads this argument rather than keeping it,
+            // the reference is the compiler's, and it is written here. The
+            // *declaration* reads the same column, so the two cannot disagree —
+            // and where the source wrote one itself, `NK1137` has already
+            // refused the program rather than letting a `&&T` reach the
+            // language below.
+            let lend = self
+                .lent_args
+                .get(&(flow.statement, callee.to_string(), i))
+                .is_some_and(|shapes| shapes.contains(&crate::check::argument_shape(arg)));
             out.push(before);
+            if lend {
+                out.push("&");
+            }
             if count {
                 out.push("nikaia_std::count::of(");
             }

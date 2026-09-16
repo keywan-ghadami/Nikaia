@@ -1575,11 +1575,18 @@ used again afterwards, is refused with `.clone()` named as the way out (8.3).
 > **Status:** partly built ([ADR-094](adr/adr-094.md) §5). **A `for` lends** and
 > `xs.len()` after the loop is a program; `xs.drain()` is how a loop takes the
 > elements away; a `let` over a place — `config.name`, `totals.stations[name]` —
-> is a view of it where the value would otherwise have to move; and the `keeps`
-> column is inferred and recorded for every function. **Not built:** the caller
-> still writes the `&` at a **call**, and `mut` on a parameter is not a
-> declaration this compiler reads. Until they land, `&` at a call is what a
-> program writes.
+> is a view of it where the value would otherwise have to move; the `keeps`
+> column is inferred and recorded for every function; and **the compiler writes
+> the `&` at the call** off that column, so `serve(db)` is the line and
+> `serve(&db)` is refused (Part III, C.3, `NK1137`). Four things are not lent
+> and take an owned argument as before: a parameter the body **keeps**, a value
+> that **copies**, an argument that is **already a view**, and a **method's**
+> argument, where this compiler cannot resolve which entry the call goes to.
+> **Not built:** `mut` on a parameter is not a declaration this compiler reads,
+> so a function that changes its argument in place still takes it by value and
+> hands it back. And where the type of an argument is not known — a value a
+> `catch` handed back, a place inside a lambda — a `&` written at the call is
+> left alone rather than refused, because there is nothing to refuse it on.
 
 ### 6.6. Escaping References Are Tethered
 

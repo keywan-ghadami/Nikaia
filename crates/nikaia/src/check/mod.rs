@@ -277,6 +277,23 @@ pub struct Checked {
     /// a question about types and is answered here - the same arrangement
     /// `fallible_methods` and the rest use.
     pub task_handles: BTreeSet<(usize, String)>,
+    /// The **call arguments the compiler writes a `&` for**
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1), keyed the way
+    /// [`Checked::nullable_args`] is: the byte the statement starts at, the
+    /// callee as the source wrote it, the argument's position, and
+    /// [`argument_shape`].
+    ///
+    /// Whether an argument is lent or handed over is the **callee's** answer
+    /// (`contracts::keeps::lends`), and the emitter reads it for the
+    /// declaration too — one answer, two positions, because the two disagreeing
+    /// is a `&&T` or a moved value in the language below. What the emitter
+    /// cannot decide on its own is the other half: whether *this* argument is
+    /// already a view, which is a question about its type (ADR-028).
+    ///
+    /// The four-part key is `nullable_args`' and is there for the same reason:
+    /// a statement may call one function twice, and `f(a) + f(b)` has two
+    /// arguments in one position.
+    pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// The `let` statements whose initialiser is a **place** holding a value
     /// that would have to move, by the byte the statement starts at
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
@@ -559,6 +576,8 @@ pub struct Propagation {
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::lent_lets`].
     pub lent_lets: BTreeSet<usize>,
+    /// [`Checked::lent_args`].
+    pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -595,6 +614,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         comptime_values: checked.comptime_values,
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
+        lent_args: checked.lent_args,
     }
 }
 
@@ -761,6 +781,21 @@ struct Checker<'a> {
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
     checked: Checked,
+}
+
+/// One argument as [`Checker::the_compiler_writes_the_reference`] reads it:
+/// where it stands in the call, what was written there, the type that was
+/// found, and the one the parameter wants. Four values that only ever travel
+/// together, and a name for them so the rule reads as one question.
+struct Argument<'a> {
+    /// The position among the arguments, the receiver not counted.
+    at: usize,
+    /// What the source wrote there, where there is an expression to read.
+    given: Option<&'a Expr>,
+    /// The type of what was written.
+    found: &'a Ty,
+    /// The type the parameter declares.
+    want: &'a Ty,
 }
 
 /// What the guarded expression of a `catch` turned out to hold.
@@ -1566,6 +1601,155 @@ impl<'a> Checker<'a> {
             .and_then(|c| c.signature.as_ref())
             .and_then(|s| s.result.clone())
             .unwrap_or(Ty::Unknown)
+    }
+
+    /// **The compiler writes the reference at the call, and a written one is
+    /// refused** ([ADR-094](../../docs/specification/adr/adr-094.md) D1).
+    ///
+    /// The callee's answer is `contracts::keeps::lends`, read here and read
+    /// again by the emitter when it writes that callee's *declaration* — one
+    /// answer in two positions, because the two disagreeing is a `&&T` or a
+    /// moved value in the language below. What this adds is the half the
+    /// emitter cannot see: whether the argument is **already** a view, which is
+    /// a question about its type (ADR-028).
+    ///
+    /// **`NK1137` lands exactly where the compiler would have written one**,
+    /// and nowhere else. A `&` in a position the callee keeps, or one in front
+    /// of a value whose type this checker could not work out, is still the
+    /// program's own and is left alone — refusing it would take away the only
+    /// way to say what the line means before the inference that replaces it can
+    /// answer.
+    fn the_compiler_writes_the_reference(
+        &mut self,
+        contract: &FnContract,
+        argument: Argument<'_>,
+        written: &str,
+        span: &Span,
+    ) -> bool {
+        let Argument {
+            at,
+            given,
+            found,
+            want,
+        } = argument;
+        // `arguments()` drops the receiver, and the contract's positions do
+        // not, so a method's argument sits one further along.
+        let position = at
+            + usize::from(
+                contract
+                    .signature
+                    .as_ref()
+                    .is_some_and(|s| s.takes_a_receiver()),
+            );
+        if !crate::contracts::keeps::lends(contract, position) {
+            return false;
+        }
+        let Some(given) = given else {
+            return false;
+        };
+        let wrote_a_reference = matches!(
+            given,
+            Expr::Unary {
+                op: crate::ast::UnaryOp::Ref,
+                ..
+            }
+        );
+        // **Only where the call would be right with the reference in it.** A
+        // `&i64` handed to a `&Request` is `NK1102` and stays one: saying *the
+        // `&` here is the compiler's* about an argument that is the wrong value
+        // would send the reader to fix the punctuation of a line whose type is
+        // wrong.
+        //
+        // The hull's path counts as a fit: a `Shared[Conn]` reaches a `&Conn`
+        // through its deref ([ADR-040](../../docs/specification/adr/adr-040.md)
+        // D5), and that fit was the *source's* `&` before this.
+        //
+        // **Which fit to ask depends on which of the two kinds this is.** A
+        // parameter written `&str` is a view in the declaration already, so
+        // what has to fit it is the argument *with* the reference the compiler
+        // writes — a `String` becomes a `&String` and reaches `&str` the way
+        // the language below reaches it. A parameter written `Stats` and
+        // inferred lent gains its `&` in the declaration too, so both sides
+        // move together and the fit is the one it always was.
+        let fits = match want.is_a_view() {
+            true => {
+                // **`view_of` and not a `&` pasted on the front**, because
+                // a view of a `String` is a `&str` — the one rewrite Part I 6.5
+                // makes, and the same one this checker performs for a `&`
+                // somebody writes. Keeping the name refused `count(dna)` for a
+                // `dna` every caller had been writing `count(&dna)` for.
+                let lent = view_of(found);
+                lent.fits(want) || self.fits_through_deref(&lent, want)
+            }
+            false => {
+                found.fits(want)
+                    || self.fits_through_deref(found, want)
+                    // **A `&` the source wrote is already the view**, and this
+                    // parameter is not one: what has to fit `want` is what the
+                    // `&` was put in front of, because that is the expression
+                    // the compiler would have written its own `&` before. Asked
+                    // the other way, `width(&t)` for a `text: String` that
+                    // `width` only reads came back `&str` against `String` and
+                    // was answered with `NK1102`'s *write `.to_string()`* — a
+                    // help that sends the reader the wrong way about a line
+                    // whose only fault is a character the compiler writes.
+                    || (wrote_a_reference
+                        && viewed_from(found).iter().any(|owned| {
+                            owned.fits(want) || self.fits_through_deref(owned, want)
+                        }))
+            }
+        };
+        if !fits {
+            return false;
+        }
+        if wrote_a_reference {
+            // **A type this compiler could not work out is not one to refuse
+            // punctuation over.** `Ty::Unknown` fits everything, which is the
+            // right answer for an absent claim
+            // ([ADR-024](../../docs/specification/adr/adr-024.md) D1) and no
+            // ground to stand on here: `route(&n)` for an `n` whose type was
+            // never pinned would be refused on the strength of a fit that means
+            // *nothing was checked*, which is [Part III
+            // C.4](../../docs/specification/30-nikaia-tooling.md)'s correct
+            // program refused. Left alone, the `&` the source wrote is the same
+            // character the compiler would have written, so the lowering is the
+            // one either way.
+            //
+            // **Which is why the test sits here and not above the fit.** The
+            // declaration is written off `lends` alone, so anything this
+            // refuses to record is a call whose callee takes a `&T` and whose
+            // argument does not have one - `rustc` about a file nobody wrote.
+            // A condition that skips the *recording* may only be one the
+            // emitter shares; this one skips the *refusal*, and the source's
+            // own `&` stands in for what would have been recorded.
+            if matches!(found, Ty::Unknown) {
+                return false;
+            }
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1137",
+                message: "the `&` here is the compiler's to write".to_string(),
+                notes: vec![format!(
+                    "`{written}` reads this argument rather than keeping it, so the \
+                     reference is what the call already means (ADR-094 D1) - and which \
+                     of the two it is comes from the callee's body, not from this line"
+                )],
+                help: Some("take the `&` off".to_string()),
+            });
+            return true;
+        }
+        // A value that is already a view needs nothing: the declaration and the
+        // argument agree without a second `&`.
+        if found.is_a_view() {
+            return false;
+        }
+        self.checked
+            .lent_args
+            .entry((span.start, written.to_string(), at))
+            .or_default()
+            .insert(argument_shape(given));
+        true
     }
 
     /// **`NK1137`: the `&` is the compiler's to write**
@@ -3568,6 +3752,26 @@ impl<'a> Checker<'a> {
             // is consulted, because this *is* the fit - `Ty::fits` allows it,
             // and what is left is telling the emitter to write the
             // constructor.
+            // **The compiler writes the `&` at the call** (ADR-094 D1), where
+            // the callee lends this position and the value is not already a
+            // view. Asked before the wrap and the deref for `nullable_args`'
+            // reason: a lent argument *is* a fit, and what is left is telling
+            // the emitter what to write. The rule asks the fit itself, so an
+            // argument that is simply the wrong value falls through to the
+            // message it always had.
+            if self.the_compiler_writes_the_reference(
+                contract,
+                Argument {
+                    at,
+                    given: given.get(at),
+                    found,
+                    want,
+                },
+                written,
+                span,
+            ) {
+                continue;
+            }
             let is_literal = given.get(at).is_some_and(is_literal);
             if let Some(how) = wrap_for(found, want, is_literal) {
                 self.checked
@@ -5080,6 +5284,37 @@ fn view_of(inner: &Ty) -> Ty {
         // A tuple of views is not a view of a tuple, and nothing writes down
         // what a view of a lambda would be.
         _ => Ty::Unknown,
+    }
+}
+
+/// What a `&x` was a view **of**, as far as [`view_of`] runs backwards.
+///
+/// It does not run backwards cleanly — a `&str` is a view of a `String` and
+/// also a `&str` standing on its own — so this answers the owned types that
+/// would have produced the view, and the caller asks the fit of each.
+///
+/// The one place that needs it is [`Checker::the_compiler_writes_the_reference`],
+/// deciding whether a `&` the source wrote is the one the compiler would have
+/// written anyway. There, a list that is too short costs a refusal that is not
+/// raised and a list that is too long costs a correct program refused, so it is
+/// the short one: only the views this compiler itself makes.
+fn viewed_from(view: &Ty) -> Vec<Ty> {
+    match view {
+        Ty::Named {
+            name,
+            args,
+            view: true,
+        } if args.is_empty() && name == "str" => vec![Ty::named("String")],
+        Ty::Named {
+            name,
+            args,
+            view: true,
+        } => vec![Ty::Named {
+            name: name.clone(),
+            args: args.clone(),
+            view: false,
+        }],
+        _ => Vec::new(),
     }
 }
 

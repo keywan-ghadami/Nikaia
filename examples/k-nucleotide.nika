@@ -191,12 +191,12 @@ fn main() throws {
         return
     }
 
-    report_frequencies(&dna, 1)
-    report_frequencies(&dna, 2)
+    report_frequencies(dna, 1)
+    report_frequencies(dna, 2)
 
-    report_fragment(&dna, "GGT")
-    report_fragment(&dna, "GGTA")
-    report_fragment(&dna, "GGTATT")
-    report_fragment(&dna, "GGTATTTTAATT")
-    report_fragment(&dna, "GGTATTTTAATTTATAGT")
+    report_fragment(dna, "GGT")
+    report_fragment(dna, "GGTA")
+    report_fragment(dna, "GGTATT")
+    report_fragment(dna, "GGTATTTTAATT")
+    report_fragment(dna, "GGTATTTTAATTTATAGT")
 }

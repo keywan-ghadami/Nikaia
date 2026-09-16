@@ -140,7 +140,11 @@ fn a_template_capture_is_not_a_deferred_parameter() {
          }\n",
     );
     assert!(!rust.contains("NikaiaDslParams"), "{rust}");
-    assert!(rust.contains("for r in &rows"), "{rust}");
+    // `.iter()` and not `&`, which is the ordinary `for`'s rule
+    // ([ADR-094](../../../docs/specification/adr/adr-094.md) D4): since D1 a
+    // parameter the body only reads is already a view, and `&rows` would then
+    // be a reference to one.
+    assert!(rust.contains("for r in rows.iter()"), "{rust}");
 }
 
 /// A parameter the statement declares and the call does not pass.
