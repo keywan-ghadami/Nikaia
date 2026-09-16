@@ -130,7 +130,7 @@ fn item_types(
             ..
         } => {
             for arg in args {
-                written(parsed, &arg.ty, known, span, out);
+                written_at(parsed, &arg.ty, known, Position::Parameter, span, out);
             }
             if let Some(ret) = ret_type {
                 written(parsed, ret, known, span, out);
@@ -170,7 +170,14 @@ fn item_types(
                         .map(|g| parsed.text(g.name).to_string()),
                 );
                 for arg in &method.node.args {
-                    written(parsed, &arg.ty, &here, &method.span, out);
+                    written_at(
+                        parsed,
+                        &arg.ty,
+                        &here,
+                        Position::Parameter,
+                        &method.span,
+                        out,
+                    );
                 }
                 if let Some(ret) = &method.node.ret_type {
                     written(parsed, ret, &here, &method.span, out);
@@ -212,6 +219,17 @@ fn block_types(parsed: &Parsed, block: &Block, known: &BTreeSet<String>, out: &m
 /// **A tuple has no name**, so it is skipped and its parts are walked — the AST
 /// puts them where the arguments go, and reading `name` there would read a
 /// token nobody wrote as a type.
+/// Where a written type stands, for the one rule that cares
+/// ([ADR-102](../../../docs/specification/adr/adr-102.md) D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Position {
+    /// A parameter of a function, a method or a trait method.
+    Parameter,
+    /// A struct field, an enum variant's part, a result, a `let`'s annotation —
+    /// every position a *kept* function type would stand in.
+    Elsewhere,
+}
+
 fn written(
     parsed: &Parsed,
     ty: &Type,
@@ -219,7 +237,23 @@ fn written(
     span: &Span,
     out: &mut Vec<Finding>,
 ) {
-    if !ty.is_tuple {
+    written_at(parsed, ty, known, Position::Elsewhere, span, out)
+}
+
+fn written_at(
+    parsed: &Parsed,
+    ty: &Type,
+    known: &BTreeSet<String>,
+    at: Position,
+    span: &Span,
+    out: &mut Vec<Finding>,
+) {
+    // **A function type is not a name**
+    // ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), the same way
+    // a tuple is not: what `fn` holds is a shape, and its parameters are in
+    // `generics` where a tuple's parts are. Reading `name` here would report
+    // that nothing declares a type called `fn`.
+    if !ty.is_tuple && ty.code.is_none() {
         let name = parsed.text(ty.name);
         if !known.contains(name) && !name.contains("::") {
             out.push(nothing_declares(name, span));
@@ -227,6 +261,54 @@ fn written(
     }
     for argument in &ty.generics {
         written(parsed, argument, known, span, out);
+    }
+    if let Some(code) = &ty.code {
+        if let Some(result) = &code.result {
+            written(parsed, result, known, span, out);
+        }
+        if at == Position::Elsewhere {
+            out.push(only_a_parameter_yet(span));
+        }
+    }
+}
+
+/// `NK1142`: a function type outside a parameter, which is
+/// [ADR-102](../../../docs/specification/adr/adr-102.md) D5's **kept** lowering
+/// and is not built.
+///
+/// D1 says a function type may stand wherever a type may — a parameter, a
+/// struct field, a result — and D5 says the two cases lower differently: a
+/// **run** parameter is a closure argument, which is what `std`'s own
+/// higher-order entries are, and a **kept** one is a boxed closure over a boxed
+/// future. Only the first is built.
+///
+/// **It is refused rather than emitted**, which is the choice
+/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md) makes for
+/// this compiler: a field written `impl Fn(…)` is not Rust, and what the reader
+/// would get is the backend's words about a file nobody wrote. A refusal in
+/// this compiler's own words, naming what is missing, is the honest half of a
+/// record that is built in steps.
+fn only_a_parameter_yet(span: &Span) -> Finding {
+    Finding {
+        severity: Severity::Error,
+        span: span.clone(),
+        code: "NK1142",
+        message: "a function type may only be a parameter in this compiler".to_string(),
+        notes: vec![
+            "a parameter the callee **runs** lowers to a closure argument, which is what \
+             `std`'s own `map` and `access` take; a function type in a field, a result or \
+             a `let` is one the callee **keeps**, and that lowering is not built \
+             (ADR-102 D5)"
+                .to_string(),
+            "it is refused here rather than handed to the language below, because what \
+             comes back from there is about the generated file (Part III, C.1)"
+                .to_string(),
+        ],
+        help: Some(
+            "take the code in as a parameter and call it during the call - or hold it \
+             behind a type of your own until the kept lowering lands"
+                .to_string(),
+        ),
     }
 }
 

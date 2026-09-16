@@ -82,9 +82,23 @@ pub enum Ty {
     /// the `a` in `fn { a.add(t) }` has no type, nothing it is called on
     /// resolves, and the function around it cannot be shown to be `sync`.
     ///
-    /// What the lambda *hands back* is deliberately absent: nothing needs it
-    /// yet, and a spelling is easier to add than to change.
-    Fn { params: Vec<Ty> },
+    /// **Since [ADR-102](../../../docs/specification/adr/adr-102.md) D1 a
+    /// `.nika` source writes one too**, and the three fields beside `params`
+    /// are what a written one says: `fn(Request) -> Response`, and `sync` and
+    /// `throws` in the positions a declaration puts them. The defaults are the
+    /// language's (D2) — without `sync` the code may pause, without `throws` it
+    /// cannot fail — so a ledger entry that says neither reads exactly as a
+    /// declaration that says neither.
+    Fn {
+        params: Vec<Ty>,
+        /// `-> R`, absent where the code hands nothing back. `std`'s own
+        /// entries write none: the ledger's type language had no result on a
+        /// lambda until D1, and what those entries are read for is the arity
+        /// and the `sync` column.
+        result: Option<Box<Ty>>,
+        is_sync: bool,
+        throws: bool,
+    },
     /// `T?` - Part I 2.3's nullable type, and the whole of it: a type is
     /// non-nullable unless it says otherwise.
     ///
@@ -215,8 +229,37 @@ impl Ty {
             // fits a named type and no named type fits a lambda - which is a
             // claim, so it is only made where both sides are written down, and
             // `Unknown` above has already taken every other case.
-            (Ty::Fn { params: a }, Ty::Fn { params: b }) => {
-                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.fits(b))
+            //
+            // **And a lambda that does less fits a type that allows more**
+            // ([ADR-102](../../../docs/specification/adr/adr-102.md) D2), which
+            // is where the two promises are read: one that never pauses goes
+            // where pausing is allowed and one that cannot fail goes where
+            // failing is, and the other direction is the assertion `NK2206` and
+            // `NK2606` refuse.
+            (
+                Ty::Fn {
+                    params: a,
+                    result: ar,
+                    is_sync: asy,
+                    throws: at,
+                },
+                Ty::Fn {
+                    params: b,
+                    result: br,
+                    is_sync: bsy,
+                    throws: bt,
+                },
+            ) => {
+                a.len() == b.len()
+                    && a.iter().zip(b).all(|(a, b)| a.fits(b))
+                    && match (ar, br) {
+                        (Some(a), Some(b)) => a.fits(b),
+                        // A result nobody wrote is the absence of a claim, which
+                        // `Unknown` is everywhere else in this file.
+                        _ => true,
+                    }
+                    && (*asy || !*bsy)
+                    && (!*at || *bt)
             }
             // A variable that reaches a comparison was never bound, and an
             // unbound variable is the absence of a claim rather than a claim
@@ -276,10 +319,44 @@ impl Ty {
         }
         // `fn(&Stats)`, and `fn()` for a lambda that is handed nothing. Read
         // before the `&`, because a function type is never a view.
-        if let Some(inner) = text.strip_prefix("fn(").and_then(|t| t.strip_suffix(')')) {
-            return Ty::Fn {
-                params: split_args(inner).iter().map(|p| Ty::parse(p)).collect(),
-            };
+        //
+        // **Since [ADR-102](../../../docs/specification/adr/adr-102.md) D1 the
+        // closing `)` is not the end**: `fn(Request) -> Response sync throws`
+        // is the whole spelling, so the parenthesis is matched rather than
+        // found at the end, and what follows it is read backwards — the two
+        // words first, because the result is whatever is left in front of them.
+        if let Some(rest) = text.strip_prefix("fn(") {
+            if let Some(close) = closing_paren(rest) {
+                let mut tail = rest[close + 1..].trim();
+                let mut is_sync = false;
+                let mut throws = false;
+                loop {
+                    if let Some(shorter) = word_off(tail, "throws") {
+                        throws = true;
+                        tail = shorter;
+                        continue;
+                    }
+                    if let Some(shorter) = word_off(tail, "sync") {
+                        is_sync = true;
+                        tail = shorter;
+                        continue;
+                    }
+                    break;
+                }
+                let result = tail
+                    .strip_prefix("->")
+                    .map(|r| Box::new(Ty::parse(r)))
+                    .filter(|_| !tail.is_empty());
+                return Ty::Fn {
+                    params: split_args(&rest[..close])
+                        .iter()
+                        .map(|p| Ty::parse(p))
+                        .collect(),
+                    result,
+                    is_sync,
+                    throws,
+                };
+            }
         }
         let (view, rest) = match text.strip_prefix('&') {
             Some(rest) => (true, rest.trim()),
@@ -321,8 +398,16 @@ impl Ty {
         match self {
             Ty::Unknown => Ty::Unknown,
             Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| p.erase(parameters)).collect()),
-            Ty::Fn { params } => Ty::Fn {
+            Ty::Fn {
+                params,
+                result,
+                is_sync,
+                throws,
+            } => Ty::Fn {
                 params: params.iter().map(|p| p.erase(parameters)).collect(),
+                result: result.as_ref().map(|r| Box::new(r.erase(parameters))),
+                is_sync: *is_sync,
+                throws: *throws,
             },
             // A library's variable is not a Nikaia function's generic, and
             // erasing one is not the other's business.
@@ -367,8 +452,18 @@ impl Ty {
             Ty::Tuple(parts) => {
                 Ty::Tuple(parts.iter().map(|p| p.parameterise(parameters)).collect())
             }
-            Ty::Fn { params } => Ty::Fn {
+            Ty::Fn {
+                params,
+                result,
+                is_sync,
+                throws,
+            } => Ty::Fn {
                 params: params.iter().map(|p| p.parameterise(parameters)).collect(),
+                result: result
+                    .as_ref()
+                    .map(|r| Box::new(r.parameterise(parameters))),
+                is_sync: *is_sync,
+                throws: *throws,
             },
             Ty::Var { name, view } => Ty::Var {
                 name: name.clone(),
@@ -400,6 +495,26 @@ impl Ty {
                     .map(|g| Ty::from_ast(parsed, g))
                     .collect(),
             );
+        }
+        // **A parameter that is code**
+        // ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), read
+        // before the `?` for the tuple's reason: what a `fn(…)?` would mean is
+        // not written anywhere, and the grammar gives the form no `?` to begin
+        // with.
+        if let Some(code) = &ty.code {
+            return Ty::Fn {
+                params: ty
+                    .generics
+                    .iter()
+                    .map(|g| Ty::from_ast(parsed, g))
+                    .collect(),
+                result: code
+                    .result
+                    .as_ref()
+                    .map(|r| Box::new(Ty::from_ast(parsed, r))),
+                is_sync: code.is_sync,
+                throws: code.throws,
+            };
         }
         // The `?` wraps whatever the rest of the declaration says, so it is
         // read last here and first in `parse` - the same order either way round.
@@ -436,9 +551,24 @@ impl fmt::Display for Ty {
                 let parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
                 write!(f, "({})", parts.join(", "))
             }
-            Ty::Fn { params } => {
+            Ty::Fn {
+                params,
+                result,
+                is_sync,
+                throws,
+            } => {
                 let params: Vec<String> = params.iter().map(|p| p.to_string()).collect();
-                write!(f, "fn({})", params.join(", "))
+                write!(f, "fn({})", params.join(", "))?;
+                if let Some(result) = result {
+                    write!(f, " -> {result}")?;
+                }
+                if *is_sync {
+                    f.write_str(" sync")?;
+                }
+                if *throws {
+                    f.write_str(" throws")?;
+                }
+                Ok(())
             }
             Ty::Var { name, view } => {
                 if *view {
@@ -564,7 +694,7 @@ mod fn_type_tests {
     fn a_function_type_is_not_a_name() {
         let parsed = Ty::parse("fn(&Stats)");
         assert!(matches!(parsed, Ty::Fn { .. }), "{parsed:?}");
-        let Ty::Fn { params } = parsed else {
+        let Ty::Fn { params, .. } = parsed else {
             unreachable!("just matched")
         };
         assert_eq!(params, vec![Ty::view("Stats")]);
@@ -665,11 +795,21 @@ pub fn qualify(ty: &Ty, module: &str, declared: &std::collections::BTreeSet<Stri
             view: *view,
         },
         Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| qualify(p, module, declared)).collect()),
-        Ty::Fn { params } => Ty::Fn {
+        Ty::Fn {
+            params,
+            result,
+            is_sync,
+            throws,
+        } => Ty::Fn {
             params: params
                 .iter()
                 .map(|p| qualify(p, module, declared))
                 .collect(),
+            result: result
+                .as_ref()
+                .map(|r| Box::new(qualify(r, module, declared))),
+            is_sync: *is_sync,
+            throws: *throws,
         },
         other => other.clone(),
     }
@@ -697,11 +837,56 @@ pub fn renamed(ty: &Ty, renames: &std::collections::BTreeMap<String, String>) ->
             view: *view,
         },
         Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| renamed(p, renames)).collect()),
-        Ty::Fn { params } => Ty::Fn {
+        Ty::Fn {
+            params,
+            result,
+            is_sync,
+            throws,
+        } => Ty::Fn {
             params: params.iter().map(|p| renamed(p, renames)).collect(),
+            result: result.as_ref().map(|r| Box::new(renamed(r, renames))),
+            is_sync: *is_sync,
+            throws: *throws,
         },
         Ty::Nullable(inner) => Ty::Nullable(Box::new(renamed(inner, renames))),
         other => other.clone(),
+    }
+}
+
+/// The index of the `)` that closes a `fn(` already stripped from the front,
+/// or nothing where there is none.
+///
+/// Counted rather than searched from the end, because
+/// [ADR-102](../../../docs/specification/adr/adr-102.md) D1 lets a function
+/// type stand wherever a type may — including inside another one's parameters —
+/// and `fn(fn(i64)) -> i64`'s last `)` closes the wrong thing. Brackets are
+/// counted with it for a `Vec[fn(i64)]`.
+fn closing_paren(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, c) in text.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ']' => depth = depth.checked_sub(1)?,
+            ')' => match depth {
+                0 => return Some(at),
+                _ => depth -= 1,
+            },
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `text` without a trailing `word`, where what is left ends at a boundary.
+///
+/// The boundary is what keeps a type from being clipped: a result called
+/// `Resync` ends in `sync` and is not one.
+fn word_off<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    let shorter = text.strip_suffix(word)?;
+    match shorter.chars().next_back() {
+        None => Some(shorter),
+        Some(c) if c.is_whitespace() => Some(shorter.trim_end()),
+        Some(_) => None,
     }
 }
 
@@ -732,8 +917,16 @@ pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty
             view: *view,
         },
         Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| substitute(p, bound)).collect()),
-        Ty::Fn { params } => Ty::Fn {
+        Ty::Fn {
+            params,
+            result,
+            is_sync,
+            throws,
+        } => Ty::Fn {
             params: params.iter().map(|p| substitute(p, bound)).collect(),
+            result: result.as_ref().map(|r| Box::new(substitute(r, bound))),
+            is_sync: *is_sync,
+            throws: *throws,
         },
         Ty::Nullable(inner) => Ty::Nullable(Box::new(substitute(inner, bound))),
         Ty::Unknown => Ty::Unknown,

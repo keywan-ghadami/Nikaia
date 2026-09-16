@@ -912,6 +912,7 @@ grammar! {
                     is_view: view.is_some(),
                     is_tuple: false,
                     is_nullable: nullable.is_some(),
+                    code: None,
                 }
             }
           // `(A, B)`. The parts go where a named type's arguments go, so
@@ -927,6 +928,33 @@ grammar! {
                     is_view: false,
                     is_tuple: true,
                     is_nullable: false,
+                    code: None,
+                }
+            }
+          // **A parameter may be code**
+          // ([ADR-102](../../../../docs/specification/adr/adr-102.md) D1):
+          // `fn(Request) -> Response`, with `sync` and `throws` after the
+          // result, in the positions a declaration puts them. The parameters go
+          // where a tuple's parts go.
+          //
+          // **The trailing words are greedy**, which settles the one ambiguity
+          // D1 does not name: in `fn make() -> fn(i64) -> i64 sync` the `sync`
+          // belongs to the *result type*. A function whose own promise is meant
+          // writes it before the arrow, which `fn_item` accepts already —
+          // `fn make() sync -> fn(i64) -> i64`.
+          | KW_FN "(" params:type_refs? ")" result:return_type_arrow?
+            s:kw_sync? t:kw_throws? -> {
+                Type {
+                    name: _state.intern("fn"),
+                    generics: params.unwrap_or_default(),
+                    is_view: false,
+                    is_tuple: false,
+                    is_nullable: false,
+                    code: Some(Box::new(Code {
+                        result,
+                        is_sync: s.is_some(),
+                        throws: t.is_some(),
+                    })),
                 }
             }
 

@@ -5534,7 +5534,7 @@ impl<'a> Checker<'a> {
                         mutable,
                         body,
                     },
-                    Some(Ty::Fn { params: given }),
+                    Some(Ty::Fn { params: given, .. }),
                 ) => self.lambda(params, mutable, body, given, span),
                 _ => {
                     self.a_field_of_a_borrowed_subject(arg, span, "passed");

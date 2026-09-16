@@ -528,6 +528,30 @@ pub struct Type {
     /// otherwise, and `&str?` is a nullable view - so this is a flag beside
     /// `is_view` rather than a wrapper, because the two are independent.
     pub is_nullable: bool,
+    /// `fn(A, B) -> R sync throws`
+    /// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1): a parameter
+    /// may be **code**, and the type says what the code may do.
+    ///
+    /// The parameters go in `generics`, where a tuple's parts go and for the
+    /// same reason: everything that walks a type's arguments walks them
+    /// without knowing what this is. What is here is the part a tuple has no
+    /// room for - the result and the two promises.
+    pub code: Option<Box<Code>>,
+}
+
+/// What a function type says besides its parameters
+/// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1, D2).
+///
+/// **The defaults are the language's** (D2): without `sync` the code may pause,
+/// without `throws` it cannot fail. That is the reading a *declaration* already
+/// has, applied to a type - which is the whole of why it needs no words of its
+/// own.
+#[derive(Debug, Clone)]
+pub struct Code {
+    /// `-> R`, absent where the code hands nothing back.
+    pub result: Option<Type>,
+    pub is_sync: bool,
+    pub throws: bool,
 }
 
 /// One variant of an enum (Kap 4.4).

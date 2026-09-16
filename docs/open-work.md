@@ -916,18 +916,31 @@ can.
 `sync` and `throws` after the result as a declaration writes them; a lambda
 that does less fits a type that allows more, the other direction is refused;
 whether the parameter is run or kept is inferred, and a kept one's promises
-are the type's. **Nothing of it is built**: the type is a parse error, and the
-eight `std` entries that take a lambda bypass the grammar.
+are the type's. **Step 1 is built**: the type parses, the ledger writes it and
+reads it back — a function type inside another one included — D2's reading is
+in the fit, and a **run** parameter lowers to a closure argument,
+`impl Fn(A) -> R`, with the `Result` a `throws` function's declaration has
+where the type says `throws`. `fn twice(x: i64, f: fn(i64) -> i64)` is a
+program that compiles and runs.
 
-*Evidence:* `fn twice(x: i64, f: fn(i64) -> i64)` — *expected `&`; found `fn`*
-— and `examples/fortunes.nika`'s `main`, whose `route` cannot be declared by
-`examples/http/`.
+*The trailing words are greedy*, which settles the one ambiguity the record
+does not name: in `fn make() -> fn(i64) -> i64 sync` the `sync` belongs to the
+**result type**, and a function whose own promise is meant writes it before
+the arrow.
 
-*What it needs, in the record's order (§5):* the type in the grammar, using
-the spelling the ledger's type language already has; the two refusals; the
-run-or-kept inference, which is ADR-094's `keeps` asked of a code parameter;
-and the lowering of a kept pausing handler, which is *a lambda that pauses is
-refused* one entry up, with a callee that can now say which shape it wants.
+*What is left, in the record's order (§5):* D2's two refusals in words — a
+pausing lambda handed to a `fn() sync` is `NK2206` and a failing one handed to
+a type without `throws` is `NK2606`, where today both are the ordinary
+`NK1102`; D3's run-or-kept inference, which is ADR-094's `keeps` asked of a
+code parameter; and D5's lowering of a **kept** handler, which is *a lambda
+that pauses is refused* one entry up, with a callee that can now say which
+shape it wants.
+
+*Until that last one lands, a function type is a **parameter** and nothing
+else.* A field, a result and a `let` are the positions where it can only be
+kept, and they are `NK1142` here rather than `impl Fn(…)` in a Rust field,
+which is not Rust and would reach the reader as the backend's words about a
+file nobody wrote.
 
 ### 2.16. A package is found by version through Cargo, under `nikaia_<name>`
 

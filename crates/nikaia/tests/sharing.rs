@@ -844,7 +844,7 @@ fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
             args.iter().any(carries_a_handle)
         }
         Ty::Tuple(parts) => parts.iter().any(carries_a_handle),
-        Ty::Fn { params } => params.iter().any(carries_a_handle),
+        Ty::Fn { params, .. } => params.iter().any(carries_a_handle),
         // A `Shared[T]?` holds a handle or nothing, and the first is what
         // matters here (Part I 2.3).
         Ty::Nullable(inner) => carries_a_handle(inner),

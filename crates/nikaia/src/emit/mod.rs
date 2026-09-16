@@ -2715,6 +2715,7 @@ impl<'p> Emitter<'p> {
                                 is_view: false,
                                 is_tuple: false,
                                 is_nullable: false,
+                                code: None,
                             },
                             Lifetimes::NAMED,
                         );
@@ -3058,6 +3059,35 @@ impl<'p> Emitter<'p> {
             return format!("({})", parts.join(", "));
         }
 
+        // **A parameter that is code**
+        // ([ADR-102](../../docs/specification/adr/adr-102.md) D1), lowered as
+        // D5's **run** case: a closure argument, which is what `std`'s own
+        // higher-order entries take and what costs nothing. The kept case — a
+        // boxed closure over a boxed future — is the step of that record that
+        // is not built, and `NK1142` is what a field or a result meets, so this
+        // is only ever reached in a parameter.
+        //
+        // `throws` puts the same `Result` on the closure's result that a
+        // `throws` function's own declaration puts on its (Kap 7.1), which is
+        // what makes a lambda that fails fit it.
+        if let Some(code) = &ty.code {
+            let params: Vec<String> = ty
+                .generics
+                .iter()
+                .map(|g| self.ty_counted(g, lifetimes, count))
+                .collect();
+            let result = match (&code.result, code.throws) {
+                (Some(r), false) => format!(" -> {}", self.ty_counted(r, lifetimes, count)),
+                (Some(r), true) => format!(
+                    " -> Result<{}, Box<dyn std::error::Error>>",
+                    self.ty_counted(r, lifetimes, count)
+                ),
+                (None, true) => " -> Result<(), Box<dyn std::error::Error>>".to_string(),
+                (None, false) => String::new(),
+            };
+            return format!("impl Fn({}){result}", params.join(", "));
+        }
+
         // **`Seen[T]` is erased**
         // ([ADR-111](../../docs/specification/adr/adr-111.md) D1): it is a type
         // here and in the ledger and **not** one in the language below, so a
@@ -3075,6 +3105,7 @@ impl<'p> Emitter<'p> {
                 is_view: false,
                 is_nullable: false,
                 is_tuple: false,
+                code: None,
             });
             let inner = Type {
                 is_nullable: ty.is_nullable || inner.is_nullable,
