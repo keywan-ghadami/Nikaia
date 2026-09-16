@@ -452,8 +452,8 @@ Short, because it does not need defending:
   Swift got this right and so does this.
 * **`T?` with compiler-written wrapping**, `?.` and `??` — the surface is right
   even where 2.6 says the lowering is not.
-* **Provenance and the hasher**, and the untrusted-path refusal of ADR-058 D7
-  once it lands.
+* **Provenance and the hasher**, and a path that names its root at the call
+  (decided since: ADR-108).
 * **Grammars as expressions, `@frame`, `par_fold`**, with the frame invariant
   checked rather than trusted.
 * **The diagnostics discipline** — the Iron Rule and the polarity rule

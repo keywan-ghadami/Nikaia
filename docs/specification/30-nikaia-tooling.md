@@ -972,26 +972,23 @@ no status code left to send (D6). Whether that becomes `sendfile(2)`, a mapping,
 read is the library's to choose at run time and not the program's to name (D3), and it is unavailable
 under TLS and under HTTP/2 (D5).
 
-**When the request names the file, the path is `Untrusted` and the compiler says so.** A
+**When the request names the file, the name and its root arrive together.** A
 download route is the other program, and it is not the one above with a variable in it:
 
 ```nika
-// A request chose these bytes (ADR-010 D2), so they may not reach a path.
-fs::map(request.query("file") ?? "")
+// The request chose this name; the call says which directory it may not leave.
+http::File(request.query("file") ?? "", fs::Root::Dir(store))
 ```
 
-`fs::within(root, name)` is what clears it: it resolves the join, answers the
-nullable of Part I 3.5 — `none` where the result would leave `root` — and its
-answer is **trusted where its argument was not**. A handler serves the file it
-names and answers 404 for a `none`.
-
-Handing `request.query("file")` to `http::File`, `fs::map`, `fs::read` or `fs::write` directly is
-a **compile error** and not a runtime check ([ADR-058](adr/adr-058.md) D7): a `../../etc/shadow`
-that arrives as a 200 is not a failure a status code fixes afterwards. The provenance is
-[ADR-010](adr/adr-010.md) D1's lattice, so the taint survives the `join` that is exactly how a
-traversal bug is written, and `trusted: true` at the source is the other way to clear it — for
-the program that knows something the compiler does not, recorded in `nikaia.contracts` with its
-site.
+Every `std` function that takes a path takes its root right after it, with no default
+([ADR-108](adr/adr-108.md) D1) — `http::File` like `fs::map`, `fs::read` and `fs::write`. The
+root is an `fs::Root`: `Dir(store)`, under which the joined name is resolved and compared
+component by component, or `Anywhere`, the one way around the check, recorded per site and
+listed by `nikaia --trust` (D2, D4). A name that leaves its `Dir` is `fs::Outside` and the
+handler answers 404: the call refuses, it does not rewrite (D3). Nothing is inferred about where
+the name came from and no analysis follows it — a `../../etc/shadow` is stopped at the call,
+before the headers are written (D6). `trusted: false` on `fs::map` is about the file's
+*content* ([ADR-010](adr/adr-010.md) D3) and is a different question.
 
 What the library keeps between requests is bounded, dropped when the file's identity or modification
 time moves, and sized by the operator rather than the program ([ADR-058](adr/adr-058.md) D8). A
@@ -999,9 +996,8 @@ page that must be held for certain is mapped by the program itself, outside the 
 the first example above.
 
 > **Status:** `http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes`
-> row nor `http::File` exists, and neither does `fs::within` or D7's refusal — the provenance
-> analysis it would rest on does (`std::collections`, below, and `nikaia --trust`). `fs::map` and
-> `Bytes` exist.
+> row nor `http::File` exists, and `fs::Root` is not built either ([ADR-108](adr/adr-108.md)
+> §5). `fs::map` and `Bytes` exist.
 
 The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
 and `query(name)` yield `&str`, so a parameter used inside the request's scope costs nothing and
@@ -1081,14 +1077,22 @@ Every function below may fail for environmental reasons, so every one of them `t
 **Whole-file access**
 
 ```nika
-// Subject: the path ; Config: options
-pub fn read(path: Path) -> Bytes throws                       // whole file, as bytes
-pub fn read_to_string(path: Path) -> String throws            // whole file, UTF-8 validated
-pub fn write(path: Path, data: &[u8]; append: bool = false, create: bool = true) throws
+// Subject: the path, and the root it may not leave ; Config: options
+pub fn read(path: Path, root: Root) -> Bytes throws                  // whole file, as bytes
+pub fn read_to_string(path: Path, root: Root) -> String throws       // whole file, UTF-8 validated
+pub fn write(path: Path, root: Root, data: &[u8]; append: bool = false, create: bool = true) throws
 ```
 
+**Every path names its root** ([ADR-108](adr/adr-108.md)). `root` is an `fs::Root`:
+`Dir(store)` resolves the name under that directory and throws `fs::Outside` where it would leave
+it; `Anywhere` performs no check and is the word a review looks for, listed by `nikaia --trust`
+(D4). There is no default and no exception for a literal — a relative name is resolved against
+the working directory, which is somebody's to change (D1). `fs::map(&path, fs::Root::Anywhere)`
+is what a command-line program whose path the operator typed writes.
+
 **What Stage 0 has of this today.** `read`, `read_to_string`, `write` — with both of its options,
-since Part I 5.1's `;` section parses — and `map`. `open`/`File` and the directory functions are
+since Part I 5.1's `;` section parses — and `map`, each **without its root** yet
+([ADR-108](adr/adr-108.md) §5). `open`/`File` and the directory functions are
 not here yet; `lines` and `bytes` are gone for a reason of their own, below.
 
 > **Status of "the runtime's reactor" above.** It exists, and this is what it
@@ -1125,7 +1129,7 @@ There is no `fs::lines` and no `fs::bytes`, and there will not be. The reasons a
 * **The properties `lines` was for are properties of the mapping**: tethered `&str`, no allocation per line, constant memory. They come from `map`, not from the sequence.
 
 ```nika
-let data = fs::map(&path)
+let data = fs::map(&path, fs::Root::Anywhere)
 for line in data.lines() { … }
 ```
 
@@ -1136,7 +1140,7 @@ The WASM question these functions were the answer to comes back with the target:
 **Handles**
 
 ```nika
-pub fn open(path: Path; write: bool = false, append: bool = false,
+pub fn open(path: Path, root: Root; write: bool = false, append: bool = false,
             create: bool = false, truncate: bool = false) -> File throws
 ```
 
@@ -1156,7 +1160,7 @@ impl File {
 **Memory mapping**
 
 ```nika
-pub fn map(path: Path) -> Mapped throws          // read-only memory map
+pub fn map(path: Path, root: Root) -> Mapped throws     // read-only memory map
 ```
 
 `Mapped` derefs to `Bytes`, so a mapped file is a tethered buffer like any other and a parser cannot tell the difference. This is what makes a multi-gigabyte input practical: the pages are the buffer, and nothing is copied.
@@ -1170,13 +1174,13 @@ The error is deliberate rather than a silent fallback to `read`: degrading a mem
 **Metadata and directories**
 
 ```nika
-pub fn exists(path: Path) -> bool throws
-pub fn metadata(path: Path) -> Metadata throws   // len, is_dir, is_file, modified
-pub fn read_dir(path: Path) -> DirEntries throws
-pub fn create_dir(path: Path; recursive: bool = false) throws
-pub fn remove(path: Path; recursive: bool = false) throws
-pub fn rename(from: Path, to: Path) throws
-pub fn copy(from: Path, to: Path) -> u64 throws
+pub fn exists(path: Path, root: Root) -> bool throws
+pub fn metadata(path: Path, root: Root) -> Metadata throws   // len, is_dir, is_file, modified
+pub fn read_dir(path: Path, root: Root) -> DirEntries throws
+pub fn create_dir(path: Path, root: Root; recursive: bool = false) throws
+pub fn remove(path: Path, root: Root; recursive: bool = false) throws
+pub fn rename(from: Path, to: Path, root: Root) throws       // both names under one root
+pub fn copy(from: Path, to: Path, root: Root) -> u64 throws
 ```
 
 **Availability by target**

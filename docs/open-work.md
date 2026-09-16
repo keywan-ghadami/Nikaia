@@ -498,38 +498,12 @@ What waits inside it:
   hashing, which says in as many words that it has no target because there is no
   server.
 
-**One piece looked as though it did not wait, and this entry was wrong about it
-twice.** [ADR-058](specification/adr/adr-058.md) D7 — a path out of a request is
-`Untrusted` and may not reach `fs::map`, `fs::read`, `fs::write` or `http::File`
-unchecked — needs no socket, which is true and was the whole of the case for
-picking it up first. The two sentences under it were not, and both were measured
-the moment somebody did:
-
-* it said the work *"costs no new analysis"*. `contracts::trust` is a
-  **whole-program join** — every body walked, every `std` source the program
-  calls folded into one answer ([ADR-010](specification/adr/adr-010.md) D7's
-  report, and the hasher choice D8 built it for). D7 needs a **per-value**
-  answer, which value reaching a path parameter came from where: a dataflow
-  analysis over locals, and a second thing that happens to read the same
-  lattice.
-* it said the rule was *"testable against `fs::map` today"*. Nothing can be
-  tainted: `std.contracts` carries no `provenance = "untrusted"` entry at all,
-  and the one untrusted source that needs no server —
-  `fs::map(path; trusted: false)`, [ADR-010](specification/adr/adr-010.md) D3 —
-  is **not built**, so no call site may write the word the ledger can parse.
-
-**So it is a question and not work**, and it is
-[`open-decisions.md`](open-decisions.md)'s sixth entry, where the owner has put
-the feature itself in doubt. What that entry adds beyond the two corrections:
-§2's rule that *a refusal is free before programs exist and breaking afterwards*
-— the reason every other unbuilt refusal on this page is urgent — **does not
-apply here**. A refusal about untrusted values cannot reject a program until
-some value is untrusted, and what makes one untrusted is the request. No window
-is being lost by waiting.
-
-**It would still be the only entry in this section that closes a security hole
-rather than an ergonomic one**, which is worth leaving on the page where a
-reader chooses what to pick up.
+**The one piece that looked as though it did not wait is answered elsewhere.**
+A name the request chose reaching the filesystem is
+[ADR-108](specification/adr/adr-108.md): the root is an argument of the call,
+`http::File(path, root)` exactly as `fs::map(path, root)`, and there is no
+provenance on a path and no refusal to build before the server. The `fs` half
+is §2.21 below, and `http::File` inherits it the day it exists.
 
 Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
 bench that decided it (`benches/sendfile/`) and the write-up
@@ -905,6 +879,26 @@ where a `String` was declared; `Response(content_type:
 directions with D2's refusal; text represented as `Bytes` is, with the state
 from the tether analysis; `NK1106`'s help and the thirteen sites; the
 foreign-boundary copy once crates are described; `--tethers` over text.
+
+### 2.21. A path names its root at the call
+
+[ADR-108](specification/adr/adr-108.md). Every `std` function that takes a
+path takes its root right after it, with no default: an `fs::Root`, which is
+`Dir(store)` — the name is resolved under it and `fs::Outside` where it would
+leave it — or `Anywhere`, the one way around the check, recorded per site and
+listed by `nikaia --trust`. No exception for a literal. **Nothing of it is
+built**: `fs::map(path)` takes one argument, `fs::Root` does not exist, and
+the ledger describes the path functions without a root.
+
+*Evidence:* 15 calls in `examples/` — 8 `fs::map`, 6 `fs::read_to_string`,
+3 `fs::write` (one of them in `examples/README.md`), 1 `fs::read`, 1
+`fs::exists` — every one of them a command-line program whose path the
+operator typed, so every one of them writes `fs::Root::Anywhere`.
+
+*What it needs, in the record's order (§5):* `fs::Root` and the root in every
+path-taking entry's `signature`; the check in the Rust half of `fs`; the
+sites in `examples/`, its README and Part III 17.1; `--trust` listing
+`Anywhere` and a literal `"/"` root; `http::File` when it is built.
 
 ---
 
