@@ -4535,6 +4535,25 @@ impl<'p> Emitter<'p> {
             .is_some_and(|seen| seen.contains(caller))
     }
 
+    /// The same, for a call whose callee this emitter cannot name
+    /// ([ADR-055](../../docs/specification/adr/adr-055.md) D6, the method
+    /// half).
+    ///
+    /// `stats.add(5)` names `add` and says nothing about what `stats` is
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)), so the candidates
+    /// are **every** pausing key ending in that name — the same widening
+    /// `pausing_reach` draws its edges with, asked here at the call. Where the
+    /// two readings differ this takes the wider, for that function's own
+    /// reason: a box nobody needed costs one allocation, and a box that was
+    /// needed and is missing is a program that does not compile.
+    fn method_closes_a_pausing_cycle(&self, caller: &str, method: &str) -> bool {
+        let suffix = format!("::{method}");
+        self.pausing_reach
+            .iter()
+            .filter(|(key, _)| key.ends_with(&suffix))
+            .any(|(_, seen)| seen.contains(caller))
+    }
+
     /// Whether a type named here holds a view, and so carries the input lifetime
     /// wherever it is written (Part II, 10.6).
     ///
@@ -4887,6 +4906,21 @@ impl<'p> Emitter<'p> {
             other => other,
         };
         let length = is_length(self.text(method), args);
+        // **ADR-055 D6, the method half.** A recursive `async fn` is an
+        // infinitely sized future, and a call that closes a cycle of pausing
+        // functions puts it behind a pointer. `call` has asked this since D6's
+        // first sharp edge; a *method* could not be asked, because the emitter
+        // cannot name its callee — `stats.add(5)` names `add` and only the type
+        // checker knows what it goes to (ADR-028). It does not have to name it:
+        // `pausing_reach` already draws an edge to **every** pausing method of
+        // that name, which is the over-approximation its own note describes, so
+        // the same widening answers the question here. Boxing a call that did
+        // not need it costs one allocation; missing one is `rustc`'s *recursion
+        // in an async fn requires boxing*, about a file nobody wrote (C.1).
+        let boxed = self.method_closes_a_pausing_cycle(flow.function, self.text(method));
+        if boxed {
+            out.push("Box::pin(");
+        }
         self.receiver(out, receiver, depth, flow, false)?;
         out.push(&format!(".{written}"));
         // Nikaia's `collect` builds a List; Rust's needs to be told
@@ -4912,6 +4946,12 @@ impl<'p> Emitter<'p> {
         // ADR-055 D2, the method half, and **before the `?`** for the
         // reason `call` gives: the future is what can fail, so it has
         // to be driven before there is a `Result` to propagate.
+        // **Before the `.await`**, because it is the future that is boxed and
+        // not what awaiting it comes to.
+        if boxed {
+            out.push(")");
+        }
+
         if self.method_pauses(flow, method) {
             if flow.in_lambda {
                 return Err(pausing_in_a_lambda(self.text(method)));

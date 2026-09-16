@@ -378,11 +378,12 @@ than waiting:** the analysis names a `spawn` body's handle as a duplication site
 and used again afterwards is not refused, which `tasks.rs` says about a program
 that does it.
 
-### 2.2. A lambda that pauses is refused, and a recursive pausing method is not boxed
+### 2.2. A lambda that pauses is refused at the build
 
-Both are [ADR-055](specification/adr/adr-055.md) §6's remainder, and both are
-limits of this compiler rather than of the language — so they are here and not in
-§1, where a defect is the compiler being *wrong*.
+[ADR-055](specification/adr/adr-055.md) §6's remainder, and a limit of this
+compiler rather than of the language — so it is here and not in §1, where a
+defect is the compiler being *wrong*. **The other half of this entry, a
+recursive pausing method not being boxed, is built**; what it took is below.
 
 **A lambda whose body calls something that can pause is refused at the build.**
 Rust has no stable `async` closure, so the lowering has nothing to write. The
@@ -404,22 +405,24 @@ futures where `task::both` takes closures, and the emitter chooses between them
 per group. What is left is that a *callee's* parameter has to say which it wants,
 and the ledger has no column for it. Not a new mechanism — a claim to record.
 
-**A recursive pausing *method* is not boxed.** §6 step 2 boxes a call that closes
-a cycle of pausing functions, and it resolves a callee's name the way the emitter
-resolves anything — which is not at all for a method, because `stats.add(5)` names
-`add` and only the type checker knows what it goes to ([ADR-028](specification/adr/adr-028.md)).
-So a cycle through a method reaches `rustc` as *"recursion in an async fn requires
-boxing"*, about the generated file.
+**A recursive pausing *method* is boxed now**, and what it took was asking a
+question the emitter already had the answer to. §6 step 2 boxed a call that
+closes a cycle of pausing functions, resolving a callee's name the way the
+emitter resolves anything — which is not at all for a method, since
+`stats.add(5)` names `add` and only the type checker knows what it goes to
+([ADR-028](specification/adr/adr-028.md)). So a cycle through a method reached
+`rustc` as *"recursion in an async fn requires boxing"*, about the generated
+file.
 
-*Evidence: none.* No program in the repository has one — `examples/json.nika`'s
-recursion is through free functions, which is the case that is built. It is
-written down because it is the same edge one step further in, not because
-something failed.
-
-*What it needs:* the checker already hands the emitter *whether* a method call
-pauses, keyed by statement and name (`Checked::pausing_methods`). A third set
-keyed the same way, saying whether it also closes a cycle, is the same shape
-again — the checker has the resolved call graph that `contracts::sync` builds.
+*The fix needed no new set and no new answer from the checker*, which the plan
+here had said it would. `pausing_reach` already draws an edge to **every**
+pausing method of a given name — that is the over-approximation its own note
+describes — so the graph had the method cycles in it all along and only the call
+site was not asking. The same widening answers it at the call: a box nobody
+needed costs one allocation, and a box that was needed and is missing is a
+program that does not compile, so where the two readings differ it takes the
+wider. `crates/nikaia/tests/recursive_methods.rs` holds the two cycles and the
+three shapes that must *not* box.
 
 ### 2.3. Standard input is `async` and does not suspend
 
