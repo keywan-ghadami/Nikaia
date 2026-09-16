@@ -679,7 +679,7 @@ no notion of a linkable artifact — no `cdylib`, no `staticlib`, no `.so`.
 **The owner has since named it as open**, so it is no longer waiting on scope
 ([`project_status_and_roadmap.md`](project_status_and_roadmap.md)). **Talking
 *to* C came first** and is 15.1's, and it is built:
-[ADR-119](specification/adr/adr-119.md) reserved `extern` and `unsafe` *with
+[ADR-121](specification/adr/adr-121.md) reserved `extern` and `unsafe` *with
 their constructs* — the number that allowed two words was zero — and an
 `extern "C"` block, an `unsafe { … }` and `NK1143` are all there. What that
 record left open is `Pointer[T]`, and what **this** one still waits on is a
@@ -1315,11 +1315,45 @@ the checker's field resolution and refusals, the enum operand refused; the
 lowering to a struct expression with a base; `examples/1brc.nika`'s `Stats`
 and a test.
 
+### 2.31. A target without an operating system
+
+[ADR-121](specification/adr/adr-121.md). A bare-metal target with
+`user_parallelism` pinned to `no`; `no_std` emission with a target prelude
+and abort; the target's executor over described crates with interrupts as
+wakers and `irq::on(vector, fn() sync)`; a heap by default and an
+`allocation = "startup"` profile over a derived `allocates` column; locks as
+critical sections; runtime settings baked at build time. **Nothing of it is
+built**: the compiler knows `x86_64-linux` and `wasm32-unknown`, and `std`
+has one Rust half. Scheduled after the HTTP server.
+
+*What it needs, in the record's order (§5):* the target and the pin;
+`no_std` emission; the `std` half over described crates; `allocates` and the
+profile; build-time settings and the deadline; the availability rows and a
+first program.
+
+### 2.32. A grammar's action is the block after the pattern, and two borrowed names go
+
+[ADR-120](specification/adr/adr-120.md). Part II 10.8 is the normative page
+of everything a grammar may write. A rule's action is `{ … }` after its
+pattern with no second arrow; `tag("x")` is `"x"` and `digit1` is `digit+`,
+both refused with the spelling. **Nothing of it is built**: grammars write
+`-> { … }`, and the engine's names pass through.
+
+*Evidence:* 53 action arrows in `examples/` (`json.nika` 18, `calc.nika` 11,
+`config.nika` 8, `k-nucleotide.nika` 5, `access-log.nika` 4, `report.nika`
+4, `1brc.nika` 3), and the grammar blocks of Part II 10.1, 10.6 and 10.7,
+which now write the new form and are fragments until the parser takes it.
+
+*What it needs, in the record's order (§5):* the parser's block-after-pattern
+with the arrow form refused; the emitter writing the engine's arrow; the two
+names refused; the examples rewritten.
+
 ---
 
-### 2.31. A C declaration cannot name a pointer
 
-[ADR-119](specification/adr/adr-119.md) §4, and the only part of that record
+### 2.33. A C declaration cannot name a pointer
+
+[ADR-121](specification/adr/adr-121.md) §4, and the only part of that record
 left. `extern` and `unsafe` are reserved words with constructs, an
 `extern "C"` block is a program, `unsafe { … }` is how a call to one is
 written, `NK1143` is what a call outside one meets, and the whole thing

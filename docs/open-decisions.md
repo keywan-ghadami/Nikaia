@@ -70,7 +70,7 @@ compiler picks, and `&str` is the assertion that it is a view — the 13
 the taint analysis the question doubted, and the answer is that the check goes
 where the name and the directory are both in hand, so there is nothing to
 follow) and
-[ADR-119](specification/adr/adr-119.md) (what `extern "C"` costs the language —
+[ADR-121](specification/adr/adr-121.md) (what `extern "C"` costs the language —
 answered the way this file asks a question to be answered, with a **number**:
 nothing in the corpus, the tests or the three pages writes `extern` or `unsafe`
 as a name, and nothing is released, so two reserved words cost nothing and the

@@ -500,7 +500,7 @@ grammar! {
           | i:fn_item -> { Spanned::new(i, _span) }
 
         // Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-        // ([ADR-119](../../../../docs/specification/adr/adr-119.md) D1).
+        // ([ADR-121](../../../../docs/specification/adr/adr-121.md) D1).
         //
         // **The declarations are `trait_method`s**, because a signature without
         // a body is the same shape wherever it stands. What differs is how one
@@ -1779,7 +1779,7 @@ grammar! {
           // of its own, which is the trap the `while` rule records.
           | o:overlap_expr -> { o }
           // Part III 15.1's other half, and it sits here for `overlap`'s reason
-          // ([ADR-119](../../../../docs/specification/adr/adr-119.md) D3): a
+          // ([ADR-121](../../../../docs/specification/adr/adr-121.md) D3): a
           // keyword and a block, which a PEG would otherwise read as a struct
           // literal called `unsafe`. `unsafe` is a reserved word now, so it
           // could not be one - but the ordering is the rule and not the
@@ -2275,7 +2275,7 @@ grammar! {
           | KW_QUOTE -> { 0 }
           | KW_WITH -> { 0 }
           // **Reserved with their constructs**
-          // ([ADR-119](../../../../docs/specification/adr/adr-119.md) D1), which
+          // ([ADR-121](../../../../docs/specification/adr/adr-121.md) D1), which
           // is what tells them from the four above: a word reserved so that a
           // reader can be told something is one `NK1117`'s help can tell them
           // about instead ([ADR-117](../../../../docs/specification/adr/adr-117.md)).
@@ -2355,7 +2355,7 @@ grammar! {
             KW_OVERLAP b:block -> { Expr::Overlap(b) }
 
         // Part III 15.1: `unsafe { … }`, the one place a call to an `extern`
-        // name may stand ([ADR-119](../../../../docs/specification/adr/adr-119.md)
+        // name may stand ([ADR-121](../../../../docs/specification/adr/adr-121.md)
         // D3). A block with a value and no other rule - what is inside is
         // checked exactly as anything else is, and what the word buys is that
         // the boundary is visible *at the call*.

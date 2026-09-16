@@ -17,31 +17,31 @@ Nikaia grammars are **scannerless**: there is no separate tokenizer stage. A gra
 **Key features:**
 *   **Commit Points (`=>`):** control backtracking. Once the parser passes a commit point, it stays in this branch — a later failure is an *error*, not a reason to silently try the next alternative.
 *   **Lexical vs. syntactic rules:** rule names starting with an uppercase letter are **lexical** (no whitespace between parts); lowercase rules are **syntactic** (whitespace allowed). This replaces the lexer/parser split.
-*   **Typed actions (`-> { … }`):** each rule builds your own types directly.
+*   **Typed actions (`{ … }` after the pattern):** each rule builds your own types directly ([ADR-120](adr/adr-120.md) D2).
 
 ```nika
 grammar Json {
     pub rule value -> Value =
-        o:object -> { Value::Object(o) }
-      | a:array  -> { Value::Array(a) }
-      | s:string -> { Value::String(s) }
+        o:object { Value::Object(o) }
+      | a:array  { Value::Array(a) }
+      | s:string { Value::String(s) }
 
     // Commit point: once '{' matched, members and '}' MUST follow, or we error.
     rule object -> Object
         = "{" => members:list(pair, ",") "}"
-        -> { Object { members } }
+        { Object { members } }
 
-    rule pair -> Pair = key:string ":" => val:value -> { Pair { key, val } }
+    rule pair -> Pair = key:string ":" => val:value { Pair { key, val } }
 
     // Lexical rule (uppercase): no whitespace inside a hex byte. Two hex digits
     // always fit in a `u8`, so this action cannot fail; where one can, what its
     // failure means is decided by the commit point above it
     // ([ADR-023](adr/adr-023.md) D9).
-    rule HEX -> u8 = d:hex_digit{2} -> { hex_byte(d) }
+    rule HEX -> u8 = d:hex_digit{2} { hex_byte(d) }
 }
 ```
 
-> **Note:** Auto-generated AST types (structs for labelled sequences, enums for alternatives, when no `-> { … }` is given) are a planned convenience, not current behaviour. Action blocks are required today. See [ADR-007](adr/adr-007.md), D7.
+> **Note:** Auto-generated AST types (structs for labelled sequences, enums for alternatives, when no `{ … }` is given) are a planned convenience, not current behaviour. Action blocks are required today. See [ADR-007](adr/adr-007.md), D7.
 
 ### 10.2. Dual-Mode Parsing (Static vs. Dynamic)
 A grammar defined once can be used at compile time and at runtime — **with the same
@@ -367,8 +367,8 @@ return type and its `=`:
 
 ```nika
 rule expr -> Expr # "expression" =
-      c:closure_expr -> { c }
-    | e:catch_expr   -> { e }
+      c:closure_expr { c }
+    | e:catch_expr   { e }
 ```
 
 The name replaces the list **only where the rule failed at its own starting
@@ -402,11 +402,11 @@ A parser that reads a file end to end uses one core. For a multi-gigabyte input 
 // Up to ";" - or to the end of the frame, whichever comes first. `frame_end`
 // is the boundary of the frame this rule is reached from: written once, in
 // the attribute below, and referenced here.
-rule NAME -> &str = s:until(";" | frame_end) -> { s }
+rule NAME -> &str = s:until(";" | frame_end) { s }
 
 @frame(boundary: "\n")
 rule MEASUREMENT -> Reading =
-    name:NAME ";" => temp:TENTHS frame_end -> { Reading { name, temp } }
+    name:NAME ";" => temp:TENTHS frame_end { Reading { name, temp } }
 ```
 
 A bare `@frame` takes the boundary from the rule's trailing literal; a frame that ends in `frame_end` names it in the attribute. A frame must end in its boundary, and it is written **lexical** (uppercase) — the implicit whitespace of a syntactic rule would eat newlines, and a data format with no whitespace between its fields is lexical anyway.
@@ -441,6 +441,78 @@ let totals = Measurements.file(data)
 At `user_parallelism = no`, `par_fold` runs as an ordinary sequential `fold`: same accumulator, same merge, same result, no threads. A grammar written this way compiles unchanged for `wasm32`.
 
 **What you get for free.** Because the grammar states the format, the generated parser is allowed to exploit it: scanning for a separator or a frame boundary works a machine word at a time rather than byte by byte, on every target and with no `unsafe` in sight — and a terminator with up to three alternatives, like `until(";" | frame_end)`, is still one scan. See [ADR-009](adr/adr-009.md).
+
+### 10.8. The Grammar's Vocabulary
+
+Everything a grammar may write, one line each. An element not on this page is
+not in the language ([ADR-120](adr/adr-120.md) D1). Where a line says *text*,
+the value is a view of the input and nothing is copied (10.6).
+
+**A rule.** `rule name -> Type = pattern { action }`. The `->` names the
+result type; the block after the pattern is the action, one per alternative,
+and it may read every binding of that alternative. `pub` before `rule` makes
+the rule an entry a call can reach (`Json.value(input)`, [ADR-082](adr/adr-082.md)).
+A rule may take arguments and be used as `list(pair, ",")` is.
+
+**Lexical and syntactic.** A rule whose name starts with an **uppercase**
+letter is lexical: nothing is skipped between its elements. A lowercase name
+is syntactic: the `WS` rule is matched between elements. `WS` defaults to any
+run of whitespace; a grammar that declares `rule WS = …` says what is skipped,
+and `rule WS = "" { }` skips nothing. (ANTLR's lexer rules are uppercase for
+the same reason; pest steers skipping by a rule named `WHITESPACE`.)
+
+| element | matches | yields |
+| :--- | :--- | :--- |
+| `"text"` | that text, exactly | nothing |
+| `x:p` | `p`, and binds what it yields to `x` for the action | — |
+| `p q` | `p` then `q` (whitespace between them in a syntactic rule) | each binding |
+| `p \| q` | `p`, or where `p` fails without a cut, `q` | the alternative's action |
+| `p => q` | the **cut**: after `p`, `q` must follow; a failure in `q` is an error and no enclosing alternative is retried | as `p q` |
+| `p?` | `p` or nothing | a `T?` |
+| `p*`, `p+` | zero or more, one or more `p` | a list of what `p` yields, or the text matched where `p` is a character class |
+| `p{n}`, `p{n,}`, `p{n,m}` | exactly, at least, between `n` and `m` times; greedy and never giving one back | as `p*` |
+| `( p )` | grouping | as `p` |
+| `[ p ]`, `{ p }`, `paren( p )` | the delimiter around `p` in the **input**: `[`, `{`, `(` | as `p` |
+| `not(p)` | succeeds where `p` does not match, consuming nothing | nothing |
+| `peek(p)` | `p` without consuming it | as `p` |
+| `until(p)` | everything up to `p`, not consuming `p`; an error where `p` never comes | text |
+| `text(p)` | `p`, handing back the text it covered instead of its value | text |
+| `dec[T](p)` | `p`, its text read as the number type `T`; an error where it does not fit | `T` |
+| `intern(p)`, `ident` | `p`'s text interned (10.6); `ident` is an identifier, interned | a symbol |
+| `raw_ident` | an identifier | text |
+| `string` | a quoted string, quotes excluded | text |
+| `char` | a character literal such as `'\n'` | a `char` |
+| `any` | one character | a `char` |
+| `digit` | one decimal digit; `digit+` is a run of them | a `char`; text for the run |
+| `alpha1` | a run of letters | text |
+| `hex_digit` | one hexadecimal digit | a `char` |
+| `multispace0`, `multispace1` | zero or more, one or more whitespace characters, newlines included | text |
+| `line_ending` | `\n` or `\r\n` | nothing |
+| `empty` | nothing, always succeeding | nothing |
+| `eof` | the end of the input | nothing |
+| `frame_end` | the boundary of the enclosing `@frame` (10.7) | nothing |
+| `fail("message")` | never; fails with the message | — |
+| `recover(p, sync)` | `p`, and where `p` fails, skips to `sync` and reports the failure without stopping the parse | `p`'s value or the report |
+| `list(item, sep)` | `item`, separated by `sep`, zero or more | a list |
+
+**Names for failures.** `rule expr -> Expr # "expression" = …` names the rule
+for the message where it fails at its own start, in place of the list of what
+its alternatives could have begun with (10.6). `alt # "label"` after one
+alternative names that alternative alone.
+
+**Frames.** `@frame(boundary: "\n")` before a lexical rule says a record can be
+found from any offset by scanning to the boundary, which is what lets the input
+be cut and parsed in parallel; the compiler checks that no rule reachable from
+it consumes the boundary in the middle (10.7, [ADR-009](adr/adr-009.md)).
+
+**What is not written.** `tag("x")` is `"x"`, and `digit1` is `digit+`
+([ADR-120](adr/adr-120.md) D3); a grammar that writes either is refused with
+the spelling to use. The engine underneath has further built-ins that no
+program has needed; one joins this page the day one does.
+
+> **Status:** the vocabulary above is what the examples use and the engine
+> provides. **Not built**: the action block without the arrow, and the two
+> refusals ([ADR-120](adr/adr-120.md) §5) — today a grammar writes `-> { … }`.
 
 ## Chapter 11: Running Your Code at Once
 

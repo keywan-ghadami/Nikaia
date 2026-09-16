@@ -755,7 +755,7 @@ pub(crate) fn visit_stmt_blocks<'a>(stmt: &'a Stmt, f: &mut impl FnMut(&'a Block
 pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block)) {
     match expr {
         // An `unsafe` block is part of the function that writes it
-        // ([ADR-119](../../../docs/specification/adr/adr-119.md) D3): it makes
+        // ([ADR-121](../../../docs/specification/adr/adr-121.md) D3): it makes
         // no boundary of its own, so what it calls, the function calls.
         Expr::Block(block)
         | Expr::Unsafe(block)

@@ -958,7 +958,7 @@ struct Checker<'a> {
     /// whose parameter's type nothing describes.
     handed_over: Option<Handed>,
     /// **The names an `extern "C"` block declares**
-    /// ([ADR-119](../../docs/specification/adr/adr-119.md) D3).
+    /// ([ADR-121](../../docs/specification/adr/adr-121.md) D3).
     ///
     /// Collected from the item tree rather than read off the ledger, because
     /// the ledger records what a name *is* and this asks where it **came
@@ -3181,12 +3181,12 @@ impl<'a> Checker<'a> {
             // is about the *order* its statements run in (ADR-033 D7), not
             // about what any of them mean or what it hands back.
             // **`unsafe { … }` is a block with a value and no other rule**
-            // ([ADR-119](../../docs/specification/adr/adr-119.md) D3): what is
+            // ([ADR-121](../../docs/specification/adr/adr-121.md) D3): what is
             // inside is checked exactly as anything else is.
             Expr::Block(block) => self.block(block),
 
             // **`unsafe { … }` is a block with a value and no other rule**
-            // ([ADR-119](../../docs/specification/adr/adr-119.md) D3): what is
+            // ([ADR-121](../../docs/specification/adr/adr-121.md) D3): what is
             // inside is checked exactly as anything else is. The one thing it
             // changes is that a call to an `extern` name is allowed here, which
             // is the whole of what the word buys.
@@ -4480,7 +4480,7 @@ impl<'a> Checker<'a> {
         };
 
         // **A call to an `extern` name is written inside `unsafe { … }`**
-        // ([ADR-119](../../docs/specification/adr/adr-119.md) D3), and this is
+        // ([ADR-121](../../docs/specification/adr/adr-121.md) D3), and this is
         // where that is asked: the name is in hand and the block is a flag the
         // walk carries.
         self.a_foreign_call_outside_unsafe(&name, span);
@@ -6064,7 +6064,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1143`: a call to an `extern` name outside an `unsafe` block**
-    /// ([ADR-119](../../docs/specification/adr/adr-119.md) D3).
+    /// ([ADR-121](../../docs/specification/adr/adr-121.md) D3).
     ///
     /// That is the whole of what the word buys, and it is why it is a word
     /// rather than an attribute on the declaration: the boundary is visible
@@ -6093,7 +6093,7 @@ impl<'a> Checker<'a> {
             ),
             notes: vec![
                 "C is not memory-safe, so the boundary is written where it is crossed \
-                 rather than once beside the declaration (Part III, 15.1; ADR-119 D3)"
+                 rather than once beside the declaration (Part III, 15.1; ADR-121 D3)"
                     .to_string(),
                 "the block makes no other rule: what is inside it is checked exactly as \
                  anything else is"

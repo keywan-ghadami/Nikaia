@@ -447,7 +447,10 @@ designed:
 
 None of this is wrong; all of it is undocumented and looks like the tool it is
 built on. It deserves the same pass Part I got: one page, every built-in, one
-spelling for actions.
+spelling for actions. *Decided since:* [ADR-120](specification/adr/adr-120.md)
+— Part II 10.8 is the page, the action is the block after the pattern, `tag`
+and `digit1` go; the case convention (ANTLR's), `WS` (pest's `WHITESPACE`),
+`=>` and `# "…"` stay, with precedent on their side.
 
 ### 3.7 Smaller things, each real
 

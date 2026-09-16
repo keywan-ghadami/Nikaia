@@ -135,7 +135,7 @@ fields changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
 **`extern` and `unsafe` are on it with their constructs**, which is the
 condition rather than an accident of timing: an `extern "C"` block and the
 `unsafe { … }` a call to one is written in arrived in the same change
-([ADR-119](adr/adr-119.md), Part III 15.1). The number that allowed two words is
+([ADR-121](adr/adr-121.md), Part III 15.1). The number that allowed two words is
 **zero** — nothing in the corpus, the tests or these pages wrote either as a
 name, and nothing is released, which is [ADR-084](adr/adr-084.md)'s own
 standard.

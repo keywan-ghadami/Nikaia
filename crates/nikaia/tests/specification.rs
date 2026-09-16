@@ -117,6 +117,14 @@ fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
 /// compiler had been accepting because it could not read a type name. A count
 /// cannot tell those apart, which is why the number is a floor and the sentence
 /// beside it is the actual guard.
+///
+/// **Lowered a second time, from 50 to 49.** Part II 10.1's `grammar Json`
+/// writes a rule's action as the block after the pattern, with no second
+/// arrow ([ADR-120](../../../docs/specification/adr/adr-120.md) D2), and the
+/// parser does not take that form yet — so the page is ahead of the compiler
+/// by decision, which is the state every unbuilt record leaves its examples
+/// in. The block comes back as a program with ADR-120 §5's first step, and
+/// the floor goes back up with it.
 #[test]
 fn most_of_a_third_of_the_specifications_blocks_are_programs() {
     let verdicts = specbook::verdicts(&specbook::specification_dir());
@@ -125,8 +133,8 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
         .filter(|v| v.stage == Stage::Lowered)
         .count();
     assert!(
-        lowered >= 50,
-        "{lowered} of {} blocks lower, and 50 did when this floor was last set - \
+        lowered >= 49,
+        "{lowered} of {} blocks lower, and 49 did when this floor was last set - \
          raise it if it is beaten, and read the diff if it is not",
         verdicts.len()
     );

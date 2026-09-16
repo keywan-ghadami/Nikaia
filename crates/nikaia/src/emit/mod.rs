@@ -1989,7 +1989,7 @@ impl<'p> Emitter<'p> {
                 Ok(())
             }
             // **Rust's own `extern` block**
-            // ([ADR-119](../../docs/specification/adr/adr-119.md) D1), which is
+            // ([ADR-121](../../docs/specification/adr/adr-121.md) D1), which is
             // the whole of the lowering: the form means the same thing on both
             // sides, and a declaration is `trait_method`'s shape with `sync`
             // said by the caller (D2).
@@ -2031,7 +2031,7 @@ impl<'p> Emitter<'p> {
     /// shape reads two ways: a **trait** method without the word may pause
     /// ([ADR-109](../../docs/specification/adr/adr-109.md) D1), and an
     /// **`extern "C"`** declaration never can
-    /// ([ADR-119](../../docs/specification/adr/adr-119.md) D2) — C has no
+    /// ([ADR-121](../../docs/specification/adr/adr-121.md) D2) — C has no
     /// suspension point, and a C function that sleeps blocks a thread, which is
     /// `println`'s question and not this one.
     fn trait_method(
@@ -3812,7 +3812,7 @@ impl<'p> Emitter<'p> {
             // it - so it is not written as the block's value (`Tail`).
             Expr::Block(block) => self.block(out, block, depth, flow, Tail::Value)?,
             // **Rust's own `unsafe`**
-            // ([ADR-119](../../docs/specification/adr/adr-119.md) D3), which is
+            // ([ADR-121](../../docs/specification/adr/adr-121.md) D3), which is
             // the whole of the lowering: the word means the same thing on both
             // sides and the block inside it is an ordinary one.
             Expr::Unsafe(block) => {

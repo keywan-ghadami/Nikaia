@@ -1,5 +1,5 @@
 //! `extern "C"` and `unsafe`, the two words Part III 15.1 writes
-//! ([ADR-119](../../../docs/specification/adr/adr-119.md)).
+//! ([ADR-121](../../../docs/specification/adr/adr-121.md)).
 //!
 //! The page wrote C interoperability out in full and the language had **none**
 //! of the three things the example needs: `extern` was not reserved and the

@@ -984,7 +984,7 @@ impl Ledger {
                     // of this thing have.
                     // **An `extern "C"` declaration is an entry like any
                     // other, and reads unlike a trait method**
-                    // ([ADR-119](../../../docs/specification/adr/adr-119.md)
+                    // ([ADR-121](../../../docs/specification/adr/adr-121.md)
                     // D2). Two things are turned around, and only one of them
                     // by this record. It is **`sync`**, asserted rather than
                     // inferred, which is the shape `std`'s own hand-written
