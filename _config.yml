@@ -21,7 +21,7 @@ description: >-
 
 # A project site, served under the repository name.
 url: https://keywan-ghadami.github.io
-baseurl: /Nikaia
+baseurl: /
 
 theme: jekyll-theme-primer
 
