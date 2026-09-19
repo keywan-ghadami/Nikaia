@@ -108,6 +108,18 @@ pub struct Runtime {
     workers: worker::Workers,
     #[cfg(target_os = "linux")]
     ring: Option<Mutex<uring::Ring>>,
+    /// **The descriptor a worker rings to wake a park on `ring`**
+    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D1), or `-1`
+    /// where this runtime has no ring.
+    ///
+    /// Beside the lock and not inside it, because the thread that rings cannot
+    /// take the lock the thread it is waking is holding - `uring::ring_the_bell`
+    /// says that at length. Per runtime and not per process: a test that builds
+    /// a second `Runtime` gets a second ring with a bell of its own, and
+    /// publishing that one as *the* bell left the process's own park deaf. Found
+    /// by `the_compilers_pair_answers_the_same_either_way` hanging.
+    #[cfg(target_os = "linux")]
+    bell: std::os::fd::RawFd,
     /// The executor for user tasks, at `user_parallelism = yes` and not
     /// otherwise.
     ///
@@ -143,12 +155,34 @@ static FINISHED: Mutex<u64> = Mutex::new(0);
 static BELL: Condvar = Condvar::new();
 
 /// Rung by an I/O worker, after the operation and before it takes the next one.
+///
+/// **Both bells, always**
+/// ([ADR-121](../../../docs/specification/adr/adr-121.md) D1). The condvar
+/// above is what a thread parked off the ring waits on, and the `eventfd` on
+/// the ring is what a thread parked *in* `io_uring_enter` waits on - a process
+/// can have waiters of both kinds at the same instant, and which park a given
+/// thread took is not a question this can ask. The second costs one write to a
+/// descriptor nobody may be polling, which is the price of never having to ask.
 pub(crate) fn ring_the_bell() {
-    let mut count = FINISHED.lock().unwrap_or_else(|e| e.into_inner());
-    *count += 1;
-    // Every parked thread, because any of them may be the one waiting for this
-    // operation - and at `user_parallelism = no` there is exactly one.
-    BELL.notify_all();
+    {
+        let mut count = FINISHED.lock().unwrap_or_else(|e| e.into_inner());
+        *count += 1;
+        // Every parked thread, because any of them may be the one waiting for
+        // this operation - and at `user_parallelism = no` there is exactly one.
+        BELL.notify_all();
+    }
+    // **After the count**, and outside the lock it is under. Both orderings
+    // matter: a park woken by this looks at a world the worker has already
+    // finished changing, and `Ring::park`'s own check of the count is what
+    // makes a ring that arrives between a poll and a park impossible to lose.
+    //
+    // `get` and not `handle`: this runs on a thread the runtime started, so the
+    // runtime exists - and a worker that somehow rings while the `OnceLock` is
+    // still being filled has nothing parked on a ring to wake.
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = RUNTIME.get() {
+        uring::ring_the_eventfd(runtime.bell);
+    }
 }
 
 /// Start the runtime, and hand back the guard whose `finish` drains it.
@@ -294,6 +328,14 @@ impl Runtime {
             UserCode::Concurrent => Some(pool::Pool::start(config.user_pool)),
         };
 
+        // Read out of the ring before the lock closes over it: a `write` may
+        // not wait for a park (D1), so the number lives beside the lock.
+        #[cfg(target_os = "linux")]
+        let bell = match ring.as_ref() {
+            Some(ring) => ring.lock().unwrap_or_else(|e| e.into_inner()).bell(),
+            None => -1,
+        };
+
         Runtime {
             config,
             user_code,
@@ -301,6 +343,8 @@ impl Runtime {
             workers,
             #[cfg(target_os = "linux")]
             ring,
+            #[cfg(target_os = "linux")]
+            bell,
             user_pool,
         }
     }
@@ -782,8 +826,14 @@ pub mod io {
         let runtime = handle();
         match runtime.files() {
             #[cfg(target_os = "linux")]
+            // **A worker operation is something to wait for here too**
+            // ([ADR-121](../../../docs/specification/adr/adr-121.md) D1): the
+            // bell is armed on the ring, so a worker's reply posts a completion
+            // and the park returns. What the ring cannot know is that there is
+            // one coming, because D2 keeps the bell out of its job count - so
+            // the worker count is read here and handed down.
             Files::Completion => runtime
-                .with_ring(|ring| ring.park())
+                .with_ring(|ring| ring.park(since, runtime.pending() > 0, limit))
                 .expect("`Files::Completion` means there is a ring"),
             #[cfg(not(target_os = "linux"))]
             Files::Completion => unreachable!("no completion queue off Linux"),
@@ -836,13 +886,120 @@ pub mod io {
         interest: Interest,
         timeout: Option<std::time::Duration>,
     ) -> Result<bool> {
-        use std::os::fd::AsRawFd;
+        off_the_io_thread();
+        let answer = queue_readiness(socket, interest, timeout)?;
+        answer
+            .recv()
+            .unwrap_or_else(|_| Err(Error::other("the runtime's I/O worker went away")))
+    }
 
+    /// **The same wait, as something that can be awaited**
+    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
+    ///
+    /// This is what the record is for. The reply arrives on an I/O worker, and a
+    /// worker rings a bell that - since D1 - *both* parks hear, so a `Pending`
+    /// from here is one the executor can sleep on whichever mechanism the
+    /// process got. Before D1 it could not: on the completion path the park
+    /// answered off a count of ring jobs, a worker's reply was not one, and a
+    /// future fed from one either spun or met `exec::block_on`'s panic about a
+    /// waker nobody arranged.
+    ///
+    /// **No waker is stored**, for the reason [`Reading`] gives at length: the
+    /// executor is the only thing on this thread that parks, and it parks in the
+    /// I/O.
+    ///
+    /// The descriptor the worker polls is a **duplicate** of this one
+    /// ([`worker::Op::Readiness`] says why), so a `Waiting` dropped before its
+    /// answer arrives leaves the worker with a descriptor of its own rather than
+    /// with a number the caller may since have closed.
+    pub fn waiting(
+        socket: &impl std::os::fd::AsFd,
+        interest: Interest,
+        timeout: Option<std::time::Duration>,
+    ) -> Waiting {
+        off_the_io_thread();
+        Replied {
+            answer: queue_readiness(socket, interest, timeout),
+        }
+    }
+
+    /// **All of standard input, as a future**
+    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
+    ///
+    /// The read itself is the blocking one standard input always had, moved onto
+    /// an I/O worker: D4 asks for *no second read shape and no ring path for a
+    /// stream that has no size to `stat`*. What is new is not the read but the
+    /// **park**. A worker's reply wakes the executor on either mechanism now, so
+    /// the thread the program runs on is given up here instead of held.
+    pub fn stdin_whole() -> Replied<Vec<u8>> {
         off_the_io_thread();
         let runtime = handle();
         let (reply, answer) = std::sync::mpsc::channel();
+        let queued = runtime.workers.send(worker::Op::Stdin { reply });
+        Replied {
+            answer: match queued {
+                true => Ok(answer),
+                false => Err(Error::other("the runtime has already been drained")),
+            },
+        }
+    }
+
+    /// What [`waiting`] hands back.
+    pub type Waiting = Replied<bool>;
+
+    /// **A worker's reply, as something that can be awaited**
+    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
+    ///
+    /// One shape for every worker operation, because they differ only in what
+    /// comes back: the reply is a channel, the poll is a `try_recv`, and the
+    /// wake is the bell the worker rings when it is done.
+    pub struct Replied<T> {
+        /// The reply channel, or the reason there is none - a runtime already
+        /// drained, which is an answer and not a wait.
+        answer: Result<std::sync::mpsc::Receiver<Result<T>>>,
+    }
+
+    impl<T> std::future::Future for Replied<T> {
+        type Output = Result<T>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            use std::task::Poll;
+
+            let _ = context;
+            let answer = match self.get_mut().answer.as_mut() {
+                Ok(answer) => answer,
+                // The `Err` is taken by value on the first poll and the channel
+                // that is not there cannot be polled again - a second poll of a
+                // finished future is the caller's mistake either way, and this
+                // is the message it gets rather than a hang.
+                Err(e) => return Poll::Ready(Err(Error::other(e.to_string()))),
+            };
+            match answer.try_recv() {
+                Ok(done) => Poll::Ready(done),
+                Err(std::sync::mpsc::TryRecvError::Empty) => Poll::Pending,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Poll::Ready(Err(Error::other("the runtime's I/O worker went away")))
+                }
+            }
+        }
+    }
+
+    /// Hand one readiness wait to a worker, and keep the reply channel.
+    ///
+    /// The half [`wait`] and [`waiting`] share: the difference between them is
+    /// only who does the receiving, which is the whole of what D4 changes.
+    fn queue_readiness(
+        socket: &impl std::os::fd::AsFd,
+        interest: Interest,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<std::sync::mpsc::Receiver<Result<bool>>> {
+        let runtime = handle();
+        let (reply, answer) = std::sync::mpsc::channel();
         let queued = runtime.workers.send(worker::Op::Readiness {
-            fd: socket.as_fd().as_raw_fd(),
+            fd: socket.as_fd().try_clone_to_owned()?,
             interest,
             timeout,
             reply,
@@ -850,11 +1007,7 @@ pub mod io {
         if !queued {
             return Err(Error::other("the runtime has already been drained"));
         }
-        // `socket` is borrowed for the whole of this call, so the descriptor
-        // the worker polls cannot be closed underneath it.
-        answer
-            .recv()
-            .unwrap_or_else(|_| Err(Error::other("the runtime's I/O worker went away")))
+        Ok(answer)
     }
 }
 
@@ -862,26 +1015,26 @@ pub mod io {
 mod tests {
     use super::*;
 
-    /// **A worker's reply cannot wake the executor on the completion path**,
-    /// which is the reason standard input does not suspend — and not the one
-    /// `docs/open-work.md` had recorded.
+    /// **A worker operation wakes the executor on either path**
+    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D1 and D3).
     ///
-    /// The bell exists for the **fallback**: one private reply channel per
-    /// operation and no way to wait for *whichever finishes first*, so a worker
-    /// bumps a count and the park hook watches it. On the completion path the
-    /// hook waits on the **ring** instead, and `Ring::park` answers off
-    /// `unreaped` — which counts ring jobs. A worker operation is not one, so
-    /// the hook says *there is nothing to wait for* while something is plainly
-    /// in flight.
+    /// **This test used to assert the opposite**, and that is why it is here.
+    /// The bell was the **fallback's**: one private reply channel per operation
+    /// and no way to wait for *whichever finishes first*, so a worker bumped a
+    /// count and the park hook watched it. On the completion path the hook
+    /// waited on the **ring** instead, and `Ring::park` answered off `unreaped`,
+    /// which counts ring jobs — a worker operation is not one, so the hook said
+    /// *there is nothing to wait for* while something was plainly in flight. No
+    /// future could be fed from a worker reply: `exec::block_on` either spun
+    /// (`main` alone) or panicked about a waker nobody arranged.
     ///
-    /// What follows is that no future may be fed from a worker reply while the
-    /// ring is the park: `exec::block_on` either spins (`main` alone) or panics
-    /// with *a future returned `Pending` without arranging for its waker to be
-    /// called*. So wiring standard input to `Op::Readiness` — which is what
-    /// that entry proposed — would have produced exactly that, and the choice
-    /// in `docs/open-decisions.md` is which way out to take.
+    /// D1 puts an `eventfd` on the ring with a poll always armed and has the
+    /// bell write to it, so a worker's reply completes a ring job and the park
+    /// returns. D3 keeps the test and inverts the claim, because *a hang is the
+    /// failure this may not have*: what went red the day the defect existed goes
+    /// red the day it comes back.
     #[test]
-    fn a_worker_operation_does_not_wake_the_completion_park() {
+    fn a_worker_operation_wakes_the_park_on_either_path() {
         let runtime = handle();
         // A pipe with nothing in it: the readiness wait will not finish, so the
         // operation is still in flight while this thread asks about the park.
@@ -906,25 +1059,107 @@ mod tests {
         // tests' scheduling and went red the day one was added.
         assert!(runtime.pending() >= 1, "the readiness wait is queued");
 
+        // **The claim, and it is about the park hook rather than about time.**
+        // `park_for` answers `false` for *there is nothing outstanding to wait
+        // for*, which is what the ring park used to say about a worker
+        // operation. The readiness wait above takes two seconds to time out, so
+        // this park is entered with the operation in flight on either path, and
+        // what is asserted is that the hook did **not** claim there was nothing
+        // to wait for.
         let moved = io::park_for(io::generation(), Some(std::time::Duration::from_millis(50)));
-        match runtime.files() {
-            // **The finding.** Something is in flight and the park says there
-            // is nothing to wait for.
-            Files::Completion => assert!(
-                !moved,
-                "the ring park saw a worker operation; if this is true now, the \
-                 entry in docs/open-decisions.md about standard input has been \
-                 answered by something and should be re-read"
-            ),
-            // On the fallback the bell *is* the park, so the same operation
-            // is waited for properly - which is what says the finding is about
-            // the **path** and not about readiness. Nothing is asserted here:
-            // whether this particular 50ms park returns is a timing answer, and
-            // a test that turned one into a claim would be flaky rather than
-            // informative.
-            Files::Blocking => {}
-        }
+        assert!(
+            moved,
+            "the park said there was nothing to wait for while a worker \
+             operation was in flight on the {} path; ADR-121 D1's eventfd is \
+             what makes a worker's reply something the ring park can wait for",
+            runtime.files().as_str()
+        );
         let _ = waiting.join();
+    }
+
+    /// **A future fed from a worker finishes under `block_on`, with other tasks
+    /// alive** ([ADR-121](../../../docs/specification/adr/adr-121.md) D3).
+    ///
+    /// The other half of the same claim, through the executor rather than
+    /// through the hook — and the half that could not be written at all before
+    /// D1. `io::waiting` is a worker operation as a future: it polls a reply
+    /// channel and stores no waker, so the only thing that can wake it is the
+    /// park, and the park is what D1 changed.
+    ///
+    /// *With other tasks alive*, because `main` alone is the case the defect
+    /// **hid**: with nothing else to poll, `block_on` spun round its loop and
+    /// eventually got the answer. A started task is what makes the executor park
+    /// properly, and a park that could not hear the worker is a program that
+    /// never ends.
+    ///
+    /// **Which is why `block_on` is driven on a thread of its own and joined
+    /// with a bound.** Its park is deliberately unbounded while `main` is still
+    /// running - an unbounded wait is what a program asked for - so a bell that
+    /// is not heard is a hang rather than a panic, and a test that hung would
+    /// report this defect by never finishing. The bound is the harness this test
+    /// brings with it.
+    #[test]
+    fn a_future_fed_from_a_worker_finishes_under_block_on() {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let (reader, mut writer) = std::io::pipe().expect("a pipe");
+        // A task that is alive and waiting on something its own thread cannot
+        // provide, which is what makes the executor **park** rather than spin
+        // round a ready queue - `Yield` would have kept it ready and hidden the
+        // very defect this is about.
+        let slot = exec::Slot::<()>::empty();
+        let ran = Arc::new(AtomicBool::new(false));
+
+        // Both arrive after the executor has had time to park, so what wakes it
+        // is a worker's reply and not a poll that was going to be ready anyway.
+        let filling = Arc::clone(&slot);
+        let writing = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            writer.write_all(b"x").expect("the peer writes");
+            filling.fill(());
+        });
+
+        let (told, heard) = std::sync::mpsc::channel();
+        let joined = Arc::clone(&slot);
+        let finished = Arc::clone(&ran);
+        std::thread::Builder::new()
+            .name("adr-121-block-on".to_string())
+            .spawn(move || {
+                exec::start(async move {
+                    exec::Waiting::on(joined).await;
+                    finished.store(true, Ordering::SeqCst);
+                });
+                let ready = exec::block_on(async {
+                    io::waiting(
+                        &reader,
+                        Interest::Readable,
+                        Some(std::time::Duration::from_secs(5)),
+                    )
+                    .await
+                });
+                let _ = told.send(ready.map_err(|e| e.to_string()));
+            })
+            .expect("the driving thread starts");
+
+        let ready = heard
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "`block_on` never came back: a future fed from a worker did not wake \
+                     the executor, which is the hang ADR-121 D3 exists to keep out"
+                )
+            });
+        assert!(
+            ready.expect("the readiness wait was answered"),
+            "a pipe with a byte in it is readable"
+        );
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "the task nobody joined still ran to its end (ADR-055 D5)"
+        );
+        let _ = writing.join();
     }
 
     /// **An expired `cleanup-deadline` is exit 70, said on the panic path**

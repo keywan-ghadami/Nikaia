@@ -40,13 +40,32 @@ pub(super) enum Op {
         reply: Sender<io::Result<Vec<u8>>>,
     },
     /// Wait until a socket can be read or written without blocking - D3's
-    /// readiness half. The worker owns the poller; the caller owns the socket.
+    /// readiness half. The worker owns the poller *and the descriptor it polls*.
+    ///
+    /// **A duplicate and not the caller's own**
+    /// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D4). While the
+    /// only surface was `io::wait`, the caller was blocked for the whole of the
+    /// wait and its borrow was the guarantee - `poll_one`'s safety comment said
+    /// so. `io::waiting` is the same wait as a **future**, and a future may be
+    /// dropped while the operation is still in flight, so the borrow is not
+    /// there to be had. A `dup` shares the file description, which is what
+    /// readiness is about, and costs one syscall.
     Readiness {
-        fd: std::os::fd::RawFd,
+        fd: std::os::fd::OwnedFd,
         interest: Interest,
         timeout: Option<std::time::Duration>,
         reply: Sender<io::Result<bool>>,
     },
+    /// All of standard input, read on the worker thread
+    /// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D4).
+    ///
+    /// **Not a second read shape**, which is that decision's own words: a stream
+    /// has no size to `stat` and nothing to put on the ring, so this is the
+    /// blocking read standard input always had - moved off the thread the
+    /// program runs on, now that a worker's reply can wake a park on either
+    /// mechanism. The lock `StdinLock` takes is the process's, which is what
+    /// makes one reader at a time true here as it is anywhere else.
+    Stdin { reply: Sender<io::Result<Vec<u8>>> },
     /// Stop after everything already queued. What shutdown sends (ADR-006 D5).
     Stop,
 }
@@ -205,6 +224,16 @@ fn perform(op: Op) {
         } => {
             let _ = reply.send(poll_one(fd, interest, timeout));
         }
+        Op::Stdin { reply } => {
+            use std::io::Read;
+
+            let mut bytes = Vec::new();
+            let read = std::io::stdin()
+                .lock()
+                .read_to_end(&mut bytes)
+                .map(|_| bytes);
+            let _ = reply.send(read);
+        }
         Op::Stop => {}
     }
 }
@@ -250,21 +279,24 @@ pub(super) fn blocking_write(
 /// is here is the mechanism behind one `std` surface, so that change is a
 /// `std` change.
 fn poll_one(
-    fd: std::os::fd::RawFd,
+    fd: std::os::fd::OwnedFd,
     interest: Interest,
     timeout: Option<std::time::Duration>,
 ) -> io::Result<bool> {
     use polling::{Event, Events, Poller};
+    use std::os::fd::AsRawFd;
 
+    let fd = fd.as_raw_fd();
     let poller = Poller::new()?;
     let key = 0usize;
     let event = match interest {
         Interest::Readable => Event::readable(key),
         Interest::Writable => Event::writable(key),
     };
-    // SAFETY: the descriptor is owned by the caller, which is blocked on this
-    // reply for the whole of the wait, so it cannot be closed underneath the
-    // poller. It is deleted again below, before the caller is answered.
+    // SAFETY: the descriptor is the `OwnedFd` this call holds, so it is open
+    // for the whole of the wait whatever the caller does - which is what
+    // [`Op::Readiness`] is a duplicate for. It is deleted again below, and
+    // closed when this function returns.
     unsafe { poller.add(fd, event)? };
 
     let mut events = Events::new();
@@ -306,7 +338,7 @@ mod tests {
     /// half of ADR-006 D5 that cannot hang.
     #[test]
     fn the_drain_is_bounded_by_its_deadline() {
-        use std::os::fd::AsRawFd;
+        use std::os::fd::AsFd;
 
         let workers = Workers::start(1);
         let (reply, answer) = channel();
@@ -314,7 +346,7 @@ mod tests {
         // outlives any deadline.
         let (quiet, _peer) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
         assert!(workers.send(Op::Readiness {
-            fd: quiet.as_raw_fd(),
+            fd: quiet.as_fd().try_clone_to_owned().expect("a duplicate"),
             interest: Interest::Readable,
             timeout: None,
             reply,
@@ -333,12 +365,12 @@ mod tests {
     #[test]
     fn readiness_tells_ready_from_timed_out() {
         use std::io::Write;
-        use std::os::fd::AsRawFd;
+        use std::os::fd::AsFd;
 
         let (here, there) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
         assert!(
             !poll_one(
-                here.as_raw_fd(),
+                here.as_fd().try_clone_to_owned().expect("a duplicate"),
                 Interest::Readable,
                 Some(std::time::Duration::from_millis(20))
             )
@@ -349,7 +381,7 @@ mod tests {
         (&there).write_all(b"x").expect("the peer writes");
         assert!(
             poll_one(
-                here.as_raw_fd(),
+                here.as_fd().try_clone_to_owned().expect("a duplicate"),
                 Interest::Readable,
                 Some(std::time::Duration::from_secs(5))
             )

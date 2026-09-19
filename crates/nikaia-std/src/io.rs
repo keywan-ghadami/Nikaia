@@ -11,20 +11,29 @@
 //! is exactly what the `sync` rule (Part II, 12.1) exists to keep out of a
 //! `par_iter` body.
 //!
-//! **They are `async` and they do not suspend yet**, and the difference is
-//! worth stating rather than leaving to be discovered. Since
-//! [ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 3 the
-//! signatures say a read from here may pause, which is what a caller's compiler
-//! reads and what makes the enclosing function `async` - and the body is still
-//! the blocking read it was. That is [ADR-038](../../../docs/specification/adr/adr-038.md)
-//! D3's own split: its mechanism serves **files**, and a stream needs the
-//! readiness half, which is built for sockets and not wired to standard input.
-//! An `async fn` that never awaits finishes on its first poll, so what a caller
-//! sees is a read that returns - exactly what it saw before. What is left is
-//! that the thread is given up at a `for line in io::lines()` rather than held,
-//! and `docs/open-work.md` carries it.
+//! **Whole-of-input reads suspend; a line at a time does not yet**
+//! ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
+//!
+//! Since [ADR-055](../../../docs/specification/adr/adr-055.md) §6 step 3 these
+//! signatures have said a read from here may pause, which is what a caller's
+//! compiler reads and what makes the enclosing function `async`. The bodies did
+//! not: the blocking read ran on the program's own thread, because a worker's
+//! reply could not wake an executor parked on the ring and a future fed from one
+//! had nowhere to come back to.
+//!
+//! ADR-121 D1 put the bell on the ring, so [`read`] and [`read_to_string`] are
+//! now the read they always were, performed on an I/O worker and **awaited**.
+//! There is still no second read shape and no ring path for a stream with no
+//! size to `stat`, which is D4's own sentence: what changed is the park.
+//!
+//! [`lines`] is the one that has not moved, and the reason is the language and
+//! not the runtime. A step of it is an `Iterator::next`, and a suspension point
+//! inside one would have to be `while let Some(x) = s.next().await` in the
+//! language below - a `Stream` trait Rust has not stabilised, and a `for` over a
+//! stream this language has not decided. `docs/open-work.md` carries that as the
+//! half it always said was the larger one.
 
-use std::io::{BufRead, Read};
+use std::io::BufRead;
 
 /// All of standard input, as text.
 ///
@@ -35,9 +44,15 @@ use std::io::{BufRead, Read};
 /// Reading it a second time yields what the operating system says, which is
 /// nothing.
 pub async fn read_to_string() -> Result<String, std::io::Error> {
-    let mut text = String::new();
-    std::io::stdin().lock().read_to_string(&mut text)?;
-    Ok(text)
+    let bytes = crate::rt::io::stdin_whole().await?;
+    // The same failure `std`'s own `read_to_string` reports, in the same kind:
+    // a stream that is not text is `InvalidData` and not a lossy string.
+    String::from_utf8(bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "standard input did not contain valid UTF-8",
+        )
+    })
 }
 
 /// All of standard input, as bytes.
@@ -45,9 +60,7 @@ pub async fn read_to_string() -> Result<String, std::io::Error> {
 /// The half for input that is not text - and the one that says what
 /// `read_to_string` is doing, since the only difference is the check.
 pub async fn read() -> Result<Vec<u8>, std::io::Error> {
-    let mut bytes = Vec::new();
-    std::io::stdin().lock().read_to_end(&mut bytes)?;
-    Ok(bytes)
+    crate::rt::io::stdin_whole().await
 }
 
 /// Standard input, one line at a time.
@@ -83,6 +96,12 @@ pub async fn read() -> Result<Vec<u8>, std::io::Error> {
 ///
 /// The trailing newline is not part of a line, and a final line without one is
 /// still a line.
+///
+/// **This one does not suspend**, and the module comment says why: a step is an
+/// `Iterator::next`, and a suspension point inside one needs a `for` over a
+/// stream that neither this language nor the one below has decided.
+/// [`read_to_string`] is the entry that does, for an input a program is willing
+/// to hold whole.
 pub async fn lines() -> Lines {
     Lines {
         inner: std::io::stdin().lock().lines(),
@@ -108,6 +127,77 @@ impl Iterator for Lines {
 #[cfg(test)]
 mod tests {
     use std::io::BufRead;
+
+    /// **Standard input is read on a worker, and the read is awaited**
+    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
+    ///
+    /// It has to be a *process*. There is one standard input per process, a test
+    /// may not consume it, and what is being asserted is that the executor
+    /// **parks** for the read and is woken by the worker's reply - which needs a
+    /// program whose standard input is a pipe somebody else is writing to.
+    ///
+    /// **The child bounds itself**, which is D3's *a hang is the failure this
+    /// may not have*. `exec::block_on`'s park is unbounded while `main` is
+    /// running, so a bell that is not heard would be a child that never exits
+    /// and a test that never finishes; the watchdog turns that into a status the
+    /// parent reads and a sentence that says what happened.
+    #[test]
+    fn standard_input_is_read_on_a_worker_and_awaited() {
+        use std::io::Write;
+
+        const NAME: &str = "standard_input_is_read_on_a_worker_and_awaited";
+        const CHILD: &str = "NIKAIA_STDIN_CHILD";
+        /// What the watchdog exits with. Not 70 and not 101, so that a hang is
+        /// told apart from an expired cleanup and from a panic.
+        const DEAF: i32 = 99;
+
+        if std::env::var_os(CHILD).is_some() {
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                eprintln!(
+                    "the child never got its input: the executor parked for a worker's \
+                     reply and was not woken (ADR-121 D1)"
+                );
+                std::process::exit(DEAF);
+            });
+            let text = crate::rt::exec::block_on(super::read_to_string()).expect("the input");
+            print!("READ[{text}]");
+            std::io::stdout().flush().expect("flushed");
+            return;
+        }
+
+        let mut child = std::process::Command::new(std::env::current_exe().expect("this binary"))
+            .args([NAME, "--nocapture"])
+            .env(CHILD, "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("the child started");
+
+        // Written after a pause, so the child reaches its park with nothing to
+        // read - which is the whole of what this is about. The pipe is then
+        // closed, because a whole-of-input read ends at the end of the input.
+        let mut input = child.stdin.take().expect("the child's standard input");
+        let writing = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            input.write_all(b"eins\nzwei\n").expect("the parent writes");
+        });
+
+        let ran = child.wait_with_output().expect("the child ran");
+        let _ = writing.join();
+        let said = String::from_utf8_lossy(&ran.stderr).into_owned();
+        let out = String::from_utf8_lossy(&ran.stdout).into_owned();
+        assert_ne!(
+            ran.status.code(),
+            Some(DEAF),
+            "the read never came back.\nstderr:\n{said}"
+        );
+        assert!(
+            out.contains("READ[eins\nzwei\n]"),
+            "the whole of the input came back through the worker.\nstdout:\n{out}\nstderr:\n{said}"
+        );
+    }
 
     /// The three cases a step has, on a reader that is not standard input -
     /// there is one stdin per process and a test may not consume it.

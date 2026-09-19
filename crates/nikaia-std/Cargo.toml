@@ -27,6 +27,12 @@ polling = "3.11"
 # binary built on a machine with io_uring still runs on one without it.
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = "0.7"
+# ADR-121 D1's bell: an `eventfd` on the ring, which is three calls - make it,
+# write a one to it, read it back to zero. **No package is added by this line**:
+# `io-uring` above resolves `libc` already, so what this declares is that `std`
+# names it directly rather than reaching it by accident. Linux-only for the same
+# reason the ring is: off Linux there is no ring to hang a bell on.
+libc = "0.2"
 
 # **No build dependencies, and that is the point** (ADR-002 D4). This crate used
 # to build the Stage 0 compiler to lower its own `src/*.nika`, which meant Cargo

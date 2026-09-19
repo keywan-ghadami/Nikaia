@@ -464,56 +464,38 @@ program that does not compile, so where the two readings differ it takes the
 wider. `crates/nikaia/tests/recursive_methods.rs` holds the two cycles and the
 three shapes that must *not* box.
 
-### 2.3. Standard input is `async` and does not suspend
+### 2.3. A `for` over a stream has no suspension point
 
-**Answered by [ADR-121](specification/adr/adr-121.md):** the defect is the ring's park, which cannot hear a worker's bell; an eventfd on the ring makes every worker operation awaitable, standard input included, and the proposal below to wire standard input to readiness is withdrawn. The entry stays until the input suspends.
+**[ADR-121](specification/adr/adr-121.md) closed the first half of this entry
+and renamed what is left.** The defect was the ring's park, which could not hear
+a worker's bell; an eventfd on the ring makes every worker operation awaitable,
+and the proposal this entry used to carry — wire standard input to readiness —
+is withdrawn, because readiness was never the problem.
 
-[ADR-055](specification/adr/adr-055.md) §6 step 3 made every pausing `std` entry
-an `async fn`, and made **files** actually suspend: a read is a slot on the ring
-or a worker's reply, and `exec::block_on` is the only place a program parks. A
-read of standard input is not. `io::read`, `io::read_to_string` and `io::lines`
-are `async fn` whose bodies are the blocking read they always were, so they
-finish on their first poll.
+**`io::read` and `io::read_to_string` suspend now.** The read is the blocking one
+standard input always had, performed on an I/O worker and awaited: no second read
+shape, and no ring path for a stream that has no size to `stat`. What changed is
+the park.
 
-That is [ADR-038](specification/adr/adr-038.md) D3's own split rather than
-something the step left half done: its completion mechanism serves files, and a
-stream needs the readiness half — which is built (`rt::io::wait`, for sockets)
-and not wired to standard input.
+**`io::lines` does not, and the reason is the language.** A step of it is an
+`Iterator::next`, and a suspension point inside one is `while let Some(x) =
+s.next().await` in the language below — a `Stream` trait Rust has not stabilised
+and a `for` over a stream this language has not decided. This entry always said
+that was the larger half; it is now the whole of it.
 
-*Evidence: none, and none is possible yet.* A caller sees a read that returns,
-which is what it saw before, so no program behaves differently. What is missing
-is only that the thread is **held** rather than given up for the duration of
-`for line in io::lines()` — which nothing can observe until something else wants
-the thread. Something can now: at `user_parallelism = yes` a task is on a thread
-of its own, so a `main` blocked in `io::lines()` is a thread the pool could have
-had.
+*Evidence: none, and none is possible yet.* A caller sees a step that returns,
+which is what it saw before. What is missing is that the thread is **held** for
+the duration of `for line in io::lines()` rather than given up — which nothing
+can observe until something else wants the thread, and at
+`user_parallelism = yes` something can: a `main` blocked in `io::lines()` is a
+thread the pool could have had.
 
-*What it needs is not what this entry used to say.* It proposed
-`Op::Readiness` against standard input's descriptor. **That would not have
-worked**, and the reason is the park hook rather than readiness: the bell a
-worker rings is the *fallback* path's, and on the completion path the executor
-parks on the **ring**, whose `park` answers off a count of ring jobs. A worker
-operation is not one, so a worker's reply cannot wake the executor and no future
-may be fed from one — `exec::block_on` spins or panics with its own *a future
-returned `Pending` without arranging for its waker to be called*.
-`a_worker_operation_does_not_wake_the_completion_park` in
-`crates/nikaia-std/src/rt/mod.rs` holds the finding and goes red the day it
-stops being true.
-
-**So the first half is a decision and it is in
-[`open-decisions.md`](open-decisions.md)**: put standard input on the ring, or
-make the ring park hear the bell. The second is the larger one and stays a
-question of its own: a `for` over a **stream** is `while let Some(x) =
-s.next().await` in the language below, and Rust has no stable trait for one. The
-parallel is [ADR-025](specification/adr/adr-025.md) D6's `iterates_fallibly` — a
-property of the *type*, recorded in the ledger, that makes the emitter write the
-step differently — so the shape to copy exists.
-
-*And something larger rests on the same answer.* `rt::io::wait` is D3's
-readiness half, built for sockets, and it **cannot be awaited** either — only
-blocked on, for exactly this reason. That is what an HTTP server needs, so the
-entry below about there being no HTTP server waits on this decision and not only
-on its own.
+*The shape to copy exists.* [ADR-025](specification/adr/adr-025.md) D6's
+`iterates_fallibly` is a property of the **type**, recorded in the ledger, that
+makes the emitter write the step differently — which is what a pausing step would
+need. What it waits on is a ruling about the `for`, not work: it is a question,
+and when it becomes one it belongs in [`open-decisions.md`](open-decisions.md)
+rather than here.
 
 ### 2.4. The lock is built and every rule around it is not
 
@@ -1198,7 +1180,7 @@ which is a corpus migration rather than a rule change.
 word-sized values and the second lowering, with `explain` naming which row a
 value fell in; `--sharing` on a large `get`.
 
-### 2.24. A cleanup the deadline cut off names the resource
+### 2.23. A cleanup the deadline cut off names the resource
 
 [ADR-112](specification/adr/adr-112.md). **Steps 2 and 3 are built**: an
 expired `cleanup-deadline` ends the program with exit status 70, and the
@@ -1219,7 +1201,7 @@ nothing about the status changes.
 exit code can be set. The hook has already run and said what happened, so
 that profile loses the status and not the message.
 
-### 2.25. `?.` reaches through a view
+### 2.24. `?.` reaches through a view
 
 [ADR-113](specification/adr/adr-113.md). `?.` takes nothing: it reaches
 through a view of its receiver, and the result is a copy where the member
@@ -1235,7 +1217,7 @@ value"* today.
 `as_ref()`; the tether analysis reading the result as a view; the translation
 removed and a test that uses the receiver again.
 
-### 2.26. Reading a map through the brackets is a `T?`
+### 2.25. Reading a map through the brackets is a `T?`
 
 [ADR-114](specification/adr/adr-114.md). `m[k]` on a map answers a `T?`,
 `get` says the same, `m[k] = v` still inserts, `m[k] += 1` is written
@@ -1251,7 +1233,7 @@ key came from the same map a line earlier.
 an output type per container; the checker typing the read as `T?` and
 refusing `+=`; the two example lines, Part I 4.5 and a test.
 
-### 2.27. An `overlap` keeps every failure
+### 2.26. An `overlap` keeps every failure
 
 [ADR-115](specification/adr/adr-115.md). Every error carries a `secondary`
 list; an `overlap`'s later failing branches join the winner's list in written
@@ -1265,7 +1247,7 @@ and the printer; the `overlap` join appending; the cleanup attachment
 through the list; Part I 8.1.2's example and a test with two failing
 branches.
 
-### 2.28. `from` is a name, and a file a build reads is `asset("…")`
+### 2.27. `from` is a name, and a file a build reads is `asset("…")`
 
 [ADR-116](specification/adr/adr-116.md). `from` leaves the reserved list, so
 `fs::rename(from:, to:)` parses as Part III writes it; the build-time read is
@@ -1282,7 +1264,7 @@ language's words, where the old spelling was a parse fragment.
 table with the `dsl X from e` message matching the bare word; `asset("…")`
 when the second stage of `comptime` lands; the two `fs` entries.
 
-### 2.29. `loop`, `const`, `macro` and `quote` are names
+### 2.28. `loop`, `const`, `macro` and `quote` are names
 
 [ADR-117](specification/adr/adr-117.md). The four leave the reserved list,
 and what each used to be told a reserved word, the undeclared-name refusal
@@ -1292,7 +1274,7 @@ macros*. **Nothing of it is built**: the four are in `parser::RESERVED_WORDS`.
 *What it needs, in the record's order (§5):* the four out of the parser's
 table; the three help texts on `NK1117` and a test per word.
 
-### 2.30. `with` is a copy of a value with named fields changed
+### 2.29. `with` is a copy of a value with named fields changed
 
 [ADR-118](specification/adr/adr-118.md). `p with { x: p.x + 1 }` is a new
 value of the same type; the braces are the literal's, only the top level, the
@@ -1304,7 +1286,7 @@ the checker's field resolution and refusals, the enum operand refused; the
 lowering to a struct expression with a base; `examples/1brc.nika`'s `Stats`
 and a test.
 
-### 2.31. A target without an operating system
+### 2.30. A target without an operating system
 
 [ADR-119](specification/adr/adr-119.md). A bare-metal target with
 `user_parallelism` pinned to `no`; `no_std` emission with a target prelude
@@ -1320,7 +1302,7 @@ has one Rust half. Scheduled after the HTTP server.
 profile; build-time settings and the deadline; the availability rows and a
 first program.
 
-### 2.32. A grammar's action is the block after the pattern, and two borrowed names go
+### 2.31. A grammar's action is the block after the pattern, and two borrowed names go
 
 [ADR-120](specification/adr/adr-120.md). Part II 10.8 is the normative page
 of everything a grammar may write. A rule's action is `{ … }` after its
@@ -1337,18 +1319,29 @@ which now write the new form and are fragments until the parser takes it.
 with the arrow form refused; the emitter writing the engine's arrow; the two
 names refused; the examples rewritten.
 
-### 2.34. The ring's park hears the bell
+### 2.32. The ring's park hears the bell
 
-[ADR-121](specification/adr/adr-121.md). An eventfd on the ring, always
-armed, that `ring_the_bell` writes to; its completion carries its own user
-data and is not an operation's; the test that a worker reply does not wake a
-ring park is inverted; `io::read`, `io::read_to_string`, `io::lines` and
-`rt::io::wait` are awaited. **Nothing of it is built.**
+[ADR-121](specification/adr/adr-121.md). **Built, except `io::lines`.** The ring
+carries an eventfd with a poll always armed and its own user data; the bell
+writes to it as well as bumping the fallback's count; the bell's completion is
+answered by draining the descriptor and arming the next poll and is not counted
+among the ring's outstanding jobs, so a park with only the bell armed still
+sleeps. `rt::io::wait` has a future beside it, and `io::read` and
+`io::read_to_string` are awaited reads on a worker.
 
-*What it needs, in the record's order (§5):* the eventfd and its re-arming;
-the bell writing to it; the tests; the four entries awaited.
+*What the building found that the record had not named:* a **poll** and not a
+read, which keeps `uring`'s soundness rule out of the bell entirely; the
+descriptor beside the lock rather than inside it, because a worker that had to
+take that lock could not wake the thread holding it; the bell **coalescing**, so
+the park checks the fallback's own generation inside that lock; and a park with a
+limit **bounded** by `IORING_ENTER_EXT_ARG`, because after D1 an unheard bell
+would be a hang where there had been a panic — which is D3 read strictly.
 
-### 2.35. A function-typed parameter lowers by its type
+*What is left is `io::lines`*, and it is §2.3 above rather than work here: a step
+of it is an `Iterator::next`, and the `for` over a stream that would give it a
+suspension point is undecided.
+
+### 2.33. A function-typed parameter lowers by its type
 
 [ADR-122](specification/adr/adr-122.md). Without `sync` the future shape, run
 or kept; with `sync` a plain closure; the refusal of a pausing lambda at a run
@@ -1376,7 +1369,7 @@ writable now, and what it waits on is `examples/http/` declaring `route` — whi
 is ADR-102's consequence and needs the package rewritten rather than the
 compiler changed.
 
-### 2.36. `crosses` says *no* as well as *yes*
+### 2.34. `crosses` says *no* as well as *yes*
 
 [ADR-123](specification/adr/adr-123.md). `crosses = false` is the claim a
 type may not cross a thread; absent stays *nothing recorded*; the describer
@@ -1389,10 +1382,7 @@ is a boolean.
 verdict reading `false`; the describer and the example's description; the
 refusals' tests firing.
 
----
-
-
-### 2.33. A C declaration cannot name a pointer
+### 2.35. A C declaration cannot name a pointer
 
 [ADR-124](specification/adr/adr-124.md) §4, and the only part of that record
 left. `extern` and `unsafe` are reserved words with constructs, an
