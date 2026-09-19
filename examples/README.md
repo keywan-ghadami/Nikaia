@@ -1,7 +1,7 @@
 # Nikaia Examples
 
-Twelve of the thirteen programs here compile, run, and are checked by `cargo test`. The
-thirteenth is written at specification level — it shows what Nikaia 0.0.7 is meant to look like,
+Thirteen of the fourteen programs here compile, run, and are checked by `cargo test`. The
+fourteenth is written at specification level — it shows what Nikaia 0.0.7 is meant to look like,
 and what it needs is listed under *Gaps* below.
 
 Two of them are a **pair**: `http/` is a package and `hello-http/` is a program that reaches it
@@ -25,6 +25,7 @@ down rather than described.
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 | [`http/`](http/) | the `http` **package** — what a handler is given and gives back, and HTTP/1.1's text half | ✅ through its consumer |
 | [`hello-http/`](hello-http/) | a program that reaches `http` **by a path**: the dependency arm, with a program on the end of it | ✅ `crates/nikaia/tests/project.rs` |
+| [`sqlite/`](sqlite/) | a real **C library**, end to end: a buffer, two handles with their `cleanup`, an out-parameter and text the library owns | ✅ `crates/nikaia/tests/foreign_pointers.rs`, skipped where the machine has no `libsqlite3` |
 
 Each of the eleven single programs is compiled and run **at both settings**, and their output
 must be identical — that is the claim the switches rest on, and a test is where it belongs

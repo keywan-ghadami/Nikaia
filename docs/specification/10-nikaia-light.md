@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.56 (Draft)
+**Version:** 0.0.57 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -2098,7 +2098,9 @@ impl Error for ConfigError {
 An error **carries what belongs to it**: "not found" carries the path. An
 `enum` is the language's type for one of a fixed set of things (4.4), and a
 `match` over one is checked for completeness. The type carries no marker: what
-is thrown implements `Error`, and the `impl` line says so.
+is thrown implements `Error`, and the `impl` line says so — so a number, a
+`bool`, a character and text are not errors, and a `throw` of one is refused
+with `NK1161`.
 
 **Raising: `throw`.**
 

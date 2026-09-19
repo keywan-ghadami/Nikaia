@@ -2247,6 +2247,10 @@ impl<'p> Emitter<'p> {
         out.push(&format!(
             "#[repr(transparent)]\n\
              #[derive(Debug)]\n\
+             // A C type keeps the name its header gives it, which is not the\n\
+             // shape Rust's own lint expects (Part III, C.1: what `rustc` would\n\
+             // say here is about a file nobody wrote).\n\
+             #[allow(non_camel_case_types)]\n\
              pub struct {name}(core::ptr::NonNull<core::ffi::c_void>);\n\
              \n\
              #[allow(dead_code)]\n\

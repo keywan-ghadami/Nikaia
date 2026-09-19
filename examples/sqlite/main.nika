@@ -1,0 +1,60 @@
+// **`sqlite3` from end to end**
+// ([ADR-147](../../docs/specification/adr/adr-147.md) §5 step 5), which is that
+// record's own check that its four decisions are enough for a real library
+// rather than for four libc calls.
+//
+// Everything the C boundary offers is here and nothing else is: a **buffer**
+// lent for the call (`&[u8]`), an **opaque handle** with its `cleanup`
+// (`sqlite3`, `sqlite3_stmt`), a handle that **may be absent** filled through an
+// out-parameter ([ADR-155](../../docs/specification/adr/adr-155.md) D1), and
+// **text the library owns** copied once by `std` (`CStr`).
+//
+// What closes the database and the statement is written **nowhere**: each
+// handle's release runs at the end of its scope, which is Part I 6.4's
+// `cleanup` read at this boundary.
+//
+// Build it with `-l sqlite3`.
+
+extern "C" {
+    opaque type sqlite3 released by sqlite3_close
+    opaque type sqlite3_stmt released by sqlite3_finalize
+
+    fn sqlite3_open(path: &[u8], out: &mut sqlite3?) -> i32
+    fn sqlite3_close(db: sqlite3) -> i32
+    fn sqlite3_prepare_v2(db: sqlite3, sql: &[u8], bytes: i32, out: &mut sqlite3_stmt?, tail: &mut CStr?) -> i32
+    fn sqlite3_finalize(stmt: sqlite3_stmt) -> i32
+    fn sqlite3_step(stmt: sqlite3_stmt) -> i32
+    fn sqlite3_column_text(stmt: sqlite3_stmt, column: i32) -> CStr?
+}
+
+enum Refused {
+    NoDatabase,
+    NoStatement
+}
+
+impl Error for Refused {
+    fn message(&self) -> String {
+        match self {
+            Refused::NoDatabase => "sqlite3_open handed back no database".to_string()
+            Refused::NoStatement => "sqlite3_prepare_v2 handed back no statement".to_string()
+        }
+    }
+}
+
+fn main() throws {
+    let mut slot: sqlite3? = null
+    let opened = unsafe { sqlite3_open(":memory:\0", slot) }
+    println(f"opened {opened}")
+    let db = slot ?? throw Refused::NoDatabase
+
+    let mut ready: sqlite3_stmt? = null
+    let mut tail: CStr? = null
+    let prepared = unsafe { sqlite3_prepare_v2(db, "select 'hello, C'\0", -1, ready, tail) }
+    println(f"prepared {prepared}")
+    let stmt = ready ?? throw Refused::NoStatement
+
+    let stepped = unsafe { sqlite3_step(stmt) }
+    println(f"stepped {stepped}")
+    let text = unsafe { sqlite3_column_text(stmt, 0) }
+    println(text?.to_string() ?? "no row")
+}

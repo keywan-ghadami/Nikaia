@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.57] — 2026-09-19
+
+`sqlite3` from end to end
+([ADR-147](docs/specification/adr/adr-147.md) §5 step 5) — which completes that
+record and finds three things four libc calls could not.
+
+### Added
+
+- **`examples/sqlite/main.nika`**: it opens a database, prepares a statement, steps it and reads a row back — `hello, C`. Everything the C boundary offers is in it and nothing else is: a buffer lent for the call, an opaque handle with its `cleanup`, a handle that may be absent filled through an out-parameter, and text the library owns copied once by `std`. **What closes the database and the statement is written nowhere.**
+- **Its test skips rather than fails where the machine has no `libsqlite3`.** A gate that depends on a library not every machine has is a gate people learn to ignore — and what proves the decisions is libc, on any machine, in the four tests beside it. What `sqlite3` adds is a **library's** surface rather than four calls.
+
+### Found by step 5
+
+- **The four decisions are not four.** `sqlite3_prepare_v2` takes the database the out-parameter filled, and a `sqlite3?` cannot be handed to a parameter that takes a `sqlite3`: `??` wants a fallback and there is no second handle, `?.` reaches a member and this is a free call. The language turned out to have the answer already — `slot ?? throw Refused::NoDatabase` narrows a `T?` to a `T`, which is [ADR-138](docs/specification/adr/adr-138.md) D1's jump-as-an-expression meeting [ADR-089](docs/specification/adr/adr-089.md)'s `??`. Nothing had ever written the two together, and no shorter program would have.
+- **A lint about the generated file.** A C type keeps the name its header gives it, and `pub struct sqlite3` is not the shape Rust's own `non_camel_case_types` expects — [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class, invisible until a library with a lower-case type name was called.
+
+### Fixed
+
+- **`NK1161`: `throw "no database"` read like a program and was not one.** Part I 7.1 says *what is thrown implements `Error`, and the `impl` line says so*, and text does not — so `rustc` answered *the trait bound `str: Error` is not satisfied* about a file nobody wrote. It had been writable since `throw` existed and no program in the tree had written one.
+- **The *kind* and not the type**, which is `NK1154`'s own machinery one construct over: a bare `3` fits every numeric type and arrives as `?` (Part I 2.4), so the kind is the part of a literal that is known without one. Only Part I 2.2's own types — a type this file declares may have its `impl Error` in another file of the same package, a package's type is not this compiler's to answer for, and a caught error re-thrown is a `?` (C.4).
+
 ## [0.0.56] — 2026-09-19
 
 A handle may be absent, and `T?` is how it says so

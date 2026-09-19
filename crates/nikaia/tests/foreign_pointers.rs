@@ -845,3 +845,133 @@ fn main() throws {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **`sqlite3` from end to end**
+/// ([ADR-147](../../../docs/specification/adr/adr-147.md) §5 step 5), which is
+/// that record's own check that its four decisions are enough — for a **real
+/// library's** surface rather than for four libc calls.
+///
+/// Everything the boundary offers is in `examples/sqlite/main.nika` and nothing
+/// else is: a buffer lent for the call, an opaque handle with its `cleanup`, a
+/// handle that may be absent filled through an out-parameter
+/// ([ADR-155](../../../docs/specification/adr/adr-155.md) D1), and text the
+/// library owns copied once by `std`. What closes the database and the
+/// statement is written **nowhere**.
+///
+/// **It skips rather than fails where the machine has no `libsqlite3`.** A gate
+/// that depends on a library not every machine has is a gate people learn to
+/// ignore, and what this test is for is the four decisions rather than the
+/// presence of a package — libc already proves those, on any machine, in the
+/// four tests above.
+#[test]
+fn sqlite3_from_end_to_end() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sqlite/main.nika"),
+    )
+    .expect("the example is in the tree");
+    let rust = lowered(&source);
+
+    // What the record's four decisions look like in one program.
+    for expected in [
+        // D1: a buffer lent for the call.
+        "sql: *const u8",
+        // D3: a handle, its cleanup, and the lending.
+        "impl Drop for sqlite3",
+        "sqlite3_step(stmt.lent())",
+        // ADR-155 D1 and D2: the out-parameter, one pointer to one pointer.
+        "out: *mut Option<sqlite3>",
+        "let mut slot: Option<sqlite3> = None;",
+        // D4: text the library owns, copied by `std`.
+        "CStr::maybe(sqlite3_column_text(",
+    ] {
+        assert!(
+            rust.contains(expected),
+            "{expected}\n--- the Rust ---\n{rust}"
+        );
+    }
+
+    let dir = common::scratch_dir("sqlite3");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(
+        &file,
+        &["-l", "sqlite3", "-o", binary.to_str().expect("utf-8 path")],
+    );
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    if !out.status.success() {
+        // **The one thing that is allowed to be missing.** Anything else is a
+        // failure of the lowering and is reported as one.
+        assert!(
+            said.contains("-lsqlite3") || said.contains("library 'sqlite3' not found"),
+            "the lowering compiles where the library is there:\n{said}\n--- the Rust ---\n{rust}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!("skipped: this machine has no `libsqlite3`");
+        return;
+    }
+    assert!(
+        !said.contains("warning:"),
+        "and `rustc` says nothing about the file it was handed:\n{said}"
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "opened 0\nprepared 0\nstepped 100\nhello, C",
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **`NK1161`: a `throw` of something that is not an error** (Part I 7.1), and
+/// the second thing step 5 found.
+///
+/// *"What is thrown implements `Error`, and the `impl` line says so."* A number,
+/// a `bool`, a `char` and text are Part I 2.2's own types and none of them does
+/// — nor ever will. `throw "no database"` read like a program and `rustc`
+/// answered *the trait bound `str: Error` is not satisfied* about a file nobody
+/// wrote, which is [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
+/// class. It had been writable since `throw` existed, and no program in the
+/// tree had written one.
+#[test]
+fn what_is_thrown_is_an_error() {
+    for (thrown, named) in [
+        ("\"no database\"", "text"),
+        ("3", "a number"),
+        ("true", "a `bool`"),
+    ] {
+        let found: Vec<_> = findings(&format!("fn main() throws {{\n\x20   throw {thrown}\n}}\n"))
+            .into_iter()
+            .filter(|f| f.code == "NK1161")
+            .collect();
+        assert_eq!(found.len(), 1, "`throw {thrown}`: {found:#?}");
+        assert!(found[0].message.contains(named), "{found:#?}");
+    }
+}
+
+/// **And it is silent about everything else** (C.4), which is what makes the
+/// rule safe: a type this file declares may have its `impl Error` in another
+/// file of the same package, a package's type is not this compiler's to answer
+/// for, and a caught error re-thrown is a `?`.
+#[test]
+fn a_throw_this_compiler_cannot_type_is_left_alone() {
+    let quiet = [
+        "enum Refused { NotFound }\n\
+         \n\
+         fn main() throws {\n\x20   throw Refused::NotFound\n}\n",
+        "fn main() throws {\n\
+         \x20   let n = \"3\".parse() catch { throw error }\n\
+         \x20   println(f\"{n}\")\n\
+         }\n",
+    ];
+    for source in quiet {
+        assert!(
+            findings(source).iter().all(|f| f.code != "NK1161"),
+            "{:#?}",
+            findings(source)
+        );
+    }
+}

@@ -1132,38 +1132,7 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
-### 2.41. `sqlite3` is not written down as the test that C works
-
-[ADR-147](specification/adr/adr-147.md) and
-[ADR-155](specification/adr/adr-155.md) are **built**, every decision of both: a
-buffer is a `&[T]` or a `&mut [T]` that lives for the call, the call makes the
-address, a length beside a buffer that cannot be shown to fit it is `NK1159`, a
-library's handle is an `opaque type … released by …` whose release is a
-`cleanup`, reaching past one is `NK1160`, text a library hands back is a `CStr`
-that `std` copies, and a handle that may be absent is a `T?` — which costs
-nothing, because a handle holds a non-null address and `T?` is the absence of
-one. `&mut sqlite3?` is `sqlite3 **`, so the out-parameter works rather than
-merely typechecking. `Pointer[T]` stays `NK1135`, permanently.
-
-*What is left is one test*, [ADR-147](specification/adr/adr-147.md) §5 step 5:
-`sqlite3` from `sqlite3_open` to `sqlite3_close`, as the record's own check that
-the four decisions are enough. Nothing is in its way any more — the question
-that was is answered.
-
-*It is not what proves the four, and that is worth saying before somebody
-writes it.* libc does, on any machine: four of the twenty-nine tests in
-`crates/nikaia/tests/foreign_pointers.rs` compile against it and run — `strlen`
-and `abs`, `fopen`/`fclose`/`fileno`, `getenv` both ways, and
-`posix_memalign`'s out-parameter. What `sqlite3` adds is a **real library's**
-surface rather than a libc call each, which is the thing a record can be wrong
-about in a way four calls cannot show.
-
-*What it needs:* the declarations, a `.nika` program that opens a database in a
-temporary file and reads a row back, and a test that skips rather than fails
-where the machine has no `libsqlite3` — because a gate that depends on a
-library not every machine has is a gate people learn to ignore.
-
-### 2.42. `select` is not a keyword, and nothing cancels a task
+### 2.41. `select` is not a keyword, and nothing cancels a task
 
 [ADR-148](specification/adr/adr-148.md). Part II 12.4's block is a parse error
 and carries [ADR-141](specification/adr/adr-141.md) D2's *unspecified* mark —
@@ -1179,7 +1148,7 @@ its `cleanup` is adopted, the deadline bounds it. The runtime's race is what
 grammar; the lowering onto the runtime's race; `cancel()` on the handle, over
 the same call; the page's example as a test that runs, and the mark taken off.
 
-### 2.43. There is no channel
+### 2.42. There is no channel
 
 [ADR-149](specification/adr/adr-149.md). Part II 12.5's
 `let (tx, rx) = channel::bounded(100)` names nothing, and carries the
@@ -1191,7 +1160,7 @@ the pause on a full `send`; `std::channel` and its four entries, `send` carrying
 no `sync` and `recv` handing back a `T?`; the page's example as a test that
 runs.
 
-### 2.44. There is no duration
+### 2.43. There is no duration
 
 [ADR-150](specification/adr/adr-150.md). `5.seconds()` is a method on an
 integer that no ledger describes, and Part II 12.4 carries the *unspecified*
@@ -1202,7 +1171,7 @@ the timeout arm its example writes.
 entries; the integer extension, five names; `sleep` taking one; the page's line
 as a test that runs.
 
-### 2.45. The prelude is what the compiler happens to know
+### 2.44. The prelude is what the compiler happens to know
 
 [ADR-154](specification/adr/adr-154.md).
 `crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and

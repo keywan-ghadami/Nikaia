@@ -4330,7 +4330,8 @@ impl<'a> Checker<'a> {
             // own - the same shape a `return` has. What it throws is walked,
             // because a mistyped constructor inside it is still a mistake.
             Expr::Throw(inner) => {
-                self.expr(inner, span);
+                let thrown = self.expr(inner, span);
+                self.a_thrown_value_that_is_not_an_error(inner, &thrown, span);
                 Ty::Unknown
             }
 
@@ -6862,6 +6863,57 @@ impl<'a> Checker<'a> {
             args: vec![agreed],
             view: false,
         }
+    }
+
+    /// `NK1161`: a `throw` of something that is not an error (Part I 7.1).
+    ///
+    /// *"What is thrown implements `Error`, and the `impl` line says so."* A
+    /// number, a `bool`, a `char` and **text** are Part I 2.2's own types and
+    /// none of them does — nor ever will, because an `impl` for one would have
+    /// to be written somewhere and there is nowhere.
+    ///
+    /// **Only those**, which is the whole rule and is what makes it safe. A
+    /// type this file declares may have its `impl Error` in another file of the
+    /// same package ([ADR-047](../../docs/specification/adr/adr-047.md)), a
+    /// package's type is not this compiler's to answer for
+    /// ([ADR-046](../../docs/specification/adr/adr-046.md) D2), and a caught
+    /// error re-thrown is a `?` — so each of those is left alone, which is
+    /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s rule.
+    ///
+    /// **Found by writing `sqlite3` end to end**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) §5 step 5), which is
+    /// what that step is for: `throw "no database"` read like a program and
+    /// `rustc` answered *the trait bound `str: Error` is not satisfied* about a
+    /// file nobody wrote. It had been writable since `throw` existed and no
+    /// program in the tree had written one.
+    fn a_thrown_value_that_is_not_an_error(&mut self, value: &Expr, thrown: &Ty, span: &Span) {
+        // **The *kind* and not the type**, which is `NK1154`'s own machinery one
+        // construct over: a bare `3` fits every numeric type and so it arrives
+        // here as `?` (Part I 2.4), and the kind is the part of a literal that
+        // is known without one. `element_kind` answers for a literal *or* for a
+        // type it recognises, which is exactly the set that can never be an
+        // error.
+        let Some(what) = element_kind(value, thrown) else {
+            return;
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1161",
+            message: format!("this throws {what}, and what is thrown is an error"),
+            notes: vec![
+                "an error is a type with an `impl Error` on it, which is where its \
+                 `message` is written - the type carries no marker and the `impl` line \
+                 is what says so (Part I, 7.1)"
+                    .to_string(),
+            ],
+            help: Some(
+                "declare one: `enum Refused { NotFound }` with an \
+                 `impl Error for Refused { fn message(&self) -> String { … } }`, and \
+                 throw a value of it - an error carries what belongs to it"
+                    .to_string(),
+            ),
+        });
     }
 
     /// **Whether this argument is a count a C declaration takes in `size_t`**
