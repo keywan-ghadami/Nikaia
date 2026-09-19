@@ -135,8 +135,19 @@ const PLAIN: &[&str] = &[
 /// where the value under it may both **move** to another thread and be **looked
 /// at** from one - `Arc<T>` in the language below - and that is exactly the
 /// property every name in [`PLAIN`] and this list is required to have.
+/// **The two ends of a channel are in this list since
+/// [ADR-149](../../../../docs/specification/adr/adr-149.md) D4**, and that is
+/// where that decision is built: *the value type must cross, checked where `tx`
+/// moves into a `spawn`*. Being a container is the whole of it — the crossing
+/// analysis already asks the question at a move, so nothing about channels had
+/// to be written anywhere else.
+///
+/// They meet the invariant above: what is under either end is an `Arc` over a
+/// lock, which may both move to another thread and be looked at from one
+/// exactly when the value it carries may.
 const CONTAINERS: &[&str] = &[
-    "BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Result", "Shared", "Vec",
+    "BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Receiver", "Result", "Sender",
+    "Shared", "Vec",
 ];
 
 /// A lock: the one family whose answer depends on where the value is going

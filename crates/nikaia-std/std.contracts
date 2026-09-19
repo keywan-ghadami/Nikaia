@@ -1377,3 +1377,51 @@ doc = "This many millionths of a second, as a span of time."
 pub = true
 signature = "(span: Duration)"
 doc = "Wait out a span of time.\n\nThe thread is given up rather than held, so other tasks run while this waits."
+
+# --- Message passing (ADR-149) -----------------------------------------------
+#
+# **No language construct** (D1): two values, two methods, and the tuple `let`
+# that binds them was already built (ADR-098). What this block costs is four
+# entries.
+#
+# `-> (Sender[$T], Receiver[$T])` names the shape a `let` destructures. The
+# variable stays unbound - nothing at the call says what the channel carries -
+# so it becomes `?`, which is ADR-031's rule and is enough: what the two methods
+# need from it is the *type name*, so that `tx.send(…)` resolves to the entry
+# below and takes the `.await` its missing `sync` line asks for.
+[fn."channel::bounded"]
+pub = true
+sync = true
+touches = []
+signature = "(capacity: i64) -> (Sender[$T], Receiver[$T])"
+doc = "A channel of `capacity` values, and its two ends.\n\nThere is no unbounded channel: a capacity is a promise about memory, and an\nunbounded one is a `send` that never pauses. A program that wants *unbounded*\nwrites a large number - and has said it."
+
+[type."Sender"]
+pub = true
+doc = "The sending end of a channel.\n\nHanding it into a `spawn` is where the crossing check asks whether what the\nchannel carries may go to another thread."
+
+[type."Receiver"]
+pub = true
+doc = "The receiving end of a channel.\n\n`recv` hands back a `T?`, and `null` means every sender is gone."
+
+# **A suspension point**, which is the missing `sync` line (D2): a `send` waits
+# for room where the channel is full, so a `sync` body cannot send on one and
+# the compiler names the promise in the way - without a rule about channels,
+# because the column *is* the rule. That is what a bounded channel is for:
+# back-pressure is a pause, and a pause is something this ledger already talks
+# about.
+#
+# No `touches`, which is the fail-closed answer: what a send orders against is
+# whatever the other end does with the value.
+[fn."Sender::send"]
+pub = true
+signature = "(&Sender[$T], value: ?)"
+doc = "Put a value in, waiting for room where there is none.\n\nIt gives the thread up rather than holding it, so other work runs while this\nwaits."
+
+# **`-> $T?`**, and the `?` is D3: a closed channel is the ordinary **end** of a
+# stream rather than a failure, so `??` is what reads it (Part I 3.5) and
+# nothing here `throws`.
+[fn."Receiver::recv"]
+pub = true
+signature = "(&Receiver[$T]) -> $T?"
+doc = "The next value, or `null` where every sender is gone.\n\nA closed channel is the ordinary end of a stream and not a failure, so `??`\nis what reads it. It gives the thread up rather than holding it."

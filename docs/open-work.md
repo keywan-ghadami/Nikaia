@@ -1185,19 +1185,7 @@ arbitrary value.
 step 1. Neither is small, and the harness delivers nothing a reader of a program
 would notice — which is worth knowing before it is started rather than after.
 
-### 2.41. There is no channel
-
-[ADR-149](specification/adr/adr-149.md). Part II 12.5's
-`let (tx, rx) = channel::bounded(100)` names nothing, and carries the
-*unspecified* mark. Nothing in it needs syntax — two values, two methods, and
-the tuple `let` is built ([ADR-098](specification/adr/adr-098.md)).
-
-*What it needs, in the record's order (§5):* the runtime's bounded queue, with
-the pause on a full `send`; `std::channel` and its four entries, `send` carrying
-no `sync` and `recv` handing back a `T?`; the page's example as a test that
-runs.
-
-### 2.42. The prelude is what the compiler happens to know
+### 2.41. The prelude is what the compiler happens to know
 
 [ADR-154](specification/adr/adr-154.md).
 `crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and

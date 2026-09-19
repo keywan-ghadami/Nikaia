@@ -548,13 +548,25 @@ impl Signature {
     /// Read one back from the text above.
     pub fn parse(text: &str) -> Result<Signature> {
         let text = text.trim();
-        let close = text
-            .rfind(')')
-            .ok_or_else(|| anyhow!("a signature is `(…) -> T`, found `{text}`"))?;
         let inside = text
             .strip_prefix('(')
-            .map(|t| &t[..close - 1])
             .ok_or_else(|| anyhow!("a signature starts with `(`, found `{text}`"))?;
+        // **The `)` that closes the *first* `(`, counted rather than searched
+        // for from the end.**
+        //
+        // `rfind(')')` was here and was wrong the day a result had parentheses
+        // in it: `(capacity: i64) -> (Sender[$T], Receiver[$T])` ends with the
+        // **result's** close, so the parameter list became
+        // `capacity: i64) -> (Sender[$T], Receiver[$T]` and the whole signature
+        // was nonsense — silently, because a parameter list of one garbage part
+        // still parses into a type nobody can name. What it cost was every
+        // argument to that call being lent, since a parameter whose type is not
+        // known is one that moves ([ADR-094](../../../docs/specification/adr/adr-094.md)
+        // D1). Found by [ADR-149](../../../docs/specification/adr/adr-149.md),
+        // whose `channel::bounded` is the first entry to hand back a tuple.
+        let close = matching_close(inside)
+            .ok_or_else(|| anyhow!("a signature is `(…) -> T`, found `{text}`"))?;
+        let (inside, after) = inside.split_at(close);
 
         // Kap 5.1: the `;` divides the subjects from the options.
         let (positional, options) = match split_config(inside) {
@@ -604,10 +616,7 @@ impl Signature {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let result = text[close + 1..]
-            .trim()
-            .strip_prefix("->")
-            .map(ty::Ty::parse);
+        let result = after[1..].trim().strip_prefix("->").map(ty::Ty::parse);
 
         Ok(Signature {
             params,
@@ -616,6 +625,22 @@ impl Signature {
             result,
         })
     }
+}
+
+/// The byte of the `)` that closes the `(` this text is already inside.
+///
+/// `None` where it never closes, which is a signature the caller refuses.
+fn matching_close(inside: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, byte) in inside.bytes().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' if depth == 0 => return Some(at),
+            b')' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// What a caller needs to know about one type.

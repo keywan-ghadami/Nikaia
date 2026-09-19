@@ -507,6 +507,7 @@ pub fn check_program(
         stamped_condition: None,
         inside_a_door: false,
         inside_an_action: None,
+        inside_a_sync_function: None,
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
@@ -1250,6 +1251,20 @@ struct Checker<'a> {
     /// needs the rule's name, because a grammar is a page of rules and a caret
     /// on a call inside one is not enough to find it.
     inside_an_action: Option<String>,
+    /// The name of the enclosing function, where its declaration **writes**
+    /// `sync` ([ADR-027](../../docs/specification/adr/adr-027.md) D4: an
+    /// assertion is checked, never overwritten).
+    ///
+    /// It is here because `NK2202` cannot see a **method** call: `contracts::sync`
+    /// deliberately does not resolve one, on the ground that the type checker is
+    /// the only thing that knows what `tx.send(1)` goes to
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) — and the type
+    /// checker is here. Without it a `sync` function that sends on a channel
+    /// lowered to an ordinary `fn` with an `.await` inside it, which is not Rust
+    /// (Part III, C.1). Found by
+    /// [ADR-149](../../docs/specification/adr/adr-149.md) D2, and reachable
+    /// before it through `TaskHandle::join`.
+    inside_a_sync_function: Option<String>,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -1692,6 +1707,7 @@ impl<'a> Checker<'a> {
             ret_type,
             body,
             throws,
+            is_sync,
             ..
         } = item
         else {
@@ -1718,6 +1734,12 @@ impl<'a> Checker<'a> {
             None => own_name,
         };
         let outer_current = self.current.replace(key);
+        let outer_sync = match is_sync {
+            true => self
+                .inside_a_sync_function
+                .replace(self.current.clone().unwrap_or_default()),
+            false => self.inside_a_sync_function.take(),
+        };
 
         // **Inside its own body a type parameter is a type**
         // ([ADR-074](../../docs/specification/adr/adr-074.md) D1). `T` is not a
@@ -1836,6 +1858,7 @@ impl<'a> Checker<'a> {
         self.type_parameters = outer_declared;
         self.borrowing_self = outer_borrowing;
         self.current = outer_current;
+        self.inside_a_sync_function = outer_sync;
     }
 
     /// Whether a conversion narrows, recorded for the emitter (ADR-043 D4).
@@ -2839,6 +2862,7 @@ impl<'a> Checker<'a> {
         // `std` entry blocked its thread and awaiting one would have
         // been awaiting a value rather than a future.
         self.method_pauses(method, !contract.sync.is_sync(), span);
+        self.a_pausing_method_in_a_sync_body(&key, contract, span);
         self.a_call_that_may_pause(contract);
         self.a_pausing_call_in_an_action(self.parsed.text(method), contract, span);
         // A method call is a written call, so the rule reaches it too
@@ -5721,6 +5745,50 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK2202` for a method call** — the half `contracts::sync` cannot do
+    /// ([ADR-027](../../docs/specification/adr/adr-027.md) D4,
+    /// [ADR-149](../../docs/specification/adr/adr-149.md) D2).
+    ///
+    /// That analysis resolves a **free** call by name and stops at a method, on
+    /// the ground that only a type checker knows what `tx.send(1)` goes to
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) — and it is right
+    /// about that, which is why the rule is here instead. What it cost while
+    /// nothing asked it: a function declaring `sync` and calling a pausing
+    /// method lowered to an ordinary `fn` with an `.await` in its body, and the
+    /// backend answered about a file nobody wrote (Part III, C.1).
+    ///
+    /// **Only where the ledger answered**, which is every other `sync` rule's
+    /// convention ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)):
+    /// a callee nothing describes is not refused, because a refusal on a guess
+    /// is a correct program refused. An unresolved receiver never reaches here.
+    fn a_pausing_method_in_a_sync_body(
+        &mut self,
+        callee: &str,
+        contract: &FnContract,
+        span: &Span,
+    ) {
+        if contract.sync.is_sync() {
+            return;
+        }
+        let Some(caller) = self.inside_a_sync_function.clone() else {
+            return;
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2202",
+            message: format!("`{caller}` is `sync`, and `{callee}` can pause"),
+            notes: vec![
+                "a `sync` function promises it cannot pause and does no I/O (Part II, 12.1)"
+                    .to_string(),
+                format!("`{callee}` carries no `sync` in the contracts this program is built against (Part III, 13.5)"),
+            ],
+            help: Some(format!(
+                "drop `sync` from `{caller}`, or move the call out of it"
+            )),
+        });
+    }
+
     /// Where a method call stands in ADR-023 D8's propagation, for the emitter
     /// ([`Checked::fallible_methods`]).
     ///
@@ -7716,7 +7784,14 @@ impl<'a> Checker<'a> {
         // does happens when its own callee runs it. `lambda` sets its own
         // accumulator inside the walk and reads it back there.
         let handed = self.handed_over.take();
+        // **And the enclosing `sync` stops here too.** What is inside this body
+        // is a body of its own — a lambda, an `overlap` branch, a `select` arm —
+        // and what *it* may do is said by its own type rather than by the
+        // declaration around it ([ADR-102](../../docs/specification/adr/adr-102.md)
+        // D2, whose `NK2206` is the rule for a lambda).
+        let promised = self.inside_a_sync_function.take();
         let value = walk(self);
+        self.inside_a_sync_function = promised;
         self.handed_over = handed;
         self.loops = loops;
         self.barrier = barrier;

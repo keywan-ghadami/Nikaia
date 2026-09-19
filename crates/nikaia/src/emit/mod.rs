@@ -4752,11 +4752,28 @@ impl<'p> Emitter<'p> {
             }
             Expr::Coalesce { value, fallback } => {
                 // Kap 3.5. `into()` because the fallback is written as the
-                // value it stands for, not as the type the option holds.
+                // value it stands for, not as the type the option holds -
+                // `text ?? "none"` on a `String?` is the case it exists for.
+                //
+                // **Except for a number**, and that exception is Part I 2.4
+                // rather than a special case: a number literal takes the type
+                // its use asks for, so `0` already *is* whatever the option
+                // holds and `0.into()` adds a conversion that has to be
+                // resolved. Where the option's own type is still open - a
+                // `channel::bounded` whose element type nothing has pinned yet
+                // ([ADR-149](../../docs/specification/adr/adr-149.md)) - there
+                // is nothing to resolve it from, and what a reader got was
+                // *"type annotations needed"* about a file nobody wrote
+                // (Part III, C.1). Without the `into` the literal is simply
+                // one more use of the type, which is what decides it.
+                let bare = a_number(fallback);
                 self.expr(out, value, depth, flow)?;
                 out.push(".unwrap_or_else(|| ");
                 self.expr(out, fallback, depth, flow)?;
-                out.push(".into())");
+                out.push(match bare {
+                    true => ")",
+                    false => ".into())",
+                });
             }
             Expr::TryCatch { expr, handler } => {
                 // Kap 7.1: the handler sees the error as `error`.
@@ -6768,6 +6785,23 @@ fn integer_literal(value: i64, widen: bool) -> String {
     match i32::try_from(value) {
         Ok(_) if !widen => value.to_string(),
         _ => format!("{value}i64"),
+    }
+}
+
+/// Whether this expression is a **number written down**, sign and all.
+///
+/// The negation is part of the answer rather than a wrapper around it: the
+/// unary arm above folds `-1` into one literal, and `-1.into()` in the language
+/// below is `-(1.into())`, which is a second reason not to write the `into` at
+/// all.
+fn a_number(expr: &Expr) -> bool {
+    match expr {
+        Expr::LitInt(_) | Expr::LitFloat(_) => true,
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr,
+        } => a_number(expr),
+        _ => false,
     }
 }
 

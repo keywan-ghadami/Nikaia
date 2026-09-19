@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.62] — 2026-09-19
+
+A channel is `std`'s, and only bounded
+([ADR-149](docs/specification/adr/adr-149.md)) — which takes the *unspecified*
+mark off Part II 12.5 and leaves [ADR-141](docs/specification/adr/adr-141.md)
+D2 with nothing in that chapter still marked.
+
+### Added
+
+- **`std::channel`, with `bounded(n)` and nothing else.** Four entries and no syntax: two values, two methods, and the tuple `let` that binds them was already built. A capacity below one is refused with its reason rather than quietly turned into something else — `bounded(0)` is a rendezvous channel, which is a different promise.
+- **`send` pauses where the channel is full and `recv` where it is empty**, each leaving the waker the other rings. Back-pressure is a pause, and a pause is something the ledger already talks about: `send` carries no `sync`, so a `sync` body cannot send and the compiler names the promise in the way — without a rule about channels.
+- **`recv` hands back a `T?`, and `null` means every sender is gone.** Not a failure: a closed channel is the ordinary end of a stream, and `??` is what reads it.
+- **D4 is one row in a list.** `Sender` and `Receiver` joined the crossing analysis's containers, which is the whole of *the value type must cross, checked where `tx` moves into a `spawn`*: the analysis already asks that question at a move.
+- **`crates/nikaia/tests/channels.rs`**: nine tests, four of which build a program and run it, including Part II 12.5's own example.
+
+### Found by building it
+
+- **A signature whose result has parentheses in it was read to the wrong place.** `Signature::parse` took `rfind(')')` for the end of the parameter list, and `channel::bounded` is the first entry in `std` to hand back a **tuple** — so the last `)` was the *result's*, and the parameter list became everything up to it. Silently: a garbage parameter list still parses, and what it cost was every argument to the call being lent, because a parameter whose type is not known is one that moves.
+- **`?? 0` needed an annotation nobody could write.** A `??`'s fallback is lowered with an `.into()`, which is right for `?? "none"` on a `String?` and wrong for a number: Part I 2.4 already says a number literal takes the type its use asks for. Where the option's own type was still open the conversion had nothing to resolve from, and the reader got *"type annotations needed"* about a file nobody wrote. A number fallback is now written as itself — sign included, since `-1.into()` in the language below is `-(1.into())`.
+- **`NK2202` could not see a method call, so a `sync` body that paused was not refused.** `contracts::sync` resolves a **free** call by name and stops at a method, on the ground that only a type checker knows what `tx.send(1)` goes to. So a function declaring `sync` and calling a pausing method lowered to an ordinary `fn` with an `.await` in its body, which is not Rust. The rule is now raised from the type checker too — the same code, the same three lines, from the only place that can ask it. Reachable before this record through `TaskHandle::join`.
+
+### Changed
+
+- **Part II 12.5's implementation note** says *Implemented*, and the `NK22xx` table says where each half of `NK2202` is asked.
+
+### Left open
+
+- **`select` over a receiver**, **a `for` over a receiver** (which wants a `Seq` entry) and **a rendezvous channel** — all three [ADR-149](docs/specification/adr/adr-149.md) §4's, all three untouched.
+
 ## [0.0.61] — 2026-09-19
 
 `select { … }` keeps the first arm to finish, and a task handle has `cancel()`

@@ -811,18 +811,26 @@ pub fn check(
             plural(walked)
         ));
     }
-    let rules = findings.len() - types - crossings - aliases - tasks - walked;
+    // **`NK2202` is counted with the other `sync` violations and not below**,
+    // wherever it came from. The free call is `contracts::sync`'s and the
+    // method call is the type checker's
+    // ([ADR-149](../../docs/specification/adr/adr-149.md) D2), because only one
+    // of the two knows what `tx.send(1)` goes to — but they are one rule, and a
+    // tally that has to say what it counted must not call one of them *a place
+    // that can fail without saying so*.
+    let pausing = count("NK2202");
+    let rules = findings.len() - types - crossings - aliases - tasks - walked - pausing;
     if rules > 0 {
         refused.push(format!(
             "{rules} place{} that can fail without saying so",
             plural(rules)
         ));
     }
-    if !violations.is_empty() {
+    let may_not = violations.len() + pausing;
+    if may_not > 0 {
         refused.push(format!(
-            "{} call{} a `sync` function may not make",
-            violations.len(),
-            if violations.len() == 1 { "" } else { "s" }
+            "{may_not} call{} a `sync` function may not make",
+            if may_not == 1 { "" } else { "s" }
         ));
     }
     // A refusal and not a failure of this compiler, so it leaves without a

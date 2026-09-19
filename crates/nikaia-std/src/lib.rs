@@ -19,6 +19,7 @@
 //! from what the compiler produces.
 
 pub mod abort;
+pub mod channel;
 pub mod cli;
 pub mod concat;
 pub mod count;
@@ -51,6 +52,8 @@ pub mod text {
 
 /// What a `use std::…` in a Nikaia program brings into scope.
 pub mod prelude {
+    pub use crate::channel;
+    pub use crate::channel::{Receiver, Sender};
     pub use crate::cli;
     pub use crate::error::Full;
     // **The C boundary's one `std` type**

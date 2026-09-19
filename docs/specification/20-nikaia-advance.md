@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.61 (Draft)
+**Version:** 0.0.62 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -912,8 +912,10 @@ select {
 ### 12.5. Channels (Message Passing)
 Nikaia offers **message passing** beside shared memory. A channel is `std`'s and not the language's: two values and two methods say everything the example below says ([ADR-149](adr/adr-149.md)). A channel is **bounded**. `send` pauses when the channel is full, so a `sync` body cannot send on one, and the ledger's column says so. `recv` hands back a `T?`; `null` means every sender is gone. The value type must `crosses` ([ADR-123](adr/adr-123.md)), checked where `tx` moves into the `spawn` as any move is.
 
-> **Implementation status:** Not implemented ([ADR-149](adr/adr-149.md) §5).
-> `docs/open-work.md` carries it.
+> **Implementation status:** Implemented ([ADR-149](adr/adr-149.md) §5). The
+> example below is a program: `std::channel` is a module, `send` pauses where
+> the channel is full and `recv` hands back a `T?`. There is no `unbounded()`,
+> and a capacity below one is refused.
 
 ```nika
 // Subject: 100 (capacity)
