@@ -17,5 +17,17 @@ A rule specified ahead of the compiler carries a short **Status** note saying
 what is built and what is not, because a reader cannot otherwise tell a plan
 from a promise.
 
+An example that is ahead of the *language* carries a different mark:
+
+> **Unspecified.** This writes a construct the language does not have and no
+> record decides. It is here for the shape of the example; the decision is
+> named where it will be taken.
+
+The two are not the same state ([ADR-141](adr/adr-141.md) D3). A **Status**
+note stands under a rule that *is* decided — a record says what happens and the
+compiler has not caught up. An **Unspecified** mark stands under a construct
+nobody has decided at all, kept on the page because the shape it was written
+for is worth keeping and removing it would lose the argument with it.
+
 For what belongs in this directory and what belongs in the notes, see
 [`docs/README.md`](../README.md).

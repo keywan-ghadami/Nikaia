@@ -1554,16 +1554,20 @@ message. The list is one alternative tried before the positional one and decided
 on the token after the type, because it insists on the `= value` that makes a
 parameter an option.
 
-**The call half is blocked by a question, not by work.** D3 argues the parser can
-tell the new form apart because *nothing in expression position begins with a name
-followed by a colon — a struct literal begins `Name {`*, and Kap 4.2's other
-struct literal does: `Stats(min: first, max: first)` is `execute(target_age: 30)`
-spelled identically. The parser tries the literal first, so the new call form is
-read as a struct literal. A name denotes one of the two constructs, so what tells
-them apart is **resolution** — which is
-[`open-decisions.md`](open-decisions.md) §9, with three options and a
-recommendation. The leading `;` stays accepted at a call meanwhile: refusing it
-with nothing to replace it would leave such a function uncallable.
+**The call half was blocked by a question and is not any more.** D3 argues the
+parser can tell the new form apart because *nothing in expression position begins
+with a name followed by a colon — a struct literal begins `Name {`*, and Kap 4.2's
+other struct literal does: `Stats(min: first, max: first)` is
+`execute(target_age: 30)` spelled identically, so the parser tries the literal
+first and reads the new call form as one.
+
+[ADR-140](specification/adr/adr-140.md) **D1 answers it by taking the named
+literal out of the language**: `Name { … }` is the struct literal and
+`name(field: value)` is a call with options and nothing else. So this entry waits
+on *that migration* rather than on a ruling — **`Name(field: value)` goes first,
+this follows**, and the resolution fork the question had proposed is not needed.
+The leading `;` stays accepted at a call meanwhile: refusing it with nothing to
+replace it would leave such a function uncallable.
 
 *Two defects were fixed on the way, and both were older than the record.* A call
 whose arguments are all options lowered to `execute(, 30)` — the comma the emitter
@@ -1576,8 +1580,171 @@ was built to close for a written annotation. It is `NK1135` now, and its message
 names the call where the name is a function — the silence that let this collision
 through two records.
 
-*What is left:* the ruling, then the call half. Part III 15.1's
+*What is left:* the named literal's migration, then the call half. Part III 15.1's
 `script.exec(msg: message)` and the specification's lowering floor wait with it.
+
+### 2.43. There is no list literal
+
+[ADR-135](specification/adr/adr-135.md). `[1, 2, 3]` is a parse error at the `[`,
+and so is a list *type* written `[User]`. Every program in `examples/` that wants
+a list builds it a `push` at a time, which `language-review.md` §3.1 calls the
+one piece of table stakes this language is missing.
+
+**The two rulings are what the entry has and the parser does not.** `[]` takes
+its element type from the first use that says one and is **refused** where none
+ever does — no default element type, because guessing one is Part III C.4's
+*never refuse a correct program* traded for a wrong program that compiles. And a
+`[` at the **start of a line** begins a literal rather than indexing the line
+above it, which is the reading Rust and JavaScript both decline to take.
+
+*What it needs, in the record's order (§5):* the literal in expression position
+with the statement-start rule; the element type agreed across the elements, and
+the refusal naming two that do not agree; `[]` deferred to its first use, and refused
+where nothing ever constrains it; the list *type* `[T]` left out, because
+`Vec[T]` is the spelling and a second one is [ADR-140](specification/adr/adr-140.md)'s
+whole subject.
+
+### 2.44. A number literal takes no separator and no radix prefix
+
+[ADR-136](specification/adr/adr-136.md). `let n = 1_000_000` is the number `1`
+beside a name `_000_000` that nothing declares, and `0xFF` is `0` beside `xFF`.
+The grammar is scannerless, so neither is a syntax error — each is a **misparse**,
+which is the class [Part III C.1](specification/30-nikaia-tooling.md) is about and
+the reason `NK1117` reports it instead of `rustc`.
+
+**The one ruling is that the radix is a spelling.** `0xFF` is `255` and takes the
+first type that holds it ([ADR-060](specification/adr/adr-060.md)), because a
+width read off the digits would make `0x0FF` a wider type than `0xFF` — a type
+that depends on how many zeroes somebody typed. The separator is not in the value
+anywhere, including a diagnostic's text.
+
+*What it needs, in the record's order (§5):* the lexical rule for `1_000_000`,
+`0xFF`, `0b1010` and `0o17`, with the underscore refused first, last and beside
+the prefix; the constant fold reading them so `NK1116` and `NK1118` answer about
+the value; `NK1117`'s help losing its `1_000` clause, and a test per form.
+
+### 2.45. Six `match` pattern shapes are missing, and the range spelling is the old one
+
+[ADR-137](specification/adr/adr-137.md). A tuple, an or-pattern, a range, a
+guard, a nested pattern and `..` for a struct's rest are all missing, and the
+absence is visible in the corpus: `examples/calc.nika` matches `step.0` because
+it cannot match `step`.
+
+**Step 2 is the one that changes the meaning of a form that already compiles**,
+which is why the record puts the migration in the same change. `..` becomes
+**inclusive** everywhere and `..<` is the exclusive range — a `for`, a slice, a
+pattern alike — and `..=`, which this language already has in an expression, goes
+with D5's message, because `..` is now what it said. The old spelling keeps
+parsing and changes meaning, so a migration spread over two changes is a corpus
+that means something nobody wrote in between.
+
+*What it needs, in the record's order (§5):* the six pattern rules and the
+or-pattern's binding-set refusal; `..<` in the range rule with `..` inclusive and
+`..=` refused; the corpus and the specification's ranges rewritten — the pages
+state the rule already and keep their examples until this step, so that no block
+leaves the lowering floor for nothing; `calc.nika` matching `step`, and a test per
+shape.
+
+### 2.46. `throw`, `return`, `break` and `continue` are statements
+
+[ADR-138](specification/adr/adr-138.md). `=> throw NotFound` is a parse error, so
+is `?? throw Missing`, and so is an `else` branch that is one `return`. Each has
+to be written with braces that hold nothing together and produce no value.
+
+**The type side is already decided**, which is what makes this grammar work
+rather than a language question: [ADR-093](specification/adr/adr-093.md) gives
+the never type, and `NK1133` — a statement after a `break` in the same block is
+refused — is what keeps `break x` from becoming a quietly dropped value one
+position over.
+
+*What it needs, in the record's order (§5):* the four as expression alternatives
+with the statement forms kept; the never type fitting every expected type in the
+checker, so a `match` whose arms are a value and a `throw` is typed by the value;
+the specification's error chapter and `examples/` written without the braces, and
+a test per position — an arm, a `??` right side, an `else`.
+
+### 2.47. The ledger has nowhere to put a sentence
+
+[ADR-139](specification/adr/adr-139.md). `nikaia.contracts` **ships** with a
+package and is the one file a consumer's compiler reads about a dependency — every
+signature, every promise, every restriction — and it carries no prose. The prompt
+bundle on the roadmap has the same hole from the other side. `///` is an ordinary
+comment today and a comment in the source does not travel, because the source of a
+published package is not what a consumer reads.
+
+*What it needs, in the record's order (§5):* the lexical rule that **keeps** what
+`WS` throws away, for a run of `///` immediately before an item; the field on the
+AST's items; the `doc` column in the ledger's parse and render, for a `pub` `fn`
+or `type` only; the derivation, which makes it a pure function of the sources like
+every other column; and `NK2401` staying silent about prose, because a changed
+sentence is not a changed contract.
+
+### 2.48. The named struct literal `Name(field: value)`
+
+[ADR-140](specification/adr/adr-140.md) D1, and **the first of that record's five
+migrations, because another record waits on it.** `Stats(min: first)` and
+`Reading { name, temp }` both build a struct, and `Stats(first)` calls the
+anonymous constructor — so `Foo(x: 1)` goes round a type's invariants and `Foo(1)`
+goes through them, told apart by a colon. The brace form stays and the call-shaped
+one goes.
+
+**What waits on it is 2.42**: with the named literal gone, `name(field: value)` is
+a call with options and nothing else, and ADR-133's call half is unblocked.
+
+*What it needs:* the alternative out of the expression grammar, with a message
+naming the brace form; `examples/`, `crates/nikaia-std/` and the specification's
+pages rewritten — Part I 4.2's own constructor example is one of them; then 2.42.
+
+### 2.49. `throws` and `sync` parse on either side of the arrow
+
+[ADR-140](specification/adr/adr-140.md) D4. `fn f() throws -> String` and
+`fn f() -> String throws` both parse, and the second is the language:
+[ADR-102](specification/adr/adr-102.md) D1 already fixed that order for a
+function *type*, where the trailing words are greedy, so a declaration and a type
+read the same way round.
+
+*What it needs:* the pre-arrow form out of the declaration grammar with a message
+naming the order, and the pages that write it — Part I 7.1's first example among
+them.
+
+### 2.50. A grammar's rule is reached through a dot
+
+[ADR-140](specification/adr/adr-140.md) D3. `Json.value(input)` reaches a rule of
+the grammar `Json`, and `Op::Times` reaches a variant of an enum. A grammar's name
+is a name; the dot is for a **value's** members, and a namespace behind one is the
+single place this language asks a reader to tell two things apart by what the left
+side happens to be.
+
+*What it needs:* `::` in the grammar's entry rule, the dot refused with a message
+naming the replacement, and Part II 10.2, 10.3 and 11 rewritten with the
+`examples/` that enter a grammar.
+
+### 2.51. `std`'s own types are constructed with `new`
+
+[ADR-140](specification/adr/adr-140.md) D2. `Vec::new()`, `String::new()` and
+`HashMap::new()` are Rust's convention reaching through a hand-written ledger,
+where a `.nika` file writes an anonymous constructor (`pub fn(first: i32)`,
+Part I 4.2). `1brc.nika` passes `Summary::new` as a value although `Summary`
+declares an anonymous constructor and no `new` — a program written against the
+convention it could see.
+
+*What it needs:* `std.contracts`'s entries renamed to `Vec()`, `String()` and
+`HashMap()`, the lowering that puts `::new()` back on the Rust side, the corpus
+and the pages, and `1brc.nika`'s `Summary::new`.
+
+### 2.52. `use std::…` brings a name in and a package's `use` does not
+
+[ADR-140](specification/adr/adr-140.md) D5.
+[ADR-046](specification/adr/adr-046.md)'s rule is *no name is brought in*, and
+`std` is the one place it is not followed: `use std::collections::HashMap` gives
+the file `HashMap`. What goes is the `use` **acting differently** depending on
+what follows it, not the prelude — `Vec`, `String` and `HashMap` need no `use` at
+all and that is unchanged.
+
+*What it needs:* the `std` arm of `use` resolving to a prefix like every other,
+`collections::HashMap` at each use, and every `std` import in `examples/`, in
+`crates/nikaia-std/` and on the three pages. Last of the five, because nothing
+waits on it.
 
 ## 3. Upkeep
 

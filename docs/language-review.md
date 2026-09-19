@@ -341,19 +341,19 @@ Ordered by how early a newcomer meets it. Each was reproduced unless marked
 | :--- | :--- |
 | `else if` | **parse error** — `expected '{'; found 'if'`. Every language has it; the examples work around it with nested blocks and sequential `if`s (`http/src/main.nika:status_line`). *Decided since:* [ADR-132](specification/adr/adr-132.md) — an `else` whose block is one `if`, braces left out; not built. |
 | `let (a, b) = pair` | was a parse error at `61849da`; **built since** by [ADR-098](specification/adr/adr-098.md), a flat tuple of names. |
-| `[1, 2, 3]` | parse error. A list literal is the first thing a scripting-language reader types. `Vec::new()` then `push`, four times, is what `n-body.nika` and `jumps.nika` do instead. |
-| `1_000_000`, `0xFF`, `0b1010` | `NK1117: nothing declares _000_000`. A language with `u8`, `Bytes`, `wrapping_shl`, an x86 DSL and a benchmark full of physical constants has no hex and no digit groups. |
-| tuple, or-, range-, guarded, nested patterns in `match` | parse error on `(1, y) =>`. `calc.nika` matches `step.0` because it cannot match `step`. Six pattern shapes, none composable. |
-| `..` rest in a struct pattern | parse error *(spec status)*. |
-| a bare `throw` as a match arm | parse error; must be `{ throw error }`. |
-| block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. *Decided since:* [ADR-134](specification/adr/adr-134.md) — `/* … */`, nesting, not a doc comment; doc comments are in `open-decisions.md`. |
+| `[1, 2, 3]` | parse error. A list literal is the first thing a scripting-language reader types. `Vec::new()` then `push`, four times, is what `n-body.nika` and `jumps.nika` do instead. *Decided since:* [ADR-135](specification/adr/adr-135.md) — `[]` takes its element type from the first use and is refused where none says one, and a `[` at the start of a line begins a literal; not built. |
+| `1_000_000`, `0xFF`, `0b1010` | `NK1117: nothing declares _000_000`. A language with `u8`, `Bytes`, `wrapping_shl`, an x86 DSL and a benchmark full of physical constants has no hex and no digit groups. *Decided since:* [ADR-136](specification/adr/adr-136.md) — the four forms, and the radix is a spelling so `0xFF` is `255`; not built. |
+| tuple, or-, range-, guarded, nested patterns in `match` | parse error on `(1, y) =>`. `calc.nika` matches `step.0` because it cannot match `step`. Six pattern shapes, none composable. *Decided since:* [ADR-137](specification/adr/adr-137.md) — the six, a guard is `if`, and `..` in a pattern is inclusive, so `..<` becomes the exclusive range everywhere and `..=` goes; not built. |
+| `..` rest in a struct pattern | parse error *(spec status)*. *Decided since:* [ADR-137](specification/adr/adr-137.md) D1, with the other five. |
+| a bare `throw` as a match arm | parse error; must be `{ throw error }`. *Decided since:* [ADR-138](specification/adr/adr-138.md) — `throw`, `return`, `break` and `continue` are expressions of the never type; not built. |
+| block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. *Decided since:* [ADR-134](specification/adr/adr-134.md) — `/* … */`, nesting, not a doc comment; and [ADR-139](specification/adr/adr-139.md) — a doc comment is a language feature and the ledger carries it in a derived `doc` column; neither the column nor `///` is built. |
 | a function that never returns | needed an unreachable `return 0` at `61849da`; **built since** by [ADR-093](specification/adr/adr-093.md). |
 
-None of these needs a decision. They need an afternoon each. *Since:* the rows
-without a pointer — the list literal, number literals, `match` patterns, `..`,
-the bare `throw` arm — are in `open-decisions.md`, because each turned out to
-have one question in it (what an empty literal is, how a range pattern is
-spelled) that the owner answers.
+None of these needs a decision any more. **Every row has a record**, and the
+five that turned out to carry a question in them — what an empty literal is, how
+a range pattern is spelled, whether a hexadecimal literal carries a width — were
+answered in one round and left `open-decisions.md` with it. What each needs now
+is the afternoon, and [`open-work.md`](open-work.md) §2 says in what order.
 
 ### 3.2 Reserved words that block ordinary names
 
@@ -408,6 +408,16 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   false)`; 5.1 says a named argument stands after the `;`. *Decided since:*
   [ADR-133](specification/adr/adr-133.md) — 17.1 was right.
 
+*Decided since, all five:* [ADR-140](specification/adr/adr-140.md) picks the
+brace literal, the anonymous constructor with `new` gone from `std`'s own types,
+`::` everywhere, `throws` and `sync` after the result type, and `use` bringing
+nothing in for `std` as for a package. **One record and five migrations**,
+because they are one question — *does this language say one thing one way* — and
+answering them apart would migrate the corpus five times for one property. None
+is built; [`open-work.md`](open-work.md) §2 carries one entry each, with the
+brace literal first, since [ADR-133](specification/adr/adr-133.md)'s call half
+was blocked on exactly the spelling it frees.
+
 ### 3.4 The subject/config protocol at its worst
 
 `query.execute(; target_age: min_age)` and `script.exec(; msg: message)`. A
@@ -434,6 +444,16 @@ one form and the leading `;` is refused; a mixed call keeps its `;`. Not built.
   where 7.1 says an error type is an `enum`.
 * `5.seconds()`, `channel::bounded(100)`, `select { … }` — unbuilt and
   unspecified in Part I.
+
+*Decided since:* [ADR-141](specification/adr/adr-141.md), and it is **built** —
+the six slips are corrected on their pages and in `1brc.nika`, and the three
+**constructs** are marked *unspecified* in place rather than removed or decided
+in a footnote, because each is a record's worth of question and Part I chapter 8
+is where it is taken. The mark has a definition of its own beside the **Status**
+note's, in [`specification/README.md`](specification/README.md): a *Status* note
+stands under a decided rule the compiler has not caught up with, an *Unspecified*
+mark under a construct nobody decided. `List[…]` turned out to be written in four
+places rather than three.
 
 ### 3.6 The grammar sub-language
 

@@ -1212,7 +1212,7 @@ not here yet; `lines` and `bytes` are gone for a reason of their own, below.
 >   `overlap { … }` (Part I 8.1.2) or a `spawn`, and no longer the compiler
 >   choosing — [ADR-050](adr/adr-050.md) D1 withdrew that choice.
 
-`read` returns **`Bytes`**, not a `List[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
+`read` returns **`Bytes`**, not a `Vec[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Chapter 6.6 in Part I). This is what lets a parser hand back thousands of names that all point into a single allocation.
 
 **Reading a large file: `map`, and the grammar**
 
@@ -1465,7 +1465,7 @@ Here is how common standard library functions are annotated internally to drive 
 ```nika
 // std::collections::List
 // Standard immediate execution
-pub fn map[U](self, op: fn(T) -> U) -> List[U]
+pub fn map[U](self, op: fn(T) -> U) -> Vec[U]
 
 // std::task (Global Spawn)
 // Detached execution: Must take ownership of environment
@@ -1556,7 +1556,7 @@ Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")
 ```text
 error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1
   --> app.nika:11:5
-  11 |     let text = io::read_to_string("input.txt")?
+  11 |     let text = io::read_to_string("input.txt")
            ^
      = `io::read_to_string() -> String`
      help: call it as `io::read_to_string()`

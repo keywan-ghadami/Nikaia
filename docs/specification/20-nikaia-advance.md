@@ -47,9 +47,19 @@ grammar Json {
 A grammar defined once can be used at compile time and at runtime — **with the same
 syntax and the same meaning**. A grammar is entered by an **ordinary call**, and
 every `pub` rule in it is an entry named after the rule
-([ADR-082](adr/adr-082.md) D1, D2): `Json.value(x)` runs the rule `value` of the
+([ADR-082](adr/adr-082.md) D1, D2): `Json::value(x)` runs the rule `value` of the
 grammar `Json`. What decides *when* it runs is the word in front of the binding,
 not the shape of the line.
+
+**The separator is `::`, as it is everywhere else** ([ADR-140](adr/adr-140.md)
+D3). A grammar's name is a name and a rule of it is reached the way every other
+qualified name is; the dot is for a **value's** members, and a namespace behind
+one was the single place this language asked a reader to tell two things apart
+by what the left side happens to be.
+
+> **Status:** the dot is what parses today ([ADR-140](adr/adr-140.md) §5 step 3),
+> and this chapter still writes it. `::` in the entry rule, the dot refused with
+> a message, and 10.3 with it are unbuilt.
 
 **A. Static Embedding (Compile-Time)**
 In a `comptime` binding the parser runs *during the build*. If the input is
@@ -295,7 +305,7 @@ Library authors accept those parameters with the **typed spread**:
 ```nika
 impl SqlParser {
     // Subject: self (the parsed statement) ; Config: the DSL's parameters
-    pub fn execute(self; ...args: Self::dsl) -> List[Row] throws {
+    pub fn execute(self; ...args: Self::dsl) -> Vec[Row] throws {
         return self.conn.query(self.sql, args.values())
     }
 }
@@ -940,19 +950,32 @@ select {
     result = heavy_math() => { return result }
     
     // Case 2: Timeout happens first
-    _ = sleep(5.seconds()) => { throw TimeoutError("Too slow!") }
+    _ = sleep(5.seconds()) => { throw Timeout::TooSlow }
 }
 ```
 *Note: When one branch wins, the other task is automatically cancelled and cleaned up.*
 
+> **Unspecified.** This writes a construct the language does not have and no
+> record decides — `select { … }` itself, and the duration literal
+> `5.seconds()` inside it. It is here for the shape of the example; the
+> decision is taken when Part I chapter 8 is next opened
+> ([ADR-141](adr/adr-141.md) D2).
+
 > **Status:** not built. `select` is not a keyword in the parser and the block
 > above is a parse error, so nothing races two tasks today and the teardown rule
-> below is stated ahead of the construct it governs.
+> below is stated ahead of the construct it governs. The error it throws is an
+> **enum variant** and not `TimeoutError("Too slow!")`, because an error type is
+> an `enum` ([ADR-023](adr/adr-023.md) D1, [ADR-141](adr/adr-141.md) D1).
 
 **What "cleaned up" means precisely:** the losing task stops at its current pause point and its values are torn down. Resources with a pausable `cleanup` (Part I, 6.4) cannot be awaited by the *winner* — you should not pay for the loser's teardown — so the runtime **adopts** their `cleanup` runs and finishes them in the background ("parked cleanup"). The program will not exit before parked cleanups are done, bounded by the `cleanup-deadline` (Part III, 13.3). Errors from a parked cleanup have no caller to bubble to; they are reported through the runtime's error hook. See [ADR-006](adr/adr-006.md), D3.
 
 ### 12.5. Channels (Message Passing)
 Instead of locking shared memory, Nikaia encourages **Message Passing**.
+
+> **Unspecified.** This writes a construct the language does not have and no
+> record decides: whether a channel is `std`'s or the language's, and what it
+> is called, is taken when Part I chapter 8 is next opened
+> ([ADR-141](adr/adr-141.md) D2).
 
 ```nika
 // Subject: 100 (capacity)
@@ -1060,5 +1083,10 @@ This allows building self-healing systems.
 // Note: 'spawn' syntax (fn {}) is the subject.
 supervisor::start_link(fn {
     server.run()
-}; restart_policy: "always")
+}; restart_policy: RestartPolicy::Always)
 ```
+
+The policy is an **enum** and not a string ([ADR-141](adr/adr-141.md) D1). A
+string naming one of a few things is the shape Part I 4.4 argues against on its
+own page: a misspelling is caught at the call rather than at the restart, and
+the few things are listed where they are declared.

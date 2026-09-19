@@ -90,8 +90,20 @@ A **comment** begins with `//` and runs to the end of the line, or begins with
 `/*` and runs to the matching `*/` — across lines, anywhere whitespace may
 stand, and **nested**: `/* a /* b */ c */` is one comment, so a block that
 already holds one can be commented out ([ADR-134](adr/adr-134.md)). An unclosed
-`/*` is reported where it opened. There is no doc comment: `///` and `/** … */`
-are ordinary comments that happen to begin so.
+`/*` is reported where it opened. A block comment is a comment wherever it
+stands, including `/** … */`.
+
+**A run of `///` lines immediately before an item is that item's
+documentation** ([ADR-139](adr/adr-139.md)) — a `fn`, a `struct`, an `enum`, a
+`trait`, a field or a variant. Anywhere else `///` is an ordinary comment. It
+is prose and the compiler reads nothing out of it: no directive, no `@param`,
+no link it resolves. What it does is **travel**: on a `pub` item it becomes the
+`doc` column of `nikaia.contracts` (Part III, 13.5), which is the one file a
+consumer's compiler reads about a dependency, and it is derived there like
+every other column rather than written by hand.
+
+> **Status:** the doc comment is **not built** ([ADR-139](adr/adr-139.md) §5).
+> `///` is an ordinary comment today and the ledger has no `doc` column.
 
 ### 2.1. Variables and Assignment
 A **Variable** is a named storage location in memory that holds a value. In Nikaia, variables are declared using the `let` keyword.
@@ -230,13 +242,30 @@ Nikaia provides basic types to represent simple values.
       `char`, and turning one into the other is a decision a program makes
       rather than something that happens to it.
 
-**A number is written in digits, and the exponent above is the only other thing
-in one.** There are no digit separators, no radix prefixes and no type suffixes,
-so `1_000`, `0xFF` and `1i64` are each not a number but a number beside a name —
-and the name beside it is refused, as `NK1117`, because nothing declares it
-(Part III, C.3). This language has **no word it does not know**: one that stands
-on its own is read as a name, so `assert c` and `unsafe { … }` are refused the
-same way rather than being read as constructs that are not there.
+**A number may carry a digit separator or a radix prefix, and nothing else**
+([ADR-136](adr/adr-136.md)). `1_000_000`, `0xFF`, `0b1010` and `0o17` are the
+four forms, beside the exponent above; an underscore stands **between** digits
+and nowhere else, and a float takes the separator (`1_000.5`) and no prefix.
+
+**The radix is a spelling, and a literal is a value.** `0xFF` is `255`, and it
+takes the first type that holds it exactly as `255` does
+([ADR-060](adr/adr-060.md)) — so `let mask = 0xFF` is an `i32` and
+`let mask: u8 = 0xFF` is a `u8`. The width is never read off the digits,
+because then `0x0FF` would be a wider type than `0xFF` and the type of a
+number would depend on how many zeroes somebody typed. The separator is not in
+the value anywhere: `1_000` is `1000` to the checker, to the ledger and to a
+diagnostic's text.
+
+**There is no type suffix**, so `1i64` is still a number beside a name — and
+the name beside it is refused, as `NK1117`, because nothing declares it
+(Part III, C.3). This language has **no word it does not know**: one that
+stands on its own is read as a name, so `assert c` and `unsafe { … }` are
+refused the same way rather than being read as constructs that are not there.
+
+> **Status:** the separator and the three radix prefixes are **not built**
+> ([ADR-136](adr/adr-136.md) §5). Today `1_000` is the number `1` beside the
+> name `_000` and `0xFF` is `0` beside `xFF`, and `NK1117`'s help still names
+> the `1_000` case.
 
 **These four are the integer types a program writes.** The compiler accepts more
 — `u32`, `u64` and the machine-width `usize` among them — and the specification
@@ -630,17 +659,28 @@ while count < 5 {
 Iterates over a sequence (like a range of numbers or a list).
 
 ```nika
-// Iterates from 0 to 4 (5 is excluded)
+// Iterates from 0 to 4 — the spelling the compiler takes today; the rule
+// below and the Status note under it say what it becomes.
 for i in 0..5 {
     println(f"Index: {i}")
 }
 ```
 
-`a..b` excludes its end and `a..=b` includes it. A range is an ordinary
-expression — it may be given a name, passed, or indexed with — and it binds
-**looser than every operator in it**, so `0..n - 1` is a range ending at
-`n - 1` rather than a range with something subtracted from it. That is the
-reading a loop head wants and the only one that is ever useful.
+**`a..b` includes its end and `a..<b` excludes it** ([ADR-137](adr/adr-137.md)
+D4) — `..<` reads *up to, not including*, as it does in Kotlin and in Swift. One spelling per
+meaning, in a `for`, in a slice and in a pattern alike, which is why `..=` goes
+(D5): `..` is now what it said. A range is an ordinary expression — it may be
+given a name, passed, or indexed with — and it binds **looser than every
+operator in it**, so `0..<n - 1` is a range ending below `n - 1` rather than a
+range with something subtracted from it. That is the reading a loop head wants
+and the only one that is ever useful.
+
+> **Status:** **not built, and the page's examples are still the old spelling**
+> ([ADR-137](adr/adr-137.md) §5). Today `a..b` *excludes* its end, `a..=b`
+> includes it, and `..<` does not parse. The rule above is what the language
+> is; every range in this specification and in `examples/` is rewritten in the
+> one change that takes `..<`, because the old spelling keeps parsing and
+> changes meaning.
 
 A `for` over a list **lends** it: the elements are looked at, and the list is
 still there when the loop is over. Taking them away is written,
@@ -797,7 +837,25 @@ bare name binds. That is the same line the enum's own syntax draws — `Quit` is
 a variant *of* `Message`, never on its own — so a pattern never has to be read
 twice to see which of the two it is.
 
-An arm's body is an expression or a block:
+**Six more shapes** ([ADR-137](adr/adr-137.md) D1):
+
+| pattern | matches |
+| :--- | :--- |
+| `(0, 0)`, `(0, y)` | a tuple, position by position |
+| `(0, y) \| (y, 0)` | either alternative — and every alternative binds the **same set of names**, which is what keeps the body answerable |
+| `200..299` | a range, **inclusive at both ends** (D3): an exclusive one is written by moving the end, and `..<` is never written in a pattern |
+| `(x, y) if x == y` | a **guard**: the arm matches only where the condition holds, and the word is `if` (D2) |
+| `Event::Click(Point { x, .. })` | a pattern inside a pattern, and `..` for the fields this one does not name |
+
+**`..` means two different things and neither is the other's neighbour**: in a
+range pattern it is the range, and in a struct pattern it is *the rest of the
+fields*. A struct pattern has no range in it and a range has no fields, so the
+position says which.
+
+An arm's body is an expression or a block, and an expression may be a `throw`,
+a `return`, a `break` or a `continue` ([ADR-138](adr/adr-138.md) D1) — their
+type is **never**, so an arm that throws sits beside an arm that hands back a
+value and the `match` is that value's type:
 
 ```nika
 match step.0 {
@@ -805,6 +863,12 @@ match step.0 {
     Op::Divide => { value = value / step.1 }
 }
 ```
+
+> **Status:** the six shapes of [ADR-137](adr/adr-137.md) D1 are **not built**,
+> nor is a bare `throw` as an arm ([ADR-138](adr/adr-138.md) §5) — today it is
+> written `=> { throw NotFound }`. Built: the six rows of the first table,
+> which is what `examples/calc.nika` matching `step.0` rather than `step` is
+> working around.
 
 ### 3.5. Null Safety Operators
 Accessing members of a Nullable Type requires handling the potential `null` case.
@@ -918,6 +982,24 @@ impl User {
 }
 ```
 
+**A struct literal is written with braces, and only with braces**
+([ADR-140](adr/adr-140.md) D1). `User { username: name, email: address }` is the
+literal; `User(username: name)` — the same thing written like a call — goes.
+`User(a, b)` stays what it reads as: a **call**, of the anonymous constructor or
+of anything else, so the colon no longer decides whether a type's invariants are
+gone through or round.
+
+**A type is constructed by its anonymous constructor** ([ADR-140](adr/adr-140.md)
+D2), in `std` as in a `.nika` file: `Vec()`, `String()` and `HashMap()` where
+`Vec::new()`, `String::new()` and `HashMap::new()` stand today. `new` is the
+neighbouring language's convention reaching through a hand-written ledger, and
+this language has one of its own.
+
+> **Status:** **neither is built** ([ADR-140](adr/adr-140.md) §5 steps 1 and 4).
+> `Type(field: value)` still parses and this chapter still writes it; `std`'s
+> constructors are still `::new()`. D1 is the first of that record's five
+> migrations, because [ADR-133](adr/adr-133.md)'s call half waits on it.
+
 **A copy with fields changed: `with`.** Every binding is immutable unless it
 says `mut`, so the value a program wants most often is the one it has with one
 field different. `with` writes that without naming the rest
@@ -1029,9 +1111,18 @@ Nikaia includes built-in types for storing groups of data.
 
     A map is hashed according to where its keys came from: keys derived from data a remote peer supplied are hashed with a random per-run key, so nobody can pick keys that make your program crawl, and keys from data you supplied are hashed with the fast function. You do not configure this and, in the ordinary case, you do not think about it — see Part III, 17.1, for the cases where you want the last word. One consequence is worth remembering here: **the order you get when iterating a map is not guaranteed** and may differ between runs.
 
+**A list is written `[1, 2, 3]`** ([ADR-135](adr/adr-135.md)). The elements are
+expressions, a trailing comma is allowed, and the type is `Vec[T]` where `T` is
+what the elements agree on. `[]` is the empty list and **takes its element type
+from the first use that says one** — `let xs: Vec[i64] = []`, or a `push` — and
+where nothing ever says, it is refused asking for the type rather than guessing
+one. A `[` at the **start of a line** begins a literal and never an index of the
+line above it, so an index is always written where its subject is.
+
 > **Status:** the **list literal is not built** — `[1, 2, 3]` is a parse error at
-> the `[`, and so is a list *type* written `[User]`. Built: the type `Vec[T]`,
-> the tuple, indexing (`xs[0]`), indexed assignment, and `HashMap::new()`.
+> the `[`, and so is a list *type* written `[User]`
+> ([ADR-135](adr/adr-135.md) §5). Built: the type `Vec[T]`, the tuple, indexing
+> (`xs[0]`), indexed assignment, and `HashMap::new()`.
 
 ### 4.6. Generics (Type Parameters)
 To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.
@@ -1167,8 +1258,13 @@ options is declared `fn execute(target_age: i64 = 0)` and called
 `execute(target_age: 30)`; `execute(; target_age: 30)` is refused, so there is
 one spelling. A mixed call keeps its `;`, and keeps it required.
 
-> **Status:** the options-only form is not built; today it needs the leading
-> `;` ([ADR-133](adr/adr-133.md) §5).
+> **Status:** the **signature** half is built and the **call** half is not;
+> today a call needs the leading `;` ([ADR-133](adr/adr-133.md) §5).
+> `fn execute(target_age: i64 = 0)` parses and `fn execute(; target_age: i64 = 0)`
+> is refused. The call was blocked because `execute(target_age: 30)` and the
+> named struct literal `Stats(min: first)` are the same five tokens — and
+> [ADR-140](adr/adr-140.md) D1 unblocks it by taking the named literal out of
+> the language, which is why that migration goes first.
 
 **Every configuration parameter has a default**, and that is what makes it an
 *option*: a caller may leave it out, and leaving it out is never a question
@@ -1710,7 +1806,7 @@ struct Token {
     text: &str,   // a view into someone else's buffer
 }
 
-fn tokenize(source: String) -> List[Token] {
+fn tokenize(source: String) -> Vec[Token] {
     // The returned tokens outlive `source`'s scope, so the list is tethered:
     // it keeps `source` alive. No annotations, no copies of the text,
     // no dangling references — and one handle for the whole list.
@@ -1807,6 +1903,16 @@ fn fetch_config() throws -> String {
 }
 ```
 
+**`throws` stands after the result type**, and `sync` with it:
+`fn fetch_config() -> String throws` ([ADR-140](adr/adr-140.md) D4). That is the
+order [ADR-102](adr/adr-102.md) D1 already fixed for a function *type*, so a
+declaration and a type read the same way round; the form before the arrow stops
+parsing, with a message naming the order.
+
+> **Status:** **both orders parse today** ([ADR-140](adr/adr-140.md) §5 step 2),
+> and this chapter's examples still write the one that goes. One order is the
+> language; refusing the other is unbuilt.
+
 **`throws` names no types.** What a function can fail *with* follows from its body, so the compiler
 infers it whole-program and writes it to `nikaia.contracts` (Part III, 13.5). Writing it into the
 signature would mean maintaining derived truth by hand — the same reason a borrow relationship is
@@ -1844,6 +1950,25 @@ if !fs::exists(path) {
     throw ConfigError::NotFound(path)
 }
 ```
+
+**A `throw` is an expression**, and so are `return`, `break` and `continue`
+([ADR-138](adr/adr-138.md) D1). Their type is **never**
+([ADR-093](adr/adr-093.md)), which fits every expected type without widening
+it — the expression hands back nothing at all — so each may stand wherever an
+expression may:
+
+```nika
+let user = find(id) ?? throw NotFound(id)
+```
+
+Nothing about what they *do* changes: a `throw` still leaves the function and
+still makes it `throws`, a `break` still needs a loop, and `NK1133` still
+refuses a statement after a `break` in the same block — which is the rule that
+keeps `break x` from becoming a quietly dropped value (3.3).
+
+> **Status:** **not built** ([ADR-138](adr/adr-138.md) §5). The four are
+> statements today, so `?? throw Missing` and `=> throw NotFound` are parse
+> errors and each has to be written with braces.
 
 **Propagation happens on its own, and nothing marks it.** A call that can fail, inside a function
 that declares `throws` — that is all of it. No operator, no sigil:
@@ -1992,8 +2117,10 @@ use std::panic
 
 fn main() {
     // Global, one per application. Set it early.
-    // The hook must be 'sync' — mid-panic there is nothing to pause on.
-    panic::on_panic fn(info) sync {
+    // The hook may not pause — mid-panic there is nothing to pause on — and
+    // that promise is on `on_panic`'s parameter type, not on the lambda
+    // (ADR-102 D1): a lambda carries no promise of its own.
+    panic::on_panic fn(info) {
         // 'info' carries: message, file/line, and the stack trace.
         // Pattern: open crash resources at startup, only WRITE here.
         crash_log.write_report(info)
@@ -2009,12 +2136,14 @@ The rules, told straight:
 * **Blocking is allowed here — briefly.** Where the process is ending anyway it costs nothing. Where the program keeps running, keep the hook short and hand heavy reporting to something you started earlier.
 * **Diagnosis, not cleanup.** Do not try to flush buffered files or finish transactions from the hook — those objects may be broken in exactly the way that caused the panic. That is why panics skip destructors, and the hook does not reopen that door. If the hook itself panics, the process aborts immediately.
 
-> **Status:** not built. There is no `std::panic`, and the line above does not
-> parse as one construct either: a lambda's parameter list is followed by its
-> body and by nothing else (5.3), so the `sync` marker ends the lambda and
-> `panic::on_panic fn(info) sync { … }` is read as three expressions. The
-> trailing lambda itself is built, named arguments included — it is the marker
-> between the parameters and the block that has no grammar.
+> **Status:** not built. There is no `std::panic`. The example **used to**
+> write `fn(info) sync { … }`, which does not parse as one construct at all —
+> a lambda's parameter list is followed by its body and by nothing else (5.3),
+> so the marker ended the lambda and the line was read as three expressions.
+> The word is gone because a lambda carries no promise
+> ([ADR-141](adr/adr-141.md) D1): what may not pause is the *parameter*, and
+> `on_panic`'s type is where that is written ([ADR-102](adr/adr-102.md) D1).
+> The trailing lambda itself is built, named arguments included.
 
 ---
 
@@ -2329,7 +2458,12 @@ without `use http` is refused, so a file still lists what it depends on at the t
 alias or by collision, is an error rather than a rule about which wins (D5).
 
 `use std::fs` is the one `use` with a path in it, and it names the library rather
-than a package of yours ([ADR-030](adr/adr-030.md) D1).
+than a package of yours ([ADR-030](adr/adr-030.md) D1). **It brings no name in
+either** ([ADR-140](adr/adr-140.md) D5): `use std::collections` then
+`collections::HashMap`, exactly as a package's prefix works, because a `use` that
+behaves differently depending on what follows it is the one place this rule was
+not the language's. `Vec`, `String` and `HashMap` need no `use` at all — that is
+the prelude, and it is unchanged.
 
 > **Status:** both halves are built, one level deep. Every `.nika` beside the
 > entry takes part and they are one namespace; a package is depended on by
@@ -2346,7 +2480,9 @@ than a package of yours ([ADR-030](adr/adr-030.md) D1).
 > The braced and glob forms get the sentence above, with the caret on the brace
 > or the star ([ADR-046](adr/adr-046.md) §5).
 >
-> **Not built:** a package's *own* package dependencies are refused rather than
+> **Not built:** `use std::…` still brings a name in
+> ([ADR-140](adr/adr-140.md) §5 step 5), which is the one `use` that does; a
+> package's *own* package dependencies are refused rather than
 > resolved, and a version does not yet find a package — it resolves through
 > Cargo under the crate name `nikaia_<name>` ([ADR-103](adr/adr-103.md)), and
 > that arm is unbuilt.

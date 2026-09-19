@@ -1,145 +1,15 @@
 # Open decisions — the questions that need the owner
 
-**Nine entries are open**, below, and the ninth was found by *building* one of
-the others rather than by reading. An answer is an [ADR](specification/adr/),
-and the moment a question is answered its entry leaves this file rather than
-staying with a note on it. What is merely **unbuilt** is in
-[`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
-not do it yet, which needs work and not a ruling. Each entry says what the
-question is, why it is the owner's, and what this file recommends.
+**Nothing is open.** An answer is an [ADR](specification/adr/), and the moment
+a question is answered its entry leaves this file rather than staying with a
+note on it. What is merely **unbuilt** is in [`open-work.md`](open-work.md) —
+an ADR said what happens and the compiler does not do it yet, which needs work
+and not a ruling. Each entry says what the question is, why it is the owner's,
+and what this file recommends.
 
 ## Open
 
-### 1. What a list literal is: `[1, 2, 3]`, and the empty one
-
-The literal is table stakes (`language-review.md` §3.1) and the parser has no
-`[` in expression position, so the syntax is free. Two questions are the
-owner's: what `[]` is (a `Vec` of the first type a later use gives it, as a
-number literal takes its width — [ADR-060](specification/adr/adr-060.md)'s rule
-applied to a container — or a refusal asking for the type), and whether a
-literal at the start of a statement after an expression is an index or a new
-literal (Rust and JavaScript answer this differently). *Recommendation:*
-`[]` takes the type from the first use and is refused where none exists;
-a `[` at the start of a line begins a literal, because an index across a
-line break is a shape nobody writes.
-
-### 2. Number literals: `1_000_000`, `0xFF`, `0b1010`, `0o17`
-
-`NK1117` today (*nothing declares `_000_000`*). The forms are Rust's and the
-lowering is verbatim. The one question: does a hexadecimal literal take the
-first type that holds it as a decimal does ([ADR-060](specification/adr/adr-060.md)),
-or is `0xFF` a `u8` because eight bits were written? *Recommendation:* the
-same rule as decimal — a literal is a value, and the digits it was written in
-are a spelling — so `0xFF` is an `i32` unless a use says otherwise.
-
-### 3. `match` patterns: tuple, or, range, guard, nested, and `..` in a struct
-
-Six shapes, none built; `calc.nika` matches `step.0` because it cannot match
-`step`. Each is Rust's and lowers verbatim. The owner's questions are two:
-whether a guard is `if` (Rust) and whether a range pattern is `1..=5`
-(Rust) or `1..5` inclusive as the language's own `for` range is not — the
-language's `..` is exclusive, and a pattern reader from Rust expects `..=`.
-*Recommendation*: if for the guard; .. for the inclusive range pattern, with ..< adopted across the language for exclusive ranges; ..< never in a pattern, so that patterns remain purely inclusive and visually clean.
-
-### 4. A bare `throw` as a `match` arm
-
-`=> throw NotFound` is a parse error; it must be `=> { throw NotFound }`.
-The question is whether `throw` (and `return`, `break`, `continue`) are
-expressions of the never type ([ADR-093](specification/adr/adr-093.md) has
-the type) or statements that need a block. *Recommendation:* expressions of
-the never type, as Rust has them, so that an arm, an `??` right side and an
-`else` branch may all end in one.
-
-### 5. Doc comments, and a `doc` column in the ledger
-
-`///` is an ordinary comment ([ADR-134](specification/adr/adr-134.md) D3
-keeps it so). The ledger ships and the prompt bundle is on the roadmap, and
-neither has anywhere to take a sentence about a function from. The question
-is whether a doc comment is a language feature (a `doc` column in
-`nikaia.contracts`, a `///` the parser keeps, `nikaia doc`) or a convention
-the tooling reads. *Recommendation:* a language feature — the ledger is the
-one place a consumer reads, and a sentence that is not in it is not read.
-
-### 6. Two spellings for one thing (`language-review.md` §3.3)
-
-Five pairs, each needing a pick: the struct literal `Stats(min: 1)` beside
-`Reading { name, temp }`; the anonymous constructor beside `Type::new()`; the
-path separator `::` beside the dot of `Json.value(input)`; `throws` before
-`->` beside after; `use` bringing in a name for `std` and none for a package.
-*Recommendation:* the brace literal, the anonymous constructor with `new`
-gone from `std`'s own types, `::` everywhere, `throws` after the type, and
-`use` as [ADR-046](specification/adr/adr-046.md) says with `std` brought in
-line. Each is a record of its own, and each costs an example migration.
-
-### 7. The specification writes things the language does not have (§3.5)
-
-`neg.is_some()`, a postfix `?`, `List[T]` for `Vec[T]`, a lambda carrying
-`sync`, a string where an enum was argued for, an error raised as a
-positional constructor, `5.seconds()`, `channel::bounded`, `select { … }`.
-Most are corrections a page can take without a ruling; three are not — the
-`select` block, the duration literal and the channel — because each is a
-construct. *Recommendation:* correct the six; decide the three when their
-chapter (Part I 8) is next opened, and mark them *unspecified* until then.
-
-### 8. A roadmap note for the marketing wish list
-
-*Recommendation:*  `std::db` second, the C library
-([ADR-125](specification/adr/adr-125.md)) third, the query DSL fourth; the
-bare-metal target ([ADR-119](specification/adr/adr-119.md)) after that the server
-an. One
-paragraph in `project_status_and_roadmap.md` would say it.
-
-### 9. `execute(target_age: 30)` and `Stats(min: first)` are one spelling
-
-**Found by building [ADR-133](specification/adr/adr-133.md), and it blocks that
-record's call half.** D3 argues the parser can tell an options-only call apart on
-the second token because *nothing in expression position begins with a name
-followed by a colon — a struct literal begins `Name {`*. Kap 4.2's other struct
-literal does: `Stats(min: first, max: first)` builds the struct, and
-`execute(target_age: 30)` is the same five tokens. The parser tries the literal
-first, so D1's new call form is read as a struct literal for a struct nothing
-declares.
-
-**What is blocked:** ADR-133 D1's and D2's *call* halves, and with them Part III
-15.1's `script.exec(msg: message)` — which is why the specification's lowering
-floor stays where it is. The **signature** halves are built: `fn execute(target_age:
-i64 = 0)` parses and the leading `;` in a signature is refused, because nothing
-competes with that shape.
-
-**What is not blocked any more:** the silence. A struct literal naming nothing
-this compiler declares used to lower verbatim and come back from `rustc` as
-*cannot find struct `execute`* — Part III C.1's class — and is now `NK1135`,
-whose message names the call where the name is a function.
-
-*The options.*
-
-1. **Resolution decides, and the parser does not.** A name denotes one thing, so
-   `Name(field: value)` is a struct literal where `Name` is a type and a call with
-   options where it is a function. The precedent is in the language already:
-   `Stats(first)` is Kap 4.2's anonymous constructor and is parsed as a **call**,
-   with the checker and the emitter turning it into `Stats::new(first)` by looking
-   the name up. This is the same lookup on the other form. *Costs:* the fork in
-   `check` and in `emit`, and a rule for a name that is both a type and a function
-   — which the grammar allows today and nothing in the corpus writes.
-2. **The named constructor goes**, leaving `Stats { min: first }` as the only
-   struct literal and `name(opt: v)` unambiguous. *Costs:* a form the
-   specification writes in several places and the corpus uses, and a migration
-   with nothing to gain but the parser's simplicity.
-3. **ADR-133's call half is withdrawn** and an options-only call keeps its
-   leading `;`. *Costs:* the shape no reader has seen in any language, kept for a
-   collision the compiler could resolve — and D2's *one spelling per shape* then
-   applies to the signature only, which is the asymmetry the build is currently in.
-
-*Recommendation:* **option 1.** It is the answer the language already gives for
-the other half of the same form, it needs no migration, and it keeps both
-constructs exactly as their records describe them. What it asks for is one
-sentence — *a name denotes a type or a function, and that is what tells the two
-forms apart* — and one refusal for the case where somebody declares both.
-
-*If it is wrong:* option 1 spent on a form that should have gone (option 2) is a
-fork in two files that then becomes dead; option 3 spent is the two parser
-alternatives already written, reverted. Neither is expensive, which is why the
-question is worth asking rather than guessing.
+Nothing.
 
 ## Answered
 
@@ -225,7 +95,32 @@ shape a declaration commits to, with the box measured before it is closed)
 and
 [ADR-123](specification/adr/adr-123.md) (`crosses` says *no* as well as *yes*
 — the entry about the two refusals that could not fire, answered the way
-`locks` was). Each record
+`locks` was) and
+[ADR-135](specification/adr/adr-135.md) (a list literal is `[1, 2, 3]`, `[]`
+takes its element type from the first use and is refused where none says one,
+and a `[` at the start of a line begins a literal) and
+[ADR-136](specification/adr/adr-136.md) (`1_000_000`, `0xFF`, `0b1010`, `0o17`
+— and the radix is a **spelling**, so `0xFF` is `255` and takes the first type
+that holds it, because otherwise `0x0FF` would be a wider type than `0xFF`) and
+[ADR-137](specification/adr/adr-137.md) (six more `match` patterns, a guard is
+`if`, and `..` in a pattern is inclusive — so `..<` is the exclusive range
+everywhere and `..=` goes, which is the answer this file's recommendation asked
+for and one form more than it knew about) and
+[ADR-138](specification/adr/adr-138.md) (`throw`, `return`, `break` and
+`continue` are expressions of the never type, so an arm, a `??` right side and
+an `else` may each end in one) and
+[ADR-139](specification/adr/adr-139.md) (a doc comment is a language feature
+and the ledger carries it in a derived `doc` column, because the ledger is the
+one file a consumer reads and a sentence that is not in it is not read) and
+[ADR-140](specification/adr/adr-140.md) (the five places one thing had two
+spellings, picked: the brace literal, the anonymous constructor with `new` gone
+from `std`, `::` everywhere, `throws` after the result type, and `use`
+bringing nothing in — which also freed
+[ADR-133](specification/adr/adr-133.md)'s call half, since the named literal
+was the construct it collided with) and
+[ADR-141](specification/adr/adr-141.md) (six of the specification's nine slips
+corrected on the page and the three that are **constructs** marked *unspecified*
+in place, with the mark given a definition beside the **Status** note's). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.
@@ -244,14 +139,31 @@ does not exist in any form. That is **scope**, and
 [`project_status_and_roadmap.md`](project_status_and_roadmap.md) holds it; scope
 becomes a decision by something coming to rest on it.
 
-**Every question this file held has been answered**, and the last four went in
-one round: the ring's park ([ADR-121](specification/adr/adr-121.md)), the retry
-that needs no typed `catch` ([ADR-111](specification/adr/adr-111.md) D5,
-corrected), the shape a handler's declaration commits to
-([ADR-122](specification/adr/adr-122.md)), `crosses` saying *no*
-([ADR-123](specification/adr/adr-123.md)) — and what `extern "C"` costs
-([ADR-124](specification/adr/adr-124.md)), answered with the number this file
-asks for.
+**Every question this file held has been answered**, and the last nine went in
+one round, each the way this page had recommended: the list literal
+([ADR-135](specification/adr/adr-135.md)), the number literal's four forms
+([ADR-136](specification/adr/adr-136.md)), the six `match` patterns and the
+range spelling ([ADR-137](specification/adr/adr-137.md)), the four jumps as
+expressions ([ADR-138](specification/adr/adr-138.md)), the doc comment
+([ADR-139](specification/adr/adr-139.md)), the five double spellings
+([ADR-140](specification/adr/adr-140.md)), the specification's own slips
+([ADR-141](specification/adr/adr-141.md)), the roadmap's ordering — which is a
+paragraph in [`project_status_and_roadmap.md`](project_status_and_roadmap.md)
+and names no partner, because naming one is theirs to agree to — and the
+collision between an options-only call and a named struct literal, which needed
+no ruling of its own in the end: ADR-140 D1 takes the named literal out of the
+language, so the spelling has one owner.
+
+**Two of the nine came back with something the question did not contain**,
+which is the argument for writing a recommendation down rather than deciding in
+one's head. `..` inclusive everywhere meant `..=` had to go, and the entry had
+not noticed the language already has `..=` in an expression
+([ADR-137](specification/adr/adr-137.md) D5). And the marketing entry's
+recommendation was edited to garbled text on its way here; what survived it
+unambiguously was that the partners are not named, which is what the roadmap
+paragraph carries — the ordering itself is the last complete version of the
+sentence, and [ADR-119](specification/adr/adr-119.md)'s own scheduling is what
+pins the bare-metal target after the server.
 
 **That is the state to write down rather than to enjoy.** A page with nothing
 on it means the work in [`open-work.md`](open-work.md) is the kind that needs
