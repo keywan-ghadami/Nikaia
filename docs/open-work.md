@@ -460,7 +460,11 @@ build-time call.
 
 *What it unblocks:* `comptime CONFIG = Config.value(from "config.toml")` — the
 case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
-[ADR-072](specification/adr/adr-072.md) built the permission for.
+[ADR-072](specification/adr/adr-072.md) built the permission for — **and the
+database driver**, below, whose whole first step is a grammar declaring what
+columns a query returns. That entry says what the narrow half costs, which is
+less than this one's general case: a flat list of declarations rather than an
+arbitrary value.
 
 ### 2.10. The cleanup point the ledger should narrate
 
@@ -1131,6 +1135,31 @@ are packages. No expression capture, no ORM; `raw(text)` for dynamic SQL.
 build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
+
+**Step 1 is blocked, and the record does not say by what.** For the compiler to
+know which columns a grammar declares, the grammar has to **run while the
+program is built** — and *running a grammar while the program is built is not
+interpretation*, above, says that may only be done by compiling the **generated**
+parser and running it. So `meta::column` waits on that entry, and so does
+`meta::parameter`: today a `dsl` block's holes come from a **scan of the body
+text** (`crates/nikaia/src/dsl.rs`), which that file's own note calls an
+approximation, and `dsl html { … }` is the one block this compiler runs at all —
+by [ADR-017](specification/adr/adr-017.md), because `html` is the target it
+compiles itself.
+
+*Measured, and the measurement is the point:* the emitter already writes a
+complete `grammar! { … }` for a grammar item, and `sysroot.rs` already knows
+where `winnow_grammar` and `winnow` are. What is missing is the **harness** — a
+crate holding one grammar and a `main` that parses the block's bytes, compiled
+and run during the build, keyed in the cache on the grammar's source — and a way
+for what it found to come **back**: for this record that is narrow (a flat list
+of declared columns and parameters), where the general case of §2.9's own
+example (`comptime CONFIG = Config.value(from "config.toml")`) has to carry an
+arbitrary value.
+
+*So the order inside this entry is not the record's:* the harness first, then
+step 1. Neither is small, and the harness delivers nothing a reader of a program
+would notice — which is worth knowing before it is started rather than after.
 
 ### 2.41. `select` is not a keyword, and nothing cancels a task
 

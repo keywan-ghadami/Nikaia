@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.58] — 2026-09-19
+
+What blocks the database driver, written down where the next reader looks
+([ADR-143](docs/specification/adr/adr-143.md)) — because a measurement nobody
+recorded is a measurement somebody takes again.
+
+### Found
+
+- **The driver's first step cannot be built yet, and its record does not say so.** [ADR-143](docs/specification/adr/adr-143.md) §5 starts with `meta::column` and the row type derived from a grammar. For the compiler to know which columns a grammar declares, the grammar has to **run while the program is built** — and `docs/open-work.md`'s own rule for that says it may only be done by compiling the **generated** parser and running it, never by interpreting the grammar a second time. So step 1 waits on an entry four pages above it, and nothing in the record pointed there.
+- **What exists and what is missing, measured rather than guessed.** The emitter already writes a complete `grammar! { … }` for a grammar item, and `sysroot.rs` already knows where `winnow_grammar` and `winnow` live. What is missing is the **harness** — a crate holding one grammar and a `main` that parses the block's bytes, built and run during the build, keyed in the cache on the grammar's source — and a way for what it found to come **back**. Today a `dsl` block's holes come from a **scan of the body text** (`crates/nikaia/src/dsl.rs`), which that file's own note calls an approximation, and `dsl html { … }` is the one block this compiler runs at all.
+- **The narrow half is cheaper than the general one.** What the driver needs back is a flat list of declared columns and parameters; what `comptime CONFIG = Config.value(from "config.toml")` needs back is an arbitrary value. The two share a harness and part ways at the return, which is worth knowing before either is started.
+
+### Changed
+
+- **`docs/open-work.md`**: the driver's entry carries the finding and says the order inside it is **not** the record's — the harness first, then step 1 — and the build-time entry it waits on now points forward at the driver as the case that needs its narrow half.
+
+### Left open
+
+- Nothing new. The finding moves no code; it moves the next session's starting point.
+
 ## [0.0.57] — 2026-09-19
 
 `sqlite3` from end to end
