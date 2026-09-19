@@ -30,7 +30,7 @@ use winnow_grammar::Symbol;
 
 use crate::ast::{
     BinaryOp, Block, Expr, FnArg, FoldSpec, FrameAttr, GrammarDef, GrammarRule, Item, MatchPattern,
-    Pattern, Receiver, Repeat, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
+    Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
 use crate::parser::{parse_expression, Parsed};
 use crate::refused;
@@ -38,6 +38,18 @@ use crate::refused;
 /// One branch of an `overlap { … }`, where the schedule and the written order
 /// differ and the results have to be put back (ADR-050 D2, D6).
 const BRANCH: &str = "__nikaia_branch_";
+
+/// The name a `select` arm's winning value arrives under, where it has to be
+/// unwrapped before the arm's own binding sees it (ADR-148 D1).
+const WINNER: &str = "__nikaia_won";
+
+/// What the variants of `std`'s `Race<n>` are called, in written order.
+///
+/// **Ordinals and not letters**, so the generated `match` reads as the source
+/// does: `Race2::Second(_)` is the second arm of the block (Part III C.1).
+const ORDINALS: [&str; MOST_BRANCHES] = [
+    "First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth",
+];
 
 /// How many branches an `overlap` block may have.
 ///
@@ -4343,6 +4355,9 @@ impl<'p> Emitter<'p> {
             // **Part I 8.1.2: every branch in flight, and the value is their
             // results in written order** (ADR-050 D2).
             Expr::Overlap(block) => self.overlap(out, block, depth, flow)?,
+            // **Part II 12.4: every arm in flight, and the first to finish is
+            // the one that is kept** (ADR-148 D1).
+            Expr::Select(arms) => self.select(out, arms, depth, flow)?,
             // An `if` in *expression* position - `let x = if c { a } else { b }`
             // - hands its branch's value to whoever asked for it, so a `return`
             // in a branch is the function's and stays one.
@@ -5491,6 +5506,117 @@ impl<'p> Emitter<'p> {
         } else {
             out.push(".await");
         }
+        Ok(())
+    }
+
+    /// **`select { … }`** — Part II 12.4,
+    /// [ADR-148](../../../docs/specification/adr/adr-148.md) D1 and D2.
+    ///
+    /// Each arm's expression becomes an `async` block, `task::race<n>` polls all
+    /// of them in one pass, and what comes back says **which** arm won. So the
+    /// construct lowers to a `match` over a sum, which is what an arm binding a
+    /// name and then running a block *is* in the language below.
+    ///
+    /// **The losers are cancelled, and nothing here writes that** (D2). The
+    /// losing futures are dropped when `race<n>` returns; a future dropped at
+    /// its suspension point tears its values down, and a `cleanup` that pauses
+    /// is adopted by the runtime and bounded by the `cleanup-deadline`
+    /// ([ADR-006](../../../docs/specification/adr/adr-006.md) D3). That is the
+    /// mechanism this runtime already had, which is the whole argument of D3.
+    ///
+    /// **A failing arm**, where the enclosing function is `throws`: every arm is
+    /// wrapped in `Ok` so the vehicle sees one shape, and the winner is
+    /// unwrapped at the top of its own body — `?` there and not at the `match`,
+    /// because only the arm that won has a value to propagate.
+    fn select(
+        &self,
+        out: &mut Out,
+        arms: &[SelectArm],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        if arms.len() < 2 {
+            return Err(refused!(
+                "a `select` needs at least two arms; one arm has nothing to race \
+                 against (Part II, 12.4)"
+            ));
+        }
+        if arms.len() > MOST_BRANCHES {
+            return Err(refused!(
+                "a `select` of {} arms is more than this compiler builds \
+                 ({MOST_BRANCHES}); `std` has one vehicle per arity (ADR-148 D1)",
+                arms.len()
+            ));
+        }
+
+        // The same all-or-none the `overlap` above writes, and for the same
+        // reason: the vehicle sees one shape and the error type is named rather
+        // than inferred, because an `async` block with a `?` in it and nothing
+        // to infer from is *"type annotations needed"* about a file nobody
+        // wrote (Part III, C.1).
+        let fallible = flow.throws
+            && arms
+                .iter()
+                .any(|arm| self.branch_can_fail(&arm.value, flow.at(arm.at)));
+
+        let pad = "    ".repeat(depth);
+        let inner = "    ".repeat(depth + 1);
+        out.push(&format!("match nikaia_std::task::race{}(\n", arms.len()));
+        for arm in arms {
+            out.push(&inner);
+            out.push("async { ");
+            // `Flow::PLAIN` for the reason an `overlap` branch gets it: a
+            // `return` written inside the *raced expression* would leave that
+            // block. What an arm's **body** does is the function's, and the body
+            // is emitted below with the flow it was called with.
+            let inside = Flow {
+                statement: arm.at,
+                throws: fallible,
+                origin: flow.origin,
+                ..Flow::PLAIN
+            };
+            if fallible {
+                out.push("Ok::<_, Box<dyn std::error::Error>>(");
+            }
+            self.expr(out, &arm.value, depth + 1, inside)?;
+            if fallible {
+                out.push(")");
+            }
+            out.push(" },\n");
+        }
+        out.push(&format!("{pad}).await {{\n"));
+
+        for (at, arm) in arms.iter().enumerate() {
+            let bound = match (fallible, arm.binding) {
+                (true, _) => WINNER.to_string(),
+                (false, Some(name)) => self.text(name).to_string(),
+                (false, None) => "_".to_string(),
+            };
+            out.push(&format!(
+                "{inner}nikaia_std::task::Race{}::{}({bound}) => ",
+                arms.len(),
+                ORDINALS[at]
+            ));
+            // The winner's `?`, at the top of the arm that won. A `_` arm still
+            // propagates, because an arm that ignores a value does not ignore a
+            // failure.
+            let opening = fallible.then(|| match arm.binding {
+                Some(name) => format!("let {} = {WINNER}?;", self.text(name)),
+                None => format!("{WINNER}?;"),
+            });
+            out.from(&Span::from(arm.at..arm.at), |out| {
+                self.block_opening_with(
+                    out,
+                    &arm.body,
+                    depth + 1,
+                    flow,
+                    Tail::Value,
+                    opening.as_deref(),
+                )
+            })?;
+            out.push("\n");
+        }
+        out.push(&format!("{pad}}}"));
         Ok(())
     }
 

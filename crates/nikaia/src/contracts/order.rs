@@ -1082,6 +1082,19 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
         | Expr::Unsafe(block)
         | Expr::Overlap(block)
         | Expr::Closure { body: block, .. } => names_in_block(parsed, block, out),
+        // **Both halves of every arm**, and the binding too: a name an arm
+        // binds is read inside its body, and this walk counts what a value
+        // *reaches* rather than what it declares - so counting one name too
+        // many is the safe direction (D9).
+        Expr::Select(arms) => {
+            for arm in arms {
+                if let Some(name) = arm.binding {
+                    out.insert(parsed.text(name).to_string());
+                }
+                names_in(parsed, &arm.value, out);
+                names_in_block(parsed, &arm.body, out);
+            }
+        }
         Expr::If {
             cond,
             then_branch,

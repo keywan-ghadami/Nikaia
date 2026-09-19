@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.60 (Draft)
+**Version:** 0.0.61 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -896,12 +896,16 @@ select {
 ```
 `select` is a block whose arms bind ([ADR-148](adr/adr-148.md)). The first branch to finish wins. The losers are cancelled with the teardown [ADR-006](adr/adr-006.md) D3 describes, and the handle `spawn` returns gains `cancel()`, so a program's cancel and a loser's are one mechanism. `5.seconds()` is a `std::time::Duration`, made by a `std` extension on the integers; there is no suffix literal ([ADR-150](adr/adr-150.md)). The error a branch throws is an **enum variant**, because an error type is an `enum` ([ADR-023](adr/adr-023.md) D1, [ADR-141](adr/adr-141.md) D1).
 
-> **Implementation status:** Partly implemented. `5.seconds()` and `sleep` are
-> built ([ADR-150](adr/adr-150.md)): the five names are `std` methods on either
-> integer type, and `sleep` gives the thread up rather than holding it. `select`
-> is **not** — it is not a keyword in the parser and the block above is a parse
-> error, so nothing races two tasks today ([ADR-148](adr/adr-148.md) §5).
-> `docs/open-work.md` carries it.
+`select` and `overlap` are a **pair** ([ADR-148](adr/adr-148.md) D4): both start every branch at once, and the difference is what they keep — `overlap` keeps every result ([ADR-050](adr/adr-050.md)), `select` keeps the first. A block needs at least two arms, because one arm has nothing to race against, and at most eight, which is what `std` writes a vehicle for.
+
+> **Implementation status:** Implemented. `select` is a keyword, the block above
+> is a program, and `5.seconds()` and `sleep` are `std`
+> ([ADR-148](adr/adr-148.md) §5, [ADR-150](adr/adr-150.md) §5). The losers are
+> cancelled by being dropped, which is [ADR-006](adr/adr-006.md) D3's teardown
+> reached from a second place, and `handle.cancel()` is the same mechanism a
+> program can ask for. What a **cancelled** task's handle would say afterwards
+> is a question no program can ask, because cancelling takes the handle
+> ([ADR-148](adr/adr-148.md) §4).
 
 **What "cleaned up" means.** The losing task stops at its current pause point and its values are torn down. A resource with a pausable `cleanup` (Part I 6.4) is not awaited by the *winner*. The runtime **adopts** such `cleanup` runs and finishes them in the background ("parked cleanup"). The program does not exit before parked cleanups are done, bounded by the runtime configuration `cleanup-deadline` (Part III 13.3). An error from a parked cleanup has no caller to reach and is reported through the runtime's error hook ([ADR-006](adr/adr-006.md) D3).
 

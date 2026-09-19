@@ -401,6 +401,19 @@ pub enum Expr {
     /// would bind a name the block's own value already carries.
     Overlap(Block),
 
+    /// Part II 12.4: `select { … }` — **every arm is started and the first one
+    /// to finish wins** ([ADR-148](../../../docs/specification/adr/adr-148.md)
+    /// D1).
+    ///
+    /// [ADR-050](../../../docs/specification/adr/adr-050.md)'s `overlap` is the
+    /// other half of the pair: it runs its branches at once and keeps **every**
+    /// result; this one keeps the **first** and cancels the rest (D4).
+    ///
+    /// A `Vec<SelectArm>` and not a `Block`, because an arm is not a statement:
+    /// it binds a name and then runs a block, which is the whole of why this
+    /// costs a keyword rather than being a function (D1).
+    Select(Vec<SelectArm>),
+
     // Kap 3.2: if cond { ... } else { ... }
     If {
         cond: Box<Expr>,
@@ -730,6 +743,31 @@ pub enum VariantFields {
     Tuple(Vec<Type>),
     /// `Move { x: i32, y: i32 }` - named, read by name.
     Named(Vec<FieldDef>),
+}
+
+/// One arm of a `select { … }`: `pattern = expr => { … }`
+/// ([ADR-148](../../../docs/specification/adr/adr-148.md) D1).
+///
+/// The expression is started with every other arm's; if it is the first to
+/// finish, its value is bound to the pattern and the body runs.
+#[derive(Debug, Clone)]
+pub struct SelectArm {
+    /// The name the winner's value is bound to, or `None` for `_`.
+    ///
+    /// **`_` is the ignore pattern and not a catch-all arm**
+    /// ([ADR-126](../../../docs/specification/adr/adr-126.md) D1): a value
+    /// *arrives* here and is ignored, which is that record's own position and
+    /// not what [ADR-145](../../../docs/specification/adr/adr-145.md) took away
+    /// from it one construct over.
+    pub binding: Option<Ident>,
+    /// What is started. It is an expression and not a statement, because an arm
+    /// races a value rather than an effect.
+    pub value: Expr,
+    /// What runs if this arm wins.
+    pub body: Block,
+    /// Where the arm starts, which is the key the checker's answers are filed
+    /// under ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    pub at: usize,
 }
 
 /// One arm of a `match` (Kap 3.4).

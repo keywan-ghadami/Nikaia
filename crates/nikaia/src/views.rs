@@ -890,6 +890,15 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
         | Expr::Unsafe(block)
         | Expr::Overlap(block)
         | Expr::Closure { body: block, .. } => blocks.push(block),
+        // An arm holds both: what is raced is an expression, and what runs if
+        // it wins is a block ([ADR-148](../../docs/specification/adr/adr-148.md)
+        // D1).
+        Expr::Select(arms) => {
+            for arm in arms {
+                children.push(&arm.value);
+                blocks.push(&arm.body);
+            }
+        }
         Expr::TryCatch { expr, handler } => {
             children.push(expr);
             blocks.push(handler);

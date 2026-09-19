@@ -1250,6 +1250,28 @@ pub = true
 signature = "(TaskHandle[$T]) -> $T"
 doc = "Wait for the task and take what it produced.\n\nIt gives the thread up rather than holding it, so other work runs while this\nwaits. A handle can be joined once, because joining takes it."
 
+# **One mechanism, said three ways rather than three things**
+# ([ADR-148](../../docs/specification/adr/adr-148.md) D3): a program's own
+# cancel, a `select`'s loser and ADR-129's C `cancel` do the same thing to a
+# task - it stops at its current pause point, its values are torn down, and a
+# `cleanup` that pauses is adopted by the runtime.
+#
+# `sync = true`, and that is not a slip: this is a *request*. It sets a flag and
+# wakes the task, and the caller does not wait for the teardown because it
+# should not pay for it (D2).
+#
+# No `touches`, which is the fail-closed answer: what a cancel orders against is
+# whatever the task was doing, and that is not a set this file can name.
+#
+# It takes the handle, as `join` does, which is what makes §4's open question -
+# *can a cancelled task be observed to have been cancelled?* - one no program
+# can ask.
+[fn."TaskHandle::cancel"]
+pub = true
+sync = true
+signature = "(TaskHandle[$T])"
+doc = "Stop the task.\n\nIt stops at its current pause point and its values are torn down; a `cleanup`\nthat pauses is finished in the background. This does not wait for any of\nthat. Cancelling takes the handle, so a cancelled task is never joined."
+
 [type."Shared"]
 pub = true
 doc = "A value several parts of a program own at once.\n\nA caller is not meant to notice it: a function taking `&Connection` accepts a\n`&Shared[Connection]`. Handing a handle on by value makes a second one rather\nthan taking the first away."

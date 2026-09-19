@@ -95,7 +95,7 @@
 20-nikaia-advance.md #17 lowered (as written)  fn charge(kasse: SharedMut[i64], wieviel: i64) throws {
 20-nikaia-advance.md #18 lowered (a body) [about-a-refusal]  let counter = SharedMut(0)
 20-nikaia-advance.md #19 fragment (as written) [about-a-refusal sketch]  let account_a = SharedMut(Account(…))
-20-nikaia-advance.md #20 fragment (as written)  select {
+20-nikaia-advance.md #20 lowered (a body)  select {
 20-nikaia-advance.md #21 lowered (a body)  // Subject: 100 (capacity)
 20-nikaia-advance.md #22 lowered (a body)  let pixels = [/* 1 million pixels */]
 20-nikaia-advance.md #23 lowered (a body)  let data = [1, 2, 3]

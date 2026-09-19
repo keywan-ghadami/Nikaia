@@ -686,11 +686,20 @@ pub enum Narrowing {
 fn leaves(expr: &Expr) -> bool {
     match expr {
         Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue => true,
-        Expr::Block(block) => match block.stmts.last().map(|s| &s.node) {
-            Some(Stmt::Return(_)) | Some(Stmt::Break) | Some(Stmt::Continue) => true,
-            Some(Stmt::Expr(inner)) => leaves(inner),
-            _ => false,
-        },
+        Expr::Block(block) => block_leaves(block),
+        _ => false,
+    }
+}
+
+/// The same question about a **block**, which is what a `select` arm's body is
+/// ([ADR-148](../../docs/specification/adr/adr-148.md) D1).
+///
+/// Part II 12.4's own example has two arms and both of them jump, so this is
+/// what decides that the `select` around them carries no value.
+fn block_leaves(block: &Block) -> bool {
+    match block.stmts.last().map(|s| &s.node) {
+        Some(Stmt::Return(_)) | Some(Stmt::Break) | Some(Stmt::Continue) => true,
+        Some(Stmt::Expr(inner)) => leaves(inner),
         _ => false,
     }
 }
@@ -3642,6 +3651,52 @@ impl<'a> Checker<'a> {
                 self.scope.pop();
                 self.branches_meet_on_nothing(block, span);
                 Ty::Tuple(parts)
+            }
+
+            // **Part II 12.4: every arm is started and the first to finish
+            // wins** ([ADR-148](../../docs/specification/adr/adr-148.md) D1).
+            //
+            // Each raced expression is an `async` block of its own, exactly as
+            // an `overlap` branch is, so the boundary is per arm. What the arm
+            // *binds* is the value that came back, so the body is walked in a
+            // scope holding that one name - and `_` binds nothing, which is
+            // [ADR-126](../../docs/specification/adr/adr-126.md) D1's ignore
+            // pattern rather than a catch-all arm.
+            //
+            // **The type is the `match` rule one construct over**: an arm that
+            // jumps is not one of the types that have to agree
+            // ([ADR-138](../../docs/specification/adr/adr-138.md) D1), and
+            // where the rest do not say the same the answer is `Unknown`
+            // rather than a guess. Part II 12.4's own example is two jumping
+            // arms, so it is a `select` of no value at all.
+            Expr::Select(arms) => {
+                let mut result: Option<Ty> = None;
+                let mut agree = true;
+                for arm in arms {
+                    let raced =
+                        self.past_a_boundary("`select` arm", |me| me.expr(&arm.value, span));
+                    let frame = match arm.binding {
+                        Some(name) => {
+                            vec![Local::free(self.parsed.text(name).to_string(), raced)]
+                        }
+                        None => Vec::new(),
+                    };
+                    self.scope.push(frame);
+                    let ty = self.past_a_boundary("`select` arm", |me| me.block(&arm.body));
+                    self.scope.pop();
+                    if block_leaves(&arm.body) {
+                        continue;
+                    }
+                    match &result {
+                        None => result = Some(ty),
+                        Some(seen) if *seen == ty => {}
+                        Some(_) => agree = false,
+                    }
+                }
+                match result {
+                    Some(ty) if agree => ty,
+                    _ => Ty::Unknown,
+                }
             }
 
             Expr::If {

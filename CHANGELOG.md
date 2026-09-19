@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.61] — 2026-09-19
+
+`select { … }` keeps the first arm to finish, and a task handle has `cancel()`
+([ADR-148](docs/specification/adr/adr-148.md)) — which takes the last
+*unspecified* mark off Part II 12.4 and completes the pair `overlap` was half
+of.
+
+### Added
+
+- **`select` is a keyword and a construct, in the same change.** [ADR-051](docs/specification/adr/adr-051.md) D3's one ground that holds — reserved *for* a construct rather than against the possibility of one. The number that allowed it is zero: nothing in `examples/`, in `tests/` or in the three pages wrote it as a name.
+- **An arm is `pattern = expr => { … }`**, with `_` and a binding name, and it lowers to a `match` over **which** arm won: `std` gains `race2`..`race8` and a `Race<n>` per arity beside the `overlap<n>` it already had. An arm binding a name and then running a block *is* a match arm in the language below, so nothing had to be invented for it — which is also why the generated Rust reads as the source does, `Race2::Second(_)` and not `Race2::B(_)`.
+- **`handle.cancel()`**, over a flag the task reads at its pause point and the waker that makes it notice **now** rather than when whatever it was waiting for answers. It **takes the handle**, the way `join` does.
+- **`crates/nikaia/tests/racing.rs`**: twelve tests, seven of which build a program and run it — including Part II 12.4's own example, with a timeout short enough that a test does not wait five seconds for it.
+
+### Decided while building it
+
+- **`cancel()` taking the handle answers a question the record left open.** [ADR-148](docs/specification/adr/adr-148.md) §4 asked whether a cancelled task can be observed to have been cancelled. It cannot: after the call there is no handle to ask with. That also means a cancelled task is never joined, so nothing waits for a value that is not coming.
+- **The losers' teardown is written nowhere**, and that is D2 rather than an omission. The losing futures are dropped when the race returns; a future dropped at its suspension point tears its values down, and a `cleanup` that pauses is adopted by the runtime and bounded by the `cleanup-deadline` ([ADR-006](docs/specification/adr/adr-006.md) D3). One mechanism, which is the whole argument of D3.
+- **A failing arm propagates from the arm that won**, and not from the race: every arm is wrapped in `Ok` so the vehicle sees one shape, and the `?` is the first line of the winning arm's body. `overlap`'s D5 puts its `?`s on the tuple, because there every branch has a value.
+
+### Found by building it
+
+- **Nesting two keyword-led forms in one grammar rule costs a word in every parse error.** The backend's alternation takes twenty-two arms and `primary_expr` was at the last one, so `select` needed room. Putting `overlap` and `select` together in a rule of their own took the word `overlap` out of **six** recorded messages' *"also possible here"* lists. What was merged instead is the tuple and the grouping — both begin with a `(`, so the list is the same either way. `tests/errors/EXPECTED.txt` is what said so.
+
+### Changed
+
+- **Part II 12.4's implementation note** says *Implemented*.
+
+### Left open
+
+- **A `select` with a default arm** (*if nothing is ready yet*), which is a poll and not a race and which no page writes, and **cancellation of anything that is not a task** — both [ADR-148](docs/specification/adr/adr-148.md) §4's, both untouched.
+
 ## [0.0.60] — 2026-09-19
 
 Three sweep failures that are not failures, measured once and written down.

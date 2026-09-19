@@ -1185,27 +1185,7 @@ arbitrary value.
 step 1. Neither is small, and the harness delivers nothing a reader of a program
 would notice — which is worth knowing before it is started rather than after.
 
-### 2.41. `select` is not a keyword, and nothing cancels a task
-
-[ADR-148](specification/adr/adr-148.md). Part II 12.4's block is a parse error
-and carries [ADR-141](specification/adr/adr-141.md) D2's *unspecified* mark —
-while the **semantics** have been built since
-[ADR-006](specification/adr/adr-006.md) D3: the loser stops at its pause point,
-its `cleanup` is adopted, the deadline bounds it. The runtime's race is what
-[ADR-129](specification/adr/adr-129.md)'s C `cancel` already leans on.
-
-*And a program cannot say stop to something it started*, because losing a
-`select` is the only thing that cancels a task today.
-
-*What it needs, in the record's order (§5):* the keyword, the block and the arm
-grammar; the lowering onto the runtime's race; `cancel()` on the handle, over
-the same call; the page's example as a test that runs, and the mark taken off.
-
-*The timeout arm's half is done:* `5.seconds()` and `sleep` are built, so the
-example's second branch is a program already and what is left is the construct
-around it.
-
-### 2.42. There is no channel
+### 2.41. There is no channel
 
 [ADR-149](specification/adr/adr-149.md). Part II 12.5's
 `let (tx, rx) = channel::bounded(100)` names nothing, and carries the
@@ -1217,7 +1197,7 @@ the pause on a full `send`; `std::channel` and its four entries, `send` carrying
 no `sync` and `recv` handing back a `T?`; the page's example as a test that
 runs.
 
-### 2.43. The prelude is what the compiler happens to know
+### 2.42. The prelude is what the compiler happens to know
 
 [ADR-154](specification/adr/adr-154.md).
 `crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and

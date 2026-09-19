@@ -44,6 +44,7 @@
 20-nikaia-advance.md #3 error[E0433]
 20-nikaia-advance.md #17 compiles
 20-nikaia-advance.md #18 compiles
+20-nikaia-advance.md #20 error[E0425]
 20-nikaia-advance.md #21 error[E0433]
 20-nikaia-advance.md #22 error[E0599]
 20-nikaia-advance.md #23 error[E0425]

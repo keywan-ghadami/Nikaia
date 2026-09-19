@@ -406,11 +406,11 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 36] = [
+pub const RESERVED_WORDS: [&str; 37] = [
     "as", "break", "catch", "comptime", "continue", "dsl", "else", "enum", "extern", "false", "fn",
     "for", "from", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub",
-    "return", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true", "unsafe",
-    "use", "while", "with",
+    "return", "select", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true",
+    "unsafe", "use", "while", "with",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -2537,6 +2537,10 @@ grammar! {
           // taken for shorthand fields - or as a variable followed by a block
           // of its own, which is the trap the `while` rule records.
           | o:overlap_expr -> { o }
+          // Its pair ([ADR-148](../../../../docs/specification/adr/adr-148.md)
+          // D4), and here for the same reason: a keyword and a braced body,
+          // which a PEG would read as a struct literal called `select`.
+          | s:select_expr -> { s }
           // Part III 15.1's other half, and it sits here for `overlap`'s reason
           // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D3): a
           // keyword and a block, which a PEG would otherwise read as a struct
@@ -2556,8 +2560,17 @@ grammar! {
           | f:float_lit -> { f }
           | i:int_lit -> { i }
           | b:block_expr -> { b }
-          | t:tuple_expr -> { t }
-          | p:paren_expr -> { p }
+          // **Both parenthesised forms in one alternative**, and it is the
+          // alternation's **width** that asks for it: the backend's `alt` takes
+          // twenty-two arms, and this rule was at the last one when
+          // [ADR-148](../../../../docs/specification/adr/adr-148.md) added
+          // `select`. These two are the pair it costs nothing to merge - both
+          // begin with a `(`, so the *"also possible here"* list a parse error
+          // carries is the same either way. That is not true of two
+          // keyword-led forms, which is how this was found: nesting `overlap`
+          // and `select` together took the word `overlap` out of six recorded
+          // messages.
+          | g:parenthesised_expr -> { g }
           | l:list_lit -> { l }
           // **The four jumps, where an expression stands**
           // ([ADR-138](../../../../docs/specification/adr/adr-138.md) D1):
@@ -2779,6 +2792,12 @@ grammar! {
 
         rule paren_expr -> Expr =
             "(" e:expr ")" -> { e }
+
+        // A tuple and a grouping, which a reader tells apart by the comma and a
+        // PEG tells apart by trying the longer one first.
+        rule parenthesised_expr -> Expr =
+            t:tuple_expr -> { t }
+          | p:paren_expr -> { p }
 
         // **Part I 2.2's one container, written down**
         // ([ADR-135](../../../../docs/specification/adr/adr-135.md) D1):
@@ -3031,6 +3050,7 @@ grammar! {
         rule KW_PUB = "pub" not(ident)
         rule KW_RETURN = "return" not(ident)
         rule KW_RULE = "rule" not(ident)
+        rule KW_SELECT = "select" not(ident)
         rule KW_SELF = "self" not(ident)
         rule KW_SPAWN = "spawn" not(ident)
         rule KW_STRUCT = "struct" not(ident)
@@ -3157,6 +3177,14 @@ grammar! {
           // `tests/` or in the three pages writes either as a name.
           | KW_EXTERN -> { 0 }
           | KW_UNSAFE -> { 0 }
+          // **And the word this record spends**
+          // ([ADR-148](../../../../docs/specification/adr/adr-148.md) D1).
+          // `overlap` was reserved before it had a construct; `select` gets
+          // both at once, which is the case D3 of
+          // [ADR-051](../../../../docs/specification/adr/adr-051.md) asks for.
+          // The number that allowed it is **zero**: nothing in `examples/`, in
+          // `tests/` or in the three pages writes it as a name.
+          | KW_SELECT -> { 0 }
 
 
         // The compiler's identifier.
@@ -3258,6 +3286,38 @@ grammar! {
         // mean.
         rule overlap_expr -> Expr =
             KW_OVERLAP b:block -> { Expr::Overlap(b) }
+
+        // Part II 12.4: `select { … }`, where each **arm** is a branch and the
+        // first to finish wins ([ADR-148](../../../../docs/specification/adr/adr-148.md)
+        // D1).
+        //
+        // Not a block, which is the difference from `overlap` one rule up and
+        // the whole of why this costs a keyword: an arm binds a name and then
+        // runs a block, and no function parameter can be given that shape.
+        rule select_expr -> Expr =
+            KW_SELECT "{" arms:select_arm+ "}" -> { Expr::Select(arms) }
+
+
+        // `head_expr` and not `expr`, for the reason `match`'s arms give: what
+        // follows is `=>`, and a struct literal in the raced expression would
+        // swallow the arm's body.
+        rule select_arm -> SelectArm @=
+            binding:select_binding "=" value:head_expr "=>" body:block ","?
+                -> {
+                    SelectArm {
+                        binding,
+                        value,
+                        body,
+                        at: _span.start,
+                    }
+                }
+
+        // `_` is [ADR-126](../../../../docs/specification/adr/adr-126.md) D1's
+        // ignore pattern: a value **arrives** and is not wanted. It is tried
+        // first, because `NAME` would otherwise have to decline it.
+        rule select_binding -> Option<Symbol> =
+            UNDERSCORE -> { None }
+          | n:NAME -> { Some(n) }
 
         // Part III 15.1: `unsafe { … }`, the one place a call to an `extern`
         // name may stand ([ADR-124](../../../../docs/specification/adr/adr-124.md)
