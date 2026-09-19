@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.40] — 2026-09-19
+
+The second of the three parts is rewritten to the language standard.
+
+### Changed (Part I follows `STYLE.md`)
+
+- **Chapter 1 is rewritten from the design goal outward**: what Nikaia is, in three properties; the build options as rules with one *Design rationale* each and two pointed principles as block quotes. The comparison with other languages and "Happy Path" are gone.
+- **Chapters 2 to 9** state the rule first, then its consequence, then at most one *Design rationale* ending in the record. Rules that lived only inside old status notes — the constructor positions of 2.3, the `?.` rules of 3.5, the two hulls of `SharedMut` in 6.2, the narrow `NK2101` of 8.3 — stand in the section's prose. History, argument, test names and the second person are gone from the page.
+- **Every status note** has the one form, `> **Implementation status:** <value>.`, with plain facts and every diagnostic code and record link the old note carried.
+- **Two contradictions the page carried are resolved toward the record**: 2.2 no longer says `unsafe { … }` is read as a name (it is reserved with a construct, [ADR-124](docs/specification/adr/adr-124.md)), and a sum of fitting literals widens to `i64` as 2.4 and [ADR-063](docs/specification/adr/adr-063.md) say rather than being refused by the backend.
+- **Every ```` ```nika ```` block is byte for byte as it was**, checked by `scripts/check-spec-blocks.py`. Part III follows in the next package.
+
 ## [0.0.39] — 2026-09-19
 
 The first of the three parts is rewritten to the language standard.

@@ -1,115 +1,117 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.39 (Draft)
+**Version:** 0.0.40 (Draft)
 **Date:** 2026-09-19
 
 ---
 
-## Chapter 1: Introduction and Philosophy
+## Chapter 1: Introduction and Principles
 
-### 1.1. What is Nikaia?
-Nikaia is a programming language designed to solve a specific problem in software development: the trade-off between ease of use and technical performance.
+### 1.1. What Nikaia is
+Nikaia is a statically typed systems programming language designed around three
+properties: predictable execution, memory safety, and concise source. The
+language moves complexity out of user code and into the compiler, where it is
+checked, inferred or generated deterministically.
 
-In many languages, developers must choose between:
-1.  **Scripting Languages** (like Python): Easy to read and write, but often slow and prone to errors that only appear when the program is running (**Runtime Errors**).
-2.  **Systems Languages** (like C++ or Rust): Extremely fast and reliable, but difficult to learn and require writing complex code to manage computer memory.
+Application code expresses program logic directly. Memory management,
+concurrency constraints and representation details are enforced by the
+compiler. The compiler translates Nikaia source to Rust and drives the Rust
+toolchain, which is called the **backend** throughout this specification
+([ADR-004](adr/adr-004.md) D1).
 
-Nikaia aims to combine the readability of a scripting language with the performance and safety of a systems language. The developer writes simple code that focuses on the logic (the "Happy Path"). The **Compiler** (the program that translates your code into machine-readable instructions) automatically handles the complex technical details in the background.
+*Design rationale:* a rule the compiler carries out can be reviewed, rebuilt
+and certified against this document; a rule left to convention cannot.
 
-### 1.2. One Language, and the Switches
-There is one Nikaia. The same source compiles for every machine and at every
-setting, and prints the same bytes. What you choose when you build is **how**,
-never **what**.
+### 1.2. One language, and the build options
+There is one Nikaia. The same source compiles for every target and under every
+build option, and the resulting program prints the same bytes. A build option
+decides **how** a program is built, never **what** it computes.
 
-These are the things to choose. They are named rather than counted: the count
-has been wrong twice — once by leaving `ordering` out and once by leaving the
-re-entrancy check out — and a number nobody maintains reads as a promise.
-`ordering` was the third and is **withdrawn**
-([ADR-050](adr/adr-050.md) D7): statements run in the order they are written,
-so there is nothing left for it to switch, and a program that wants overlap
-writes `overlap { … }` (8.1.2).
+> What you choose when you build is how, never what.
 
-#### `target` — which machine
-A 64-core server has threads and unwinds a stack when something goes wrong;
-WebAssembly has neither. So the machine decides what the standard library can
-offer — whether a file can be memory-mapped at all — and what happens on a
-`panic`: an orderly unwind where the machine unwinds, an immediate trap where it
-traps.
+The build options are named below. Each lives under `[build]` in
+`nikaia.toml`; `--target` and `--user-parallelism` override the first two for a
+single build ([ADR-037](adr/adr-037.md), [ADR-033](adr/adr-033.md) D8,
+[ADR-039](adr/adr-039.md) D8). The specification does not state their number.
+A former option, `ordering`, is withdrawn: statements run in the order they
+are written, and a program that wants overlap writes `overlap { … }` (8.1.2,
+[ADR-050](adr/adr-050.md) D7).
 
-The default is `x86_64-linux`.
+#### `target` — the machine
+`target` names the machine a program is built for. The target decides what the
+standard library offers on it (Part III 17.2) and what a `panic` does: the
+stack unwinds where the machine unwinds, and the program traps where the
+machine traps (Part III, Appendix A). The default is `x86_64-linux`.
 
-#### `user_parallelism` — may *your* code run concurrently at all?
-* `no` (the default) — nothing you wrote ever runs concurrently. A web service
-  that wants one event loop is built this way, and **data races are
-  impossible**: two pieces of your code are never in flight together, so there
-  is nothing to collide.
-* `yes` — it may. This is what an image filter or a scientific calculation
-  wants, and the compiler enforces the rules that keep shared data intact.
+#### `user_parallelism` — whether user code may run concurrently
+`user_parallelism` is a permission, not a thread count.
 
-It is a permission and not a count. *How many* threads or cores serve a `yes`
-belongs to the machine and the moment, so the runtime decides it; a number here
-would be a promise the language cannot keep on hardware it has not seen.
+* `no` (the default): no two pieces of user code are ever in flight at the
+  same time. A data race in user code is impossible under this option, because
+  nothing user code wrote runs concurrently.
+* `yes`: user code may run concurrently. The compiler enforces the rules of
+  Part II chapter 12 that keep shared data intact.
 
-**The word *your* is the whole of it.** This bounds your program, not the
-compiler. Reading a file may still validate its text on four cores at
-`user_parallelism = no`, and the runtime may still hand a blocking call to a
-helper thread — neither runs code you wrote, and neither changes a single byte
-of what your program prints. The rule is:
+The option applies to user code only. The compiler and the runtime may use
+additional threads for internal work, provided that no user code executes
+concurrently on them. Reading a file may validate its text on four cores at
+`user_parallelism = no`, and the runtime may hand a blocking call to a helper
+thread; neither runs user code, and neither changes a byte of what the program
+prints.
 
-> The compiler may use as many threads as the machine has, for as long as no
-> code **you** wrote runs concurrently.
+How many threads serve a `yes` is the runtime's decision, because that number
+depends on the machine the program runs on.
 
+*Design rationale:* `user_parallelism = no` guarantees sequential execution of
+user code, not single-threaded execution of the compiler or the runtime. A
+thread count in the source would be a promise the language cannot keep on
+hardware it has not seen ([ADR-037](adr/adr-037.md) D2).
 
-#### the re-entrancy check — should a broken rule be noticed?
-Taking a lock while a lock is held is refused when you compile (Part II, 12.3).
-This switch decides whether a program *also* carries the run-time check
-that notices such a nesting if one ever gets through. It is on by default, and
-it can be declined.
+> The compiler may be concurrent even when the program is not.
 
-This is the switch's own guarantee of the rule above it: **for every program
-that obeys the nesting rule, both builds behave identically.** The check cannot
-fire in a correct compiler, so what it controls is not error handling but
-self-control — if it ever fires, the compiler has a hole, and without the check
-that hole would show up as a silent hang instead. It is not a development aid to
-be removed later; it is a guarantee that may be declined
+#### The re-entrancy check — whether a broken rule is noticed
+Taking a lock while a lock is held is refused when the program is compiled
+(Part II 12.3). The re-entrancy check is a build option that decides whether
+the program also carries the runtime check that notices such a nesting if one
+occurs. It is on by default and may be declined.
+
+For every program that obeys the nesting rule, both builds behave identically.
+The check cannot fire in a correct compiler. If it fires, the compiler has a
+defect; without the check, the same defect would appear as a silent hang
 ([ADR-039](adr/adr-039.md) D8, D2).
 
-> **Status:** not built. Nothing refuses the nesting of Part II 12.3, no
-> re-entrancy check is emitted, and `nikaia.toml` has no key for this one — it
-> is the one switch here specified ahead of the manifest that would carry it.
-
-Each of them lives in `nikaia.toml`, and `--target` and `--user-parallelism`
-override those two for a single build ([ADR-037](adr/adr-037.md),
-[ADR-033](adr/adr-033.md) D8, [ADR-039](adr/adr-039.md) D8).
+> **Implementation status:** Not implemented. Nothing refuses the nesting of
+> Part II 12.3, no re-entrancy check is emitted, and `nikaia.toml` has no key
+> for this option ([ADR-039](adr/adr-039.md) §4).
 
 ---
 
 ## Chapter 2: Variables and Data Types
 
 A **comment** begins with `//` and runs to the end of the line, or begins with
-`/*` and runs to the matching `*/` — across lines, anywhere whitespace may
-stand, and **nested**: `/* a /* b */ c */` is one comment, so a block that
-already holds one can be commented out ([ADR-134](adr/adr-134.md)). An unclosed
-`/*` is reported where it opened. A block comment is a comment wherever it
-stands, including `/** … */`.
+`/*` and runs to the matching `*/`. A block comment may span lines and may
+stand anywhere whitespace may stand. Block comments **nest**: `/* a /* b */ c */`
+is one comment, so a block that already holds one can be commented out
+([ADR-134](adr/adr-134.md)). An unclosed `/*` is reported where it opened. A
+block comment is a comment wherever it stands, including `/** … */`.
 
 **A run of `///` lines immediately before an item is that item's
-documentation** ([ADR-139](adr/adr-139.md)) — a `fn`, a `struct`, an `enum`, a
-`trait`, a field or a variant. Anywhere else `///` is an ordinary comment. It
-is prose and the compiler reads nothing out of it: no directive, no `@param`,
-no link it resolves. What it does is **travel**: on a `pub` item it becomes the
-`doc` column of `nikaia.contracts` (Part III, 13.5), which is the one file a
-consumer's compiler reads about a dependency, and it is derived there like
-every other column rather than written by hand.
+documentation** ([ADR-139](adr/adr-139.md)). An item is a `fn`, a `struct`, an
+`enum`, a `trait`, a field or a variant. Anywhere else `///` is an ordinary
+comment. A doc comment is prose: the compiler reads no directive, no `@param`
+and no link out of it. On a `pub` item the doc comment becomes the `doc` column
+of `nikaia.contracts` (Part III, 13.5), derived there like every other column.
 
-> **Status:** the doc comment is **not built** ([ADR-139](adr/adr-139.md) §5).
-> `///` is an ordinary comment today and the ledger has no `doc` column.
+> **Implementation status:** Not implemented. `///` is an ordinary comment
+> today and the ledger has no `doc` column ([ADR-139](adr/adr-139.md) §5).
 
 ### 2.1. Variables and Assignment
-A **Variable** is a named storage location in memory that holds a value. In Nikaia, variables are declared using the `let` keyword.
+A **variable** is a named storage location that holds a value. A variable is
+declared with `let`.
 
 **Immutability**
-By default, variables are **Immutable**. This means once a value is assigned to a name, it cannot be changed. This prevents accidental modification of data.
+A variable is **immutable** unless it is declared otherwise. Once a value is
+assigned to an immutable name, the name cannot be assigned again.
 
 ```nika
 let x = 10
@@ -117,7 +119,7 @@ let x = 10
 ```
 
 **Mutability**
-To allow a variable to change, you must explicitly mark it as **Mutable** using the keyword `mut`.
+A variable that may change is declared **mutable** with the keyword `mut`.
 
 ```nika
 let mut y = 10
@@ -126,8 +128,8 @@ y = 20     // This is allowed
 
 **Reserved words**
 
-These words mean one thing wherever they appear, so a name may not be one of them
-([ADR-051](adr/adr-051.md) D1):
+A reserved word means one thing wherever it appears. A name may not be a
+reserved word ([ADR-051](adr/adr-051.md) D1). The reserved words are:
 
 ```text
 as        break     catch     comptime  continue  dsl       else      enum
@@ -137,166 +139,143 @@ spawn     struct    sync      throw     throws    trait     true      unsafe
 use       while     with
 ```
 
-**`comptime` is on the list because its construct exists** — a statement
-inside a function body (Part II, 10.2). The word every neighbouring language
-uses, `const`, would say *this one does not change*, and 2.1 already gives that
-to every binding that does not say `mut`; what the declaration promises is a
-**time**, and `comptime` says so ([ADR-077](adr/adr-077.md)).
+**`comptime` is reserved for its construct**: a statement inside a function
+body (Part II, 10.2).
+
+*Design rationale:* the declaration promises a **time** of evaluation, not
+constancy; constancy is what every binding without `mut` already has (2.1)
+([ADR-077](adr/adr-077.md)).
 
 **`_` is not a name; it is the ignore pattern** ([ADR-126](adr/adr-126.md)). It
 stands where a name would be bound and says that the value is ignored on
 purpose: a position of a destructured tuple (`let (name, _) = pair()`), a
 parameter a shape dictates (`fn handle(event: Event, _: Context)`, `fn(_,
-value) { … }`), and a `match` arm. `let _ = expr` is refused — a call made for
-its effect is written as the call, and a resource is closed by name — and `_`
-is never a value. What it ignores is not moved, so a `let` over a place stays a
+value) { … }`), and a `match` arm. `let _ = expr` is refused: a call made for
+its effect is written as the call, and a resource is closed by name. `_` is
+never a value. What `_` ignores is not moved, so a `let` over a place stays a
 view of it (6.5).
 
-**`with` is on the list for its construct**: a copy of a value with named
-fields changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
+**`with` is reserved for its construct**: a copy of a value with named fields
+changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
 
-**`extern` and `unsafe` are on it with their constructs**, which is the
-condition rather than an accident of timing: an `extern "C"` block and the
-`unsafe { … }` a call to one is written in arrived in the same change
-([ADR-124](adr/adr-124.md), Part III 15.1). The number that allowed two words is
-**zero** — nothing in the corpus, the tests or these pages wrote either as a
-name, and nothing is released, which is [ADR-084](adr/adr-084.md)'s own
-standard.
+**`extern` and `unsafe` are reserved for their constructs**: an `extern "C"`
+block, and the `unsafe { … }` a call into one is written in
+([ADR-124](adr/adr-124.md), Part III 15.1).
 
-**`break` and `continue` were reserved before they were constructs and are
-constructs now** (3.3, [ADR-084](adr/adr-084.md)) — which is what a reservation
-is for, and why their arrival cost no program a name.
+**`break` and `continue` are reserved for their constructs** (3.3,
+[ADR-084](adr/adr-084.md)).
 
 **`loop`, `const`, `macro`, `quote` and `from` are ordinary names**
-([ADR-116](adr/adr-116.md), [ADR-117](adr/adr-117.md)). Each was once reserved so
-that a reader arriving from another language could be told something; a name
-nothing declares is told the same thing now, by the refusal every stray name
-gets: `loop { … }` is answered with *write `while true`*, `const X = …` with
-*write `comptime`*, `macro` and `quote` with *Nikaia has no macros* — and a
-declared `loop`, `quote` or `from` is a name like any other.
+([ADR-116](adr/adr-116.md), [ADR-117](adr/adr-117.md)). A declared `loop`,
+`quote` or `from` is a name like any other. Where nothing declares one of them,
+the refusal every undeclared name meets carries a hint: `loop { … }` is
+answered with *write `while true`*, `const X = …` with *write `comptime`*, and
+`macro` and `quote` with *Nikaia has no macros*.
 
-**`seq` has left the list**, which is the direction a reserved word may move
-without breaking anything: the construct is withdrawn
-([ADR-050](adr/adr-050.md) D7), so the word means nothing and is an ordinary
-name again. Reserving one narrows what parses and un-reserving one widens it,
-so this direction costs no program anything.
+**`seq` is withdrawn** ([ADR-050](adr/adr-050.md) D7). The word is an ordinary
+name.
 
-Three things about the list, because each of them is a question a reader will
-have:
+Three further rules about the list:
 
-* **A `grammar` block has its own vocabulary**, and it is not here: `rule`,
-  `boundary`, `fold`, `par_fold` and `unchecked` are keywords *inside* one
-  (Part II, 10.1) and ordinary names everywhere else (D2).
+* **A `grammar` block has its own vocabulary**, and it is not on the list:
+  `rule`, `boundary`, `fold`, `par_fold` and `unchecked` are keywords *inside*
+  a `grammar` (Part II, 10.1) and ordinary names everywhere else (D2).
 * **After a `::` or a `.`, a reserved word is a name.** A segment follows a `::`
-  and a member follows a `.`, and no construct begins in either position - so
-  `Self::dsl` (Part II, 10.5) and `scope.spawn fn { … }` (Part II, 12.5) are what
-  they look like (D3).
-* **`self` is on the list and is also a name** - the one the receiver of a method
-  has. So *using* it is what every method body does; *declaring* one is refused
-  (D4).
+  and a member follows a `.`, and no construct begins in either position, so
+  `Self::dsl` (Part II, 10.5) and `scope.spawn fn { … }` (Part II, 12.5) are
+  what they look like (D3).
+* **`self` is on the list and is also a name**: the receiver of a method.
+  A method body uses it; user code may not declare it (D4).
 
-> **Status:** built. A name that is a reserved word does not parse, and the parse
-> error names the word and says it is reserved.
->
-> `self` is the one the grammar cannot refuse that way - `NAME` is the rule for
-> declaring a name *and* for referring to one - so declaring it is `NK1119` from
-> the checker: at a `let`, a `for` binding, a lambda's argument and a struct
-> field. A **parameter** named `self` never parsed at all, because the receiver
-> takes the word and the type beside it has nowhere to go; it says so in a
-> sentence now rather than asking for a closing parenthesis
-> ([ADR-051](adr/adr-051.md) D4).
+> **Implementation status:** Implemented. A name that is a reserved word does
+> not parse, and the parse error names the word and says it is reserved.
+> Declaring `self` at a `let`, a `for` binding, a lambda's argument or a struct
+> field is refused with `NK1119`; a parameter named `self` does not parse, and
+> the message says so ([ADR-051](adr/adr-051.md) D4).
 
 ### 2.2. Primitive Data Types
 Nikaia provides basic types to represent simple values.
 
-* **Integers:** Whole numbers without fractions.
-    * `i64`: A large integer (64-bit). Used for most numbers, and what a
-      **length** is: `xs.len()` hands back an `i64`, and an index is one
+* **Integers:** whole numbers without fractions.
+    * `i64`: a 64-bit integer. It is the type of most numbers, and the type
+      of a **length**: `xs.len()` hands back an `i64`, and an index is one
       ([ADR-048](adr/adr-048.md) D1).
-    * `i32`: A standard integer (32-bit). Used where the layout matters — a
-      struct that has to be small, a wire format, a C header — and a number
-      that meets an `i64` there is widened where you say so, with `as i64`.
-    * `u8`: One byte. What reading a file hands back a list of
-      (`fs::read` → `Vec[u8]`), which is why it is named here — a type a program
-      meets has to be a type the specification offers. It has the same
-      conversion and arithmetic names as the others.
-* **Floats:** Numbers with decimal points.
-    * `f64`: Double precision floating-point number. A literal may carry an
-      **exponent** — `1.5e-4`, `2e3`, `9.54791938424326609e-04` — which is how a
-      program about physical quantities is written; the same number spelled out
-      in zeroes is how a digit gets lost.
-* **Booleans:** Logic values.
-    * `bool`: Can only be `true` or `false`.
+    * `i32`: a 32-bit integer. It is written where the layout matters: a
+      struct that has to be small, a wire format, a C header. An `i32` that
+      meets an `i64` is widened where the program says so, with `as i64`.
+    * `u8`: one byte. Reading a file hands back a list of them
+      (`fs::read` → `Vec[u8]`). It has the same conversion and arithmetic
+      names as the other integer types.
+* **Floats:** numbers with decimal points.
+    * `f64`: a double-precision floating-point number. A literal may carry an
+      **exponent**: `1.5e-4`, `2e3`, `9.54791938424326609e-04`.
+* **Booleans:** logic values.
+    * `bool`: `true` or `false`.
 * **Text:**
     * `String`: text. Whether a value of it is a view into text that is
-      already there, or text of its own, is the compiler's to pick per use
-      (6.6, [ADR-107](adr/adr-107.md)); a literal is a view of the program's
+      already there, or text of its own, is the compiler's decision per use
+      (6.6, [ADR-107](adr/adr-107.md)). A literal is a view of the program's
       own text and allocates nothing.
-    * `&str`: the same text with a promise attached — *this is a borrowed
-      view, no copy and no handle* — and the compiler holds the program to
-      it. Written where allocating would be a mistake.
-    * `char`: One character — a Unicode scalar value, not a byte. Written
-      between single quotes, with the escapes a string uses: `'a'`, `'\n'`,
-      `'\''`. It is what iterating a text yields (`for c in name.chars()`) and
-      what a `match` over one compares against (3.4); a text is not a list of
-      `char`, and turning one into the other is a decision a program makes
-      rather than something that happens to it.
+    * `&str`: the same text with a promise attached: *this is a borrowed
+      view, no copy and no handle*. The compiler holds the program to the
+      promise. It is written where allocating would be a mistake.
+    * `char`: one character, a Unicode scalar value, not a byte. It is
+      written between single quotes, with the escapes a string uses: `'a'`,
+      `'\n'`, `'\''`. Iterating a text yields it (`for c in name.chars()`),
+      and a `match` over one compares against it (3.4). A text is not a list
+      of `char`; turning one into the other is written in the program.
 
 **A number may carry a digit separator or a radix prefix, and nothing else**
 ([ADR-136](adr/adr-136.md)). `1_000_000`, `0xFF`, `0b1010` and `0o17` are the
-four forms, beside the exponent above; an underscore stands **between** digits
-and nowhere else, and a float takes the separator (`1_000.5`) and no prefix.
+four forms, beside the exponent above. An underscore stands **between** digits
+and nowhere else. A float takes the separator (`1_000.5`) and no prefix. A
+digit the radix does not have (`0b1210`, `0o19`) is refused. A **leading**
+underscore is not one of the four forms: `_000` is a name.
 
 **The radix is a spelling, and a literal is a value.** `0xFF` is `255`, and it
 takes the first type that holds it exactly as `255` does
-([ADR-060](adr/adr-060.md)) — so `let mask = 0xFF` is an `i32` and
-`let mask: u8 = 0xFF` is a `u8`. The width is never read off the digits,
-because then `0x0FF` would be a wider type than `0xFF` and the type of a
-number would depend on how many zeroes somebody typed. The separator is not in
-the value anywhere: `1_000` is `1000` to the checker, to the ledger and to a
-diagnostic's text.
+([ADR-060](adr/adr-060.md)). So `let mask = 0xFF` is an `i32` and
+`let mask: u8 = 0xFF` is a `u8`. The width is never read off the digits. The
+separator is not part of the value: `1_000` is `1000` to the checker, to the
+ledger and to a diagnostic's text.
 
-**There is no type suffix**, so `1i64` is still a number beside a name — and
-the name beside it is refused, as `NK1117`, because nothing declares it
-(Part III, C.3). This language has **no word it does not know**: one that
-stands on its own is read as a name, so `assert c` and `unsafe { … }` are
-refused the same way rather than being read as constructs that are not there.
+*Design rationale:* a width read off the digits would make `0x0FF` a wider type
+than `0xFF`, so the type of a number would depend on how many zeroes were typed
+([ADR-136](adr/adr-136.md)).
 
-> **Status:** **built** ([ADR-136](adr/adr-136.md) §5). All four forms, the
-> float's separator, and the underscore refused where it does not stand between
-> digits; `NK1117`'s help no longer names the `1_000` case, because it is a
-> number. A digit the radix does not have — `0b1210`, `0o19` — is refused too,
-> and not as a nicety: without it the number ends at the bad digit and what
-> follows is a second number nobody wrote, which is the same misparse one prefix
-> along.
->
-> A **leading** underscore is not one of the four forms and never was: `_000` is
-> a name, in every language that has both, and a rule that read it as part of a
-> number would take `let _1 = 5` away.
->
-> And a number too wide for an `i64` is now **refused**. It used to take this
-> compiler down — the parser read the digits with `parse().unwrap()` — which is
-> the class [Part III C.1](30-nikaia-tooling.md) is about at its sharpest: the
-> program was wrong and the compiler crashed.
+**There is no type suffix.** `1i64` is a number beside a name, and the name
+beside it is refused with `NK1117` because nothing declares it (Part III, C.3).
+The language has **no word it does not know**: a word that stands on its own is
+read as a name, so `assert c` is refused the same way rather than being read as
+a construct that is not there.
+
+**A number too wide for an `i64` is refused** (Part III C.1).
+
+> **Implementation status:** Implemented. All four forms, the float's separator
+> and the exponent are built. An underscore that does not stand between digits,
+> a digit the radix does not have, and a number too wide for an `i64` are
+> refused ([ADR-136](adr/adr-136.md) §5). `NK1117`'s help does not name the
+> `1_000` case, because it is a number.
 
 **These four are the integer types a program writes.** The compiler accepts more
-— `u32`, `u64` and the machine-width `usize` among them — and the specification
-does not offer them: an entry exists because a program asked for it, and none has
-([ADR-028](adr/adr-028.md) D5). A **length** used to be the one place a program
-met the machine-width type, and since [ADR-048](adr/adr-048.md) D1 it does not:
-`for i in 0..<xs.len()` gives an `i64`, `xs[i]` takes one, and neither conversion
-is written — the compiler emits both. A negative index reports as an access out
-of bounds, because that is what it is (Part III, A.2).
+(`u32`, `u64` and the machine-width `usize` among them), and the specification
+does not offer them ([ADR-028](adr/adr-028.md) D5). A **length** is an `i64`
+([ADR-048](adr/adr-048.md) D1): `for i in 0..<xs.len()` gives an `i64`, `xs[i]`
+takes one, and neither conversion is written, because the compiler emits both.
+A negative index reports as an access out of bounds (Part III, A.2).
+
+*Design rationale:* a type has an entry because a program asked for it, and no
+program has asked for the wider unsigned types ([ADR-028](adr/adr-028.md) D5).
 
 **An integer that does not fit aborts, at every build.** An `i32` holds what an
-`i32` holds; an arithmetic result that does not is an inconsistent program state,
-like an index past the end of a list or a division by zero (Part III, A.2), and
-the program stops rather than carrying a number nobody computed. It is the same
-at both settings of `user_parallelism` and in every build, so the same program
-computes the same thing wherever it is built — which is 1.2's rule, applied to
-arithmetic ([ADR-043](adr/adr-043.md) D1).
+`i32` holds. An arithmetic result that does not fit is an inconsistent program
+state, like an index past the end of a list or a division by zero (Part III,
+A.2), and the program stops. The rule is the same at both values of
+`user_parallelism` and in every build, so the same program computes the same
+thing wherever it is built ([ADR-043](adr/adr-043.md) D1). That is 1.2's rule
+applied to arithmetic.
 
-Three of these are easy to miss, because the code looks harmless:
+Three cases abort although the code looks harmless:
 
 * `-x` and `x.abs()` on the **smallest** value of a signed type, because there is
   no matching positive one;
@@ -311,11 +290,13 @@ let volume = level.saturating_add(increase)       // stops at the maximum
 let n = a + b                                     // aborts if it does not fit
 ```
 
-`wrapping_add`, `wrapping_sub`, `wrapping_mul`, `wrapping_div`, `wrapping_neg`,
-`wrapping_abs`, `wrapping_shl`, `wrapping_shr`, and the same names with
-`saturating_`. There is no operator for either: both are rare, both are meant to
-be visible in the line that does them, and a sign for one would have to be spelt
-with `&`, which is borrowing here ([ADR-043](adr/adr-043.md) D2, D3).
+The names are `wrapping_add`, `wrapping_sub`, `wrapping_mul`, `wrapping_div`,
+`wrapping_neg`, `wrapping_abs`, `wrapping_shl`, `wrapping_shr`, and the same
+names with `saturating_`. There is no operator for either.
+
+*Design rationale:* both are rare and both are meant to be visible in the line
+that does them; a sign for one would have to be spelt with `&`, which is
+borrowing here ([ADR-043](adr/adr-043.md) D2, D3).
 
 **A conversion is written `as`, and one that may not fit aborts too.**
 
@@ -324,11 +305,10 @@ let average = (total as f64) / (count as f64)     // widening, always fits
 let small = big as i32                            // aborts if `big` does not fit
 ```
 
-Otherwise the question would be answered at the front door and let in at the
-back: whoever wants the digits thrown away says so, the same way wrapping is said
-([ADR-043](adr/adr-043.md) D4).
+A program that wants the digits thrown away says so, the same way wrapping is
+said ([ADR-043](adr/adr-043.md) D4).
 
-**And where a program means to keep only the low digits, it says so by name**, as
+**Where a program means to keep only the low digits, it says so by name**, as
 it does for wrapping. The name carries the type it converts to, because that is
 what it hands back:
 
@@ -338,86 +318,74 @@ let floored = measurement.truncating_i32()        // a float, toward zero, clamp
 let n = text.len().truncating_i32()               // a count that may not fit
 ```
 
-`truncating_i32` and `truncating_i64`, out of the larger integer, out of an `f64`,
-and out of the type a count has ([ADR-043](adr/adr-043.md) D7).
+The names are `truncating_i32` and `truncating_i64`. Each converts out of the
+larger integer, out of an `f64`, and out of the type a count has
+([ADR-043](adr/adr-043.md) D7).
 
-Three conversions are easy to miss here too:
+Three conversions are checked or unchecked in a way the code does not show:
 
-* **An `f64` to an integer** was silent three ways: `1e20 as i32` gave the largest
-  `i32`, `-1e20 as i32` the smallest, and a value that is not a number gave `0`.
-  All three abort now.
-* **A count** — what `len` hands back — is as wide as the machine is, so what fits
-  on a large machine does not on a small one. It is checked for that reason: the
-  alternative is a program whose behaviour depends on where it was built.
-* **An integer to an `f64`** is the one that is **not** checked. Digits go at large
-  values without anything overflowing — `9007199254740993` through an `f64` comes
-  back `9007199254740992` — and there is no sensible place to stop, so this is a
-  limit written down here rather than an abort.
+* **An `f64` to an integer** aborts where the value does not fit: `1e20 as i32`,
+  `-1e20 as i32`, and a value that is not a number all abort.
+* **A count**, what `len` hands back, is as wide as the machine is, so a value
+  that fits on a large machine may not fit on a small one. The conversion is
+  checked, so the program's behaviour does not depend on where it was built.
+* **An integer to an `f64`** is **not** checked. Digits are lost at large values
+  without anything overflowing: `9007199254740993` through an `f64` comes back
+  `9007199254740992`. This is a limit of the language, not an abort.
 
 **An `as` names one of the types above and nothing else.** `n as u128` and
-`n as usize` are refused as `NK1122`, naming the type: a conversion into
-something this page does not offer went to the language below unread, so a value
-could have a type there is no word here for — and `-3 as usize` was
-18,446,744,073,709,551,613, silently, in the middle of a rule that says a
-conversion which does not fit aborts ([ADR-054](adr/adr-054.md) D1).
+`n as usize` are refused with `NK1122`, naming the type
+([ADR-054](adr/adr-054.md) D1).
 
-**Where a machine-width number is what the language below wants, the compiler
-writes the conversion.** A length comes back as an `i64` and an index goes in as
-one ([ADR-048](adr/adr-048.md) D1); so does a **count**, which is why
-`"  ".repeat(indent)` is written with no conversion at all and a negative count
-aborts saying *"a count cannot be negative"* rather than becoming an enormous one
-([ADR-054](adr/adr-054.md) D2).
+*Design rationale:* a conversion into a type this page does not offer would
+give a value a type the language has no word for, and `-3 as usize` would be
+18,446,744,073,709,551,613 under a rule that says a conversion which does not
+fit aborts ([ADR-054](adr/adr-054.md) D1).
+
+**Where the backend wants a machine-width number, the compiler writes the
+conversion.** A length comes back as an `i64` and an index goes in as one
+([ADR-048](adr/adr-048.md) D1). A **count** goes in as one too, so
+`"  ".repeat(indent)` is written with no conversion. A negative count aborts
+with *"a count cannot be negative"* ([ADR-054](adr/adr-054.md) D2).
 
 **A literal that does not fit its type is a compile error, not an abort.**
 `let x: i32 = 3000000000` is decidable where it is written, and so is a sum of
 literals that cannot fit, so neither waits for the program to run
 ([ADR-043](adr/adr-043.md) D5).
 
-> **Status:** the abort is built — the generated project carries the check for
-> your program and turns it off for every Rust dependency, whose own arithmetic
-> is not this compiler's to be right about
-> ([ADR-043](adr/adr-043.md) D6), and
-> `crates/nikaia/tests/overflow.rs` compiles an overflowing program and runs it.
-> The `wrapping_` and `saturating_` names are built for `i32` and `i64` — the two
-> integer types named above — and `crates/nikaia/tests/overflow.rs` runs them
-> beside the same arithmetic with `*`, which aborts. `saturating_shl` and
-> `saturating_shr` do not exist, here or in the language below. The out-of-range constant is
-> refused here now, as `NK1116`, wherever a type stands beside it: an annotated
-> `let`, a `return` against a declared result, or an argument whose parameter says
-> what it takes. It prevented no abort — one never happened — and what it takes
-> back is the message, which was the backend's, in Rust's words, about a file
-> nobody wrote.
->
-> **A sum reaches further than a literal.** `let b = a + 1`, where `a` is a
-> constant an annotation declared an `i32`, is folded and refused with no
-> annotation on the `let` line at all: the operand's declaration is what gives the
-> arithmetic a type. `+ - * / %` and a negation fold, through any number of
-> immutable `let`s, in a wider number than either type so that the message can
-> name what the expression comes to. Everything else stops the fold and is
-> accepted — a `mut` local, a parameter, a `for` binding, a cast — and an
-> expression that does not fold is never refused.
->
-> And a division whose divisor is a constant zero is `NK1118`
-> ([ADR-043](adr/adr-043.md) D5.5). Every other division by zero stays where
-> Part III A.2 puts it: unrecoverable, at run time, naming this line.
->
-> The narrowing check is built too, and `crates/nikaia/tests/overflow.rs`
-> compiles the conversions with `-O` and **no** check flag — a conversion carries
-> its own answer rather than taking one from the build, because `as` in the
-> language below truncates by definition and has no setting to turn on. So
-> `5000000000 as i32` aborts where it used to print `705032704`, and
-> `big.truncating_i32()` is the same `as` it always was. The `truncating_` names
-> exist for the three sources above and for `i32` and `i64` as destinations.
->
-> **A literal that nothing at all constrains** — `let big = 3000000000` on its
-> own — is not this section's case and is not refused: it is an `i64`, because an
-> `i32` does not hold it ([ADR-060](adr/adr-060.md), and 2.4). What is still
-> refused the other way (Part III, C.1) is a **sum** of literals that each fit and
-> whose total does not, `let b = 2000000000 + 2000000000`: no literal there is out
-> of range, so nothing widens, and the language below refuses the arithmetic.
+The compile-time check reaches a **sum**. `let b = a + 1`, where `a` is a
+constant an annotation declared an `i32`, is folded and refused with no
+annotation on the `let` line: the operand's declaration gives the arithmetic
+its type. `+ - * / %` and a negation fold, through any number of immutable
+`let`s, in a wider number than either type, so that the message can name what
+the expression comes to. A `mut` local, a parameter, a `for` binding and a cast
+stop the fold. An expression that does not fold is never refused.
+
+A division whose divisor is a constant zero is refused with `NK1118`
+([ADR-043](adr/adr-043.md) D5.5). Every other division by zero is
+unrecoverable at run time and names its line (Part III A.2).
+
+A literal that nothing constrains, `let big = 3000000000` on its own, is not
+this section's case and is not refused: it takes the first type that holds it
+([ADR-060](adr/adr-060.md), 2.4).
+
+> **Implementation status:** Implemented. The abort is built: the generated
+> project carries the check for user code and turns it off for every Rust
+> dependency ([ADR-043](adr/adr-043.md) D6). The `wrapping_` and `saturating_`
+> names are built for `i32` and `i64`; `saturating_shl` and `saturating_shr` do
+> not exist, in Nikaia or in the backend. An out-of-range constant is refused
+> with `NK1116` wherever a type stands beside it: an annotated `let`, a `return`
+> against a declared result, or an argument whose parameter says what it takes.
+> The narrowing check is built and does not depend on a build option: a
+> conversion carries its own check, so `5000000000 as i32` aborts in every
+> build, and `big.truncating_i32()` is a plain `as` in the backend. The
+> `truncating_` names exist for the three sources above and for `i32` and `i64`
+> as destinations.
 
 ### 2.3. Nullable Types (Null Safety)
-In Nikaia, types are **non-nullable** by default. A variable of type `String` must always contain a string and cannot be `null`. To allow the absence of a value, the type must be explicitly marked with a trailing question mark `?`.
+A type is **non-nullable** unless it says otherwise. A variable of type
+`String` always holds a string and is never `null`. A type that admits the
+absence of a value is written with a trailing question mark `?`.
 
 ```nika
 let strictly_string: String = "Hello".to_string()
@@ -427,48 +395,41 @@ let mut maybe_string: &str? = null // Valid
 maybe_string = "World"             // Valid (`mut`, as in 2.1)
 ```
 
-A literal is a **view** of text the program was compiled with — see 6.6, where
-an allocation happens only where you wrote that you wanted one, and [ADR-024](adr/adr-024.md) D5.
-It stands wherever a `String` is wanted, because a `String` may be a view
-([ADR-107](adr/adr-107.md)); `.to_owned()` is how you say you want a copy.
+A literal is a **view** of text the program was compiled with (6.6,
+[ADR-024](adr/adr-024.md) D5). An allocation happens only where the program
+writes one. A literal stands wherever a `String` is wanted, because a `String`
+may be a view ([ADR-107](adr/adr-107.md)); `.to_owned()` makes a copy.
 
-> **Status:** not built — `String` and `&str` are two types in the checker today,
-> and a literal in a `String` slot is `NK1106` until [ADR-107](adr/adr-107.md) §5
-> lands.
+> **Implementation status:** Not implemented. `String` and `&str` are two types
+> in the checker today, and a literal in a `String` slot is refused with
+> `NK1106` ([ADR-107](adr/adr-107.md) §5).
 
-> **Status:** built ([ADR-052](adr/adr-052.md)). `T?` lowers to the language
-> below's `Option<T>` — the mapping Part III 15.2 writes the other way round —
-> and `null` is a reserved word (2.1) that lowers to `None`. The `?` comes last,
-> after the type's arguments, so `Vec[i64]?` is a nullable list and `Vec[i64?]`
-> is a list of nullables.
->
-> **The second line of the example is the one that needed deciding.** A plain
-> `String` standing where a `String?` is wanted is the one widening this language
-> has, and the constructor is the **compiler's** to write: there is no `Some` in
-> Nikaia and must not be, or the type's whole purpose becomes paperwork. It is
-> written wherever a plain value meets a nullable slot: an annotated `let`, an
-> assignment, a `return`, a struct-literal field, and a call argument.
->
-> **And in all five it is written even where this compiler cannot work the
-> value's type out** ([ADR-068](adr/adr-068.md)). It used to write nothing there,
-> because a value that is *already* nullable must not be wrapped twice and it
-> could not tell — so the program failed in the language below instead. What goes
-> in that case is a conversion, which is right whichever the value turns out to
-> be; the constructor stays wherever the type is known, because it says what the
-> line means.
->
-> `let m = null` with nothing beside it is **not** refused here, and that is on
-> purpose: `let mut m = null` and then `m = "hi"` is a correct program, and this
-> compiler has no inference to tell it from the one where nothing ever says. So
-> the backend asks for the annotation, which is the honest answer.
->
-> `(A, B)?` is deliberately absent — this section does not write it.
->
-> Part I 3.5's `??` was already built and now has a type to be used on, and
-> `?.` is built beside it.
+**`T?` lowers to the backend's `Option<T>`**, the mapping Part III 15.2 writes
+the other way round, and `null` is a reserved word (2.1) that lowers to `None`
+([ADR-052](adr/adr-052.md)). The `?` comes last, after the type's arguments:
+`Vec[i64]?` is a nullable list and `Vec[i64?]` is a list of nullables. `(A, B)?`
+is not written.
+
+**A plain value stands where a nullable one is wanted.** That is the one
+widening the language has, and the compiler writes the constructor. There is no
+`Some` in Nikaia. The constructor is written wherever a plain value meets a
+nullable slot: an annotated `let`, an assignment, a `return`, a struct-literal
+field, and a call argument. Where the compiler cannot work out the value's type,
+it writes a conversion instead, which is right whether or not the value is
+already nullable ([ADR-068](adr/adr-068.md)).
+
+`let m = null` with nothing beside it is not refused by the compiler:
+`let mut m = null` followed by `m = "hi"` is a correct program. Where nothing
+ever says the type, the backend asks for the annotation.
+
+> **Implementation status:** Implemented. `T?`, `null`, the constructor at all
+> five positions and the conversion of [ADR-068](adr/adr-068.md) are built. The
+> `??` and `?.` of 3.5 are built beside them ([ADR-052](adr/adr-052.md) §5).
 
 ### 2.4. Type Inference
-Nikaia is **Statically Typed**, meaning the type of every variable is known at compile time. However, you rarely need to write types manually. The compiler uses **Type Inference** to deduce the type based on the value.
+Nikaia is **statically typed**: the type of every variable is known at compile
+time. A type is rarely written. The compiler uses **type inference** to deduce
+the type from the value.
 
 ```nika
 let name = "Nikaia"  // Compiler knows this is a &str - a view of static text
@@ -488,19 +449,19 @@ let small = 42
 println(f"{wide(small)}")  // an i64 here: the use decides, and 42 holds in one
 ```
 
-The use is asked first and the size second, which is why `small` may still become
-an `i64` and `big` never has to be annotated to be one. A number too large for
-an `i64` is refused, because nothing holds it.
+The use is asked first and the size second. So `small` may still become an
+`i64`, and `big` never has to be annotated to be one. A number too large for an
+`i64` is refused, because nothing holds it.
 
-**And a sum of numbers is a number** ([ADR-063](adr/adr-063.md)), so the same
-rule decides it:
+**A sum of numbers is a number** ([ADR-063](adr/adr-063.md)), so the same rule
+decides it:
 
 ```nika
 let c = 2000000000 + 2000000000   // an i64: nothing asks, and an i32 does not hold it
 let small = 2 + 3                 // an i32, the same as any number that fits
 ```
 
-**A name is where it stops, and on purpose.** A name already took a type, and
+**A name is where the widening stops.** A name already took a type, and
 arithmetic happens in the type of its operands:
 
 ```nika
@@ -510,28 +471,23 @@ let b: i64 = 2000000000   // say so, and the sum is an i64
 let d = b + b             // 4000000000
 ```
 
-That is the answer every language with two integer widths gives, and the way out
-is the one word on the third line.
+The way out is the annotation on the third line.
 
-> **Status:** built, both halves. The *use* half is the language below's
-> inference; the size half is one rule in the emitter
-> ([ADR-060](adr/adr-060.md)), a literal whose value an `i32` cannot hold written
-> out as an `i64` — and a literal that fits left exactly as it was, so the use
-> keeps deciding. The question is about the **value**: `-2147483648` is an `i32`
-> although its digits are one too many. This compiler's own `NK1116` answers the
-> case where a type **stands beside** the literal — an annotated `let`, a
-> `return` against a declared result, an argument whose parameter says what it
-> takes — and stays silent otherwise, because a literal whose use widens it is a
-> correct program and refusing one of those is the one thing the checker may
-> never do (Part III, C.4).
->
-> **The sum is built too** ([ADR-063](adr/adr-063.md)), and with it every
-> arrangement of a constant has an answer from this compiler rather than from the
-> language below: widened where an `i64` holds it, refused as `NK1116` where no
-> type does or where a name pinned a narrower one. The two positions where a
-> number's type comes from **where it stands** — a sequence index and a repeat
-> count, both counted by the machine — are left alone, because a type written
-> into one would pin what the position is there to decide.
+The question is about the **value**, not the digits: `-2147483648` is an `i32`.
+`NK1116` answers the case where a type **stands beside** the literal (an
+annotated `let`, a `return` against a declared result, an argument whose
+parameter says what it takes) and stays silent otherwise, because a literal
+whose use widens it is a correct program (Part III, C.4). A constant is widened
+where an `i64` holds it and refused with `NK1116` where no type does or where a
+name pinned a narrower one. Two positions take their type from **where they
+stand** and are left alone: a sequence index and a repeat count, both counted
+by the machine.
+
+> **Implementation status:** Implemented. The *use* half is the backend's
+> inference; the size half is one rule in the emitter, which writes a literal an
+> `i32` cannot hold as an `i64` and leaves a literal that fits as it was
+> ([ADR-060](adr/adr-060.md) §5). The sum is built ([ADR-063](adr/adr-063.md)
+> §5).
 
 ### 2.5. Strings, Plain and Interpolated
 There are two string literals, and the difference is one character at the front.
@@ -543,8 +499,8 @@ println(f"hello, {name} - {name.len()} characters")   // f"…" - the braces are
 println("hello, {name}")                              // "…"  - the braces are braces
 ```
 
-**`"…"` is text.** A `{` is a brace and nothing else, so a program that writes JSON, CSS or a
-regular expression says what it means:
+**`"…"` is text.** A `{` in it is a brace and nothing else, so a program that
+writes JSON, CSS or a regular expression writes the braces as they are:
 
 ```nika
 print("{}")               // prints {}
@@ -552,40 +508,43 @@ print("\\d{3}")            // a regular expression, written as one
 print("{ margin: 0 }")    // a rule, not a hole
 ```
 
-**`f"…"` has code in it.** Between `{` and `}` stands an expression — not just a name, but a
-field, a call, an index. What follows a `:` inside one says *how* to write the value rather than
-which value: the first colon that is not inside a call or an index separates the two, so
-`move(by: 1)` in a hole keeps its own.
+**`f"…"` has code in it.** Between `{` and `}` stands an expression: a name, a
+field, a call, an index. What follows a `:` inside a hole says *how* to write
+the value rather than which value. The first colon that is not inside a call or
+an index separates the two, so `move(by: 1)` in a hole keeps its own colon.
 
-Inside an `f"…"`, two braces stand for one: `{{` is a literal `{` and `}}` a literal `}`. An
-escape is not a hole — the `{` in `"\u{0041}"` belongs to the escape — and a `}` on its own is an
-error rather than a guess. **A plain string needs none of that**: it has no holes to be told
-apart from, so `"{"` is a brace and `"{{"` is two.
+Inside an `f"…"`, two braces stand for one: `{{` is a literal `{` and `}}` a
+literal `}`. An escape is not a hole: the `{` in `"\u{0041}"` belongs to the
+escape. A `}` on its own is an error. **A plain string needs none of that**: it
+has no holes, so `"{"` is a brace and `"{{"` is two.
 
-The `f` and the quote are **one token**. `f"x"` interpolates; `f "x"` is a variable named `f`
-beside a string, and whitespace never decides what a program means.
+The `f` and the quote are **one token**. `f"x"` interpolates; `f "x"` is a
+variable named `f` beside a string. Whitespace never decides what a program
+means.
 
-**A newline is an ordinary character in a literal.** Nothing ends one but the
-closing `"`, so a literal left unterminated runs on to the next `"` in the file
-or, if there is none, to the end of it.
+**A newline is an ordinary character in a literal.** Nothing ends a literal but
+the closing `"`. A literal left unterminated runs on to the next `"` in the file
+or, if there is none, to the end of the file.
 
-The type follows the syntax rather than the contents. `"…"` is a view of static text and `f"…"`
-builds a `String`, whether or not anyone put a hole in it — so adding a brace to a piece of text
-cannot quietly change its type.
+**The type follows the syntax, not the contents.** `"…"` is a view of static
+text and `f"…"` builds a `String`, whether or not it has a hole in it. Adding a
+brace to a piece of text cannot change its type.
 
-**A template's holes need no `f`.** `dsl html { <p>{name}</p> } eod` (Part II) is already marked
-as a place where code appears, and the mark belongs on the construct rather than on every brace
-inside it. That is the same rule read twice: a literal that holds code says so.
+**A template's holes need no `f`.** `dsl html { <p>{name}</p> } eod` (Part II)
+is already marked as a place where code appears, and the mark belongs on the
+construct rather than on every brace inside it. A literal that holds code says
+so.
 
 ---
 
 ## Chapter 3: Control Flow
 
-Control flow determines the order in which individual statements, instructions, or function calls are executed.
+Control flow is the order in which statements and calls are executed.
 
 ### 3.1. Expressions and Blocks
-Nikaia is an **Expression-Oriented Language**. This means almost every construct returns a value.
-A **Block** is a group of statements surrounded by curly braces `{ ... }`. The last line in a block (without a semicolon) is the return value of that block.
+Nikaia is an **expression-oriented language**: almost every construct has a
+value. A **block** is a group of statements surrounded by curly braces
+`{ ... }`. The last line of a block is the value of that block.
 
 ```nika
 let result = {
@@ -595,14 +554,16 @@ let result = {
 }
 ```
 
-A block's last line is the **block's** value; `return` is the **function's**. So
-a `return` written at the end of a block that is itself a value — a `match` arm
-(3.4), an `if` branch whose value is taken (3.2), a `catch` handler (7.1) —
-leaves the enclosing function rather than handing that block a value. The one block that is its own function is a lambda, whose
-`return` leaves the lambda (5.3).
+A block's last line is the **block's** value; `return` is the **function's**.
+A `return` written at the end of a block that is itself a value (a `match` arm,
+3.4; an `if` branch whose value is taken, 3.2; a `catch` handler, 7.1) leaves
+the enclosing function rather than handing that block a value. The one block
+that is its own function is a lambda, whose `return` leaves the lambda (5.3).
 
 ### 3.2. Conditional Logic (if / else)
-The `if` expression checks a condition (a `bool`). If true, it executes the first block; otherwise, it executes the `else` block. Since `if` is an expression, it can be assigned to a variable.
+The `if` expression tests a condition of type `bool`. Where the condition is
+true it evaluates the first block; otherwise it evaluates the `else` block.
+`if` is an expression, so its value may be bound to a variable.
 
 ```nika
 let age = 18
@@ -614,9 +575,9 @@ let status = if age >= 18 {
 }
 ```
 
-After `else`, an `if` may stand where the block would — **`else if`** — and
-a chain is one `if` inside another with the inner braces left out, so every
-rule of `if` holds at every link ([ADR-132](adr/adr-132.md)):
+After `else`, an `if` may stand where the block would stand: **`else if`**. A
+chain is one `if` inside another with the inner braces left out, so every rule
+of `if` holds at every link ([ADR-132](adr/adr-132.md)):
 
 ```nika
 let grade = if score >= 90 {
@@ -628,15 +589,14 @@ let grade = if score >= 90 {
 }
 ```
 
-**A condition is an ordinary expression — every one the language has**, with the
-same operators, the same precedence and the same associativity as anywhere else
-([ADR-087](adr/adr-087.md) D1). `&&`, `||`, `!`, `??`, `as`, `null`, a tuple, a
-range: nothing is special about this position.
+**A condition is an ordinary expression.** Every expression the language has
+may stand there, with the same operators, the same precedence and the same
+associativity as anywhere else ([ADR-087](adr/adr-087.md) D1). `&&`, `||`, `!`,
+`??`, `as`, `null`, a tuple and a range are all conditions.
 
-**Except one thing, and it is about the brace rather than about the
-expression.** The `{` after the condition opens the **body**, so an expression
-that *starts* with a brace has to be parenthesised — otherwise the compiler
-cannot tell where the condition ends:
+**One rule concerns the brace.** The `{` after the condition opens the
+**body**, so an expression that *starts* with a brace is parenthesised;
+otherwise the compiler cannot tell where the condition ends:
 
 ```nika
 if p == (P { x: 1 }) {          // the parentheses say which `{` is which
@@ -649,15 +609,14 @@ if (match n { 1 => 10, else => 20 }) > 15 {
 ```
 
 That is the whole of the difference between the head of an `if`, a `while` or a
-`for` and any other position ([ADR-087](adr/adr-087.md) D2) — and it is a rule
-about spelling, not about meaning: everything is reachable, and one character
-says so.
+`for` and any other position ([ADR-087](adr/adr-087.md) D2). It is a rule about
+spelling, not about meaning: every expression is reachable.
 
 ### 3.3. Loops
-Loops allow code to be repeated.
+A loop repeats code.
 
 **The `while` Loop**
-Repeats code as long as a condition is true.
+A `while` loop repeats its body as long as its condition is true.
 
 ```nika
 let mut count = 0
@@ -668,7 +627,7 @@ while count < 5 {
 ```
 
 **The `for` Loop**
-Iterates over a sequence (like a range of numbers or a list).
+A `for` loop iterates over a sequence, such as a range of numbers or a list.
 
 ```nika
 // Iterates from 0 to 4: `..<` stops before its end.
@@ -678,34 +637,29 @@ for i in 0..<5 {
 ```
 
 **`a..b` includes its end and `a..<b` excludes it** ([ADR-137](adr/adr-137.md)
-D4) — `..<` reads *up to, not including*, as it does in Kotlin and in Swift. One spelling per
-meaning, in a `for`, in a slice and in a pattern alike, which is why `..=` goes
-(D5): `..` is now what it said. A range is an ordinary expression — it may be
-given a name, passed, or indexed with — and it binds **looser than every
-operator in it**, so `0..<n - 1` is a range ending below `n - 1` rather than a
-range with something subtracted from it. That is the reading a loop head wants
-and the only one that is ever useful.
+D4). The spelling is the same in a `for`, in a slice and in a pattern. The form
+`a..=b` is withdrawn (D5). A range is an ordinary expression: it may be given a
+name, passed, or indexed with. A range binds **looser than every operator in
+it**, so `0..<n - 1` is a range ending below `n - 1`, not a range with
+something subtracted from it.
 
-> **Status:** the **range spelling is built** ([ADR-137](adr/adr-137.md) §5):
-> `..<` parses and excludes its end, `..` includes it, and `..=` is refused
-> naming `0..n` as the form it was. Every range in this specification, in
-> `examples/`, in `benches/` and in the tests was rewritten in the same change,
-> because the old spelling keeps parsing and changes meaning — a migration
-> spread over two changes is a corpus that means something nobody wrote in
-> between.
->
-> The **six pattern shapes** of D1 are the part still to come.
+*Design rationale:* one spelling per meaning; `..<` reads *up to, not
+including*, as it does in Kotlin and in Swift ([ADR-137](adr/adr-137.md) D4).
+
+> **Implementation status:** Implemented. `..<` parses and excludes its end,
+> `..` includes it, and `..=` is refused naming the form that replaces it
+> ([ADR-137](adr/adr-137.md) §5).
 
 A `for` over a list **lends** it: the elements are looked at, and the list is
-still there when the loop is over. Taking them away is written,
-`for x in xs.drain()` ([ADR-094](adr/adr-094.md) D4, and 6.5 for the rule it
-is part of).
+still there when the loop is over. Taking the elements away is written,
+`for x in xs.drain()` ([ADR-094](adr/adr-094.md) D4; the rule it is part of is
+6.5).
 
-> **Status:** built ([ADR-094](adr/adr-094.md) D4). A `for` over a place lends
-> it and `xs.drain()` is how a loop takes the elements away; a `&` written in
-> front of the list is `NK1137`, because the compiler writes that reference. See
-> 6.5 for the half that is not built — the caller still writes the `&` at a
-> call.
+> **Implementation status:** Implemented. A `for` over a place lends it and
+> `xs.drain()` takes the elements away. A `&` written in front of the list is
+> refused with `NK1137`, because the compiler writes that reference
+> ([ADR-094](adr/adr-094.md) D4). The half of the rule that is not built is in
+> 6.5.
 
 **Leaving a loop early: `break` and `continue`**
 
@@ -725,30 +679,28 @@ for n in numbers {
 println(f"{first_even}")         // the loop is over, the program is not
 ```
 
-A `break` leaves the **loop** and a `return` leaves the **function**. That is the
-difference worth keeping straight: after the `break` above, the `println` runs.
+A `break` leaves the **loop** and a `return` leaves the **function**. After the
+`break` above, the `println` runs.
 
-Three things about them, and each is a decision rather than an accident:
+Three rules govern them:
 
-* **Neither takes a value.** A loop here is a statement and hands back nothing,
-  so `break` has nothing to carry out of one. `break n` is refused rather than
-  read as a `break` followed by a statement `n` — which is what it would
-  otherwise mean, with the value quietly dropped
-  ([ADR-084](adr/adr-084.md) D3):
+* **Neither takes a value.** A loop is a statement and hands back nothing, so
+  `break` has nothing to carry out of one. `break n` is refused rather than
+  read as a `break` followed by a statement `n` ([ADR-084](adr/adr-084.md) D3):
 
   ```
   error[NK1133]: nothing after a `break` in the same block is reached
   ```
 
-* **There is no label.** `break` acts on the loop it is written in and there is
-  no way to name an outer one ([ADR-084](adr/adr-084.md) D2). To leave two loops
-  at once, leave the inner one and test outside it — or `return`, where the
-  function has nothing left to do.
+* **There is no label.** `break` acts on the loop it is written in, and there
+  is no way to name an outer one ([ADR-084](adr/adr-084.md) D2). A program that
+  leaves two loops at once leaves the inner one and tests outside it, or
+  `return`s where the function has nothing left to do.
 
-* **A jump does not leave a function**, so a `break` whose loop is outside a
+* **A jump does not leave a function.** A `break` whose loop is outside a
   **lambda**, a **task** (`spawn`), an **`overlap` branch** or a DSL fold's step
   is refused ([ADR-084](adr/adr-084.md) D4). Each of those is a function of its
-  own, and a jump is a jump to a place in *this* one:
+  own, and a jump is a jump to a place in the same function:
 
   ```nika
   for x in xs {
@@ -758,9 +710,8 @@ Three things about them, and each is a decision rather than an accident:
   }
   ```
 
-  The way out is to decide inside and act outside — hand back a `bool` and let
-  the loop test it. A `catch` handler is **not** one of these: a `break` in one
-  leaves the loop around it, which is usually exactly what is wanted
+  Such a lambda hands back a `bool`, and the loop tests it. A `catch` handler
+  is **not** a function of its own: a `break` in one leaves the loop around it
   ([ADR-084](adr/adr-084.md) D5):
 
   ```nika
@@ -770,11 +721,10 @@ Three things about them, and each is a decision rather than an accident:
   }
   ```
 
-**A loop can fail.** Some things a `for` walks are read *as it goes* — standard
-input's lines are the one `std` has today. Getting the next one is real work,
-and real work can fail. When it does, the loop stops and **the failure leaves
-the function**, exactly as a failing call would (Chapter 7), and the compiler
-makes you declare it:
+**A loop can fail.** Some sequences a `for` walks are read *as it goes*;
+standard input's lines are the one `std` has today. Getting the next element
+can fail. When it does, the loop stops and **the failure leaves the function**,
+exactly as a failing call would (Chapter 7). The function declares it:
 
 ```nika
 fn tally() -> i64 throws {           // without `throws`: error[NK2701]
@@ -784,21 +734,20 @@ fn tally() -> i64 throws {           // without `throws`: error[NK2701]
 }
 ```
 
-Nothing marks the loop, for the reason nothing marks a call that can fail
-([ADR-023](adr/adr-023.md) D8) — and this is the same rule 6.4 already applies
-to the *end* of a block, where a resource's cleanup can fail and the function
-that owns it has to say so. One rule, two places the language calls something
-you did not write ([ADR-025](adr/adr-025.md) D1).
+Nothing marks the loop, as nothing marks a call that can fail
+([ADR-023](adr/adr-023.md) D8). The same rule applies at the *end* of a block,
+where a resource's cleanup can fail and the function that owns it declares it
+(6.4). It is one rule for the two places where the language performs a call
+user code did not write ([ADR-025](adr/adr-025.md) D1).
 
-What this rule exists to prevent is the alternative: a failed read that looks
-like the end of the input, so a truncated stream becomes a shorter one and the
-count is quietly wrong. 6.4 calls that "a decades-old bug class in other
-languages", and it is the same bug at the other end of the block.
+*Design rationale:* a failed read that looked like the end of the input would
+turn a truncated stream into a shorter one and a count into a quietly wrong
+number ([ADR-025](adr/adr-025.md) D1).
 
 Most loops cannot fail. A range, a list, a map: nothing is read, so nothing
 about them changes.
 
-**And there is no third form.** A loop that does not end on its own is written
+**There is no third loop form.** A loop that does not end on its own is written
 `while true { … }`, and it is left by a `break`:
 
 ```nika
@@ -811,19 +760,17 @@ while true {
 }
 ```
 
-There is no `loop` keyword, and that is a decision rather than an omission
-([ADR-070](adr/adr-070.md) D1). Go is the precedent, read carefully: it has no
-`while` at all and lets `for` carry every loop shape, so what it shows is that one
-keyword is enough — not that the unconditional loop is unnecessary. Nikaia picked
-the other word to be the general one.
+There is no `loop` keyword ([ADR-070](adr/adr-070.md) D1). `break` hands back
+nothing ([ADR-084](adr/adr-084.md) D7).
 
-The word stays reserved, against the one thing that would reopen the question: a
-`break` that hands back a **value** would make `while true` read as a lie, since
-the head says the loop does not end and the body would say what it ends *with*.
-This `break` hands back nothing ([ADR-084](adr/adr-084.md) D7), so it does not.
+*Design rationale:* one keyword is enough for every loop shape, and `while` is
+the general one. A `break` that handed back a value would make `while true`
+read as a lie, since the head says the loop does not end and the body would say
+what it ends with ([ADR-070](adr/adr-070.md) D1, [ADR-084](adr/adr-084.md) D7).
 
 ### 3.4. Pattern Matching (`match`)
-The `match` expression compares a value against a series of patterns. It is similar to a "switch" statement in other languages but ensures that every possible case is handled.
+The `match` expression compares a value against a series of patterns. Every
+possible case is handled.
 
 ```nika
 let value = 2
@@ -839,45 +786,42 @@ A pattern is one of six things, and each is read the way it is written:
 
 | pattern | matches |
 | :--- | :--- |
-| `else` | anything, and binds nothing — the arm taken when none above it matched, the word `if` uses for the same idea ([ADR-145](adr/adr-145.md)). `_` in this position is refused: it is the **ignore pattern**, which stands in a tuple position and as a parameter ([ADR-126](adr/adr-126.md)), and nothing arrives at a catch-all arm |
+| `else` | anything, and binds nothing: the arm taken when none above it matched, the word `if` uses for the same idea ([ADR-145](adr/adr-145.md)). `_` in this position is refused: it is the **ignore pattern**, which stands in a tuple position and as a parameter ([ADR-126](adr/adr-126.md)), and nothing arrives at a catch-all arm |
 | `1`, `"text"`, `true`, `'n'` | that value |
 | `Op::Times` | that variant |
 | `Message::Write(text)` | that variant, binding what it carries |
 | `Message::Move { x, y }` | that variant, binding its fields by name |
 | `other` | anything, and **binds it** to that name |
 
-The last two lines are one rule: a path with `::` in it names a variant, and a
-bare name binds. That is the same line the enum's own syntax draws — `Quit` is
-a variant *of* `Message`, never on its own — so a pattern never has to be read
-twice to see which of the two it is.
+The last two rows are one rule: a path with `::` in it names a variant, and a
+bare name binds. That is the line the enum's own syntax draws: `Quit` is a
+variant *of* `Message`, never on its own.
 
 **Six more shapes** ([ADR-137](adr/adr-137.md) D1):
 
 | pattern | matches |
 | :--- | :--- |
 | `(0, 0)`, `(0, y)` | a tuple, position by position |
-| `(0, y) \| (y, 0)` | either alternative — and every alternative binds the **same set of names**, which is what keeps the body answerable |
-| `200..299` | a range, **inclusive at both ends** (D3): an exclusive one is written by moving the end, and `..<` is never written in a pattern |
+| `(0, y) \| (y, 0)` | either alternative; every alternative binds the **same set of names** |
+| `200..299` | a range, **inclusive at both ends** (D3). An exclusive one is written by moving the end; `..<` is never written in a pattern |
 | `(x, y) if x == y` | a **guard**: the arm matches only where the condition holds, and the word is `if` (D2) |
 | `Event::Click(Point { x, .. })` | a pattern inside a pattern, and `..` for the fields this one does not name |
 
-**`..` means two different things and neither is the other's neighbour**: in a
-range pattern it is the range, and in a struct pattern it is *the rest of the
-fields*. A struct pattern has no range in it and a range has no fields, so the
-position says which.
+**`..` means two different things**: in a range pattern it is the range, and
+in a struct pattern it is *the rest of the fields*. A struct pattern has no
+range in it and a range has no fields, so the position says which.
 
-**Every case is covered** ([ADR-146](adr/adr-146.md) D1), which is what the
-first sentence of this section has always said. A `match` over an **enum** is
-complete when every variant is named and needs no `else`; over anything else it
-needs one, because the set of an `i64`, a `char` or a `String` is not something
-arms can write out. `bool` is the case that is neither: `true` and `false` are
-two arms and a complete `match`. `NK1151` names what is missing — the variants,
-or `else`.
+**Every case is covered** ([ADR-146](adr/adr-146.md) D1). A `match` over an
+**enum** is complete when every variant is named, and needs no `else`. A
+`match` over anything else needs an `else`, because the set of an `i64`, a
+`char` or a `String` cannot be written out in arms. `bool` is the exception:
+`true` and `false` are two arms and a complete `match`. An incomplete `match` is
+refused with `NK1151`, which names what is missing: the variants, or `else`.
 
-An arm's body is an expression or a block, and an expression may be a `throw`,
-a `return`, a `break` or a `continue` ([ADR-138](adr/adr-138.md) D1) — their
-type is **never**, so an arm that throws sits beside an arm that hands back a
-value and the `match` is that value's type:
+An arm's body is an expression or a block. The expression may be a `throw`, a
+`return`, a `break` or a `continue` ([ADR-138](adr/adr-138.md) D1). Their type
+is **never**, so an arm that throws sits beside an arm that hands back a value,
+and the `match` is that value's type:
 
 ```nika
 match step.0 {
@@ -886,17 +830,23 @@ match step.0 {
 }
 ```
 
-> **Status:** the six shapes of [ADR-137](adr/adr-137.md) D1 are **not built**,
-> nor is a bare `throw` as an arm ([ADR-138](adr/adr-138.md) §5) — today it is
-> written `=> { throw NotFound }`. Built: the six rows of the first table,
-> which is what `examples/calc.nika` matching `step.0` rather than `step` is
-> working around.
+> **Implementation status:** Partially implemented. The six rows of the first
+> table and the completeness check are built. The six shapes of the second
+> table are not built ([ADR-137](adr/adr-137.md) §5). A bare `throw` as an arm
+> is not built; today it is written `=> { throw NotFound }`
+> ([ADR-138](adr/adr-138.md) §5).
 
 ### 3.5. Null Safety Operators
-Accessing members of a Nullable Type requires handling the potential `null` case.
+A member of a nullable type is reached through an operator that handles the
+`null` case.
 
-* **Safe Navigation (`?.`):** Accesses a member only if the receiver is not null. If it is null, the expression short-circuits to `null`. A **field** and a **method** are both members, and a method call takes its arguments there as it does anywhere ([ADR-066](adr/adr-066.md) D1).
-* **Null Coalescing (`??`):** Provides a fallback value when an expression evaluates to `null`. More than one may be written: `a ?? b ?? c` takes the first that has a value (D4).
+* **Safe navigation (`?.`):** reaches a member only where the receiver is not
+  `null`. Where the receiver is `null`, the expression is `null`. A **field**
+  and a **method** are both members, and a method call takes its arguments
+  there as it does anywhere ([ADR-066](adr/adr-066.md) D1).
+* **Null coalescing (`??`):** supplies a fallback value where an expression is
+  `null`. A chain may be written: `a ?? b ?? c` takes the first that has a
+  value (D4).
 
 ```nika
 // If find_user returns null, 'name' becomes null.
@@ -912,61 +862,52 @@ let display_name = name ?? "Guest"
 let shown = nickname ?? name ?? "Guest"
 ```
 
-> **Status:** `??` is built, and 2.3's `T?` is what it operates on
-> ([ADR-052](adr/adr-052.md)): `a ?? b` lowers to `a.unwrap_or_else(|| b.into())`.
->
-> `?.` is built too. It lowers to `map` over a plain field and to `and_then`
-> over one that is **itself** a `T?` — the second being the whole difficulty,
-> since `map` there would leave `a?.b?.c` reaching through a nullable of a
-> nullable. Which of the two is a question about the declared type, so the
-> compiler decides it, the way 2.3's `Some(…)` is decided
-> ([ADR-052](adr/adr-052.md) D6).
->
-> The result is a `T?` either way, which is what lets `??` end a chain and `?.`
-> continue one.
->
-> **`?.` through something that cannot be absent is refused** as `NK1121`, and
-> the way out is the plain `.` — a type that is not `T?` always has a value.
->
-> **`?.` takes nothing.** It reaches through a view of its receiver, so `user`
-> is usable on the line after `user?.name`; what comes out is a copy where the
-> member copies and a view of the receiver otherwise, as a field read is (6.6)
-> ([ADR-113](adr/adr-113.md)). **Not built yet**: today the lowering takes the
-> receiver, and using it again is refused below with *"use of moved value"*.
->
-> **`?.` reaches a method too**, because the sentence above says *member* and a
-> method is one ([ADR-066](adr/adr-066.md)): `find(1)?.greet("Hallo")` calls it
-> only where there is something to call it on, arguments reach it, and the result
-> is a `T?` like any other reach. It flattens for the same reason a field does,
-> where the method's own result is already a `T?`.
->
-> It lowers to a `match` and not to `map`, which is the one place the two members
-> differ: a method may **pause** and may **fail**, and a closure is where neither
-> can happen.
->
-> **And `??` chains**: `a ?? b ?? c` takes the first that has a value. It used to
-> be a parse error naming the second `??` (D4).
->
-> **A `?.` guards its own member and no more**, which is what safe navigation
-> means everywhere: if the receiver is absent the whole expression is `null` and
-> what follows is never reached, but a `.` written *after* the reach is reaching
-> into a `T?`. In a language where `null` inhabits every type that is a crash at
-> run time; here it is refused where it is written (`NK1125`, D6), because 2.3
-> makes `T?` a type of its own and a member of `T` is not a member of it. So
-> `a?.b.c` is refused and `a?.b?.c` is the program — every link that may be
-> absent says so.
+**The result of a `?.` is a `T?`.** Where the member is itself a `T?`, the
+result is flattened: `a?.b?.c` never reaches through a nullable of a nullable.
+Which case applies is a question about the declared type, and the compiler
+decides it ([ADR-052](adr/adr-052.md) D6). That is what lets `??` end a chain
+and `?.` continue one.
+
+**`?.` through a type that cannot be absent is refused** with `NK1121`. A type
+that is not `T?` always has a value, and the plain `.` reaches it.
+
+**`?.` takes nothing.** It reaches through a view of its receiver, so `user` is
+usable on the line after `user?.name`. What comes out is a copy where the
+member copies and a view of the receiver otherwise, as a field read is (6.6)
+([ADR-113](adr/adr-113.md)).
+
+**`?.` reaches a method** ([ADR-066](adr/adr-066.md)). `find(1)?.greet("Hallo")`
+calls the method only where there is something to call it on; the arguments
+reach it, and the result is a `T?` like any other reach. It flattens where the
+method's own result is already a `T?`. A method may **pause** and may **fail**,
+and a `?.` on one carries both.
+
+**A `?.` guards its own member and no more.** Where the receiver is absent, the
+whole expression is `null` and what follows is never reached. A `.` written
+*after* the reach is reaching into a `T?`, and is refused where it is written
+with `NK1125` (D6): `T?` is a type of its own (2.3), and a member of `T` is not
+a member of it. So `a?.b.c` is refused and `a?.b?.c` is the program.
+
+> **Implementation status:** Partially implemented. `??` and its chain are
+> built: `a ?? b` lowers to `a.unwrap_or_else(|| b.into())`
+> ([ADR-052](adr/adr-052.md)). `?.` is built over a field and over a method,
+> with `NK1121` and `NK1125`; over a method it lowers to a `match`, because a
+> method may pause and may fail. The view of the receiver is not built: today
+> the lowering takes the receiver, and using it again is refused by the backend
+> with *"use of moved value"* ([ADR-113](adr/adr-113.md) §5).
 
 ---
 
 ## Chapter 4: Data Structures
 
 ### 4.1. Structs (Custom Data Types)
-A **Struct** allows you to group related values together under a single name.
+A **struct** groups related values under a single name.
 
 **Visibility and Encapsulation**
-In Nikaia, **everything is Private by Default**. This includes Structs and their Fields.
-* To make a Struct usable by other modules, you must mark it `pub`.
-* Even if a Struct is public, its fields remain private unless explicitly marked `pub`.
+**Everything is private unless it says `pub`.** That includes a struct and its
+fields.
+* A struct another package may use is marked `pub`.
+* The fields of a public struct stay private unless each is marked `pub`.
 
 ```nika
 // file: users.nika
@@ -980,13 +921,17 @@ pub struct User {
 ```
 
 ### 4.2. Constructors and Instantiation
-Because fields are private by default, you often cannot initialize a struct directly from another module using the struct literal `Type { field: value }`. You must provide a public **Constructor**.
+A struct literal `Type { field: value }` names fields, and a private field
+cannot be named from another package. A type another package constructs
+provides a public **constructor**.
 
 **The Anonymous Constructor (`pub fn`)**
-Nikaia allows you to define a special function inside an `impl` block that has no name. This function is automatically called when you invoke the Type name like a function `User(...)`.
+An `impl` block may declare one function with no name. That function is called
+when the type name is invoked like a function: `User(...)`.
 
-* **Internal Access:** Inside the `users.nika` module, code can access private fields to build the object using the standard Struct Literal syntax.
-* **External Access:** Outside modules utilize the public anonymous constructor.
+* **Inside the package:** code builds the value with the struct literal, because
+  it may name the private fields.
+* **Outside the package:** code calls the public anonymous constructor.
 
 ```nika
 // file: users.nika
@@ -1006,32 +951,28 @@ impl User {
 
 **A struct literal is written with braces, and only with braces**
 ([ADR-140](adr/adr-140.md) D1). `User { username: name, email: address }` is the
-literal; `User(username: name)` — the same thing written like a call — goes.
-`User(a, b)` stays what it reads as: a **call**, of the anonymous constructor or
-of anything else, so the colon no longer decides whether a type's invariants are
-gone through or round.
+literal. The form `User(username: name)` is withdrawn. `User(a, b)` is a
+**call**, of the anonymous constructor or of anything else.
+
+*Design rationale:* with one spelling per form, a colon does not decide
+whether a type's invariants are gone through or around
+([ADR-140](adr/adr-140.md) D1).
 
 **A type is constructed by its anonymous constructor** ([ADR-140](adr/adr-140.md)
 D2), in `std` as in a `.nika` file: `Vec()`, `String()`, `HashMap()`,
-`Stats(first)`. `new` is the neighbouring language's convention reaching through
-a hand-written ledger, and this language has one of its own — a written
-`Type::new` is `NK1149`, in either position, because the constructor handed over
-as a **value** is the same spelling: `par_fold(M, Summary, …)`.
-
-The ledger keeps writing `Type::new`, and that is not a second spelling: it is
-the name the **lowering** uses, and the lowering is name for name
+`Stats(first)`. A written `Type::new` is refused with `NK1149`, in a call and as
+a value alike; the constructor handed over as a **value** is the same spelling,
+`par_fold(M, Summary, …)`. The ledger writes `Type::new`, because that is the
+name the **lowering** uses, and the lowering is name for name
 ([ADR-011](adr/adr-011.md) D2).
 
-> **Status:** **both are built** ([ADR-140](adr/adr-140.md) §5).
-> `Type(field: value)` does not parse as a literal any more — it is a call, and
-> where the name is a type `NK1146` says so and names the braces. `Vec()`,
-> `String()` and `HashMap()` are the constructors, and a written `Type::new` is
-> `NK1149`.
+> **Implementation status:** Implemented. `Type(field: value)` does not parse as
+> a literal; it is a call, and where the name is a type `NK1146` names the
+> braces. `Vec()`, `String()` and `HashMap()` are the constructors, and a
+> written `Type::new` is refused with `NK1149` ([ADR-140](adr/adr-140.md) §5).
 
-**A copy with fields changed: `with`.** Every binding is immutable unless it
-says `mut`, so the value a program wants most often is the one it has with one
-field different. `with` writes that without naming the rest
-([ADR-118](adr/adr-118.md)):
+**A copy with fields changed: `with`.** `with` writes a copy of a value with
+named fields changed, without naming the rest ([ADR-118](adr/adr-118.md)):
 
 ```nika
 let moved = p with { x: p.x + 1 }
@@ -1039,14 +980,16 @@ let stats = old with { count: old.count + 1, sum: old.sum + t }
 ```
 
 The braces are the struct literal's, with its field list and its shorthand.
-Only the top level: a field of a field is `p with { pos: p.pos with { x: 1 } }`.
-The fields not named are **moved** from `p`, never copied unseen — where one of
-them is a text or a list and `p` is used afterwards, the refusal names the copy
-to write. Across a package, `with` names `pub` fields only, as a literal does.
-**Not built yet.**
+`with` names top-level fields only: a field of a field is
+`p with { pos: p.pos with { x: 1 } }`. The fields not named are **moved** from
+`p`, never copied unseen. Where one of them is a text or a list and `p` is used
+afterwards, the refusal names the copy to write. Across a package, `with` names
+`pub` fields only, as a literal does.
+
+> **Implementation status:** Not implemented ([ADR-118](adr/adr-118.md) §5).
 
 **Usage Example**
-External modules see `User` as a factory function.
+Another package reaches `User` through its constructor.
 
 ```nika
 // file: main.nika
@@ -1065,9 +1008,9 @@ fn main() {
 ```
 
 ### 4.3. Why No Classes? (Data vs. Behavior)
-Nikaia does not use **Classes** (a concept from Object-Oriented Programming). Instead, Nikaia separates them:
-1.  **Structs** define the **Data** (what it is).
-2.  **Impl Blocks** define the **Behavior** (what it does).
+Nikaia has no **classes**. Data and behavior are declared apart:
+1.  A **struct** defines the **data**: what a value is.
+2.  An **`impl` block** defines the **behavior**: what a value does.
 
 ```nika
 // Defining behavior for the User struct
@@ -1079,7 +1022,7 @@ impl User {
 ```
 
 ### 4.4. Enums (Algebraic Data Types)
-An **Enum** (Enumeration) is a type that can be one of several distinct variants.
+An **enum** is a type whose value is one of several distinct variants.
 
 ```nika
 enum Message {
@@ -1089,81 +1032,84 @@ enum Message {
 }
 ```
 
-Use one where a value is **one of a fixed set of things**: two operators, four
-directions, the three states a connection can be in. A string would say the
-same and check nothing — `"tiems"` is a value a string type accepts and an enum
-does not. Reading one back is `match` (3.4), which is where the fixed set pays:
-an arm per variant and no arm for a case that cannot happen.
+An enum is the type for a value that is **one of a fixed set of things**: two
+operators, four directions, the three states a connection can be in. A string
+would carry the same value and check nothing: `"tiems"` is a value a string
+type accepts and an enum does not. An enum is read back with `match` (3.4): an
+arm per variant, and no arm for a case that cannot happen.
 
 ### 4.5. Collections
-Nikaia includes built-in types for storing groups of data.
+The standard library provides types for groups of values.
 
-* **List (Vector):** An ordered sequence of elements.
+* **List (Vector):** an ordered sequence of elements.
     ```nika
     let numbers = [1, 2, 3, 4]
     ```
     A list keeps the order it was given, and that order can be changed:
-    `xs.sort()` puts the elements in their natural order, `xs.sort_by_key fn { … }`
-    in the order of whatever the closure returns. **Both are stable** — elements
-    the key does not separate keep the order they had — which is what makes two
-    passes say a compound order without a comparator:
+    `xs.sort()` puts the elements in their natural order, and
+    `xs.sort_by_key fn { … }` in the order of what the closure returns. **Both
+    are stable**: elements the key does not separate keep the order they had.
+    Two passes therefore express a compound order without a comparator:
     ```nika
     names.sort()                                  // by name
     names.sort_by_key fn (name) { -report[name].hits }   // then by hits, descending
     ```
-    That matters because of the line below: a map has no order to borrow, so a
-    program that prints one says which.
-* **Tuple:** A fixed number of values of *different* types, with no name for
-    the group and no names for the parts. Written and read by position:
+    A map has no order to borrow, so a program that prints one says which.
+* **Tuple:** a fixed number of values of *different* types, with no name for
+    the group and no names for the parts. It is written and read by position:
     ```nika
     let pair = ("*", 3)          // (&str, i64)
     let op = pair.0
     ```
-    A tuple is the answer when a pair of values belongs together for one step of
-    a computation and naming it would be a struct pretending to be a type — the
-    element of a grammar rule that yields an operator and its operand, the two
-    halves of a map entry in `for (name, value) in map`. Where the group has a
-    meaning that outlives the step, it wants a struct (4.1) and its fields want
-    names.
-* **Map (HashMap):** Stores key-value pairs.
+    A tuple is the type for values that belong together for one step of a
+    computation: the element of a grammar rule that yields an operator and its
+    operand, or the two halves of a map entry in `for (name, value) in map`.
+    A group whose meaning outlives the step is a struct (4.1) with named
+    fields.
+* **Map (HashMap):** key-value pairs.
     ```nika
     use std::collections::HashMap
     let mut scores = HashMap()
     scores["Player1"] = 100
     ```
-    Reading through the brackets answers a `T?`, because a key is data and may
-    be absent: `scores["Player1"] ?? 0`, or `scores[name]?.rank ?? 0`
-    ([ADR-114](adr/adr-114.md)); `get` says the same. A list's `xs[i]` stays a
+    Reading a map through the brackets gives a `T?`, because a key is data and
+    may be absent: `scores["Player1"] ?? 0`, or `scores[name]?.rank ?? 0`
+    ([ADR-114](adr/adr-114.md)). `get` gives the same. A list's `xs[i]` stays a
     `T`, because an index is the program's own arithmetic and a wrong one is a
-    bug (Part III, Appendix A). **Not built yet**: today a missing key aborts.
+    bug (Part III, Appendix A).
 
-    A map is hashed according to where its keys came from: keys derived from data a remote peer supplied are hashed with a random per-run key, so nobody can pick keys that make your program crawl, and keys from data you supplied are hashed with the fast function. You do not configure this and, in the ordinary case, you do not think about it — see Part III, 17.1, for the cases where you want the last word. One consequence is worth remembering here: **the order you get when iterating a map is not guaranteed** and may differ between runs.
+    > **Implementation status:** Not implemented. Today a missing key aborts
+    > ([ADR-114](adr/adr-114.md) §5).
+
+    A map's hash function follows where its keys came from. Keys derived from
+    data a remote peer supplied are hashed with a random per-run key, so no
+    peer can choose keys that degrade the program. Keys from data the program
+    supplied are hashed with the fast function. User code does not configure
+    this; Part III, 17.1 names the cases where a program decides it. **The
+    iteration order of a map is not guaranteed** and may differ between runs.
 
 **A list is written `[1, 2, 3]`** ([ADR-135](adr/adr-135.md)). The elements are
 expressions, a trailing comma is allowed, and the type is `Vec[T]` where `T` is
-what the elements agree on. `[]` is the empty list and **takes its element type
-from the first use that says one** — `let xs: Vec[i64] = []`, or a `push` — and
-where nothing ever says, it is refused asking for the type rather than guessing
-one. A `[` at the **start of a line** begins a literal and never an index of the
-line above it, so an index is always written where its subject is.
+what the elements agree on. Elements that do not agree are refused with
+`NK1154`. `[]` is the empty list and **takes its element type from the first
+use that says one**: `let xs: Vec[i64] = []`, or a `push`. Where nothing ever
+says the type, `[]` is refused with `NK1153`, asking for the type. A `[` at the
+**start of a line** begins a literal and never an index of the line above it,
+so an index is always written where its subject is. The list *type* is written
+`Vec[T]`; there is no second spelling `[User]`.
 
-> **Status:** the **list literal is built** ([ADR-135](adr/adr-135.md) §5): the
-> literal and its trailing comma, the element type the elements agree on and
-> `NK1154` where two do not, `[]` from the annotation or from a later use and
-> `NK1153` where nothing ever uses it, and the `[` that begins a line. What is
-> **not** built is the list *type* written `[User]`, and deliberately: `Vec[T]`
-> is the spelling and a second one is [ADR-140](adr/adr-140.md)'s whole subject.
-> Built beside it: the tuple, indexing (`xs[0]`), indexed assignment, and
-> `HashMap()`.
->
-> One case is left to the language below rather than answered here, for
-> [Part III C.4](30-nikaia-tooling.md)'s reason: `[]` whose only uses cannot
-> give it an element type — `xs.len()` and nothing else. Refusing it would mean
-> deciding which uses count, and deciding that wrongly is a correct program
-> refused; what silence costs is a backend message instead of this one.
+A `[]` whose only uses cannot give it an element type (`xs.len()` and nothing
+else) is not refused by the compiler, and the backend reports it
+([Part III C.4](30-nikaia-tooling.md)).
+
+> **Implementation status:** Implemented. The literal, its trailing comma, the
+> element type, `NK1154`, `NK1153` and the `[` that begins a line are built
+> ([ADR-135](adr/adr-135.md) §5). The tuple, indexing (`xs[0]`), indexed
+> assignment and `HashMap()` are built beside it.
 
 ### 4.6. Generics (Type Parameters)
-To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.
+A **generic** declaration is written once for several types. A type parameter is
+declared inside square brackets `[...]`.
 
 ```nika
 struct Box[T] {
@@ -1181,14 +1127,13 @@ fn hand[T](x: T) -> T {
 }
 ```
 
-A parameter is written, never guessed, and it means two things depending on
-where you stand. **Inside the body it is a type**: `x` is a `T` and a `T` is not
-an `i64`, because the body did not pick what `T` is — its caller did. **At the
-call it is filled in from what you pass**: `hand(n)` where `n` is an `i64` hands
-back an `i64`, and `Box { item: n }` is a `Box[i64]`.
+A type parameter is written, never inferred. **Inside the body it is a type**:
+`x` is a `T`, and a `T` is not an `i64`, because the caller picks what `T` is.
+**At the call it is filled in from the arguments**: `hand(n)` where `n` is an
+`i64` hands back an `i64`, and `Box { item: n }` is a `Box[i64]`.
 
-That is also why a `T` on its own has no members. Nothing has said which types
-`T` may be, so nothing can say what one can do:
+A `T` on its own has no members. Nothing has said which types `T` may be, so
+nothing can say what one can do:
 
 ```nika
 fn shout[T](x: T) -> String {
@@ -1197,15 +1142,13 @@ fn shout[T](x: T) -> String {
                               // `to_uppercase`
 ```
 
-> **Status:** the parameter, the call that fills it in, and `NK1126` are built,
-> for a `fn`, a `struct` and the `impl` over it. **A bound — `[T: Summarize]` —
-> is not**, and cannot be until 4.7's `trait` declaration is: a bound names a
-> trait, and a trait can currently be implemented but not declared. Until then a
-> generic body may move and pass its value and nothing else
-> ([ADR-074](adr/adr-074.md)). A generic `enum` is not read.
+> **Implementation status:** Partially implemented. The parameter, the call that
+> fills it in, and `NK1126` are built for a `fn`, a `struct` and the `impl` over
+> it ([ADR-074](adr/adr-074.md) §5). A generic `enum` is not read. A bound,
+> `[T: Summarize]`, is 4.7's subject.
 
 ### 4.7. Traits (Defining Behavior)
-A **Trait** defines a set of behaviors (methods) that different types can share.
+A **trait** declares a set of methods that different types can share.
 
 ```nika
 trait Summarize {
@@ -1219,11 +1162,11 @@ impl Summarize for User {
 }
 ```
 
-A trait's methods are **signatures**: no body, because the declaration says what
-a type must have and the `impl` says what it does.
+A trait's methods are **signatures** without a body. The declaration says what
+a type must have, and the `impl` says what it does.
 
-Once a trait is declared, a type parameter can be **bound** by it — and that is
-what gives a generic body something it may do (4.6):
+A type parameter may be **bound** by a trait. The bound is what gives a generic
+body something it may do (4.6):
 
 ```nika
 trait Summarize {
@@ -1235,46 +1178,52 @@ fn shout[T: Summarize](x: T) -> String {
 }
 ```
 
-The bound answers the whole call, not just whether it is allowed: how many
-arguments `summary` takes, what they have to be, what it hands back, and whether
-it can fail or pause all come from the declaration. Several bounds are written
-`[T: Named + Aged]`.
+The bound answers the whole call: how many arguments `summary` takes, what
+they have to be, what it hands back, and whether it can fail or pause all come
+from the declaration. Several bounds are written `[T: Named + Aged]`. A bound
+may take a path, `[H: http::Handler]`, and the ledger records a trait and each
+`impl` where they were written ([ADR-106](adr/adr-106.md)).
 
-**A trait method reads like any signature** ([ADR-109](adr/adr-109.md)): without
-`sync` it may pause, without `throws` it cannot fail, and an implementation is
-checked against that — a body that pauses under a `sync` declaration is refused
-by name, and a body that does less than the declaration allows is fine. So a
-trait can describe I/O, `fn load(&self) -> String throws`, and a call through
-its bound pauses where the declaration says it may.
+**A trait method reads like any signature** ([ADR-109](adr/adr-109.md)). Without
+`sync` it may pause; without `throws` it cannot fail. An implementation is
+checked against the declaration: a body that pauses under a `sync` declaration
+is refused, and a body that does less than the declaration allows is accepted.
+A trait can therefore describe I/O, `fn load(&self) -> String throws`, and a
+call through its bound pauses where the declaration says it may.
 
-> **Status:** the declaration, `[T: Bound]`, `[T: A + B]` and the lookup are
-> built ([ADR-078](adr/adr-078.md)), and so is what an `impl` owes its trait:
-> a method the trait does not declare, or one it declares that the `impl` leaves
-> out, is `NK1130`, and a method whose implementation **pauses** where the
-> declaration says `sync` is `NK1129` ([ADR-080](adr/adr-080.md)). **A method
-> without the word may pause and is not lowered so yet**: the emitter still
-> writes a plain `fn` in every trait ([ADR-109](adr/adr-109.md) §5). **A differing signature is not
-> compared yet**, so a method with the wrong arity or result is still refused by
-> the language below. A **default body** has no syntax, a trait is not a type
-> (there is no `dyn` and no `fn f(x: Summarize)`). A bound takes a path —
-> `[H: http::Handler]` — and the ledger records a trait and each `impl` where
-> they were written ([ADR-106](adr/adr-106.md)); neither is built, so today a
-> trait cannot be named from another package.
+An `impl` owes its trait the declared methods and no others: a method the trait
+does not declare, or one it declares that the `impl` leaves out, is refused
+with `NK1130`. A method whose implementation **pauses** where the declaration
+says `sync` is refused with `NK1129` ([ADR-080](adr/adr-080.md)). A trait
+method has no **default body**, and a trait is not a type: there is no `dyn`
+and no `fn f(x: Summarize)`.
+
+> **Implementation status:** Partially implemented. The declaration,
+> `[T: Bound]`, `[T: A + B]`, the lookup, `NK1130` and `NK1129` are built
+> ([ADR-078](adr/adr-078.md), [ADR-080](adr/adr-080.md)). A method without
+> `sync` is not yet lowered as one that may pause: the emitter writes a plain
+> `fn` in every trait ([ADR-109](adr/adr-109.md) §5). A differing signature is
+> not compared, so a method with the wrong arity or result is refused by the
+> backend. A bound with a path and the ledger's record of traits are not built,
+> so a trait cannot be named from another package
+> ([ADR-106](adr/adr-106.md) §5).
 
 ---
 
 ## Chapter 5: Functions & Argument Architecture
 
 ### 5.1. The "Subject ; Config" Protocol
-Nikaia enforces a strict separation between data (subjects) and configuration options to maximize readability. This is achieved via a dedicated **Semicolon Separator (`;`)** in function signatures.
+A function signature separates the data a function operates on (its subject)
+from its configuration options with a **semicolon separator (`;`)**.
 
 **Zone 1: Subject (Positional)**
-Arguments *before* the semicolon are the data the function operates on.
-* **Syntactic Rule:** Positional arguments are allowed here.
+Parameters *before* the semicolon are the data the function operates on.
+* **Syntactic rule:** arguments here are positional.
 
 **Zone 2: Configuration (Named Only)**
-Arguments *after* the semicolon are options, flags, or modifiers.
-* **Syntactic Rule:** Arguments here *must* be named. Positional usage is forbidden.
+Parameters *after* the semicolon are options, flags, or modifiers.
+* **Syntactic rule:** arguments here are named. A positional argument in this
+  zone is refused.
 
 ```nika
 // Definition
@@ -1290,38 +1239,35 @@ request("https://api.com"; method: "POST", timeout: 5)  // in any order
 // request("https://api.com"; timout: 5)  // error[NK1109]: no option `timout`
 ```
 
-**The `;` stands between the two zones, and where one is empty it is not
+**The `;` stands between the two zones, and where one zone is empty it is not
 written** ([ADR-133](adr/adr-133.md)). A function whose parameters are all
 options is declared `fn execute(target_age: i64 = 0)` and called
-`execute(target_age: 30)`; `execute(; target_age: 30)` is refused, so there is
-one spelling. A mixed call keeps its `;`, and keeps it required.
+`execute(target_age: 30)`. `execute(; target_age: 30)` is refused, so there is
+one spelling. A mixed call keeps its `;`, and the `;` is required there. A
+**method** call takes the same form. A driver's deferred parameters (Part II
+10.5) write no `;` either, because a receiver stands outside the parentheses
+and leaves no zone for the separator to stand between.
 
-> **Status:** **built, both halves** ([ADR-133](adr/adr-133.md) §5), and the
-> call half waited on a second record: `execute(target_age: 30)` and the named
-> struct literal `Stats(min: first)` were the same five tokens until
-> [ADR-140](adr/adr-140.md) D1 took the literal out of the language. A **method**
-> call takes the form too, and a driver's deferred parameters (Part II 10.5)
-> write no `;` either, because a receiver stands outside the parentheses and
-> leaves no zone for the separator to stand between.
+> **Implementation status:** Implemented. The declaration and the call are both
+> built ([ADR-133](adr/adr-133.md) §5); the call form became unambiguous when
+> [ADR-140](adr/adr-140.md) D1 withdrew the named struct literal.
 
-**Every configuration parameter has a default**, and that is what makes it an
-*option*: a caller may leave it out, and leaving it out is never a question
-about what the value is. A parameter that has to be passed belongs before the
-`;`. Writing one without a default is a parse error that says so.
+**Every configuration parameter has a default.** A caller may leave an option
+out, and the call then takes the default. A parameter that has to be passed
+belongs before the `;`. An option without a default is a parse error that says
+so.
 
-**A default is a literal.** An option's default is a constant in every program
-anyone writes, and an arbitrary expression would raise a question with no
-obvious answer — whether it is evaluated where the function is declared or where
-it is called. That is worth deciding when something needs it.
+**A default is a literal.** Where a default is evaluated, at the declaration or
+at the call, is therefore never a question.
 
 **Order is the declaration's**, not the call's: `method` written first above is
-still passed second, because only the declaration knows what the order is. This
-is also why the ledger records an option's name, type *and* default (Part III,
-13.5) — a call that leaves an option out still passes a value, and a consumer
-compiling against a library cannot work out which.
+still passed second. The ledger records an option's name, type *and* default
+(Part III, 13.5), because a call that leaves an option out still passes a value,
+and a consumer compiling against a library must know which.
 
 **Optional Parentheses**
-For functions defined without configuration or arguments, parentheses may be omitted to match the block lambda style.
+A function declared without parameters may omit the parentheses, matching the
+block lambda style.
 
 ```nika
 fn init { 
@@ -1330,33 +1276,32 @@ fn init {
 ```
 
 ### 5.2. There Is One Lambda Form
-A lambda is written `fn { … }`, and 5.3 is the whole of it. There is no second, shorter form for
-single-line bodies.
+A lambda is written `fn { … }`, and 5.3 describes it. There is no second,
+shorter form for single-line bodies.
 
-Naming the arguments — `fn(user) { … }`, 5.3 — is that one form spelled out rather than a
-second one: the body is a block either way, and both spellings go in all the same places.
+Naming the arguments, `fn(user) { … }` (5.3), is the same form spelled out: the
+body is a block either way, and both spellings stand in all the same places.
 
-**The arguments are the ones it names.** A lambda that names none takes none, so
-`fn { … }` is a lambda of no arguments. There were once three automatic names —
-`a`, `b`, `c`, with the count read off which of them the body mentioned — and they
-are **withdrawn** ([ADR-049](adr/adr-049.md)): a body reaching for one now names
-something nothing declares, and that is `NK1117`.
+**The arguments are the ones the lambda names.** A lambda that names none takes
+none, so `fn { … }` is a lambda of no arguments. The three automatic names `a`,
+`b` and `c` are withdrawn ([ADR-049](adr/adr-049.md)); a body that uses one
+names something nothing declares, and is refused with `NK1117`.
 
-The short form `fn: expression` is **not** part of the language. It saved four characters and its
-body ran to the end of the expression, so a `.method()` chained after it landed *inside* the
-lambda — silently, and a different program. Writing it is a compile error that names the block
-form, rather than a parse failure, because the form appeared in earlier versions of this
-specification and readers will have it in their fingers. Full reasoning:
-[ADR-022](adr/adr-022.md).
+The short form `fn: expression` is withdrawn ([ADR-022](adr/adr-022.md)).
+Writing it is refused with a message that names the block form.
+
+*Design rationale:* the short form's body ran to the end of the expression, so
+a `.method()` chained after it landed inside the lambda and silently changed
+the program ([ADR-022](adr/adr-022.md)).
 
 ### 5.3. Lambdas (`fn { ... }`)
-When logic requires multiple steps, use a Block Lambda. Its arguments are the ones
-it names.
+A block lambda holds any number of statements. Its arguments are the ones it
+names.
 
 * **Syntax:** `fn(name) { ... }`, and `fn(first, second) { ... }` for more than one
-* **Args:** as many as the list says, and the list is the only thing that says so
+* **Arguments:** as many as the list says; the list is the only thing that says so
 * **A lambda that names none takes none**, so `fn { ... }` is the zero-argument
-  form — which is what a `.or_insert_with fn { Stats(0) }` wants
+  form, which is what `.or_insert_with fn { Stats(0) }` takes
 
 ```nika
 let complex = users.map fn(user) {
@@ -1368,20 +1313,17 @@ let complex = users.map fn(user) {
 let ids = users.map fn(user) { user.id }
 ```
 
-**The automatic `a`, `b`, `c` are withdrawn** ([ADR-049](adr/adr-049.md)). They
-were a second spelling in which the arguments were not written down at all and
-*how many there were* was read off which of the three names the body mentioned — so
-a local called `a` inside such a lambda was not a local but an argument. That rule
-could not be changed while every lambda depended on it, and a body that reaches for
-one of the three is now a body naming something nothing declares:
+**The automatic `a`, `b`, `c` are withdrawn** ([ADR-049](adr/adr-049.md)). A
+local inside a lambda may be called anything. A body that uses one of the three
+names without declaring it names something nothing declares:
 
 ```text
 error[NK1117]: nothing declares `a`, and this statement is just that name
 ```
 
 **Trailing Syntax**
-A lambda that is the last argument may go *outside* the parentheses, and where there are no other
-arguments the parentheses go away with it:
+A lambda that is the last argument may stand *outside* the parentheses. Where
+there are no other arguments, the parentheses are omitted with it:
 
 ```nika
 let ids = users.map fn(user) { user.id }
@@ -1406,24 +1348,30 @@ users.map fn(user) {
 }
 ```
 
-> **Status:** built, in both positions, and the automatic names are gone from the
-> compiler rather than left unreachable — the warning that made their rule visible
-> (`NK1114`), the arity-from-body mechanism and the one function the emitter and
-> the checker shared to compute it went with them ([ADR-049](adr/adr-049.md)).
-> A trailing lambda may follow a method call with or without other arguments, a
-> plain call, or a path: `users.map fn(user) { … }`, `numbers.reduce(0) fn(acc, n)
-> { … }`, `access_all(a, b) fn(x, y) { … }` (Part II, 12.3),
-> `task::scope fn(s) { … }` (Part II, 12.7), and the chain above.
-> **Not built:** an effect marker on a lambda. A parameter list is followed by the
-> body and by nothing else, so `fn(info) sync { … }` (7.2) ends the lambda at the
-> `sync` and the line is read as three expressions rather than one.
+A trailing lambda may follow a method call with or without other arguments, a
+plain call, or a path: `users.map fn(user) { … }`,
+`numbers.reduce(0) fn(acc, n) { … }`, `access_all(a, b) fn(x, y) { … }`
+(Part II, 12.3), `task::scope fn(s) { … }` (Part II, 12.7), and the chain
+above.
+
+**A lambda carries no effect marker.** A parameter list is followed by the body
+and by nothing else; `fn(info) sync { … }` is not one construct (7.2,
+[ADR-141](adr/adr-141.md) D1).
+
+> **Implementation status:** Implemented. The lambda is built in both
+> positions. The automatic names, their warning `NK1114` and the
+> arity-from-body mechanism are removed from the compiler
+> ([ADR-049](adr/adr-049.md) §5).
 
 ### 5.4. Contextual Capture (The Lifecycle Rule)
-Nikaia simplifies memory management in closures by automatically inferring whether to Borrow or Move variables based on the context in which the lambda is used. This behavior is the same at either `user_parallelism`.
+Whether a lambda borrows or moves the variables it uses is inferred from the
+context the lambda is used in. The rule is the same at both values of
+`user_parallelism`.
 
 #### A. Immediate Context (`@immediate`)
-If a function guarantees that the callback will be executed and finished before the function itself returns, it is an **Immediate Context**.
-* **Behavior:** Implicit Borrow (`&T`).
+A function that runs the callback to completion before it returns is an
+**immediate context**.
+* **Behavior:** implicit borrow (`&T`).
 * **Examples:** `map`, `filter`, `for_each`, `sort_by`.
 
 ```nika
@@ -1439,10 +1387,11 @@ println(prefix)
 ```
 
 #### B. Detached Context (`@detached`)
-If a function stores the callback, executes it later, or sends it to another thread/task, it is a **Detached Context**.
-* **Behavior:** Implicit Move (Ownership Transfer) for ordinary data. A handle on a
-  shared value is **duplicated** rather than moved, so the name outside stays usable
-  ([ADR-040](adr/adr-040.md) D1, and 6.2 for the rule).
+A function that stores the callback, runs it later, or hands it to another
+thread or task is a **detached context**.
+* **Behavior:** implicit move (ownership transfer) for ordinary data. A handle
+  on a shared value is **duplicated** rather than moved, so the name outside
+  stays usable ([ADR-040](adr/adr-040.md) D1; the rule is 6.2).
 * **Examples:** `spawn`, `defer`, `set_timeout`, `channel.on_receive`.
 
 ```nika
@@ -1458,65 +1407,90 @@ spawn fn { println(prefix + "System started") }
 
 #### C. Where the Distinction Lives
 
-Which of the two a lambda is in belongs to the **function that takes it**, not to
-the call: `map` is immediate for every caller and `spawn` is detached for every
-caller, and that is what lets the capture be decided where the lambda is
-written.
+The context belongs to the **function that takes the lambda**, not to the call.
+`map` is immediate for every caller and `spawn` is detached for every caller,
+so the capture is decided where the lambda is written.
 
-**Your own function says it with a type** ([ADR-102](adr/adr-102.md)). A
-parameter that is code is written as a function type, spelled the way a
-signature is: `handler: fn(Request) -> Response`, and `sync` or `throws` after
-the result where the declaration would put them. Without `sync` the code may
-pause; without `throws` it cannot fail — the reading every declaration has. A
-lambda that does less fits a type that allows more; a pausing lambda handed to
-a `fn() sync` is refused.
+**A function in user code declares a code parameter with a function type**
+([ADR-102](adr/adr-102.md)). The type is spelled the way a signature is,
+`handler: fn(Request) -> Response`, with `sync` or `throws` after the result
+where a declaration puts them. Without `sync` the code may pause; without
+`throws` it cannot fail. A lambda that does less fits a type that allows more.
+A pausing lambda handed to a `fn() sync` is refused.
 
-Which of the two contexts your parameter is in is **inferred**, not written: a
-parameter the body only calls is immediate and borrows, one the body keeps —
-stores, hands back, gives to a task — is detached and moves. It is the same
-question 6.5 asks of every parameter, and there is no `@detached` to write.
-For an immediate parameter the callee's own promises follow the lambda, as
-`map`'s do; for a kept one they follow the type, so a `listen` that calls a
-stored `fn(Request) -> Response` may pause.
+The context of such a parameter is **inferred**, not written. A parameter the
+body only calls is immediate and borrows. A parameter the body keeps (stores,
+hands back, gives to a task) is detached and moves. It is the question 6.5 asks
+of every parameter, and there is no `@detached` to write. For an immediate
+parameter the callee's own promises follow the lambda, as `map`'s do. For a
+kept parameter they follow the type, so a `listen` that calls a stored
+`fn(Request) -> Response` may pause.
 
-> **Status:** not built — a parameter of function type is a parse error, and
-> the eight `std` entries that take a lambda are written straight into the
-> ledger. The capture the rule decides **is** reported for the one detached
-> context the language has a keyword for: `NK2101` at a `spawn` (8.3).
-> [ADR-102](adr/adr-102.md) §5 is the order of work.
+> **Implementation status:** Not implemented. A parameter of function type is a
+> parse error, and the eight `std` entries that take a lambda are written
+> straight into the ledger. The capture at a `spawn` is reported with `NK2101`
+> (8.3). [ADR-102](adr/adr-102.md) §5 carries the work.
 
 ---
 
 ## Chapter 6: Memory and Ownership
 
-Memory management is usually either manual (hard) or automatic via Garbage Collection (slow). Nikaia uses a third way: **Ownership and Borrowing**, handled by the compiler.
+Memory is managed by **ownership and borrowing**, which the compiler enforces.
+There is no garbage collector, and user code frees no memory.
 
 ### 6.1. The Concept of Scope
-When a variable goes out of **Scope** (usually at the end of the block `{}` where it was created), Nikaia automatically cleans up the memory. You do not need to free memory manually.
+When a variable goes out of **scope**, at the end of the block `{}` where it
+was created, its memory is released. User code frees no memory.
 
 ### 6.2. Unified Types
-To make coding easier, Nikaia provides smart types that handle memory logic for you.
+Three shared types carry a value that has more than one owner.
 
-You write `Shared[T]` yourself — it is not inferred, because sharing changes *when* a value is cleaned up (6.4), and that is something your program can observe. What the compiler decides is the machinery underneath: **which count of owners each value gets**, one a second thread may safely touch where the value may reach one, and a cheaper one where it may not ([ADR-037](adr/adr-037.md) D7). What never depends on the build is the **answer** — whether a `Shared` may be handed to a task (Part II, 11.2) is decided from the type and from where it is going, at both settings and deliberately so ([ADR-045](adr/adr-045.md) D1). The count follows that answer; it does not make it.
+**`Shared[T]` is written in the source; it is not inferred.** Sharing changes
+*when* a value is cleaned up (6.4), and a program can observe that. What the
+compiler decides is the machinery underneath: **which owner count each value
+gets**, one a second thread may safely touch where the value may reach one, and
+a cheaper one where it may not ([ADR-037](adr/adr-037.md) D7). Whether a
+`Shared` may be handed to a task (Part II, 11.2) is decided from the type and
+from where it is going, at both values of `user_parallelism`
+([ADR-045](adr/adr-045.md) D1). The count follows that answer; it does not make
+it.
 
-**Where the compiler can prove that a particular value never leaves the thread that made it, it uses a cheaper count instead** ([ADR-037](adr/adr-037.md) D7). That is an optimisation and never a change of meaning: the program does the same thing either way, and the only difference is about 9 ns each time a handle is made and dropped — nothing at all for a handle you only read. **Where nothing proves it, the safe count is what you get**, and there is no way to ask for the other one: every case where the proof fails is a place something has not been written down, and writing it down is the way to the cheaper count.
+**Where the compiler can prove that a value never leaves the thread that made
+it, it uses the cheaper count** ([ADR-037](adr/adr-037.md) D7). That is an
+optimisation, never a change of meaning. The difference is about 9 ns each
+time a handle is made and dropped, and nothing for a handle that is only read.
+**Where nothing proves it, the value gets the safe count**, and there is no way
+to ask for the other one.
 
-**At `user_parallelism = no` every count is the cheap one** ([ADR-061](adr/adr-061.md) D2), and nothing has to be proved for it: there is one thread of yours, the runtime's own threads run no code you wrote, and a `Shared` may not be handed to code nothing written down describes ([ADR-061](adr/adr-061.md) D1) — so there is no other thread for a proof to be about. The way out of a program is to pass what is **inside** the `Shared`, a view or a copy; a foreign library that means to keep a value puts it in a hull of its own anyway. `nikaia --input x.nika --sharing` prints which count each of your values got, why, and what would have changed it. Like `--overlaps` and `--trust`, it explains a decision rather than changing one.
+**At `user_parallelism = no` every count is the cheap one**
+([ADR-061](adr/adr-061.md) D2). Nothing has to be proved for it: user code runs
+on one thread, the runtime's own threads run no user code, and a `Shared` may
+not be handed to code nothing written down describes
+([ADR-061](adr/adr-061.md) D1). What a program passes out of itself is what is
+**inside** the `Shared`, a view or a copy; a foreign library that means to keep
+a value puts it in a hull of its own. `nikaia --input x.nika --sharing` prints
+which count each value got, why, and what would have changed it. Like
+`--overlaps` and `--trust`, it explains a decision and changes none.
 
-* **`Shared[T]`**: for a value several parts of the program own at once and nobody changes. The memory is only cleaned up when the *last* owner is finished.
-* **`SharedMut[T]`**: for a value several parts own at once and any of them may change. The lock that keeps the changes apart is part of the type — there is no second wrapper to write around it — and the changing is done through the four doors of 6.3. This is the common case, which is why it has the short name ([ADR-039](adr/adr-039.md) D9).
-* **`Locked[T]`**: for individually locked fields inside a shared structure — one lock per field rather than one lock around the whole of it. It is the same lock as the one inside `SharedMut[T]`, opened by the same four doors.
+* **`Shared[T]`**: a value several parts of the program own at once and nobody
+  changes. The memory is released when the *last* owner is finished.
+* **`SharedMut[T]`**: a value several parts own at once and any of them may
+  change. The lock that keeps the changes apart is part of the type; there is
+  no second wrapper to write around it. The value is changed through the four
+  doors of 6.3. This is the common case, which is why it has the short name
+  ([ADR-039](adr/adr-039.md) D9).
+* **`Locked[T]`**: an individually locked field inside a shared structure, one
+  lock per field rather than one lock around the whole. It is the same lock as
+  the one inside `SharedMut[T]`, opened by the same four doors.
 
-**How the second owner comes about.** You do not write the step that produces
-one. Where a handle on a `Shared[T]` or a `SharedMut[T]` is handed on **by
-value** — passed to a function that keeps it, or used by a task (Part II, 11.2) —
-the handle is **duplicated**, and each handle is
-cleaned up at the end of its own block (6.1). There is no method to call, because
-there would be nothing for it to do: a duplicated handle copies none of the data
-and produces no second value — one value, one more owner — so there is nothing to
-name ([ADR-040](adr/adr-040.md) D1). Both are shared values, so the rule is the
-same for both — though a `SharedMut[T]` has nowhere to be handed *to* across a
-thread, because it may not cross one (Part II, 11.2).
+**The second owner arises without a written step.** Where a handle on a
+`Shared[T]` or a `SharedMut[T]` is handed on **by value**, passed to a function
+that keeps it or used by a task (Part II, 11.2), the handle is **duplicated**.
+Each handle is cleaned up at the end of its own block (6.1). There is no method
+to call: a duplicated handle copies none of the data and produces no second
+value, one value and one more owner ([ADR-040](adr/adr-040.md) D1). The rule is
+the same for both shared types; a `SharedMut[T]` may not cross a thread
+(Part II, 11.2).
 
 **Lending the inner value out duplicates nothing.** `&` on a shared value is a
 view of the value *inside* it, so a function that only uses the value takes an
@@ -1529,24 +1503,24 @@ let db = Shared(postgres::connect("…"))
 serve(&db)          // a view; no handle is made, and the count is untouched
 ```
 
-Whether the value is shared is the caller's decision, and `serve` has no business
-knowing. A signature names the shared type only where the function **keeps** the
-value past the call — puts it in a structure, gives it to a task, hangs it on
-something that outlives the call — because only then does it need a handle of its
-own ([ADR-042](adr/adr-042.md) D1, D2).
+Whether the value is shared is the caller's decision, and `serve` does not know
+it. A signature names the shared type only where the function **keeps** the
+value past the call: puts it in a structure, gives it to a task, hangs it on
+something that outlives the call. Only then does it need a handle of its own
+([ADR-042](adr/adr-042.md) D1, D2).
 
-**With `SharedMut[T]` you get in by opening it, and then it is an ordinary view
-again.** There is no `&` straight through a lock: the caller opens it with one of
-the four doors of 6.3 and passes the borrowed value in, and the called function
-sees a plain value and must obey the rule for a lock that is open — it may not
-pause, and it may not touch a lock of its own (Part II, 12.2).
+**A `SharedMut[T]` is opened, and the opened value is an ordinary view.** There
+is no `&` straight through a lock. The caller opens the lock with one of the
+four doors of 6.3 and passes the borrowed value in. The called function sees a
+plain value and obeys the rule for an open lock: it may not pause, and it may
+not touch a lock of its own (Part II, 12.2).
 
 ```nika
 let db = SharedMut(postgres::connect("…"))
 db.access fn(open) { serve(open) }    // `serve` must be `sync` and lock-free
 ```
 
-**How the first handle is made: you write it.** Each of the three shared types
+**The first handle is written in the source.** Each of the three shared types
 makes one by being **called with the value that goes in it**
 ([ADR-064](adr/adr-064.md) D2):
 
@@ -1556,17 +1530,16 @@ let counter = SharedMut(0)
 let frei = Locked(0)                    // a field's lock, one per field
 ```
 
-**The rule behind it is one sentence, and it decides every hull in the
-language:**
+One rule decides every hull in the language:
 
 > **A hull you cannot see, the compiler writes. A hull you can see, you write.**
 
-A `T?` costs nothing and hides nothing — the same value, possibly absent — so the
-compiler puts a plain value into one for you (2.3). These three change **when the
-value is cleaned up**, and that is something your program can observe. So the word
+A `T?` costs nothing and hides nothing (the same value, possibly absent), so the
+compiler puts a plain value into one (2.3). The three shared types change
+**when the value is cleaned up**, and a program can observe that, so the word
 stands where it happens.
 
-**It stands wherever an expression may**, which is the whole of what that buys:
+**A constructor stands wherever an expression may:**
 
 ```nika
 keep(Shared(connect(url)))                      // an argument
@@ -1584,58 +1557,50 @@ error[NK1115]: `serve` takes a shared value, and `db` is not one
   help: write `Shared(db)` - a hull you can see is one you write
 ```
 
-**Returning a shared value is no longer a special case**, and neither is a number:
-`SharedMut(0)` works because the hull is made by a call, and a call gives the
-number its type the way any other argument does.
+A shared value may be returned, and a number may be shared: `SharedMut(0)` is a
+call, and the call gives the number its type as any other argument does.
 
-**This is the handle and nothing else.** Ordinary data — a string, a number, a
-struct of those — is still **moved** where it is handed on to something that
-keeps it (6.5, 8.3). An automatic
-duplication there would copy the whole of the data, which is a different thing at
-a different cost, so for data the `.clone()` stays something you write yourself
+**Only the handle is duplicated.** Ordinary data (a string, a number, a struct
+of those) is **moved** where it is handed on to something that keeps it (6.5,
+8.3). For data, the `.clone()` is written in the source
 ([ADR-040](adr/adr-040.md) D1).
 
-**Each handle lives to the end of its own block whether you use it again or
-not.** The duplication is not conditional on a later use
-([ADR-040](adr/adr-040.md) D2), so the value is cleaned up where *your* handle
-ends, which may be later than the task that holds the other one. That is the
-block rule of 6.1 applied unchanged rather than a special case to learn: whoever
-wants the cleanup earlier ends the block earlier ([ADR-040](adr/adr-040.md) D3).
-Where a handle is duplicated is not something your source shows, so `--sharing`
-names each duplication site beside the count it printed for that value — the cost
-of an extra handle stays something you can look up
+*Design rationale:* an automatic duplication of data would copy the whole of
+it, which is a different thing at a different cost ([ADR-040](adr/adr-040.md)
+D1).
+
+**Each handle lives to the end of its own block, whether or not it is used
+again.** The duplication is not conditional on a later use
+([ADR-040](adr/adr-040.md) D2), so the value is cleaned up where the caller's
+handle ends, which may be later than the task that holds the other one. That is
+the block rule of 6.1 applied unchanged: a program that wants the cleanup
+earlier ends the block earlier ([ADR-040](adr/adr-040.md) D3). Where a handle
+is duplicated is not visible in the source, so `--sharing` names each
+duplication site beside the count it printed for that value
 ([ADR-040](adr/adr-040.md) D5).
 
-> **Status:** all three are built. Each is a type the compiler knows, `std`'s
-> ledger carries their entries, and the constructors above really do make the
-> hulls — wherever an expression may stand. `serve(&db)` works through the `deref`
-> entry and nothing else ([ADR-042](adr/adr-042.md) D2), and the call that wants a
-> shared value and is given a plain one is refused by `NK1115`, whose way out is
-> the constructor (Part III, C.3).
->
-> **`SharedMut[T]` is one name and two hulls**, and only the backend knows that
-> ([ADR-064](adr/adr-064.md) D1): what a message, a printed type or a ledger entry
-> says is the name you wrote. Which shapes it becomes is decided per value, the
-> same way the owner count is. **`Shared[Locked[T]]` is refused** and the message
-> names `SharedMut[T]`: one type, one spelling (`NK1123`).
->
-> **`SharedMut[T]` and `Locked[T]` are not.** Writing either names a type that
-> does not exist, the backend has no lowering for one, and the four doors of 6.3
-> wait on the same thing ([ADR-039](adr/adr-039.md) §4).
->
-> **The duplication is built for a handle handed to a function**, and not for one
-> used by a task. A handle handed on by value — to a call whose parameter takes one
-> — is duplicated, so the name outside stays usable; lending the inner value out
-> duplicates nothing; and `--sharing` names each duplication site beside the count
-> it printed ([ADR-040](adr/adr-040.md) D1, D5). The task half waits on `spawn`,
-> which does not lower yet (Part II, 11.2) — the analysis sees it and names it, and
-> no emitted program reaches it. What is built above all of it is the reasoning:
-> which owner count a `Shared` value gets is inferred per value, and `--sharing`
-> prints it ([ADR-037](adr/adr-037.md) D7).
+**`SharedMut[T]` is one name and two hulls**, and only the backend knows that
+([ADR-064](adr/adr-064.md) D1). A message, a printed type and a ledger entry
+say the name the program wrote. Which shape it becomes is decided per value,
+as the owner count is. **`Shared[Locked[T]]` is refused** with `NK1123`, and
+the message names `SharedMut[T]`: one type, one spelling.
+
+> **Implementation status:** Partially implemented. `Shared[T]` is built: the
+> type, its ledger entry, the constructor wherever an expression may stand, and
+> `serve(&db)` through the `deref` entry ([ADR-042](adr/adr-042.md) D2). A call
+> that wants a shared value and is given a plain one is refused with `NK1115`
+> (Part III, C.3). `SharedMut[T]` and `Locked[T]` are not built: writing either
+> names a type that does not exist, the backend has no lowering for one, and
+> the four doors of 6.3 wait on the same thing ([ADR-039](adr/adr-039.md) §4).
+> The duplication is built for a handle handed to a function and not for one
+> used by a task, because `spawn` does not lower a handle yet (Part II, 11.2);
+> the owner count is inferred per value and `--sharing` prints it with each
+> duplication site ([ADR-037](adr/adr-037.md) D7, [ADR-040](adr/adr-040.md)
+> D1, D5).
 
 ### 6.3. Changing Shared Data: The Four Doors
-A value behind a lock is not changed by assignment — the lock has to be opened
-first, and the shape of the change decides which door you use:
+A value behind a lock is not changed by assignment. The lock is opened first,
+and the shape of the change decides which door opens it:
 
 ```nika
 let kasse: SharedMut[i32] = ...
@@ -1650,47 +1615,64 @@ protokoll.update fn(mut log) { log.add("gebucht") }
 let n = protokoll.access fn(log) { log.len() }
 ```
 
-Each door is shaped for what it is for:
+Each door is shaped for its use:
 
-* **`get` and `set` take no block at all.** `get` copies the value out. `set`'s argument is computed *before* the call, so everything slow about producing the new value — including waiting for I/O — happens outside, and the lock is open for one store.
-* **`update` is handed the value as `mut v` and changes it.** It returns nothing: the change *is* the result, and `mut` is the word every changed parameter carries (4.3). Whether `v` is a copy of a small value or the address of a large one is the compiler's to decide, and a block may be run more than once where that is free — which is why it may not do I/O or take another lock ([ADR-110](adr/adr-110.md)).
-* **`access` is for where copying is too expensive** — a list of ten thousand entries is not copied to be asked its length. It hands your block the value where it lies, to **read**; it may not change it.
+* **`get` and `set` take no block.** `get` copies the value out. `set`'s
+  argument is computed *before* the call, so everything slow about producing
+  the new value, including waiting for I/O, happens outside, and the lock is
+  open for one store.
+* **`update` is handed the value as `mut v` and changes it.** It returns
+  nothing: the change *is* the result, and `mut` is the word every changed
+  parameter carries (4.3). Whether `v` is a copy of a small value or the
+  address of a large one is the compiler's decision. An `update` block may be
+  run more than once where that is free, so it may not do I/O or take another
+  lock ([ADR-110](adr/adr-110.md)).
+* **`access` is for a value that is too expensive to copy**: a list of ten
+  thousand entries is not copied to be asked its length. It hands the block
+  the value where it lies, to **read**; the block may not change it.
 
-Because `update` and `access` run your code while the lock is open, that code
-must be able to run straight through: no I/O, and no second lock. The compiler
-checks both (Part II, 12.2 and 12.3).
+`update` and `access` run user code while the lock is open, so that code runs
+straight through: no I/O, and no second lock. The compiler checks both
+(Part II, 12.2 and 12.3).
 
-**What you take out of a lock is stamped.** `kasse.get()` is a `Seen[i64]`,
-and so is what `access` computes. A `Seen` reads like the value it carries —
-print it, compare it, send it in a response, hand it to any function that
-touches no lock — and the stamp goes with it through arithmetic, calls,
-struct fields (declared `Seen[…]`) and time. What it may not do is go back into
-a lock **blind**: `kasse.set(stand + 100)` is refused wherever `stand` was
-read, and so is `if stand > 100 { kasse.set(0) }`, because the decision is
-stale even where the value is not. The doors for what was seen are `update`,
-which decides inside the lock, and `set(neu; after: stand)`, which stores only
-if the lock still holds what was seen and throws `Overtaken` otherwise
-([ADR-111](adr/adr-111.md)). There is no word that removes the stamp.
+**A value taken out of a lock is stamped.** `kasse.get()` is a `Seen[i64]`,
+and so is what `access` computes. A `Seen` reads like the value it carries: a
+program prints it, compares it, sends it in a response, and hands it to any
+function that touches no lock. The stamp goes with it through arithmetic,
+calls, struct fields declared `Seen[…]`, and time. A stamped value may not go
+back into a lock **blind**: `kasse.set(stand + 100)` is refused wherever
+`stand` was read, and so is `if stand > 100 { kasse.set(0) }`, because the
+decision is stale even where the value is not. The doors for what was seen are
+`update`, which decides inside the lock, and `set(neu; after: stand)`, which
+stores only if the lock still holds what was seen and throws `Overtaken`
+otherwise ([ADR-111](adr/adr-111.md)). There is no word that removes the stamp.
 
-Three mistakes are refused by name. Assigning to a `SharedMut` directly —
-`kasse = 0` — is refused, and the message names `set`. A `set` given a stamped
+Three mistakes are refused by name. Assigning to a `SharedMut` directly,
+`kasse = 0`, is refused, and the message names `set`. A `set` given a stamped
 value, or standing under a stamped condition, is refused, and the message names
 `update` and `after:` ([ADR-039](adr/adr-039.md) D10, [ADR-111](adr/adr-111.md)
-D4). And an `update` block that assigns to `v` without reading it is a `set`
-through the back door, refused as one.
+D4). An `update` block that assigns to `v` without reading it is a `set`
+through the back door, and is refused as one.
 
-> **Status:** not built. None of the four doors exists: `get`, `set`, `update`,
-> `access` and `access_all` have no entry in `std`, nothing lowers them, and
-> neither of the two refusals above is reported.
+> **Implementation status:** Not implemented. `get`, `set`, `update`, `access`
+> and `access_all` have no entry in `std`, nothing lowers them, and none of the
+> refusals above is reported ([ADR-039](adr/adr-039.md) §4,
+> [ADR-111](adr/adr-111.md) §5).
 
 ### 6.4. Resource Cleanup (RAII)
-Since Nikaia does not use a Garbage Collector, resources must be cleaned up deterministically. Nikaia follows the **RAII** principle (Resource Acquisition Is Initialization).
+Resources are cleaned up deterministically, following the **RAII** principle
+(Resource Acquisition Is Initialization). There is no garbage collector.
 
 **Automatic Destruction**
-When a variable goes out of scope (usually at the closing brace `}`), Nikaia automatically frees its memory.
+When a variable goes out of scope, at the closing brace `}`, its memory is
+released.
 
 **Custom Cleanup (`impl Drop`)**
-If your struct manages external resources (like File Handles, Sockets, or C-Pointers), you can implement the `Drop` trait. The `drop` method is called automatically when the object is destroyed. `drop` is **synchronous**: it runs straight through and can never pause — use it for teardown that is pure memory work or a cheap native call.
+A struct that manages an external resource (a file handle, a socket, a C
+pointer) may implement the `Drop` trait. The `drop` method is called when the
+value is destroyed. `drop` is **synchronous**: it runs straight through and
+never pauses. It is for teardown that is pure memory work or a cheap native
+call.
 
 ```nika
 struct FileHandle {
@@ -1706,7 +1688,10 @@ impl Drop for FileHandle {
 ```
 
 **Cleanup That Needs I/O (`impl Cleanup`)**
-Some resources cannot be torn down without doing real work: a buffered file must *flush* its remaining data to disk, a database transaction must *roll back*, a TLS connection wants to say goodbye over the network. All of that is I/O — and in Nikaia, I/O means the function may pause (Chapter 8). A synchronous `drop` cannot pause. For these resources, implement `Cleanup` instead:
+Some resources cannot be torn down without I/O: a buffered file *flushes* its
+remaining data to disk, a database transaction *rolls back*, a TLS connection
+closes over the network. I/O means the function may pause (Chapter 8), and a
+synchronous `drop` cannot pause. Such a resource implements `Cleanup`:
 
 ```nika
 impl Cleanup for BufferedFile {
@@ -1726,9 +1711,15 @@ impl Cleanup for BufferedFile {
 }
 ```
 
-You never call `cleanup` yourself, and you cannot forget it — the compiler inserts the call at the end of the block, exactly like `drop`. The only visible difference: the end of the block becomes a place where the function may briefly pause (like any other I/O), and the truth about errors surfaces (next paragraph).
+User code never calls `cleanup`. The compiler inserts the call at the end of
+the block, exactly as it does for `drop`. The end of the block is then a place
+where the function may pause, like any other I/O, and where a failure surfaces
+(next paragraph).
 
-**Cleanup errors are real errors.** If closing a resource can fail, the function that owns it can fail — Nikaia does not hide this (silently losing data at close time is a decades-old bug class in other languages). If `cleanup` declares `throws`, the surrounding function needs `throws` too, and the compiler tells you precisely why:
+**A cleanup error is an error.** If closing a resource can fail, the function
+that owns the resource can fail. If `cleanup` declares `throws`, the enclosing
+function declares `throws` too. A function that does not is refused with
+`NK2601`, and the message names the resource:
 
 ```text
 error[NK2601]: this function can fail because closing `f` can fail
@@ -1743,32 +1734,56 @@ error[NK2601]: this function can fail because closing `f` can fail
         f.close() catch { ... }
 ```
 
+*Design rationale:* silently losing data at close time is a decades-old bug
+class in other languages ([ADR-025](adr/adr-025.md) D1).
+
 Two refinements:
-* If a value dies **while an error is already bubbling up**, the cleanup error does not replace it — it is attached to the original error as a *secondary error* (see 7.1's automatic debug information).
-* If you want to react to the close error specifically, call **`close()`** yourself — it consumes the resource, returns the error normally, and no implicit cleanup runs afterwards.
+* If a value dies **while an error is already propagating**, the cleanup error
+  does not replace it. It is attached to the original error as a *secondary
+  error* (7.1).
+* A program that handles the close error specifically calls **`close()`**.
+  `close()` consumes the resource and returns the error normally, and no
+  implicit cleanup runs afterwards.
 
-**One restriction, told straight:** a `sync` function can never pause — so a resource with a pausable `cleanup` must not go out of scope inside one. The compiler catches this (`NK2602`) and names the ways out: return the resource to your caller, close it before the `sync` part, or use a non-buffering variant.
+**A `sync` function never pauses**, so a resource with a pausable `cleanup`
+may not go out of scope inside one. Such a program is refused with `NK2602`,
+and the message names the ways out: return the resource to the caller, close it
+before the `sync` part, or use a non-buffering variant.
 
-**When `cleanup` cannot run.** If a task is *cancelled* (it lost a `select` race, or a supervisor restarts it), nobody can wait for its I/O. The runtime then adopts the pending `cleanup` runs and finishes them in the background before the program exits ("parked cleanup" — bounded by the `cleanup-deadline`, Part III 13.3b; a cleanup the deadline cut off is a failure of the program, exit status 70 with the resource named on the panic path, [ADR-112](adr/adr-112.md)). Only a **panic** gets no pausable cleanup: during panic teardown only the synchronous `drop` fallback runs — and **on a target that traps rather than unwinds, a panic ends the process immediately, so no destructors run at all** (Part III, Appendix A). What *does* still run on every panic is the **Panic Hook** (7.2) — your registered last-moment handler for dumps and crash reports. Panics are for unrecoverable bugs; recoverable failures use `throws`, where full cleanup is guaranteed.
+**When `cleanup` cannot run.** When a task is *cancelled* (it lost a `select`
+race, or a supervisor restarts it), nobody can wait for its I/O. The runtime
+adopts the pending `cleanup` runs and finishes them in the background before
+the program exits ("parked cleanup"). The runtime configuration
+`cleanup-deadline` bounds them (Part III 13.3b). A cleanup the deadline cut off
+is a failure of the program: exit status 70, with the resource named on the
+panic path ([ADR-112](adr/adr-112.md)). A **panic** runs no pausable cleanup:
+during panic teardown only the synchronous `drop` fallback runs, and **on a
+target that traps rather than unwinds, a panic ends the process immediately, so
+no destructors run at all** (Part III, Appendix A). The **panic hook** (7.2)
+runs on every panic. A panic is for an unrecoverable bug; a recoverable failure
+uses `throws`, where full cleanup is guaranteed.
 
-> **Design Note: Why no `defer`?**
-> Unlike languages like Go or Zig, Nikaia does not need a `defer` keyword.
-> 1.  **Scope-Bound:** Cleanup happens automatically at the end of the block via `Drop`. You cannot forget it.
-> 2.  **Safety:** Patterns like `.access()` for locks guarantee that resources are released, replacing manual `lock/defer unlock` sequences.
-> 3.  **Unwinding:** If an error occurs (`throws`), the stack unwinds and triggers `drop` for all variables in the scope, ensuring no resource leaks even during failures.
+There is no `defer` keyword. Cleanup happens at the end of the block through
+`Drop`, so it cannot be forgotten. A lock's `.access()` releases the lock, so
+there is no manual `lock/defer unlock` pair. A `throws` unwinds the stack and
+runs `drop` for every variable in scope, so no resource leaks during a failure.
 
 ### 6.5. References and Borrowing
 
-Sometimes a function only needs to *look at* a value, not own it. For this, Nikaia has **References** (written `&T`, or `&str` for text). Think of it as lending a book: the owner keeps the book, the borrower may read it, and the loan ends automatically.
+A function that only *looks at* a value, and does not own it, takes a
+**reference** (written `&T`, or `&str` for text). The owner keeps the value,
+the borrower may read it, and the loan ends on its own.
 
-**The headline guarantee:**
+**Nikaia source contains no lifetime annotations.** There is no syntax for
+them. Everything described below happens inside the compiler
+([ADR-005](adr/adr-005.md)).
 
-> **Nikaia source code contains no lifetime annotations. Ever.**
-> There is no syntax for them, and there never will be. Everything described below happens inside the compiler. (See [ADR-005](adr/adr-005.md).)
+> Nikaia source code contains no lifetime annotations. Ever.
 
-Two things are guaranteed to *just work*:
+Two things are guaranteed:
 
-1.  **Borrowing inside a function**, even across I/O. Because Nikaia is async by default, a function may pause at any I/O call — and a borrowed value simply stays valid across that pause:
+1.  **Borrowing inside a function**, across I/O. A function may pause at any
+    I/O call (Chapter 8), and a borrowed value stays valid across the pause:
 
     ```nika
     fn report(config: &Config) {
@@ -1778,66 +1793,79 @@ Two things are guaranteed to *just work*:
     }
     ```
 
-2.  **Returning borrowed values from functions.** A function like `fn first_word(s: &str) -> &str` needs no annotations. Even when the result could come from *several* inputs, the compiler figures out the connection on its own — across function boundaries, through your whole program (see 6.7).
+2.  **Returning a borrowed value from a function.** `fn first_word(s: &str) -> &str`
+    needs no annotation. Where the result could come from *several* inputs,
+    the compiler infers the connection, across function boundaries and through
+    the whole program (6.7).
 
-**The one rule you need to know:** a borrow may not outlive its owner. You will rarely be able to break this rule by accident, because of the next section.
+**A borrow may not outlive its owner.** The next section is why a program
+rarely breaks this rule by accident.
 
-**Who writes the `&`: the declaration, never the call** ([ADR-094](adr/adr-094.md)).
+**The declaration writes the `&`, never the call** ([ADR-094](adr/adr-094.md)).
 A parameter written with a plain type is a **view** unless the function's body
-keeps the value — stores it, hands it back, gives it to a task, or passes it to
-something that keeps it — and which of the two it is comes from the body, is
-written to the ledger (6.7), and is true for every caller. So the caller writes
-`serve(db)` and `fs::map(path)`, and the compiler writes the reference the
-callee asked for, the way it writes the pause and the failure a call carries
-(7.1, 8.1). A `&` in a parameter type is an assertion — *this is a view, hold
-me to it* — the way `sync` is (Part II, 12.1). A parameter the function changes
-in place says `mut` in the declaration (`fn fill(mut out: Vec[i64])`), which is
-`&mut self`'s rule for every parameter; the call shows nothing, as `xs.push(1)`
-shows nothing. A `for` **lends** its list, so the list is still there after the
-loop; iteration that takes the elements away is written, `for x in xs.drain()`.
-Nothing here inserts a copy: a value handed to a function that keeps it, and
-used again afterwards, is refused with `.clone()` named as the way out (8.3).
+keeps the value: stores it, hands it back, gives it to a task, or passes it to
+something that keeps it. Which of the two it is comes from the body, is written
+to the ledger (6.7), and is true for every caller. The caller writes `serve(db)`
+and `fs::map(path)`, and the compiler writes the reference the callee asked
+for, as it writes the pause and the failure a call carries (7.1, 8.1). A `&` in
+a parameter type is an assertion, *this is a view*, as `sync` is (Part II,
+12.1). A parameter the function changes in place says `mut` in the declaration,
+`fn fill(mut out: Vec[i64])`; that is `&mut self`'s rule for every parameter,
+and the call shows nothing, as `xs.push(1)` shows nothing. A `for` **lends**
+its list, so the list is still there after the loop; iteration that takes the
+elements away is written `for x in xs.drain()`. Nothing here inserts a copy: a
+value handed to a function that keeps it, and used again afterwards, is refused
+with `.clone()` named as the way out (8.3).
 
-> **Status:** partly built ([ADR-094](adr/adr-094.md) §5). **A `for` lends** and
-> `xs.len()` after the loop is a program; `xs.drain()` is how a loop takes the
-> elements away; a `let` over a place — `config.name`, `totals.stations[name]` —
-> is a view of it where the value would otherwise have to move; the `keeps`
-> column is inferred and recorded for every function; and **the compiler writes
-> the `&` at the call** off that column, so `serve(db)` is the line and
-> `serve(&db)` is refused (Part III, C.3, `NK1137`). Four things are not lent
-> and take an owned argument as before: a parameter the body **keeps**, a value
-> that **copies**, an argument that is **already a view**, and a **method's**
-> argument, where this compiler cannot resolve which entry the call goes to.
-> **`mut` is read too**: `fn fill(mut out: Vec[i64])` lowers to `&mut Vec<i64>`
-> and `fill(xs)` gains its `&mut`, and a parameter a body *changes* without the
-> word is refused (`NK1138`) rather than handed to the compiler below.
-> **Not built:** the ledger diff that narrates a kept value's moved cleanup
-> point. And where the type of an argument is not known — a value a
-> `catch` handed back, a place inside a lambda — a `&` written at the call is
-> left alone rather than refused, because there is nothing to refuse it on.
+Four kinds of argument are not lent and are passed owned: a parameter the body
+**keeps**, a value that **copies**, an argument that is **already a view**, and
+a **method's** argument.
+
+> **Implementation status:** Partially implemented ([ADR-094](adr/adr-094.md)
+> §5). A `for` lends; `xs.drain()` takes the elements away; a `let` over a
+> place (`config.name`, `totals.stations[name]`) is a view of it where the value
+> would otherwise have to move; the `keeps` column is inferred and recorded for
+> every function; and the compiler writes the `&` at the call off that column,
+> so `serve(&db)` is refused with `NK1137` (Part III, C.3). `mut` is read:
+> `fn fill(mut out: Vec[i64])` lowers to `&mut Vec<i64>`, `fill(xs)` gains its
+> `&mut`, and a parameter a body changes without the word is refused with
+> `NK1138`. A method's argument is passed owned because the compiler cannot yet
+> resolve which entry the call goes to. Not built: the ledger diff that
+> narrates a kept value's moved cleanup point, and the refusal of a `&` written
+> at a call whose argument type is not known (a value a `catch` handed back, a
+> place inside a lambda).
 
 ### 6.6. Escaping References Are Tethered
 
-What happens when a borrowed value is not just used, but **escapes** — returned past the scope that owns the buffer, captured by a `@detached` lambda, or put into a collection that lives longer than the buffer? In most systems languages this is where the pain starts, because the compiler must prove the owner lives long enough.
-
-Nikaia takes a different route. The rule is:
+A borrowed value **escapes** when it is returned past the scope that owns the
+buffer, captured by a `@detached` lambda, or put into a collection that lives
+longer than the buffer. An escaping view is **tethered**: the buffer stays
+alive as long as the view does.
 
 > **Transient = borrow. Escaping = tether. Copying = yours to ask for.**
 
-Every view (`&str`, `&[u8]`) is in one of three states, and the compiler picks the cheapest one that works. You never write these states:
+Every view (`&str`, `&[u8]`) is in one of three states. The compiler picks the
+cheapest one that works, and the states are never written in the source:
 
 | State | What it is | Cost |
 | :--- | :--- | :--- |
 | **Borrowed** | a plain reference into the buffer | nothing at all |
 | **Tethered** | a handle on the buffer plus a position | one shared handle per *container* — no copy, no allocation |
-| **Owned** | a `String` of its own | one allocation — **only** where you wrote `.to_owned()` |
+| **Owned** | a `String` of its own | one allocation, **only** where the program wrote `.to_owned()` |
 
-The effect: **the buffer cannot die while anything still points into it.** Instead of an error telling you "you may not use this after the buffer is gone," the language guarantees the buffer stays alive — deterministically, by reference counting, with no garbage collector involved.
+**The buffer cannot die while anything still points into it.** The buffer is
+kept alive deterministically, by reference counting, with no garbage
+collector.
 
-Two things about this are worth knowing, because they are what make it usable on large data:
+Two rules keep this cheap on large data:
 
-* **Storing a slice in a struct is not, by itself, an escape.** A struct that is built and consumed inside the scope that owns the buffer keeps plain references. A parser loop that builds a hundred million small records pays *nothing* for them.
-* **The handle sits on the container, not on every slice.** When a map full of slices outlives its buffer, the *map* holds one handle; its keys stay positions. Filling it costs no handle traffic at all.
+* **Storing a slice in a struct is not, by itself, an escape.** A struct that
+  is built and consumed inside the scope that owns the buffer keeps plain
+  references. A parser loop that builds a hundred million small records pays
+  nothing for them.
+* **The handle sits on the container, not on every slice.** When a map full of
+  slices outlives its buffer, the *map* holds one handle, and its keys stay
+  positions. Filling it costs no handle traffic.
 
 ```nika
 struct Token {
@@ -1852,20 +1880,38 @@ fn tokenize(source: String) -> Vec[Token] {
 }
 ```
 
-Because of this, you will never see a "struct with lifetime parameters" in Nikaia — that concept does not exist in the language.
+There is no struct with lifetime parameters in Nikaia; the concept does not
+exist in the language.
 
-**When you want the guarantee in writing.** In a hot loop you may want to be *told* if a value ever starts tethering rather than borrowing. Mark the struct `@borrowed`:
+**A struct marked `@borrowed` never tethers.** In a hot loop, a program that
+wants to be told if a value ever starts tethering rather than borrowing marks
+the struct:
 
 ```nika
 @borrowed
 struct Reading { name: &str, temp: i32 }
 ```
 
-Nothing about the program changes — except that an escape is now a compile error that names the place where it happens. `nikaia explain --tethers` prints the state of every view without changing anything at all.
+Nothing about the program changes, except that an escape is a compile error
+that names the place where it happens. `nikaia explain --tethers` prints the
+state of every view and changes nothing.
 
-**The one case that is an error.** If a slice escapes and its buffer cannot be shared — it lives on the stack, or came from a foreign library — no tether is possible. The compiler says so and offers the ways out, `.to_owned()` among them. It never inserts that copy on your behalf: an invisible copy in a loop over a billion rows is exactly the kind of surprise Nikaia refuses to produce. (Details: [ADR-008](adr/adr-008.md).)
+**An escape whose buffer cannot be shared is refused.** Where a slice escapes
+and its buffer lives on the stack or came from a foreign library, no tether is
+possible. The compiler refuses the program and names the ways out,
+`.to_owned()` among them. The compiler never inserts that copy
+([ADR-008](adr/adr-008.md)).
 
-**A parameter written `&str` may not be kept past its call.** A view inside a struct carries the buffer it points into, because the struct's own declaration says it holds a view; a parameter written `&str` on its own says only that the call may look at one. So a function that stores such a parameter — into a field of its subject, into a struct it hands back, into a task — is refused as `NK2302` (Part III, C.3), and the way to write it is to put the view in a struct and take the struct:
+*Design rationale:* an invisible copy in a loop over a billion rows is the kind
+of surprise the language refuses to produce ([ADR-008](adr/adr-008.md)).
+
+**A parameter written `&str` may not be kept past its call.** A view inside a
+struct carries the buffer it points into, because the struct's declaration says
+it holds a view. A parameter written `&str` on its own says only that the call
+may look at one. A function that stores such a parameter, into a field of its
+subject, into a struct it hands back, or into a task, is refused with `NK2302`
+(Part III, C.3). Such a function puts the view in a struct and takes the
+struct:
 
 ```nika
 @borrowed
@@ -1876,26 +1922,58 @@ impl Summary {
 }
 ```
 
-Handing a view back out of the buffer it came from is **not** this rule: `fn count(seq: &str, k: i64) -> HashMap[&str, Tally]` returns views of `seq`, and the result points into `seq` and nothing else. Why a parameter is not given a buffer of its own to name is [ADR-005](adr/adr-005.md) D1 — the language has no syntax for one — and what a struct carries instead is [ADR-008](adr/adr-008.md) D1.
+Handing a view back out of the buffer it came from is **not** this rule:
+`fn count(seq: &str, k: i64) -> HashMap[&str, Tally]` returns views of `seq`,
+and the result points into `seq` and nothing else. A parameter has no buffer of
+its own to name, because the language has no syntax for one
+([ADR-005](adr/adr-005.md) D1); a struct carries its buffer instead
+([ADR-008](adr/adr-008.md) D1).
 
-Where the thing it is stored into **already carries a buffer**, there is nothing to refuse: a method of a struct that holds a view has that struct's buffer in hand, so storing the parameter into one of its fields is accepted and the parameter is a view of *that* buffer. `fn note(&mut self, name: &str)` on a `Summary` holding `label: &str` compiles, and `name` is a view of the same buffer `label` points into — which narrows what a caller may pass and is why it is the signature rather than the body that changes.
+Where the destination **already carries a buffer**, there is nothing to refuse.
+A method of a struct that holds a view has that struct's buffer in hand, so
+storing the parameter into one of its fields is accepted, and the parameter is
+a view of *that* buffer. `fn note(&mut self, name: &str)` on a `Summary`
+holding `label: &str` compiles, and `name` is a view of the buffer `label`
+points into. That narrows what a caller may pass, which is why the signature
+changes rather than the body.
 
-> **Status:** built for a **method of a struct that holds a view**, which is where a buffer is already named. Three cases are still refused: a function or method whose own subject holds no view (there is no buffer to name, even when the destination is a field of a struct that carries one); a view handed back through the result; and a view given to a task. Of the accepted cases, one is accepted without being decided: where the view is handed to a call on the subject, the compiler cannot see whether the callee keeps it, so it is treated as kept and the parameter is written as a view of the subject's buffer either way.
+> **Implementation status:** Partially implemented. The rule is built for a
+> method of a struct that holds a view. Three cases are refused with `NK2302`:
+> a function or method whose own subject holds no view, even when the
+> destination is a field of a struct that carries one; a view handed back
+> through the result; and a view given to a task. Where the view is handed to
+> a call on the subject, the compiler cannot see whether the callee keeps it,
+> so it is treated as kept and the parameter is written as a view of the
+> subject's buffer ([ADR-008](adr/adr-008.md) §5).
 
-**One honest cost.** A tether keeps the *whole* buffer alive, not just the part you pointed at. Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB. Where that looks like a mistake the compiler warns and suggests `.to_owned()`.
+**A tether keeps the whole buffer alive**, not just the part pointed at.
+Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB. Where
+that looks like a mistake, the compiler warns and suggests `.to_owned()`.
 
 ### 6.7. The Borrow Contract Ledger
 
-For every function whose signature involves borrows, the compiler infers a **Borrow Contract**: a note such as "the result of `longest(a, b)` borrows from `a` or `b`." You never write these contracts. They are stored in a generated file, **`nikaia.contracts`**, which is committed alongside `nikaia.lock` (details in Part III, Chapter 13.5).
+For every function whose signature involves a borrow, the compiler infers a
+**borrow contract**, such as "the result of `longest(a, b)` borrows from `a`
+or `b`." A contract is never written in the source. Contracts are stored in a
+generated file, **`nikaia.contracts`**, the ledger, which is committed
+alongside `nikaia.lock` (Part III, 13.5).
 
 The ledger has two jobs:
 
-1.  **Cache:** if a contract did not change, none of the function's callers need to be re-checked. Builds stay fast.
-2.  **Explanation:** if you edit a function *body* and that changes its contract, the compiler compares old and new contract. If a caller elsewhere breaks, the error does not point at some mysterious distant line — it tells the whole story: *what you changed, how the contract changed, and which caller is affected* — plus what to do about it.
+1.  **Cache:** if a contract did not change, none of the function's callers is
+    re-checked.
+2.  **Explanation:** if an edit to a function *body* changes its contract, the
+    compiler compares the old and the new contract. If a caller elsewhere
+    breaks, the error names the edit, the change in the contract, the caller
+    that is affected, and the way out.
 
 ### 6.8. When the Compiler Says No
 
-Ownership rules occasionally reject code — usually because the code contains a genuine bug. Nikaia's promise ([ADR-005](adr/adr-005.md), D7): **every such error explains itself in plain language and tells you what to do next.** You never need Rust knowledge to read a Nikaia error; if a raw internal (Rust) error ever reaches you, that is a Nikaia bug — please report it.
+An ownership rule refuses a program that breaks it. **Every such refusal
+explains itself in plain language and names the way out**
+([ADR-005](adr/adr-005.md) D7). Reading a Nikaia diagnostic requires no
+knowledge of Rust; a backend error that reaches user code is a defect of the
+compiler.
 
 The most common case is changing a collection while looping over it:
 
@@ -1921,18 +1999,21 @@ error[NK2301]: cannot change `users` while looping over it
         users.retain fn (user) { !user.is_duplicate() }
 ```
 
-For every known pattern of this kind, the standard library provides a safe, named method (`retain`, `drain`, `entry`, `swap(i, j)`, …) and the error message points directly at it.
+For every known pattern of this kind, the standard library provides a safe,
+named method (`retain`, `drain`, `entry`, `swap(i, j)`, …), and the diagnostic
+names it.
 
 ---
 
 ## Chapter 7: Error Handling
 
-Failures are a part of software. Nikaia distinguishes between two types of errors.
+Nikaia distinguishes two kinds of errors.
 
 ### 7.1. Recoverable Errors (`throws`)
 
-These are expected problems: a file is missing, a connection drops, an input does not fit the
-format. A function that can fail says so with `throws`.
+A recoverable error is an expected problem: a file is missing, a connection
+drops, an input does not fit the format. A function that can fail says so with
+`throws`.
 
 ```nika
 fn fetch_config() -> String throws {
@@ -1942,21 +2023,22 @@ fn fetch_config() -> String throws {
 ```
 
 **`throws` stands after the result type**, and `sync` with it:
-`fn fetch_config() -> String throws` ([ADR-140](adr/adr-140.md) D4). That is the
-order [ADR-102](adr/adr-102.md) D1 already fixed for a function *type*, so a
-declaration and a type read the same way round; the form before the arrow stops
-parsing, with a message naming the order.
+`fn fetch_config() -> String throws` ([ADR-140](adr/adr-140.md) D4). A function
+*type* has the same order ([ADR-102](adr/adr-102.md) D1), so a declaration and
+a type read the same way round. A declaration with no result type writes the
+word after the parameters: `fn tick() sync { … }`. The form before the arrow
+is withdrawn and does not parse; the message names the order.
 
-> **Status:** **built** ([ADR-140](adr/adr-140.md) §5). The pre-arrow form is a
-> parse error whose message names the order, and this chapter writes the one
-> that stays. A declaration with **no** result type writes the word where it
-> always did — `fn tick() sync { … }` — because there is nothing for it to be
-> before or after.
+> **Implementation status:** Implemented. The pre-arrow form is a parse error
+> whose message names the order ([ADR-140](adr/adr-140.md) §5).
 
-**`throws` names no types.** What a function can fail *with* follows from its body, so the compiler
-infers it whole-program and writes it to `nikaia.contracts` (Part III, 13.5). Writing it into the
-signature would mean maintaining derived truth by hand — the same reason a borrow relationship is
-not written in the source ([ADR-005](adr/adr-005.md) D3, [ADR-023](adr/adr-023.md) D1).
+**`throws` names no types.** What a function can fail *with* follows from its
+body. The compiler infers it whole-program and writes it to `nikaia.contracts`
+(Part III, 13.5).
+
+*Design rationale:* an error set in the signature would be derived truth
+maintained by hand, for the same reason a borrow relationship is not written in
+the source ([ADR-005](adr/adr-005.md) D3, [ADR-023](adr/adr-023.md) D1).
 
 **An error type is an `enum`.**
 
@@ -1978,10 +2060,10 @@ impl Error for ConfigError {
 }
 ```
 
-An error **carries what belongs to it** — "not found" without the path is a message that costs a
-question before it helps. An `enum` is what the language already has for one of a fixed set of
-things (4.4), and a `match` over one is checked for completeness. No marker on the type is needed:
-what is thrown must implement `Error`, and the `impl` line is where that is said.
+An error **carries what belongs to it**: "not found" carries the path. An
+`enum` is the language's type for one of a fixed set of things (4.4), and a
+`match` over one is checked for completeness. The type carries no marker: what
+is thrown implements `Error`, and the `impl` line says so.
 
 **Raising: `throw`.**
 
@@ -1993,25 +2075,25 @@ if !fs::exists(path) {
 
 **A `throw` is an expression**, and so are `return`, `break` and `continue`
 ([ADR-138](adr/adr-138.md) D1). Their type is **never**
-([ADR-093](adr/adr-093.md)), which fits every expected type without widening
-it — the expression hands back nothing at all — so each may stand wherever an
-expression may:
+([ADR-093](adr/adr-093.md)). A `never` fits every expected type without
+widening it, because the expression hands back nothing, so each may stand
+wherever an expression may:
 
 ```nika
 let user = find(id) ?? throw NotFound(id)
 ```
 
-Nothing about what they *do* changes: a `throw` still leaves the function and
-still makes it `throws`, a `break` still needs a loop, and `NK1133` still
-refuses a statement after a `break` in the same block — which is the rule that
-keeps `break x` from becoming a quietly dropped value (3.3).
+What they *do* is unchanged: a `throw` leaves the function and makes it
+`throws`, a `break` needs a loop, and a statement after a `break` in the same
+block is refused with `NK1133` (3.3).
 
-> **Status:** **not built** ([ADR-138](adr/adr-138.md) §5). The four are
-> statements today, so `?? throw Missing` and `=> throw NotFound` are parse
-> errors and each has to be written with braces.
+> **Implementation status:** Not implemented. The four are statements today, so
+> `?? throw Missing` and `=> throw NotFound` are parse errors, and each is
+> written with braces ([ADR-138](adr/adr-138.md) §5).
 
-**Propagation happens on its own, and nothing marks it.** A call that can fail, inside a function
-that declares `throws` — that is all of it. No operator, no sigil:
+**Propagation happens on its own, and nothing marks it.** A call that can fail
+stands inside a function that declares `throws`. There is no operator and no
+sigil:
 
 ```nika
 fn load() -> Config throws {
@@ -2020,13 +2102,16 @@ fn load() -> Config throws {
 }
 ```
 
-That is deliberate, and it is the same decision as in three other places. Four things can leave the
-control flow of a Nikaia program without the line showing it: a call may **pause** (8.1), a block's
-end may **pause and fail** (6.4), a call may **fail** (here), and a loop's step may fail
-([ADR-025](adr/adr-025.md)). Marking one of them would claim the other three were absent.
+Four things leave the control flow of a program without the line showing it: a
+call may **pause** (8.1), a block's end may **pause and fail** (6.4), a call may
+**fail** (here), and a loop's step may fail ([ADR-025](adr/adr-025.md)).
 
-**Because nothing marks it, the compiler insists on the declaration.** A call that can fail, in a
-function that does not say `throws`, is **refused** — `NK2605` — rather than lowered:
+*Design rationale:* marking one of the four would claim the other three were
+absent ([ADR-023](adr/adr-023.md) D8).
+
+**Because nothing marks a failing call, the declaration is required.** A call
+that can fail, in a function that does not say `throws`, is refused with
+`NK2605`:
 
 ```text
 error[NK2605]: this function can fail because `liest` can fail
@@ -2038,22 +2123,27 @@ error[NK2605]: this function can fail because `liest` can fail
      help: declare the error: add `throws` to `ruft` - or handle it at the call, `… catch { … }` (Part I, 7.1)
 ```
 
-on `fn liest() -> String throws { return fs::read_to_string("x.txt") }` one line above. The shape
-is Appendix C.4's: the caret is on the statement, **the note is the contract** quoted from the
-ledger the call was resolved against, and the help is one of the two things a reader can type.
+for `fn liest() -> String throws { return fs::read_to_string("x.txt") }` one
+line above. The shape is Appendix C.4's: the caret is on the statement, the
+note is the contract quoted from the ledger the call was resolved against, and
+the help is one of the two things user code can write.
 
-Two things rest on that refusal. The signature is the only place the source says a function can
-fail, so a caller that does not say it has said something false; and `nikaia.contracts` records
-`throws` per function and is **committed and read by other programs** (Part III, 13.5), so
-accepting the program would publish that `ruft` cannot fail.
+*Design rationale:* the signature is the only place the source says a function
+can fail, so a caller that does not say it has said something false; and
+`nikaia.contracts` records `throws` per function and is committed and read by
+other programs (Part III, 13.5), so accepting the program would publish that
+`ruft` cannot fail ([ADR-023](adr/adr-023.md) D8).
 
-> **Status:** built for a call **by name** — a function of this program, of another of its
-> modules, or of `std`. A **method** call that can fail is refused by `NK2605` all the same, but
-> the lowering does not yet propagate one: on a method, `catch` at the call is the shape that
-> compiles today. A call nothing describes is neither refused nor propagated, and reaches the
-> backend as before.
+> **Implementation status:** Partially implemented. The refusal and the
+> propagation are built for a call **by name**: a function of this program, of
+> another of its modules, or of `std`. A **method** call that can fail is
+> refused with `NK2605`, but the lowering does not propagate one yet; on a
+> method, `catch` at the call is the form that compiles today. A call nothing
+> describes is neither refused nor propagated, and reaches the backend
+> ([ADR-023](adr/adr-023.md) §5).
 
-**Handling: `catch`.** The block supplies the replacement value — or it leaves the function.
+**Handling: `catch`.** The block supplies the replacement value, or it leaves
+the function.
 
 ```nika
 let config = load() catch {
@@ -2064,12 +2154,12 @@ let config = load() catch {
 let port = read_port() catch { 8080 }     // replacement value
 ```
 
-Inside the block the error is called **`error`**. To pass it on rather than handle it, throw it:
-`throw error`.
+Inside the block the error is named **`error`**. A handler that passes the
+error on writes `throw error`.
 
-**Telling failures apart.** `error` is the sum of the errors that can arrive at this point — the
-compiler knows them because it inferred them. Match with the patterns of 3.4, where a path with
-`::` names a variant:
+**Telling failures apart.** `error` is the sum of the errors that can arrive at
+this point; the compiler inferred them. A handler tells them apart with the
+patterns of 3.4, where a path with `::` names a variant:
 
 ```nika
 let config = load() catch {
@@ -2084,37 +2174,41 @@ let config = load() catch {
 }
 ```
 
-> **Status:** the patterns of 3.4 are built. Two things in the example above are
-> not: **`..` in a named pattern**, so a `match` cannot yet bind some fields and
-> ignore the rest, and a bare `throw` as an arm's body — write the arm as a
-> block, `else => { throw error }`.
+> **Implementation status:** Partially implemented. The patterns of 3.4 are
+> built. `..` in a named pattern is not built, so a `match` cannot yet bind some
+> fields and ignore the rest ([ADR-137](adr/adr-137.md) §5). A bare `throw` as
+> an arm's body is not built; the arm is written as a block,
+> `else => { throw error }` ([ADR-138](adr/adr-138.md) §5).
 
-Two sets, and they are not the same one. The **variants of an error type** are closed, a `match`
-over them is exhaustive, and adding one is a breaking change — correctly. The **set of error types**
-arriving at a `catch` is open, and it grows when a callee gains a failure. When it does, **every
-`catch` over that callee is named once in the build output** — the new error, the handler it now
-reaches, and that the handler takes it as it takes everything — and under `--locked` the build
-fails until the ledger is regenerated and committed. The commit is the acknowledgement; nothing is
-written at the handler, and a handler that matches on `error` is told the same as one that does not
-([ADR-101](adr/adr-101.md), `NK2401`).
+**Two sets differ.** The **variants of an error type** are closed: a `match`
+over them is exhaustive, and adding one is a breaking change. The **set of
+error types** arriving at a `catch` is open, and it grows when a callee gains a
+failure. When it grows, **every `catch` over that callee is named once in the
+build output**, with the new error, the handler it now reaches, and the fact
+that the handler takes it as it takes everything (`NK2401`). Under `--locked`
+the build fails until the ledger is regenerated and committed. The commit is the
+acknowledgement; nothing is written at the handler, and a handler that matches
+on `error` is told the same as one that does not ([ADR-101](adr/adr-101.md)).
 
-> **Status:** not built — `std.contracts` writes `throws = ["?"]` on every entry,
-> so there is no set to diff until error types are lowered.
+> **Implementation status:** Not implemented. `std.contracts` writes
+> `throws = ["?"]` on every entry, so there is no set to diff until error types
+> are lowered ([ADR-101](adr/adr-101.md) §5).
 
-**What an error brings without anyone attaching it.** The **site** it was raised from, and the chain
-beneath it where another error joined on the way — a cleanup that failed while the stack was
-unwinding is attached to the original as a *secondary* error rather than replacing it (6.4), and so
-are the other failing branches of an `overlap` (8.1.2). The list is `error.secondary`, in the order
-the errors joined, each with its own site; a `catch` still catches one error and chooses by its
-type ([ADR-115](adr/adr-115.md)). The site costs nothing at run time: the compiler knew it and
-wrote it into the binary as text.
+**Every error carries its site and its chain.** The **site** is where the error
+was raised. The chain holds every error that joined on the way: a cleanup that
+failed while the stack was unwinding is attached to the original as a
+*secondary* error rather than replacing it (6.4), and so are the other failing
+branches of an `overlap` (8.1.2). The list is `error.secondary`, in the order
+the errors joined, each with its own site. A `catch` catches one error and
+chooses by its type ([ADR-115](adr/adr-115.md)). The site costs nothing at run
+time: the compiler wrote it into the binary as text.
 
-**A stack trace is not among them.** Errors here are the *expected* kind — a missing file, a line
-that does not parse — and capturing a trace for each one costs far more than raising it, so a
-program would pay that per rejected line for a value almost nothing reads. `NIKAIA_TRACE=1` asks
-for one; without it there is none, and the long form **says so** rather than leaving you to wonder
-whether one was lost. What that costs, and why the cost decided it, is
-[ADR-036](adr/adr-036.md).
+**A stack trace is not carried.** `NIKAIA_TRACE=1` asks for one; without it
+there is none, and the long form says so ([ADR-036](adr/adr-036.md)).
+
+*Design rationale:* a recoverable error is the expected kind, and capturing a
+trace for each one costs far more than raising it, per rejected line, for a
+value almost nothing reads ([ADR-036](adr/adr-036.md)).
 
 **Printing it: short is the default.**
 
@@ -2123,34 +2217,42 @@ eprintln(f"{error}")           // the message, and nothing else
 eprintln(f"{error.full()}")    // the site, the chain, and a trace if one was captured
 ```
 
-`{error}` is the message the author wrote. An error message is for the operator, not for the visitor
-of a web page — which is why a failed HTTP handler answers with a generic 500 and logs the rest
-([ADR-018](adr/adr-018.md)). The form you type without thinking is the one you may show a stranger.
+`{error}` is the message the author wrote. An error message is for the
+operator, not for the visitor of a web page, so a failed HTTP handler answers
+with a generic 500 and logs the rest ([ADR-018](adr/adr-018.md)).
 
-`full()` is an ordinary call, not a spelling the language had to invent: a hole holds an expression
-(2.5), and a method call is one.
+> The form you type without thinking is the one you may show a stranger.
 
-So that a generic answer stays findable anyway, every error knows the **site that raised it** and
-has a short form of it a person can read out. A screenshot carrying `(NK-2C7)` leads through
-`nikaia explain NK-2C7` to the line that threw it — with no log file, and also when your working
-tree is two features further along ([ADR-023](adr/adr-023.md) D6).
+`full()` is an ordinary call: a hole holds an expression (2.5), and a method
+call is one.
 
-**Failure nobody writes down.** Two places perform a call you did not type, and both can fail: the
-end of a block, where a resource is cleaned up (6.4, `NK2601`), and a loop's step over a fallible
-stream ([ADR-025](adr/adr-025.md), `NK2701`). In both the enclosing function gains a `throws`, and
-the compiler says which resource or which loop it was.
+Every error knows the **site that raised it** and has a short form of it a
+person can read out. A screenshot carrying `(NK-2C7)` leads through
+`nikaia explain NK-2C7` to the line that threw it, with no log file, and also
+when the working tree has moved on ([ADR-023](adr/adr-023.md) D6).
 
-**It is one rule with three sites**, stated generally by [ADR-025](adr/adr-025.md) D1: where a
-call can fail — written by you or performed by the language — the failure fails the enclosing
-function, the function must declare `throws`, and the compiler names the call that is the reason.
-`NK2605` is the written call, `NK2601` the closing brace, `NK2701` the loop's step; three codes
-because three messages have three different things to point at, and one rule behind them.
+**A call the language performs can fail.** Two places perform a call user code
+did not write: the end of a block, where a resource is cleaned up (6.4,
+`NK2601`), and a loop's step over a fallible stream ([ADR-025](adr/adr-025.md),
+`NK2701`). In both the enclosing function declares `throws`, and the compiler
+names the resource or the loop.
+
+**It is one rule with three sites** ([ADR-025](adr/adr-025.md) D1). Where a
+call can fail, written by user code or performed by the language, the failure
+fails the enclosing function, the function declares `throws`, and the compiler
+names the call that is the reason. `NK2605` is the written call, `NK2601` the
+closing brace, `NK2701` the loop's step.
 
 ### 7.2. Unrecoverable Errors (`panic`)
-These are logical bugs, like trying to access the 10th item in a list of 5 items. Nikaia stops the execution to prevent incorrect behavior. Where the machine cannot unwind, this ends the process safely.
+An unrecoverable error is a logic bug, such as reading the tenth item of a
+list of five. The program stops. Where the machine cannot unwind, the process
+ends.
 
 **The Panic Hook (`std::panic::on_panic`)**
-"Abort" does not mean *no* code runs anymore — it means no normal cleanup runs. Before the process dies, or the crashed task is isolated where the program survives, Nikaia calls one last, registered function: the **Panic Hook**. This is the place for a crash dump, a crash report, or flushing a diagnostics log — so a crash in production never has to be a mystery.
+An abort runs no normal cleanup. Before the process dies, or before the crashed
+task is isolated where the program survives, the runtime calls one registered
+function: the **panic hook**. It is the place for a crash dump, a crash report,
+or flushing a diagnostics log.
 
 ```nika
 use std::panic
@@ -2170,75 +2272,68 @@ fn main() {
 }
 ```
 
-The rules, told straight:
-* **Global, application-only.** Exactly one hook per program, set by the application — a library calling `on_panic` is a compile error (`NK2604`). A crash-reporting library instead exports a function that your hook calls.
-* **It runs on every panic, on every target** — right before the trap where the machine traps, before the task is poisoned where it unwinds. Supervisors (Part II, 12.8) receive their crash information from the same `info`.
-* **Blocking is allowed here — briefly.** Where the process is ending anyway it costs nothing. Where the program keeps running, keep the hook short and hand heavy reporting to something you started earlier.
-* **Diagnosis, not cleanup.** Do not try to flush buffered files or finish transactions from the hook — those objects may be broken in exactly the way that caused the panic. That is why panics skip destructors, and the hook does not reopen that door. If the hook itself panics, the process aborts immediately.
+The rules:
+* **Global, application-only.** There is exactly one hook per program, set by
+  the application. A library that calls `on_panic` is refused with `NK2604`. A
+  crash-reporting library exports a function that the application's hook
+  calls.
+* **It runs on every panic, on every target**: before the trap where the
+  machine traps, before the task is poisoned where it unwinds. A supervisor
+  (Part II, 12.8) receives its crash information from the same `info`.
+* **The hook may block, briefly.** Where the process is ending anyway, blocking
+  costs nothing. Where the program keeps running, the hook stays short and
+  hands heavy reporting to something started earlier.
+* **Diagnosis, not cleanup.** The hook does not flush buffered files or finish
+  transactions: those objects may be broken in exactly the way that caused the
+  panic, which is why a panic skips destructors. If the hook itself panics, the
+  process aborts immediately.
 
-> **Status:** not built. There is no `std::panic`. The example **used to**
-> write `fn(info) sync { … }`, which does not parse as one construct at all —
-> a lambda's parameter list is followed by its body and by nothing else (5.3),
-> so the marker ended the lambda and the line was read as three expressions.
-> The word is gone because a lambda carries no promise
-> ([ADR-141](adr/adr-141.md) D1): what may not pause is the *parameter*, and
-> `on_panic`'s type is where that is written ([ADR-102](adr/adr-102.md) D1).
-> The trailing lambda itself is built, named arguments included.
+**The hook may not pause.** That promise is on `on_panic`'s parameter type
+([ADR-102](adr/adr-102.md) D1), not on the lambda; a lambda carries no promise
+of its own ([ADR-141](adr/adr-141.md) D1). The form `fn(info) sync { … }` is
+withdrawn (5.3).
+
+> **Implementation status:** Not implemented. There is no `std::panic`. The
+> trailing lambda itself is built, named arguments included
+> ([ADR-102](adr/adr-102.md) §5).
 
 ---
 
 ## Chapter 8: Concurrency (Doing things at the same time)
 
-Even at `user_parallelism = no`, you can perform multiple tasks concurrently, such as waiting for a download while responding to user input. This is done using **Asynchronous Programming**.
+A program performs several tasks concurrently at both values of
+`user_parallelism`, such as waiting for a download while answering input. The
+mechanism is **asynchronous execution**.
 
 ### 8.1. Async by Default
-In Nikaia, functions that perform Input/Output (I/O), like reading a file or downloading a URL, automatically "pause" execution without blocking the whole program. You do not need special keywords like `await`.
+A function that performs I/O, such as reading a file or downloading a URL,
+**pauses** without blocking the program. There is no `await` keyword.
 
-Within one task the order is exactly the order you wrote: `let a = fs::read("x")` pauses, and the line after it does not run until `a` is there. What runs meanwhile is some *other* task — a pause point never forks one. Tasks exist only where you put them (`spawn`, `par_iter`, `task::scope`), and `.join()` on a handle is where two of them meet again. Nikaia did not remove the marker for waiting; it kept it exactly where something branches, and left it off where nothing does.
+Within one task, the order is the written order: `let a = fs::read("x")`
+pauses, and the line after it does not run until `a` is there. What runs
+meanwhile is some *other* task; a pause never forks one. A task exists only
+where the program writes one (`spawn`, `par_iter`, `task::scope`), and
+`.join()` on a handle is where two tasks meet again. The marker for waiting
+stands where something branches, and nowhere else.
 
-> **Status:** built ([ADR-055](adr/adr-055.md) §6 steps 1–4), and this is the
-> section that most needed saying so.
->
-> ***"Pause without blocking the whole program"* was not true until it was.**
-> The compiler emitted Rust with the word `async` in it **zero** times, so a
-> function that read a file blocked its thread — and at `user_parallelism = no`
-> that thread is the program. Every sentence above was a promise about a
-> lowering nobody had written. A function the ledger says can pause is an
-> `async fn` now, a file read suspends on the kernel's completion queue or an
-> I/O worker's reply, and the executor is the only place the program parks. So
-> *"what runs meanwhile is some other task"* is a thing that happens.
->
-> **You still do not write a keyword**, and that is checked rather than
-> promised: a test reads every `.nika` file in this repository and fails on
-> `async`, `await` and the runtime's type names. `.join()` is a word you write,
-> because it is where two **tasks** meet — a different thing from waiting, and
-> the one place something branches.
->
-> Of the three ways to make a task, `spawn` is built (8.2); `par_iter` and
-> `task::scope` are not.
+> **Implementation status:** Partially implemented. A function the ledger says
+> can pause is an `async fn`; a file read suspends on the kernel's completion
+> queue or an I/O worker's reply; and the executor is the only place the
+> program parks ([ADR-055](adr/adr-055.md) §6 steps 1–4). No `.nika` file
+> writes `async`, `await` or a runtime type name. Of the three ways to make a
+> task, `spawn` is built (8.2); `par_iter` and `task::scope` are not.
 
 ### 8.1.1. Statement Order Is the Written Order
 
-Two statements run in the order you wrote them, whether or not they touch
-anything in common. No analysis stands between the source and the schedule, and
-a program that wants two things to run together says so (8.1.2).
+Two statements run in the order they are written, whether or not they touch
+anything in common. No analysis stands between the source and the schedule. A
+program that wants two things to run together says so (8.1.2).
 
-> **This section used to say the opposite**, and the withdrawal is
-> [ADR-050](adr/adr-050.md) D1. Operations that met on nothing were *unordered*
-> by the compiler, with `seq { … }` to force an order the analysis could not see
-> and an `ordering` switch to turn the whole thing off.
->
-> **Two escapes are an admission** — that the analysis can be incomplete, and
-> that the correction is by hand, after the fact, by somebody who noticed. A rule
-> that changes what a program means, resting on an analysis admitted to be
-> incomplete and corrected manually, is the shape of a defect source rather than
-> of a guarantee; against it stood an optimisation whose reach nobody was able to
-> state. So the rule goes, and `seq { … }` and the switch go with it (D7).
->
-> **What the analysis was is kept**, because D3 gives it a better use: the touch
-> sets are what check an `overlap` block's claim that its branches meet on
-> nothing. Checking a claim is a stronger use of them than making one, and
-> `--overlaps` is now a report about the blocks a program writes.
+The automatic reordering of operations that met on nothing, the `seq { … }`
+block and the `ordering` build option are withdrawn
+([ADR-050](adr/adr-050.md) D1, D7). The touch-set analysis is kept for one use:
+it checks an `overlap` block's claim that its branches meet on nothing (D3),
+and `--overlaps` reports on the blocks a program writes.
 
 ### 8.1.2. Asking for Overlap: `overlap { … }`
 
@@ -2254,67 +2349,63 @@ let (user, rights, prefs) = overlap {
 }
 ```
 
-**It is not a task.** The block ends before the function continues, so nothing
-outlives it: nothing is moved, borrowing works as it does anywhere else, and the
-crossing rules a `spawn` meets (Part II, 12.4) have nothing to do here. That is
-what makes it lighter than two `spawn`s.
+**An `overlap` block is not a task.** The block ends before the function
+continues, so nothing outlives it: nothing is moved, borrowing works as it does
+anywhere else, and the crossing rules a `spawn` meets (Part II, 12.4) do not
+apply. That is what makes it lighter than two `spawn`s.
 
-**The branches must meet on nothing, and the compiler checks it.** This is 8.1.1's
-analysis used the other way round: not *"may I reorder these?"* but *"you said
-these overlap; is that true?"* A branch pair that meets on a resource is refused,
-and the message names the resource.
+**The branches meet on nothing, and the compiler checks it.** A branch pair that
+meets on a resource is refused with `NK2104`, and the message names the
+resource. A branch that **binds** a name is refused the same way.
 
-**A branch that fails makes the block fail**, and if two fail the first **in
-written order** wins, so the result is reproducible — written order is the only
-order the source has. The others are not lost: they are attached to the winner
-as its `secondary` list, in written order, and a log or `nikaia explain` shows
-them under it ([ADR-115](adr/adr-115.md)). Per-branch handling is `catch` inside
-the branch; combining failures is `catch` on the block, where a handler has the
-winner and `error.secondary`. A branch cannot see another branch's failure,
-because branches meet on nothing.
+**A branch that fails makes the block fail.** Where two branches fail, the
+first **in written order** wins, so the result is reproducible. The other
+failures are attached to the winner as its `secondary` list, in written order,
+and a log or `nikaia explain` shows them under it ([ADR-115](adr/adr-115.md)).
+Per-branch handling is a `catch` inside the branch. Combining failures is a
+`catch` on the block, where the handler has the winner and `error.secondary`. A
+branch cannot see another branch's failure, because branches meet on nothing.
 
-**A branch is an expression.** Several steps in one branch are a block expression
-inside it; where two branches would both be multi-line blocks doing the same shape
-of work, write a function and call it twice.
+**A branch is an expression.** Several steps in one branch are a block
+expression inside it. Two branches that would both be multi-line blocks of the
+same shape are a function called twice.
 
-**Same meaning at both settings of `user_parallelism`, different duration.** At
-`no` a branch that computes still overlaps with another branch's *waiting*,
-because the waiting is not your code. Computation beside I/O overlaps at every
-setting; only computation beside computation needs `yes`. That is 1.2's rule — you
-choose `how`, never `what`.
+**The meaning is the same at both values of `user_parallelism`; the duration
+differs.** At `no`, a branch that computes still overlaps with another branch's
+*waiting*, because the waiting is not user code. Computation beside I/O
+overlaps under both values; computation beside computation overlaps only under
+`yes`. That is 1.2's rule.
 
-> **Status:** built ([ADR-050](adr/adr-050.md) D2–D6,
-> [ADR-055](adr/adr-055.md) §6 step 5). `overlap { … }` parses, every branch is
-> in flight at once, the block's value is their results in written order, a
-> branch that **binds** or that **meets** another is refused as `NK2104`, and an
-> uncaught failure fails the block with the first in written order winning.
->
-> **D6 is visible in the emitted Rust**, which is where it has to be: the
-> branches that can pause are handed to the vehicle first, and the tuple is put
-> back into written order afterwards with a comment naming the record. A block
-> whose branches are all of one kind pays for no permutation.
->
-> **And the withdrawal it was ordered before is done too** — 8.1.1's automatic
-> half, `seq { … }` and the `ordering` switch are gone (D1, D7), so this is the
-> one way a program asks for overlap.
->
-> **And the destructuring `let` this section's own example writes is not built
-> either.** `let (user, rights, prefs) = overlap { … }` does not parse: `let`
-> takes one name. Part II 12.5's `let (tx, rx) = channel::bounded(100)` writes
-> the same form, so it is a gap this construct met rather than one it made —
-> `docs/open-work.md` carries it. An `overlap` is reached by its tuple today:
+The emitted Rust hands the branches that can pause to the vehicle first and
+puts the tuple back into written order afterwards (D6). A block whose branches
+are all of one kind pays for no permutation.
+
+> **Implementation status:** Partially implemented. `overlap { … }` parses,
+> every branch is in flight at once, the block's value is the results in
+> written order, `NK2104` is raised, and an uncaught failure fails the block
+> with the first in written order winning ([ADR-050](adr/adr-050.md) D2–D6,
+> [ADR-055](adr/adr-055.md) §6 step 5). The destructuring `let` the example
+> writes is not built: `let (user, rights, prefs) = overlap { … }` does not
+> parse, because `let` takes one name; Part II 12.5's
+> `let (tx, rx) = channel::bounded(100)` writes the same form, and
+> `docs/open-work.md` carries it. Today an `overlap` is reached by its tuple:
 > `let r = overlap { … }`, then `r.0`.
 
 ### 8.2. Spawning Tasks
-To run a new independent task, use `spawn`. It takes a lambda containing the code to run — the
-one lambda form (5.3), whose body is a block whether it holds one line or several.
+`spawn` starts a new independent task. It takes a lambda holding the code to
+run: the one lambda form (5.3), whose body is a block whether it holds one line
+or several.
 
 ```nika
 spawn fn { println("I am running in the background!") }
 ```
 
 ### 8.3. Data Ownership in Tasks (Implicit Move)
-A background task may keep running after the function that started it has already finished. It therefore cannot merely *borrow* variables — they might be gone by the time it runs. Following the Contextual Capture rules (Chapter 5.4), `spawn` is a **Detached Context**: variables used inside the task are **moved** into it automatically. There is no `move` keyword — the compiler applies the rule for you.
+A background task may keep running after the function that started it has
+finished, so it cannot *borrow* a variable that might be gone by the time it
+runs. Under the contextual capture rules (5.4), `spawn` is a **detached
+context**: a variable used inside the task is **moved** into it. There is no
+`move` keyword; the compiler applies the rule.
 
 ```nika
 let message = "Hello"
@@ -2326,18 +2417,17 @@ spawn fn { println(message) }
 // println(message)
 ```
 
-**Two cases, and the type of the value decides which.** What the rule above is
-about is **ordinary data** — a string, a number, a struct or collection of those —
-and for data a move stays a move. A handle on a `Shared[T]` is the other case:
-the handle is **duplicated** rather than moved (6.2), so the name outside the task
-keeps working and there is nothing for you to write
-([ADR-040](adr/adr-040.md) D1). `message` here is a string, so everything in the
-rest of this section is the **data** case.
+**The type of the value decides between two cases.** The rule above is about
+**ordinary data**: a string, a number, a struct or collection of those. For data
+a move is a move. A handle on a `Shared[T]` is the other case: the handle is
+**duplicated** rather than moved (6.2), so the name outside the task keeps
+working and nothing is written ([ADR-040](adr/adr-040.md) D1). `message` here
+is a string, so the rest of this section is the **data** case.
 
-If you still need the value afterwards, clone it **before** the task is built and
-give the task the copy. A `.clone()` written *inside* the body does not help: the
-body runs after `message` has already moved into the task, so it would clone the
-task's own copy and leave nothing behind for the parent.
+A program that needs the value afterwards clones it **before** the task is
+built and gives the task the copy. A `.clone()` written *inside* the body does
+not help: the body runs after `message` has moved into the task, so it would
+clone the task's own copy and leave nothing behind for the parent.
 
 ```nika
 let message = "Hello"
@@ -2346,8 +2436,7 @@ spawn fn { println(copy) }   // the copy is what moves into the task
 println(message)             // OK: `message` never left
 ```
 
-The compiler error for this situation — data moved into a task and used again
-afterwards — explains exactly that:
+Data moved into a task and used again afterwards is refused with `NK2101`:
 
 ```text
 error[NK2101]: this background task takes ownership of `message`
@@ -2365,70 +2454,65 @@ error[NK2101]: this background task takes ownership of `message`
         spawn fn { println(copy) }
 ```
 
-**`NK2101` belongs to the data case only.** For a handle on a `Shared[T]` there is
-nothing to refuse: using the value again after the task is built is the very thing
-the duplication of 6.2 serves, so there is no error and no `.clone()` to write
+**`NK2101` belongs to the data case only.** For a handle on a `Shared[T]` there
+is nothing to refuse: using the value again after the task is built is what the
+duplication of 6.2 serves, so there is no error and no `.clone()` to write
 ([ADR-040](adr/adr-040.md) D5).
 
-> **Status:** built, in both cases ([ADR-055](adr/adr-055.md) §6 step 4).
-> `spawn` lowers: the body becomes a future the executor owns, `.join()` is a
-> suspension point, and a task nobody joins still runs — the example at the top
-> of 8.2 prints what it says it prints, after `main` has gone on. `NK2101` is
-> raised, and it is **narrow on purpose**: only where the type is known and a
-> move takes it away. A number, a `bool`, a `char` and a **view** are copied, so
-> `let message = "Hello"` is not this case and `"Hello".to_string()` is; a
-> handle on a `Shared[T]` is duplicated, which is the exemption this section
-> states ([ADR-040](adr/adr-040.md) D1, D5); and an **assignment** between the
-> task and the later use clears it, because giving the name a value again is a
-> correct program. The form above is the one spelling of a `spawn`, the trailing
-> lambda of 5.3, and the parser takes it — it used to insist on parentheses
-> around the body, which was a bug in the parser and not a second form; that
-> spelling now says so rather than parsing. A lambda that **names** an argument
-> is refused as `NK2103`: a task is handed nothing.
->
-> **The multi-threaded half is built too.** At `user_parallelism = yes` a task
-> goes to a pool of futures over the `user-pool` worker count and runs on a
-> thread of its own; at `no` every task interleaves on the one thread, which is
-> what Part II 11.2 promises there. The same two lines mean the same thing at
-> both, which is that section's *uniform API*.
->
-> What is not built is the **refusal**. Because a task moves between threads at
-> `yes`, its future must be `Send` ([ADR-055](adr/adr-055.md) §2 D6) — and one
-> that is not is refused by the backend, about the generated file, rather than
-> here about the program (Part III, C.1).
+`NK2101` is raised only where the type is known and a move takes the value
+away. A number, a `bool`, a `char` and a **view** are copied, so
+`let message = "Hello"` is not this case and `"Hello".to_string()` is. An
+**assignment** between the task and the later use clears it, because giving the
+name a value again is a correct program. The form above is the one spelling of
+a `spawn`, the trailing lambda of 5.3. A lambda that **names** an argument is
+refused with `NK2103`: a task is handed nothing.
+
+**A task means the same thing at both values of `user_parallelism`.** At `yes`
+a task goes to a pool of futures over the `user-pool` worker count and runs on
+a thread of its own. At `no` every task interleaves on the one thread
+(Part II 11.2). Because a task moves between threads at `yes`, its future must
+be `Send` ([ADR-055](adr/adr-055.md) §2 D6).
+
+> **Implementation status:** Partially implemented. `spawn` lowers: the body
+> becomes a future the executor owns, `.join()` is a suspension point, and a
+> task nobody joins still runs, so the example at the top of 8.2 prints after
+> `main` has gone on ([ADR-055](adr/adr-055.md) §6 step 4). `NK2101` and
+> `NK2103` are raised, and both values of `user_parallelism` are built. A
+> future that is not `Send` is refused by the backend, about the generated
+> file, rather than by the compiler about the program (Part III, C.1).
 
 ### 8.4. The Runtime Sidecar Model
-While `user_parallelism = no` keeps your own logic on one thread ("The Happy Path"), the Runtime employs a **Hidden Sidecar Pattern** to handle heavy I/O without blocking.
+At `user_parallelism = no`, user code runs on one thread. The runtime uses a
+**hidden sidecar** to carry out heavy I/O without blocking that thread.
 
-* **Separation of Concerns:** User code runs exclusively on the main thread (Event Loop). Heavy operations (like SQLite queries) are offloaded to a managed Runtime Sidecar (a background thread on Native, or a Web Worker on WASM).
-* **Safety Guarantee:** Data exchange occurs via strict message passing (ownership transfer). Since user code never accesses the Sidecar memory directly, **Race Conditions** remain impossible.
-* **Non-Blocking:** From the developer's perspective, a database call is simply an async yield point. The Runtime guarantees that the main loop never stalls waiting for disk I/O.
+* **Separation of concerns:** user code runs exclusively on the main thread
+  (the event loop). A heavy operation, such as an SQLite query, is offloaded to
+  a runtime sidecar: a background thread on a native target, a Web Worker on
+  WebAssembly.
+* **Safety guarantee:** data is exchanged by message passing (ownership
+  transfer). User code never accesses the sidecar's memory, so a **race
+  condition** remains impossible.
+* **Non-blocking:** a database call is a pause point. The main loop never
+  stalls waiting for disk I/O.
 
-> **Status:** built, for files ([ADR-055](adr/adr-055.md) §6 step 3). The
-> sidecar existed and the yield point did not; now both do.
->
-> The runtime starts **before your first statement**, with one I/O thread
-> always and a pool for your own code only at `user_parallelism = yes`
-> ([ADR-038](adr/adr-038.md) D4). What runs on that thread is `std`'s own code
-> and nothing else — the boundary is a closed list of operations rather than a
-> queue of closures, which is what makes "user code never accesses the Sidecar
-> memory" a property of the compiler rather than a promise
-> ([ADR-037](adr/adr-037.md) D2, ADR-038 §4.2). A file read is handed to the
-> **kernel** where the machine can complete it, so the commonest heavy
-> operation involves no sidecar thread at all (ADR-038 D3).
->
-> **The last bullet is what changed.** A file operation used to be a direct call
-> that blocked the calling thread while the kernel worked: no state machine, so
-> no other task for the main loop to run meanwhile. It is a *slot* now — on the
-> ring, or an I/O worker's reply — and asking whether it has finished never
-> blocks, so the main loop runs whatever else is ready and parks in the I/O only
-> when nothing is.
->
-> **A database call is not that yet**, and neither is standard input: `std::db`
-> does not exist, and a stream needs the readiness half of D3's mechanism, which
-> is built for sockets and not wired to stdin. Both are `async` in their
-> signatures and finish on their first poll, so a caller sees what it saw
-> before.
+**The runtime starts before the first statement of user code**, with one I/O
+thread always and a pool for user code only at `user_parallelism = yes`
+([ADR-038](adr/adr-038.md) D4). What runs on the I/O thread is `std`'s own code
+and nothing else: the boundary is a closed list of operations rather than a
+queue of closures, which makes "user code never accesses the sidecar's memory"
+a property of the compiler ([ADR-037](adr/adr-037.md) D2, ADR-038 §4.2). A file
+read is handed to the **kernel** where the machine can complete it, so the
+commonest heavy operation involves no sidecar thread (ADR-038 D3). A file
+operation is a *slot*, on the ring or in an I/O worker's reply; asking whether
+it has finished never blocks, so the main loop runs whatever else is ready and
+parks in the I/O only when nothing is.
+
+> **Implementation status:** Partially implemented. The sidecar and the pause
+> point are built for files ([ADR-055](adr/adr-055.md) §6 step 3). A database
+> call and standard input are not: `std::db` does not exist, and a stream needs
+> the readiness half of ADR-038 D3's mechanism, which is built for sockets and
+> not wired to stdin. Both are `async` in their signatures and finish on their
+> first poll.
 
 ---
 
@@ -2455,11 +2539,10 @@ fn main() {
 ```
 
 Two files of one package may **not** declare the same name. There is one
-namespace, so two `Row`s in it is an error rather than a rule about which of them
-a line means.
+namespace, and two `Row`s in it are refused.
 
 **A package reaches another package by its name.** `use http` makes the package
-`http` reachable and does nothing else: every name from it is written with its
+`http` reachable and does nothing else. Every name from it is written with its
 prefix, at every use ([ADR-046](adr/adr-046.md) D1).
 
 ```nika
@@ -2472,12 +2555,12 @@ fn handle(r: http::Request) -> rh::Response {
 }
 ```
 
-The prefix falls where a name is **written**, not where a value is used: `r.path`
-and `r.header("host")` carry none, because there is a value in hand and nothing to
-resolve. In a body that works with values the prefix barely appears.
+The prefix falls where a name is **written**, not where a value is used:
+`r.path` and `r.header("host")` carry none, because there is a value in hand
+and nothing to resolve.
 
-**No name is brought in** — not by a glob, not by a braced list, not one at a time
-([ADR-046](adr/adr-046.md) D2):
+**No name is brought in**: not by a glob, not by a braced list, not one at a
+time ([ADR-046](adr/adr-046.md) D2):
 
 ```text
 error: names are not brought in; a package is reached through its name
@@ -2487,86 +2570,78 @@ error: names are not brought in; a package is reached through its name
      = if the prefix is long, `use http as h` shortens it once, in one place
 ```
 
-What this buys is that a reader of any line knows where every name in it comes
-from without consulting the top of the file, and that no edit elsewhere changes
-what an already-written line means. What it costs is the prefix, and `use x as y`
-is what shortens one that is long — once, in one place (D3).
+`use x as y` shortens a long prefix once, in one place (D3).
 
-Two more rules come with it. **A prefix must be introduced**: `http::Request`
-without `use http` is refused, so a file still lists what it depends on at the top
-(D4). And **one name per file**: two packages that end up under the same name, by
-alias or by collision, is an error rather than a rule about which wins (D5).
+*Design rationale:* every line says where each name in it comes from without
+the top of the file, and no edit elsewhere changes what an already-written line
+means ([ADR-046](adr/adr-046.md) D2).
 
-**A name denotes one thing** ([ADR-144](adr/adr-144.md) D1), and the second
-declaration is refused — `NK1148`, with the caret on the one that arrived. A
-`fn`, a `struct`, an `enum`, a `trait` and a `grammar` declare a name; a
-**method** belongs to its type and two types may each have a `len`, and a
-**rule** belongs to its grammar and is reached as `Json::value`. That is the
-same sentence one namespace down from *two files of a package may not declare
-the same name*, and it is why that one needs no rule about which declaration a
-line means.
+Two more rules come with it. **A prefix is introduced before it is used**:
+`http::Request` without `use http` is refused, so a file lists what it depends
+on at the top (D4). **One name per file**: two packages under the same name in
+one file, by alias or by collision, are refused (D5).
 
-`use std::fs` is the one `use` with a path in it, and it names the library rather
-than a package of yours ([ADR-030](adr/adr-030.md) D1). **It brings no name in
-either** ([ADR-140](adr/adr-140.md) D5): `use std::collections` then
-`collections::HashMap`, exactly as a package's prefix works, because a `use` that
-behaves differently depending on what follows it is the one place this rule was
-not the language's. `Vec`, `String` and `HashMap` need no `use` at all — that is
-the prelude, and it is unchanged.
+**A name denotes one thing** ([ADR-144](adr/adr-144.md) D1). A second
+declaration is refused with `NK1148`, with the caret on the one that arrived. A
+`fn`, a `struct`, an `enum`, a `trait` and a `grammar` declare a name. A
+**method** belongs to its type, so two types may each have a `len`; a **rule**
+belongs to its grammar and is reached as `Json::value`. That is the same rule
+one namespace down from *two files of a package may not declare the same name*.
 
-> **Status:** both halves are built, one level deep. Every `.nika` beside the
-> entry takes part and they are one namespace; a package is depended on by
-> **path** — `http = { path = "../http" }` in `[dependencies]` (Part III, 13.3) —
-> and a `use` naming one resolves. Two files declaring the same name is refused by
-> name, a `use` naming a file beside this one says to remove the line, one naming
-> no dependency says where to declare it, and one name twice is refused.
->
-> `use http as h` works too, and a call, a type and a struct literal all reach
-> through it. A diagnostic names the **package** rather than the alias — the type
-> is `http::Request` whatever one file calls the package, and the `use` line that
-> connects the two is at the top of the same file.
->
-> The braced and glob forms get the sentence above, with the caret on the brace
-> or the star ([ADR-046](adr/adr-046.md) §5).
->
-> **Not built:** `use std::…` still brings a name in
-> ([ADR-140](adr/adr-140.md) §5 step 5), which is the one `use` that does; a
-> package's *own* package dependencies are refused rather than
-> resolved, and a version does not yet find a package — it resolves through
-> Cargo under the crate name `nikaia_<name>` ([ADR-103](adr/adr-103.md)), and
-> that arm is unbuilt.
->
-> Outside a project a `.nika` file is compiled **on its own**: a package is a
-> directory of a project, and a directory of loose examples is a directory of
-> programs.
+`use std::fs` is the one `use` with a path in it, and it names the standard
+library rather than a package ([ADR-030](adr/adr-030.md) D1). **It brings no
+name in either** ([ADR-140](adr/adr-140.md) D5): `use std::collections`, then
+`collections::HashMap`, exactly as a package's prefix works. `Vec`, `String`
+and `HashMap` need no `use`: that is the prelude.
+
+A diagnostic names the **package** rather than the alias: the type is
+`http::Request` whatever one file calls the package, and the `use` line that
+connects the two is at the top of the same file. Outside a project a `.nika`
+file is compiled **on its own**: a package is a directory of a project, and a
+directory of loose examples is a directory of programs.
+
+> **Implementation status:** Partially implemented. Every `.nika` beside the
+> entry takes part in one namespace; a package is depended on by **path**,
+> `http = { path = "../http" }` in `[dependencies]` (Part III, 13.3), and a
+> `use` naming one resolves. Two files declaring the same name, a `use` naming
+> a file beside this one, a `use` naming no dependency, one name twice
+> (`NK1148`), and the braced and glob forms are refused
+> ([ADR-046](adr/adr-046.md) §5, [ADR-144](adr/adr-144.md) §5). `use http as h`
+> is built for a call, a type and a struct literal. Not built: `use std::…`
+> still brings a name in ([ADR-140](adr/adr-140.md) §5 step 5); a package's own
+> package dependencies are refused rather than resolved; and a version does not
+> yet find a package, which resolves through Cargo under the crate name
+> `nikaia_<name>` ([ADR-103](adr/adr-103.md) §5).
 
 ### 9.2. Visibility Rules (Privacy)
-Nikaia enforces strict encapsulation to prevent tight coupling between parts of your code.
+Visibility is per package.
 
-1.  **Private to its package, by default:**
-    * Functions, Structs, Enums and Constants are visible inside the **package**
-      that declares them — every file of that directory — and nowhere else. (A
-      `comptime` binding at **item level** is decided and unbuilt: inside a
-      function body it is a statement today, and `pub comptime` at the top of a
-      file has nowhere to stand yet — [ADR-073](adr/adr-073.md) D2,
-      [ADR-077](adr/adr-077.md) for the word.)
-    * Struct fields are the same: visible throughout the package that declares
+1.  **Private to its package unless it says otherwise:**
+    * A function, a struct, an enum and a `comptime` binding are visible inside
+      the **package** that declares them, in every file of that directory, and
+      nowhere else.
+    * A struct field is the same: visible throughout the package that declares
       the struct.
 
-2.  **The `pub` Keyword:**
-    * To let **another package** use an item, prefix it with `pub`.
-    * To let another package reach a specific field of a struct, prefix the field
-      with `pub`.
-    * A **public type may keep its fields private**, and 9.3 is about why that
-      is the ordinary case rather than an inconvenience.
+2.  **The `pub` keyword:**
+    * An item **another package** may use is prefixed with `pub`.
+    * A field another package may reach is prefixed with `pub`.
+    * A **public type may keep its fields private**; 9.3 shows the ordinary
+      case.
 
-The boundary is the package and not the file on purpose
-([ADR-047](adr/adr-047.md) D1): a library's internal file layout is then not its
-public surface, so moving a declaration from one file to another is housekeeping
-and breaks no consumer.
+> **Implementation status:** Partially implemented. A `comptime` binding at
+> **item level** is decided and not built: inside a function body it is a
+> statement today, and `pub comptime` at the top of a file has nowhere to stand
+> ([ADR-073](adr/adr-073.md) D2, §5; [ADR-077](adr/adr-077.md) for the word).
 
-Reaching a private item from another package is `NK1110`, and says which package
-keeps it:
+The boundary is the package and not the file ([ADR-047](adr/adr-047.md) D1).
+
+*Design rationale:* a library's internal file layout is then not its public
+surface, so moving a declaration from one file to another breaks no consumer
+([ADR-047](adr/adr-047.md) D1).
+
+Reaching a private item from another package is refused with `NK1110`, and the
+message says which package keeps it:
 
 ```text
 error[NK1110]: `secret` is private to `utils`
@@ -2576,15 +2651,16 @@ error[NK1110]: `secret` is private to `utils`
      help: write `pub fn secret` in `utils`, or reach it through something that is public
 ```
 
-> **Status:** built, for items and for fields, and `NK1110` reaches a program now
-> that a package can be depended on: *"`secret` is private to `http`"*, and
-> *"`http::Request.method` is private to `http`"* both for reading such a field
-> and for giving one a value in a struct literal. The ledger carries a field's
-> `pub` because the language below cannot enforce it — a dependency's items are
-> in the same crate ([ADR-047](adr/adr-047.md) §5).
+> **Implementation status:** Implemented. `NK1110` is raised for an item and
+> for a field, both for reading a field and for giving one a value in a struct
+> literal. The ledger carries a field's `pub` because the backend cannot
+> enforce it: a dependency's items are in the same crate
+> ([ADR-047](adr/adr-047.md) §5).
 
 ### 9.3. Granular Control
-While `pub` makes an item available generally, strict privacy forces developers to create safe interfaces (Constructors and Methods) rather than exposing raw data.
+`pub` makes an item available to every package. A private field is reached
+through a constructor or a method, so a type's invariants hold outside its
+package.
 
 ```nika
 // file: network.nika
