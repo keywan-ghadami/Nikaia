@@ -64,7 +64,10 @@ pub enum Refusal {
     /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1, D2). A
     /// different claim from the one above and it gets a different code: the
     /// shape is understood and the rule says no.
-    NotAllowed { callee: String, because: &'static str },
+    NotAllowed {
+        callee: String,
+        because: &'static str,
+    },
     /// The call depth above.
     TooDeep { callee: String },
 }
@@ -118,7 +121,7 @@ impl<'a> BuildTime<'a> {
                     _ => Err(Refusal::Unevaluable),
                 }
             }
-            Expr::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, frame),
+            Expr::Binary { op, lhs, rhs, .. } => self.binary(*op, lhs, rhs, frame),
             // **An `if` is an expression always** (Part I 3.1), so it is one
             // here too — and it is what makes a body worth calling at all.
             Expr::If {
@@ -290,7 +293,11 @@ impl<'a> BuildTime<'a> {
 
     /// A body: `let`s, an early `return`, and a last statement that is the
     /// value — which is Part I 3.1's rule for every block, read here.
-    fn block(&mut self, block: &Block, mut frame: BTreeMap<String, Value>) -> Result<Value, Refusal> {
+    fn block(
+        &mut self,
+        block: &Block,
+        mut frame: BTreeMap<String, Value>,
+    ) -> Result<Value, Refusal> {
         let last = block.stmts.len().saturating_sub(1);
         for (at, stmt) in block.stmts.iter().enumerate() {
             match &stmt.node {

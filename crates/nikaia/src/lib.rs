@@ -4,6 +4,7 @@
 // tools) can drive it. The binary in `main.rs` is the CLI on top of this.
 
 pub mod ast;
+pub mod build_time;
 pub mod check;
 pub mod contracts;
 pub mod diagnostics;

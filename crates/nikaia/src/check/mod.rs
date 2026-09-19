@@ -28,6 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
+use crate::build_time;
 use crate::contracts::{send, ty, ty::Ty, FieldContract, FnContract, Ledger};
 use crate::fold::Constant;
 use crate::parser::Parsed;
@@ -6346,6 +6347,95 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **The interpreter, and the two refusals it can raise**
+    /// ([ADR-073](../../docs/specification/adr/adr-073.md) D5's second stage,
+    /// bounded by [ADR-075](../../docs/specification/adr/adr-075.md)).
+    ///
+    /// `None` is *this compiler cannot evaluate it*, which the caller turns
+    /// into `NK1127` — the refusal that has always been there and whose note
+    /// says what the stage knows. A body the rule **forbids** is a different
+    /// claim and gets `NK1152`: the shape is understood and the answer is no.
+    fn build_time_value(&mut self, value: &Expr, span: &Span) -> Option<build_time::Value> {
+        let outcome = {
+            // A name outside the body: a `comptime` already evaluated, or a
+            // `let` whose value folded. Integers only, because that is what
+            // the scope records — a `bool` constant is not visible here yet
+            // and reaches the same `NK1127` it always did.
+            let known = |name: &str| -> Option<build_time::Value> {
+                let (_, constant) = self.local(name)?;
+                constant.map(build_time::Value::Int)
+            };
+            build_time::BuildTime::new(self.parsed, self.own, &known).evaluate(value)
+        };
+        match outcome {
+            Ok(value) => Some(value),
+            Err(build_time::Refusal::Unevaluable) => None,
+            Err(build_time::Refusal::NotAllowed { callee, because }) => {
+                self.a_body_that_may_not_run_at_build_time(&callee, because, span);
+                None
+            }
+            Err(build_time::Refusal::TooDeep { callee }) => {
+                self.a_build_time_call_went_too_deep(&callee, span);
+                None
+            }
+        }
+    }
+
+    /// `NK1152`: a build-time body the rule forbids
+    /// ([ADR-075](../../docs/specification/adr/adr-075.md) D1, D2).
+    ///
+    /// **Not `NK1127`**, which says *this compiler cannot evaluate it*. Here it
+    /// can: the shape is understood, the body is in hand, and the ledger says
+    /// the call may not be made while the program is built. Two claims, two
+    /// codes, because a reader does two different things about them — wait for
+    /// a stage, or change the callee.
+    fn a_body_that_may_not_run_at_build_time(&mut self, callee: &str, because: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1152",
+            message: format!("`{callee}` may not be called while the program is built"),
+            notes: vec![
+                format!("{because}"),
+                "the rule is two ledger columns and not a list of allowed functions, so \
+                 what a build-time body may do is what the compiler already derives about \
+                 every function it sees"
+                    .to_string(),
+            ],
+            help: Some(
+                "call it while the program runs - a `let` rather than a `comptime` - or \
+                 make the callee `sync` and reach nothing outside the build"
+                    .to_string(),
+            ),
+        });
+    }
+
+    /// The call-depth limit, which is **not** a step budget
+    /// ([ADR-075](../../docs/specification/adr/adr-075.md) D4).
+    ///
+    /// That record deliberately has none and wrote down what it costs: a body
+    /// that does not terminate hangs the build. A *recursion* that does not
+    /// terminate is a different failure — it takes this compiler's stack down
+    /// with it, and a compiler that falls over is not the hang D4 accepted.
+    fn a_build_time_call_went_too_deep(&mut self, callee: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1152",
+            message: format!("`{callee}` calls itself too deeply to evaluate while building"),
+            notes: vec![
+                "there is no step budget on a build-time body (ADR-075 D4) and a loop that \
+                 does not end hangs the build; what this bounds is the **call depth**, so \
+                 that a recursion without a base case says so rather than taking this \
+                 compiler's stack with it"
+                    .to_string(),
+            ],
+            help: Some(
+                "give the recursion a base case, or compute it while the program runs".to_string(),
+            ),
+        });
+    }
+
     /// `NK1149`: a type's constructor written `Type::new`
     /// ([ADR-140](../../docs/specification/adr/adr-140.md) D2).
     ///
@@ -7206,6 +7296,16 @@ impl<'a> Checker<'a> {
         // the first one that holds it - Part I 2.4's rule, applied here
         // because Rust's `const` will not take the absence.
         let folded = self.constant_of(value);
+        // **The second stage of
+        // [ADR-073](../../docs/specification/adr/adr-073.md) D5**: a call, and
+        // with it everything a called body can reach. The fold above is the
+        // first stage and stays in front of it, because it is what says which
+        // integer type a *declaration* pinned — a question the interpreter does
+        // not ask and does not need to.
+        let evaluated = match &folded {
+            Some(folded) => Some(build_time::Value::Int(folded.value)),
+            None => self.build_time_value(value, span),
+        };
         let below = match (&want, &folded, value) {
             (Some(want), _, _) => rust_constant_type(want),
             (None, Some(folded), _) => Some(match &folded.pinned {
@@ -7215,16 +7315,24 @@ impl<'a> Checker<'a> {
                     Err(_) => "i64".to_string(),
                 },
             }),
-            (None, None, Expr::LitBool(_)) => Some("bool".to_string()),
-            _ => None,
+            (None, None, _) => match evaluated {
+                // A `bool` from the interpreter is a `bool` below, whether it
+                // was written `true` or came out of a call.
+                Some(build_time::Value::Bool(_)) => Some("bool".to_string()),
+                Some(build_time::Value::Int(value)) => Some(match i32::try_from(value) {
+                    Ok(_) => "i32".to_string(),
+                    Err(_) => "i64".to_string(),
+                }),
+                None => None,
+            },
         };
 
-        // The value, spelled below. An integer is what the fold came
+        // The value, spelled below. An integer is what the evaluation came
         // to; `true` and `false` are themselves.
-        let written = match (&folded, value) {
-            (Some(folded), _) => Some(folded.value.to_string()),
-            (None, Expr::LitBool(yes)) => Some(yes.to_string()),
-            _ => None,
+        let written = match evaluated {
+            Some(build_time::Value::Int(value)) => Some(value.to_string()),
+            Some(build_time::Value::Bool(yes)) => Some(yes.to_string()),
+            None => None,
         };
         match (&below, &written) {
             (Some(below), Some(written)) => {
@@ -7241,9 +7349,11 @@ impl<'a> Checker<'a> {
                     "a `comptime` is a `let` that *must* fold, so one that cannot is \
                          refused rather than computed while the program runs (Part II, 10.2)"
                         .to_string(),
-                    "what it evaluates today is an integer - a literal, arithmetic \
-                         over literals and over other constants - and `true` or `false`. \
-                         A call is not in it yet"
+                    "what it evaluates today is an integer or a `bool` - a literal, \
+                         arithmetic and comparisons over literals and over other \
+                         constants, an `if`, and a **call** to a function of this program \
+                         whose body is made of those (ADR-073 D5's second stage). A loop \
+                         is not in it yet, and neither is text"
                         .to_string(),
                 ],
                 help: Some(format!(
@@ -7254,7 +7364,20 @@ impl<'a> Checker<'a> {
         }
 
         let held = want.unwrap_or(found);
-        self.bind_with(bound, held, folded.map(|c| c.value));
+        // **What the name is worth is what was *evaluated*, not what folded.**
+        // They were the same thing while the fold was the whole evaluator; with
+        // a call in it they are not, and binding the fold left
+        // `comptime ANSWER = double(21)` visible as a name with no value — so
+        // the next constant that read it was `NK1127` although the one before
+        // it had just been computed.
+        self.bind_with(
+            bound,
+            held,
+            match evaluated {
+                Some(build_time::Value::Int(value)) => Some(value),
+                _ => None,
+            },
+        );
         Ty::Tuple(Vec::new())
     }
 

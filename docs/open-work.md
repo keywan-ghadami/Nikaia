@@ -747,19 +747,43 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.9. Nothing runs Nikaia code while the program is built
+### 2.9. The build-time evaluator has a call and no loop
 
-*Reproduced:* `comptime` is built and its evaluator is
-[`crates/nikaia/src/fold.rs`](../crates/nikaia/src/fold.rs) — **124 lines**, and
-what it knows is an integer literal, a name whose value already folded, a
-negation, and `+ - * / %`. No call, no loop, no text, no aggregate.
+**The call is built** ([ADR-073](specification/adr/adr-073.md) D5's second
+stage), which is what this entry was mostly about: a `comptime` initialiser may
+call a function of this program, and what the called body may be made of is
+arithmetic, comparisons, an `if`, `let`s, a `return` — and another call,
+including a recursion with a base case.
+[`crates/nikaia/src/build_time.rs`](../crates/nikaia/src/build_time.rs) is the
+interpreter; [`fold.rs`](../crates/nikaia/src/fold.rs) stays in front of it,
+because it is what says which integer type a *declaration* pinned.
+
+*What bounds it was already decided and is read rather than re-invented:*
+[ADR-075](specification/adr/adr-075.md) D1 and D2 are two **ledger columns** —
+`sync`, and a touch set that is empty or exactly the build's own parameters — so
+the interpreter decides nothing about safety. `NK1152` is a callee the rule
+forbids, and it is deliberately not `NK1127`: one says *not yet*, the other says
+*not allowed*.
+
+*And D4 needed one neighbour.* There is no step budget, so a body that does not
+terminate hangs the build — that record's own accepted cost. A **recursion**
+that does not terminate is a different failure, because it takes this compiler's
+stack with it, so the call depth is bounded at a limit no terminating program
+meets and the message says that is what it is.
+
+*What is left is the loop, and after it the field walk.*
+
+*Reproduced (the part that is left):* the interpreter has no `for`, no `while`
+and no `push`, so [ADR-079](specification/adr/adr-079.md) §3's table cannot be
+built; and no aggregate and no text, so nothing that is not an integer or a
+`bool` can come out of one.
 
 *Why it is work and not a question:* three records decided what may happen and
 none of them can happen.
 
 | record | what it wants of the evaluator |
 | :--- | :--- |
-| [ADR-073](specification/adr/adr-073.md) D5 | a **call** in an initialiser, which is what [ADR-072](specification/adr/adr-072.md)'s file reading waits behind |
+| ~~[ADR-073](specification/adr/adr-073.md) D5~~ | ~~a **call** in an initialiser~~ — **built**; what still waits behind it is [ADR-072](specification/adr/adr-072.md)'s file reading, which needs the allowlist rather than the evaluator |
 | [ADR-079](specification/adr/adr-079.md) §3 | a **loop and `push`**, to build a table that then crosses as a view |
 | [ADR-088](specification/adr/adr-088.md) D1 | a **loop over a type's fields**, which is the whole of 10.3 |
 
@@ -778,9 +802,10 @@ written down rather than invented here. There is deliberately **no step budget**
 starting, and not a reason to add one on the way past.
 
 *The order the records imply:* the **call** first, because it alone unlocks
-reading a file at build time and is the smallest of the three. Then **loop and
-`push`**. The field walk last, because it needs something the other two do not —
-see the entry below, *running a grammar while the program is built*.
+reading a file at build time and is the smallest of the three — **done**. Then
+**loop and `push`**. The field walk last, because it needs something the other
+two do not — see the entry below, *running a grammar while the program is
+built*.
 
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is the next entry's, *running a grammar while the program is

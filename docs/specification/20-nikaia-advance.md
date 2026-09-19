@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.32 (Draft)
+**Version:** 0.0.33 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -102,12 +102,22 @@ fn parse_input(input: String) throws {
 > word for the same slot. At **item level** it is still a parse error, so the
 > example above has nowhere to stand yet.
 >
-> What the initialiser may hold is D5's first stage: an integer — a literal,
-> arithmetic over literals and over other constants — and `true` or `false`. **A
-> call is not in it**, so the `Json::value(asset("…"))` above still runs at runtime
-> wherever it is written. A `comptime` binding this compiler cannot evaluate is
-> `NK1127` rather than a value computed later, which is D3's demand doing its one
-> job.
+> What the initialiser may hold is D5's **second** stage: an integer or a
+> `bool` — literals, arithmetic and comparisons over them and over other
+> constants, an `if` — and a **call** to a function of this program whose body is
+> made of those, including a recursion with a base case. What a called body may
+> do is [ADR-075](adr/adr-075.md)'s two ledger columns: it must be `sync` and
+> touch nothing but the build's own parameters, and `NK1152` is what a callee
+> that fails either gets.
+>
+> **A loop is not in it**, which is why `Json::value(asset("…"))` above still
+> runs at runtime wherever it is written: running a *grammar* while the program
+> is built is a different piece again, and it is compiling the generated parser
+> rather than interpreting the grammar — `docs/open-work.md` says why. A
+> `comptime` binding this compiler cannot evaluate is `NK1127` rather than a
+> value computed later, which is D3's demand doing its one job — and it is
+> deliberately a different code from `NK1152`: one says *not yet*, the other says
+> *not allowed*.
 >
 > **And what crosses is decided** ([ADR-079](adr/adr-079.md)): a result arrives in
 > its **view** form — `Vec[T]` as `&[T]`, `String` as `&str` — so what was built

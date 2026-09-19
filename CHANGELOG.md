@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.33] — 2026-09-19
+
+The build-time evaluator gets a call, which three records have been waiting on.
+
+### Added ([ADR-073](docs/specification/adr/adr-073.md) D5's second stage)
+
+- **A `comptime` initialiser may call a function of this program.** `comptime ANSWER = double(21)` evaluates, and so does `factorial(3)` — a recursion with a base case. What a called body may be made of is arithmetic, comparisons, an `if`, `let`s, a `return`, and another call. `crates/nikaia/src/build_time.rs` is the interpreter; `fold.rs` stays in front of it, because it is what says which integer type a *declaration* pinned, which the interpreter does not ask and does not need to.
+- **D5 wrote this as *when Q4 is answered*, and [ADR-075](docs/specification/adr/adr-075.md) answered it.** So nothing new was decided here: the rule is that record's two **ledger columns** — a callee must be `sync` (D1) and its touch set must be empty or exactly the build's own parameters (D2) — and both are derived for every function the compiler sees. The interpreter reads what was decided rather than keeping a list of allowed functions.
+- **`NK1152`, deliberately not `NK1127`.** One says *this compiler cannot evaluate it* — the staging talking — and the other says *the rule says no*. A reader does two different things about them: wait for a stage, or change the callee. A callee this unit does not **declare** is neither: there is no body here to run, so it is unevaluable, and saying *you may not* about a function whose body is elsewhere is a claim this cannot make.
+- **And D4's accepted cost needed one neighbour.** That decision has no step budget and writes down what it costs: a body that does not terminate hangs the build. A **recursion** that does not terminate is a different failure — it overflows this compiler's own stack, and a compiler that falls over is not the hang D4 accepted. So the call depth is bounded, at a limit no terminating program meets, and the message says that is what it bounds. The work is still unbounded.
+
+### Fixed (a name bound to the wrong number)
+
+- **What a `comptime` name is worth is what was *evaluated*, not what *folded*.** They were the same thing while the fold was the whole evaluator; with a call in it they are not — `comptime ANSWER = double(21)` was visible as a name with no value, so the constant below it was `NK1127` although the one above it had just been computed. Found by writing the second constant, which is the shortest a fixture has taken to earn its keep this round.
+- *Eight tests* in `crates/nikaia/tests/build_time.rs`, including the two refusals and the one that pins what is **not** in the stage: a loop is `open-work.md` §2.9's next step, and the note says so rather than leaving a reader to find out.
+
 ## [0.0.32] — 2026-09-19
 
 ### Fixed (the specification's own version number, twenty-four packages stale)
