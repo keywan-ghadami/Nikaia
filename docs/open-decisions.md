@@ -1,13 +1,16 @@
 # Open decisions — the questions that need the owner
 
-**Nine entries are open**, below — the doors the records of the last rounds
+**Eight entries are open**, below — the doors the records of the last rounds
 left open on purpose, gathered here so that each has a recommendation and an
 owner. The order of the five big pieces is answered on the roadmap page (the
-HTTP server last). A question found by building rarely stays long:
-three of the four this file held yesterday are records already —
+HTTP server last). A question found by building rarely stays long: four of the
+five this file held yesterday are records already —
 [ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*,
 [ADR-143](specification/adr/adr-143.md), *the driver checks the SQL at build
-time*, and [ADR-144](specification/adr/adr-144.md), *a name denotes one thing*.
+time*, [ADR-144](specification/adr/adr-144.md), *a name denotes one thing*, and
+[ADR-146](specification/adr/adr-146.md), *a `match` covers every case* — which
+arrived and left the same day, and whose recommendation had written `_` for the
+rest one record before [ADR-145](specification/adr/adr-145.md) made it `else`.
 An answer is an [ADR](specification/adr/), and
 the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
@@ -148,32 +151,7 @@ The questions are the type (`std::time::Duration`, no dispute) and the spelling.
 
 *If it is wrong:* a suffix is additive, and the method form loses nothing to it.
 
-### 5. Must a `match` cover every case?
-
-[ADR-137](specification/adr/adr-137.md) §4 leaves exhaustiveness open. It is
-not open below: Rust refuses a non-exhaustive `match`, so a Nikaia `match` with
-a missing variant is today refused **by the backend, in its words, on a Nikaia
-line** — the class [Part III C.1](specification/30-nikaia-tooling.md) exists to
-close.
-
-*The options.*
-
-1. **Always exhaustive**, with `_` as the way to say *the rest*. The refusal is
-   this compiler's, naming the missing variants for an `enum` (the ledger has
-   them) and asking for `_` on an integer or a text. *Costs:* one check per
-   scrutinee kind.
-2. **Exhaustive as a value, free as a statement.** *Costs:* two rules for one
-   construct, and the statement form is lowered to the same Rust and refused
-   there anyway.
-3. **Never required**, with a silent fall-through. *Costs:* cannot be lowered
-   without inventing an arm, and it is the bug `match` exists to catch.
-
-*Recommendation:* **option 1.** The backend enforces it already; all this
-decides is whose message the reader gets.
-
-*If it is wrong:* relaxing a check is additive; today's programs all pass it.
-
-### 6. `break` with a value
+### 5. `break` with a value
 
 [ADR-138](specification/adr/adr-138.md) §4: Rust's `break x` hands a value out
 of a `loop`; this language has no unconditional loop
@@ -188,7 +166,7 @@ is the ambiguity `if` was spared by being an expression always.
 
 *If it is wrong:* additive later; the refusal costs nothing but a message.
 
-### 7. A fixed-size array
+### 6. A fixed-size array
 
 Two records point here: [ADR-127](specification/adr/adr-127.md) §4 (a field
 `[f64; 3]` of a C value struct) and [ADR-135](specification/adr/adr-135.md) §4
@@ -208,7 +186,7 @@ full one. No new syntax, and both records' doors close.
 
 *If it is wrong:* the type's name is the only thing to change.
 
-### 8. A native Node add-on
+### 7. A native Node add-on
 
 [ADR-130](specification/adr/adr-130.md) and [ADR-131](specification/adr/adr-131.md)
 give Node the WebAssembly build, and what a WebAssembly module cannot reach on
@@ -224,7 +202,7 @@ artifact, and every binding a file over it.
 
 *If it is wrong:* nothing is spent until the generator is written.
 
-### 9. What needs no `use`: the prelude
+### 8. What needs no `use`: the prelude
 
 [ADR-140](specification/adr/adr-140.md) D5 decided how `use` works and left
 what needs none — `Vec`, `String`, `println` — undecided, so the line is drawn
@@ -359,6 +337,9 @@ second declaration is refused — the entry that turned out to be **three**
 holes rather than the one it asked about: a `trait` and a `grammar` were not
 counted at all, and everything else was counted only when the build had a
 manifest) and
+[ADR-146](specification/adr/adr-146.md) (a `match` covers every case, and the
+refusal is this compiler's — the entry that only ever decided *whose message*,
+since the backend has been enforcing it all along on a Nikaia line) and
 [ADR-143](specification/adr/adr-143.md) (the database driver checks the SQL at
 build time against the schema — the "LINQ" the question was really about, and
 the answer is that this language already had the better half of it: the SQL is

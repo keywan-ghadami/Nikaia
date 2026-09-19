@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.30] — 2026-09-19
+
+The question the last record made answerable, answered the same day.
+
+### Added ([ADR-146](docs/specification/adr/adr-146.md): a `match` covers every case)
+
+- **`NK1151`.** [ADR-137](docs/specification/adr/adr-137.md) §4 left exhaustiveness open — *a question about types this compiler does not yet answer*. It was never open **below**: Rust refuses a non-exhaustive `match`, so the reader got the backend's words on a Nikaia line, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class. All this decided is whose message it is — and Part I 3.4's own first sentence had been promising the rule the whole time.
+- **An enum is complete when every variant is named**, and the message names the ones that are missing; anything else needs `else` ([ADR-145](docs/specification/adr/adr-145.md)), because the set of an `i64`, a `char` or a `String` is not something arms can write out. A bare name catches and covers, which is what the arm already meant.
+- **`bool` is the case that is neither**, and it is written out: `true` and `false` are two arms and a complete `match`, which no enum map knows. Without it a program Rust accepts would have been refused here, which is C.4 exactly.
+- **Where the scrutinee's type is not known, nothing is claimed** (C.4). That is the one place the rule is weaker than it reads, and it is the same weakness every other check here has for the same reason.
+- **The shape is smaller than the question suggested**: the first thing asked is *does anything here catch everything*, and only where nothing does is the type asked about at all.
+- **Nothing in the corpus had to change**, which is what says the rule was already being kept — by the backend.
+- *Seven tests* in `crates/nikaia/tests/match_coverage.rs`.
+
 ## [0.0.29] — 2026-09-19
 
 One character back from a meaning it did not have.

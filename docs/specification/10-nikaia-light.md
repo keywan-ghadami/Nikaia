@@ -852,6 +852,14 @@ range pattern it is the range, and in a struct pattern it is *the rest of the
 fields*. A struct pattern has no range in it and a range has no fields, so the
 position says which.
 
+**Every case is covered** ([ADR-146](adr/adr-146.md) D1), which is what the
+first sentence of this section has always said. A `match` over an **enum** is
+complete when every variant is named and needs no `else`; over anything else it
+needs one, because the set of an `i64`, a `char` or a `String` is not something
+arms can write out. `bool` is the case that is neither: `true` and `false` are
+two arms and a complete `match`. `NK1151` names what is missing — the variants,
+or `else`.
+
 An arm's body is an expression or a block, and an expression may be a `throw`,
 a `return`, a `break` or a `continue` ([ADR-138](adr/adr-138.md) D1) — their
 type is **never**, so an arm that throws sits beside an arm that hands back a

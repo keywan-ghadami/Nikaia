@@ -3481,6 +3481,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 self.stamped_condition = outer_condition;
+                self.a_match_that_misses_a_case(&on, arms, span);
                 // Every arm of a `match` is a value of the same type, but what
                 // that type is, is only known when every arm says the same.
                 match result {
@@ -6240,6 +6241,108 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `{name} {{ {fields}: … }}`")),
+        });
+    }
+
+    /// **`NK1151`: a `match` that misses a case**
+    /// ([ADR-146](../../docs/specification/adr/adr-146.md) D1).
+    ///
+    /// Part I 3.4's own first sentence says a `match` *ensures that every
+    /// possible case is handled*, and nothing here ensured it: Rust refuses a
+    /// non-exhaustive `match`, so the reader got the backend's words on a Nikaia
+    /// line ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **The question asked first is *does anything catch everything*,** and
+    /// only where nothing does is the scrutinee's type asked about at all — an
+    /// `else` ([ADR-145](../../docs/specification/adr/adr-145.md)) or a bare
+    /// name, which binds and matches anything (D2).
+    fn a_match_that_misses_a_case(&mut self, on: &Ty, arms: &[ast::MatchArm], span: &Span) {
+        let catches_everything = arms.iter().any(|arm| match &arm.pattern {
+            MatchPattern::Otherwise => true,
+            // **A bare name is a catch-all, and covers** (D2). One segment and
+            // no brackets is the binding form - `Op::Times` is two, and
+            // `Message::Write(text)` is a `Tuple`.
+            MatchPattern::Path(path) => path.len() == 1,
+            _ => false,
+        });
+        if catches_everything {
+            return;
+        }
+        // **Where the type is not known, nothing is claimed** (D3), which is
+        // [Part III C.4](../../../docs/specification/30-nikaia-tooling.md): a
+        // refusal on a guess is a correct program refused.
+        let Ty::Named { name, .. } = on else {
+            return;
+        };
+
+        // **`bool` is the case that is neither** an enum nor open-ended: `true`
+        // and `false` are two arms and a complete `match`, which no enum map
+        // knows. Without this, a program Rust accepts would be refused here.
+        if name == "bool" {
+            let mut seen = BTreeSet::new();
+            for arm in arms {
+                if let MatchPattern::Literal(Expr::LitBool(value)) = &arm.pattern {
+                    seen.insert(*value);
+                }
+            }
+            if !seen.contains(&true) || !seen.contains(&false) {
+                let missing: Vec<String> = [true, false]
+                    .into_iter()
+                    .filter(|value| !seen.contains(value))
+                    .map(|value| value.to_string())
+                    .collect();
+                self.a_case_is_missing(&missing.join("`, `"), span);
+            }
+            return;
+        }
+
+        // An **enum**, from the map `NK1135` and the variant rule already read.
+        let Some(variants) = self.enums.get(name).cloned() else {
+            // Every other known type: the set is not enumerable in arms, so
+            // `else` is what says the rest.
+            self.a_case_is_missing("else", span);
+            return;
+        };
+        let named: BTreeSet<String> = arms
+            .iter()
+            .filter_map(|arm| match &arm.pattern {
+                MatchPattern::Path(path)
+                | MatchPattern::Tuple { path, .. }
+                | MatchPattern::Named { path, .. } => {
+                    path.last().map(|last| self.parsed.text(*last).to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let missing: Vec<String> = variants
+            .iter()
+            .filter(|variant| !named.contains(*variant))
+            .map(|variant| format!("{name}::{variant}"))
+            .collect();
+        if !missing.is_empty() {
+            self.a_case_is_missing(&missing.join("`, `"), span);
+        }
+    }
+
+    /// The message [`a_match_that_misses_a_case`] raises, with what is missing
+    /// already spelled: the variants for an enum, `else` for everything else.
+    fn a_case_is_missing(&mut self, missing: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1151",
+            message: format!("this `match` does not cover `{missing}`"),
+            notes: vec![
+                "a `match` handles every possible case (Part I, 3.4), so that a type gaining \
+                 a variant is a refusal here rather than a branch nobody took \
+                 (ADR-146 D1)"
+                    .to_string(),
+            ],
+            help: Some(
+                "add the arm, or write `else => …` for the rest - a bare name catches too, \
+                 and binds what it caught"
+                    .to_string(),
+            ),
         });
     }
 
