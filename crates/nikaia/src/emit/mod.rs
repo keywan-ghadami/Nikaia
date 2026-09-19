@@ -868,6 +868,12 @@ struct Emitter<'p> {
     /// beside it is: it is a question about the type, and this has none
     /// (ADR-028).
     lent_lets: std::collections::BTreeSet<usize>,
+    /// The list literals that are an **array**
+    /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4), by the byte the
+    /// `[` stands at. `vec![…]` for one that is not in here and `[…]` for one
+    /// that is; the checker decides, because the decision is a type's
+    /// (ADR-028).
+    array_literals: std::collections::BTreeSet<usize>,
     /// The method calls that can fail, by the byte their statement starts at
     /// and the method's name (ADR-023 D8).
     ///
@@ -1082,6 +1088,8 @@ const MAIN: &str = "main";
 /// reference count, and which of the two a particular value gets is
 /// `contracts::sharing`'s answer ([ADR-037](../../../docs/specification/adr/adr-037.md)
 /// D7).
+use crate::contracts::ty::ARRAY;
+
 const SHARED: &str = "Shared";
 /// Part I 6.3's lock, whose shape is decided per value
 /// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
@@ -1554,6 +1562,7 @@ impl<'p> Emitter<'p> {
             nullable_sites: propagation.nullable,
             concatenations: propagation.concatenations,
             lent_lets: propagation.lent_lets,
+            array_literals: propagation.array_literals,
             comptime_values: propagation.comptime_values,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
@@ -2850,6 +2859,7 @@ impl<'p> Emitter<'p> {
                                 is_tuple: false,
                                 is_nullable: false,
                                 code: None,
+                                count: None,
                             },
                             Lifetimes::NAMED,
                         );
@@ -3262,6 +3272,7 @@ impl<'p> Emitter<'p> {
                 is_nullable: false,
                 is_tuple: false,
                 code: None,
+                count: None,
             });
             let inner = Type {
                 is_nullable: ty.is_nullable || inner.is_nullable,
@@ -3305,6 +3316,24 @@ impl<'p> Emitter<'p> {
                     self.ty_counted(held, lifetimes, count)
                 ));
                 return out;
+            }
+        }
+        // **`Array[T, N]` is `[T; N]`**
+        // ([ADR-152](../../docs/specification/adr/adr-152.md) D1, D2): `N`
+        // elements inline, no allocation, and the layout C gives it.
+        //
+        // After the view, so `&Array[f64, 3]` is a borrow of the array rather
+        // than an array of borrows, and before the name is written, because the
+        // arguments do not go where a generic's do.
+        if self.text(ty.name) == ARRAY {
+            if let [element, length] = ty.generics.as_slice() {
+                if let Some(n) = length.count {
+                    out.push_str(&format!(
+                        "[{}; {n}]",
+                        self.ty_counted(element, lifetimes, count)
+                    ));
+                    return out;
+                }
             }
         }
         out.push_str(&self.written_name(self.text(ty.name), count));
@@ -4091,8 +4120,19 @@ impl<'p> Emitter<'p> {
             // ([ADR-135](../../../docs/specification/adr/adr-135.md) D1). Part
             // I 2.2 offers one container and the literal writes that one, so
             // there is no second shape to choose between here.
-            Expr::ListLit(items) => {
-                out.push("vec![");
+            //
+            // **Unless the use asked for an array**
+            // ([ADR-152](../../../docs/specification/adr/adr-152.md) D4), which
+            // is a fact about the literal's *type* and therefore the checker's
+            // to hand over: the same three values are `vec![…]` in one position
+            // and `[…]` in the other, and nothing in the source distinguishes
+            // them.
+            Expr::ListLit { items, at } => {
+                let array = self.array_literals.contains(at);
+                out.push(match array {
+                    true => "[",
+                    false => "vec![",
+                });
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
                         out.push(", ");
@@ -6656,7 +6696,9 @@ pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
                 visit_expr(&arm.body, f);
             }
         }
-        Expr::Tuple(parts) | Expr::ListLit(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
+        Expr::Tuple(parts) | Expr::ListLit { items: parts, .. } => {
+            parts.iter().for_each(|p| visit_expr(p, f))
+        }
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr(base, f),
         Expr::StructLit { fields, .. } => fields
             .iter()

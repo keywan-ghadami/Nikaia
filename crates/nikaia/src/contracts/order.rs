@@ -561,7 +561,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             walk(parsed, lhs, out);
             walk(parsed, rhs, out);
         }
-        Expr::Tuple(parts) | Expr::ListLit(parts) => {
+        Expr::Tuple(parts) | Expr::ListLit { items: parts, .. } => {
             parts.iter().for_each(|part| walk(parsed, part, out))
         }
         // A jump is not an operation to reorder and it ends the sequence
@@ -1058,7 +1058,7 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             names_in(parsed, base, out);
             names_in(parsed, index, out);
         }
-        Expr::Tuple(parts) | Expr::ListLit(parts) => {
+        Expr::Tuple(parts) | Expr::ListLit { items: parts, .. } => {
             parts.iter().for_each(|p| names_in(parsed, p, out))
         }
         Expr::Coalesce { value, fallback } => {

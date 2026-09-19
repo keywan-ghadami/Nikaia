@@ -1475,6 +1475,29 @@ grammar! {
                     is_tuple: false,
                     is_nullable: nullable.is_some(),
                     code: None,
+                    count: None,
+                }
+            }
+          // **An integer where a type argument stands**
+          // ([ADR-152](../../../../docs/specification/adr/adr-152.md) D1): the
+          // `3` of `Array[f64, 3]`. It is an alternative of `type_ref` rather
+          // than a second kind of argument, because that is what makes the
+          // bracket generic the type language already has carry it — nothing
+          // that walks a type's arguments learns a new shape.
+          //
+          // **The position is free.** No name begins with a digit, so a number
+          // here can be nothing else; what a number means where a type is
+          // *expected* rather than where an argument stands is the checker's
+          // (`NK1135` stays silent, and the type it names is unknown).
+          | n:number_lit -> {
+                Type {
+                    name: _state.intern(&n.to_string()),
+                    generics: Vec::new(),
+                    is_view: false,
+                    is_tuple: false,
+                    is_nullable: false,
+                    code: None,
+                    count: Some(n),
                 }
             }
           // `(A, B)`. The parts go where a named type's arguments go, so
@@ -1491,6 +1514,7 @@ grammar! {
                     is_tuple: true,
                     is_nullable: false,
                     code: None,
+                    count: None,
                 }
             }
           // **A parameter may be code**
@@ -1517,6 +1541,7 @@ grammar! {
                         is_sync: s.is_some(),
                         throws: t.is_some(),
                     })),
+                    count: None,
                 }
             }
 
@@ -2688,8 +2713,16 @@ grammar! {
         // Nothing else in an expression begins with a `[`, so the position in
         // the alternation is free; it stands beside the other bracketed forms
         // where a reader looks for it.
-        rule list_lit -> Expr =
-            "[" items:list_items? "]" -> { Expr::ListLit(items.unwrap_or_default()) }
+        //
+        // **`@=` because this literal carries its position**
+        // ([ADR-152](../../../../docs/specification/adr/adr-152.md) D4): whether
+        // it is laid out inline or allocated is its *use*'s answer, the use is
+        // the checker's and the lowering is the emitter's, and a statement's
+        // byte cannot tell two literals in one statement apart.
+        rule list_lit -> Expr @=
+            "[" items:list_items? "]" -> {
+                Expr::ListLit { items: items.unwrap_or_default(), at: _span.start }
+            }
 
         rule list_items -> Vec<Expr> =
             head:expr tail:call_args_tail* ","? -> {

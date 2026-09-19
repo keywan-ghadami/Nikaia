@@ -46,6 +46,20 @@ pub enum Ty {
     },
     /// `(A, B)` - a fixed number of parts and no name.
     Tuple(Vec<Ty>),
+    /// **A number where a type argument stands**
+    /// ([ADR-152](../../../docs/specification/adr/adr-152.md) D1): the `3` of
+    /// `Array[f64, 3]`.
+    ///
+    /// It is a `Ty` rather than a second kind of argument for the reason the
+    /// AST's is an alternative of `type_ref`: everything that walks a type's
+    /// arguments already walks these, and a second list beside `args` would
+    /// have to be threaded through every one of them for one type's sake.
+    ///
+    /// **It is compatible with nothing but itself.** A count is not a type, so
+    /// `Array[f64, 3]` and `Array[f64, 4]` are different types and the ordinary
+    /// argument-by-argument comparison says so with no rule of its own - which
+    /// is the whole of D4's *the length is part of the type*.
+    Count(i64),
     /// `$V` - a name in a *library's* signature that stands for a type the
     /// receiver supplies (ADR-030).
     ///
@@ -155,6 +169,15 @@ pub const SEQ: &str = "Seq";
 /// The same, where the steps run at once (D3).
 pub const PAR: &str = "Par";
 
+/// **A fixed-size array**
+/// ([ADR-152](../../../../docs/specification/adr/adr-152.md) D1): `Array[T, N]`,
+/// `N` elements inline and nothing allocated.
+///
+/// A name and not a shape, so every reader of a type that does not care about
+/// arrays is unchanged: it is a `Named` with two arguments, and the second is a
+/// [`Ty::Count`].
+pub const ARRAY: &str = "Array";
+
 impl Ty {
     pub fn named(name: impl Into<String>) -> Ty {
         Ty::Named {
@@ -261,6 +284,14 @@ impl Ty {
             (Ty::Tuple(a), Ty::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.fits(b))
             }
+            // **A count fits the same count and nothing else**
+            // ([ADR-152](../../../docs/specification/adr/adr-152.md) D4): the
+            // length is part of the type, so `Array[f64, 3]` and
+            // `Array[f64, 4]` are different types with no rule of their own -
+            // the argument-by-argument comparison one arm down reaches this and
+            // says it. A count against a *type* falls to `false` below, which
+            // is right: neither is the other.
+            (Ty::Count(a), Ty::Count(b)) => a == b,
             // Two lambdas fit when they take the same things. A lambda never
             // fits a named type and no named type fits a lambda - which is a
             // claim, so it is only made where both sides are written down, and
@@ -363,6 +394,13 @@ impl Ty {
         let text = text.trim();
         if text.is_empty() || text == "?" {
             return Ty::Unknown;
+        }
+        // **A run of digits is a count**
+        // ([ADR-152](../../../docs/specification/adr/adr-152.md) D1), read
+        // first because nothing else in this language can be one: no type name
+        // begins with a digit, so there is nothing for this to take away.
+        if let Ok(n) = text.parse::<i64>() {
+            return Ty::Count(n);
         }
         // A trailing `?` is Part I 2.3's nullable marker, read before anything
         // else so that `&str?` and `Vec[i64]?` reach the branches below as the
@@ -502,6 +540,10 @@ impl Ty {
     pub fn erase(&self, parameters: &BTreeSet<String>) -> Ty {
         match self {
             Ty::Unknown => Ty::Unknown,
+            // A count is a number and not a name, so no parameter can stand
+            // for it (ADR-152 §4 leaves an integer parameter of anything else
+            // undecided).
+            Ty::Count(n) => Ty::Count(*n),
             Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| p.erase(parameters)).collect()),
             Ty::Fn {
                 params,
@@ -568,6 +610,7 @@ impl Ty {
     pub fn parameterise(&self, parameters: &BTreeSet<String>) -> Ty {
         match self {
             Ty::Unknown => Ty::Unknown,
+            Ty::Count(n) => Ty::Count(*n),
             Ty::Tuple(parts) => {
                 Ty::Tuple(parts.iter().map(|p| p.parameterise(parameters)).collect())
             }
@@ -621,6 +664,12 @@ impl Ty {
 
     /// The type a `.nika` declaration names.
     pub fn from_ast(parsed: &Parsed, ty: &ast::Type) -> Ty {
+        // **An integer argument** (ADR-152 D1), read first: it has no name, no
+        // arguments and no `?`, so none of the branches below has anything to
+        // say about it.
+        if let Some(n) = ty.count {
+            return Ty::Count(n);
+        }
         if ty.is_tuple {
             return Ty::Tuple(
                 ty.generics
@@ -680,6 +729,9 @@ impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Ty::Unknown => f.write_str("?"),
+            // The digits and nothing around them, so `Array[f64, 3]` reads in a
+            // message exactly as the source wrote it (Part III, C.1).
+            Ty::Count(n) => write!(f, "{n}"),
             Ty::Tuple(parts) => {
                 let parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
                 write!(f, "({})", parts.join(", "))
@@ -1102,6 +1154,7 @@ pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty
             view: *view,
         },
         Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| substitute(p, bound)).collect()),
+        Ty::Count(n) => Ty::Count(*n),
         Ty::Fn {
             params,
             result,

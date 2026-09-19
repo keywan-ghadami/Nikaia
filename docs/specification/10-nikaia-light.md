@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.47 (Draft)
+**Version:** 0.0.48 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -1108,10 +1108,38 @@ A `[]` whose only uses cannot give it an element type (`xs.len()` and nothing
 else) is not refused by the compiler, and the backend reports it
 ([Part III C.4](30-nikaia-tooling.md)).
 
+**A fixed-size array is `Array[T, N]`** ([ADR-152](adr/adr-152.md)), in the
+bracket generic every other parameterised type is written in — `N` is a number
+rather than a type, and it is the one place a type argument is one. It is `N`
+elements **inline**: in a struct it is part of the struct, as an argument it is
+passed as a value, and nothing is allocated — which is what makes it the
+container for a profile with no allocator. It is indexed as a list is, an index
+out of range aborts (Appendix A), and `len()` is the `N` it was declared with,
+known while the program is built.
+
+```nika
+struct Vector3 { parts: Array[f64, 3] }
+
+let origin: Array[f64, 3] = [0.0, 0.0, 0.0]
+```
+
+The literal is the list literal: **it takes the array type where the use asks
+for one**, and a literal with no use to constrain it is a `Vec`, exactly as `[]`
+takes its element type from its use. The length is part of the type, so
+`Array[f64, 3]` and `Array[f64, 4]` are different types and a literal whose
+length does not match `N` is refused with `NK1157` naming both numbers.
+
+> **Implementation status:** Implemented for the positions a use is written in —
+> an annotated `let`, an argument, a declared result and a struct literal's
+> field. A slice of an array, an integer parameter of anything else, and a
+> default value for an unwritten element are all left open
+> ([ADR-152](adr/adr-152.md) §4).
+
 > **Implementation status:** Implemented. The literal, its trailing comma, the
 > element type, `NK1154`, `NK1153` and the `[` that begins a line are built
 > ([ADR-135](adr/adr-135.md) §5). The tuple, indexing (`xs[0]`), indexed
-> assignment and `HashMap()` are built beside it.
+> assignment and `HashMap()` are built beside it. `Array[T, N]` is built; its
+> own note stands with it above.
 
 ### 4.6. Generics (Type Parameters)
 A **generic** declaration is written once for several types. A type parameter is

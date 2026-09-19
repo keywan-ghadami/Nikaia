@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.48] — 2026-09-19
+
+A fixed-size array is `Array[T, N]`
+([ADR-152](docs/specification/adr/adr-152.md)), which closes two records' open
+doors with one type.
+
+### Added ([ADR-152](docs/specification/adr/adr-152.md) D1, D2, D3, D4)
+
+- **`Array[T, N]`, in the bracket generic the type language already has.** Rust's `[T; N]` is a new type form; this language writes every parameterised type in brackets already, so `Array[f64, 3]` adds no form and what a reader knows about `Vec[T]` transfers. It is `N` elements **inline**: in a struct it is part of the struct, as an argument it is passed as a value, and nothing is allocated — which is what makes it the answer to both [ADR-127](docs/specification/adr/adr-127.md) §4's C field and [ADR-135](docs/specification/adr/adr-135.md) §4's *container that does not allocate*, the one [ADR-119](docs/specification/adr/adr-119.md)'s bare-metal profile needs on its first day.
+- **The new part is an integer argument in the type language**, and it is a `Ty` rather than a second kind of argument: `Ty::Count(i64)` beside the names and the tuples, so `Array` is an ordinary two-argument type and everything that already walked a type's arguments walks this one. A second list beside them would have had to be threaded through every reader for one type's sake.
+- **It is compatible with nothing but itself**, which is the whole of *the length is part of the type*: `Array[f64, 3]` against `Array[f64, 4]` is the ordinary argument-by-argument comparison, and no rule was written for it.
+- **D2 turned out to be three predicates already in the tree.** *It copies as its elements do* is what `moves`, `moves_away` and `copies` each ask, one per caller — so an `Array[i64, 3]` is passed by value the way a tuple of three `i64` is, and an `Array[String, 3]` is lent the way one of three `String` is. Without that the compiler wrote the `&` of [ADR-094](docs/specification/adr/adr-094.md) D1 around an array of numbers, which compiles and is not what the record says.
+- **The literal carries a position, and it is the only expression that does.** Whether `[0.0, 0.0, 0.0]` is `vec![…]` or `[…]` is decided by its *use*, a use is a type and the emitter has none ([ADR-028](docs/specification/adr/adr-028.md)) — but a statement's byte is not enough here, because one statement may hold a list and an array both. So `list_lit` records the byte its `[` stands at.
+- **The use answers, and the element question stays with the use.** A literal standing where an `Array[T, N]` is wanted comes back as the array of what its elements *agreed* on rather than as the one that was asked for, so an element that is not what the array holds is the `let`'s, the argument's or the field's own refusal under the code that position always used. `NK1157` is only the **length**, and it names both numbers because what a reader has to do about it is count.
+- **Twelve tests in `crates/nikaia/tests/fixed_size_array.rs`**, one of which compiles the lowering with `rustc` and runs it.
+
+### Open
+
+- **An array inside another type has no literal.** `let grid: Vec[Array[f64, 2]] = [[1.0, 2.0], [3.0, 4.0]]` is refused although it is right: four positions write a use and each reads the type it was given whole, so a use one level down is not read. Filed as a defect in `docs/open-work.md` §1 with its reproduction — a correct program refused is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s class.
+- **[ADR-127](docs/specification/adr/adr-127.md)'s C field waits on that record**, which is unbuilt: `extern "C" struct` is still a parse error, so there is no `repr(C)` struct to put an `Array[f64, 3]` in. The field in an *ordinary* struct is built and tested.
+
 ## [0.0.47] — 2026-09-19
 
 `use std::collections::HashMap` is refused, which completes

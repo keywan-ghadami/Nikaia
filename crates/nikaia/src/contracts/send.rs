@@ -398,6 +398,12 @@ fn walk(
         Ty::Unknown => Crossing::Undecided {
             part: "?".to_string(),
         },
+        // **A count crosses** ([ADR-152](../../../../docs/specification/adr/adr-152.md)
+        // D1): it is a number the compiler knows, it is part of the *type* and
+        // not part of the value, and there is nothing of it at run time to go
+        // anywhere. An `Array[T, N]` therefore crosses exactly when its `T`
+        // does, which is D2's *it copies as its elements do* read one layer up.
+        Ty::Count(_) => Crossing::May,
         // A library signature's variable that nothing bound. `substitute` turns
         // a bound one into the type it bound to before this is ever asked, so
         // one that arrives here is the absence of an answer (ADR-031).

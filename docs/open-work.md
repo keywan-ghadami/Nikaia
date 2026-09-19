@@ -336,7 +336,7 @@ runs, which is a test that reports *no defect* three times out of five — so it
 runs its body twenty times now. Twenty rounds of a coin that lands red two times
 in five come up green by luck once in twenty-five thousand runs.
 
-### The most negative `i64` has no spelling### The most negative `i64` has no spelling
+### 1.2. The most negative `i64` has no spelling
 
 *Found by building* [ADR-136](specification/adr/adr-136.md), and small enough
 that it is here rather than in §2: `-9223372036854775808` is refused, because
@@ -352,6 +352,33 @@ negation folded in the parser where it sits directly in front of one — and the
 second is the smaller change, since `Expr::LitInt` is an `i64` everywhere else
 and widening it touches every reader. Nothing in the tree writes the number, so
 this is a completeness item rather than a blocker.
+
+### 1.3. An array inside another type has no literal
+
+*Found by building* [ADR-152](specification/adr/adr-152.md), and it is the one
+position that record's D4 does not reach: a literal takes the array type from
+its **use**, and a use one level down is not read.
+
+*Reproduction:*
+
+```nika
+let grid: Vec[Array[f64, 2]] = [[1.0, 2.0], [3.0, 4.0]]
+```
+
+`error[NK1103]: this is `Vec[Vec[?]]`, and the `let` says `Vec[Array[f64, 2]]``
+— a correct program refused, which is [Part III
+C.4](specification/30-nikaia-tooling.md)'s class and the one thing this compiler
+may not do. Four positions write a use today (an annotated `let`, a call
+argument, a declared result and a struct literal's field) and each reads the
+type it was given whole; none of them walks *into* it beside the literal.
+
+*What it needs:* the answer to descend together with the literal — a wanted type
+and a value walked in step, so that the `n`th element of a literal meets the
+`n`th argument of the type. That is the shape the empty list's rule will want
+too, so it is one piece of work rather than two.
+
+*What it does not need:* a guess. Refusing is the correct half of this; what is
+missing is accepting the program that is right.
 
 ## 2. Decided and unbuilt
 
@@ -840,10 +867,12 @@ only where it is not last.
 aggregate value, so [ADR-079](specification/adr/adr-079.md) §3's table can be
 *computed* and has nowhere to arrive: what a `comptime` hands to the language
 below is what Rust's `const` can hold, and today that is one integer or one
-`bool`. [ADR-135](specification/adr/adr-135.md)'s literal is **built**, so a
-list can be *written* now; what is still missing is a type it can cross in, and
-that is [ADR-152](specification/adr/adr-152.md)'s `Array[T, N]` — a `Vec`
-allocates and Rust's `const` cannot hold one. Text is not in it either.
+`bool`. [ADR-135](specification/adr/adr-135.md)'s literal is **built** and so is
+[ADR-152](specification/adr/adr-152.md)'s `Array[T, N]`, so a table can now be
+*written* **and** has a type it can cross in — a `Vec` allocates and Rust's
+`const` cannot hold one, where `[T; N]` is exactly what a `const` holds. What is
+missing is in the evaluator: it has no `push` and no aggregate value, so the
+table can be computed and has nowhere to arrive. Text is not in it either.
 
 *Why it is work and not a question:* three records decided what may happen and
 none of them can happen.
@@ -1618,7 +1647,10 @@ function.
 *What it needs, in the record's order (§5):* the parser; the field check and
 `NK1145`; the emitter's `repr(C)`, passing, array and buffer; the header's
 `typedef struct` and the ledger's field record; an example beside the
-library's.
+library's. **And §4's `[f64; 3]` field**, which is
+[ADR-152](specification/adr/adr-152.md)'s step 4: `Array[T, N]` is built and
+lowers to `[T; N]`, so what is left is a `repr(C)` struct to put one in and the
+test that it is laid out as C lays it out.
 
 ### 2.37. The symbol prefix is one line in the build
 
@@ -1797,25 +1829,7 @@ the timeout arm its example writes.
 entries; the integer extension, five names; `sleep` taking one; the page's line
 as a test that runs.
 
-### 2.48. There is no fixed-size array
-
-[ADR-152](specification/adr/adr-152.md), and **after**
-[ADR-135](specification/adr/adr-135.md), because the literal is that record's.
-Two doors close with one type: [ADR-127](specification/adr/adr-127.md) §4's C
-field `[f64; 3]`, and [ADR-135](specification/adr/adr-135.md) §4's container
-that does not allocate — which [ADR-119](specification/adr/adr-119.md)'s
-`startup` profile needs on its first day, since a `Vec` wants an allocator that
-profile has none of.
-
-**The new part is an integer argument in the type language.** Every parameter
-so far has been a type, and `Array[T, N]` wants a `comptime` integer.
-
-*What it needs, in the record's order (§5):* the integer argument and
-`Array[T, N]` parsing, binding and writing itself back; the literal taking the
-array type from its use, and the length refusal; the lowering to `[T; N]`, and
-indexing; the C field, laid out as C lays it out.
-
-### 2.49. The prelude is what the compiler happens to know
+### 2.48. The prelude is what the compiler happens to know
 
 [ADR-154](specification/adr/adr-154.md).
 `crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and

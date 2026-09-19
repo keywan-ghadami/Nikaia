@@ -336,7 +336,17 @@ pub enum Expr {
     /// takes its element type from the first use that needs one (D2), which is
     /// [ADR-060](../../../docs/specification/adr/adr-060.md)'s rule for a
     /// number literal one level up.
-    ListLit(Vec<Expr>),
+    /// `at` is the byte the `[` stands at, and it is the one expression here
+    /// that carries a position. **`Array[T, N]` is what needs it**
+    /// ([ADR-152](../../../docs/specification/adr/adr-152.md) D4): whether a
+    /// literal is laid out inline or allocated is decided by its *use*, the
+    /// use is known to the checker and the lowering is the emitter's, so the
+    /// answer has to be handed over - and a statement's byte is not enough,
+    /// because one statement may hold a list and an array both.
+    ListLit {
+        items: Vec<Expr>,
+        at: usize,
+    },
     /// `"…"` - Kap 2.5. **Inert text.** A `{` is a brace and nothing else, so
     /// a program that writes JSON, CSS or a regular expression says what it
     /// means. The body is kept as written, escapes and all, for the same
@@ -618,6 +628,16 @@ pub struct Type {
     /// without knowing what this is. What is here is the part a tuple has no
     /// room for - the result and the two promises.
     pub code: Option<Box<Code>>,
+    /// **An integer where a type argument stands**
+    /// ([ADR-152](../../../docs/specification/adr/adr-152.md) D1): the `3` of
+    /// `Array[f64, 3]`. Nothing else in the type grammar is a number, so this
+    /// is set on exactly the position the record opened and is `None`
+    /// everywhere else - which is what keeps every reader of a type that does
+    /// not care about arrays unchanged.
+    ///
+    /// `name` holds the digits as they were written, so a message that prints
+    /// a type prints the number the source wrote.
+    pub count: Option<i64>,
 }
 
 /// What a function type says besides its parameters

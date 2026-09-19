@@ -99,6 +99,13 @@ pub fn lends(contract: &super::FnContract, at: usize) -> bool {
 pub fn moves(ty: &super::ty::Ty) -> bool {
     use super::ty::Ty;
     match ty {
+        // **An array copies as its elements do**
+        // ([ADR-152](../../../docs/specification/adr/adr-152.md) D2): `N`
+        // elements inline and nothing allocated, so `Array[i64, 3]` is copied
+        // the way a tuple of three `i64` is and `Array[String, 3]` is moved the
+        // way one of three `String` is. The count among the arguments answers
+        // **no** on its own, which is what makes `any` right here.
+        Ty::Named { name, args, .. } if name == super::ty::ARRAY => args.iter().any(moves),
         Ty::Named { name, view, .. } => {
             !view
                 && !matches!(

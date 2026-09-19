@@ -248,6 +248,10 @@ const BUILT_IN: &[&str] = &[
     "SharedMut",
     "Locked",
     "TaskHandle",
+    // **`Array[T, N]`** ([ADR-152](../../../docs/specification/adr/adr-152.md)
+    // D1), which is a name here for the same reason `Vec` is: nothing declares
+    // it in a `.nika` file and the emitter writes it (`[T; N]`).
+    "Array",
 ];
 
 /// The type parameters an item brings into scope for its own body.
@@ -433,6 +437,14 @@ fn written_at(
     // a tuple is not: what `fn` holds is a shape, and its parameters are in
     // `generics` where a tuple's parts are. Reading `name` here would report
     // that nothing declares a type called `fn`.
+    // **A count is not a name either**
+    // ([ADR-152](../../../docs/specification/adr/adr-152.md) D1): the `3` of
+    // `Array[f64, 3]` is an argument of the type and nothing declares a type
+    // called `3`. The walk over the arguments below reaches it, so the silence
+    // has to be here rather than at the one position that writes one.
+    if ty.count.is_some() {
+        return;
+    }
     if !ty.is_tuple && ty.code.is_none() {
         let name = parsed.text(ty.name);
         if !known.contains(name) && !name.contains("::") {

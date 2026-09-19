@@ -852,7 +852,10 @@ fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
         // a `Vec` of them is ([ADR-105](../../../docs/specification/adr/adr-105.md)
         // D1): what it produces is what it holds, for this question.
         Ty::Seq { item, .. } => carries_a_handle(item),
-        Ty::Unknown | Ty::Var { .. } => false,
+        // A count is a number the compiler knows and nothing at run time, so
+        // there is nothing in it to hold a handle
+        // ([ADR-152](../../../docs/specification/adr/adr-152.md) D1).
+        Ty::Unknown | Ty::Var { .. } | Ty::Count(_) => false,
     }
 }
 

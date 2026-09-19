@@ -425,6 +425,22 @@ pub struct Checked {
     /// move out of a container — so this is a set that has to be *right* rather
     /// than one that can be safe.
     pub lent_lets: BTreeSet<usize>,
+    /// The list literals that are an **array** rather than a list
+    /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4), by the byte the
+    /// `[` stands at.
+    ///
+    /// `[0.0, 0.0, 0.0]` is a `Vec` on its own and an `Array[f64, 3]` where the
+    /// use asks for one, and which of the two it is decides what the emitter
+    /// writes - `vec![…]` or `[…]`. The use is a *type*, and the emitter has
+    /// none ([ADR-028](../../docs/specification/adr/adr-028.md)), so the answer
+    /// is computed here and handed over.
+    ///
+    /// **The literal's own byte and not the statement's**, which is the one
+    /// place this parts company with `lent_lets` and its neighbours: a
+    /// statement may hold a list and an array both, and the two lower
+    /// differently. `Expr::ListLit` is the one expression that carries a
+    /// position, and it carries it for this.
+    pub array_literals: BTreeSet<usize>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -803,6 +819,8 @@ pub struct Propagation {
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::lent_lets`].
     pub lent_lets: BTreeSet<usize>,
+    /// [`Checked::array_literals`].
+    pub array_literals: BTreeSet<usize>,
     /// [`Checked::lent_args`].
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::mut_args`].
@@ -847,6 +865,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         comptime_values: checked.comptime_values,
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
+        array_literals: checked.array_literals,
         lent_args: checked.lent_args,
         mut_args: checked.mut_args,
         method_options: checked.method_options,
@@ -3277,6 +3296,11 @@ impl<'a> Checker<'a> {
                         // way out.
                         self.constant_fits(value, Some(&want), span);
                         self.wraps_into_nullable(&found, &want, value, span);
+                        // **The annotation is a use, and a use answers the
+                        // literal** (ADR-152 D4).
+                        let found = self
+                            .array_literal(&found, &want, value, span)
+                            .unwrap_or(found);
                         self.expect(&found, &want, span.clone(), "let", |found, want| {
                             format!("this is `{found}`, and the `let` says `{want}`")
                         });
@@ -3299,7 +3323,7 @@ impl<'a> Checker<'a> {
                 // asked again when the body has been walked, because the use
                 // that answers it stands *after* this line.
                 let pending = match (ty, value) {
-                    (None, Expr::ListLit(items)) if items.is_empty() => {
+                    (None, Expr::ListLit { items, .. }) if items.is_empty() => {
                         self.empty_lists
                             .insert(span.start, (name.clone(), span.clone()));
                         Some(span.start)
@@ -4085,6 +4109,15 @@ impl<'a> Checker<'a> {
                             // D2). It was the second of the two positions, and the
                             // two positions are what stopped being a list.
                             let _ = &owner;
+                            // **A declared field is a use** (ADR-152 D4), and
+                            // it is the position [ADR-127](../../docs/specification/adr/adr-127.md)
+                            // §4's C value field will be written through.
+                            let found = match init.value.as_ref() {
+                                Some(value) => self
+                                    .array_literal(&found, &want, value, span)
+                                    .unwrap_or(found),
+                                None => found,
+                            };
                             // Part I 2.3's fourth position: a plain value in a
                             // field the struct declares nullable. The same rule
                             // as the other three (`wraps_into_nullable`), keyed
@@ -4255,7 +4288,7 @@ impl<'a> Checker<'a> {
             // **`[1, 2, 3]` is a `Vec[T]`**
             // ([ADR-135](../../docs/specification/adr/adr-135.md) D1), and `T`
             // is what the elements agree on.
-            Expr::ListLit(items) => self.list_literal(items, span),
+            Expr::ListLit { items, .. } => self.list_literal(items, span),
 
             // A `?` unwraps a failure, a `??` unwraps an absence, an index
             // reaches into a container and a range is an iterator: four things
@@ -5160,6 +5193,16 @@ impl<'a> Checker<'a> {
             if let Some(given) = given.get(at) {
                 self.constant_fits(given, Some(want), span);
             }
+            // **A parameter is a use** (ADR-152 D4), and a literal handed to one
+            // that takes an `Array[T, N]` **is** that array. What it changes is
+            // the type the rest of this loop reads, rather than ending it: the
+            // `&` the compiler writes (ADR-094 D1) and the ordinary fit are
+            // still this argument's questions, and they have to be asked of what
+            // the literal turned out to be.
+            let array = given
+                .get(at)
+                .and_then(|given| self.array_literal(found, want, given, span));
+            let found = array.as_ref().unwrap_or(found);
             // Part I 2.3's third position for the wrap: a plain value in a
             // parameter the callee declares nullable. Recorded before `fits`
             // is consulted, because this *is* the fit - `Ty::fits` allows it,
@@ -6754,6 +6797,95 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **A literal takes the array type where the use asks for one**
+    /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4), and hands back
+    /// the array it is.
+    ///
+    /// This is [ADR-135](../../docs/specification/adr/adr-135.md) D2's rule for
+    /// the **empty** list extended to a full one: the literal takes the type its
+    /// use gives it, and a use that asks for `Array[f64, 3]` gets an array
+    /// rather than a `Vec`.
+    ///
+    /// **Asked after the literal has been walked** rather than before it, which
+    /// is what keeps it one function instead of a second argument threaded
+    /// through every expression that has a type: `[1.0, 2.0]` holds two `f64`
+    /// whichever container it turns out to be, so the walk answers the elements
+    /// and this answers only the container.
+    ///
+    /// **And it hands back the array of what the elements *agreed* on** rather
+    /// than the one the use asked for, which is what leaves the element
+    /// question with its caller: `[1, 2]` where an `Array[&str, 2]` is wanted
+    /// comes back `Array[i64, 2]` and is refused by the `let`, the argument or
+    /// the field in that position's own words, under the code that position
+    /// always used. One message, and no code of its own for a mismatch that is
+    /// not new.
+    ///
+    /// `None` where the use asks for anything else, and the caller keeps the
+    /// `Vec` the walk produced.
+    fn array_literal(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
+        let Ty::Named { name, args, .. } = want else {
+            return None;
+        };
+        if name != ty::ARRAY {
+            return None;
+        }
+        let [_, Ty::Count(n)] = args.as_slice() else {
+            return None;
+        };
+        let Expr::ListLit { items, at } = value else {
+            return None;
+        };
+        // **The length is part of the type** (D4), so a literal that does not
+        // match `N` is refused naming both numbers - and `want` goes back, so
+        // that the caller's own fit stays quiet about a type it would otherwise
+        // report a second time in numbers the reader has to compare by eye.
+        if items.len() as i64 != *n {
+            self.a_list_the_wrong_length_for_its_array(items.len(), *n, span);
+            return Some(want.clone());
+        }
+        self.checked.array_literals.insert(*at);
+        // `Vec[E]` is what the walk hands back and `E` is what the elements
+        // agreed on; `Unknown` where they said nothing, which is the silence
+        // every unanswered question here keeps (Part III, C.4).
+        let agreed = match found {
+            Ty::Named { args, .. } => args.first().cloned().unwrap_or(Ty::Unknown),
+            _ => Ty::Unknown,
+        };
+        Some(Ty::Named {
+            name: ty::ARRAY.to_string(),
+            args: vec![agreed, Ty::Count(*n)],
+            view: false,
+        })
+    }
+
+    /// `NK1157`: a list literal standing where an `Array[T, N]` is wanted, with
+    /// a different number of elements
+    /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4).
+    ///
+    /// **Both numbers**, because the length *is* part of the type and what the
+    /// reader has to do about it is count: a message saying only that one array
+    /// type is not another leaves the counting undone.
+    fn a_list_the_wrong_length_for_its_array(&mut self, written: usize, wanted: i64, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1157",
+            message: format!(
+                "this writes {}, and the array holds {wanted}",
+                plural(written, "element")
+            ),
+            notes: vec![
+                "the length is part of the type, so an `Array[T, N]` takes exactly `N` \
+                 elements (ADR-152 D4)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write {}, or declare the array the length this literal is",
+                plural(wanted.unsigned_abs() as usize, "element")
+            )),
+        });
+    }
+
     /// `NK1154`: two elements of one list literal are not the same type
     /// ([ADR-135](../../docs/specification/adr/adr-135.md) D1).
     ///
@@ -7881,9 +8013,14 @@ impl<'a> Checker<'a> {
         let Some(expected) = self.expected.clone() else {
             return;
         };
+        let mut found = found;
         if let Some(value) = value {
             self.constant_fits(value, Some(&expected), span);
             self.wraps_into_nullable(&found, &expected, value, span);
+            // **The declared result is a use** (ADR-152 D4).
+            found = self
+                .array_literal(&found, &expected, value, span)
+                .unwrap_or(found);
         }
         self.expect(&found, &expected, span.clone(), "returns", |found, want| {
             format!("this returns `{found}`, and the function declares `{want}`")
@@ -8452,6 +8589,12 @@ fn is_literal(expr: &Expr) -> bool {
 ///     one: `Unknown` is the absence of an answer and not a licence to refuse.
 fn moves_away(ty: &Ty) -> bool {
     match ty {
+        // **An array copies as its elements do**
+        // ([ADR-152](../../docs/specification/adr/adr-152.md) D2): `N` elements
+        // inline and nothing allocated, so an `Array[i64, 3]` takes as little
+        // away as an `i64` does and an `Array[String, 3]` takes as much as a
+        // `String`. The count among the arguments answers `false` on its own.
+        Ty::Named { name, args, .. } if name == ty::ARRAY => args.iter().any(moves_away),
         Ty::Named { name, view, .. } => {
             !view
                 && !is_number(name)
@@ -8649,6 +8792,8 @@ fn a_view_of(ty: &Ty) -> String {
 /// is one this says nothing about only when it is also unknown.
 fn copies(ty: &Ty) -> bool {
     match ty {
+        // `moves_away`'s other half, and ADR-152 D2's same sentence.
+        Ty::Named { name, args, .. } if name == ty::ARRAY => args.iter().all(copies),
         Ty::Named { name, view, .. } => {
             *view
                 || matches!(
