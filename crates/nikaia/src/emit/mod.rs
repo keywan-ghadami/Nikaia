@@ -4347,6 +4347,24 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(" {} ", binary_op(*op)));
                 self.nested(out, rhs, here + 1, depth, flow)?;
             }
+            // **A fallback that jumps is a `match` and not a closure**
+            // ([ADR-138](../../../docs/specification/adr/adr-138.md) D1, and
+            // [ADR-084](../../../docs/specification/adr/adr-084.md) D4's rule
+            // about what a jump may not cross).
+            //
+            // `unwrap_or_else` takes a **closure**, so a `return` written in
+            // the fallback would return from the closure and the program would
+            // carry on — `let user = find(id) ?? throw NotFound(id)`, the shape
+            // this record's own example is written in, would have thrown
+            // nothing and bound a value nobody produced. The `match` puts the
+            // jump in the function it was written in.
+            Expr::Coalesce { value, fallback } if jumps(fallback) => {
+                out.push("match ");
+                self.expr(out, value, depth, flow)?;
+                out.push(" { Some(__nikaia_value) => __nikaia_value, None => ");
+                self.expr(out, fallback, depth, flow)?;
+                out.push(" }");
+            }
             Expr::Coalesce { value, fallback } => {
                 // Kap 3.5. `into()` because the fallback is written as the
                 // value it stands for, not as the type the option holds.
@@ -4413,6 +4431,42 @@ impl<'p> Emitter<'p> {
             // the compiler knew and the author did not have to write (D6). The
             // trace it may attach is off unless the program asked - measured at
             // 28 300 instructions an error, which is not a default.
+            // **The four jumps, written as the language below writes them**
+            // ([ADR-138](../../../docs/specification/adr/adr-138.md) D1): each
+            // is `!` there too, so an arm that returns beside an arm that hands
+            // back a value is a `match` of that value's type by the backend's
+            // own rule and not by a coercion this had to write.
+            Expr::Return(value) => match (value, flow.throws) {
+                (Some(value), true) => {
+                    out.push("return Ok(");
+                    self.nullable(out, value, &(0..0), depth, flow)?;
+                    out.push(")");
+                }
+                (Some(value), false) => {
+                    out.push("return ");
+                    self.nullable(out, value, &(0..0), depth, flow)?;
+                }
+                (None, true) => out.push("return Ok(())"),
+                (None, false) => out.push("return"),
+            },
+            Expr::Break | Expr::Continue => {
+                let word = match expr {
+                    Expr::Break => "break",
+                    _ => "continue",
+                };
+                // **The same refusal the statement form has**
+                // ([ADR-084](../../../docs/specification/adr/adr-084.md) D6):
+                // the lowering states it too, so a path that reached here
+                // without the checker's answer still writes no file `rustc`
+                // would refuse.
+                if !flow.in_loop {
+                    return Err(refused!(
+                        "`{word}` has no loop to act on here, and the language below \
+                         would refuse the file this writes (Part I, 3.3)"
+                    ));
+                }
+                out.push(word);
+            }
             Expr::Throw(inner) => {
                 out.push("return Err(nikaia_std::error::raise(");
                 self.expr(out, inner, depth, flow)?;
@@ -6142,6 +6196,20 @@ fn unary_op(op: UnaryOp) -> &'static str {
 /// argument type *from* - every integer type answers with the same `usize`, so the
 /// call is ambiguous and `cannot infer type` about a generated file is what
 /// Part III C.1 forbids.
+/// Whether this expression **leaves** rather than coming to a value
+/// ([ADR-138](../../docs/specification/adr/adr-138.md) D1).
+///
+/// What it decides is where the jump is *written*: a closure is a function
+/// boundary ([ADR-084](../../docs/specification/adr/adr-084.md) D4), so a
+/// lowering that puts an expression inside one has to know whether that
+/// expression is a jump before it does.
+fn jumps(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue
+    )
+}
+
 fn only_literals(index: &Expr) -> bool {
     match index {
         Expr::LitInt(_) => true,
@@ -6601,6 +6669,8 @@ pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_expr(rhs, f);
         }
         Expr::Try(inner) | Expr::Throw(inner) => visit_expr(inner, f),
+        Expr::Return(Some(value)) => visit_expr(value, f),
+        Expr::Return(None) | Expr::Break | Expr::Continue => {}
         Expr::Index { base, index } => {
             visit_expr(base, f);
             visit_expr(index, f);

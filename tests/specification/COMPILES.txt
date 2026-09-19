@@ -33,6 +33,7 @@
 10-nikaia-light.md #60 error[E0425]
 10-nikaia-light.md #61 error[E0433]
 10-nikaia-light.md #66 error[E0425]
+10-nikaia-light.md #67 error[E0433]
 10-nikaia-light.md #71 compiles
 10-nikaia-light.md #72 compiles
 10-nikaia-light.md #73 compiles

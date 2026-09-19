@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.45] — 2026-09-19
+
+`throw`, `return`, `break` and `continue` where an expression stands
+([ADR-138](docs/specification/adr/adr-138.md)), and two defects the record did
+not see.
+
+### Added ([ADR-138](docs/specification/adr/adr-138.md) D1, D2)
+
+- **`=> throw NotFound` is a program**, and so are `?? throw Missing`, `=> return 0` and `for x in xs { return x }`. Each had to be written with braces that said nothing: there was no second statement they held together and no value they produced.
+- **Never is a question about the expression and not a `Ty`.** What *never* has to mean here is *this is not one of the answers that have to agree*, and the only place that matters is a `match`'s arms — so an arm that jumps is skipped when the arms agree on a type, and the `match` is the other arm's. The language below reads the jumping arm as the `!` it is, so the two halves agree by construction rather than by a coercion this had to write.
+- **Nothing about what they do changes** (D2). A `break` outside a loop is still `NK1132`, a statement after one is still `NK1133`, and every program written against the braced forms means what it meant.
+- **`examples/json.nika` and Part I's error chapter lose the braces**, and the specification's lowering floor went **53 to 54**. *Eight tests* in `crates/nikaia/tests/jump_expressions.rs`.
+
+### Fixed (two things the record did not see, and both are one rule)
+
+- **A `??` whose fallback jumps lowered into a closure.** `unwrap_or_else` takes one, and [ADR-084](docs/specification/adr/adr-084.md) D4 says a jump does not cross a function boundary — so `let user = find(id) ?? throw NotFound(id)`, this record's own first example, would have thrown from the closure while the program carried on and bound a value nobody produced. A **different program**, which is the worst kind of defect this compiler can emit. A jumping fallback is a `match` now; an ordinary one keeps the closure it always had.
+- **And a bare `break` stopped being a statement.** `break_stmt` and `continue_stmt` are last in `stmt`, measured and argued in [ADR-084](docs/specification/adr/adr-084.md) D8 — so once the two words were in the expression grammar, `expr_stmt` reached them first and every analysis that asks about a jump asks about the *statement*. `NK1133`, which is D3's whole safety net, stopped firing. `expr_stmt` maps the three back in its action: nothing to parse, and the rest of the compiler gets the tree it had.
+
 ## [0.0.44] — 2026-09-19
 
 The six `match` pattern shapes, which is the rest of

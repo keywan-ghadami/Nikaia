@@ -564,6 +564,13 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         Expr::Tuple(parts) | Expr::ListLit(parts) => {
             parts.iter().for_each(|part| walk(parsed, part, out))
         }
+        // A jump is not an operation to reorder and it ends the sequence
+        // ([ADR-138](../../../docs/specification/adr/adr-138.md) D1): what
+        // follows it in a `seq` does not run, so this refuses rather than
+        // accounting for it.
+        Expr::Return(_) | Expr::Break | Expr::Continue => {
+            out.refuse(Accounted::Opaque("a `return`, a `break` or a `continue`"))
+        }
 
         // A name that is not a callee's is a value from somewhere else, and the
         // closure this is lowered into would have to capture it. It performs
@@ -1096,6 +1103,12 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             }
         }
         Expr::Spawn { body, .. } | Expr::Throw(body) => names_in(parsed, body, out),
+        Expr::Return(value) => {
+            if let Some(value) = value {
+                names_in(parsed, value, out);
+            }
+        }
+        Expr::Break | Expr::Continue => {}
         Expr::TryCatch { expr, handler } => {
             names_in(parsed, expr, out);
             names_in_block(parsed, handler, out);

@@ -865,6 +865,11 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
             children.push(end);
         }
         Expr::Tuple(parts) | Expr::ListLit(parts) => children.extend(parts),
+        // `return`, `break` and `continue` as expressions
+        // ([ADR-138](../../docs/specification/adr/adr-138.md) D1): a `return`
+        // holds what it hands back, and the other two hold nothing.
+        Expr::Return(value) => children.extend(value.as_deref()),
+        Expr::Break | Expr::Continue => {}
         Expr::StructLit { fields, .. } => {
             children.extend(fields.iter().filter_map(|f| f.value.as_ref()))
         }

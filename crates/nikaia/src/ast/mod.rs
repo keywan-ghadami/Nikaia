@@ -503,6 +503,23 @@ pub enum Expr {
     /// load-bearing rather than convenient.
     Throw(Box<Expr>),
 
+    /// `return`, `break` and `continue` **as expressions**
+    /// ([ADR-138](../../../docs/specification/adr/adr-138.md) D1).
+    ///
+    /// Their type is **never**, so they fit every expected type without
+    /// widening anything: an arm that returns sits beside an arm that hands
+    /// back a `&str` and the `match` is a `&str`, because the arm that returns
+    /// hands back nothing at all.
+    ///
+    /// **Beside the statement forms and not instead of them** (D2). A statement
+    /// whose expression is one of these is exactly what the statement was, so
+    /// nothing about what they *do* changes — and `NK1133` still refuses a
+    /// statement after a `break` in the same block, which is what keeps
+    /// `break x` from becoming a quietly dropped value one position over (D3).
+    Return(Option<Box<Expr>>),
+    Break,
+    Continue,
+
     // Kap 2.2: 10.0
     LitFloat(String),
 

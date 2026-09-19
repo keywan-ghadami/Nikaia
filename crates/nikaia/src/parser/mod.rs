@@ -1869,8 +1869,32 @@ grammar! {
           | "/=" -> { Some(BinaryOp::Div) }
           | "=" -> { None }
 
+        // **A statement whose expression is a jump *is* that statement**
+        // ([ADR-138](../../../../docs/specification/adr/adr-138.md) D2), and
+        // this line is what makes that true rather than nearly true.
+        //
+        // `break_stmt` and `continue_stmt` are **last** in `stmt`, measured and
+        // argued there (740 instructions a statement,
+        // [ADR-084](../../../../docs/specification/adr/adr-084.md) D8) — so
+        // once D1 put the two words in the expression grammar, `expr_stmt`
+        // reached them first and a bare `break` became `Stmt::Expr(Expr::Break)`.
+        // Every analysis that asks about a jump asks about the *statement*, so
+        // `NK1133` — *nothing after a `break` in the same block is reached*,
+        // which is D3's whole safety net — stopped firing.
+        //
+        // Normalising in the action costs nothing to parse and hands the rest
+        // of the compiler the tree it had. The alternative was two failed
+        // keyword matches in front of every expression statement, which is the
+        // cost that ordering was chosen to avoid.
         rule expr_stmt -> Stmt =
-            e:expr ";"? -> { Stmt::Expr(e) }
+            e:expr ";"? -> {
+                match e {
+                    Expr::Break => Stmt::Break,
+                    Expr::Continue => Stmt::Continue,
+                    Expr::Return(value) => Stmt::Return(value.map(|v| *v)),
+                    e => Stmt::Expr(e),
+                }
+            }
 
         // --- Expressions ---
 
@@ -2310,6 +2334,26 @@ grammar! {
           | t:tuple_expr -> { t }
           | p:paren_expr -> { p }
           | l:list_lit -> { l }
+          // **The four jumps, where an expression stands**
+          // ([ADR-138](../../../../docs/specification/adr/adr-138.md) D1):
+          // `=> throw NotFound`, `?? throw Missing`, `else => return 0`. Their
+          // type is never, so they fit every expected type.
+          //
+          // **Last, and keyword-led**, for the reason `dsl_from_expr` gives
+          // three lines down in the head chain: each of the four words is
+          // reserved, so no earlier alternative can take one, and an
+          // alternative that cannot be taken costs a failed keyword match for
+          // every primary in every expression. The statement forms are
+          // untouched (D2) — `stmt` tries them first, so a `break` on a line of
+          // its own is the statement it always was and `NK1133` still answers
+          // about what follows it (D3).
+          | j:jump_expr -> { j }
+
+        rule jump_expr -> Expr =
+            KW_THROW e:expr -> { Expr::Throw(Box::new(e)) }
+          | KW_RETURN e:expr? -> { Expr::Return(e.map(Box::new)) }
+          | KW_BREAK -> { Expr::Break }
+          | KW_CONTINUE -> { Expr::Continue }
 
         rule float_lit -> Expr =
             f:FLOAT -> { Expr::LitFloat(f) }

@@ -217,7 +217,7 @@ fn unescape(raw: &str) -> String {
 // look.
 fn longest(value: &Json) -> i64 {
     match value {
-        Json::Text(raw) => { return unescape(raw).chars().count() as i64 }
+        Json::Text(raw) => return unescape(raw).chars().count() as i64
 
         Json::Array(items) => {
             let mut best = 0
@@ -237,7 +237,7 @@ fn longest(value: &Json) -> i64 {
             return best
         }
 
-        else => { return 0 }
+        else => return 0
     }
 }
 

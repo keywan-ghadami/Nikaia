@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.44 (Draft)
+**Version:** 0.0.45 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -830,12 +830,12 @@ match step {
 }
 ```
 
-> **Implementation status:** Partially implemented. The six rows of the first
-> table, the six shapes of the second and the completeness check are built
+> **Implementation status:** Implemented. The six rows of the first table, the
+> six shapes of the second and the completeness check are built
 > ([ADR-137](adr/adr-137.md) §5). A guarded arm covers nothing, so a `match`
 > whose only catch-all carries an `if` is still `NK1151`. Alternatives of an
-> `|` pattern that bind different names are refused with `NK1155`. A bare
-> `throw` as an arm is not built; today it is written `=> { throw NotFound }`
+> `|` pattern that bind different names are refused with `NK1155`. An arm's
+> body may be a bare `throw`, `return`, `break` or `continue`
 > ([ADR-138](adr/adr-138.md) §5).
 
 ### 3.5. Null Safety Operators
@@ -2089,9 +2089,12 @@ What they *do* is unchanged: a `throw` leaves the function and makes it
 `throws`, a `break` needs a loop, and a statement after a `break` in the same
 block is refused with `NK1133` (3.3).
 
-> **Implementation status:** Not implemented. The four are statements today, so
-> `?? throw Missing` and `=> throw NotFound` are parse errors, and each is
-> written with braces ([ADR-138](adr/adr-138.md) §5).
+> **Implementation status:** Implemented ([ADR-138](adr/adr-138.md) §5). A
+> `??` whose fallback jumps lowers to a `match` rather than to
+> `unwrap_or_else`, because a closure is a function boundary and a jump does
+> not cross one ([ADR-084](adr/adr-084.md) D4). The statement forms are
+> unchanged, and a bare `break` on a line of its own is the statement it always
+> was, so `NK1133` still answers about what follows it.
 
 **Propagation happens on its own, and nothing marks it.** A call that can fail
 stands inside a function that declares `throws`. There is no operator and no
@@ -2176,10 +2179,9 @@ let config = load() catch {
 }
 ```
 
-> **Implementation status:** Partially implemented. The patterns of 3.4 are
-> built, `..` in a named pattern among them ([ADR-137](adr/adr-137.md) §5). A
-> bare `throw` as an arm's body is not built; the arm is written as a block,
-> `else => { throw error }` ([ADR-138](adr/adr-138.md) §5).
+> **Implementation status:** Implemented. The patterns of 3.4 are built, `..`
+> in a named pattern among them ([ADR-137](adr/adr-137.md) §5), and a bare
+> `throw` is an arm's body ([ADR-138](adr/adr-138.md) §5).
 
 **Two sets differ.** The **variants of an error type** are closed: a `match`
 over them is exhaustive, and adding one is a breaking change. The **set of

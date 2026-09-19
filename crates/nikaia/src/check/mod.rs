@@ -648,6 +648,26 @@ pub enum Narrowing {
 /// Whether an expression **can only** be a value: a name, a literal, an
 /// operator, a field, an index.
 ///
+/// Whether this expression **leaves** rather than coming to a value
+/// ([ADR-138](../../docs/specification/adr/adr-138.md) D1).
+///
+/// Its type is *never*, which is not a type this checker's `Ty` spells: what
+/// never means here is *this is not one of the answers that have to agree*, and
+/// that is a question about the expression rather than about a type. A block
+/// counts where its last statement is one of the four, which is the shape an
+/// arm written `=> { throw NotFound }` still has.
+fn leaves(expr: &Expr) -> bool {
+    match expr {
+        Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue => true,
+        Expr::Block(block) => match block.stmts.last().map(|s| &s.node) {
+            Some(Stmt::Return(_)) | Some(Stmt::Break) | Some(Stmt::Continue) => true,
+            Some(Stmt::Expr(inner)) => leaves(inner),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// Whether a pattern matches every value of its type
 /// ([ADR-137](../../docs/specification/adr/adr-137.md) D1,
 /// [ADR-145](../../docs/specification/adr/adr-145.md) D1).
@@ -3349,24 +3369,7 @@ impl<'a> Checker<'a> {
             }
 
             Stmt::Return(value) => {
-                if let Some(value) = value {
-                    self.a_field_of_a_borrowed_subject(value, span, "handed back");
-                }
-                let found = match value {
-                    Some(value) => self.expr(value, span),
-                    None => Ty::Tuple(Vec::new()),
-                };
-                if let Some(expected) = self.expected.clone() {
-                    if let Some(value) = value {
-                        self.constant_fits(value, Some(&expected), span);
-                    }
-                    if let Some(value) = value {
-                        self.wraps_into_nullable(&found, &expected, value, span);
-                    }
-                    self.expect(&found, &expected, span.clone(), "returns", |found, want| {
-                        format!("this returns `{found}`, and the function declares `{want}`")
-                    });
-                }
+                self.returns(value.as_ref(), span);
                 Ty::Unknown
             }
 
@@ -3594,6 +3597,16 @@ impl<'a> Checker<'a> {
                     }
                     let ty = self.expr(&arm.body, span);
                     self.scope.pop();
+                    // **An arm that jumps is not one of the types that have to
+                    // agree** ([ADR-138](../../docs/specification/adr/adr-138.md)
+                    // D1): its type is *never*, which fits every expected type
+                    // without widening anything, so an arm that throws sits
+                    // beside an arm that hands back a `&str` and the `match` is
+                    // a `&str`. The language below reads the jumping arm as the
+                    // `!` it is and agrees by construction.
+                    if leaves(&arm.body) {
+                        continue;
+                    }
                     match &result {
                         None => result = Some(ty),
                         Some(seen) if *seen == ty => {}
@@ -4192,6 +4205,26 @@ impl<'a> Checker<'a> {
             // because a mistyped constructor inside it is still a mistake.
             Expr::Throw(inner) => {
                 self.expr(inner, span);
+                Ty::Unknown
+            }
+
+            // **`return`, `break` and `continue` where an expression stands**
+            // ([ADR-138](../../docs/specification/adr/adr-138.md) D1). Nothing
+            // about what they do changes (D2), so each asks exactly what its
+            // statement form asks — the answer to *what is a `return` worth* is
+            // the same wherever it is written.
+            Expr::Return(value) => {
+                self.returns(value.as_deref(), span);
+                Ty::Unknown
+            }
+            Expr::Break | Expr::Continue => {
+                if self.loops == 0 {
+                    let word = match expr {
+                        Expr::Break => "break",
+                        _ => "continue",
+                    };
+                    self.a_jump_with_nowhere_to_go(word, span);
+                }
                 Ty::Unknown
             }
             Expr::Coalesce { value, fallback } => {
@@ -7766,6 +7799,30 @@ impl<'a> Checker<'a> {
                  the loop assigns, or a `return`, where the function has nothing left to \
                  do after the `{word}`"
             )),
+        });
+    }
+
+    /// **What a `return` hands back, asked once**
+    /// ([ADR-138](../../docs/specification/adr/adr-138.md) D2): the statement
+    /// and the expression are the same `return`, so they ask the same
+    /// questions in the same order rather than in two places that drift.
+    fn returns(&mut self, value: Option<&Expr>, span: &Span) {
+        if let Some(value) = value {
+            self.a_field_of_a_borrowed_subject(value, span, "handed back");
+        }
+        let found = match value {
+            Some(value) => self.expr(value, span),
+            None => Ty::Tuple(Vec::new()),
+        };
+        let Some(expected) = self.expected.clone() else {
+            return;
+        };
+        if let Some(value) = value {
+            self.constant_fits(value, Some(&expected), span);
+            self.wraps_into_nullable(&found, &expected, value, span);
+        }
+        self.expect(&found, &expected, span.clone(), "returns", |found, want| {
+            format!("this returns `{found}`, and the function declares `{want}`")
         });
     }
 
