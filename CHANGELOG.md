@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.52] — 2026-09-19
+
+A length beside a buffer is checked at the call
+([ADR-147](docs/specification/adr/adr-147.md) D2), which closes the overrun
+0.0.51 left open.
+
+### Added ([ADR-147](docs/specification/adr/adr-147.md) D2)
+
+- **`NK1159`: a count that cannot be shown to fit its buffer.** A `&[T]` and, right after it, a `usize` are **one fact** in C — the pointer says where and the count says how far — so a call passing a longer count is the buffer overrun the boundary exists to stop, and it is refused here rather than by the operating system.
+- **The *type* is what says *length*, not the name.** `usize` is not a type this language's own values have ([ADR-048](docs/specification/adr/adr-048.md) D1): a length here is an `i64` and the machine-width type left the surface a program can write. A declaration that writes one beside a buffer is therefore naming C's `size_t`, and this is what that says.
+- **Two shapes are accepted and everything else asks for one of them** — D2's *narrow on purpose*: the buffer's own `len()`, and a constant the buffer's length is known to cover, which is an `Array[T, N]` ([ADR-152](docs/specification/adr/adr-152.md) D1). A **zero** fits any buffer, because no length is smaller. A `Vec` with a constant is refused, and correctly: nothing here can show what its length will be.
+
+### Fixed
+
+- **`keeps::moves` did not name `usize` or `isize`**, so a type it did not name was one that **moves** and [ADR-094](docs/specification/adr/adr-094.md) D1 lent the count: `read(0, buf.as_mut_ptr(), &buf.len() as i64)`, which is not Rust. Invisible until now because no program could write a `usize` — the first declaration to name one is the first program to meet it.
+- **A `usize` parameter had no way to take this language's `i64`.** `buf.len()` met `NK1102` with a help naming `as usize`, a cast into a type Part I 2.2 does not offer. A size at the boundary now takes an `i64` and the conversion is emitted — the arrangement `str::repeat` already had, arrived at from the **declaration** rather than from a name.
+
+### Open
+
+- **A `usize` beside a buffer that is not its length** — an offset, say — has no way to say so, and the call is refused. That is D2's narrowness rather than a defect in it: the record chose the pair as definitional. Written into [ADR-147](docs/specification/adr/adr-147.md) §5 so the day a program meets it, it is met as a decision.
+- **D3's opaque handle and D4's `CStr`** are the record's steps 3 and 4 and are next, in that order.
+
 ## [0.0.51] — 2026-09-19
 
 The C boundary lends a view, which makes most of C callable

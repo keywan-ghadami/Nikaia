@@ -1742,25 +1742,19 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
-### 2.44. C has a buffer and no handle, and no length is checked
+### 2.44. C has a buffer and no handle
 
-[ADR-147](specification/adr/adr-147.md) D1 is **built**: a buffer is a `&[T]`
-or a `&mut [T]` that lives for the call, it lowers to the pointer C wants, the
-call makes the address, and either form away from the boundary is `NK1158`. So
-`libc`'s memory surface is callable and Part III 15.1's own block compiles and
-runs. D5 is built by being a decision: `Pointer[T]` stays `NK1135`, permanently
-rather than pending.
+[ADR-147](specification/adr/adr-147.md) D1 and D2 are **built**: a buffer is a
+`&[T]` or a `&mut [T]` that lives for the call, it lowers to the pointer C
+wants, the call makes the address, either form away from the boundary is
+`NK1158`, and a length beside a buffer that cannot be shown to fit it is
+`NK1159`. So `libc`'s memory surface is callable, Part III 15.1's own block
+compiles and runs, and a count longer than its buffer is refused here rather
+than by the operating system. D5 is built by being a decision: `Pointer[T]`
+stays `NK1135`, permanently rather than pending.
 
 **What is left is the library that hands out a handle** — a database
-connection, an HTTP client, a compressor — and the check that keeps a buffer's
-length honest.
-
-*D2, the length:* `read(fd, buf, count)` declares `count: usize` and the two
-parameters are one fact in C. A call where `count` cannot be shown to be at
-most `buf.len()` is the buffer overrun the boundary exists to stop, and it
-should be refused here rather than by the operating system. Today it is not
-checked at all, so a longer count reaches C. Narrow on purpose: a constant or
-`buf.len()`, and anything else asks for one of those two.
+connection, an HTTP client, a compressor.
 
 *D3, the handle:* `opaque type sqlite3 released by sqlite3_close` in the block,
 an address the language never dereferences, with the release a `cleanup` the

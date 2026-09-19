@@ -269,3 +269,135 @@ fn main() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A length beside a view is checked at the call** (D2).
+///
+/// A pointer and a count are one fact in C — the first says where and the
+/// second says how far — so the declaration is where this language says they
+/// belong together, and a call that passes a longer count is the buffer
+/// overrun the boundary exists to stop.
+#[test]
+fn a_length_a_buffer_covers_is_accepted() {
+    for count in ["room.len()", "32", "0"] {
+        let source = format!(
+            "extern \"C\" {{\n\
+             \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+             }}\n\
+             \n\
+             fn main() {{\n\
+             \x20   let mut room: Array[u8, 2] = [0, 0]\n\
+             \x20   let n = unsafe {{ read(0, room, {count}) }}\n\
+             \x20   println(f\"{{n}}\")\n\
+             }}\n",
+        );
+        // `32` is longer than two, so only the other two stand on their own
+        // here; the length that does not fit is the test below.
+        let found: Vec<_> = findings(&source)
+            .into_iter()
+            .filter(|f| f.code == "NK1159")
+            .collect();
+        match count {
+            "32" => assert_eq!(found.len(), 1, "`{count}` is longer than the array"),
+            _ => assert!(found.is_empty(), "`{count}` fits: {found:#?}"),
+        }
+    }
+}
+
+/// **And a constant the array's own length covers is accepted**, because an
+/// `Array[T, N]` carries its length in its type
+/// ([ADR-152](../../../docs/specification/adr/adr-152.md) D1).
+#[test]
+fn a_constant_within_a_known_length_is_accepted() {
+    let source = "extern \"C\" {\n\
+                  \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let mut room: Array[u8, 4] = [0, 0, 0, 0]\n\
+                  \x20   let n = unsafe { read(0, room, 4) }\n\
+                  \x20   println(f\"{n}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+}
+
+/// **A count nothing can show to fit is refused**, naming both ways out — which
+/// is D2's *narrow on purpose*: the buffer's own `len()`, or a constant a known
+/// length covers, and anything else asks for one of those two.
+#[test]
+fn a_length_that_cannot_be_shown_to_fit_is_refused() {
+    let found: Vec<_> = findings(
+        "extern \"C\" {\n\
+         \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut buf: Vec[u8] = []\n\
+         \x20   buf.push(0)\n\
+         \x20   let n = unsafe { read(0, buf, 8) }\n\
+         \x20   println(f\"{n}\")\n\
+         }\n",
+    )
+    .into_iter()
+    .filter(|f| f.code == "NK1159")
+    .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(found[0].message.contains("`buf`"), "{found:#?}");
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .unwrap_or_default()
+            .contains("buf.len()"),
+        "{found:#?}"
+    );
+}
+
+/// **A `usize` at the boundary takes this language's own integer** (D2,
+/// [ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+///
+/// A length here is an `i64` and the machine-width type left the surface a
+/// program can write, so a declaration that says `size_t` is handed an `i64`
+/// and the **conversion is emitted** — a user writes `buf.len()` and never
+/// `buf.len() as usize`, which is a cast into a type Part I 2.2 does not offer.
+#[test]
+fn a_size_takes_an_i64_and_the_conversion_is_written() {
+    let source = "extern \"C\" {\n\
+                  \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let mut buf: Vec[u8] = []\n\
+                  \x20   buf.push(0)\n\
+                  \x20   let n = unsafe { read(0, buf, buf.len()) }\n\
+                  \x20   println(f\"{n}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(
+        rust.contains("nikaia_std::count::of(buf.len() as i64)"),
+        "{rust}"
+    );
+    // **And no `&` in front of it.** `keeps::moves` did not name `usize` or
+    // `isize`, so a type it did not name was one that *moves* and the compiler
+    // lent the count ([ADR-094](../../../docs/specification/adr/adr-094.md)
+    // D1) — `read(0, buf.as_mut_ptr(), &buf.len() as i64)`, which is not Rust.
+    // No program could write a `usize` before this record, so the first
+    // declaration to name one is the first program to meet it.
+    assert!(!rust.contains("&nikaia_std::count::of"), "{rust}");
+    assert!(!rust.contains(", &buf.len()"), "{rust}");
+}
+
+/// **The pair is the declaration's own types**, so a `usize` with no buffer in
+/// front of it is an ordinary parameter and nothing is claimed about it.
+#[test]
+fn a_size_with_no_buffer_before_it_is_left_alone() {
+    let source = "extern \"C\" {\n\
+                  \x20   fn sleep(seconds: usize) -> i32\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let n = unsafe { sleep(1) }\n\
+                  \x20   println(f\"{n}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+}

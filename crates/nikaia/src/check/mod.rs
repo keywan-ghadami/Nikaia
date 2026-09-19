@@ -5165,6 +5165,13 @@ impl<'a> Checker<'a> {
             return signature.result_or_unit();
         }
 
+        // **A length beside a view is checked at the call**
+        // ([ADR-147](../../docs/specification/adr/adr-147.md) D2), before the
+        // arguments are measured one at a time: the question is about a *pair*
+        // of them, and a `usize` that is measured on its own has already
+        // passed.
+        self.a_length_that_fits_its_buffer(written, wanted, given, found, span);
+
         // Kap 5.1: an option is named, so it is checked by name - that it
         // exists, and that what is passed is what it takes.
         for (name, found) in passed {
@@ -5203,6 +5210,21 @@ impl<'a> Checker<'a> {
                 .get(at)
                 .and_then(|given| self.array_literal(found, want, given, span));
             let found = array.as_ref().unwrap_or(found);
+            // **A `usize` at the C boundary takes this language's own integer**
+            // ([ADR-147](../../docs/specification/adr/adr-147.md) D2,
+            // [ADR-048](../../docs/specification/adr/adr-048.md) D1). A length
+            // here is an `i64` and the machine-width type left the surface a
+            // program can write, so a declaration that says `size_t` is handed
+            // an `i64` and the conversion is emitted — the same arrangement
+            // `str::repeat` has, arrived at from the **declaration** rather
+            // than from a name.
+            //
+            // `continue`, because this *is* the fit: what is left for the
+            // positions below to decide is a `&` this argument cannot want, a
+            // number being copied rather than moved.
+            if self.a_count_at_the_boundary(written, want, found) {
+                continue;
+            }
             // Part I 2.3's third position for the wrap: a plain value in a
             // parameter the callee declares nullable. Recorded before `fits`
             // is consulted, because this *is* the fit - `Ty::fits` allows it,
@@ -6795,6 +6817,157 @@ impl<'a> Checker<'a> {
             args: vec![agreed],
             view: false,
         }
+    }
+
+    /// **Whether this argument is a count a C declaration takes in `size_t`**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D2).
+    ///
+    /// `usize` is not a type this language's own values have
+    /// ([ADR-048](../../docs/specification/adr/adr-048.md) D1) — a length is an
+    /// `i64` and the machine-width type left the surface a program can write —
+    /// so a foreign declaration that writes one is naming C's `size_t`, and
+    /// what a caller hands it is the integer this language does have. The
+    /// emitter writes the conversion, exactly as it does for `str::repeat`.
+    ///
+    /// **Only a foreign declaration**, because only there does `usize` mean
+    /// *the other language's word for this*. A `usize` anywhere else is a type
+    /// like any other and is measured like one.
+    fn a_count_at_the_boundary(&self, written: &str, want: &Ty, found: &Ty) -> bool {
+        if !self.foreign_names.contains(written) {
+            return false;
+        }
+        let wants_a_size = matches!(
+            want,
+            Ty::Named { name, args, .. } if name == "usize" && args.is_empty()
+        );
+        let hands_a_number = match found {
+            Ty::Unknown => true,
+            Ty::Named { name, args, .. } => args.is_empty() && is_number(name),
+            _ => false,
+        };
+        wants_a_size && hands_a_number
+    }
+
+    /// **A length beside a view is checked at the call**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D2).
+    ///
+    /// `read(fd, buf, count)` declares `count: usize`, and the two parameters
+    /// are **one fact** in C: the pointer says where and the count says how far.
+    /// A call that passes a longer count is the buffer overrun the boundary
+    /// exists to stop, and it is refused here rather than by the operating
+    /// system.
+    ///
+    /// **What makes a pair is the declaration's own types**: a `&[T]` and, right
+    /// after it, a `usize`. The type is what says *length* rather than the name,
+    /// because `usize` is not a type this language's own values have
+    /// ([ADR-048](../../docs/specification/adr/adr-048.md) D1) — a length here
+    /// is an `i64` and the machine-width type left the surface a program can
+    /// write. A declaration that writes `usize` beside a buffer is therefore
+    /// saying C's `size_t`, and this is what that says.
+    ///
+    /// **Two shapes are accepted and everything else is refused** (D2's *narrow
+    /// on purpose*): the buffer's own `len()`, and a constant the buffer's
+    /// length is known to cover — which is an `Array[T, N]`, whose length is
+    /// part of its type ([ADR-152](../../docs/specification/adr/adr-152.md) D1).
+    /// A **zero** is accepted against any buffer, because no length is smaller.
+    ///
+    /// Nothing is claimed where the callee is not a foreign declaration, or
+    /// where this checker could not work the buffer's type out (Part III, C.4).
+    fn a_length_that_fits_its_buffer(
+        &mut self,
+        written: &str,
+        wanted: &[(String, Ty)],
+        given: &[Expr],
+        found: &[Ty],
+        span: &Span,
+    ) {
+        if !self.foreign_names.contains(written) {
+            return;
+        }
+        for (at, (_, want)) in wanted.iter().enumerate() {
+            if !matches!(want, Ty::Pointed { slice: true, .. }) {
+                continue;
+            }
+            let counts = matches!(
+                wanted.get(at + 1).map(|(_, t)| t),
+                Some(Ty::Named { name, args, .. }) if name == "usize" && args.is_empty()
+            );
+            if !counts {
+                continue;
+            }
+            let (Some(buffer), Some(count)) = (given.get(at), given.get(at + 1)) else {
+                continue;
+            };
+            // `buf.len()` on the very expression the buffer position was given.
+            // Compared by shape, which is how this module tells two arguments of
+            // one statement apart everywhere else.
+            if let Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } = count
+            {
+                if self.parsed.text(*method) == "len"
+                    && args.is_empty()
+                    && argument_shape(receiver) == argument_shape(buffer)
+                {
+                    continue;
+                }
+            }
+            let folded = self.constant_of(count).map(|c| c.value);
+            // A constant the buffer's own length covers. `Array[T, N]` is the
+            // one buffer whose length this compiler knows, and a zero is
+            // covered by every buffer there is.
+            let room = match found.get(at) {
+                Some(Ty::Named { name, args, .. }) if name == ty::ARRAY => match args.as_slice() {
+                    [_, Ty::Count(n)] => Some(*n as i128),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let fits = match (folded, room) {
+                (Some(0), _) => true,
+                (Some(c), Some(n)) => c >= 0 && c <= n,
+                _ => false,
+            };
+            if fits {
+                continue;
+            }
+            self.a_length_that_may_not_fit(written, buffer, span);
+        }
+    }
+
+    /// `NK1159`: a length handed to a C declaration beside a buffer it cannot be
+    /// shown to fit ([ADR-147](../../docs/specification/adr/adr-147.md) D2).
+    ///
+    /// **The help names both ways out**, because D2 accepts exactly two: the
+    /// buffer's own `len()`, and a constant a known length covers. Anything
+    /// else is refused rather than guessed at, which is the polarity every
+    /// check at this boundary keeps — the alternative is the operating system
+    /// answering, about memory the program did not mean to touch.
+    fn a_length_that_may_not_fit(&mut self, written: &str, buffer: &Expr, span: &Span) {
+        let named = self.names_of(buffer);
+        let buffer = named.as_deref().unwrap_or("the buffer");
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1159",
+            message: format!(
+                "`{written}` reads this as the length of `{buffer}`, and it cannot be \
+                 shown to fit"
+            ),
+            notes: vec![
+                "a pointer and a count are one fact in C - the first says where and the \
+                 second says how far - and a count that is longer than the buffer is the \
+                 overrun this boundary exists to stop (ADR-147 D2)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `{buffer}.len()`, or a constant the buffer's own length covers - an \
+                 `Array[T, N]` carries its length and a `Vec[T]` does not"
+            )),
+        });
     }
 
     /// **A literal takes the array type where the use asks for one**

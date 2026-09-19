@@ -113,6 +113,19 @@ pub fn moves(ty: &super::ty::Ty) -> bool {
                     "i8" | "i16"
                         | "i32"
                         | "i64"
+                        // **The two machine-width names are copied too**, and
+                        // their absence here was a defect the C boundary found
+                        // ([ADR-147](../../../docs/specification/adr/adr-147.md)
+                        // D2): a declaration writing `count: usize` got a `&`
+                        // in front of its argument, because a type this list
+                        // does not name is one that **moves**. No program could
+                        // write one before - a length is an `i64` and the
+                        // machine-width type left the surface
+                        // ([ADR-048](../../../docs/specification/adr/adr-048.md)
+                        // D1) - so the first declaration to name one is the
+                        // first program to meet it.
+                        | "isize"
+                        | "usize"
                         | "u8"
                         | "u16"
                         | "u32"

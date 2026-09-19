@@ -2182,6 +2182,19 @@ impl<'p> Emitter<'p> {
         self.ty(ty, Lifetimes::ELIDED)
     }
 
+    /// Whether an `extern "C"` declaration takes this position in `size_t`
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D2).
+    ///
+    /// The declaration's own word, and not a list of names: `is_count` beside
+    /// it is a fact about *Rust's* library that nothing in this compiler can
+    /// derive, where a foreign declaration is written in this very file.
+    fn takes_a_size(&self, callee: &str, at: usize) -> bool {
+        self.foreign_params
+            .get(callee)
+            .and_then(|params| params.get(at))
+            .is_some_and(|ty| !ty.is_view && !ty.is_slice && self.text(ty.name) == "usize")
+    }
+
     /// One method of a `trait`: a signature and a `;`.
     ///
     /// Deliberately **not** `function` with the body switched off. That one
@@ -5992,7 +6005,14 @@ impl<'p> Emitter<'p> {
             // type from, every integer type answers with the same `usize`, and
             // `cannot infer type` about a generated file is what Part III C.1
             // forbids. Rust's own inference already gives a literal the `usize`.
-            let count = is_count(callee, i) && !only_literals(arg);
+            // **And a `usize` a C declaration names is one too**
+            // ([ADR-147](../../docs/specification/adr/adr-147.md) D2): the
+            // declaration says `size_t` and a caller hands over the `i64` this
+            // language has, so the conversion is written here. Read off the
+            // declaration rather than off a list of names, which is what
+            // `is_count` is and has to be for a ledger's entries.
+            let wants_a_size = is_count(callee, i) || self.takes_a_size(callee, i);
+            let count = wants_a_size && !only_literals(arg);
             // **The caller writes no `&`** ([ADR-094](../../docs/specification/adr/adr-094.md)
             // D1): where the callee reads this argument rather than keeping it,
             // the reference is the compiler's, and it is written here. The
@@ -6058,7 +6078,7 @@ impl<'p> Emitter<'p> {
             }
             // A count written only in literals is left for Rust to infer as a
             // `usize`, so a suffix may not be written into it either.
-            let inside = match is_count(callee, i) && !count {
+            let inside = match wants_a_size && !count {
                 true => flow.inferred(),
                 false => flow,
             };
