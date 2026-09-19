@@ -9,6 +9,7 @@
 //! Each generated file goes in a module of its own, because each is a whole
 //! compilation unit and brings its own imports.
 
+use nikaia::contracts::{Ledger, STD};
 use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
 
@@ -192,7 +193,7 @@ grammar Measurements {
 }
 
 fn summarize() {
-    let totals = Measurements.file(data)
+    let totals = Measurements::file(data)
 }
 "#;
 
@@ -243,7 +244,7 @@ fn a_target_without_threads_pins_the_driver_sequential() {
 fn a_sequential_entry_rule_gets_no_piece_driver() {
     // Without a `par_fold` there is nothing to cut and nothing to merge, so the
     // lowering drives the rule's own parser over the whole input (ADR-011 D4).
-    let source = format!("{DIGITS}\n\nfn read() {{\n    let p = Digits.pair(data)\n}}\n");
+    let source = format!("{DIGITS}\n\nfn read() {{\n    let p = Digits::pair(data)\n}}\n");
     let emitted = emit(&source, Build::default());
 
     assert!(!emitted.contains("_pieces("), "{emitted}");
@@ -275,7 +276,7 @@ fn a_sequential_entry_rule_gets_no_piece_driver() {
 fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
     let source = format!(
         "{DIGITS}\n\nfn read() throws {{\n    \
-         let p = Digits.pair(data) catch {{\n        return\n    }}\n}}\n"
+         let p = Digits::pair(data) catch {{\n        return\n    }}\n}}\n"
     );
     let emitted = emit(&source, Build::default());
 
@@ -638,8 +639,8 @@ grammar Two {
 fn zero() -> i64 { return 0 }
 fn add(a: i64, b: i64) -> i64 { return a + b }
 
-fn pieces() { let p = Two.both(data) }
-fn single() { let s = Two.one(data) }
+fn pieces() { let p = Two::both(data) }
+fn single() { let s = Two::one(data) }
 "#;
     let emitted = emit(source, Build::default());
 
@@ -650,12 +651,58 @@ fn single() { let s = Two.one(data) }
     assert!(!emitted.contains("parse_one_pieces("), "{emitted}");
 }
 
+/// **The dot is refused, and the message names the `::`**
+/// ([ADR-140](../../../docs/specification/adr/adr-140.md) D3).
+///
+/// In the **checker**, because only this side knows the receiver names a
+/// grammar: `Nums.number(text)` and `text.number(x)` are the same five tokens,
+/// and a grammar name is not a value the parser can tell apart from one.
+#[test]
+fn a_rule_reached_through_a_dot_is_refused() {
+    let source = "grammar Nums {\n\
+                  \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+                  }\n\
+                  \n\
+                  fn read(text: &str) { let n = Nums.number(text) catch { 0 } }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger");
+    let found: Vec<_> = nikaia::check::check(&parsed, &own, &library)
+        .findings
+        .into_iter()
+        .filter(|f| f.code == "NK1147")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    let help = found[0].help.as_deref().expect("a way out");
+    assert!(help.contains("Nums::number(…)"), "{help}");
+}
+
+/// **A method call on an ordinary value is untouched**, which is what the
+/// refusal has to leave alone: it asks whether the receiver *is* a grammar of
+/// this file and whether the name *is* one of its rules, so a value that
+/// happens to share a spelling is not this.
+#[test]
+fn a_method_on_a_value_is_not_a_grammar_entry() {
+    let source = "grammar Nums {\n\
+                  \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+                  }\n\
+                  \n\
+                  fn read(text: String) -> i64 { return text.len() }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger");
+    assert!(nikaia::check::check(&parsed, &own, &library)
+        .findings
+        .iter()
+        .all(|f| f.code != "NK1147"));
+}
+
 /// **A rule that is not `pub` is not an entry** (D2), and the message says which
 /// of the two it is.
 ///
-/// A grammar name can only stand where a callee stands, so `Two.N(data)` is not
-/// a method call that happens to miss — it is an entry naming a rule that is
-/// there and is private. Saying *there is no such rule* about one written three
+/// A grammar name can only stand where a callee stands, so `Two::N(data)` is not
+/// a path that happens to miss — it is an entry naming a rule that is there and
+/// is private. Saying *there is no such rule* about one written three
 /// lines up is the message a reader cannot act on.
 #[test]
 fn a_private_rule_is_not_an_entry() {
@@ -665,7 +712,7 @@ grammar Two {
     pub rule one -> i64 = n:N -> { n }
 }
 
-fn reach() { let s = Two.N(data) }
+fn reach() { let s = Two::N(data) }
 "#;
     let parsed = parse_to_ast(source).expect("the source parses");
     let Err(error) = emit_program(&parsed, Build::default()) else {

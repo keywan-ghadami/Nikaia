@@ -398,7 +398,9 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   `Summary` declares an anonymous constructor and no `new`. One convention.
 * **Path separator**: `Op::Times`, `Summary::merge`, `http::Request` — and
   `Json.value(input)`, `T.fields` (ADR-082, 10.3) with a dot. Same kind of
-  thing, two spellings.
+  thing, two spellings. *Decided and **built**:*
+  [ADR-140](specification/adr/adr-140.md) D3 — `::` everywhere, with `NK1147`
+  naming it; `T::fields` is a page edit, since that construct is itself unbuilt.
 * **`throws` and `sync` on either side of `->`**: `fn f() throws -> String`
   (7.1) and `fn f() -> String throws` (3.3, every example). The parser takes
   both. One order; after the type reads best. *Decided and **built**:*
@@ -419,7 +421,7 @@ brace literal, the anonymous constructor with `new` gone from `std`'s own types,
 nothing in for `std` as for a package. **One record and five migrations**,
 because they are one question — *does this language say one thing one way* — and
 answering them apart would migrate the corpus five times for one property.
-**D1 and D4 are built** and the other three are not; [`open-work.md`](open-work.md) §2
+**D1, D3 and D4 are built** and the other two are not; [`open-work.md`](open-work.md) §2
 carries one entry each. D1 went first because
 [ADR-133](specification/adr/adr-133.md)'s call half was blocked on exactly the
 spelling it frees, and that half is built too.

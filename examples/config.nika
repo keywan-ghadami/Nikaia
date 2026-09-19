@@ -99,7 +99,7 @@ fn main() throws {
         return
     }
 
-    let sections = Config.file(text) catch {
+    let sections = Config::file(text) catch {
         eprintln(f"{path}: {error}")
         return
     }

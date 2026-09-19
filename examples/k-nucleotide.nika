@@ -167,7 +167,7 @@ fn main() throws {
         return
     }
 
-    let sections = Fasta.file(text) catch {
+    let sections = Fasta::file(text) catch {
         eprintln(f"standard input is not FASTA: {error}")
         return
     }

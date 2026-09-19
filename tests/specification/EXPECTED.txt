@@ -76,9 +76,9 @@
 10-nikaia-light.md #76 lowered (as written)  use http
 10-nikaia-light.md #77 lowered (as written)  // file: network.nika
 20-nikaia-advance.md #1 fragment (as written)  grammar Json {
-20-nikaia-advance.md #2 refused (as written) [NK1117,NK1127]  // The compiler runs the Json grammar at build time.
-20-nikaia-advance.md #3 refused (as written) [NK1117]  fn parse_input(input: String) throws {
-20-nikaia-advance.md #4 refused (as written) [NK1117]  fn describe[T: Struct](value: T) {
+20-nikaia-advance.md #2 refused (as written) [NK1127]  // The compiler runs the Json grammar at build time.
+20-nikaia-advance.md #3 lowered (as written)  fn parse_input(input: String) throws {
+20-nikaia-advance.md #4 refused (as written) [NK1135]  fn describe[T: Struct](value: T) {
 20-nikaia-advance.md #5 fragment (as written)  use nikaia_sql::{Database, mysql}
 20-nikaia-advance.md #6 refused (as written) [sketch NK1135]  impl SqlParser {
 20-nikaia-advance.md #7 fragment (as written)  rule expr -> Expr # "expression" =

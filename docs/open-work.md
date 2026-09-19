@@ -118,7 +118,9 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**Empty, and the entry that was here was wrong on both of its claims.** It said an
+**One entry, below, and it arrived by building something else.** Before it this
+section was empty, and the last entry to leave it was wrong on both of its
+claims. It said an
 accessor cannot hand back a **view** of a field and that the lowering names no
 lifetime. Neither is true, and both were checkable in a minute:
 
@@ -254,6 +256,32 @@ the jump's message got better for it. **A question that can be answered by
 running the corpus is not a reason to leave a defect open**, and this one had
 been open since the record that named it.
 
+
+### 1.1. A grammar's entry claims nothing, and every caller inherits that
+
+**Found by building [ADR-140](specification/adr/adr-140.md) D3**, which is the
+only reason it is visible: a grammar used to be entered through a **method**
+call, and the analyses answer *nothing* about a method whose receiver they
+cannot resolve. `::` makes it a call by name, so they read the entry's contract
+instead — and the entry's contract is `..Default::default()` with `throws` and a
+signature on it, because nothing derives its columns.
+
+*Reproduction:* `examples/inventory/nikaia.contracts`, in the diff of that
+change. `read`, whose body is one `Stock::file(data)`, went from
+`sync = "inferred"`, `keeps = ["data"]`, `touches = []` to none of the three and
+`locks = "?"` — and its lowering went from `pub fn` to `pub async fn`.
+
+**The direction is right and the answer is poor**, which is why this is an entry
+and not a revert. Withholding `sync` on doubt is
+[ADR-010](specification/adr/adr-010.md) D1's polarity, and the *old* answer was
+the analysis failing open: a rule's action is arbitrary Nikaia and could pause,
+and the method shape let the caller keep a promise nobody had derived. What is
+missing is the derivation — a `pub` rule's action blocks are ordinary bodies, so
+`sync`, `keeps`, `touches` and `locks` can be inferred over them and folded into
+the entry the same way a function's are.
+
+*Every example still runs*, at both settings, which is what says this costs
+information rather than correctness.
 
 ## 2. Decided and unbuilt
 
@@ -1288,7 +1316,7 @@ every rule the allowlist record already states. **Nothing of it is built**:
 `from` is in `parser::RESERVED_WORDS`, and the read is unbuilt in either
 spelling.
 
-*Evidence:* Part II 10.6's `Json.value(asset("config.json"))` parses and is
+*Evidence:* Part II 10.6's `Json::value(asset("config.json"))` parses and is
 refused as `NK1117` and `NK1127` — the page ahead of the compiler, in this
 language's words, where the old spelling was a parse fragment.
 
@@ -1652,19 +1680,7 @@ or `type` only; the derivation, which makes it a pure function of the sources li
 every other column; and `NK2401` staying silent about prose, because a changed
 sentence is not a changed contract.
 
-### 2.47. A grammar's rule is reached through a dot
-
-[ADR-140](specification/adr/adr-140.md) D3. `Json.value(input)` reaches a rule of
-the grammar `Json`, and `Op::Times` reaches a variant of an enum. A grammar's name
-is a name; the dot is for a **value's** members, and a namespace behind one is the
-single place this language asks a reader to tell two things apart by what the left
-side happens to be.
-
-*What it needs:* `::` in the grammar's entry rule, the dot refused with a message
-naming the replacement, and Part II 10.2, 10.3 and 11 rewritten with the
-`examples/` that enter a grammar.
-
-### 2.48. `std`'s own types are constructed with `new`
+### 2.47. `std`'s own types are constructed with `new`
 
 [ADR-140](specification/adr/adr-140.md) D2. `Vec::new()`, `String::new()` and
 `HashMap::new()` are Rust's convention reaching through a hand-written ledger,
@@ -1677,7 +1693,7 @@ convention it could see.
 `HashMap()`, the lowering that puts `::new()` back on the Rust side, the corpus
 and the pages, and `1brc.nika`'s `Summary::new`.
 
-### 2.49. `use std::…` brings a name in and a package's `use` does not
+### 2.48. `use std::…` brings a name in and a package's `use` does not
 
 [ADR-140](specification/adr/adr-140.md) D5.
 [ADR-046](specification/adr/adr-046.md)'s rule is *no name is brought in*, and

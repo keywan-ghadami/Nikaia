@@ -154,6 +154,18 @@ fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
 /// **Raised, from 47 to 48**, by ADR-133's call half — Part III 15.1's block,
 /// above. That is what the floor is for, and the sentence is here because the
 /// four before it are.
+///
+/// **Raised again, 48 to 49**, by [ADR-140](../../../docs/specification/adr/adr-140.md)
+/// D3. Part II 10.2's `fn parse_input` entered its grammar through a **dot**,
+/// which made `Json` a name nothing declares (`NK1117`); `Json::value(input)`
+/// is a path and resolves. The block beside it, 10.3's `describe[T: Struct]`,
+/// moved the other way and is the reason the number is 49 and not 50: with
+/// `T::fields` a path rather than a dotted receiver, the `NK1117` that used to
+/// refuse it was gone and the block reached `rustc`, which answered *cannot
+/// find trait `Struct`* about a file nobody wrote. It is `NK1135` now — the
+/// same claim one position over, for a **bound** naming a trait nothing
+/// declares — so the block is refused in this compiler's words rather than
+/// counted as a program.
 #[test]
 fn most_of_a_third_of_the_specifications_blocks_are_programs() {
     let verdicts = specbook::verdicts(&specbook::specification_dir());
@@ -162,8 +174,8 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
         .filter(|v| v.stage == Stage::Lowered)
         .count();
     assert!(
-        lowered >= 48,
-        "{lowered} of {} blocks lower, and 48 did when this floor was last set - \
+        lowered >= 49,
+        "{lowered} of {} blocks lower, and 49 did when this floor was last set - \
          raise it if it is beaten, and read the diff if it is not",
         verdicts.len()
     );

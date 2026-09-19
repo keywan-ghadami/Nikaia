@@ -150,7 +150,7 @@ fn main() throws {
     // The whole parse. A malformed line is a value, not a panic: the parser
     // reports the offset it failed at in the *file*, not in whichever piece a
     // core happened to be holding (ADR-009 D3).
-    let report = Log.file(data) catch {
+    let report = Log::file(data) catch {
         eprintln(f"{path}: {error}")
         return
     }

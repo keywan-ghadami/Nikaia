@@ -57,9 +57,13 @@ qualified name is; the dot is for a **value's** members, and a namespace behind
 one was the single place this language asked a reader to tell two things apart
 by what the left side happens to be.
 
-> **Status:** the dot is what parses today ([ADR-140](adr/adr-140.md) §5 step 3),
-> and this chapter still writes it. `::` in the entry rule, the dot refused with
-> a message, and 10.3 with it are unbuilt.
+> **Status:** **built for a grammar** ([ADR-140](adr/adr-140.md) §5).
+> `Json::value(input)` is the entry and the dot is refused with `NK1147`, which
+> is the checker's and not the parser's: `Json.value(x)` and `text.value(x)` are
+> the same five tokens, and only the side that knows `Json` names a grammar can
+> tell them apart. 10.3's `T::fields` is the same decision on a page whose
+> construct is itself unbuilt — a `comptime` loop over a type's shape does not
+> exist yet, so the spelling is all there is to fix.
 
 **A. Static Embedding (Compile-Time)**
 In a `comptime` binding the parser runs *during the build*. If the input is
@@ -76,7 +80,7 @@ file.
 ```nika
 // The compiler runs the Json grammar at build time.
 // If "config.json" is malformed, the build stops.
-comptime CONFIG: Json::Value = Json.value(asset("config.json"))
+comptime CONFIG: Json::Value = Json::value(asset("config.json"))
 ```
 
 **B. Dynamic Parsing (Runtime)**
@@ -84,7 +88,7 @@ The exact same grammar processes user input or network data while the program ru
 
 ```nika
 fn parse_input(input: String) throws {
-    let data = Json.value(input)
+    let data = Json::value(input)
     println(f"Parsed: {data}")
 }
 ```
@@ -100,7 +104,7 @@ fn parse_input(input: String) throws {
 >
 > What the initialiser may hold is D5's first stage: an integer — a literal,
 > arithmetic over literals and over other constants — and `true` or `false`. **A
-> call is not in it**, so the `Json.value(asset("…"))` above still runs at runtime
+> call is not in it**, so the `Json::value(asset("…"))` above still runs at runtime
 > wherever it is written. A `comptime` binding this compiler cannot evaluate is
 > `NK1127` rather than a value computed later, which is D3's demand doing its one
 > job.
@@ -150,7 +154,7 @@ type's shape as **ordinary data** and a loop that runs while the program is buil
 
 ```nika
 fn describe[T: Struct](value: T) {
-    for field in T.fields {
+    for field in T::fields {
         println(f"{field.name} = {field.of(value)}")
     }
 }
@@ -158,7 +162,7 @@ fn describe[T: Struct](value: T) {
 
 Every piece of that is something the language has elsewhere.
 
-**The bound is what makes `T.fields` exist.** `T: Struct` is an ordinary bound
+**The bound is what makes `T::fields` exist.** `T: Struct` is an ordinary bound
 (4.7), answered from a declaration the way every other one is — and it is what
 says a shape may be asked for at all. A `T: Enum` would have `T.variants`. There is
 no builtin and no special syntax: **reflection is reached as a member**, and
@@ -171,7 +175,7 @@ fit only when something deep in this body failed — with the message pointing i
 somebody else's code. The bound answers *you passed something that is not a
 struct* **once, at the call**, and leaves inside only what is genuinely per-field.
 
-**The loop needs no second word.** `T.fields` is known while the program is built,
+**The loop needs no second word.** `T::fields` is known while the program is built,
 so a loop over it cannot be anything but unrolled — there is no run-time reading to
 rule out. Other languages spell this with a second keyword; here the absence of an
 alternative does the work.
@@ -195,7 +199,7 @@ that is correct for the others, so the diagnostic says which:
 ```text
 error: `println` cannot format a `Vec[u8]`
   --> describe.nika:3:9
-     = unrolling `T.fields` for `User`, at field `avatar`
+     = unrolling `T::fields` for `User`, at field `avatar`
 ```
 
 **What cannot be read is asked** (D6). No build-time system lets you see what a
@@ -210,14 +214,14 @@ what was unrolled, for the types actually used.
 > ```text
 > error[NK1117]: nothing declares `T`
 >   --> describe.nika:2:5
->    2 |     for field in T.fields {
+>    2 |     for field in T::fields {
 > ```
 >
-> because **a type is not a value here**: `T.fields` reads `T` in a place where a
+> because **a type is not a value here**: `T::fields` reads `T` in a place where a
 > value stands, and nothing declares one. That is the first of three things
 > missing, and the deepest — it is what Zig means when it says types are values at
 > build time. The second is the shape itself: `Struct` is not a trait anything
-> declares, so `[T: Struct]` names a bound that does not exist, and `T.fields`
+> declares, so `[T: Struct]` names a bound that does not exist, and `T::fields`
 > would be a member nothing provides. The third is a loop that runs while the
 > program is built, which is the same missing piece [ADR-079](adr/adr-079.md) §3
 > and [ADR-073](adr/adr-073.md) D5 wait on.
@@ -441,7 +445,7 @@ pub rule file -> Summary =
 
 ```nika
 let data = fs::map(path)
-let totals = Measurements.file(data)
+let totals = Measurements::file(data)
 ```
 
 **Pieces and the whole agree — always.** A `par_fold` rule's parser is the per-piece parser, so it skips no whitespace at its entry, unlike every other rule: whitespace skipped there would be skipped at every cut rather than once. A frame that begins with a space keeps it; whitespace-only text between two frames is an error, in pieces and in one go alike. That is what makes the number of cores unable to change the answer — on inputs the grammar accepts and on inputs it rejects.
@@ -461,7 +465,7 @@ the value is a view of the input and nothing is copied (10.6).
 **A rule.** `rule name -> Type = pattern { action }`. The `->` names the
 result type; the block after the pattern is the action, one per alternative,
 and it may read every binding of that alternative. `pub` before `rule` makes
-the rule an entry a call can reach (`Json.value(input)`, [ADR-082](adr/adr-082.md)).
+the rule an entry a call can reach (`Json::value(input)`, [ADR-082](adr/adr-082.md)).
 A rule may take arguments and be used as `list(pair, ",")` is.
 
 **Lexical and syntactic.** A rule whose name starts with an **uppercase**

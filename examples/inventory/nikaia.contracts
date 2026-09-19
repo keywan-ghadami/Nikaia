@@ -12,7 +12,7 @@ toolchain = "nikaia 0.1.0"
 inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 
 [sources]
-"stock.nika" = "5e99682dd8679b3c487a7c6ec7a67ae31445bde6b85b360f02e64a210acee245"
+"stock.nika" = "4bfce7b82e8ec6e644e14e0209df8f6fec9df70215f61734ac16ad7c4ce43195"
 
 [fn."Stock::file"]
 pub = true
@@ -21,10 +21,8 @@ signature = "(input: ?) -> Vec[Entry]"
 
 [fn."read"]
 pub = true
-sync = "inferred"
 throws = ["?"]
-keeps = ["data"]
-touches = []
+locks = "?"
 signature = "(data: &str) -> Vec[Entry]"
 
 [fn."total"]

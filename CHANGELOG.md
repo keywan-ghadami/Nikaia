@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.21] — 2026-09-19
+
+[ADR-140](docs/specification/adr/adr-140.md)'s third migration, and the silence
+it made visible.
+
+### Changed (a grammar's rule is reached with `::`)
+
+- **[ADR-140](docs/specification/adr/adr-140.md) D3.** `Json::value(input)` where `Json.value(input)` stood. A grammar's name is a name and a rule of it is a qualified name like every other; the dot is for a **value's** members, and a namespace behind one was the single place this language asked a reader to tell two things apart by what the left side happens to be. The ledger key was already `Grammar::rule`, so the checker, the emitter and the contracts all read the shape the entry now has.
+- **`NK1147` is the checker's refusal and not the parser's**, because `Json.value(x)` and `text.value(x)` are the same five tokens and a grammar name is not a value. Raised only where the receiver **is** a grammar of this file and the name **is** one of its rules, so the message carries the whole rewrite and a method on a value that shares a spelling is untouched.
+- **Nine sites in `examples/`**, five in the tests, Part II 10.2, 10.6 and 11. `T::fields` on 10.3 is the same decision on a page whose construct is itself unbuilt, so there the spelling was all there was to fix.
+
+### Fixed (the import walk read the old shape)
+
+- **`uses_driver` decided whether the emitted file imports `ParseContext` and `Parallelism`** by looking for a method call, so after the migration a parallel entry lowered to a `parse_…_pieces` call with both names undeclared — `rustc` about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)). No test of the spelling would have caught it; what caught it was *every runnable example prints what it promises*.
+
+### Fixed (a bound naming a trait nothing declares reached the backend)
+
+- **`NK1135`, one position over.** Part II 10.3's `describe[T: Struct]` was refused as `NK1117` — *nothing declares `T`* — because `T.fields` read `T` as a **value**; as a path there was nothing for that refusal to fire on and the block reached `rustc`, which answered *cannot find trait `Struct` in this scope* about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)). A bound is checked against the traits either ledger records ([ADR-106](docs/specification/adr/adr-106.md)) and this unit's own, with the message saying *trait* because that is what a bound names. A parameter with no bound is untouched, and a qualified name is left alone for `NK1135`'s own reason.
+- **The specification's lowering floor is 49**, up from 48: Part II 10.2's `parse_input` entered its grammar through a dot, which made `Json` a name nothing declares, and is a program now.
+
+### And one silence that had been failing open
+
+- **A grammar entry used to contribute nothing to its caller's `sync`, `keeps`, `touches` and `locks`.** The analyses answer nothing about a method whose receiver they cannot resolve, so the caller kept a promise nobody had derived — [ADR-010](docs/specification/adr/adr-010.md) D1's polarity backwards. As a call by name it reads the entry's contract instead, and that contract carries none of those columns because nothing derives them: `examples/inventory`'s `read` lost `sync = "inferred"`, `keeps` and `touches`, and its lowering became `async`. Every example still runs at both settings, so this costs information rather than correctness — and the derivation a `pub` rule's action blocks would allow is `docs/open-work.md` §1.1, which is that section's only live entry.
+
 ## [0.0.20] — 2026-09-19
 
 [ADR-140](docs/specification/adr/adr-140.md)'s second migration, and a test that

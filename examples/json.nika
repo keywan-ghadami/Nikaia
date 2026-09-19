@@ -252,7 +252,7 @@ fn main() throws {
     // One entry rule over the whole document. There is no `par_fold` here and
     // there could not be: a JSON document has no boundary a cutter could find
     // without parsing it, which is the shape ADR-009's frames are *not* for.
-    let document = Json_.value(text) catch {
+    let document = Json_::value(text) catch {
         eprintln(f"{path}: {error}")
         return
     }

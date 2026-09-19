@@ -1802,12 +1802,17 @@ impl<'p> Emitter<'p> {
         for item in &self.parsed.program.items {
             if let Item::Fn { body, .. } = &item.node {
                 visit_block(body, &mut |e| {
-                    if let Expr::MethodCall {
-                        receiver, method, ..
-                    } = e
-                    {
-                        if let Expr::Variable(name) = receiver.as_ref() {
-                            parallel(name, method);
+                    // **A grammar is entered through a path**
+                    // ([ADR-140](../../docs/specification/adr/adr-140.md) D3),
+                    // so this reads the shape the entry has rather than the one
+                    // it used to have. Missing it emitted a `parse_…_pieces`
+                    // call with `ParseContext` and `Parallelism` undeclared —
+                    // `rustc` about a file nobody wrote (Part III C.1).
+                    if let Expr::Call { func, .. } = e {
+                        if let Expr::Path(segments) = func.as_ref() {
+                            if let [grammar, rule] = segments.as_slice() {
+                                parallel(grammar, rule);
+                            }
                         }
                     }
                 });
@@ -4481,6 +4486,19 @@ impl<'p> Emitter<'p> {
         // `pausing_reach` is computed once per unit (see that function for why
         // it over-approximates), and the emitter only looks names up in it: it
         // still resolves nothing (ADR-011 D2).
+        // **A grammar is entered by an ordinary call**
+        // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
+        // **path** since [ADR-140](../../docs/specification/adr/adr-140.md) D3:
+        // `Json::value(input)`, where `Json` names a grammar in this file and
+        // `value` one of its `pub` rules. First, because it is not a call to
+        // anything the recursion graph or the ledger knows.
+        if let Expr::Path(segments) = func {
+            if let [grammar, rule] = segments.as_slice() {
+                if self.grammars.contains_key(grammar) && args.len() == 1 {
+                    return self.grammar_entry(out, *grammar, *rule, &args[0], depth, flow);
+                }
+            }
+        }
         let pausing = self.pausing_key(func);
         if let Some(key) = pausing.as_deref().filter(|_| flow.in_lambda) {
             return Err(pausing_in_a_lambda(key));
@@ -5331,7 +5349,17 @@ impl<'p> Emitter<'p> {
         // settle.
         if let Some(Expr::Variable(name)) = receiver {
             if self.grammars.contains_key(name) && args.len() == 1 {
-                return self.grammar_entry(out, *name, method, &args[0], depth, flow);
+                // **The dot is gone** (ADR-140 D3). `NK1147` is what a program
+                // meets; this is here so that a caller who lowers without
+                // checking gets the same sentence rather than a method call on
+                // a name that is not a value.
+                return Err(refused!(
+                    "a rule of grammar `{}` is reached with `::`, not with a dot \
+                     (ADR-140 D3): write `{}::{}(…)`",
+                    self.text(*name),
+                    self.text(*name),
+                    self.text(method)
+                ));
             }
         }
         if let Some(into) = truncating(self.text(method)) {

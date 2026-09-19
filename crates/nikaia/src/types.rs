@@ -26,12 +26,89 @@ use crate::parser::Parsed;
 pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
     let mut found = Vec::new();
     let known = known_names(parsed, own, library);
+    let traits = known_traits(parsed, own, library);
     for item in &parsed.program.items {
         let mut here = known.clone();
         here.extend(parameters_of(parsed, &item.node));
+        bounds_of(parsed, &item.node, &traits, &item.span, &mut found);
         item_types(parsed, &item.node, &here, &item.span, &mut found);
     }
     found
+}
+
+/// The names a **bound** may have: a `trait` this unit declares, or one either
+/// ledger records ([ADR-106](../../../docs/specification/adr/adr-106.md)).
+///
+/// A set of its own and not `known_names`, because the two questions are not
+/// the same one: `[T: Summary]` asks for a trait where `x: Summary` asks for a
+/// type, and a `struct` is not an answer to the first.
+fn known_traits(parsed: &Parsed, own: &Ledger, library: &Ledger) -> BTreeSet<String> {
+    let mut known: BTreeSet<String> = BTreeSet::new();
+    for ledger in [own, library] {
+        for key in ledger.traits.keys() {
+            known.insert(key.clone());
+            if let Some((_, last)) = key.rsplit_once("::") {
+                known.insert(last.to_string());
+            }
+        }
+    }
+    // Declared in this very unit, which the ledger handed to this walk may not
+    // carry - `check` runs per unit and a ledger is the program's.
+    for item in &parsed.program.items {
+        if let Item::Trait { name, .. } = &item.node {
+            known.insert(parsed.text(*name).to_string());
+        }
+    }
+    known
+}
+
+/// `NK1135` one position over: **a bound naming a trait nothing declares**.
+///
+/// `fn describe[T: Struct](value: T)` lowered to `fn describe<T: Struct>(…)` and
+/// came back from the backend as *cannot find trait `Struct` in this scope*,
+/// which is [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
+/// class and exactly what `NK1135` was built to close for a written type.
+///
+/// **Qualified names are left alone**, for that refusal's own reason: whether
+/// this build can see the package a bound names is a question with its own
+/// message.
+fn bounds_of(
+    parsed: &Parsed,
+    item: &Item,
+    traits: &BTreeSet<String>,
+    span: &Span,
+    out: &mut Vec<Finding>,
+) {
+    let generics = match item {
+        Item::Fn { generics, .. } | Item::Struct { generics, .. } => generics.as_slice(),
+        _ => return,
+    };
+    for parameter in generics {
+        for bound in &parameter.bounds {
+            let name = parsed.text(*bound);
+            if !name.contains("::") && !traits.contains(name) {
+                out.push(nothing_declares_a_trait(name, span));
+            }
+        }
+    }
+}
+
+/// The message [`bounds_of`] raises, under `NK1135`'s code because it is the
+/// same claim: a name written where a declaration has to exist, and none does.
+fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
+    Finding {
+        severity: Severity::Error,
+        span: span.clone(),
+        code: "NK1135",
+        message: format!("nothing declares the trait `{name}`"),
+        notes: vec![
+            "a bound names a trait - what a caller's type has to implement (Part I, 4.7) -              and this name is not one this program declares with `trait`, nor one a ledger              records (ADR-106)"
+                .to_string(),
+        ],
+        help: Some(format!(
+            "declare `{name}` with `trait`, or leave the bound off - a parameter without              one may be moved and passed and nothing else (ADR-074 D5)"
+        )),
+    }
 }
 
 /// The names a written type may have.

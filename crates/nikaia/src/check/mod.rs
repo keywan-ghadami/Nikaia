@@ -1950,6 +1950,46 @@ impl<'a> Checker<'a> {
             .map(|_| format!("{grammar}::{rule}"))
     }
 
+    /// The same key off a **path**, which is how a grammar is entered
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D3): `Json::value(x)`
+    /// names the grammar `Json` and its `pub` rule `value`.
+    ///
+    /// A grammar's name is a name and a rule of it is reached the way every
+    /// other qualified name is. The dot is for a **value's** members, and a
+    /// namespace behind one was the single place this language asked a reader
+    /// to tell two things apart by what the left side happens to be.
+    fn grammar_path(&self, name: &str) -> Option<String> {
+        let (grammar, rule) = name.split_once("::")?;
+        self.grammars
+            .get(grammar)
+            .filter(|rules| rules.contains(rule))
+            .map(|_| name.to_string())
+    }
+
+    /// `NK1147`: a grammar's rule reached through a dot
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D3).
+    ///
+    /// Raised only where the receiver **is** a grammar of this file and the
+    /// name **is** one of its rules, so the message can carry the whole
+    /// rewrite — and so that a method call on an ordinary value named like a
+    /// grammar is untouched.
+    fn a_grammar_reached_through_a_dot(&mut self, grammar: &str, rule: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1147",
+            message: format!("a rule of grammar `{grammar}` is reached with `::`, not with a dot"),
+            notes: vec![
+                "a grammar's name is a name, and a rule of it is a qualified name like \
+                 every other (ADR-140 D3). The dot is for a **value's** members, and a \
+                 namespace behind one was the single place this language asked a reader \
+                 to tell two things apart by what the left side happens to be"
+                    .to_string(),
+            ],
+            help: Some(format!("write `{grammar}::{rule}(…)`")),
+        });
+    }
+
     /// The entry call itself: the input is an expression like any other, and
     /// what comes back is what the rule declares.
     ///
@@ -3469,6 +3509,12 @@ impl<'a> Checker<'a> {
                     if let Some(at) = witness {
                         self.expr(&config[at].value, span);
                     }
+                    // **The dot is gone** (ADR-140 D3), and the refusal is
+                    // here rather than in the parser because only this side
+                    // knows the receiver names a grammar: `Json.value(x)` and
+                    // `text.value(x)` are the same five tokens.
+                    let (grammar, rule) = entered.split_once("::").unwrap_or((&entered, ""));
+                    self.a_grammar_reached_through_a_dot(grammar, rule, span);
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
@@ -4646,6 +4692,15 @@ impl<'a> Checker<'a> {
         // where that is asked: the name is in hand and the block is a flag the
         // walk carries.
         self.a_foreign_call_outside_unsafe(&name, span);
+
+        // **A grammar is entered by an ordinary call**
+        // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
+        // **path** since [ADR-140](../../docs/specification/adr/adr-140.md) D3.
+        // Answered before anything is resolved, because a grammar is not a
+        // ledger entry a `resolve` would find.
+        if let Some(entered) = self.grammar_path(&name) {
+            return self.grammar_call(&entered, args, span);
+        }
 
         // **A struct literal written like a call**
         // ([ADR-140](../../docs/specification/adr/adr-140.md) D1). `Stats(min: 1)`
