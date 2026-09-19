@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.9] — 2026-09-19
+
+### Decided (what the library boundary had left open)
+
+- **[ADR-127](docs/specification/adr/adr-127.md).** `pub extern "C" struct` is a struct with C's layout that crosses the boundary by value — the `Point` and the `Sample` a C programmer expects to pass, not a handle around two doubles. Fields are numbers, `bool`, `char`, payload-free enums and other such structs, every one `pub`; anything else is `NK1145` naming the handle as the shape. A list of them is an array in and the caller's buffer out; the layout is in the ledger, so `--locked` catches a change; the same type serves a declared C function.
+- **[ADR-128](docs/specification/adr/adr-128.md).** The symbol prefix is the package's name, or one `symbol-prefix` line in `[build]`; no declaration renames itself, so the header stays a projection of the ledger.
+- **[ADR-129](docs/specification/adr/adr-129.md).** The `_async` form hands back a ticket that `<package>_cancel` cancels at the task's next pause point, with `cleanup` run and `done` called exactly once (`E_CANCELLED` when the cancellation came first). A stream is the callback the function already takes: `fn(item) -> bool sync`, whose `false` stops it and whose return is the backpressure. No construct is added.
+- **[ADR-130](docs/specification/adr/adr-130.md).** There is no `extern "wasm"`: a WebAssembly module's exports are C-convention functions, and the target names WebAssembly. The same declarations make a `.wasm` with a generated `.js` and `.d.ts`; the host takes its buffers from `<package>_alloc`, a pausing entry point has only the callback form and the `.js` makes it a Promise driven from the host's event loop.
+- **[ADR-131](docs/specification/adr/adr-131.md).** A binding for another language is a generated file over the C library — `nikaia bind python` over `ctypes`, `nikaia bind js` for the WebAssembly build — and never a second artifact. Java, C# and Go load the C library with their own means; a native Node add-on stays open.
+- [ADR-125](docs/specification/adr/adr-125.md) reads as if it had always said so: the table has the value-struct row, the status table has `-7`, the async form has its ticket, and its §4 keeps only the other direction.
+
 ## [0.0.8] — 2026-09-19
 
 Closes what had been unreleased since 0.0.7 — the integrity round (the `Seen`

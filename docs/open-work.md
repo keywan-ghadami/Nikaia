@@ -1451,6 +1451,73 @@ view rule holds and a temporary ends with its statement. It lowers to Rust's
 and the parameter; `NK1144`; the emitter passing `_` through, and a test that
 an ignored lambda argument produces no warning below.
 
+### 2.39. A struct crosses the boundary by value
+
+[ADR-127](specification/adr/adr-127.md), all of it. `pub extern "C" struct`
+has C's layout (declaration order, C padding — `#[repr(C)]` below) and crosses
+by value, in, out and as a field; a `Vec` of them is an array in and the
+caller's buffer out, counted in elements; `T?` of one is the `NONE` status.
+Fields are numbers, `bool`, `char`, payload-free enums and other such structs,
+every field `pub`; anything else is `NK1145` naming the handle as the shape.
+No lock around its methods — it is the caller's memory. The layout is in the
+ledger, so `--locked` catches a change. The same type serves a declared C
+function.
+
+*What it needs, in the record's order (§5):* the parser; the field check and
+`NK1145`; the emitter's `repr(C)`, passing, array and buffer; the header's
+`typedef struct` and the ledger's field record; an example beside the
+library's.
+
+### 2.40. The symbol prefix is one line in the build
+
+[ADR-128](specification/adr/adr-128.md), all of it. `symbol-prefix = "hc"` in
+`[build]`, default the package name with `-` written `_`; a C identifier or
+refused. No declaration renames its own symbol.
+
+*What it needs:* the manifest key with its check; the header generator and
+the emitter reading it.
+
+### 2.41. An async call can be cancelled, and a stream is a callback
+
+[ADR-129](specification/adr/adr-129.md), all of it. The `_async` form ends with
+`<package>_op** op` (or `NULL`); `<package>_cancel` cancels the task at its
+next pause point with `cleanup` run; `done` is called exactly once,
+`E_CANCELLED` (`-7`) when the cancellation came first; `<package>_op_free`
+after `done`. A function producing many results takes `fn(item) -> bool sync`,
+whose `false` stops it, and the next item is produced only after the callback
+returned; a returned list of text or handles is refused naming that shape.
+
+*What it needs, in the record's order (§5):* the ticket, `cancel`, `op_free`
+and the code; the `bool` callback row and the refusal message; a streamed file
+and a cancelled fetch in the C example.
+
+### 2.42. A WebAssembly library is the same entry point on another target
+
+[ADR-130](specification/adr/adr-130.md), all of it. `target = "wasm32-unknown"`
+with `artifact = "c-library"` makes `<package>.wasm`, `<package>.js` and
+`<package>.d.ts` from the same declarations; `extern "wasm"` is refused. The
+host takes buffers from `<package>_alloc`/`_free`; no `set_allocator`; a
+handle is an offset wrapped in a class with `free()`; a pausing entry point
+has only the callback form and the `.js` makes it a Promise with an
+`AbortSignal` for cancel, the module's executor driven from the host's event
+loop.
+
+*What it needs, in the record's order (§5):* the target check with the two
+exports and the absent forms; the `.js`/`.d.ts` generator; the executor
+bridge and the Promise form; the library on a page, and the test in Node.
+
+### 2.43. A binding is a generated file over the C library
+
+[ADR-131](specification/adr/adr-131.md), all of it. `nikaia bind python`
+writes a `ctypes` binding from the ledger (exceptions per variant, `str` and
+`bytes` for buffers, classes with `close()` for handles, `IntEnum`, `None`,
+generators for streams, an awaitable for `_async`); `nikaia bind js` is the
+WebAssembly build's `.js`. No second artifact, no native Node add-on.
+
+*What it needs, in the record's order (§5):* the Python generator over the
+example library; the streamed and async forms; the `js` name; a test that
+imports the binding.
+
 ## 3. Upkeep
 
 ### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect
