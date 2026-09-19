@@ -6,18 +6,25 @@ use winnow::Parser;
 use winnow_grammar::error::ParseError;
 use winnow_grammar::{grammar, InternerContext, ParseContext, ParseInput, StateOf, Symbol};
 
-/// Where the last run of whitespace ended, and whether it held a line break.
+/// What the whitespace skip has seen: where it ended, whether it held a line
+/// break, and the run of `///` lines in it.
 ///
-/// **The grammar's one piece of state, and it exists for one rule**
-/// ([ADR-135](../../../docs/specification/adr/adr-135.md) D3): a `[` at the
-/// start of a line begins a list literal rather than indexing the line above
-/// it. The generator skips the implicit whitespace *before* an alternative is
-/// tried, so by the time the index rule runs the line break is already behind
-/// it and gone — this is what keeps it.
+/// **The grammar's one piece of state, and both things in it are there for the
+/// same reason.** The generator skips the implicit whitespace *before* an
+/// alternative is tried, so by the time a rule runs, what stood in front of it
+/// is consumed and gone — and a PEG only looks ahead. A `[` at the start of a
+/// line is a list literal and not an index
+/// ([ADR-135](../../../docs/specification/adr/adr-135.md) D3); a run of `///`
+/// before an item is that item's documentation
+/// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1). Neither
+/// question can be asked of the input that is left.
 ///
 /// **Idempotent, which is what backtracking asks of state**: what whitespace
 /// stands at a position is a property of the input, so a branch that reads it
-/// and then loses has written the same answer a branch that wins would.
+/// and then loses has written the same answer a branch that wins would. The
+/// doc buffer keeps that true by position — a comment that starts before where
+/// the run already ended is one this has seen, and appending it again is the
+/// one thing that would make re-running it matter.
 #[derive(Clone, Debug, Default)]
 pub struct Trivia {
     /// Where the run ended. Compared against a token's start, so trivia that
@@ -25,6 +32,27 @@ pub struct Trivia {
     end: usize,
     /// Whether it held a `\n`.
     newline: bool,
+    /// The run of `///` lines seen most recently, joined by newlines and with
+    /// the slashes and one leading space taken off.
+    doc: String,
+    /// Where that run ended, which is what makes appending to it idempotent.
+    doc_end: usize,
+    /// How far the unbroken trivia after that run reaches — the position the
+    /// prose is *about*.
+    ///
+    /// **A position and not a flag**, and that is the whole of what makes this
+    /// survive backtracking. `item` tries nine alternatives and eight of them
+    /// fail, but a failed alternative has still consumed tokens and still run
+    /// the whitespace skip after them — so a flag saying *the run still
+    /// reaches here* is false by the time the arm that matches asks. A
+    /// position is a fact about the input, and a later skip somewhere else
+    /// neither extends it nor spoils it.
+    doc_reaches: usize,
+    /// Whether a run has been seen at all. Nothing clears it: a run that no
+    /// longer reaches the position being asked about is ruled out by
+    /// `doc_reaches`, which is a fact about the input rather than a flag a
+    /// losing branch can spoil.
+    doc_live: bool,
 }
 
 impl Trivia {
@@ -32,16 +60,96 @@ impl Trivia {
     ///
     /// A comment that a line break ran straight into **carries** the flag, so
     /// `\n/* c */[1]` is a line that begins with a `[` exactly as `\n[1]` is.
+    ///
+    /// **And a doc run reaches as far as the trivia after it is unbroken**,
+    /// which is what says which item the prose is about: a gap means a token
+    /// was consumed in between, and a sentence on the other side of one
+    /// belongs to nothing here.
     fn ran(&mut self, at: std::ops::Range<usize>, newline: bool) {
         let carried = self.end == at.start && self.newline;
         self.end = at.end;
         self.newline = newline || carried;
+        if self.doc_reaches == at.start {
+            self.doc_reaches = at.end;
+        }
+    }
+
+    /// One `//…` comment, which is a doc comment when a third slash follows
+    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1).
+    ///
+    /// `body` is what stands after the two slashes, so a doc comment's body
+    /// begins with the third. `////` is an ordinary comment, as it is in every
+    /// language that has both.
+    fn comment(&mut self, at: std::ops::Range<usize>, body: &str) {
+        let line = match body.strip_prefix('/') {
+            Some(rest) if !rest.starts_with('/') => rest,
+            // **An ordinary comment neither adds to a run nor ends one.** It is
+            // trivia, so a token has not been consumed and the prose is still
+            // about the item below — and the shape it allows is the one this
+            // repository is written in: a sentence for whoever reaches the
+            // item, then a note for whoever reads the source. What ends a run
+            // is *code*, because then `doc_reaches` stops at the token.
+            _ => {
+                self.ran(at, false);
+                return;
+            }
+        };
+        // Seen already — a `WS` is run speculatively at the same position many
+        // times, and appending twice is the only way that could matter.
+        if at.start < self.doc_end {
+            self.ran(at, false);
+            return;
+        }
+        // A run continues where the trivia after the last line runs straight
+        // into this one; anywhere else it is a new run.
+        if !self.doc_live || self.doc_reaches != at.start {
+            self.doc.clear();
+        }
+        if !self.doc.is_empty() {
+            self.doc.push('\n');
+        }
+        self.doc.push_str(line.strip_prefix(' ').unwrap_or(line));
+        self.doc_end = at.end;
+        self.doc_reaches = at.end;
+        self.doc_live = true;
+        self.ran(at, false);
+    }
+
+    /// The documentation standing immediately before the item at this byte.
+    ///
+    /// **Read and not taken**, which is what backtracking asks for: `item`
+    /// tries nine alternatives and eight of them fail, so a read that emptied
+    /// the buffer would hand the prose to whichever arm failed first. Nothing
+    /// has to be cleared, because the run expires on its own — the next item
+    /// has a token between it and this prose, so `ran` finds the trivia broken
+    /// and `doc_live` is false by the time it asks.
+    fn doc_at(&self, at: usize) -> Option<String> {
+        match self.doc_live && !self.doc.is_empty() && self.doc_reaches == at {
+            true => Some(self.doc.clone()),
+            false => None,
+        }
     }
 
     /// Whether the token at this byte is the first thing on its line.
     fn began_a_line(&self, at: usize) -> bool {
         self.end == at && self.newline
     }
+}
+
+/// The documentation standing in front of the item about to be parsed
+/// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1).
+///
+/// Written by hand and called **first in the rule** rather than read in its
+/// action, because the two are different moments: by the time an item's action
+/// runs, the whitespace skip has been over the item's whole body and what it
+/// recorded is the trivia inside it. This consumes nothing and asks at the one
+/// position where the question has an answer.
+fn doc_here<'a, S>(i: &mut ParseInput<'a, S>) -> Result<Option<String>, ParseError>
+where
+    S: Clone + std::fmt::Debug + StateOf<Trivia>,
+{
+    let at = i.current_token_start();
+    Ok(StateOf::<Trivia>::state(&mut i.state.user_state).doc_at(at))
 }
 
 /// A token that is **not** the first thing on its line
@@ -704,6 +812,7 @@ grammar! {
         // [ADR-136](../../../../docs/specification/adr/adr-136.md) D1).
         extern rule same_line -> ();
         extern rule number_lit -> i64;
+        extern rule doc_here -> Option<String>;
 
         // --- Entry Point ---
         // Rule 'program' -> generates 'parse_program'
@@ -726,7 +835,7 @@ grammar! {
         // tried, so the break is gone by the time anything could look.
         rule WSE = w:multispace1 @ at -> { _state.user().ran(at, w.contains('\n')) }
         rule WS = (WSE | COMMENT | BLOCK_COMMENT)*
-        rule COMMENT @= "//" until(line_ending) -> { _state.user().ran(_span, false) }
+        rule COMMENT @= "//" body:until(line_ending) -> { _state.user().comment(_span, body) }
 
         // **`/* … */`, and it nests**
         // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D1, D2).
@@ -801,16 +910,22 @@ grammar! {
         // what each could have begun with says less than the word for what was
         // expected. A rule that got *further* keeps its own message - the
         // label only replaces the list (winnow-grammar `# "…"`).
+        // **And every arm takes the prose standing in front of it**
+        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1). The
+        // `///` lines are gone by the time this runs — the implicit whitespace
+        // skip ate them — so what is read back is what the skip recorded
+        // (`Trivia::comment`), and `take_doc` is a *take*: an item consumes its
+        // own prose, so the next one does not inherit it.
         rule item -> Spanned<Item> # "item" @=
-            g:grammar_item -> { Spanned::new(g, _span) }
-          | s:struct_item -> { Spanned::new(s, _span) }
-          | e:enum_item -> { Spanned::new(e, _span) }
-          | im:impl_item -> { Spanned::new(im, _span) }
-          | t:trait_item -> { Spanned::new(t, _span) }
-          | u:use_item -> { Spanned::new(u, _span) }
-          | c:comptime_item -> { Spanned::new(c, _span) }
-          | e:extern_item -> { Spanned::new(e, _span) }
-          | i:fn_item -> { Spanned::new(i, _span) }
+            d:doc_here g:grammar_item -> { Spanned::documented(g, _span, d) }
+          | d:doc_here s:struct_item -> { Spanned::documented(s, _span, d) }
+          | d:doc_here e:enum_item -> { Spanned::documented(e, _span, d) }
+          | d:doc_here im:impl_item -> { Spanned::documented(im, _span, d) }
+          | d:doc_here t:trait_item -> { Spanned::documented(t, _span, d) }
+          | d:doc_here u:use_item -> { Spanned::documented(u, _span, d) }
+          | d:doc_here c:comptime_item -> { Spanned::documented(c, _span, d) }
+          | d:doc_here e:extern_item -> { Spanned::documented(e, _span, d) }
+          | d:doc_here i:fn_item -> { Spanned::documented(i, _span, d) }
 
         // Part III 15.1: `extern "C" { fn getpid() -> i32 }`
         // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D1).
@@ -861,7 +976,11 @@ grammar! {
                 Item::Trait { name, methods, is_public: vis.is_some() }
             }
 
+        // A trait's methods are entries too — `Summarize::summary` is how a
+        // bound is looked up — so they take their prose the same way
+        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1).
         rule trait_method -> Spanned<TraitMethod> @=
+            d:doc_here
             KW_FN
             name:NAME
             generics:generic_list?
@@ -871,7 +990,7 @@ grammar! {
             promise:promise_after_the_type
             -> {
                 let (sync, throws) = promise;
-                Spanned::new(TraitMethod {
+                Spanned::documented(TraitMethod {
                     name,
                     generics: generics.unwrap_or_default(),
                     receiver: params.receiver,
@@ -880,10 +999,16 @@ grammar! {
                     ret_type: ret,
                     is_sync: sync,
                     throws,
-                }, _span)
+                }, _span, d)
             }
 
-        rule impl_method -> Spanned<Item> @= f:fn_item -> { Spanned::new(f, _span) }
+        // **A method takes its prose too**
+        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1, D2), and
+        // it is the shape a package's surface is mostly made of: a `pub`
+        // method's entry is in the ledger under `Type::name`, so a consumer
+        // reads it there or nowhere.
+        rule impl_method -> Spanned<Item> @=
+            d:doc_here f:fn_item -> { Spanned::documented(f, _span, d) }
 
         rule kw_sync -> () = KW_SYNC -> { () }
         rule kw_pub -> () = KW_PUB -> { () }

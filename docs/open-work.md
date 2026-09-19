@@ -1694,21 +1694,30 @@ formatter is born with, and **the formatter itself is the entry**. Nothing else 
 the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
 compiler's own Rust and no `.nika` file has ever been formatted by a tool.
 
-### 2.42. The ledger has nowhere to put a sentence
+### 2.42. `std`'s hand-written entries have no prose
 
-[ADR-139](specification/adr/adr-139.md). `nikaia.contracts` **ships** with a
-package and is the one file a consumer's compiler reads about a dependency — every
-signature, every promise, every restriction — and it carries no prose. The prompt
-bundle on the roadmap has the same hole from the other side. `///` is an ordinary
-comment today and a comment in the source does not travel, because the source of a
-published package is not what a consumer reads.
+[ADR-139](specification/adr/adr-139.md) §5 step 3, the half that is a writing
+job. The **mechanism** is built: a run of `///` before an item is that item's
+documentation, and a `pub` one reaches the ledger's `doc` column, derived like
+every other column.
 
-*What it needs, in the record's order (§5):* the lexical rule that **keeps** what
-`WS` throws away, for a run of `///` immediately before an item; the field on the
-AST's items; the `doc` column in the ledger's parse and render, for a `pub` `fn`
-or `type` only; the derivation, which makes it a pure function of the sources like
-every other column; and `NK2401` staying silent about prose, because a changed
-sentence is not a changed contract.
+*What carries one today:* `std`'s one Nikaia entry, `text::digit_value`, whose
+prose is derived and whose drift the regeneration test catches — and five
+hand-written entries a first program reaches: `fs::read_to_string`,
+`io::read_to_string`, `Vec::push`, `String::push`, `HashMap::entry`.
+
+*What is left:* the other ninety-eight hand-written entries of
+`crates/nikaia-std/std.contracts`. Each is a sentence or two about a function
+whose body is Rust, written there and reviewed like code, which is the bargain
+that file already makes about `sync` and `crosses`. It is not a mechanism and
+nothing waits on it — but a `doc` column that is mostly empty is a column a
+reader stops looking at, so it wants doing in one sitting rather than a line at
+a time.
+
+*And two positions the record names that nothing reads yet:* a **field**'s and a
+**variant**'s. [ADR-139](specification/adr/adr-139.md) D1 gives them prose and
+D2 gives the ledger no column for it, so what would read them is `nikaia doc` —
+which is §4's and its own record.
 
 ### 2.43. `use std::…` brings a name in and a package's `use` does not
 

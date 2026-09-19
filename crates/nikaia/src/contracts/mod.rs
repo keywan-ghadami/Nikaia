@@ -234,6 +234,22 @@ pub struct FnContract {
     /// see the body of - which ADR-020 predicted would be an extension of this
     /// file rather than a new one.
     pub signature: Option<Signature>,
+    /// The prose standing in front of the declaration
+    /// ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2).
+    ///
+    /// **Only for a `pub` item**, because the ledger records what a consumer
+    /// may reach ([ADR-028](../../../../docs/specification/adr/adr-028.md) D5)
+    /// and a private item's prose is the source's — which is the only place
+    /// the two can disagree, and the answer that costs nothing.
+    ///
+    /// **Derived and not written**, like every other column: a hand-edited
+    /// `doc` is overwritten by the package's own build exactly as a
+    /// hand-edited `sync` is
+    /// ([ADR-100](../../../../docs/specification/adr/adr-100.md)).
+    ///
+    /// The compiler does not read it (D3). What it does is travel: it is the
+    /// one thing `nikaia.contracts` ships that is for a person.
+    pub doc: Option<String>,
     /// The parameters the result may point into, in declaration order.
     ///
     /// Empty when the result holds no view. Stage 0 has one input lifetime, so
@@ -606,6 +622,22 @@ impl Signature {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TypeContract {
     pub public: bool,
+    /// The prose standing in front of the declaration
+    /// ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2).
+    ///
+    /// **Only for a `pub` item**, because the ledger records what a consumer
+    /// may reach ([ADR-028](../../../../docs/specification/adr/adr-028.md) D5)
+    /// and a private item's prose is the source's — which is the only place
+    /// the two can disagree, and the answer that costs nothing.
+    ///
+    /// **Derived and not written**, like every other column: a hand-edited
+    /// `doc` is overwritten by the package's own build exactly as a
+    /// hand-edited `sync` is
+    /// ([ADR-100](../../../../docs/specification/adr/adr-100.md)).
+    ///
+    /// The compiler does not read it (D3). What it does is travel: it is the
+    /// one thing `nikaia.contracts` ships that is for a person.
+    pub doc: Option<String>,
     /// ADR-008 D6: `@borrowed` was asserted in the source.
     pub borrowed: bool,
     /// Every field, with its type - what a checker needs to say that `r.nmae`
@@ -999,8 +1031,13 @@ impl Ledger {
             for item in &parsed.program.items {
                 match &item.node {
                     Item::Fn { .. } => {
-                        let (name, contract) =
-                            ledger.function(parsed, &item.node, None, &BTreeSet::new());
+                        let (name, contract) = ledger.function(
+                            parsed,
+                            &item.node,
+                            None,
+                            &BTreeSet::new(),
+                            item.doc.as_ref(),
+                        );
                         ledger.functions.insert(name, contract);
                     }
                     Item::Impl {
@@ -1013,8 +1050,13 @@ impl Ledger {
                             .collect();
                         let target = parsed.text(target.name).to_string();
                         for method in methods {
-                            let (name, contract) =
-                                ledger.function(parsed, &method.node, Some(&target), &outer);
+                            let (name, contract) = ledger.function(
+                                parsed,
+                                &method.node,
+                                Some(&target),
+                                &outer,
+                                method.doc.as_ref(),
+                            );
                             ledger.functions.insert(name, contract);
                         }
                     }
@@ -1046,7 +1088,7 @@ impl Ledger {
                     Item::Extern { declarations, .. } => {
                         for declaration in declarations {
                             let (_, mut contract) =
-                                trait_method(parsed, "", &declaration.node, false);
+                                trait_method(parsed, "", &declaration.node, false, None);
                             contract.sync = Sync::Asserted;
                             contract.throws = Vec::new();
                             ledger
@@ -1061,8 +1103,13 @@ impl Ledger {
                     } => {
                         let own = parsed.text(*name).to_string();
                         for method in methods {
-                            let (key, contract) =
-                                trait_method(parsed, &own, &method.node, *is_public);
+                            let (key, contract) = trait_method(
+                                parsed,
+                                &own,
+                                &method.node,
+                                *is_public,
+                                method.doc.as_ref(),
+                            );
                             ledger.functions.insert(key, contract);
                         }
                         ledger.traits.insert(
@@ -1102,6 +1149,7 @@ impl Ledger {
                             parsed.text(*name).to_string(),
                             TypeContract {
                                 public: *is_public,
+                                doc: item.doc.clone().filter(|_| *is_public),
                                 borrowed: *is_borrowed,
                                 fields: field_types,
                                 // Never inferred: a `struct` declared here records
@@ -1228,12 +1276,18 @@ impl Ledger {
     }
 
     /// One function's entry, named as a caller would reach it.
+    ///
+    /// `doc` is the prose standing in front of the declaration
+    /// ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2), and it is
+    /// kept only where the entry is `pub`: what a private item says is the
+    /// source's, and a consumer was never going to read it.
     fn function(
         &self,
         parsed: &Parsed,
         item: &Item,
         target: Option<&str>,
         outer: &BTreeSet<String>,
+        doc: Option<&String>,
     ) -> (String, FnContract) {
         let Item::Fn {
             name,
@@ -1301,6 +1355,7 @@ impl Ledger {
             key,
             FnContract {
                 public: *is_public,
+                doc: doc.filter(|_| *is_public).cloned(),
                 // What the *declaration* says. `sync::infer` reads the body
                 // afterwards and may raise a `No` to `Inferred`; it never
                 // touches this one, because an assertion is what `NK2202`
@@ -1532,6 +1587,12 @@ impl Ledger {
             if let Some(signature) = &contract.signature {
                 out.push_str(&format!("signature = \"{}\"\n", escape(&signature.text())));
             }
+            // **Last, because it is the one line that is for a person**
+            // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2):
+            // every key above it is something a compiler reads.
+            if let Some(doc) = &contract.doc {
+                out.push_str(&format!("doc = \"{}\"\n", escape(doc)));
+            }
         }
 
         for (name, contract) in &self.types {
@@ -1587,6 +1648,9 @@ impl Ledger {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
+            }
+            if let Some(doc) = &contract.doc {
+                out.push_str(&format!("doc = \"{}\"\n", escape(doc)));
             }
         }
 
@@ -1703,6 +1767,7 @@ impl Ledger {
                         "signature" => {
                             entry.signature = Some(Signature::parse(&unquote(value, at())?)?)
                         }
+                        "doc" => entry.doc = Some(unquote(value, at())?),
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
                     }
                 }
@@ -1729,6 +1794,7 @@ impl Ledger {
                             }
                         }
                         "tethered" => entry.tethered = string_list(value, at())?,
+                        "doc" => entry.doc = Some(unquote(value, at())?),
                         "iterates" => {
                             let value = unquote(value, at())?;
                             if value != "throws" {
@@ -1837,6 +1903,7 @@ fn trait_method(
     trait_name: &str,
     method: &crate::ast::TraitMethod,
     public: bool,
+    doc: Option<&String>,
 ) -> (String, FnContract) {
     let mut params: Vec<(String, ty::Ty)> = Vec::new();
     if let Some(receiver) = &method.receiver {
@@ -1855,6 +1922,7 @@ fn trait_method(
         format!("{trait_name}::{}", parsed.text(method.name)),
         FnContract {
             public,
+            doc: doc.filter(|_| public).cloned(),
             // ADR-109 D1: the declaration's own word, and its absence is the
             // claim that it may pause.
             sync: match method.is_sync {
@@ -1985,8 +2053,16 @@ fn quoted(rest: &str, close: &str, at: usize) -> Result<String> {
 
 /// A value that may itself hold a quote - which a signature does, the moment an
 /// option's default is a string: `method: &str = "GET"`.
+/// **And a `\n` becomes `\\n`**, which is
+/// [ADR-139](../../../docs/specification/adr/adr-139.md) D2's one demand on
+/// this format: a doc comment holds its line breaks and the file is read a
+/// line at a time. Nothing else written here has ever held one, so every
+/// ledger already on disk renders and reads back exactly as it did.
 fn escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 fn unquote(value: &str, at: usize) -> Result<String> {
@@ -2000,6 +2076,11 @@ fn unquote(value: &str, at: usize) -> Result<String> {
     while let Some(c) = chars.next() {
         match c {
             '\\' => match chars.next() {
+                // The only escape that means something other than itself, and
+                // `escape` above only ever writes it for a real line break: a
+                // backslash of the value's own is `\\\\` and reaches the arm
+                // below on its second character.
+                Some('n') => out.push('\n'),
                 Some(escaped) => out.push(escaped),
                 None => return Err(anyhow!("line {at}: a `\\` at the end of `{value}`")),
             },

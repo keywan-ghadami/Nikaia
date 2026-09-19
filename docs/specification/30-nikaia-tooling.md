@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.45 (Draft)
+**Version:** 0.0.46 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -334,6 +334,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
 | `fields` | type | every field with its type: `["name: &str", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
+| `doc` | fn, type | the run of `///` lines standing in front of the declaration, with its line breaks kept and no markup the ledger has to agree about ([ADR-139](adr/adr-139.md) D2). **Only on a `pub` entry**: the ledger records what a consumer may reach, and a private item's prose is the source's. Derived like every other column, so a hand-edited one is overwritten by the package's own build. The compiler does not read it — what it does is travel, and it is the one line in this file that is for a person |
 | `trait."…"` | table | a trait, with its methods as ordinary `fn` entries (signature, `sync`, `throws`) and no `fields`; a bound and an `impl … for` must name one ([ADR-106](adr/adr-106.md) D3). *Not implemented.* |
 | `impl."A for T"` | table | an `impl`, in the ledger of the package that wrote it. Whether `T` implements `A` is the union over every ledger a program reads plus its own; no ledger claims completeness ([ADR-106](adr/adr-106.md) D4). *Not implemented.* |
 | `crosses` | type | a value of this type **may cross a thread** (`true`), **may not** (`false`, which the crossing refusals fire on, [ADR-123](adr/adr-123.md)), or nothing was recorded (absent) ([ADR-005](adr/adr-005.md) §1 Group B, `NK25xx`). Written by hand, or by `nikaia describe` from a foreign type's fields, and never inferred: it answers only for a type whose parts this compiler cannot walk, since a Nikaia `struct` records its `fields` and the check walks those. Absence means *nobody said*, not *it may not*; and *nobody said* is not permission, so the compiler does not put such a value on a thread of its own choosing |
@@ -352,6 +353,8 @@ Only what is true is written. **An absent `sync` on an entry means not `sync`.**
 `locks` is the one key whose absence is the restrictive answer written the other way round. **An absent `locks` means the function touches a lock.** A function that reaches no lock says `locks = false`; a function that says nothing is read as reaching one.
 
 *Design rationale:* for `sync`, absence lands on the restrictive answer and costs nothing. For `locks` it would land on permission, and reading the absence of an answer as a yes is the polarity [ADR-010](adr/adr-010.md) D1 forbids ([ADR-039](adr/adr-039.md) D5).
+
+**A changed `doc` is not a changed contract.** `--locked` compares this file byte for byte and a changed sentence fails that, which is correct: the file is derived and the build regenerates it. `NK2401`, which narrates what *broke a caller*, says nothing about prose ([ADR-139](adr/adr-139.md) D4).
 
 **`sync` is written in two forms** ([ADR-027](adr/adr-027.md)). `sync = true` is a promise the source made; a body that contradicts it is refused with `NK2202`. `sync = "inferred"` is a promise the body implies: nothing the function calls can pause, so the function cannot pause.
 

@@ -22,18 +22,44 @@ pub type Span = std::ops::Range<usize>;
 pub struct Spanned<T> {
     pub node: T,
     pub span: Span,
+    /// The run of `///` lines standing immediately before it
+    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1), with the
+    /// slashes and one leading space taken off and the line breaks kept.
+    ///
+    /// **Here rather than on each item**, because it is the same fact about
+    /// every one of them and this is already the wrapper that says *where this
+    /// came from*: prose in front of an item is a second answer to that
+    /// question. Only an **item** carries one today; a field's and a variant's
+    /// wait on `nikaia doc`, which is what would read them
+    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) §4).
+    ///
+    /// The compiler does not read it (D3). What it does is travel.
+    pub doc: Option<String>,
 }
 
 impl<T> Spanned<T> {
     pub fn new(node: T, span: Span) -> Self {
-        Self { node, span }
+        Self {
+            node,
+            span,
+            doc: None,
+        }
+    }
+
+    /// The same, with the documentation standing in front of it.
+    pub fn documented(node: T, span: Span, doc: Option<String>) -> Self {
+        Self { node, span, doc }
     }
 }
 
 /// Lets a rule written `-> Spanned<T> @=` wrap its value without an action.
 impl<T> winnow_grammar::WithSpan<T> for Spanned<T> {
     fn with_span(node: T, span: Span) -> Self {
-        Self { node, span }
+        Self {
+            node,
+            span,
+            doc: None,
+        }
     }
 }
 

@@ -8,7 +8,13 @@
 // and it is small on purpose: what a Nikaia file can be here is exactly what
 // Stage 0 can lower, and the moment that grows, so can this (ADR-014).
 
-// The value of a decimal digit: '7' is 7.
+/// The value of a decimal digit: `'7'` is `7`.
+///
+/// A character that is not a digit is not a question this answers: it hands
+/// back whatever the subtraction comes to.
+//
+// The prose above is the **documentation** (ADR-139 D1) and travels in the
+// ledger; what follows is about the source and stays here.
 //
 // A free function rather than a method on the character: Rust's own
 // `char::to_digit` has this name with a different shape, an inherent method

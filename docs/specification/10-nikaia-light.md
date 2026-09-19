@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.45 (Draft)
+**Version:** 0.0.46 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -98,12 +98,17 @@ block comment is a comment wherever it stands, including `/** … */`.
 **A run of `///` lines immediately before an item is that item's
 documentation** ([ADR-139](adr/adr-139.md)). An item is a `fn`, a `struct`, an
 `enum`, a `trait`, a field or a variant. Anywhere else `///` is an ordinary
-comment. A doc comment is prose: the compiler reads no directive, no `@param`
-and no link out of it. On a `pub` item the doc comment becomes the `doc` column
-of `nikaia.contracts` (Part III, 13.5), derived there like every other column.
+comment. An ordinary comment standing between the run and the item does not end
+it; a statement does. A doc comment is prose: the compiler reads no directive,
+no `@param` and no link out of it. On a `pub` item the doc comment becomes the
+`doc` column of `nikaia.contracts` (Part III, 13.5), derived there like every
+other column.
 
-> **Implementation status:** Not implemented. `///` is an ordinary comment
-> today and the ledger has no `doc` column ([ADR-139](adr/adr-139.md) §5).
+> **Implementation status:** Partially implemented. A `fn`, a method, a trait
+> method, a `struct`, an `enum` and a `trait` carry theirs, and a `pub` one
+> reaches the ledger's `doc` column ([ADR-139](adr/adr-139.md) §5). A **field**
+> and a **variant** do not: nothing reads them until `nikaia doc` exists, which
+> is that record's §4.
 
 ### 2.1. Variables and Assignment
 A **variable** is a named storage location that holds a value. A variable is

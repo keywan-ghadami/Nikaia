@@ -197,6 +197,7 @@ touches = ["file(path) read"]
 throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> String"
+doc = "The whole of a file, as text.\n\nIt fails where the file cannot be read or is not UTF-8. The bytes came from\nthe program's own machine, so what it hands back is **trusted**: a map keyed\non it is hashed with the fast function."
 
 [fn."fs::write"]
 pub = true
@@ -251,6 +252,7 @@ pub = true
 throws = ["?"]
 provenance = "trusted"
 signature = "() -> String"
+doc = "The whole of standard input, as text.\n\nIt pauses rather than holding the thread it is called on. It fails where the\ninput is not UTF-8."
 
 [fn."list::ListExt::map"]
 pub = true
@@ -543,6 +545,7 @@ mutates = true
 touches = []
 keeps = ["key"]
 signature = "(&HashMap[$K, $V], key: ?) -> Entry[$V]"
+doc = "The place in the map this key names, whether or not anything is there yet.\n\nOne lookup rather than two: `or_insert` puts a value in where there is none,\nand `and_modify` changes the one that is. The map **keeps** the key."
 
 # `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
 # borrows as, so `m.get("x")` on a `HashMap[String, …]` is correct and `$K`
@@ -668,6 +671,7 @@ mutates = true
 touches = []
 keeps = ["c"]
 signature = "(&String, c: char)"
+doc = "Add one character to the end of the text."
 
 [fn."String::push_str"]
 pub = true
@@ -779,6 +783,7 @@ mutates = true
 touches = []
 keeps = ["value"]
 signature = "(&Vec[$T], value: ?)"
+doc = "Add a value to the end of the list.\n\nThe list **keeps** the value, so what is handed over is given away rather\nthan lent."
 
 [fn."Vec::sort"]
 pub = true
@@ -1051,6 +1056,7 @@ pub = true
 sync = true
 touches = []
 signature = "(c: char) -> i32"
+doc = "The value of a decimal digit: `'7'` is `7`.\n\nA character that is not a digit is not a question this answers: it hands\nback whatever the subtraction comes to."
 
 # What the program was started with, and the one type here that says it **may
 # cross a thread** (`crosses`, ADR-005 §1 Group B). Its parts are Rust, so

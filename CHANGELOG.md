@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.46] — 2026-09-19
+
+A doc comment is a language feature, and the ledger carries it
+([ADR-139](docs/specification/adr/adr-139.md)).
+
+### Added ([ADR-139](docs/specification/adr/adr-139.md) D1, D2, D3)
+
+- **A run of `///` before an item is that item's documentation**, and a `pub` one reaches the `doc` column of `nikaia.contracts` — derived like every other column, so a hand-edited one is overwritten by the package's own build. `nikaia.contracts` **ships** with a package and is the one file a consumer's compiler reads about a dependency; it had nowhere to put a sentence, and a comment in the source does not travel because the source of a published package is not what a consumer reads.
+- **What it took is not a lexical rule.** The implicit whitespace skip runs *before* a rule is tried, so by the time `item` matches, the `///` lines in front of it are consumed and gone — the same wall [ADR-135](docs/specification/adr/adr-135.md) D3 met one record earlier. The skip **records** what it sees and the item reads it back.
+- **And it is read at the item's first byte rather than in its action.** An action runs when the rule has matched, and by then the skip has been over the whole body: what it recorded is the trivia *inside* the item. `doc_here` consumes nothing and asks at the one position where the question has an answer.
+- **The answer is a position and not a flag**, which is what makes it survive backtracking: `item` tries nine alternatives and eight of them fail *after consuming tokens*, so a flag saying *the run still reaches here* is false by the time the arm that matches asks.
+- **An ordinary comment between the prose and the item does not end the run.** The first reading of D1's *immediately before* — a `//` line ends it — forbids the shape this repository is written in: a sentence for whoever reaches the item, then a note for whoever reads the source. A comment is trivia, so no token has been consumed. What ends a run is **code**.
+- **`std` is the first corpus.** Its one Nikaia entry, `text::digit_value`, carries prose that is **derived** — and the test that regenerates `std.contracts` from its sources caught the drift the moment the line was missing, which is the whole argument for deriving it. Five hand-written entries a first program reaches carry one too; `open-work.md` §2.42 holds the other ninety-eight.
+- *Ten tests* in `crates/nikaia/tests/doc_comments.rs`.
+
+### Changed (one thing in the ledger's format)
+
+- **`escape` writes a line break as `\n` and `unquote` reads it back.** A doc comment holds its line breaks and the file is read a line at a time. Nothing else ever written to that file has held one, so every ledger already on disk renders and reads back exactly as it did.
+
 ## [0.0.45] — 2026-09-19
 
 `throw`, `return`, `break` and `continue` where an expression stands
