@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.50] — 2026-09-19
+
+`std`'s ledger carries prose about every entry it publishes, which completes
+[ADR-139](docs/specification/adr/adr-139.md) §5 step 3.
+
+### Added ([ADR-139](docs/specification/adr/adr-139.md) D2)
+
+- **A hundred and three sentences.** `nikaia.contracts` **ships** with a package and is the one file a consumer's compiler reads about a dependency; `std` is the surface every program meets first, and six of its hundred and nine entries had a `doc` line. The rest do now — written in that file and reviewed like code, which is the bargain it already makes about `sync` and `crosses`, because a compiler that does not read Rust cannot derive them.
+- **What they say is what a caller cannot get from the signature.** Whether a key may be absent and what the `??` is for; that `len()` counts **bytes** and `chars().count()` is the other question; that a sort is **stable**, so two passes express a compound order; that `drain` hands its elements over owned rather than lent; that a `Seen` value is what a `set(after)` compares against; that `trim` hands back a **view** and costs no allocation.
+- **What keeps the column full is a test and not a habit.** `every_public_entry_of_the_shipped_std_ledger_has_prose` fails on an entry added without a sentence, the way the two beside it fail on one added without a `signature`. A column that is mostly empty is a column a reader stops looking at, and six out of a hundred and nine was the shape that was heading for.
+- **And the prose survives the file.** A `doc` is the one value in this format that can hold a line break, written `\n` and read back; rendering the shipped ledger and parsing it again holds the escape and its reverse together over a hundred real entries rather than one fixture.
+
+### Open
+
+- **A field's prose and a variant's** still go nowhere: [ADR-139](docs/specification/adr/adr-139.md) D1 gives them the same meaning it gives an item's and the parser keeps neither, because D2 gives the ledger no column for them. What would read them is `nikaia doc`, which is that record's §4 and wants a record of its own — so it is one piece of work with that one rather than a job waiting on nobody. `docs/open-work.md` §2 carries it.
+
 ## [0.0.49] — 2026-09-19
 
 The array literal's answer descends with the literal, which closes the defect

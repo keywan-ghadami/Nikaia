@@ -1706,30 +1706,23 @@ formatter is born with, and **the formatter itself is the entry**. Nothing else 
 the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
 compiler's own Rust and no `.nika` file has ever been formatted by a tool.
 
-### 2.42. `std`'s hand-written entries have no prose
+### 2.42. A field's prose and a variant's go nowhere
 
-[ADR-139](specification/adr/adr-139.md) §5 step 3, the half that is a writing
-job. The **mechanism** is built: a run of `///` before an item is that item's
-documentation, and a `pub` one reaches the ledger's `doc` column, derived like
-every other column.
+[ADR-139](specification/adr/adr-139.md) D1 gives a `///` run in front of a
+**field** and a **variant** the same meaning it gives one in front of an item,
+and the parser keeps neither. Everything else of that record is built: the nine
+item positions, the ledger's `doc` column, and `std`'s hundred and eight
+hand-written entries, which carry prose held there by a test.
 
-*What carries one today:* `std`'s one Nikaia entry, `text::digit_value`, whose
-prose is derived and whose drift the regeneration test catches — and five
-hand-written entries a first program reaches: `fs::read_to_string`,
-`io::read_to_string`, `Vec::push`, `String::push`, `HashMap::entry`.
+*Why it sits still:* D2 gives the ledger a column for a `fn` and a `type` and
+none for a field or a variant, so nothing would **read** what the parser kept.
+What would is `nikaia doc`, which is that record's §4 and wants a record of its
+own — so this is one piece of work with that one rather than a job waiting on
+nobody.
 
-*What is left:* the other ninety-eight hand-written entries of
-`crates/nikaia-std/std.contracts`. Each is a sentence or two about a function
-whose body is Rust, written there and reviewed like code, which is the bargain
-that file already makes about `sync` and `crosses`. It is not a mechanism and
-nothing waits on it — but a `doc` column that is mostly empty is a column a
-reader stops looking at, so it wants doing in one sitting rather than a line at
-a time.
-
-*And two positions the record names that nothing reads yet:* a **field**'s and a
-**variant**'s. [ADR-139](specification/adr/adr-139.md) D1 gives them prose and
-D2 gives the ledger no column for it, so what would read them is `nikaia doc` —
-which is §4's and its own record.
+*What it needs:* `doc_here` at a field's and a variant's first byte, which is
+the same hand-written parser the items already use; a place on `FieldDef` and on
+`EnumVariant` to keep it; and the reader that makes it travel.
 
 ### 2.43. The database driver checks the SQL while the program is built
 

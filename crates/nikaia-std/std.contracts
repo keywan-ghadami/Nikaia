@@ -135,6 +135,7 @@ sync = true
 touches = ["args read"]
 provenance = "trusted"
 signature = "() -> Args"
+doc = "The arguments the program was started with.\n\nThe program's own name is at 0, so the first one a user typed is at 1. Two\ncalls meet on nothing and neither waits for the other."
 
 # The argument at a position, and **there may not be one** - which is the half
 # the corpus writes every time: `cli::args().nth(1) ?? "default"` opens six of
@@ -151,6 +152,7 @@ mutates = true
 touches = ["args read"]
 provenance = "trusted"
 signature = "(&Args, at: i64) -> String?"
+doc = "The argument at a position, or nothing where there is none.\n\nThere may not be one, which is why this hands back a `String?`: the shape the\nexamples write is `cli::args().nth(1) ?? some_default`."
 
 [fn."eprint"]
 pub = true
@@ -158,6 +160,7 @@ sync = true
 touches = ["stderr write"]
 locks = true
 signature = "(text: ?)"
+doc = "Write text to standard error, with no line break after it."
 
 [fn."eprintln"]
 pub = true
@@ -165,6 +168,7 @@ sync = true
 touches = ["stderr write"]
 locks = true
 signature = "(text: ?)"
+doc = "Write text to standard error, and end the line."
 
 [fn."fs::map"]
 pub = true
@@ -172,6 +176,7 @@ touches = ["file(path) read"]
 throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> Mapped"
+doc = "A file as memory, without reading it into any of its own.\n\nWhat comes back reads as text and the pages arrive as they are touched, which\nis what makes a file larger than memory workable. It fails where the file\ncannot be opened."
 
 [fn."fs::Mapped::deref"]
 pub = true
@@ -183,6 +188,7 @@ sync = true
 touches = ["file read"]
 returns = "borrows(self)"
 signature = "(&Mapped) -> &str"
+doc = "The mapped file, as text.\n\nIt is a **view** of the mapping and not a copy, so it lives as long as the\nmapping does and costs nothing to take."
 
 [fn."fs::read"]
 pub = true
@@ -190,6 +196,7 @@ touches = ["file(path) read"]
 throws = ["?"]
 provenance = "trusted"
 signature = "(path: ?) -> Vec[u8]"
+doc = "The whole of a file, as bytes.\n\nIt fails where the file cannot be read. The bytes came from the program's own\nmachine, so what it hands back is **trusted**."
 
 [fn."fs::read_to_string"]
 pub = true
@@ -204,6 +211,7 @@ pub = true
 touches = ["file(path) write"]
 throws = ["?"]
 signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
+doc = "Write data to a file.\n\n`create` makes the file where there is none and `append` adds to the end\nrather than replacing what is there. It fails where the path cannot be\nwritten."
 
 [fn."print"]
 pub = true
@@ -211,6 +219,7 @@ sync = true
 touches = ["stdout write"]
 locks = true
 signature = "(text: ?)"
+doc = "Write text to standard output, with no line break after it."
 
 [fn."println"]
 pub = true
@@ -218,6 +227,7 @@ sync = true
 touches = ["stdout write"]
 locks = true
 signature = "(text: ?)"
+doc = "Write text to standard output, and end the line."
 
 [fn."html::escape"]
 pub = true
@@ -225,12 +235,14 @@ sync = true
 touches = []
 returns = "borrows(text)"
 signature = "(text: &str) -> ?"
+doc = "The same text, with the five characters HTML reads as markup written as\nentities.\n\nWhat comes back **borrows** its argument where nothing had to change, so text\nwith no markup in it costs no allocation."
 
 [fn."io::read"]
 pub = true
 throws = ["?"]
 provenance = "trusted"
 signature = "() -> Vec[u8]"
+doc = "The whole of standard input, as bytes.\n\nIt may pause rather than holding the thread it is called on, and it fails\nwhere the input cannot be read."
 
 # **A produced sequence, and its step can fail**
 # ([ADR-105](../../docs/specification/adr/adr-105.md) D1). It said `-> Lines`,
@@ -246,6 +258,7 @@ signature = "() -> Vec[u8]"
 pub = true
 provenance = "trusted"
 signature = "() -> Seq[String] throws"
+doc = "Standard input, one line at a time.\n\nThe lines are produced as they are asked for rather than read up front, so a\nstream larger than memory is a `for` over this. A **step** can fail, because\na step of it reads the pipe."
 
 [fn."io::read_to_string"]
 pub = true
@@ -258,6 +271,7 @@ doc = "The whole of standard input, as text.\n\nIt pauses rather than holding th
 pub = true
 sync = "from(f)"
 signature = "(?, f: fn(?)) -> ?"
+doc = "Each element through a function, as a new list.\n\nWhether this pauses is the lambda's answer and not its own."
 
 # --- Written by hand: the collections and text the language below provides ---
 #
@@ -305,12 +319,14 @@ pub = true
 sync = true
 touches = []
 signature = "(f64) -> f64"
+doc = "The number without its sign."
 
 [fn."f64::sqrt"]
 pub = true
 sync = true
 touches = []
 signature = "(f64) -> f64"
+doc = "The square root. A negative number gives not-a-number, which is what the\nhardware hands back rather than a failure."
 
 # ## Arithmetic that does not abort (ADR-043 D2, D3)
 #
@@ -338,168 +354,196 @@ pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Addition that **wraps** at the ends of an `i32` instead of aborting."
 
 [fn."i32::wrapping_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Subtraction that **wraps** at the ends of an `i32` instead of aborting."
 
 [fn."i32::wrapping_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Multiplication that **wraps** at the ends of an `i32` instead of aborting."
 
 [fn."i32::wrapping_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Division that **wraps** instead of aborting.\n\nThe one case it changes is the most negative `i32` divided by `-1`, whose\nanswer does not fit; a divisor of zero still aborts, because no result would\nbe the right one."
 
 [fn."i32::wrapping_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
+doc = "Negation that **wraps** instead of aborting: the most negative `i32`\nnegates to itself."
 
 [fn."i32::wrapping_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
+doc = "The number without its sign, **wrapping** instead of aborting: the most\nnegative `i32` comes back unchanged."
 
 [fn."i32::wrapping_shl"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, places: ?) -> i32"
+doc = "Shift left, with the number of places taken around the width of an `i32`\nrather than aborting. Bits shifted off the top are lost, as a shift always\nloses them."
 
 [fn."i32::wrapping_shr"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, places: ?) -> i32"
+doc = "Shift right, with the number of places taken around the width of an `i32`\nrather than aborting. The sign bit is carried in, because an `i32` is signed."
 
 [fn."i32::saturating_add"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Addition that **stops** at the ends of an `i32` instead of aborting."
 
 [fn."i32::saturating_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Subtraction that **stops** at the ends of an `i32` instead of aborting."
 
 [fn."i32::saturating_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Multiplication that **stops** at the ends of an `i32` instead of aborting."
 
 [fn."i32::saturating_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
+doc = "Division that **stops** at the ends of an `i32` instead of aborting.\n\nThe one case it changes is the most negative `i32` divided by `-1`; a divisor\nof zero still aborts."
 
 [fn."i32::saturating_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
+doc = "Negation that **stops** at the ends of an `i32` instead of aborting: the\nmost negative `i32` negates to the most positive one."
 
 [fn."i32::saturating_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
+doc = "The number without its sign, **stopping** at the ends of an `i32` instead of\naborting: the most negative `i32` comes back as the most positive one."
 
 [fn."i64::wrapping_add"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Addition that **wraps** at the ends of an `i64` instead of aborting."
 
 [fn."i64::wrapping_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Subtraction that **wraps** at the ends of an `i64` instead of aborting."
 
 [fn."i64::wrapping_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Multiplication that **wraps** at the ends of an `i64` instead of aborting."
 
 [fn."i64::wrapping_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Division that **wraps** instead of aborting.\n\nThe one case it changes is the most negative `i64` divided by `-1`, whose\nanswer does not fit; a divisor of zero still aborts, because no result would\nbe the right one."
 
 [fn."i64::wrapping_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
+doc = "Negation that **wraps** instead of aborting: the most negative `i64`\nnegates to itself."
 
 [fn."i64::wrapping_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
+doc = "The number without its sign, **wrapping** instead of aborting: the most\nnegative `i64` comes back unchanged."
 
 [fn."i64::wrapping_shl"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, places: ?) -> i64"
+doc = "Shift left, with the number of places taken around the width of an `i64`\nrather than aborting. Bits shifted off the top are lost, as a shift always\nloses them."
 
 [fn."i64::wrapping_shr"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, places: ?) -> i64"
+doc = "Shift right, with the number of places taken around the width of an `i64`\nrather than aborting. The sign bit is carried in, because an `i64` is signed."
 
 [fn."i64::saturating_add"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Addition that **stops** at the ends of an `i64` instead of aborting."
 
 [fn."i64::saturating_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Subtraction that **stops** at the ends of an `i64` instead of aborting."
 
 [fn."i64::saturating_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Multiplication that **stops** at the ends of an `i64` instead of aborting."
 
 [fn."i64::saturating_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
+doc = "Division that **stops** at the ends of an `i64` instead of aborting.\n\nThe one case it changes is the most negative `i64` divided by `-1`; a divisor\nof zero still aborts."
 
 [fn."i64::saturating_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
+doc = "Negation that **stops** at the ends of an `i64` instead of aborting: the\nmost negative `i64` negates to the most positive one."
 
 [fn."i64::saturating_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
+doc = "The number without its sign, **stopping** at the ends of an `i64` instead of\naborting: the most negative `i64` comes back as the most positive one."
 
 # **Truncation has a name**, and the name carries the destination
 # ([ADR-043](../../docs/specification/adr/adr-043.md) D7). Since D4 a conversion
@@ -525,18 +569,21 @@ pub = true
 sync = true
 touches = []
 signature = "(i64) -> i32"
+doc = "The low 32 bits of an `i64`, as an `i32`.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits - said rather than assumed."
 
 [fn."f64::truncating_i32"]
 pub = true
 sync = true
 touches = []
 signature = "(f64) -> i32"
+doc = "The whole part of an `f64`, as an `i32`, with the digits that do not fit\ndropped.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits."
 
 [fn."f64::truncating_i64"]
 pub = true
 sync = true
 touches = []
 signature = "(f64) -> i64"
+doc = "The whole part of an `f64`, as an `i64`, with the digits that do not fit\ndropped.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits."
 
 [fn."HashMap::entry"]
 pub = true
@@ -565,30 +612,35 @@ pub = true
 sync = true
 touches = []
 signature = "(&HashMap[$K, $V], key: ?) -> $V?"
+doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?`: the\nshape a program writes is `counts.get(k) ?? 0`, or `counts.get(k)?.field`."
 
 [fn."HashMap::keys"]
 pub = true
 sync = true
 touches = []
 signature = "(&HashMap[$K, $V]) -> Seq[$K] sync"
+doc = "The keys, one at a time.\n\nA map has no order of its own, so a program that prints one says which order\nit means."
 
 [fn."HashMap::len"]
 pub = true
 sync = true
 touches = []
 signature = "(&HashMap[?, ?]) -> i64"
+doc = "How many pairs the map holds."
 
 [fn."HashMap::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> HashMap[?, ?]"
+doc = "A map with nothing in it. It is written `HashMap()`."
 
 [fn."HashMap::values"]
 pub = true
 sync = true
 touches = []
 signature = "(&HashMap[$K, $V]) -> Seq[$V] sync"
+doc = "The values, one at a time, in the order the keys come out in."
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
 # is what `from(f)` says (ADR-029). Sound because the lambda runs *during* the
@@ -598,6 +650,7 @@ signature = "(&HashMap[$K, $V]) -> Seq[$V] sync"
 pub = true
 sync = "from(f)"
 signature = "(Entry[$V], f: fn(&$V)) -> Entry[$V]"
+doc = "Change the value that is already there, and leave an empty place alone.\n\nWhether this pauses is the lambda's answer and not its own."
 
 [fn."Entry::or_insert"]
 pub = true
@@ -605,12 +658,14 @@ sync = true
 touches = []
 keeps = ["value"]
 signature = "(Entry[$V], value: ?) -> &$V"
+doc = "The value that is there, putting this one in first where there is none.\n\nThe map **keeps** the value, so it is given away rather than lent."
 
 # Also runs its lambda, before it returns.
 [fn."Entry::or_insert_with"]
 pub = true
 sync = "from(f)"
 signature = "(Entry[$V], f: fn()) -> &$V"
+doc = "The same as `or_insert`, with the value built only where one is needed.\n\nWhether this pauses is the lambda's answer and not its own."
 
 # `Shared[T]` is the type several parts of a program own at once (Part I 6.2).
 # It is here rather than inferred for the reason the whole of this section is
@@ -639,6 +694,7 @@ sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(&Shared[$T]) -> &$T"
+doc = "What the handle holds.\n\nIt is what makes a `&Shared[Connection]` reach a parameter declared\n`&Connection`: a caller is not meant to notice the handle."
 
 # `String()` reaches nothing and hands back an empty one. Four adjacent pairs in
 # `examples/` named it as the callee nobody had described, which is what asked
@@ -650,6 +706,7 @@ pub = true
 sync = true
 touches = []
 signature = "() -> String"
+doc = "Text with nothing in it. It is written `String()`."
 
 [fn."String::chars"]
 pub = true
@@ -657,12 +714,14 @@ sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(&String) -> Seq[char] sync"
+doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
 [fn."String::len"]
 pub = true
 sync = true
 touches = []
 signature = "(&String) -> i64"
+doc = "How many **bytes** the text is.\n\nNot how many characters: text is UTF-8, so a character outside ASCII is more\nthan one byte. `chars().count()` is the other question."
 
 [fn."String::push"]
 pub = true
@@ -679,24 +738,28 @@ sync = true
 mutates = true
 touches = []
 signature = "(&String, text: ?)"
+doc = "Add text to the end of this text."
 
 [fn."Vec::is_empty"]
 pub = true
 sync = true
 touches = []
 signature = "(&Vec[?]) -> bool"
+doc = "Whether the list holds nothing."
 
 [fn."Vec::len"]
 pub = true
 sync = true
 touches = []
 signature = "(&Vec[?]) -> i64"
+doc = "How many elements the list holds."
 
 [fn."Vec::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> Vec[?]"
+doc = "A list with nothing in it. It is written `Vec()`."
 
 # **`drain` takes the elements away** (ADR-094 D4). A `for` lends, so the body
 # that hands an element to something which keeps it says so here - and below it
@@ -706,12 +769,14 @@ pub = true
 sync = true
 touches = []
 signature = "(Vec[$T]) -> Seq[$T] sync"
+doc = "The elements, one at a time, **taken out** of the list.\n\nWhat a `for` over this binds is owned rather than lent, so an element may be\nhanded to something that keeps it - and the list goes with them, because\nthat is what taking them out means."
 
 [fn."HashMap::drain"]
 pub = true
 sync = true
 touches = []
 signature = "(HashMap[$K, $V]) -> Seq[($K, $V)] sync"
+doc = "The pairs, one at a time, **taken out** of the map.\n\nWhat a `for` over this binds is owned rather than lent, so a key or a value\nmay be handed to something that keeps it - and the map goes with them,\nbecause that is what taking them out means."
 
 # --- What is produced step by step, and what walks it ------------------------
 #
@@ -735,6 +800,7 @@ sync = true
 touches = []
 # The walk is what consumes it (D2): the sequence goes in by value.
 signature = "(Seq[$T]) -> Vec[$T]"
+doc = "Everything the sequence produces, as a list.\n\nThe walk is what consumes it, so the sequence is not there afterwards."
 
 [fn."Seq::count"]
 pub = true
@@ -743,6 +809,7 @@ touches = []
 # `i64`, which is what `Vec::len` says for the same reason: this language's
 # integer is not Rust's `usize`, and the emitter writes the cast.
 signature = "(Seq[$T]) -> i64"
+doc = "How many elements the sequence produces.\n\nIt has to walk the whole of it to answer, which is what separates this from a\nlist's `len()`."
 
 [fn."Seq::nth"]
 pub = true
@@ -750,12 +817,14 @@ sync = true
 touches = []
 # **There may not be one**, which is `Args::nth`'s shape one type over.
 signature = "(Seq[$T], at: i64) -> $T?"
+doc = "The element at a position, or nothing where the sequence is shorter than that.\n\nIt walks up to that position to answer."
 
 [fn."Seq::join"]
 pub = true
 sync = true
 touches = []
 signature = "(Seq[$T], sep: &str) -> String"
+doc = "Everything the sequence produces, written one after another with this text\nbetween them."
 
 # `sync = "from(f)"` for the reason `list::ListExt::map` has it: the step is the
 # lambda, so the caller's own claim is what decides ([ADR-029](../../docs/specification/adr/adr-029.md)
@@ -767,6 +836,7 @@ pub = true
 sync = "from(f)"
 touches = []
 signature = "(Seq[$T], f: fn($T)) -> Seq[?]"
+doc = "Each element through a function.\n\nThe elements are produced as they are asked for, so nothing is walked until\nsomething walks the result. Whether a step pauses is the lambda's answer."
 
 [fn."Seq::filter"]
 pub = true
@@ -775,6 +845,7 @@ touches = []
 # The element type survives a filter, which is the one place a `Seq` entry says
 # more than `?`.
 signature = "(Seq[$T], f: fn($T)) -> Seq[$T]"
+doc = "Only the elements the function says yes to.\n\nThe element type survives, so what comes out holds what went in. Whether a\nstep pauses is the lambda's answer."
 
 [fn."Vec::push"]
 pub = true
@@ -791,6 +862,7 @@ sync = true
 mutates = true
 touches = []
 signature = "(&Vec[?])"
+doc = "Put the elements in their natural order, in place.\n\nIt is **stable**: elements the order does not separate keep the order they\nhad, which is what lets two passes express a compound order."
 
 # Part II 12.2's four doors ([ADR-059](../../docs/specification/adr/adr-059.md)).
 # Written down so the checker can resolve them: without an entry a call is "a
@@ -813,6 +885,7 @@ touches = ["lock read"]
 sync = true
 locks = true
 signature = "(&Locked[$T]) -> Seen[$T]"
+doc = "A copy of what the lock holds.\n\nWhat comes back is **stamped**: it carries where it came from, so a `set`\nthat means *only if nothing changed since* can say which reading it means."
 
 [fn."Locked::set"]
 pub = true
@@ -821,6 +894,7 @@ sync = true
 keeps = ["value"]
 locks = true
 signature = "(&Locked[$T], value: $T)"
+doc = "Put a value in, whatever is there now.\n\nThe lock **keeps** the value. Where the new value is worked out from the old\none, `update` is the door that does not lose a change made in between."
 
 
 # **The one door for a stamped value** (ADR-111 D5). `kasse.set(neu; after:
@@ -847,6 +921,7 @@ throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
 signature = "(&Locked[$T], value: $T, seen: &$T)"
+doc = "Put a value in **only if** what the lock holds is still what was seen.\n\nIt is written `lock.set(value; after: seen)`, and it fails with `Overtaken`\nwhere something changed in between - which is the answer a read-modify-write\nthrough two doors needs."
 
 # **Reads in place and may not change what it is handed** (ADR-059 D1): the one
 # door that answers a question about a large value without copying it.
@@ -856,6 +931,7 @@ touches = ["lock read"]
 sync = "from(f)"
 locks = true
 signature = "(&Locked[$T], f: fn(&$T)) -> ?"
+doc = "Read what the lock holds, in place, without copying it.\n\nThe block may not change it. Whether the call pauses is the block's answer\nand not the door's; waiting to open the lock is not pausing."
 
 # **Where locked data changes** (D2). The old value goes in by value and the new
 # one comes back, so no handle into the inside ever exists - and `old` is an
@@ -870,6 +946,7 @@ sync = "from(f)"
 # for here is the arity and the `sync` column.
 locks = true
 signature = "(&Locked[$T], f: fn($T))"
+doc = "Change what the lock holds: the old value goes in and the new one comes back.\n\nNo handle into the inside ever exists, which is what makes this the door for\na change that depends on what is there. Whether the call pauses is the\nblock's answer."
 
 # `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-039 D9): a value
 # several parts own at once and any of them may change. **It is one name here and
@@ -892,6 +969,7 @@ touches = ["lock read"]
 sync = true
 locks = true
 signature = "(&SharedMut[$T]) -> Seen[$T]"
+doc = "A copy of what this value holds.\n\nWhat comes back is **stamped**: it carries where it came from, so a `set`\nthat means *only if nothing changed since* can say which reading it means."
 
 [fn."SharedMut::set"]
 pub = true
@@ -900,6 +978,7 @@ sync = true
 keeps = ["value"]
 locks = true
 signature = "(&SharedMut[$T], value: $T)"
+doc = "Put a value in, whatever is there now.\n\nIt **keeps** the value. Where the new value is worked out from the old one,\n`update` is the door that does not lose a change made in between."
 
 [fn."SharedMut::set(after)"]
 pub = true
@@ -909,6 +988,7 @@ throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
 signature = "(&SharedMut[$T], value: $T, seen: &$T)"
+doc = "Put a value in **only if** what is held is still what was seen.\n\nIt is written `value.set(next; after: seen)`, and it fails with `Overtaken`\nwhere something changed in between."
 
 [fn."SharedMut::access"]
 pub = true
@@ -916,12 +996,14 @@ touches = ["lock read"]
 sync = "from(f)"
 locks = true
 signature = "(&SharedMut[$T], f: fn(&$T)) -> ?"
+doc = "Read what this value holds, in place, without copying it.\n\nThe block may not change it. Whether the call pauses is the block's answer\nand not the door's."
 
 [fn."SharedMut::update"]
 pub = true
 touches = ["lock write"]
 sync = "from(f)"
 signature = "(&SharedMut[$T], f: fn($T))"
+doc = "Change what this value holds: the old one goes in and the new one comes back.\n\nWhether the call pauses is the block's answer."
 
 # **The two doors over several locks** (Part II 12.3, ADR-065). They take the
 # locks and then the block, and the acquisition order is by address so that two
@@ -938,17 +1020,20 @@ signature = "(&SharedMut[$T], f: fn($T))"
 pub = true
 touches = ["lock read"]
 sync = "from(f)"
+doc = "Read several locked values at once, in place.\n\nThe locks are taken in one order however they are written, so two tasks\nnaming the same two the other way round still take them alike and neither\nwaits forever. The block may not change what it is shown."
 
 [fn."update_all"]
 pub = true
 touches = ["lock write"]
 sync = "from(f)"
+doc = "Change several locked values at once.\n\nThe locks are taken in one order however they are written, so two tasks\nnaming the same two the other way round still take them alike and neither\nwaits forever."
 
 [fn."Vec::sort_by_key"]
 pub = true
 sync = "from(f)"
 mutates = true
 signature = "(&Vec[$T], f: fn(&$T)) -> ?"
+doc = "Put the elements in the order of what the function returns, in place.\n\nIt is **stable**, so a sort by one key after a sort by another leaves the\nfirst as the tie-breaker."
 
 [fn."str::chars"]
 pub = true
@@ -956,12 +1041,14 @@ sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(&str) -> ?"
+doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
 [fn."str::len"]
 pub = true
 sync = true
 touches = []
 signature = "(&str) -> i64"
+doc = "How many **bytes** the text is.\n\nNot how many characters: text is UTF-8, so a character outside ASCII is more\nthan one byte. `chars().count()` is the other question."
 
 # `n` is the `i64` a program can hold, not the `usize` Rust counts in
 # (ADR-054 D2). The conversion is emitted at the call and a negative count
@@ -972,18 +1059,21 @@ pub = true
 sync = true
 touches = []
 signature = "(&str, n: i64) -> String"
+doc = "The text written `n` times, one after another.\n\n`n` is an ordinary `i64`, and a negative one aborts with *a count cannot be\nnegative* rather than with anything about the language below."
 
 [fn."str::starts_with"]
 pub = true
 sync = true
 touches = []
 signature = "(&str, prefix: ?) -> bool"
+doc = "Whether the text begins with this."
 
 [fn."str::to_string"]
 pub = true
 sync = true
 touches = []
 signature = "(&str) -> String"
+doc = "The same text, owned rather than borrowed."
 
 # Written down because the corpus asks for it - `line.to_uppercase()` in
 # `examples/k-nucleotide.nika` - and because it is sayable: a case fold hands
@@ -997,24 +1087,28 @@ pub = true
 sync = true
 touches = []
 signature = "(&str) -> String"
+doc = "The same text with every character in upper case, as owned text.\n\nIt follows Unicode rather than ASCII, so a character whose upper case is more\nthan one character becomes all of them."
 
 [fn."str::to_lowercase"]
 pub = true
 sync = true
 touches = []
 signature = "(&str) -> String"
+doc = "The same text with every character in lower case, as owned text.\n\nIt follows Unicode rather than ASCII."
 
 [fn."String::to_uppercase"]
 pub = true
 sync = true
 touches = []
 signature = "(&String) -> String"
+doc = "The same text with every character in upper case, as new text.\n\nIt follows Unicode rather than ASCII."
 
 [fn."String::to_lowercase"]
 pub = true
 sync = true
 touches = []
 signature = "(&String) -> String"
+doc = "The same text with every character in lower case, as new text.\n\nIt follows Unicode rather than ASCII."
 
 # **The way out `NK1131` names, so it has to be described here**
 # ([ADR-083](../../docs/specification/adr/adr-083.md)). A field of a borrowed
@@ -1030,6 +1124,7 @@ pub = true
 sync = true
 touches = []
 signature = "(&String) -> String"
+doc = "A copy of the text, owned by whoever asked for it.\n\nIt is the way out of handing a field of a borrowed subject away by value: the\ncopy is the caller's and the field stays where it is."
 
 # The same for a view, which is what a `&str` field or a literal is cloned from.
 [fn."str::clone"]
@@ -1037,6 +1132,7 @@ pub = true
 sync = true
 touches = []
 signature = "(&str) -> String"
+doc = "A copy of the text, owned by whoever asked for it.\n\nThe same way out one type over: a view is copied into text of its own."
 
 [fn."str::trim"]
 pub = true
@@ -1044,6 +1140,7 @@ sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(&str) -> &str"
+doc = "The same text with the white space at both ends left off.\n\nWhat comes back is a **view** into the text it was given, so it costs no\nallocation and lives as long as that text does."
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
@@ -1067,9 +1164,11 @@ doc = "The value of a decimal digit: `'7'` is `7`.\n\nA character that is not a 
 [type."cli::Args"]
 pub = true
 crosses = true
+doc = "The arguments the program was started with.\n\nIt may cross to another thread, so a task may be handed one."
 
 [type."fs::Mapped"]
 pub = true
+doc = "A file held as memory: the pages arrive as they are touched rather than being\nread up front, which is what makes a file larger than memory workable.\n\nIt reads as text through the ordinary `&str` surface."
 
 # A step of this one can **fail**, and that is a fact a caller cannot get from
 # anywhere else: a `for` over it is a place the enclosing function can fail
@@ -1077,6 +1176,7 @@ pub = true
 [type."io::Lines"]
 pub = true
 iterates = "throws"
+doc = "Standard input, one line at a time.\n\nA **step** of it can fail, because a step reads the pipe - so a `for` over it\nis a place the function around it can fail from, and that function says\n`throws`."
 
 # The type several parts of a program own at once (Part I 6.2), and the one type
 # here whose `deref` entry above a caller is not meant to notice: a function that
@@ -1100,6 +1200,7 @@ iterates = "throws"
 # above says.
 [type."TaskHandle"]
 pub = true
+doc = "What a `spawn` hands back: the one end of a task that is still running.\n\n`join` is where the two meet again."
 
 # `.join()` is where two tasks meet again, and it is a **suspension point**: the
 # task fills a slot and wakes whoever is waiting on it, so joining gives the
@@ -1117,6 +1218,8 @@ pub = true
 [fn."TaskHandle::join"]
 pub = true
 signature = "(TaskHandle[$T]) -> $T"
+doc = "Wait for the task and take what it produced.\n\nIt gives the thread up rather than holding it, so other work runs while this\nwaits. A handle can be joined once, because joining takes it."
 
 [type."Shared"]
 pub = true
+doc = "A value several parts of a program own at once.\n\nA caller is not meant to notice it: a function taking `&Connection` accepts a\n`&Shared[Connection]`. Handing a handle on by value makes a second one rather\nthan taking the first away."
