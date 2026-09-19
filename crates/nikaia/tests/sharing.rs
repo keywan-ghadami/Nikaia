@@ -855,6 +855,10 @@ fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
         // A count is a number the compiler knows and nothing at run time, so
         // there is nothing in it to hold a handle
         // ([ADR-152](../../../docs/specification/adr/adr-152.md) D1).
+        // What the C boundary lends lives for the call
+        // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1), so a
+        // handle cannot be taken out of one and kept.
+        Ty::Pointed { .. } => false,
         Ty::Unknown | Ty::Var { .. } | Ty::Count(_) => false,
     }
 }

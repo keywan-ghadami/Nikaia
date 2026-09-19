@@ -329,7 +329,7 @@ fn item_types(
         Item::Extern { declarations, .. } => {
             for declaration in declarations {
                 for arg in &declaration.node.args {
-                    written_at(
+                    written_foreign(
                         parsed,
                         &arg.ty,
                         known,
@@ -339,7 +339,14 @@ fn item_types(
                     );
                 }
                 if let Some(ret) = &declaration.node.ret_type {
-                    written(parsed, ret, known, &declaration.span, out);
+                    written_foreign(
+                        parsed,
+                        ret,
+                        known,
+                        Position::Elsewhere,
+                        &declaration.span,
+                        out,
+                    );
                 }
             }
         }
@@ -424,6 +431,28 @@ fn written(
     written_at(parsed, ty, known, Position::Elsewhere, span, out)
 }
 
+/// The same, where the type stands in an `extern "C"` declaration
+/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1) — the one place
+/// this language writes `&mut` and `&[T]`.
+fn written_foreign(
+    parsed: &Parsed,
+    ty: &Type,
+    known: &BTreeSet<String>,
+    at: Position,
+    span: &Span,
+    out: &mut Vec<Finding>,
+) {
+    if let Some(element) = ty.generics.first().filter(|_| ty.is_slice) {
+        written(parsed, element, known, span, out);
+        return;
+    }
+    let pointed = Type {
+        is_mut: false,
+        ..ty.clone()
+    };
+    written_at(parsed, &pointed, known, at, span, out)
+}
+
 fn written_at(
     parsed: &Parsed,
     ty: &Type,
@@ -432,6 +461,18 @@ fn written_at(
     span: &Span,
     out: &mut Vec<Finding>,
 ) {
+    // **`&mut` and `&[T]` are the C boundary's and nowhere else's**
+    // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1). A parameter
+    // this language may change is written `mut name: T`
+    // ([ADR-094](../../../docs/specification/adr/adr-094.md) D3), and a run of
+    // elements whose length the type does not carry has no lowering here - so
+    // the two forms are refused outside an `extern "C"` declaration rather than
+    // handed to the language below, which is where `written_foreign` above lets
+    // them through.
+    if ty.is_slice || ty.is_mut {
+        out.push(only_at_the_c_boundary(ty.is_slice, span));
+        return;
+    }
     // **A function type is not a name**
     // ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), the same way
     // a tuple is not: what `fn` holds is a shape, and its parameters are in
@@ -443,6 +484,18 @@ fn written_at(
     // called `3`. The walk over the arguments below reaches it, so the silence
     // has to be here rather than at the one position that writes one.
     if ty.count.is_some() {
+        return;
+    }
+    // **And a slice is not a name**
+    // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): `&[u8]` is a
+    // shape, its element is walked below, and `slice` is the word this compiler
+    // interns for it rather than a type anybody declares. Reading `name` here
+    // would report that nothing declares a type called `slice` - which is
+    // exactly what it did.
+    if ty.is_slice {
+        for argument in &ty.generics {
+            written(parsed, argument, known, span, out);
+        }
         return;
     }
     if !ty.is_tuple && ty.code.is_none() {
@@ -501,6 +554,49 @@ fn only_a_parameter_yet(span: &Span) -> Finding {
              behind a type of your own until the kept lowering lands"
                 .to_string(),
         ),
+    }
+}
+
+/// `NK1158`: `&mut` or `&[T]` outside an `extern "C"` declaration
+/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1).
+///
+/// Both forms exist for the C boundary and have no meaning away from it. A
+/// parameter this language may change is written `mut name: T`
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3) — the word goes in
+/// front of the **name**, because what it decides is also what the caller sees —
+/// and a run of elements whose length the type does not carry is `Vec[T]` or
+/// `Array[T, N]` here, both of which know how long they are.
+///
+/// **Refused rather than lowered**, which is this compiler's choice everywhere
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)): what
+/// `rustc` would say about `&mut i64` in a generated signature is about a file
+/// nobody wrote.
+fn only_at_the_c_boundary(slice: bool, span: &Span) -> Finding {
+    let (what, message, help) = match slice {
+        true => (
+            "a run of elements",
+            "`[T]` is a type only at the C boundary",
+            "write `Vec[T]`, or `Array[T, N]` where the length is known while \
+             the program is built - both carry their length, which `[T]` does not",
+        ),
+        false => (
+            "a view that may be written through",
+            "`&mut` is a type only at the C boundary",
+            "write the `mut` in front of the **name** instead - `fn fill(mut out: Vec[i64])` \
+             is where in-place change is written (Part I, 2.1)",
+        ),
+    };
+    Finding {
+        severity: Severity::Error,
+        span: span.clone(),
+        code: "NK1158",
+        message: message.to_string(),
+        notes: vec![format!(
+            "{what} is what an `extern \"C\"` declaration lends C, and it lives for \
+             the call (ADR-147 D1); away from that boundary this language has its own \
+             words for both"
+        )],
+        help: Some(help.to_string()),
     }
 }
 

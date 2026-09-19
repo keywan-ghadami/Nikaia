@@ -48,6 +48,7 @@
 20-nikaia-advance.md #22 error[E0599]
 20-nikaia-advance.md #23 error[E0425]
 30-nikaia-tooling.md #1 error[E0433]
+30-nikaia-tooling.md #7 compiles
 30-nikaia-tooling.md #9 error[E0599]
 30-nikaia-tooling.md #12 compiles
 30-nikaia-tooling.md #14 error[E0433]

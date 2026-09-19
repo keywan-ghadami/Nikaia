@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.51] — 2026-09-19
+
+The C boundary lends a view, which makes most of C callable
+([ADR-147](docs/specification/adr/adr-147.md) D1, D5).
+
+### Added ([ADR-147](docs/specification/adr/adr-147.md) D1)
+
+- **`&T`, `&mut T`, `&[T]` and `&mut [T]` in an `extern "C"` declaration**, each the pointer C wants and each living **for the call** — which is what a view is everywhere else in this language ([ADR-094](docs/specification/adr/adr-094.md)). Nothing is stored and nothing escapes, so the shape that dangles cannot be written. Before this, every C function with a pointer in its signature was unwritable: `getpid` compiled and nothing with a buffer did.
+- **Rust's `&[T]` is a *fat* pointer, which is why a declaration writes the address.** A declaration that lowered `&[u8]` to Rust's own would be a signature the two languages disagree about, and what a reader would get for it is `rustc`'s `improper_ctypes` about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)). So a foreign declaration has a type writer of its own.
+- **The call is where the address is made**, and the emitter answers it alone: `bytes` becomes `bytes.as_ptr()`. A foreign declaration is a name in the very file the emitter is writing, which it already resolves by name ([ADR-011](docs/specification/adr/adr-011.md) D2) — and one call serves every caller, because a `Vec`, an `Array` and text all answer it.
+- **The fit is where the declaration and the caller meet.** A `&[u8]` takes whatever lends a run of `u8` — a `Vec[u8]`, an `Array[u8, N]`, a `String` or a `&str` — and one direction only: nothing fits *out* of a boundary type, because what a C function hands back is an address and the value this language would make of it is D3's handle or D4's copy.
+- **`NK1158`: both forms are the boundary's and nowhere else's.** Away from it, a parameter this language may change is written `mut name: T` ([ADR-094](docs/specification/adr/adr-094.md) D3) — the word goes in front of the **name**, because what it decides is also what the caller sees — and a run of elements is a `Vec[T]` or an `Array[T, N]`, each of which carries its length.
+- **Part III 15.1's own block now compiles and runs.** It led with `malloc(size: usize) -> Pointer[u8]`, which D5 makes permanently unwritable, so the page leads with `strlen` instead — and the specification's lowering floor went up, 55 to 56.
+- **Ten tests in `crates/nikaia/tests/foreign_pointers.rs`**, one of which compiles the lowering with `rustc` against libc's own `strlen` and `abs` and runs it — no library the machine may not have, and the whole of D1 end to end.
+
+### Decided rather than built ([ADR-147](docs/specification/adr/adr-147.md) D5)
+
+- **`malloc` stays unwritable, and `Pointer[T]` stays `NK1135`.** Memory this language will index has to arrive with a length it knows; `malloc` hands back an address and no length, so there is no shape here for it. That is the decision rather than a gap, and a program that needs a buffer makes one in Nikaia and lends it.
+
+### Open
+
+- **D2's length check, D3's opaque handle and D4's `CStr`** are the record's steps 2 to 4 and are next, in that order. Until D2 lands a call may pass a longer count than the buffer holds — inside `unsafe`, which is where C's unsafety is written ([ADR-124](docs/specification/adr/adr-124.md) D3), and still the overrun that check exists to stop. `docs/open-work.md` §2 carries all four.
+
 ## [0.0.50] — 2026-09-19
 
 `std`'s ledger carries prose about every entry it publishes, which completes

@@ -1460,14 +1460,39 @@ grammar! {
 
         rule generic_bound_tail -> Symbol = "+" n:NAME -> { n }
 
-        // `&str` is a view marker (Part II, 10.6), not a lifetime - the `&` is
-        // recorded and the emitter decides what it becomes.
+        // **`&[u8]` and `&mut [u8]`, what the C boundary lends**
+        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1): a run of
+        // elements whose length the caller knows and the type does not.
+        //
+        // **Always behind a `&`**, which is the record's own shape: a bare `[T]`
+        // is a value of no size and this language has nowhere to put one. The
+        // element goes where a tuple's parts go, so everything that walks a
+        // type's arguments walks it.
+        //
+        // **First**, because the named alternative below begins with the same
+        // optional `&` and would take the `&` and then fail on the `[`.
         rule type_ref -> Type # "type" =
-            view:amp?
+            view:amp "[" element:type_ref "]" -> {
+                Type {
+                    name: _state.intern("slice"),
+                    generics: vec![element],
+                    is_view: true,
+                    is_tuple: false,
+                    is_nullable: false,
+                    code: None,
+                    count: None,
+                    is_mut: view,
+                    is_slice: true,
+                }
+            }
+          // `&str` is a view marker (Part II, 10.6), not a lifetime - the `&`
+          // is recorded and the emitter decides what it becomes.
+          | view:amp?
             name:type_name
             generics:generic_type_args?
             nullable:question?
             -> {
+                let mutable = matches!(view, Some(true));
                 Type {
                     name,
                     generics: generics.unwrap_or_default(),
@@ -1476,6 +1501,8 @@ grammar! {
                     is_nullable: nullable.is_some(),
                     code: None,
                     count: None,
+                    is_mut: mutable,
+                    is_slice: false,
                 }
             }
           // **An integer where a type argument stands**
@@ -1498,6 +1525,8 @@ grammar! {
                     is_nullable: false,
                     code: None,
                     count: Some(n),
+                    is_mut: false,
+                    is_slice: false,
                 }
             }
           // `(A, B)`. The parts go where a named type's arguments go, so
@@ -1515,6 +1544,8 @@ grammar! {
                     is_nullable: false,
                     code: None,
                     count: None,
+                    is_mut: false,
+                    is_slice: false,
                 }
             }
           // **A parameter may be code**
@@ -1542,10 +1573,18 @@ grammar! {
                         throws: t.is_some(),
                     })),
                     count: None,
+                    is_mut: false,
+                    is_slice: false,
                 }
             }
 
-        rule amp -> () = "&" -> { () }
+        // **The `&`, and whether a `mut` followed it**
+        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1). `&mut T`
+        // is a view the callee may write through, and the C boundary is the one
+        // place this language writes one: a parameter's mutability is otherwise
+        // the word in front of its *name*
+        // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3).
+        rule amp -> bool = "&" m:kw_mut? -> { m.is_some() }
 
         // Part I 2.3: the trailing `?` that makes a type nullable. It comes
         // last, after the arguments, so `Vec[i64]?` is a nullable list and not

@@ -727,6 +727,30 @@ impl Needs {
 /// A trait the compiler reads rather than a `.nika` file wrote - `impl Error
 /// for ConfigError` ([ADR-023](../../docs/specification/adr/adr-023.md) D3) -
 /// carries no `::` either, so it is left alone by the same test.
+/// What each `extern "C"` declaration in this file takes
+/// ([ADR-147](../../docs/specification/adr/adr-147.md) D1), by the name a call
+/// writes.
+fn foreign_params(parsed: &Parsed) -> std::collections::BTreeMap<String, Vec<Type>> {
+    let mut out = std::collections::BTreeMap::new();
+    for item in &parsed.program.items {
+        let Item::Extern { declarations, .. } = &item.node else {
+            continue;
+        };
+        for declaration in declarations {
+            out.insert(
+                parsed.text(declaration.node.name).to_string(),
+                declaration
+                    .node
+                    .args
+                    .iter()
+                    .map(|a| a.ty.clone())
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+    out
+}
+
 fn foreign_traits(parsed: &Parsed) -> std::collections::BTreeSet<String> {
     parsed
         .program
@@ -1043,6 +1067,16 @@ struct Emitter<'p> {
     /// name. A `;` at a call means options everywhere else, and this is what
     /// says which calls mean the other thing.
     dsl_drivers: HashSet<String>,
+    /// **What an `extern "C"` declaration takes, by name and position**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+    ///
+    /// A declaration says `&[u8]` and C wants a pointer, so the *call* is where
+    /// the pointer is made — `bytes.as_ptr()` rather than `bytes`. It is read
+    /// from this file's own items rather than handed over by the checker, which
+    /// is the one place that arrangement works: the emitter resolves a free
+    /// call by name already ([ADR-011](../../docs/specification/adr/adr-011.md)
+    /// D2), and a foreign declaration is a name in this very file.
+    foreign_params: std::collections::BTreeMap<String, Vec<Type>>,
     /// Whether these items are the crate root - the one file that may carry
     /// the program's entry point.
     ///
@@ -1575,6 +1609,7 @@ impl<'p> Emitter<'p> {
             own_contracts,
             library,
             dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
+            foreign_params: foreign_params(parsed),
             entry: true,
         }
     }
@@ -2021,7 +2056,7 @@ impl<'p> Emitter<'p> {
                 for method in methods {
                     out.from(&method.span, |out| {
                         out.push("    ");
-                        self.trait_method(out, &method.node, method.node.is_sync)
+                        self.trait_method(out, &method.node, method.node.is_sync, false)
                     })?;
                 }
                 out.push("}\n");
@@ -2094,7 +2129,7 @@ impl<'p> Emitter<'p> {
                 for declaration in declarations {
                     out.from(&declaration.span, |out| {
                         out.push("    ");
-                        self.trait_method(out, &declaration.node, true)
+                        self.trait_method(out, &declaration.node, true, true)
                     })?;
                 }
                 out.push("}\n");
@@ -2102,6 +2137,49 @@ impl<'p> Emitter<'p> {
             }
             other => Err(refused!("cannot emit item yet: {other:?}")),
         }
+    }
+
+    /// **A type in an `extern "C"` declaration, as the pointer C wants**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+    ///
+    /// The four forms the record writes, and each lives **for the call**, which
+    /// is what a view is everywhere else in this language
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md)):
+    ///
+    /// | written | below |
+    /// | :--- | :--- |
+    /// | `&T` | `*const T` |
+    /// | `&mut T` | `*mut T` |
+    /// | `&[T]` | `*const T` |
+    /// | `&mut [T]` | `*mut T` |
+    ///
+    /// **A slice loses its length here, and that is the point.** C takes a
+    /// pointer and a count as two parameters, and D2 is the rule that keeps
+    /// them one fact: the declaration names both and the call is checked.
+    /// Rust's own `&[T]` is a *fat* pointer, so writing it in a declaration
+    /// would be a signature the two languages disagree about — and what a
+    /// reader would get for it is `rustc`'s `improper_ctypes` about a file
+    /// nobody wrote (Part III, C.1).
+    ///
+    /// Anything that is not a view is the ordinary lowering: an `i32` is an
+    /// `i32` at both ends.
+    fn foreign_ty(&self, ty: &Type) -> String {
+        if ty.is_slice {
+            let element = match ty.generics.first() {
+                Some(element) => self.foreign_ty(element),
+                None => "u8".to_string(),
+            };
+            return format!("*{} {element}", pointing(ty.is_mut));
+        }
+        if ty.is_view {
+            let pointed = Type {
+                is_view: false,
+                is_mut: false,
+                ..ty.clone()
+            };
+            return format!("*{} {}", pointing(ty.is_mut), self.foreign_ty(&pointed));
+        }
+        self.ty(ty, Lifetimes::ELIDED)
     }
 
     /// One method of a `trait`: a signature and a `;`.
@@ -2124,6 +2202,15 @@ impl<'p> Emitter<'p> {
         out: &mut Out,
         method: &crate::ast::TraitMethod,
         is_sync: bool,
+        // **Whether this is a C declaration**
+        // ([ADR-147](../../docs/specification/adr/adr-147.md) D1), which is
+        // what decides how a view is written: at the C boundary it is the
+        // pointer C wants, and everywhere else it is the borrow Rust wants.
+        // The same `&str` is a thin pointer to C and a fat one to Rust, so a
+        // declaration that wrote the second would be a signature the two
+        // languages disagree about - and `rustc` says so, about a file nobody
+        // wrote (Part III, C.1).
+        foreign: bool,
     ) -> Result<()> {
         let mut params: Vec<String> = Vec::new();
         if let Some(receiver) = &method.receiver {
@@ -2140,7 +2227,10 @@ impl<'p> Emitter<'p> {
             params.push(format!(
                 "{}: {}",
                 self.name(arg.name),
-                self.ty(&arg.ty, Lifetimes::ELIDED)
+                match foreign {
+                    true => self.foreign_ty(&arg.ty),
+                    false => self.ty(&arg.ty, Lifetimes::ELIDED),
+                }
             ));
         }
         // Kap 5.1: the language below has neither named arguments nor defaults,
@@ -2154,7 +2244,10 @@ impl<'p> Emitter<'p> {
             ));
         }
         let returned = match &method.ret_type {
-            Some(ty) => self.ty(ty, Lifetimes::ELIDED),
+            Some(ty) => match foreign {
+                true => self.foreign_ty(ty),
+                false => self.ty(ty, Lifetimes::ELIDED),
+            },
             None => "()".to_string(),
         };
         let outcome = if method.throws {
@@ -2860,6 +2953,8 @@ impl<'p> Emitter<'p> {
                                 is_nullable: false,
                                 code: None,
                                 count: None,
+                                is_mut: false,
+                                is_slice: false,
                             },
                             Lifetimes::NAMED,
                         );
@@ -3273,6 +3368,8 @@ impl<'p> Emitter<'p> {
                 is_tuple: false,
                 code: None,
                 count: None,
+                is_mut: false,
+                is_slice: false,
             });
             let inner = Type {
                 is_nullable: ty.is_nullable || inner.is_nullable,
@@ -5929,11 +6026,32 @@ impl<'p> Emitter<'p> {
             // word.
             let future = matches!(arg, Expr::Closure { .. })
                 && self.future_lambdas.contains(&(flow.statement, i));
+            // **The pointer a C declaration takes**
+            // ([ADR-147](../../docs/specification/adr/adr-147.md) D1). The
+            // declaration says `&[u8]` and C wants an address, so the address
+            // is made here: `bytes.as_ptr()` for a run and a plain `&` for one
+            // value, which Rust coerces to `*const T` on its own.
+            //
+            // It is exclusive with the two above by construction rather than by
+            // an `else`: a boundary type is not a view in the ledger's type
+            // language and not something that moves, so `keeps::lends` withholds
+            // its claim and `mut_args` never names the position.
+            let pointer = self
+                .foreign_params
+                .get(callee)
+                .and_then(|params| params.get(i))
+                .and_then(pointer_for);
             out.push(before);
             if change {
                 out.push("&mut ");
             } else if lend {
                 out.push("&");
+            }
+            if let Some(Pointer::Reference { mutable }) = pointer {
+                out.push(match mutable {
+                    true => "&mut ",
+                    false => "&",
+                });
             }
             if count {
                 out.push("nikaia_std::count::of(");
@@ -5976,6 +6094,15 @@ impl<'p> Emitter<'p> {
                     out.push(")");
                 }
                 _ => self.expr(out, arg, depth, inside)?,
+            }
+            // `.as_ptr()` and `.as_mut_ptr()`, which a `Vec`, an `Array` and
+            // text all answer - so one call writes the address of whatever a
+            // caller lends a `&[T]` parameter (D1).
+            if let Some(Pointer::Run { mutable }) = pointer {
+                out.push(match mutable {
+                    true => ".as_mut_ptr()",
+                    false => ".as_ptr()",
+                });
             }
             if count {
                 out.push(")");
@@ -6248,6 +6375,38 @@ fn jumps(expr: &Expr) -> bool {
         expr,
         Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue
     )
+}
+
+/// **How a call makes the address an `extern "C"` declaration takes**
+/// ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+///
+/// Two shapes, because C's two are a run of elements and one value: a run is a
+/// pointer to the first element and the length is a parameter of its own (D2),
+/// and one value is an address Rust writes for a `&` on its own.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pointer {
+    /// `&[T]` and `&mut [T]`: `.as_ptr()`, `.as_mut_ptr()`.
+    Run { mutable: bool },
+    /// `&T` and `&mut T`: a plain `&`, which Rust coerces to `*const T`.
+    Reference { mutable: bool },
+}
+
+/// Which of the two a declared parameter is, or `None` where it is an ordinary
+/// value an `i32` is at both ends.
+fn pointer_for(ty: &Type) -> Option<Pointer> {
+    match (ty.is_slice, ty.is_view) {
+        (true, _) => Some(Pointer::Run { mutable: ty.is_mut }),
+        (false, true) => Some(Pointer::Reference { mutable: ty.is_mut }),
+        (false, false) => None,
+    }
+}
+
+/// `const` or `mut`, the word Rust puts between the `*` and the type.
+fn pointing(mutable: bool) -> &'static str {
+    match mutable {
+        true => "mut",
+        false => "const",
+    }
 }
 
 fn only_literals(index: &Expr) -> bool {

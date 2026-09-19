@@ -404,6 +404,13 @@ fn walk(
         // anywhere. An `Array[T, N]` therefore crosses exactly when its `T`
         // does, which is D2's *it copies as its elements do* read one layer up.
         Ty::Count(_) => Crossing::May,
+        // **What the C boundary lends does not cross**
+        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1): it
+        // lives for the call, and a thread outlives one. Undecided rather than
+        // refused, which is this file's polarity: what it names is the part it
+        // cannot answer for, and a boundary type is the caller's own for
+        // exactly one call.
+        Ty::Pointed { .. } => Crossing::Undecided { part: ty.text() },
         // A library signature's variable that nothing bound. `substitute` turns
         // a bound one into the type it bound to before this is ever asked, so
         // one that arrives here is the absence of an answer (ADR-031).

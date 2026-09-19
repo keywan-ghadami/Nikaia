@@ -638,6 +638,29 @@ pub struct Type {
     /// `name` holds the digits as they were written, so a message that prints
     /// a type prints the number the source wrote.
     pub count: Option<i64>,
+    /// **`&mut T`** ([ADR-147](../../../docs/specification/adr/adr-147.md) D1):
+    /// a view the callee may write through.
+    ///
+    /// Beside `is_view` rather than inside it, because the two are independent
+    /// in exactly the way `is_view` and `is_nullable` are: what the `&` says is
+    /// *a view*, and what the `mut` adds is *and it may be written*. Set only
+    /// where the source wrote the word, which today is an `extern "C"`
+    /// declaration and nowhere else - the C boundary is the one place this
+    /// language has a use for the distinction, because a parameter's
+    /// mutability is otherwise written `mut name: T`
+    /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3).
+    pub is_mut: bool,
+    /// **`[T]`** ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): a
+    /// run of `T` whose length the caller knows and the type does not.
+    ///
+    /// The element goes in `generics`, where a tuple's parts and a function
+    /// type's parameters go, and for the same reason: everything that walks a
+    /// type's arguments walks this without knowing what it is.
+    ///
+    /// It is always behind a `&` - `&[u8]` and `&mut [u8]` are the two forms
+    /// D1 writes, and a bare `[T]` is a value of no size, which this language
+    /// has nowhere to put.
+    pub is_slice: bool,
 }
 
 /// What a function type says besides its parameters

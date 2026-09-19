@@ -1742,26 +1742,37 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
-### 2.44. `Pointer[T]` is undeclared, and C is `getpid`
+### 2.44. C has a buffer and no handle, and no length is checked
 
-[ADR-147](specification/adr/adr-147.md). Every C function whose signature has a
-pointer in it is unwritable: all of `libc`'s memory surface, and every library
-that hands out a handle — a database connection, an HTTP client, a compressor.
-`extern "C" { fn malloc(size: usize) -> Pointer[u8] }` is `NK1135`, because
-`Pointer[T]` is a type nothing declares, and
-[ADR-124](specification/adr/adr-124.md) §4 left it that way on purpose.
+[ADR-147](specification/adr/adr-147.md) D1 is **built**: a buffer is a `&[T]`
+or a `&mut [T]` that lives for the call, it lowers to the pointer C wants, the
+call makes the address, and either form away from the boundary is `NK1158`. So
+`libc`'s memory surface is callable and Part III 15.1's own block compiles and
+runs. D5 is built by being a decision: `Pointer[T]` stays `NK1135`, permanently
+rather than pending.
 
-**What the record adds is not a pointer.** A buffer is a **view** that lives
-for the call, with a length parameter checked against it at the call site; a
-handle is an `opaque type … released by …`, an address the language never
-dereferences whose release is a `cleanup`. Both make a dangling dereference
-impossible by construction, and `malloc` stays unwritable by design — memory
-the language will index arrives with a length the language knows.
+**What is left is the library that hands out a handle** — a database
+connection, an HTTP client, a compressor — and the check that keeps a buffer's
+length honest.
 
-*What it needs, in the record's order (§5):* the view forms in an `extern`
-declaration; the length check and its refusal; the opaque type, with its
-`cleanup`; `CStr` and the `std` function that copies it; `sqlite3` end to end
-as the test that the four are enough.
+*D2, the length:* `read(fd, buf, count)` declares `count: usize` and the two
+parameters are one fact in C. A call where `count` cannot be shown to be at
+most `buf.len()` is the buffer overrun the boundary exists to stop, and it
+should be refused here rather than by the operating system. Today it is not
+checked at all, so a longer count reaches C. Narrow on purpose: a constant or
+`buf.len()`, and anything else asks for one of those two.
+
+*D3, the handle:* `opaque type sqlite3 released by sqlite3_close` in the block,
+an address the language never dereferences, with the release a `cleanup` the
+compiler runs at the end of its scope (Part I 6.4). It is the shape every C
+library with a session in it is made of.
+
+*D4, returned text:* `getenv` hands back memory the caller does not own. It
+arrives as an opaque `CStr` and one `std` function copies it into a `String`
+inside `unsafe`, written once where every program would otherwise write the
+same loop.
+
+*And then step 5:* `sqlite3` end to end, as the test that the four are enough.
 
 ### 2.45. `select` is not a keyword, and nothing cancels a task
 

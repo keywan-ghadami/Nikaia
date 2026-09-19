@@ -46,6 +46,29 @@ pub enum Ty {
     },
     /// `(A, B)` - a fixed number of parts and no name.
     Tuple(Vec<Ty>),
+    /// **What the C boundary lends**
+    /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): `&mut T`,
+    /// `&[u8]` and `&mut [u8]`, each a view that lives for the call.
+    ///
+    /// **A variant rather than two flags on `Named`**, which is the opposite of
+    /// how the AST records it and for the reason that decided `Nullable`: there
+    /// are seventy-eight places in this compiler that build a `Named`, and not
+    /// one of them can produce either shape. A field they would all have to
+    /// answer for is a field for one position's sake.
+    ///
+    /// A plain `&T` is **not** this. That is the view every declaration in this
+    /// language writes and it is `Named` with `view`, here as everywhere; what
+    /// is new is the `mut` and the run of elements, and a shape that held the
+    /// third case too would have two spellings for one type.
+    Pointed {
+        /// What is pointed at: the `u8` of `&[u8]`, the `T` of `&mut T`.
+        item: Box<Ty>,
+        /// `[T]` rather than `T` - a run of them, and the length is the
+        /// caller's to pass (D2).
+        slice: bool,
+        /// `&mut` rather than `&`: the callee may write through it.
+        mutable: bool,
+    },
     /// **A number where a type argument stands**
     /// ([ADR-152](../../../docs/specification/adr/adr-152.md) D1): the `3` of
     /// `Array[f64, 3]`.
@@ -292,6 +315,38 @@ impl Ty {
             // says it. A count against a *type* falls to `false` below, which
             // is right: neither is the other.
             (Ty::Count(a), Ty::Count(b)) => a == b,
+            // **What the C boundary lends fits the same shape and nothing
+            // else** ([ADR-147](../../../docs/specification/adr/adr-147.md) D1):
+            // a `&mut [u8]` is not a `&[u8]`, because the second promises not
+            // to write - and it is not a `&u8` either, because one of them is a
+            // run and the other is one element.
+            (
+                Ty::Pointed {
+                    item: a,
+                    slice: asl,
+                    mutable: am,
+                },
+                Ty::Pointed {
+                    item: b,
+                    slice: bsl,
+                    mutable: bm,
+                },
+            ) => a.fits(b) && asl == bsl && am == bm,
+            // **And what a caller may hand to one**
+            // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): the
+            // declaration says what C wants and the caller writes what this
+            // language has, so the fit is where the two meet. A `Vec[u8]`, an
+            // `Array[u8, N]` and text all hand a run of `u8` to a `&[u8]`; a
+            // plain value fits a `&T` the way it fits any other view, because
+            // the reference is the compiler's to write (ADR-094 D1).
+            //
+            // **One direction only.** Nothing fits *out* of a boundary type:
+            // what a C function hands back is an address, and the value this
+            // language would have to make of it is D3's handle or D4's copy.
+            (found, Ty::Pointed { item, slice, .. }) => match slice {
+                true => lends_a_run_of(found, item),
+                false => found.fits(item),
+            },
             // Two lambdas fit when they take the same things. A lambda never
             // fits a named type and no named type fits a lambda - which is a
             // claim, so it is only made where both sides are written down, and
@@ -411,6 +466,30 @@ impl Ty {
         }
         if let Some(inner) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
             return Ty::Tuple(split_args(inner).iter().map(|p| Ty::parse(p)).collect());
+        }
+        // **What the C boundary lends** (ADR-147 D1), read before the plain `&`
+        // below: `&mut T` and `&[u8]` are shapes of their own, and a `&` with a
+        // name after it is the view every other declaration writes.
+        if let Some(rest) = text.strip_prefix('&').map(str::trim_start) {
+            // `word_off` takes a word off the *end*; this one is at the
+            // front, and the space after it is what keeps `mutable` from being
+            // a type whose name begins with those three letters.
+            let (mutable, rest) = match rest.strip_prefix("mut ") {
+                Some(shorter) => (true, shorter.trim_start()),
+                None => (false, rest),
+            };
+            let slice = rest.starts_with('[') && rest.ends_with(']');
+            if mutable || slice {
+                let inner = match slice {
+                    true => &rest[1..rest.len() - 1],
+                    false => rest,
+                };
+                return Ty::Pointed {
+                    item: Box::new(Ty::parse(inner)),
+                    slice,
+                    mutable,
+                };
+            }
         }
         // `fn(&Stats)`, and `fn()` for a lambda that is handed nothing. Read
         // before the `&`, because a function type is never a view.
@@ -544,6 +623,15 @@ impl Ty {
             // for it (ADR-152 §4 leaves an integer parameter of anything else
             // undecided).
             Ty::Count(n) => Ty::Count(*n),
+            Ty::Pointed {
+                item,
+                slice,
+                mutable,
+            } => Ty::Pointed {
+                item: Box::new(item.erase(parameters)),
+                slice: *slice,
+                mutable: *mutable,
+            },
             Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| p.erase(parameters)).collect()),
             Ty::Fn {
                 params,
@@ -611,6 +699,15 @@ impl Ty {
         match self {
             Ty::Unknown => Ty::Unknown,
             Ty::Count(n) => Ty::Count(*n),
+            Ty::Pointed {
+                item,
+                slice,
+                mutable,
+            } => Ty::Pointed {
+                item: Box::new(item.parameterise(parameters)),
+                slice: *slice,
+                mutable: *mutable,
+            },
             Ty::Tuple(parts) => {
                 Ty::Tuple(parts.iter().map(|p| p.parameterise(parameters)).collect())
             }
@@ -669,6 +766,29 @@ impl Ty {
         // say about it.
         if let Some(n) = ty.count {
             return Ty::Count(n);
+        }
+        // **What the C boundary lends** (ADR-147 D1), read before the tuple for
+        // its reason: the element sits where a tuple's parts sit, and the
+        // branches below would read it as an argument of a type called `slice`.
+        if ty.is_slice || ty.is_mut {
+            let item = match ty.generics.first() {
+                Some(element) => Ty::from_ast(parsed, element),
+                // `&mut T`, whose `T` is the name rather than an argument.
+                None => Ty::Named {
+                    name: parsed.unaliased(parsed.text(ty.name)),
+                    args: ty
+                        .generics
+                        .iter()
+                        .map(|g| Ty::from_ast(parsed, g))
+                        .collect(),
+                    view: false,
+                },
+            };
+            return Ty::Pointed {
+                item: Box::new(item),
+                slice: ty.is_slice,
+                mutable: ty.is_mut,
+            };
         }
         if ty.is_tuple {
             return Ty::Tuple(
@@ -732,6 +852,22 @@ impl fmt::Display for Ty {
             // The digits and nothing around them, so `Array[f64, 3]` reads in a
             // message exactly as the source wrote it (Part III, C.1).
             Ty::Count(n) => write!(f, "{n}"),
+            // `&mut [u8]` and not the pointer it lowers to, for the same
+            // reason: a message names what the program wrote.
+            Ty::Pointed {
+                item,
+                slice,
+                mutable,
+            } => {
+                f.write_str("&")?;
+                if *mutable {
+                    f.write_str("mut ")?;
+                }
+                match slice {
+                    true => write!(f, "[{item}]"),
+                    false => write!(f, "{item}"),
+                }
+            }
             Ty::Tuple(parts) => {
                 let parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
                 write!(f, "({})", parts.join(", "))
@@ -795,6 +931,29 @@ impl fmt::Display for Ty {
                 Ok(())
             }
         }
+    }
+}
+
+/// Whether a value of this type lends a **run** of `item` laid out in memory
+/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1).
+///
+/// What a `&[u8]` parameter may be handed: a list, a fixed-size array, and -
+/// where the element is `u8` - text, which is a run of bytes and is what every
+/// C function taking a `char *` is given. `Unknown` says nothing, here as
+/// everywhere.
+fn lends_a_run_of(found: &Ty, item: &Ty) -> bool {
+    match found {
+        Ty::Unknown => true,
+        Ty::Named { name, args, .. } => match (name.as_str(), args.as_slice()) {
+            ("Vec" | "List", [element]) => element.fits(item),
+            (ARRAY, [element, _]) => element.fits(item),
+            // Text is a run of bytes, and `u8` is what a declaration writes for
+            // one. Both spellings, because a `&str` and a `String` hand over
+            // the same bytes.
+            ("String" | "str", []) => matches!(item, Ty::Named { name, .. } if name == "u8"),
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -1155,6 +1314,15 @@ pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty
         },
         Ty::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| substitute(p, bound)).collect()),
         Ty::Count(n) => Ty::Count(*n),
+        Ty::Pointed {
+            item,
+            slice,
+            mutable,
+        } => Ty::Pointed {
+            item: Box::new(substitute(item, bound)),
+            slice: *slice,
+            mutable: *mutable,
+        },
         Ty::Fn {
             params,
             result,

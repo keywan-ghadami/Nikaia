@@ -200,7 +200,7 @@ Parse error:
 expected type; found unexpected token `=` at line 2, column 12
    2 |     let x: = 1
                   ^
-note: also possible here: `&`, `(`, `//`, `fn`, block comment
+note: also possible here: `&`, `(`, `//`, `fn`, block comment, digits
 in COMMENT
 in item 1
 in WS
