@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.53] — 2026-09-19
+
+`docs/open-work.md` holds only what is open.
+
+### Changed
+
+- **A closed entry is deleted, not kept**, and the page's head now says so for all three of its sections. What an entry was and what closed it is in this file, which is the record; the list is for what is still open, and an entry that has been answered only makes it longer to read. The rule applies to the part of an entry that has been answered while the rest stands, which is where most of the length had gone.
+- **Four entries left because their subject is false.** *The crossing refusals are built and nothing can reach them* — `NK2501` and `NK2502` are in the list of codes the compiler emits, `send.rs` asserts one firing, and the question the entry pointed at in `open-decisions.md` was answered by [ADR-123](docs/specification/adr/adr-123.md). *The ring's park hears the bell* was built except for a remainder that is another entry's. *A C declaration cannot name a pointer* is [ADR-147](docs/specification/adr/adr-147.md)'s, answered two packages ago. And *the ring's `block_on` test flakes* named contention as the mechanism; the real one was four instances of one mistake and was fixed in 0.0.43, since when the test has been green in every run.
+- **Two more left because they were done**: *eight citations named an entry by its number* (all eight fixed), and §1's long narrative of every defect this project has closed.
+- **Six entries were 70 per cent retrospective and are now what is left of them** — the lock's rules, the build-time evaluator, the cleanup point, the function-typed parameter, the lambda `std` refuses, and §3.1's account of what upkeep used to hold. What was cut is the measurement and the history of finished work; what stays is every open item, every constraint a future change has to respect, and the two numbers a refusal has to be read against (the `locks` column's 0/24/35, and the lending column's 6 of 39).
+- **2040 lines to 1350.** §1 holds two entries, §2 forty-five, §3 two.
+
+### Fixed
+
+- **[ADR-124](docs/specification/adr/adr-124.md) said §4 was not built**, which stopped being true when [ADR-147](docs/specification/adr/adr-147.md) answered it: a buffer is a view and a handle is opaque, and `malloc` stays unwritable by design. Its **Built** line, its §5 and its row in the index say so; the §4 note itself stands, because an ADR is written once and the correction belongs to the record that made it.
+
 ## [0.0.52] — 2026-09-19
 
 A length beside a buffer is checked at the call
