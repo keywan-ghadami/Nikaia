@@ -1,15 +1,152 @@
 # Open decisions — the questions that need the owner
 
-**Nothing is open.** An answer is an [ADR](specification/adr/), and the moment
-a question is answered its entry leaves this file rather than staying with a
-note on it. What is merely **unbuilt** is in [`open-work.md`](open-work.md) —
-an ADR said what happens and the compiler does not do it yet, which needs work
-and not a ruling. Each entry says what the question is, why it is the owner's,
-and what this file recommends.
+**Three entries are open**, below, and all three were found by *building*
+rather than by reading — which is the only way this file ever fills up once its
+reading-questions are answered. An answer is an [ADR](specification/adr/), and
+the moment a question is answered its entry leaves this file rather than
+staying with a note on it. What is merely **unbuilt** is in
+[`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
+not do it yet, which needs work and not a ruling. Each entry says what the
+question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-Nothing.
+### 1. May a grammar's action pause?
+
+**Found by building [ADR-140](specification/adr/adr-140.md) D3, and it is a
+defect as well as a question.** A rule's action is arbitrary Nikaia, so it may
+call something that pauses — and this compiler accepts it and emits `.await`
+inside the synchronous parser the `grammar!` macro writes:
+
+```nika
+grammar Nums {
+    pub rule number -> i64 = d:dec[i64](digit+) -> { let t = io::read_to_string() return d }
+}
+```
+
+```text
+error: `await` is only allowed inside `async` functions and blocks
+```
+
+The backend's words about a construct this compiler let through, relayed onto
+the `.nika` line ([ADR-056](specification/adr/adr-056.md)) but still the
+backend's.
+
+**What is blocked:** the `sync` half of [`open-work.md`](open-work.md) §1.1. A
+grammar entry's contract carries no `sync`, so since D3 made the entry a call by
+name every function that parses is `async` — `examples/inventory`'s `read` is
+the measured case. If an action may **not** pause, an entry is `sync` by
+construction and there is nothing to derive; if it may, the derivation has to
+read every action of every `pub` rule, and the entry's column follows the worst
+of them.
+
+*The options.*
+
+1. **An action may not pause**, which is `sync` demanded of it the way
+   [ADR-050](specification/adr/adr-050.md) demands it of an `overlap` branch and
+   Part II 12.6 of a `par_iter` lambda. The refusal is at the action, in this
+   compiler's words, and the entry is `sync` with no inference at all.
+   *Costs:* one check over the action blocks, and a rule a program cannot get
+   round — a parse that wants to read a file mid-rule has to be two passes.
+2. **An action may pause**, and the generated parser becomes `async`. *Costs:*
+   `winnow-grammar` is synchronous and its driver is, so this is a change in a
+   dependency before it is a change here; and `@frame`'s parallel parse
+   ([ADR-009](specification/adr/adr-009.md)) would have to say what an `async`
+   piece means.
+3. **Leave it**, and the program is refused by the backend. *Costs:*
+   [Part III C.1](specification/30-nikaia-tooling.md) for a shape the language
+   allows, which is the class this compiler exists to close.
+
+*Recommendation:* **option 1.** A parser is computation over bytes that are
+already there — that is what makes `@frame`'s parallel parse sound at all — and
+nothing in `examples/`, in `tests/` or in `std` writes an action that pauses.
+It is the cheap answer *today* and the one that keeps the door open: an action
+that may pause can be allowed later without breaking a program, where taking it
+away could not.
+
+*If it is wrong:* option 1 spent is one check and one message, deleted the day
+option 2 lands. Option 2 spent first is work in a dependency for a program
+nobody has written.
+
+### 2. A name that is both a type and a function
+
+**Found by building [ADR-140](specification/adr/adr-140.md) D1**, and
+[ADR-133](specification/adr/adr-133.md)'s own open question had named the shape:
+*a rule for a name that is both a type and a function — which the grammar allows
+today and nothing in the corpus writes*. D1 removed the collision between the
+two constructs and left this one untouched, and the build picked an answer in
+silence:
+
+```nika
+struct Foo { n: i64 }
+fn Foo(n: i64 = 0) -> i64 { return n }
+
+let a = Foo(n: 1)   // error[NK1146]: … `Foo` is a type
+                    // help: write `Foo { n: … }`
+```
+
+The type wins, so the **function is uncallable** through the only spelling
+[ADR-133](specification/adr/adr-133.md) D1 gives it — and the help sends the
+reader to a line that builds the struct, which is a *different program*. A wrong
+help is worse than none.
+
+**What is blocked:** nothing anybody has written; no `.nika` file in the tree
+declares both. What is at stake is a message that is currently misleading, and a
+rule that exists by accident rather than by decision.
+
+*The options.*
+
+1. **A name denotes one thing**, and declaring both is refused at the second
+   declaration. *Costs:* one check over the item list and one message; the
+   language loses nothing it uses.
+2. **Both may be declared**, and the *call* form belongs to the function while
+   the *brace* form belongs to the type — which is what the two spellings
+   already mean everywhere else. *Costs:* `NK1146` has to ask whether the name
+   is also a function before it fires, and a reader has to hold a rule that
+   `Foo(n: 1)` and `Foo { n: 1 }` are two different programs.
+3. **Leave it**, and fix only the help. *Costs:* the rule stays an accident, and
+   the next record that touches either construct meets it again.
+
+*Recommendation:* **option 1.** It is the same sentence the language already
+says about two files declaring one name and about two packages under one alias —
+[ADR-046](specification/adr/adr-046.md) D5's *one name per file*, applied one
+namespace over — and it is the only option under which `NK1146`'s help is
+always right.
+
+*If it is wrong:* option 1 spent is a refusal that has to be lifted before
+option 2 could be taken, and nothing in the corpus would notice either way.
+
+### 3. The order of the five big unchecked boxes
+
+**Written down from a truncated sentence, which is why it is back here.** This
+file's old §8 asked for the order among the HTTP server, `std::db`, the C
+library ([ADR-125](specification/adr/adr-125.md)), the query DSL and the
+bare-metal target ([ADR-119](specification/adr/adr-119.md)). The edit that
+answered it removed the partner names — deliberately, and that part is carried —
+and left the recommendation cut off mid-sentence: *"`std::db` second, the C
+library third, the query DSL fourth; the bare-metal target
+([ADR-119](specification/adr/adr-119.md)) after that the server an."*
+
+**What is blocked:** nothing, and that is the honest answer — this is **scope**
+rather than work, and it is here only because
+[`project_status_and_roadmap.md`](project_status_and_roadmap.md) now states an
+order that was reconstructed rather than read. A paragraph that says something
+the owner did not is worse than one that says nothing.
+
+*What the paragraph says today*, and what it is reconstructed from: the HTTP
+server first because every demo stands on it, then `std::db`, the C library, the
+query DSL, and the bare-metal target after the server and the C library. The
+first clause is the one the edit deleted; the last is
+[ADR-119](specification/adr/adr-119.md)'s own scheduling, which the roadmap page
+already cites, so any order putting bare metal before the server would
+contradict a record.
+
+*Recommendation:* **confirm or correct the first clause.** If the HTTP server is
+no longer first, the sentence to replace it is one line and everything after it
+holds.
+
+*If it is wrong:* nothing is built on it — the cost is a roadmap paragraph a
+reader takes for the owner's and is not.
 
 ## Answered
 
@@ -165,9 +302,17 @@ paragraph carries — the ordering itself is the last complete version of the
 sentence, and [ADR-119](specification/adr/adr-119.md)'s own scheduling is what
 pins the bare-metal target after the server.
 
-**That is the state to write down rather than to enjoy.** A page with nothing
-on it means the work in [`open-work.md`](open-work.md) is the kind that needs
-building rather than deciding; the next question belongs here the moment
+**And it did not stay that way for one round.** The page was empty for exactly
+as long as it took to *build* three of the records it had just answered: a
+grammar action that pauses, a name that is both a type and a function, and a
+roadmap sentence that was reconstructed rather than read. None of the three was
+findable by reading — the first two are what the compiler does when a program
+does something nobody had written, and the third is what a truncated edit leaves
+behind.
+
+**That is the state to write down rather than to enjoy.** A page with nothing on
+it never means there are no questions; it means none has been *found* yet, and
+the way they are found is by building. The next one belongs here the moment
 something comes to rest on it, in the shape this page has always asked for and
 still describes above: what is blocked, the options, a recommendation, and what
 either direction costs if it is wrong.

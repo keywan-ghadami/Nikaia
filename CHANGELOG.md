@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.22] — 2026-09-19
+
+`docs/open-decisions.md` was empty for one round. Three questions went back on
+it, and all three were found by *building* rather than by reading.
+
+### Added (three open questions, and the defect behind the first)
+
+- **May a grammar's action pause?** A rule's action is arbitrary Nikaia, so it may call something that pauses — and nothing refuses that, so `.await` is emitted inside the synchronous parser the `grammar!` macro writes and the backend answers *`await` is only allowed inside `async` functions*. Relayed onto the `.nika` line ([ADR-056](docs/specification/adr/adr-056.md)) and still the backend's words about a construct this compiler let through. It blocks the `sync` half of `open-work.md` §1.2: if an action may not pause, a grammar entry is `sync` by construction and there is nothing to derive. **Recommended:** it may not — a parser is computation over bytes that are already there, which is what makes `@frame`'s parallel parse sound, and nothing in the tree writes such an action.
+- **A name that is both a type and a function.** [ADR-133](docs/specification/adr/adr-133.md)'s own open question had named the shape — *a rule for a name that is both* — and [ADR-140](docs/specification/adr/adr-140.md) D1 left it untouched while the build picked an answer in silence: the type wins, so `Foo(n: 1)` is `NK1146` and the function is uncallable through the only spelling ADR-133 D1 gives it, with a help that sends the reader to a line building the struct. **Recommended:** a name denotes one thing, refused at the second declaration — the sentence [ADR-046](docs/specification/adr/adr-046.md) D5 already says one namespace over, and the only option under which that help is always right.
+- **The order of the five big unchecked boxes.** The edit that answered the old §8 removed the partner names deliberately and left the recommendation cut off mid-sentence, so the roadmap paragraph states an order that was *reconstructed* rather than read. It blocks nothing — it is back because a paragraph that says something the owner did not is worse than one that says nothing. **Recommended:** confirm or correct the first clause; the rest holds either way, since [ADR-119](docs/specification/adr/adr-119.md)'s own scheduling pins the bare-metal target after the server.
+- **`open-work.md` §1.1 carries the defect** with its reproduction, and §1.2 now says which of its four columns the ruling decides.
+
 ## [0.0.21] — 2026-09-19
 
 [ADR-140](docs/specification/adr/adr-140.md)'s third migration, and the silence

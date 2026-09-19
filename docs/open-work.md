@@ -118,8 +118,8 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**One entry, below, and it arrived by building something else.** Before it this
-section was empty, and the last entry to leave it was wrong on both of its
+**Two entries, below, and both arrived by building something else.** Before them
+this section was empty, and the last entry to leave it was wrong on both of its
 claims. It said an
 accessor cannot hand back a **view** of a field and that the lowering names no
 lifetime. Neither is true, and both were checkable in a minute:
@@ -257,7 +257,36 @@ running the corpus is not a reason to leave a defect open**, and this one had
 been open since the record that named it.
 
 
-### 1.1. A grammar's entry claims nothing, and every caller inherits that
+### 1.1. A grammar action that pauses lowers to invalid Rust
+
+**Found by probing the entry below**, and it is the other half of it. A rule's
+action is arbitrary Nikaia, so it may call something that pauses — and nothing
+refuses that, so `.await` is emitted inside the synchronous parser the
+`grammar!` macro writes:
+
+```nika
+grammar Nums {
+    pub rule number -> i64 = d:dec[i64](digit+) -> { let t = io::read_to_string() return d }
+}
+```
+
+```text
+error: /tmp/probe/src/main.nika:2:54: `await` is only allowed inside `async`
+       functions and blocks
+```
+
+The backend's words about a construct this compiler let through — relayed onto
+the `.nika` line ([ADR-056](specification/adr/adr-056.md)), which is what keeps
+it from being [Part III C.1](specification/30-nikaia-tooling.md) at its worst,
+and still the backend's.
+
+**It waits on a ruling and not on work**, which is why the fix is one line
+either way and is not written yet: whether an action may pause at all is
+[`open-decisions.md`](open-decisions.md) §1, with the options and a
+recommendation. Nothing in `examples/`, in `tests/` or in `std` writes such an
+action, which is what makes the question free to answer.
+
+### 1.2. A grammar's entry claims nothing, and every caller inherits that
 
 **Found by building [ADR-140](specification/adr/adr-140.md) D3**, which is the
 only reason it is visible: a grammar used to be entered through a **method**
@@ -279,6 +308,12 @@ and the method shape let the caller keep a promise nobody had derived. What is
 missing is the derivation — a `pub` rule's action blocks are ordinary bodies, so
 `sync`, `keeps`, `touches` and `locks` can be inferred over them and folded into
 the entry the same way a function's are.
+
+**Half of it may need no derivation at all.** If an action may not pause —
+[`open-decisions.md`](open-decisions.md) §1, the question §1.1 above raises —
+then an entry is `sync` by construction and only `keeps`, `touches` and `locks`
+are left to infer. So this entry waits on that ruling for its sharpest column
+and can be taken for the other three either way.
 
 *Every example still runs*, at both settings, which is what says this costs
 information rather than correctness.
