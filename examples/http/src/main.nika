@@ -49,15 +49,19 @@ pub fn render(response: &Response) -> String {
     return f"HTTP/1.1 {status}\r\ncontent-type: {response.content_type}\r\ncontent-length: {response.body.len()}\r\n\r\n{response.body}"
 }
 
+// One decision, written as one decision
+// ([ADR-132](../../../docs/specification/adr/adr-132.md)). This was four
+// statements - three `if`s in a row and a `return` - which read as three
+// decisions where there is one, and was the workaround the record was written
+// about: `else if` did not parse.
 pub fn status_line(status: i32) -> String {
     if status == 200 {
         return "200 OK".to_string()
-    }
-    if status == 404 {
+    } else if status == 404 {
         return "404 Not Found".to_string()
-    }
-    if status == 400 {
+    } else if status == 400 {
         return "400 Bad Request".to_string()
+    } else {
+        return "500 Internal Server Error".to_string()
     }
-    return "500 Internal Server Error".to_string()
 }

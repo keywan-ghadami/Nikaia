@@ -3328,6 +3328,36 @@ impl<'p> Emitter<'p> {
         self.block(out, then_branch, depth, flow, tail)?;
         if let Some(block) = else_branch {
             out.push(" else ");
+            // **`else if` and not `else { if … }`**
+            // ([ADR-132](../../docs/specification/adr/adr-132.md) D2), so the
+            // generated Rust reads as the source does. The condition is the
+            // block holding **one** `if` and nothing else, which is exactly what
+            // the parser makes of an `else if` - and an `else` whose block holds
+            // an `if` *and* other statements stays a block, because that is what
+            // the author wrote.
+            //
+            // It is the chain's depth this takes away rather than a brace: three
+            // links nested three deep is a line the reader has to unwind, and
+            // Part III C.1's rule is about what a reader of the generated file
+            // meets.
+            if let [only] = block.stmts.as_slice() {
+                if let Stmt::Expr(Expr::If {
+                    cond,
+                    then_branch,
+                    else_branch,
+                }) = &only.node
+                {
+                    return self.if_expr(
+                        out,
+                        cond,
+                        then_branch,
+                        else_branch.as_ref(),
+                        depth,
+                        flow,
+                        tail,
+                    );
+                }
+            }
             self.block(out, block, depth, flow, tail)?;
         }
         Ok(())

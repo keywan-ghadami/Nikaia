@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.14] — 2026-09-19
+
+The last of 0.0.10's three shapes, and the one every reader comes looking for.
+
+### Added (`else if`)
+
+- **[ADR-132](docs/specification/adr/adr-132.md).** `if a { … } else if b { … } else { … }` was a parse error — *expected `{`, found `if`* — and the examples worked around it with sequential `if`s, which reads as three decisions where there is one. The `else` rule has a second alternative and it makes that `if` the block's one statement, so the chain reaches the rest of the compiler as the `if` inside an `if` it **is**: every rule of `if` holds at every link — the condition's brace rule, the branches agreeing on one type where the value is taken, a `return` leaving the function — with nothing asked of any of them.
+- **The emitter writes Rust's own `else if`** where the `else` block holds one `if` and nothing else, so the generated file reads as the source does; what that takes away is the chain's **depth**, since three links nested three deep is a line the reader has to unwind. An `else` whose block holds an `if` *and* other statements stays a block, because that is what the author wrote.
+- **No keyword was added, and that is the claim worth a test.** `elseif` is a **name** — the grammar is scannerless, so a word it has no rule for is read as one — and `NK1117` says nothing declares it. An `elseif` that quietly became the keyword would be a second spelling nobody decided on.
+- **`examples/http`'s `status_line` is one decision** rather than three `if`s in a row, which is the program the record was written about. A three-link chain is compiled by the same `rustc` that built the test and **run**: it prints `ABCF`, because *the branches agree on one type and the chain ends with an `else`* is a claim about a value and the only way to say it held is to run the program.
+- **What D2 asks of the formatter has nowhere to go**, and `open-work.md` §2.43 is the formatter itself now: Part III's tool page names `nikaia fmt` and the CLI has `build`, `run` and `lower-std`. *Never unfold a chain into nested blocks or fold nested blocks into a chain* is a rule for that tool to be born with rather than an unbuilt step of this record.
+
 ## [0.0.13] — 2026-09-19
 
 Two of 0.0.10's three shapes, one built whole and one stopped by a premise that

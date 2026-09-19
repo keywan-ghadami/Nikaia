@@ -1524,17 +1524,29 @@ WebAssembly build's `.js`. No second artifact, no native Node add-on.
 example library; the streamed and async forms; the `js` name; a test that
 imports the binding.
 
-### 2.43. `else if`
+### 2.43. `nikaia fmt` does not exist
 
-[ADR-132](specification/adr/adr-132.md), all of it. After `else`, an `if` may
-stand where the block would; the chain is one `if` inside another with the
-inner braces left out, so every rule of `if` holds at every link. The emitter
-writes Rust's `else if` where the `else` block holds one `if` and nothing else;
-the formatter keeps a chain flat and never refolds one.
+[ADR-132](specification/adr/adr-132.md). **Built, except the formatter's line.**
+After `else`, an `if` may stand where the block would: the `else` rule has a
+second alternative and it makes that `if` the block's one statement, so the chain
+reaches the rest of the compiler as the `if` inside an `if` it is and every rule
+of `if` holds at every link with nothing asked of any of them. The emitter writes
+Rust's own `else if` where the `else` block holds one `if` and nothing else, and
+`examples/http`'s `status_line` is one decision rather than three `if`s in a row.
 
-*What it needs, in the record's order (§5):* the parser's alternative; the
-emitter's flat form and the formatter's line; `examples/http`'s `status_line`
-as a chain, and a test on a three-link chain's value.
+*Nothing was added to the language, and that is the claim worth a test.* `elseif`
+is a **name** — the grammar is scannerless, so a word it has no rule for is read
+as one — and `NK1117` says nothing declares it. An `elseif` that quietly became
+the keyword would be a second spelling nobody decided on.
+
+**What is left belongs to a tool that is not there.** D2's *`nikaia fmt` writes
+`} else if cond {` on one line, and never unfolds a chain into nested blocks or
+folds nested blocks into a chain* asks something of a formatter, and there is no
+formatter: Part III's tool page names `nikaia fmt` and the CLI has `build`, `run`
+and `lower-std`. So this is not a step of that record any more — it is a rule the
+formatter is born with, and **the formatter itself is the entry**. Nothing else in
+the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
+compiler's own Rust and no `.nika` file has ever been formatted by a tool.
 
 ### 2.44. An options-only call and a named struct literal are one spelling
 

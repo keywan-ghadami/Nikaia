@@ -2534,8 +2534,25 @@ grammar! {
                 }
             }
 
-        rule else_branch -> Block =
+        // **`else if` is an `else` whose block holds one `if`**
+        // ([ADR-132](../../../../docs/specification/adr/adr-132.md) D1), with
+        // that block's braces left out. Nothing is added to the language: the
+        // chain *is* an `if` inside an `if`, so every rule of `if` holds at every
+        // link - the condition's brace rule, the branches agreeing on one type
+        // where the value is taken, a `return` leaving the function.
+        //
+        // `else if` is two words with whitespace between them and not a keyword,
+        // which is what makes this one alternative rather than a word on the
+        // reserved list ([ADR-084](../../../../docs/specification/adr/adr-084.md)
+        // is what a keyword costs). The braced form comes first, because an
+        // `else { … }` whose block *begins* with an `if` is a block and must stay
+        // one - `{` cannot begin an `if`, so the order is a statement about
+        // reading rather than a trap, and it keeps the plain form the cheap one.
+        rule else_branch -> Block @=
             KW_ELSE b:block -> { b }
+          | KW_ELSE i:if_expr -> {
+                Block { stmts: vec![Spanned::new(Stmt::Expr(i), _span)] }
+            }
 
         // Blocks are expressions (Part I, 3.1).
         rule block_expr -> Expr =

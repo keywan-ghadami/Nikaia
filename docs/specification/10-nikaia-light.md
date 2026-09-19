@@ -587,9 +587,6 @@ let grade = if score >= 90 {
 }
 ```
 
-> **Status:** `else if` is not built; it is a parse error today
-> ([ADR-132](adr/adr-132.md) §5).
-
 **A condition is an ordinary expression — every one the language has**, with the
 same operators, the same precedence and the same associativity as anywhere else
 ([ADR-087](adr/adr-087.md) D1). `&&`, `||`, `!`, `??`, `as`, `null`, a tuple, a
