@@ -139,7 +139,7 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *What waits inside it*: [ADR-018](specification/adr/adr-018.md) entire, and [ADR-058](specification/adr/adr-058.md)'s response bodies ([#45](https://github.com/keywan-ghadami/Nikaia/pull/45)) - a `Bytes` or a mapping as a body, `http::File` for a file the program never read, the mechanism choice `std` makes between them, and the kept mappings that measured fastest. `examples/fortunes.nika` is the program on the other side of it.
     *   *One piece was answered without the server*: a name the request chose reaching the filesystem is [ADR-108](specification/adr/adr-108.md) - the root is an argument of the call, `http::File(path, root)` exactly as `fs::map(path, root)`, and no provenance travels a path. The `fs` half is [`open-work.md`](open-work.md) §2's entry on it, and `http::File` inherits it the day it exists.
     *   *Measured before it is built*: `benches/sendfile/` and [`zero-copy-send.md`](zero-copy-send.md) price the five ways a file can reach a socket, in both of the two programs there turn out to be - one whose page is known at startup and one whose file the request names. `mmap` per request is **2.5× worse than plainly reading** at 4 KiB, which is the trap an implementation of `http::File` would otherwise walk into.
-*   [ ] **A target without an operating system** ([ADR-119](specification/adr/adr-119.md)). Bare metal is a target, not a second language: `user_parallelism` pinned to `no`, `no_std` emission, the target's executor with interrupts as wakers, an interrupt handler checked as a `fn() sync` that touches no lock, an allocation profile, locks as critical sections. Scheduled **after the HTTP server**; the record states what the compiler promises about time and what it leaves to analysis, and claims no certification.
+*   [ ] **A target without an operating system** ([ADR-119](specification/adr/adr-119.md)). Bare metal is a target, not a second language: `user_parallelism` pinned to `no`, `no_std` emission, the target's executor with interrupts as wakers, an interrupt handler checked as a `fn() sync` that touches no lock, an allocation profile, locks as critical sections. Scheduled **after the C library** and before the HTTP server, which comes last of the five; the record states what the compiler promises about time and what it leaves to analysis, and claims no certification.
 *   [ ] **LSP Server**: Create a Language Server Protocol (LSP) implementation.
     *   *Benefit*: IDE support (syntax highlighting, go-to-definition) in editors like VS Code.
     *   *Reuse*: Reuse the parser and AST for this.
@@ -178,14 +178,14 @@ the list waits on a thread: what is left of it is D6's `Send` as a refusal of
 read rather than this paragraph.
 
 **The unchecked boxes are not in a random order either**, and the order among
-the big ones is this: the **HTTP server** first, because every demo stands on
-it; **`std::db`** second; the **C library** ([ADR-125](specification/adr/adr-125.md))
-third; the **query DSL** fourth — which is the driver's build-time check
-against the schema and the typed row ([ADR-143](specification/adr/adr-143.md)),
-not a query language; and the **bare-metal target**
-([ADR-119](specification/adr/adr-119.md)) after the server and the C library,
-since it reuses their allocator and their baked settings — which is the order
-that record already schedules itself into.
+the big ones is the owner's: **`std::db`** first; the **C library**
+([ADR-125](specification/adr/adr-125.md)) second; the **query DSL** third — which
+is the driver's build-time check against the schema and the typed row
+([ADR-143](specification/adr/adr-143.md)), not a query language; the
+**bare-metal target** ([ADR-119](specification/adr/adr-119.md)) fourth, since it
+reuses the C library's allocator and baked settings; and the **HTTP server**
+**last**. Read as a plan it says: four pieces that each carry a demo of their
+own, and the largest one when they stand.
 
 This is *scope*, not work: none of the five has an entry in
 [`open-work.md`](open-work.md) §2 telling somebody what to build, and the order

@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.27] — 2026-09-19
+
+The last question of the previous round is answered, and the doors the records
+left open on purpose are gathered on the open page with a recommendation each.
+
+### Decided (the order of the five big pieces: the HTTP server last)
+
+- **The owner's order** on `project_status_and_roadmap.md`: `std::db` first, the C library second, the query DSL third, the bare-metal target fourth, the **HTTP server last**. [ADR-119](docs/specification/adr/adr-119.md) and [ADR-125](docs/specification/adr/adr-125.md) schedule themselves accordingly, as if they always had.
+
+### Added (nine open decisions, each with a recommendation)
+
+- A pointer for the C direction (recommended: a view for the call and an opaque handle with a named release, no raw pointer); `select` and a `cancel()` on a spawned task; a channel in `std`, bounded only; the duration as `std` methods on integers; `match` exhaustive with `_`; `break` with a value kept refused; a fixed-size array as `Array[T, N]`; a native Node add-on not until asked, and then a generated C shim; the prelude as a small written list.
+
 ## [0.0.26] — 2026-09-19
 
 The second of the questions is answered, and answering it found two more holes
