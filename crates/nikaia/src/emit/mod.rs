@@ -4611,8 +4611,18 @@ impl<'p> Emitter<'p> {
         // gives - which is the only order there is, and the reason this needs
         // the callee's contract rather than the call alone.
         if let Some(options) = self.options_of(func) {
-            for option in options {
-                out.push(", ");
+            for (n, option) in options.iter().enumerate() {
+                // **The comma belongs *between* arguments**, and a call whose
+                // arguments are all options has nothing before the first one
+                // ([ADR-133](../../docs/specification/adr/adr-133.md) D1).
+                // `execute(; target_age: 30)` came out as `execute(, 30)` —
+                // invalid Rust, reported by `rustc` about a file nobody wrote
+                // (Part III C.1), for the only spelling such a call had. Older
+                // than the record that names the shape: nothing in the corpus
+                // declares a function whose parameters are all options.
+                if n > 0 || !args.is_empty() {
+                    out.push(", ");
+                }
                 match config.iter().find(|a| self.text(a.name) == option.name) {
                     Some(passed) => self.expr(out, &passed.value, depth, flow)?,
                     // Not passed, so the declaration's default is the value.

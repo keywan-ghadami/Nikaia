@@ -71,7 +71,7 @@
 10-nikaia-light.md #71 lowered (a body) [about-a-refusal]  let message = "Hello"
 10-nikaia-light.md #72 lowered (a body)  let message = "Hello"
 10-nikaia-light.md #73 lowered (as written)  // file: src/parse.nika      (the same package as src/m…
-10-nikaia-light.md #74 lowered (as written)  // file: src/main.nika
+10-nikaia-light.md #74 refused (as written) [NK1135]  // file: src/main.nika
 10-nikaia-light.md #75 lowered (as written)  use http
 10-nikaia-light.md #76 lowered (as written)  // file: network.nika
 20-nikaia-advance.md #1 fragment (as written)  grammar Json {

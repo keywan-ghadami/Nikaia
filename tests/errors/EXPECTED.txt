@@ -3,7 +3,7 @@ Parse error:
 expected `}`; found unexpected token `temp` at line 3, column 5
    3 |     temp: i32
            ^^^^
-note: also possible here: `,`, `//`, `::`, `?`
+note: also possible here: `,`, `//`, `::`, `?`, block comment
 in struct_item
 in item
 in item 1
@@ -14,7 +14,7 @@ Parse error:
 expected `)`; found unexpected token `b` at line 1, column 13
    1 | fn f(a: i32 b: i32) {
                    ^
-note: also possible here: `,`, `//`, `::`, `;`, `?`
+note: also possible here: `,`, `//`, `::`, `;`, `=`, `?`, block comment
 in fn_params
 in fn_item
 in item
@@ -26,7 +26,7 @@ Parse error:
 unexpected end of input, expected `}` at line 3, column 1
    3 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `return`, `throw`, `unsafe`, `while`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `return`, `throw`, `unsafe`, `while`, `{`, `||`, block comment, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -38,7 +38,7 @@ Parse error:
 expected expression; found unexpected token `[` at line 2, column 14
    2 |     let xs = [1, 2
                     ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in expr
 in let_stmt
 in stmt
@@ -54,7 +54,7 @@ Parse error:
 expected `}`; found unexpected token `,` at line 2, column 12
    2 |     a: i32,,
                   ^
-note: also possible here: `//`, `pub`, identifier
+note: also possible here: `//`, `pub`, block comment, identifier
 in struct_item
 in item
 in item 1
@@ -65,7 +65,7 @@ Parse error:
 expected expression; found unexpected token `}` at line 4, column 1
    4 | }
        ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in expr
 in let_stmt
 in stmt
@@ -81,7 +81,7 @@ Parse error:
 expected expression; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in COMMENT
 in item 1
 in WS
@@ -113,7 +113,7 @@ Parse error:
 expected one of: `!`, `-`, `false`, `true`; found unexpected token `{` at line 2, column 8
    2 |     if { }
               ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `dsl`, `f"`, `null`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `dsl`, `f"`, `null`, block comment, digits, identifier
 in KW_FALSE
 in bool_lit
 in head_primary
@@ -155,7 +155,7 @@ Parse error:
 expected expression; found unexpected token `)` at line 2, column 18
    2 |     let z = f(1, )
                         ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in expr
 in call_args_tail
 in item 1
@@ -187,7 +187,7 @@ Parse error:
 expected type; found unexpected token `=` at line 2, column 12
    2 |     let x: = 1
                   ^
-note: also possible here: `&`, `//`, `fn`
+note: also possible here: `&`, `//`, `fn`, block comment
 in COMMENT
 in item 1
 in WS
@@ -207,7 +207,7 @@ Parse error:
 expected `:`; found unexpected token `&` at line 2, column 10
    2 |     name &str,
                 ^
-note: also possible here: `//`
+note: also possible here: `//`, block comment
 in COMMENT
 in item 2
 in WS
@@ -222,7 +222,7 @@ Parse error:
 expected `->`; found unexpected token `{` at line 2, column 30
    2 |     rule A -> i32 = n:digit1 { n }
                                     ^
-note: also possible here: `"`, `(`, `//`, `=>`, `fold`, `par_fold`, identifier
+note: also possible here: `"`, `(`, `//`, `=>`, `fold`, `par_fold`, block comment, identifier
 in g_alt
 in g_alts
 in grammar_rule
@@ -236,7 +236,7 @@ Parse error:
 expected `)`; found unexpected token `{` at line 1, column 10
    1 | fn main( {
                 ^
-note: also possible here: `&`, `//`, `;`, `mut`, `self`, identifier
+note: also possible here: `&`, `//`, `;`, `mut`, `self`, block comment, identifier
 in fn_params
 in fn_item
 in item
@@ -248,7 +248,7 @@ Parse error:
 expected `mut`; found unexpected token `5` at line 2, column 9
    2 |     let 5 = x
                ^
-note: also possible here: `//`
+note: also possible here: `//`, block comment
 in COMMENT
 in item 1
 in WS
@@ -266,7 +266,7 @@ Parse error:
 expected `}`; found unexpected token `struct` at line 2, column 5
    2 |     struct T { }
            ^^^^^^
-note: also possible here: `//`, `fn`, `pub`
+note: also possible here: `//`, `fn`, `pub`, block comment
 in impl_item
 in item
 in item 1
@@ -278,7 +278,7 @@ Parse error:
 expected end of input; found unexpected token `/` at line 3, column 1
    3 | / ein kaputter Kommentar
        ^
-note: also possible here: `//`, `@borrowed`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `trait`, `use`, item
+note: also possible here: `//`, `@borrowed`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `trait`, `use`, block comment, item
 in COMMENT
 in item 2
 in WS
@@ -288,7 +288,7 @@ Parse error:
 expected `{`; found unexpected token `=` at line 2, column 10
    2 |     if a = b { }
                 ^
-note: also possible here: `!=`, `%`, `&&`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `::`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `fn`, `||`
+note: also possible here: `!=`, `%`, `&&`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `::`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `fn`, `||`, block comment
 in block
 in if_expr
 in primary_expr
@@ -318,7 +318,7 @@ Parse error:
 expected `{`; found unexpected token `C` at line 2, column 28
    2 |     rule A -> i32 = a:B -> C -> { 1 }
                                   ^
-note: also possible here: `//`
+note: also possible here: `//`, block comment
 in block
 in g_alt
 in g_alts
@@ -333,7 +333,7 @@ Parse error:
 expected `}`; found unexpected token `-` at line 2, column 32
    2 |     rule A -> i32 = d:digit{1, -> { 1 }
                                       ^
-note: also possible here: `//`, digits
+note: also possible here: `//`, block comment, digits
 in g_bounds
 in g_repeat
 in g_postfix
@@ -355,7 +355,7 @@ Parse error:
 expected `->`; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `"`, `(`, `*`, `+`, `//`, `=>`, `?`, `fold`, `par_fold`, `{`, identifier
+note: also possible here: `"`, `(`, `*`, `+`, `//`, `=>`, `?`, `fold`, `par_fold`, `{`, block comment, identifier
 in g_alt
 in g_alts
 in grammar_rule
@@ -399,7 +399,7 @@ Parse error:
 expected end of input; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `//`, `@borrowed`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `trait`, `use`, item
+note: also possible here: `//`, `@borrowed`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `trait`, `use`, block comment, item
 in COMMENT
 in item 2
 in WS
@@ -409,7 +409,7 @@ Parse error:
 unexpected end of input, expected `}` at line 4, column 1
    4 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `return`, `throw`, `unsafe`, `while`, `{`, `||`, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `return`, `throw`, `unsafe`, `while`, `{`, `||`, block comment, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -421,7 +421,7 @@ Parse error:
 expected expression; found unexpected token `“` at line 2, column 13
    2 |     let x = “hi”
                    ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in expr
 in let_stmt
 in stmt

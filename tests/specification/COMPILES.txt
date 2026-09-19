@@ -35,7 +35,6 @@
 10-nikaia-light.md #71 compiles
 10-nikaia-light.md #72 compiles
 10-nikaia-light.md #73 compiles
-10-nikaia-light.md #74 error[E0422]
 10-nikaia-light.md #75 error[E0433]
 10-nikaia-light.md #76 compiles
 20-nikaia-advance.md #17 compiles

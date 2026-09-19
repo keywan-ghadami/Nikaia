@@ -183,6 +183,93 @@ fn reserved_word_note(rendered: &str) -> String {
     )
 }
 
+/// **The message an unclosed `/* … */` gets, said at the `/*` that opened it**
+/// ([ADR-134](../../../../docs/specification/adr/adr-134.md) D2).
+///
+/// `BLOCK_COMMENT`'s cut fires where the input ran out, which is the end of the
+/// file and not the place the reader has to fix - a comment that swallowed the
+/// rest of a program fails at its last byte, and the caret there points at
+/// nothing. The grammar cannot say better: the opening may be thousands of bytes
+/// behind the position it failed at.
+///
+/// So the opening is **found by scanning**, and the scan is the reading the lexer
+/// does: a `"` opens a string until its unescaped close, a `//` runs to the end
+/// of its line, and `/*` and `*/` count against each other. `None` where the
+/// counts come out even, which is a `*/` the grammar wanted for some other
+/// reason and whose own message is the better one.
+///
+/// **Only ever reached on a parse that has already failed with `*/` missing**,
+/// which is what keeps the one thing this cannot read - a `/*` inside a `dsl … eod`
+/// or a `grammar { … }` block, where it is text - from turning a good message into
+/// a wrong one. The condition is the grammar's own: it was inside a
+/// `BLOCK_COMMENT` and wanted its close.
+fn unclosed_block_comment(rendered: &str, source: &str) -> Option<String> {
+    if !rendered.contains("expected `*/`") {
+        return None;
+    }
+    let at = opening_of_an_unclosed_comment(source)?;
+    let (line, column) = winnow_grammar::span::line_column(source, at);
+    Some(format!(
+        "Parse error:\nunclosed block comment, opened at line {line}, column {column}\n{}\n\
+         note: `/*` opens a comment that `*/` closes, and they nest - so a `/*` inside \
+         this one needs its own `*/` before this one's (Part I, 2; ADR-134 D2)",
+        winnow_grammar::span::caret(source, at, 2)
+    ))
+}
+
+/// The byte offset of the outermost `/*` that never closed, if there is one.
+///
+/// Bytes and not characters, deliberately: everything compared here is ASCII, and
+/// every byte of a multi-byte character is `>= 0x80`, so the scan cannot stop
+/// inside one.
+fn opening_of_an_unclosed_comment(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut open: Vec<usize> = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        // A string and a line comment are only themselves *outside* a block
+        // comment: D1's *a `//` inside a block comment is comment, not a second
+        // comment*, and the same of a quote.
+        if open.is_empty() {
+            match bytes[at] {
+                b'"' => {
+                    at += 1;
+                    while at < bytes.len() {
+                        match bytes[at] {
+                            b'\\' => at += 2,
+                            b'"' => {
+                                at += 1;
+                                break;
+                            }
+                            _ => at += 1,
+                        }
+                    }
+                    continue;
+                }
+                b'/' if bytes.get(at + 1) == Some(&b'/') => {
+                    while at < bytes.len() && bytes[at] != b'\n' {
+                        at += 1;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if bytes[at] == b'/' && bytes.get(at + 1) == Some(&b'*') {
+            open.push(at);
+            at += 2;
+            continue;
+        }
+        if bytes[at] == b'*' && bytes.get(at + 1) == Some(&b'/') && !open.is_empty() {
+            open.pop();
+            at += 2;
+            continue;
+        }
+        at += 1;
+    }
+    open.first().copied()
+}
+
 /// The note a parse error gets when a `??`'s fallback reached for an operator.
 ///
 /// **A refusal in the grammar cannot always say why**, and this is the case that
@@ -313,6 +400,13 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         // wrong, so it leaves without a backtrace (`diagnostics::Refused`).
         .map_err(|e| {
             let rendered = e.render(input);
+            // **An unclosed `/* … */` is reported at its opening** and not at
+            // the end of the file, which is the one place a parse error's
+            // position is the reader's to be told rather than the parser's
+            // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D2).
+            if let Some(rendered) = unclosed_block_comment(&rendered, input) {
+                return crate::diagnostics::refuse(rendered);
+            }
             let note = format!(
                 "{}{}{}",
                 reserved_word_note(&rendered),
@@ -452,8 +546,47 @@ grammar! {
         // syntactic, so the generator would insert `WS` between *its* tokens,
         // and `WS` calls it. That cycle recurses until the stack is gone.
         rule WSE = multispace1
-        rule WS = (WSE | COMMENT)*
+        rule WS = (WSE | COMMENT | BLOCK_COMMENT)*
         rule COMMENT = "//" until(line_ending)
+
+        // **`/* … */`, and it nests**
+        // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D1, D2).
+        // Whitespace to the parser exactly as a line comment is, which is why
+        // it is listed in `WS` and nowhere else: the generator puts `WS`
+        // between the tokens of every syntactic rule, so a block comment stands
+        // wherever whitespace may - inside an argument list, inside a
+        // `grammar { … }` block, across as many lines as it needs.
+        //
+        // `BLOCK_INNER` tries the nested comment **first**, which is the whole
+        // of D2: at a `/*` the recursion takes it, so `/* a /* b */ c */` is one
+        // comment ending at the second close. Only where the inner one has no
+        // close does the `any` alternative take the slash, which is the case the
+        // cut below is about.
+        //
+        // **The cut is what puts the error at the opening** (D2). Once `/*` has
+        // been read this input is a block comment and nothing else, so an
+        // unclosed one fails here rather than letting `WS` succeed with zero
+        // repetitions and the `/*` reaching the next rule as a token nobody
+        // wants. A cut reaches all the way up, which is why the message names
+        // this position.
+        //
+        // **A `/*` inside a string literal is text** (D1), and `STRING` below
+        // needs no help to say so: it is a lexical rule, so no implicit `WS`
+        // runs between its characters and nothing here is ever asked.
+        rule BLOCK_COMMENT # "block comment" = "/*" => BLOCK_INNER* "*/"
+
+        // One step inside a block comment: a nested comment, or one character
+        // that is not the close. **Tried in that order**, which is the whole of
+        // D2 - at a `/*` the recursion takes it, so the first `*/` closes the
+        // inner comment and not this one.
+        //
+        // It hands back a `char` it has no use for, and the reason is the
+        // generator: two alternatives of different value types make it write a
+        // unit conversion, which `clippy::unused_unit` refuses. The nested arm
+        // answers with a space, which is what a comment is to the parser anyway.
+        rule BLOCK_INNER -> char =
+            BLOCK_COMMENT -> { ' ' }
+          | not("*/") c:any -> { c }
 
         // String literals keep their escapes: the boundary of a frame is
         // written `"\n"`, and what the emitter hands to the parser backend is
@@ -642,13 +775,38 @@ grammar! {
             r:receiver args:fn_arg_def_tail* config:config_zone? -> {
                 params_of(Some(r), args, config)
             }
+          // **A signature whose parameters are all options writes no `;`**
+          // ([ADR-133](../../../../docs/specification/adr/adr-133.md) D1). Tried
+          // before the positional list and decided on the token after the type:
+          // `bare_config_params` insists on the `= value` that makes a parameter
+          // an option, so `fn add(a: i64, b: i64)` fails it at the `,` and the
+          // alternative below takes it. Where one zone is empty there is nothing
+          // for the separator to stand between.
+          | config:bare_config_params -> {
+                params_of(None, Vec::new(), Some(ConfigZone::Options(config)))
+            }
           | head:fn_arg_def tail:fn_arg_def_tail* config:config_zone? -> {
                 let mut args = vec![head];
                 args.extend(tail);
                 params_of(None, args, config)
             }
-          | config:config_zone -> {
-                params_of(None, Vec::new(), Some(config))
+          // **And the leading `;` is refused rather than accepted beside it**
+          // (D2). Two spellings for one shape would be worse than either alone:
+          // the old one would keep appearing in code that reads the old pages,
+          // and a reader would wonder what the difference is.
+          //
+          // The cut is what makes this the message. Without it the alternative
+          // fails, the rule backtracks, and `config_zone`'s own `;` arm - the one
+          // a *mixed* signature needs - would parse the old form and the sentence
+          // would never be read.
+          | ";" => fail(
+                "a parameter list with no subjects writes its options without the `;` \
+                 (ADR-133 D1): `fn execute(target_age: i64 = 0)`. The `;` stands between \
+                 the two zones of Kap 5.1 - subjects before it, options after - and where \
+                 one zone is empty it separates nothing. A *mixed* list keeps it, and \
+                 keeps it required."
+            ) -> {
+                params_of(None, Vec::new(), None)
             }
 
         // Kap 5.1: everything after the `;` is an option. Named at the call,
@@ -673,6 +831,31 @@ grammar! {
             }
 
         rule config_param_tail -> ConfigParam = "," p:config_param -> { p }
+
+        // The options-only list, without the `;`
+        // ([ADR-133](../../../../docs/specification/adr/adr-133.md) D1).
+        //
+        // **Its own rule and not `config_param` reused**, because `config_param`
+        // ends in a `fail` for a missing default - the right message *after* a
+        // `;`, where a parameter can only be an option, and the wrong one here,
+        // where `name: T` with no default is an ordinary subject and the
+        // alternative below this one is what should read it. A `fail` outranks
+        // the alternatives at its position, so reusing it would have put
+        // *a configuration parameter needs a default* on every plain signature
+        // that failed for some later reason.
+        rule bare_config_params -> Vec<ConfigParam> =
+            head:bare_config_param tail:bare_config_param_tail* -> {
+                let mut params = vec![head];
+                params.extend(tail);
+                params
+            }
+
+        rule bare_config_param_tail -> ConfigParam = "," p:bare_config_param -> { p }
+
+        rule bare_config_param -> ConfigParam =
+            name:NAME ":" ty:type_ref "=" default:literal_expr -> {
+                ConfigParam { name, ty, default }
+            }
 
         // The default is required, and that is what makes this an *option*: a
         // caller may leave it out, and leaving it out is never a question about
@@ -1737,6 +1920,22 @@ grammar! {
         // Kap 5.1: subjects, then a `;`, then options by name. The separator
         // is the whole protocol - what is before it is data and may be
         // positional, what is after it is configuration and may not.
+        // **The call side of [ADR-133](../../../../docs/specification/adr/adr-133.md)
+        // D1 is not here, and it cannot be until a question is answered.**
+        //
+        // D3 says *nothing in expression position begins with a name followed by
+        // a colon*, and that is the one thing about the grammar the record has
+        // wrong: `ctor_lit` above is Kap 4.2's struct literal with named fields,
+        // `Stats(min: first, max: first)`, which is `execute(target_age: 30)`
+        // spelled identically. It is tried before any call, so an options-only
+        // call written the new way is read as a struct literal.
+        //
+        // The two constructs share a spelling and a name denotes one of them, so
+        // what tells them apart is **resolution** rather than the parser - and
+        // whether this language lets two constructs share a spelling is a
+        // question rather than work. `docs/open-decisions.md` carries it, and the
+        // leading `;` stays accepted at a call meanwhile, because refusing it
+        // with nothing to replace it would leave such a function uncallable.
         rule call_arg_list -> (Vec<Expr>, Vec<ConfigArg>) =
             "(" args:call_args? config:config_args? ")" -> {
                 (args.unwrap_or_default(), config.unwrap_or_default())
@@ -1759,6 +1958,7 @@ grammar! {
             }
 
         rule config_arg_tail -> ConfigArg = "," a:config_arg -> { a }
+
 
         rule config_arg -> ConfigArg =
             name:NAME ":" value:expr -> { ConfigArg { name, value } }

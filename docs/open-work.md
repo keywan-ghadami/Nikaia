@@ -1536,26 +1536,39 @@ the formatter keeps a chain flat and never refolds one.
 emitter's flat form and the formatter's line; `examples/http`'s `status_line`
 as a chain, and a test on a three-link chain's value.
 
-### 2.44. The leading `;` is gone
+### 2.44. An options-only call and a named struct literal are one spelling
 
-[ADR-133](specification/adr/adr-133.md), all of it. An argument list of options
-alone writes no `;` — `execute(target_age: 30)`, `fn execute(target_age: i64 =
-0)` — and the leading form is a parse error with a message naming the new one.
-A mixed call keeps its `;`, required. One alternative tried first in the call
-rule and in the signature rule, on the second token; no AST change. The two
-specification examples already read the new form.
+[ADR-133](specification/adr/adr-133.md). **The signature half is built:**
+`fn execute(target_age: i64 = 0)` parses, a mixed signature keeps its `;` and
+keeps it required, and `fn execute(; target_age: i64 = 0)` is refused with D2's
+message. The list is one alternative tried before the positional one and decided
+on the token after the type, because it insists on the `= value` that makes a
+parameter an option.
 
-*What it needs:* the two alternatives and the message; a test that the new
-form parses and the old is refused.
+**The call half is blocked by a question, not by work.** D3 argues the parser can
+tell the new form apart because *nothing in expression position begins with a name
+followed by a colon — a struct literal begins `Name {`*, and Kap 4.2's other
+struct literal does: `Stats(min: first, max: first)` is `execute(target_age: 30)`
+spelled identically. The parser tries the literal first, so the new call form is
+read as a struct literal. A name denotes one of the two constructs, so what tells
+them apart is **resolution** — which is
+[`open-decisions.md`](open-decisions.md) §9, with three options and a
+recommendation. The leading `;` stays accepted at a call meanwhile: refusing it
+with nothing to replace it would leave such a function uncallable.
 
-### 2.45. Block comments
+*Two defects were fixed on the way, and both were older than the record.* A call
+whose arguments are all options lowered to `execute(, 30)` — the comma the emitter
+writes *between* arguments, written before the first one — which is invalid Rust
+for the **only** spelling such a call had. And a struct literal naming nothing
+this compiler declares said nothing at all: it lowered verbatim and came back as
+`rustc`'s *cannot find struct `execute`*, which is
+[Part III C.1](specification/30-nikaia-tooling.md)'s class and the hole `NK1135`
+was built to close for a written annotation. It is `NK1135` now, and its message
+names the call where the name is a function — the silence that let this collision
+through two records.
 
-[ADR-134](specification/adr/adr-134.md), all of it. `/* … */` anywhere
-whitespace may stand, across lines, nesting, an unclosed one reported at its
-opening; `/** … */` is a comment and not a doc comment.
-
-*What it needs:* `BLOCK_COMMENT` beside `COMMENT` with the nesting count; a
-test with a nested comment in an argument list and a `/*` inside a string.
+*What is left:* the ruling, then the call half. Part III 15.1's
+`script.exec(msg: message)` and the specification's lowering floor wait with it.
 
 ## 3. Upkeep
 

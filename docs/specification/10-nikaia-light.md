@@ -93,9 +93,6 @@ already holds one can be commented out ([ADR-134](adr/adr-134.md)). An unclosed
 `/*` is reported where it opened. There is no doc comment: `///` and `/** … */`
 are ordinary comments that happen to begin so.
 
-> **Status:** the block comment is not built; `/*` is a parse error
-> ([ADR-134](adr/adr-134.md) §5).
-
 ### 2.1. Variables and Assignment
 A **Variable** is a named storage location in memory that holds a value. In Nikaia, variables are declared using the `let` keyword.
 

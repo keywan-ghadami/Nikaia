@@ -133,6 +133,21 @@ fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
 /// still wants the `;` — so the page is ahead of the compiler by decision.
 /// The block comes back as a program with ADR-133 §5's first step, and the
 /// floor goes back up with it.
+///
+/// **Lowered a fourth time, from 48 to 47, and this one is the floor going
+/// down because the compiler got better.** Part I 9.1's second block writes
+/// `Row(id: helper() + 1)` for a `Row` its *first* block declares — the
+/// sentence on that page is that files in a package see one another with no
+/// `use` — and this harness hands each block over alone. It used to lower and
+/// come back from `rustc` as `E0422`, *cannot find struct `Row`*, about a file
+/// nobody wrote; it is now `NK1135` in this compiler's own words
+/// ([ADR-096](../../../docs/specification/adr/adr-096.md), and the silence that
+/// let [ADR-133](../../../docs/specification/adr/adr-133.md)'s collision
+/// through). Blocks 28, 62 and 64 were already recorded that way for the same
+/// reason. **A block that stops lowering because it is refused *here* is the
+/// C.1 class closing**, which is why this number went down and nothing is
+/// wrong: what it counts is programs this compiler hands to the backend, and
+/// one fewer wrong answer arrives from there.
 #[test]
 fn most_of_a_third_of_the_specifications_blocks_are_programs() {
     let verdicts = specbook::verdicts(&specbook::specification_dir());
@@ -141,8 +156,8 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
         .filter(|v| v.stage == Stage::Lowered)
         .count();
     assert!(
-        lowered >= 48,
-        "{lowered} of {} blocks lower, and 48 did when this floor was last set - \
+        lowered >= 47,
+        "{lowered} of {} blocks lower, and 47 did when this floor was last set - \
          raise it if it is beaten, and read the diff if it is not",
         verdicts.len()
     );

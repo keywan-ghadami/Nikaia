@@ -3644,6 +3644,25 @@ impl<'a> Checker<'a> {
                 // `http::Request` (ADR-046 D3).
                 let name = self.parsed.unaliased(self.parsed.text(*name));
                 let declared = self.fields_of(&name);
+                // **A struct literal naming nothing this compiler declares**
+                // ([ADR-096](../../docs/specification/adr/adr-096.md), `NK1135`),
+                // and it is the silence that let
+                // [ADR-133](../../docs/specification/adr/adr-133.md)'s collision
+                // through: `Stats(min: first)` and `execute(target_age: 30)` are
+                // one spelling, `ctor_lit` reads both as a literal, and a literal
+                // for a struct nothing declares walked out of here on the
+                // `continue` below and lowered verbatim. `rustc` answered
+                // *cannot find struct `execute`* about a file nobody wrote, which
+                // is Part III C.1's class and the very hole `NK1135` was built
+                // to close for a written annotation.
+                //
+                // **Unqualified only**, which is `NK1135`'s own convention:
+                // `pool::Conn(id: 1)` names a package's type, and whether this
+                // build can see that package is a question with a message of its
+                // own (ADR-046 D2).
+                if declared.is_none() && !name.contains("::") && !self.declares_a_type(&name) {
+                    self.a_struct_nothing_declares(&name, span);
+                }
                 // **What a generic struct's literal binds**
                 // ([ADR-074](../../docs/specification/adr/adr-074.md) D2).
                 // `Pair { first: 1, second: 2 }` is a `Pair[i64]` and nothing
@@ -5698,6 +5717,69 @@ impl<'a> Checker<'a> {
                     "everything before the `;` is positional (Part I, 5.1)".to_string()
                 }
                 None => "name one of the options it has".to_string(),
+            }),
+        });
+    }
+
+    /// Whether any ledger or this unit declares a **type** by this name.
+    ///
+    /// Presence and not fields, which is the difference from [`Self::fields_of`]:
+    /// *an empty field list means nothing recorded and not nothing inside*
+    /// (Part III 15.2), so a described foreign type has an entry and no fields,
+    /// and it is declared.
+    fn declares_a_type(&self, name: &str) -> bool {
+        if self.structs.contains_key(name) || self.own.types.contains_key(name) {
+            return true;
+        }
+        // `Self` inside an `impl`, and the type parameters an item brought in:
+        // both are names a literal may wear and neither is in a `types` map.
+        if name == "Self" || self.enums.contains_key(name) {
+            return true;
+        }
+        let suffix = format!("::{name}");
+        self.library
+            .types
+            .keys()
+            .any(|key| key == name || key.ends_with(&suffix))
+    }
+
+    /// `NK1135` for a struct literal, with the sentence a *call* needs.
+    ///
+    /// The same code a written annotation gets, because it is the same claim -
+    /// a name in type position that nothing declares. What differs is the way
+    /// out, and it differs because of one shape: where the name is a **function**
+    /// the author almost certainly meant
+    /// [ADR-133](../../docs/specification/adr/adr-133.md) D1's options-only call,
+    /// which this compiler does not parse yet, and *nothing declares a struct*
+    /// would send them looking for a `struct` they never wanted.
+    fn a_struct_nothing_declares(&mut self, name: &str, span: &Span) {
+        let is_a_function = self.own.functions.contains_key(name)
+            || self.library.lookup(name).is_some()
+            || self.own.functions.contains_key(&format!("{name}::new"));
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1135",
+            message: format!("nothing declares a struct called `{name}`"),
+            notes: vec![match is_a_function {
+                true => format!(
+                    "`{name}(…: …)` is Kap 4.2's struct literal with named fields, the \
+                     shape `Stats(min: first, max: first)` has - and `{name}` is a \
+                     function. A call whose arguments are all options is written \
+                     `{name}(; option: value)` in this compiler; ADR-133 D1 spells it \
+                     without the `;`, and what stands in the way is that the two forms \
+                     are one spelling (docs/open-decisions.md)"
+                ),
+                false => "a struct literal names a type, and this name is not one Part I \
+                          2.2 offers, nor one a ledger declares, nor one this file \
+                          declares (ADR-096)"
+                    .to_string(),
+            }],
+            help: Some(match is_a_function {
+                true => {
+                    format!("write `{name}(; option: value)` while the `;` is still the spelling")
+                }
+                false => "declare the `struct`, or correct the name".to_string(),
             }),
         });
     }

@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.13] — 2026-09-19
+
+Two of 0.0.10's three shapes, one built whole and one stopped by a premise that
+turned out to be wrong about the grammar — and two defects found on the way to
+it, both older than the record that names their shape.
+
+### Added (`/* … */` is a comment, it nests, and it is not a doc comment)
+
+- **[ADR-134](docs/specification/adr/adr-134.md), all of it.** A comment was `//` to the end of the line and nothing else, which is enough beside a statement and not enough for commenting out a block while debugging, for a paragraph above a function, or for a note inside an argument list. `BLOCK_COMMENT` stands beside `COMMENT` in `WS`, which is the only place a comment can be said — the generator puts `WS` between the tokens of every syntactic rule, so a block comment stands wherever whitespace may. It **nests**, because the step inside it tries the nested comment before the plain character. `/**` and `/*!` are comments and the language still has no doc comment.
+- **A `/*` inside a string literal is text with no help needed**, which is an argument about the grammar rather than a special case: `STRING` is a lexical rule, so no implicit whitespace runs between its characters and the comment rule is never asked. A `//` inside a block comment is comment, which is the case a scan that read line comments everywhere would get wrong — the close can be behind one.
+- **The error at the opening is not the grammar's to give**, and that is the one thing the record did not name. The cut fires where the input ran out, which is the end of the file: a comment that swallowed the rest of a program fails at its last byte and a caret there points at nothing. So the opening is found by a **scan**, on a parse that has already failed with `*/` missing — the condition is the grammar's own, which keeps the one thing the scan cannot read (a `/*` inside a `dsl … eod` block, where it is text) from turning a good message into a wrong one.
+
+### Changed (the leading `;` is gone from a signature, and the call meets a question)
+
+- **[ADR-133](docs/specification/adr/adr-133.md), the signature half.** `fn execute(target_age: i64 = 0)` parses: where one of Part I 5.1's two zones is empty there is nothing for the `;` to stand between. A mixed signature keeps its `;` and keeps it required, and `fn execute(; target_age: i64 = 0)` is refused with a message naming the one spelling. Its own rule rather than `config_param` reused, because that one ends in a `fail` for a missing default — the right message after a `;` and the wrong one before it, and a `fail` outranks the alternatives at its position.
+- **The call half is blocked by a question, not by work, and D3 is why.** *Nothing in expression position begins with a name followed by a colon — a struct literal begins `Name {`* leaves out the other struct literal: Kap 4.2's `Stats(min: first, max: first)` is `execute(target_age: 30)` spelled identically. The parser tries the literal first. A name denotes one of the two constructs, so what tells them apart is **resolution** — which is `open-decisions.md` §9 with three options and a recommendation. The leading `;` stays accepted at a call meanwhile: refusing it with nothing to replace it would leave such a function uncallable.
+- **Fixed: a call whose arguments are all options lowered to invalid Rust.** `execute(; target_age: 30)` came out as `execute(, 30)` — the comma the emitter writes *between* arguments, written before the first one because such a call has nothing in front of it. `rustc` answered about a file nobody wrote, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class, for the **only** spelling such a call had. Nothing in the corpus declares a function whose parameters are all options, which is why it stood.
+- **Fixed: a struct literal naming nothing this compiler declares said nothing at all.** The arm that checks a literal's fields walked over a type with none, so the program lowered verbatim and came back as *cannot find struct `execute`* — C.1 again, and the very hole `NK1135` ([ADR-096](docs/specification/adr/adr-096.md)) was built to close for a written annotation. It is `NK1135` now, unqualified names only as that code's convention has it, and its message names the call where the name is a **function**. That is the silence that let the collision above go unnoticed through two records.
+- **The specification's lowering floor goes from 48 to 47, and it is the floor going down because the compiler got better.** Part I 9.1's second block builds a `Row` its *first* block declares, this harness hands each block over alone, and the block used to lower and come back from `rustc` as `E0422`. Blocks 28, 62 and 64 were already recorded that way for the same reason. What the number counts is programs handed to the backend, and one fewer wrong answer arrives from there.
+
 ## [0.0.12] — 2026-09-19
 
 The ledger column that could only say *yes*, and the two refusals that had

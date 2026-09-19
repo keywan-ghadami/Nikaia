@@ -1,6 +1,7 @@
 # Open decisions — the questions that need the owner
 
-**Eight entries are open**, below. An answer is an [ADR](specification/adr/),
+**Nine entries are open**, below, and the ninth was found by *building* one of
+the others rather than by reading. An answer is an [ADR](specification/adr/),
 and the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
 [`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
@@ -91,6 +92,58 @@ first (every demo stands on it), `std::db` second, the C library
 bare-metal target ([ADR-119](specification/adr/adr-119.md)) after the server
 and the C library, since it reuses their allocator and baked settings. One
 paragraph in `project_status_and_roadmap.md` would say it.
+
+### 9. `execute(target_age: 30)` and `Stats(min: first)` are one spelling
+
+**Found by building [ADR-133](specification/adr/adr-133.md), and it blocks that
+record's call half.** D3 argues the parser can tell an options-only call apart on
+the second token because *nothing in expression position begins with a name
+followed by a colon — a struct literal begins `Name {`*. Kap 4.2's other struct
+literal does: `Stats(min: first, max: first)` builds the struct, and
+`execute(target_age: 30)` is the same five tokens. The parser tries the literal
+first, so D1's new call form is read as a struct literal for a struct nothing
+declares.
+
+**What is blocked:** ADR-133 D1's and D2's *call* halves, and with them Part III
+15.1's `script.exec(msg: message)` — which is why the specification's lowering
+floor stays where it is. The **signature** halves are built: `fn execute(target_age:
+i64 = 0)` parses and the leading `;` in a signature is refused, because nothing
+competes with that shape.
+
+**What is not blocked any more:** the silence. A struct literal naming nothing
+this compiler declares used to lower verbatim and come back from `rustc` as
+*cannot find struct `execute`* — Part III C.1's class — and is now `NK1135`,
+whose message names the call where the name is a function.
+
+*The options.*
+
+1. **Resolution decides, and the parser does not.** A name denotes one thing, so
+   `Name(field: value)` is a struct literal where `Name` is a type and a call with
+   options where it is a function. The precedent is in the language already:
+   `Stats(first)` is Kap 4.2's anonymous constructor and is parsed as a **call**,
+   with the checker and the emitter turning it into `Stats::new(first)` by looking
+   the name up. This is the same lookup on the other form. *Costs:* the fork in
+   `check` and in `emit`, and a rule for a name that is both a type and a function
+   — which the grammar allows today and nothing in the corpus writes.
+2. **The named constructor goes**, leaving `Stats { min: first }` as the only
+   struct literal and `name(opt: v)` unambiguous. *Costs:* a form the
+   specification writes in several places and the corpus uses, and a migration
+   with nothing to gain but the parser's simplicity.
+3. **ADR-133's call half is withdrawn** and an options-only call keeps its
+   leading `;`. *Costs:* the shape no reader has seen in any language, kept for a
+   collision the compiler could resolve — and D2's *one spelling per shape* then
+   applies to the signature only, which is the asymmetry the build is currently in.
+
+*Recommendation:* **option 1.** It is the answer the language already gives for
+the other half of the same form, it needs no migration, and it keeps both
+constructs exactly as their records describe them. What it asks for is one
+sentence — *a name denotes a type or a function, and that is what tells the two
+forms apart* — and one refusal for the case where somebody declares both.
+
+*If it is wrong:* option 1 spent on a form that should have gone (option 2) is a
+fork in two files that then becomes dead; option 3 spent is the two parser
+alternatives already written, reverted. Neither is expensive, which is why the
+question is worth asking rather than guessing.
 
 ## Answered
 
