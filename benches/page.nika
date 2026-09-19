@@ -45,7 +45,7 @@ fn main() {
     let n: i32 = count.parse() catch { 2000 }
 
     let mut total = 0
-    for i in 0..n {
+    for i in 0..<n {
         let markup = page("A page with <angles> & an ampersand", "Some body text.")
         total += markup.len()
     }

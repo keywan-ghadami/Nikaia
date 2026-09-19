@@ -299,6 +299,43 @@ entry the way a function's are.
 information rather than correctness — and `sync` has since been paid back in
 full.
 
+### A task nobody joined is left unwoken, about two runs in five
+
+*Not found by a search and not by this round's work*: `nikaia-std`'s own
+`a_future_fed_from_a_worker_finishes_under_block_on` goes red in roughly two of
+every five runs of its test binary, alone and under a loaded whole-workspace
+run alike, and has done through every change of this session. It is a test doing
+its job, so it is filed as what it found rather than as a flaky gate.
+
+*What it says when it fails:*
+
+```text
+nikaia: 1 background task(s) did not finish within the 30s cleanup deadline
+        and were abandoned
+assertion failed: the task nobody joined still ran to its end (ADR-055 D5)
+```
+
+*Reproduction:* `cargo test --release -p nikaia-std --lib` — a few times; it is
+green about three runs in five. The test writes a byte into each of two pipes
+100 ms after the executor has parked. One readiness wait is `block_on`'s own and
+the other belongs to a task started with `exec::start` and never joined.
+`block_on`'s wait is answered every time; the **task's** is not.
+
+*What that means, and it is worse than a slow test.*
+[ADR-055](specification/adr/adr-055.md) D5 promises that a task nobody joins
+still runs, and `exec::block_on` implements it — the drain at the bottom of its
+loop waits for the started queue to empty. The drain is reached and parks, and
+nothing wakes it: the wait's own deadline would answer it at two seconds if the
+worker reported at all, so what is missing is a **wake**, not a result. That is
+the shape [ADR-121](specification/adr/adr-121.md) D3 exists to keep out, one
+task over from the one it was written for.
+
+*Why it is here and not fixed in the change that found it:* it is a defect in
+the executor's wake path and the changes it was found beside are the parser's.
+Filing it with the reproduction and the two facts above — the drain is reached,
+the deadline is not what expires — is what the next session needs; guessing at a
+repair beside unrelated work is how a second defect gets added to a first.
+
 ### The most negative `i64` has no spelling
 
 *Found by building* [ADR-136](specification/adr/adr-136.md), and small enough
@@ -1657,27 +1694,31 @@ formatter is born with, and **the formatter itself is the entry**. Nothing else 
 the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
 compiler's own Rust and no `.nika` file has ever been formatted by a tool.
 
-### 2.42. Six `match` pattern shapes are missing, and the range spelling is the old one
+### 2.42. Six `match` pattern shapes are missing
 
 [ADR-137](specification/adr/adr-137.md). A tuple, an or-pattern, a range, a
 guard, a nested pattern and `..` for a struct's rest are all missing, and the
 absence is visible in the corpus: `examples/calc.nika` matches `step.0` because
 it cannot match `step`.
 
-**Step 2 is the one that changes the meaning of a form that already compiles**,
-which is why the record puts the migration in the same change. `..` becomes
-**inclusive** everywhere and `..<` is the exclusive range — a `for`, a slice, a
-pattern alike — and `..=`, which this language already has in an expression, goes
-with D5's message, because `..` is now what it said. The old spelling keeps
-parsing and changes meaning, so a migration spread over two changes is a corpus
-that means something nobody wrote in between.
+**The range spelling is built and went first**, which is the opposite of the
+record's own order and for a reason that only appears when you try it: D1's
+range *pattern* is **inclusive**, so it cannot be written while `..` means the
+other thing. `..<` excludes its end, `..` includes it, `..=` is refused, and
+every range in the tree was rewritten in the same change — the old spelling
+keeps parsing and changes meaning, so a migration spread over two changes is a
+corpus that means something nobody wrote in between.
 
-*What it needs, in the record's order (§5):* the six pattern rules and the
-or-pattern's binding-set refusal; `..<` in the range rule with `..` inclusive and
-`..=` refused; the corpus and the specification's ranges rewritten — the pages
-state the rule already and keep their examples until this step, so that no block
-leaves the lowering floor for nothing; `calc.nika` matching `step`, and a test per
-shape.
+*What it needs, and it is the record's steps 1 and 4:* the six pattern rules and
+the or-pattern's binding-set refusal — every alternative binds the same set of
+names, which is what keeps the arm's body answerable — and `calc.nika` matching
+`step`, with a test per shape. The range pattern is the one shape the spelling
+above was the prerequisite for; the other five are Rust's and lower verbatim.
+
+*And one question is parked behind it*
+([ADR-146](specification/adr/adr-146.md) §4): whether a set of **ranges** or an
+**or-pattern** counts as covering a type's cases. That record says it does and
+waits on these rules to exist.
 
 ### 2.43. `throw`, `return`, `break` and `continue` are statements
 

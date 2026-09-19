@@ -100,7 +100,7 @@ fn a_for_over_something_that_is_not_a_place_owns_it() {
     let rust = lowered(
         "fn main() {\n\
          \x20   let mut sum = 0\n\
-         \x20   for i in 0..3 { sum += i }\n\
+         \x20   for i in 0..<3 { sum += i }\n\
          \x20   let text = \"abc\".to_string()\n\
          \x20   for c in text.chars() { sum += 1 }\n\
          \x20   println(f\"{sum}\")\n\

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.36 (Draft)
+**Version:** 0.0.37 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -284,7 +284,7 @@ refused the same way rather than being read as constructs that are not there.
 does not offer them: an entry exists because a program asked for it, and none has
 ([ADR-028](adr/adr-028.md) D5). A **length** used to be the one place a program
 met the machine-width type, and since [ADR-048](adr/adr-048.md) D1 it does not:
-`for i in 0..xs.len()` gives an `i64`, `xs[i]` takes one, and neither conversion
+`for i in 0..<xs.len()` gives an `i64`, `xs[i]` takes one, and neither conversion
 is written — the compiler emits both. A negative index reports as an access out
 of bounds, because that is what it is (Part III, A.2).
 
@@ -671,9 +671,8 @@ while count < 5 {
 Iterates over a sequence (like a range of numbers or a list).
 
 ```nika
-// Iterates from 0 to 4 — the spelling the compiler takes today; the rule
-// below and the Status note under it say what it becomes.
-for i in 0..5 {
+// Iterates from 0 to 4: `..<` stops before its end.
+for i in 0..<5 {
     println(f"Index: {i}")
 }
 ```
@@ -687,12 +686,15 @@ operator in it**, so `0..<n - 1` is a range ending below `n - 1` rather than a
 range with something subtracted from it. That is the reading a loop head wants
 and the only one that is ever useful.
 
-> **Status:** **not built, and the page's examples are still the old spelling**
-> ([ADR-137](adr/adr-137.md) §5). Today `a..b` *excludes* its end, `a..=b`
-> includes it, and `..<` does not parse. The rule above is what the language
-> is; every range in this specification and in `examples/` is rewritten in the
-> one change that takes `..<`, because the old spelling keeps parsing and
-> changes meaning.
+> **Status:** the **range spelling is built** ([ADR-137](adr/adr-137.md) §5):
+> `..<` parses and excludes its end, `..` includes it, and `..=` is refused
+> naming `0..n` as the form it was. Every range in this specification, in
+> `examples/`, in `benches/` and in the tests was rewritten in the same change,
+> because the old spelling keeps parsing and changes meaning — a migration
+> spread over two changes is a corpus that means something nobody wrote in
+> between.
+>
+> The **six pattern shapes** of D1 are the part still to come.
 
 A `for` over a list **lends** it: the elements are looked at, and the list is
 still there when the loop is over. Taking them away is written,

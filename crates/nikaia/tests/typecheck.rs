@@ -463,7 +463,7 @@ fn a_loop_over_something_that_cannot_fail_says_nothing() {
         "fn count(xs: Vec[i32]) -> i64 {\n\
          \x20   let mut n = 0\n\
          \x20   for x in xs { n += 1 }\n\
-         \x20   for i in 0..10 { n += 1 }\n\
+         \x20   for i in 0..<10 { n += 1 }\n\
          \x20   return n\n\
          }"
     )

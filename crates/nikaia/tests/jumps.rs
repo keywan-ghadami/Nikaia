@@ -93,7 +93,7 @@ fn output_of(purpose: &str, source: &str) -> String {
 fn a_break_leaves_the_loop_and_the_function_goes_on() {
     let source = "fn main() {\n\
          \x20   let mut total = 0\n\
-         \x20   for i in 0..10 {\n\
+         \x20   for i in 0..<10 {\n\
          \x20       if i == 4 {\n\
          \x20           break\n\
          \x20       }\n\
@@ -110,7 +110,7 @@ fn a_break_leaves_the_loop_and_the_function_goes_on() {
 fn a_continue_skips_one_turn() {
     let source = "fn main() {\n\
          \x20   let mut total = 0\n\
-         \x20   for i in 0..10 {\n\
+         \x20   for i in 0..<10 {\n\
          \x20       if i % 2 == 0 {\n\
          \x20           continue\n\
          \x20       }\n\
@@ -127,8 +127,8 @@ fn a_continue_skips_one_turn() {
 fn a_break_leaves_the_innermost_loop() {
     let source = "fn main() {\n\
          \x20   let mut total = 0\n\
-         \x20   for i in 0..3 {\n\
-         \x20       for j in 0..10 {\n\
+         \x20   for i in 0..<3 {\n\
+         \x20       for j in 0..<10 {\n\
          \x20           if j == 2 {\n\
          \x20               break\n\
          \x20           }\n\
@@ -195,7 +195,7 @@ fn a_break_in_a_catch_handler_leaves_the_loop() {
 fn a_break_may_stand_where_a_value_is_expected() {
     let source = "fn main() {\n\
          \x20   let mut total = 0\n\
-         \x20   for i in 0..10 {\n\
+         \x20   for i in 0..<10 {\n\
          \x20       let step = if i > 3 { break } else { i }\n\
          \x20       total += step\n\
          \x20   }\n\
@@ -213,7 +213,7 @@ fn the_lowering_is_the_same_word() {
     let rust = lowered(
         "fn f(n: i64) -> i64 {\n\
          \x20   let mut t = 0\n\
-         \x20   for i in 0..n {\n\
+         \x20   for i in 0..<n {\n\
          \x20       if i == 1 {\n\
          \x20           continue\n\
          \x20       }\n\
@@ -285,7 +285,7 @@ fn a_break_in_an_overlap_branch_cannot_reach_the_loop_outside_it() {
          \n\
          fn f(n: i64) -> i64 {\n\
          \x20   let mut t = 0\n\
-         \x20   for i in 0..n {\n\
+         \x20   for i in 0..<n {\n\
          \x20       let r = overlap {\n\
          \x20           fs::read_to_string(\"a\") catch { break }\n\
          \x20           fs::read_to_string(\"b\") catch { \"\".to_string() }\n\
@@ -310,7 +310,7 @@ fn a_loop_inside_a_lambda_is_a_loop_a_break_may_leave() {
         findings(
             "fn f(xs: Vec[i64]) -> i64 {\n\
              \x20   let each = fn (n) {\n\
-             \x20       for i in 0..n {\n\
+             \x20       for i in 0..<n {\n\
              \x20           break\n\
              \x20       }\n\
              \x20       n\n\
@@ -334,7 +334,7 @@ fn a_loop_inside_a_lambda_is_a_loop_a_break_may_leave() {
 #[test]
 fn a_value_written_after_a_break_is_refused() {
     let (code, message) = one("fn f(n: i64) -> i64 {\n\
-         \x20   for i in 0..n {\n\
+         \x20   for i in 0..<n {\n\
          \x20       break i\n\
          \x20   }\n\
          \x20   return 0\n\
@@ -351,7 +351,7 @@ fn a_value_written_after_a_break_is_refused() {
 fn the_help_names_a_let_before_the_loop_and_a_return() {
     let parsed = parse_to_ast(
         "fn f(n: i64) -> i64 {\n\
-         \x20   for i in 0..n {\n\
+         \x20   for i in 0..<n {\n\
          \x20       break i\n\
          \x20   }\n\
          \x20   return 0\n\
@@ -375,7 +375,7 @@ fn the_help_names_a_let_before_the_loop_and_a_return() {
 fn a_statement_after_a_break_is_refused() {
     let (code, _) = one("fn f(n: i64) -> i64 {\n\
          \x20   let mut t = 0\n\
-         \x20   for i in 0..n {\n\
+         \x20   for i in 0..<n {\n\
          \x20       break\n\
          \x20       t += i\n\
          \x20   }\n\
@@ -392,7 +392,7 @@ fn a_break_at_the_end_of_its_block_is_silent() {
         findings(
             "fn f(n: i64) -> i64 {\n\
              \x20   let mut t = 0\n\
-             \x20   for i in 0..n {\n\
+             \x20   for i in 0..<n {\n\
              \x20       t += i\n\
              \x20       if t > 10 {\n\
              \x20           break\n\
@@ -442,7 +442,7 @@ fn the_backstop_lets_a_loop_written_inside_the_task_through() {
     let rust = lowered(
         "fn f(n: i64) -> i64 {\n\
          \x20   let h = spawn fn {\n\
-         \x20       for i in 0..n {\n\
+         \x20       for i in 0..<n {\n\
          \x20           break\n\
          \x20       }\n\
          \x20       n\n\
@@ -578,7 +578,7 @@ fn a_head_binds_and_tighter_than_or() {
 fn a_range_head_still_binds_loosest() {
     let source = "fn main() {\n\
          \x20   let mut t = 0\n\
-         \x20   for i in 0..5 - 1 {\n\
+         \x20   for i in 0..<5 - 1 {\n\
          \x20       t += i\n\
          \x20   }\n\
          \x20   println(f\"{t}\")\n\

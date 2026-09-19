@@ -71,7 +71,7 @@ impl System {
         let mut py = 0.0
         let mut pz = 0.0
 
-        for i in 0..self.bodies.len() {
+        for i in 0..<self.bodies.len() {
             px = px + self.bodies[i].vx * self.bodies[i].mass
             py = py + self.bodies[i].vy * self.bodies[i].mass
             pz = pz + self.bodies[i].vz * self.bodies[i].mass
@@ -95,8 +95,8 @@ impl System {
     fn advance(&mut self, dt: f64) sync {
         let n = self.bodies.len()
 
-        for i in 0..n {
-            for j in i + 1..n {
+        for i in 0..<n {
+            for j in i + 1..<n {
                 let dx = self.bodies[i].x - self.bodies[j].x
                 let dy = self.bodies[i].y - self.bodies[j].y
                 let dz = self.bodies[i].z - self.bodies[j].z
@@ -117,7 +117,7 @@ impl System {
             }
         }
 
-        for i in 0..n {
+        for i in 0..<n {
             self.bodies[i].x = self.bodies[i].x + dt * self.bodies[i].vx
             self.bodies[i].y = self.bodies[i].y + dt * self.bodies[i].vy
             self.bodies[i].z = self.bodies[i].z + dt * self.bodies[i].vz
@@ -132,11 +132,11 @@ impl System {
         let n = self.bodies.len()
         let mut e = 0.0
 
-        for i in 0..n {
+        for i in 0..<n {
             let b = self.bodies[i]
             e = e + 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz)
 
-            for j in i + 1..n {
+            for j in i + 1..<n {
                 let dx = b.x - self.bodies[j].x
                 let dy = b.y - self.bodies[j].y
                 let dz = b.z - self.bodies[j].z
@@ -220,7 +220,7 @@ fn main() {
     system.offset_momentum()
 
     println(f"{system.energy():.9}")
-    for _step in 0..n {
+    for _step in 0..<n {
         system.advance(0.01)
     }
     println(f"{system.energy():.9}")

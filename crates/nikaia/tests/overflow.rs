@@ -530,7 +530,7 @@ fn a_length_is_an_i64_and_the_conversions_are_emitted() {
              xs.push(20)\n    \
              xs.push(30)\n    \
              let mut sum = 0\n    \
-             for i in 0..xs.len() {\n        \
+             for i in 0..<xs.len() {\n        \
                  sum = sum + xs[i]\n    \
              }\n    \
              let last = xs[xs.len() - 1]\n    \

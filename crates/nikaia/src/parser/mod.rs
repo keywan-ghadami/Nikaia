@@ -1986,11 +1986,17 @@ grammar! {
 
         rule closure_param_tail -> (bool, Symbol) = "," p:closure_param -> { p }
 
-        // Kap 3.3. It binds looser than every operator below it, so `0..n - 1`
-        // is a range ending at `n - 1` rather than a range subtracted from -
+        // Kap 3.3. It binds looser than every operator below it, so `0..<n - 1`
+        // is a range ending at `n - 2` rather than a range subtracted from -
         // which is the reading a `for` head wants and the only one that is ever
-        // useful. `..=` is tried first, or its `=` would be read as the start
-        // of a comparison.
+        // useful.
+        //
+        // **`..` includes its end and `..<` does not**
+        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D3, D4),
+        // which is one spelling per meaning across the whole language: a `for`,
+        // a slice and a pattern read the same two operators the same way.
+        // Kotlin and Swift are the precedent and both read `..<` as *up to, not
+        // including*.
         rule range_expr -> Expr =
             start:or_expr end:range_tail? -> {
                 match end {
@@ -2003,9 +2009,24 @@ grammar! {
                 }
             }
 
+        // `..<` first, and `..=` before the bare `..`: a PEG keeps the first
+        // alternative that matches, so `..` would take the two dots of either
+        // and leave the third character stranded.
+        //
+        // **`..=` is a refusal and not a spelling** (D5). It was the inclusive
+        // range this language had, and D4 makes `..` that range - so keeping it
+        // would be the two-spellings defect of
+        // [ADR-140](../../../../docs/specification/adr/adr-140.md) introduced by
+        // the record that argues *one meaning per spelling*.
         rule range_tail -> (bool, Expr) =
-            "..=" e:or_expr -> { (true, e) }
-          | ".." e:or_expr -> { (false, e) }
+            "..<" e:or_expr -> { (false, e) }
+          | "..=" fail(
+                "`..` includes its end, so the inclusive range is written `0..n` \
+                 (ADR-137 D3). `..=` was this language's inclusive range and is \
+                 withdrawn, because one meaning per spelling is what that record \
+                 is for; the range that stops before its end is `0..<n`."
+            ) -> { (true, Expr::LitInt(0)) }
+          | ".." e:or_expr -> { (true, e) }
 
         rule or_expr -> Expr =
             head:and_expr tail:or_tail* -> { fold_binary(head, tail) }
@@ -2373,9 +2394,18 @@ grammar! {
                 }
             }
 
+        // The head chain's copy of `range_tail`, and the same three
+        // alternatives in the same order
+        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D4, D5).
         rule head_range_tail -> (bool, Expr) =
-            "..=" e:head_or -> { (true, e) }
-          | ".." e:head_or -> { (false, e) }
+            "..<" e:head_or -> { (false, e) }
+          | "..=" fail(
+                "`..` includes its end, so the inclusive range is written `0..n` \
+                 (ADR-137 D3). `..=` was this language's inclusive range and is \
+                 withdrawn, because one meaning per spelling is what that record \
+                 is for; the range that stops before its end is `0..<n`."
+            ) -> { (true, Expr::LitInt(0)) }
+          | ".." e:head_or -> { (true, e) }
 
         // **Neither connective can begin a block**, which is the whole of why
         // they are safe here: the brace problem is about what may stand

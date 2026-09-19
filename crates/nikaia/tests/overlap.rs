@@ -102,7 +102,7 @@ fn a_branch_that_cannot_pause_is_started_last_and_answered_in_place() {
          \n\
          fn expensive(n: i64) -> i64 sync {\n\
          \x20   let mut sum = 0\n\
-         \x20   for i in 0..n { sum += i }\n\
+         \x20   for i in 0..<n { sum += i }\n\
          \x20   return sum\n\
          }\n\
          \n\

@@ -15,7 +15,7 @@
 10-nikaia-light.md #15 refused (a body) [NK1117]  let grade = if score >= 90 {
 10-nikaia-light.md #16 fragment (as written) [sketch]  if p == (P { x: 1 }) {          // the parentheses say …
 10-nikaia-light.md #17 lowered (a body)  let mut count = 0
-10-nikaia-light.md #18 lowered (a body)  // Iterates from 0 to 4 — the spelling the compiler tak…
+10-nikaia-light.md #18 lowered (a body)  // Iterates from 0 to 4: `..<` stops before its end.
 10-nikaia-light.md #19 refused (a body) [NK1117]  let mut first_even = 0 - 1
 10-nikaia-light.md #20 refused (a body) [about-a-refusal NK1117,NK1132]  for x in xs {
 10-nikaia-light.md #21 refused (a body) [NK1117]  for p in paths {

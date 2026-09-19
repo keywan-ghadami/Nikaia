@@ -156,7 +156,7 @@ fn a_callee_from_elsewhere_is_unevaluable() {
 fn a_for_over_a_range_is_evaluated() {
     let source = "fn total(n: i64) -> i64 {\n\
                   \x20   let mut t = 0\n\
-                  \x20   for i in 0..n { t += i }\n\
+                  \x20   for i in 0..<n { t += i }\n\
                   \x20   return t\n\
                   }\n\
                   comptime SIX = total(4)\n\
@@ -169,13 +169,15 @@ fn a_for_over_a_range_is_evaluated() {
     );
 }
 
-/// **`..<` and the inclusive range are different loops**, and the evaluator
-/// reads the end the same way the emitter does rather than assuming one.
+/// **`..` and `..<` are different loops**
+/// ([ADR-137](../../../docs/specification/adr/adr-137.md) D3, D4), and the
+/// evaluator reads the end the same way the emitter does rather than assuming
+/// one.
 #[test]
 fn an_inclusive_range_counts_one_further() {
     let source = "fn total(n: i64) -> i64 {\n\
                   \x20   let mut t = 0\n\
-                  \x20   for i in 0..=n { t += i }\n\
+                  \x20   for i in 0..n { t += i }\n\
                   \x20   return t\n\
                   }\n\
                   comptime TEN = total(4)\n\
@@ -220,7 +222,7 @@ fn a_while_is_evaluated_and_nothing_counts_its_turns() {
 fn break_and_continue_are_both_read() {
     let source = "fn first_over(limit: i64) -> i64 {\n\
                   \x20   let mut found = 0\n\
-                  \x20   for i in 0..100 {\n\
+                  \x20   for i in 0..<100 {\n\
                   \x20       if i % 3 != 0 { continue }\n\
                   \x20       if i > limit {\n\
                   \x20           found = i\n\
@@ -246,7 +248,7 @@ fn break_and_continue_are_both_read() {
 #[test]
 fn a_return_inside_a_loop_leaves_the_function() {
     let source = "fn first_square_over(limit: i64) -> i64 {\n\
-                  \x20   for i in 0..100 {\n\
+                  \x20   for i in 0..<100 {\n\
                   \x20       if i * i > limit { return i }\n\
                   \x20   }\n\
                   \x20   return 0\n\
@@ -268,7 +270,7 @@ fn a_return_inside_a_loop_leaves_the_function() {
 fn the_loops_binding_does_not_outlive_it() {
     let found: Vec<_> = findings(
         "fn leaks() -> i64 {\n\
-         \x20   for i in 0..3 { }\n\
+         \x20   for i in 0..<3 { }\n\
          \x20   return i\n\
          }\n\
          comptime N = leaks()\n",

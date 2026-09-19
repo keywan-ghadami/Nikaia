@@ -12,10 +12,12 @@ fn emit(source: &str) -> String {
         .rust
 }
 
-/// Kap 3.3: `0..n` is what a `for` counts over.
+/// Kap 3.3: `0..<n` is what a `for` counts over, and `0..n` is the same range
+/// with its end in it ([ADR-137](../../../docs/specification/adr/adr-137.md)
+/// D3, D4).
 #[test]
 fn a_range_is_an_expression() {
-    let parsed = parse_to_ast("fn main() { for i in 0..5 { } }").expect("parses");
+    let parsed = parse_to_ast("fn main() { for i in 0..<5 { } }").expect("parses");
     let Item::Fn { body, .. } = &parsed.program.items[0].node else {
         panic!("expected a function");
     };
@@ -33,15 +35,24 @@ fn a_range_is_an_expression() {
         "{iter:?}"
     );
 
-    assert!(emit("fn main() { for i in 0..5 { } }").contains("for i in 0..5 {"));
-    assert!(emit("fn main() { for i in 0..=5 { } }").contains("for i in 0..=5 {"));
+    assert!(emit("fn main() { for i in 0..<5 { } }").contains("for i in 0..5 {"));
+    assert!(emit("fn main() { for i in 0..5 { } }").contains("for i in 0..=5 {"));
+
+    // **`..=` is withdrawn** (D5): it was the inclusive range and `..` is that
+    // range now, so keeping it would be two spellings of one meaning.
+    let refused =
+        parse_to_ast("fn main() { for i in 0..=5 { } }").expect_err("`..=` does not parse");
+    assert!(
+        refused.to_string().contains("`..` includes its end"),
+        "{refused}"
+    );
 }
 
 /// A range binds looser than the arithmetic in it, which is the reading a loop
-/// head wants: `0..n - 1` ends at `n - 1`.
+/// head wants: `0..<n - 1` ends below `n - 1`.
 #[test]
 fn a_range_binds_looser_than_its_arithmetic() {
-    let emitted = emit("fn f(n: i32) { for i in 1..n - 1 { } }");
+    let emitted = emit("fn f(n: i32) { for i in 1..<n - 1 { } }");
     assert!(emitted.contains("for i in 1..n - 1 {"), "{emitted}");
 }
 
@@ -50,7 +61,7 @@ fn a_range_binds_looser_than_its_arithmetic() {
 /// first without backtracking.
 #[test]
 fn a_range_may_end_in_a_call() {
-    let emitted = emit("fn f(xs: Vec[i32]) { for i in 0..xs.len() { } }");
+    let emitted = emit("fn f(xs: Vec[i32]) { for i in 0..<xs.len() { } }");
     // `as i64` because a length is one (ADR-048 D1), and no parentheses: `as`
     // binds tighter than `..` in Rust, so the range still ends at the length.
     assert!(
@@ -267,7 +278,7 @@ fn a_loop_whose_step_can_fail_unwraps_the_step() {
 /// leak into every `for` in the language.
 #[test]
 fn an_ordinary_loop_is_not_touched() {
-    let rust = emit("fn main() { for i in 0..5 { } }");
+    let rust = emit("fn main() { for i in 0..<5 { } }");
     assert!(rust.contains("for i in 0..5"), "{rust}");
     assert!(!rust.contains("?;"), "{rust}");
 }

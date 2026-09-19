@@ -14,7 +14,7 @@ fn main() {
     // Nested, and with a `for` inside it - the two loops are statements of the
     // same kind and neither is an expression.
     while seen < 3 {
-        for k in 0..2 { seen += 1 }
+        for k in 0..<2 { seen += 1 }
     }
     println(f"{countdown(5)} {seen}")
 }

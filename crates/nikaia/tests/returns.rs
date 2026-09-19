@@ -223,7 +223,7 @@ fn a_return_at_the_end_of_a_function_is_still_its_value() {
 #[test]
 fn a_return_in_a_loop_body_is_kept() {
     let rust = lowered(
-        "fn f(n: i64) -> i64 {\n    for i in 0..n {\n        if i > 2 {\n            return i\n        }\n    }\n    0\n}\n",
+        "fn f(n: i64) -> i64 {\n    for i in 0..<n {\n        if i > 2 {\n            return i\n        }\n    }\n    0\n}\n",
     );
     assert!(rust.contains("return i;"), "{rust}");
 }

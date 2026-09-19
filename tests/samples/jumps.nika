@@ -23,8 +23,8 @@ fn first_even(numbers: Vec[i64]) -> i64 {
 // ends the inner loop and the outer one keeps turning.
 fn triangle(rows: i64) -> i64 {
     let mut cells = 0
-    for r in 0..rows {
-        for c in 0..rows {
+    for r in 0..<rows {
+        for c in 0..<rows {
             if c > r {
                 break
             }

@@ -138,7 +138,7 @@ fn the_keywords_themselves_are_untouched() {
     for source in [
         "fn main() {\n    let x = 3 as i64\n}",
         "fn f() -> i64 {\n    return 7\n}",
-        "fn main() {\n    for n in 0..3 { println(f\"{n}\") }\n}",
+        "fn main() {\n    for n in 0..<3 { println(f\"{n}\") }\n}",
         "fn main() {\n    let mut n = 1\n    n = 2\n}",
         "pub fn f() sync {\n    return\n}",
         "fn f() throws {\n    throw oops()\n}",

@@ -19,7 +19,7 @@ fn main() throws {
     let runden = cli::args().nth(1) ?? "200000"
     let n: i32 = runden.parse() catch { 200000 }
     let mut gesamt = 0
-    for _runde in 0..n {
+    for _runde in 0..<n {
         let a = fs::read_to_string("eins.txt") catch { "".to_string() }
         let b = fs::read_to_string("zwei.txt") catch { "".to_string() }
         gesamt = gesamt + a.len() + b.len()

@@ -106,8 +106,8 @@ fn count(dna: &str, k: i64) -> HashMap[&str, Tally] {
         return counts
     }
 
-    for i in 0..dna.len() - k + 1 {
-        let fragment = &dna[i..i + k]
+    for i in 0..<dna.len() - k + 1 {
+        let fragment = &dna[i..<i + k]
         counts
             .entry(fragment)
             .and_modify fn (tally) { tally.bump() }

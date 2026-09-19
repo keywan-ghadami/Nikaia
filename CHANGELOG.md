@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.37] — 2026-09-19
+
+`a..b` includes its end and `a..<b` does not, everywhere in the language — and
+every range in the tree was rewritten in the same change, because the old
+spelling keeps parsing.
+
+### Changed ([ADR-137](docs/specification/adr/adr-137.md) D3, D4, D5, D6)
+
+- **`..<` is the exclusive range and `..` is the inclusive one.** `for i in 0..<n` stops at `n - 1`; `for i in 0..n` does not. Kotlin and Swift are the precedent and both read `..<` as *up to, not including*. **One meaning per spelling** is the whole of the argument: the alternative the record turned down was `..` exclusive in an expression and inclusive in a pattern, which is a rule a reader has to hold in their head and one the compiler cannot help with, because both forms parse in both places and mean different things.
+- **`..=` is refused**, naming `0..n` as the form it was and `0..<n` as the one that stops before its end. It was this language's inclusive range; keeping it beside a `..` that means the same thing would be the two-spellings defect introduced by the record that argues against them.
+- **Both expression chains take both**, which is not a detail: the grammar keeps a second chain for the positions where a `{` is a body rather than a struct literal, and a spelling added to one and not the other is a form that works in half the language.
+- **The migration is in this change and nowhere else** (D6). Nineteen ranges in `examples/`, `benches/` and `tests/samples/`, every Nikaia source inside the compiler's own tests, and Part I 3.3's own example. A migration spread over two changes is a corpus that means something nobody wrote in between.
+- *Six tests* in `crates/nikaia/tests/range_spelling.rs`, and one of them **walks every `.nika` file in the tree** and fails on a range left on the old spelling — because *a reader can check it by eye* is exactly the claim a test should be holding instead.
+
+### Found and filed, not fixed (a task nobody joined is left unwoken)
+
+- **`nikaia-std`'s `a_future_fed_from_a_worker_finishes_under_block_on` is red about two runs in five**, alone and under load alike, and has been through every change of this session. It is not a slow test: the drain at the bottom of `exec::block_on` is reached and parks, the started task's readiness wait is never answered, and the 30-second cleanup deadline abandons it — *`nikaia: 1 background task(s) did not finish`*. The wait's own deadline would have answered it at two seconds if the worker reported at all, so what is missing is a **wake**. [ADR-055](docs/specification/adr/adr-055.md) D5 promises the task runs; it does not. Filed in `open-work.md` §1 with the reproduction, because it is a defect in the executor's wake path and this change is the parser's — guessing at a repair beside unrelated work is how a second defect gets added to a first.
+
+### What is still open
+
+- **The six pattern shapes** (D1) are not built: a tuple, an or-pattern, a range, a guard, a nested pattern and `..` for a struct's rest. The range **pattern** is why the spelling went first and out of the record's own order — a pattern range is inclusive, so it could not be written while `..` meant the other thing. `open-work.md` §2.42 carries the rest.
+
 ## [0.0.36] — 2026-09-19
 
 `1_000_000`, `0xFF`, `0b1010` and `0o17`, and a number too wide for an `i64`

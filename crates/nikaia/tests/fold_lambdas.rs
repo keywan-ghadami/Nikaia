@@ -156,7 +156,7 @@ fn a_jump_in_a_step_names_the_lambda() {
 fn a_loop_written_inside_the_step_takes_its_own_jump() {
     let rule = "pub rule a -> i64 = fold(N, zero, fn(acc, m) { \
                 let mut t = acc\n\
-                \x20       for i in 0..m {\n\
+                \x20       for i in 0..<m {\n\
                 \x20           if i > 3 { break }\n\
                 \x20           t = t + i\n\
                 \x20       }\n\
