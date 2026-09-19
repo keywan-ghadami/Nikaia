@@ -1063,9 +1063,16 @@ grammar! {
         // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3) - which
         // is `&mut self`'s rule held for every parameter. The call shows
         // nothing, exactly as `xs.push(1)` shows nothing.
-        rule fn_arg_def -> FnArg @= mutable:kw_mut? name:NAME ":" ty:type_ref -> {
-            FnArg { name, ty, mutable: mutable.is_some(), span: _span }
-        }
+        // **`_` is a parameter a shape dictates** (ADR-126 D1). It still carries
+        // its type, because the caller needs it - what `_` says is that this body
+        // does not read the value, never that the signature is shorter.
+        rule fn_arg_def -> FnArg @=
+            mutable:kw_mut? name:NAME ":" ty:type_ref -> {
+                FnArg { name, ty, mutable: mutable.is_some(), span: _span }
+            }
+          | UNDERSCORE ":" ty:type_ref -> {
+                FnArg { name: _state.intern("_"), ty, mutable: false, span: _span }
+            }
 
         rule return_type_arrow -> Type =
             "->" ty:type_ref -> { ty }
@@ -1560,15 +1567,31 @@ grammar! {
         //
         // Nesting and `_` do not parse, and the note beside a `let`'s parse
         // error is what says so in a sentence rather than in a list of tokens.
+        // **`_` is a position of a destructured tuple**
+        // ([ADR-126](../../../../docs/specification/adr/adr-126.md) D1), and the
+        // single-name form takes it too - so that `let _ = f()` reaches the
+        // checker and gets `NK1144`'s sentence rather than a parse error at a
+        // character. D2 is a refusal *with a message*, and only the checker can
+        // give one.
+        //
+        // Two `_` in one list are fine: nothing is bound, so nothing collides.
         rule let_names -> Vec<Symbol> =
-            one:NAME -> { vec![one] }
-          | "(" first:NAME rest:let_name_tail* ")" -> {
+            one:let_name -> { vec![one] }
+          | "(" first:let_name rest:let_name_tail* ")" -> {
                 let mut names = vec![first];
                 names.extend(rest);
                 names
             }
 
-        rule let_name_tail -> Symbol = "," n:NAME -> { n }
+        rule let_name_tail -> Symbol = "," n:let_name -> { n }
+
+        // The ignore pattern carries the symbol `_`, which is what the emitter
+        // writes below and what `NK1144` looks for. It is a symbol no `NAME` can
+        // produce any more, so nothing else in the compiler can mistake a name
+        // for it.
+        rule let_name -> Symbol =
+            n:NAME -> { n }
+          | UNDERSCORE -> { _state.intern("_") }
 
         rule type_annotation -> Type =
             ":" ty:type_ref -> { ty }
@@ -1721,8 +1744,15 @@ grammar! {
                 params
             }
 
+        // **`_` is a lambda's argument** (ADR-126 D1), which is the position
+        // [ADR-102](../../../../docs/specification/adr/adr-102.md)'s function
+        // types make common: a lambda handed to a callback type of two arguments
+        // can ignore one without inventing a name.
+        //
+        // No `mut` in front of it: there is nothing bound to change.
         rule closure_param -> (bool, Symbol) =
             mutable:kw_mut? name:NAME -> { (mutable.is_some(), name) }
+          | UNDERSCORE -> { (false, _state.intern("_")) }
 
         rule closure_param_tail -> (bool, Symbol) = "," p:closure_param -> { p }
 
@@ -2292,7 +2322,7 @@ grammar! {
 
         // `_` first, and only where no name follows it: `_name` is a name.
         rule match_pattern -> MatchPattern =
-            "_" not(raw_ident) -> { MatchPattern::Wildcard }
+            UNDERSCORE -> { MatchPattern::Wildcard }
           | l:pattern_lit -> { MatchPattern::Literal(l) }
           | path:pattern_path "(" bindings:ident_list ")" -> {
                 MatchPattern::Tuple { path, bindings }
@@ -2502,7 +2532,21 @@ grammar! {
         // §7.** A reserved word is not a name, so `let fn = 3` - which used to
         // lower to `let fn = 3;` and be refused by `rustc` about the generated
         // file (Part III, C.1) - does not parse as a `let` of a name at all.
-        rule NAME -> Symbol = not(digit) not(RESERVED) n:ident -> { n }
+        // **A bare `_` is not a name**
+        // ([ADR-126](../../../../docs/specification/adr/adr-126.md) D1, D2): it
+        // is the ignore pattern, it stands in the three positions that rule names
+        // and nowhere else, and `x + _` therefore does not parse. It used to be an
+        // ordinary name, which is how `let _ = f()` compiled and lowered to Rust's
+        // own `_` - a value *discarded* where the source said *bound*, and for a
+        // file handle or a lock guard that is a different program
+        // (`open-work.md` found it and the record answered it).
+        //
+        // `_name`, `_0` and the `_000` of `1_000` stay names, which is what the
+        // two lookaheads buy: a bare `_` is one not followed by an identifier or
+        // by a digit.
+        rule NAME -> Symbol = not(digit) not(RESERVED) not(UNDERSCORE) n:ident -> { n }
+
+        rule UNDERSCORE = "_" not(raw_ident) not(digit)
 
         rule pattern_lit -> Expr =
             b:bool_lit -> { b }

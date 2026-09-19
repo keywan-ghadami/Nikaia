@@ -1443,21 +1443,7 @@ the runtime surface (`set_allocator`, `init`, `shutdown`, `last_error`,
 header generator and the naming; a library called from a C program in
 `examples/`, and the test that links it.
 
-### 2.37. `_` is the ignore pattern
-
-[ADR-126](specification/adr/adr-126.md), all of it but the `match` arm, which
-works today. `_` stands where a name would be bound and nowhere else: a tuple
-position, a parameter of a `fn` or a lambda, a `match` arm. `let _ = expr` is
-refused with `NK1144`, because the statement form says the same thing without
-pretending to bind; `_` is never a value. What `_` skips is not moved, so the
-view rule holds and a temporary ends with its statement. It lowers to Rust's
-`_`, and an ignored parameter produces no unused-variable warning below.
-
-*What it needs, in the record's order (§5):* the parser for the tuple position
-and the parameter; `NK1144`; the emitter passing `_` through, and a test that
-an ignored lambda argument produces no warning below.
-
-### 2.38. A struct crosses the boundary by value
+### 2.37. A struct crosses the boundary by value
 
 [ADR-127](specification/adr/adr-127.md), all of it. `pub extern "C" struct`
 has C's layout (declaration order, C padding — `#[repr(C)]` below) and crosses
@@ -1474,7 +1460,7 @@ function.
 `typedef struct` and the ledger's field record; an example beside the
 library's.
 
-### 2.39. The symbol prefix is one line in the build
+### 2.38. The symbol prefix is one line in the build
 
 [ADR-128](specification/adr/adr-128.md), all of it. `symbol-prefix = "hc"` in
 `[build]`, default the package name with `-` written `_`; a C identifier or
@@ -1483,7 +1469,7 @@ refused. No declaration renames its own symbol.
 *What it needs:* the manifest key with its check; the header generator and
 the emitter reading it.
 
-### 2.40. An async call can be cancelled, and a stream is a callback
+### 2.39. An async call can be cancelled, and a stream is a callback
 
 [ADR-129](specification/adr/adr-129.md), all of it. The `_async` form ends with
 `<package>_op** op` (or `NULL`); `<package>_cancel` cancels the task at its
@@ -1497,7 +1483,7 @@ returned; a returned list of text or handles is refused naming that shape.
 and the code; the `bool` callback row and the refusal message; a streamed file
 and a cancelled fetch in the C example.
 
-### 2.41. A WebAssembly library is the same entry point on another target
+### 2.40. A WebAssembly library is the same entry point on another target
 
 [ADR-130](specification/adr/adr-130.md), all of it. `target = "wasm32-unknown"`
 with `artifact = "c-library"` makes `<package>.wasm`, `<package>.js` and
@@ -1512,7 +1498,7 @@ loop.
 exports and the absent forms; the `.js`/`.d.ts` generator; the executor
 bridge and the Promise form; the library on a page, and the test in Node.
 
-### 2.42. A binding is a generated file over the C library
+### 2.41. A binding is a generated file over the C library
 
 [ADR-131](specification/adr/adr-131.md), all of it. `nikaia bind python`
 writes a `ctypes` binding from the ledger (exceptions per variant, `str` and
@@ -1524,7 +1510,7 @@ WebAssembly build's `.js`. No second artifact, no native Node add-on.
 example library; the streamed and async forms; the `js` name; a test that
 imports the binding.
 
-### 2.43. `nikaia fmt` does not exist
+### 2.42. `nikaia fmt` does not exist
 
 [ADR-132](specification/adr/adr-132.md). **Built, except the formatter's line.**
 After `else`, an `if` may stand where the block would: the `else` rule has a
@@ -1548,7 +1534,7 @@ formatter is born with, and **the formatter itself is the entry**. Nothing else 
 the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
 compiler's own Rust and no `.nika` file has ever been formatted by a tool.
 
-### 2.44. An options-only call and a named struct literal are one spelling
+### 2.43. An options-only call and a named struct literal are one spelling
 
 [ADR-133](specification/adr/adr-133.md). **The signature half is built:**
 `fn execute(target_age: i64 = 0)` parses, a mixed signature keeps its `;` and
@@ -1673,36 +1659,7 @@ A stale **Status** note is a defect in its own right
 ([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
 so this section being empty is a state to try to keep rather than a milestone.
 
-### 3.2. `_` is a name, and reaches the language below as its wildcard
-
-*Reproduced:* `let _ = f()` compiles today and lowers to Rust's `let _ = f();`.
-So does `let (a, _) = pair()`.
-
-`_` is not a reserved word here and not a construct; it parses as an ordinary
-name. **What it becomes below is not an ordinary binding**, though — Rust's `_`
-discards the value rather than binding it, and the two differ where it matters:
-a value bound to a name is dropped at the end of its scope, and a value bound to
-Rust's `_` is dropped **immediately**. For a lock guard or a file handle that is
-a different program.
-
-*Why it is upkeep and not a defect:* nothing in `examples/`, `tests/samples/` or
-`crates/nikaia-std/src/` writes one, so no program is wrong today — only the
-language is undecided about a spelling it already accepts. That is the same
-class as the postfix `??` below.
-
-*Found by* [ADR-098](specification/adr/adr-098.md): the tuple form made `_` look
-like a pattern feature, and checking whether to refuse it there turned up that
-the single-name form had been accepting it all along.
-
-*What it needs is a decision before any work:* whether `_` is a wildcard in this
-language. If it is, Part I 2.1 gains it and the drop timing is stated; if it is
-not, it is refused as a name, which is free today and breaking later — the
-polarity [ADR-051](specification/adr/adr-051.md) D1 states. Either way the
-compiler's answer stops being an accident of what the parser happens to accept.
-
-*Evidence:* the two lines above, through the release binary.
-
-### 3.3. Eight citations named an entry by its number and meant another one
+### 3.2. Eight citations named an entry by its number and meant another one
 
 Found by reading, in the round that closed the `catch` binding and again in the
 one after it. The page's own head says to cite by **subject** and not by number;
@@ -1739,7 +1696,7 @@ entry is the evidence that it has to be applied rather than merely written.
 
 *Evidence:* the eight sentences above, each read against the page as it stands.
 
-### 3.4. Two examples write a postfix `??` the language does not have
+### 3.3. Two examples write a postfix `??` the language does not have
 
 Part I 3.5 defines `??` as **null coalescing** — `a ?? b`, a fallback when the
 left side is null — and nothing else. There is no postfix unwrap in that section,

@@ -2924,6 +2924,20 @@ impl<'a> Checker<'a> {
                     return self.tuple_let(names, ty.as_ref(), &found, span);
                 }
                 let name = self.parsed.text(names[0]).to_string();
+                // **`let _ = expr` is a statement wearing a `let`**
+                // ([ADR-126](../../docs/specification/adr/adr-126.md) D2). A
+                // binding that ignores its whole value binds nothing, so the
+                // word `let` says something that does not happen - and below it
+                // is Rust's `let _ =`, which **discards** the value where the
+                // source said *bound*. For a file handle or a lock guard those
+                // are different programs, which is why the one thing Rust's form
+                // is used for is the one thing this refuses.
+                //
+                // Only the single-name form: `let (a, _) = pair()` is D1's tuple
+                // position and binds `a`.
+                if name == "_" {
+                    self.a_let_that_binds_nothing(span);
+                }
                 self.nameable(&name, span, "a `let`");
 
                 let bound = match ty {
@@ -5781,6 +5795,30 @@ impl<'a> Checker<'a> {
                 }
                 false => "declare the `struct`, or correct the name".to_string(),
             }),
+        });
+    }
+
+    /// `NK1144`: a `let` whose only name is the ignore pattern
+    /// ([ADR-126](../../docs/specification/adr/adr-126.md) D2).
+    fn a_let_that_binds_nothing(&mut self, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1144",
+            message: "`_` ignores a value inside a pattern, and this `let` has nothing else \
+                      to bind"
+                .to_string(),
+            notes: vec![
+                "a call made for its effect is written as the call, `f()`; a resource torn \
+                 down at a moment of the program's choosing is closed by name or lives in a \
+                 scope it can end with (Part I, 6.4)"
+                    .to_string(),
+                "and what this lowers to is Rust's `let _ =`, which **discards** the value \
+                 rather than binding it - so the cleanup runs here and not at the end of the \
+                 block, which is the one thing a reader cannot see in the line"
+                    .to_string(),
+            ],
+            help: Some("write the expression as a statement, or bind it to a name".to_string()),
         });
     }
 

@@ -236,7 +236,7 @@ Parse error:
 expected `)`; found unexpected token `{` at line 1, column 10
    1 | fn main( {
                 ^
-note: also possible here: `&`, `//`, `;`, `mut`, `self`, block comment, identifier
+note: also possible here: `&`, `//`, `;`, `_`, `mut`, `self`, block comment, identifier
 in fn_params
 in fn_item
 in item
@@ -252,6 +252,7 @@ note: also possible here: `//`, block comment
 in COMMENT
 in item 1
 in WS
+in let_name
 in let_names
 in let_stmt
 in stmt

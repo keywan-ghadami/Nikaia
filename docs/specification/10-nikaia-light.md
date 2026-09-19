@@ -138,7 +138,7 @@ parameter a shape dictates (`fn handle(event: Event, _: Context)`, `fn(_,
 value) { … }`), and a `match` arm. `let _ = expr` is refused — a call made for
 its effect is written as the call, and a resource is closed by name — and `_`
 is never a value. What it ignores is not moved, so a `let` over a place stays a
-view of it (6.5). **Not built** beyond the `match` arm.
+view of it (6.5).
 
 **`with` is on the list for its construct**: a copy of a value with named
 fields changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).

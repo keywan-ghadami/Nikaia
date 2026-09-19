@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.15] — 2026-09-19
+
+A character that had two readings, and the compiler's answer was an accident of
+what the parser happened to accept.
+
+### Changed (`_` is the ignore pattern, and it is no longer a name)
+
+- **[ADR-126](docs/specification/adr/adr-126.md), all of it.** `_` stands where a name would be bound and nowhere else: a position of a destructured tuple, a parameter of a `fn` or a lambda, and the `match` arm it always had. Two `_` in one list are fine — nothing is bound, so nothing collides — and a parameter written `_` still carries its type, because the caller needs it.
+- **And it was already accepted, which is what the record is really about.** `_` parsed as an ordinary **name**, so `let _ = f()` compiled and lowered to Rust's own `let _ =` — which **discards** the value where the source said *bound*. For a file handle or a lock guard those are different programs. `x + _` parsed too, as a name `NK1117` said nothing declared. Two of the record's own sentences say both forms did not parse; `open-work.md` had found otherwise, and that is the defect this closes.
+- **`NAME` rejects a bare `_`**, so the ignore pattern is producible in exactly the three positions and `x + _` is a parse error. Two lookaheads are what `_name` costs: a bare `_` is one followed by neither an identifier nor a digit, so `_count`, `_0` and the `_000` of `1_000` stay names — the last one matters, because `NK1117`'s *a number is written in digits with no separators* is a message about that name.
+- **`let _ = expr` is accepted by the grammar and refused by the checker** (`NK1144`), which is the only arrangement that can carry the sentence: a refusal *with a message* has to come from somewhere that can write one, and a parse error at a character cannot. `let (a, _) = pair()` binds `a` and is untouched.
+- **The lowering is Rust's own `_`**, and the ledger writes `_: Context` in the signature column, where its `keeps` answer can only be *not kept* — a body that never names a value cannot store it — so a caller lends it. One of the seven tests is that claim through `rustc` itself: the emitted program is compiled **without** `-A warnings`, because the `unused variable` warning is what is being asserted absent and silencing warnings would make it pass forever.
+
 ## [0.0.14] — 2026-09-19
 
 The last of 0.0.10's three shapes, and the one every reader comes looking for.
