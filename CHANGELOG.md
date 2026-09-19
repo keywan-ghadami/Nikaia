@@ -4,6 +4,13 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.32] — 2026-09-19
+
+### Fixed (the specification's own version number, twenty-four packages stale)
+
+- **All three pages said `0.0.7 (Draft)`, September 5.** The CHANGELOG's head says *the version is the specification's* and *every change package raises the patch number by one*; nothing carried that across, so the number was raised in one file and read in another. Found by a reader, which is the part worth recording: it is [`docs/README.md`](docs/README.md) §1's class one level up — a stale **Status** note is a defect because a reader cannot tell a plan from a promise, and a stale version is the same mistake about the whole document.
+- **And a gate, so it cannot drift again.** `the_specifications_version_is_the_changelogs` reads the newest `## [x.y.z] — date` heading and asserts all three pages carry it. The CHANGELOG is the source because that is where the rule already lives; a second place to maintain by hand is how the first one went stale.
+
 ## [0.0.31] — 2026-09-19
 
 Eight doors the records had left open on purpose, taken in one sitting — each

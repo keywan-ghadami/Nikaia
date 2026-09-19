@@ -83,6 +83,51 @@ fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
     );
 }
 
+/// **The three pages carry the version the CHANGELOG's newest heading does.**
+///
+/// They said **0.0.7** while it said 0.0.31 — twenty-four packages of drift,
+/// found by a reader and not by anything here. That is
+/// [`docs/README.md`](../../../docs/README.md) §1's own class one level up: a
+/// stale **Status** note is a defect because a reader cannot tell a plan from a
+/// promise, and a stale version number is the same mistake about the whole
+/// document.
+///
+/// **The CHANGELOG is the source**, because that is where the rule already
+/// lives — *every change package raises the patch number by one*, and its own
+/// head says *the version is the specification's*. A second place to maintain
+/// it by hand is how the first one went stale.
+#[test]
+fn the_specifications_version_is_the_changelogs() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let changelog = std::fs::read_to_string(root.join("CHANGELOG.md")).expect("the CHANGELOG");
+    let heading = changelog
+        .lines()
+        .find(|line| line.starts_with("## ["))
+        .expect("a version heading");
+    let (version, date) = heading
+        .trim_start_matches("## [")
+        .split_once("] — ")
+        .expect("`## [x.y.z] — date`");
+
+    for page in [
+        "10-nikaia-light.md",
+        "20-nikaia-advance.md",
+        "30-nikaia-tooling.md",
+    ] {
+        let text = std::fs::read_to_string(root.join("docs/specification").join(page))
+            .unwrap_or_else(|_| panic!("{page}"));
+        assert!(
+            text.contains(&format!("**Version:** {version} (Draft)")),
+            "{page} does not carry version {version}, which is the CHANGELOG's newest \
+             heading - raise it there and here in the same change"
+        );
+        assert!(
+            text.contains(&format!("**Date:** {date}")),
+            "{page} does not carry the date {date} of that heading"
+        );
+    }
+}
+
 /// **How much of the specification is a program this compiler takes**, as a
 /// floor rather than as a number to admire.
 ///
