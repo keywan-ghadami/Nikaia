@@ -4,6 +4,12 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.23] — 2026-09-19
+
+### Added (one open question, asked by marketing)
+
+- **The answer to "LINQ".** `docs/open-decisions.md` §4. LINQ to objects is `filter`, `map` and `fold` over a `Vec` and a `Seq`, and nothing is missing but a keyword. LINQ to SQL — an expression tree a provider translates at runtime — is the half [ADR-088](docs/specification/adr/adr-088.md) §3 left as the one genuinely new capability, and Part II 10.5 already does the thing it was for better: SQL written as SQL, parsed at build time by the dialect's grammar, every `:hole` a typed named parameter. What 10.5 lacks is the schema — an untyped row, a column the database finds — and that is one piece. **Recommended:** no expression capture; the schema read at build time through `asset("schema.sql")`, the statement's result a derived struct typed from it, a missing column a compile error at the query; an ORM is not added because the row type is the mapping. The sentence for marketing is in the entry.
+
 ## [0.0.22] — 2026-09-19
 
 `docs/open-decisions.md` was empty for one round. Three questions went back on
