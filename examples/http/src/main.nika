@@ -30,12 +30,12 @@ impl Response {
     // 200, text, the body given.  The shape every other constructor is a
     // variation of.
     pub fn text(body: String) -> Response {
-        return Response(status: 200, content_type: "text/plain".to_string(), body: body)
+        return Response { status: 200, content_type: "text/plain".to_string(), body: body }
     }
 
     // The one a router writes when nothing matched.
     pub fn not_found() -> Response {
-        return Response(status: 404, content_type: "text/plain".to_string(), body: "not found".to_string())
+        return Response { status: 404, content_type: "text/plain".to_string(), body: "not found".to_string() }
     }
 }
 

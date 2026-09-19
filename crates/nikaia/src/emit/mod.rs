@@ -985,6 +985,15 @@ struct Emitter<'p> {
         (usize, String, usize),
         std::collections::BTreeMap<String, crate::check::Wrap>,
     >,
+    /// **The options a method call has**, in the declaration's order, by the
+    /// byte the statement starts at and the method's written name
+    /// (`check::Checked::method_options`).
+    ///
+    /// A call **by name** reads its options off the callee's contract here
+    /// (`options_of`); a method cannot, because finding the entry means
+    /// resolving the receiver and this has no types
+    /// ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    method_options: std::collections::BTreeMap<(usize, String), Vec<(String, String)>>,
     /// The handles a task's body uses, by the byte the statement starts at and
     /// the name (`check::Checked::task_handles`).
     ///
@@ -1552,6 +1561,7 @@ impl<'p> Emitter<'p> {
             mut_args: propagation.mut_args,
             nullable_args: propagation.nullable_in_args,
             task_handles: propagation.task_handles,
+            method_options: propagation.method_options,
             pausing_reach: reach,
             own_contracts,
             library,
@@ -4715,6 +4725,45 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// Kap 5.1 at a **method** call: the options become positional, in the order
+    /// the declaration gives, and one that was left out becomes its default.
+    ///
+    /// The same thing `call` does from `options_of`, off the checker's answer
+    /// instead ([ADR-028](../../../docs/specification/adr/adr-028.md)) — and a
+    /// DSL driver is not this: what stands after *its* `;` is the typed spread
+    /// of [ADR-007](../../../docs/specification/adr/adr-007.md) D5, which
+    /// `dsl_parameters` has already written as one value.
+    fn method_options(
+        &self,
+        out: &mut Out,
+        method: Symbol,
+        args: usize,
+        config: &[crate::ast::ConfigArg],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let name = self.text(method).to_string();
+        if self.dsl_drivers.contains(&name) {
+            return Ok(());
+        }
+        let Some(options) = self.method_options.get(&(flow.statement, name)) else {
+            return Ok(());
+        };
+        for (n, (option, default)) in options.iter().enumerate() {
+            // **The comma belongs *between* arguments**, and a method call whose
+            // arguments are all options has nothing before the first one
+            // ([ADR-133](../../docs/specification/adr/adr-133.md) D1).
+            if n > 0 || args > 0 {
+                out.push(", ");
+            }
+            match config.iter().find(|a| self.text(a.name) == option) {
+                Some(passed) => self.expr(out, &passed.value, depth, flow)?,
+                None => out.push(default),
+            }
+        }
+        Ok(())
+    }
+
     /// Whether a branch of an `overlap` can fail out of itself
     /// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5).
     ///
@@ -5382,7 +5431,10 @@ impl<'p> Emitter<'p> {
                 // witness anybody writes lands.
                 self.postfix_base(out, seen, depth, flow)?;
             }
-            None => self.dsl_parameters(out, self.text(method), args.len(), config, depth, flow)?,
+            None => {
+                self.dsl_parameters(out, self.text(method), args.len(), config, depth, flow)?;
+                self.method_options(out, method, args.len(), config, depth, flow)?;
+            }
         }
         out.push(")");
 

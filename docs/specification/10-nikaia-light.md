@@ -543,7 +543,7 @@ print("{ margin: 0 }")    // a rule, not a hole
 **`f"…"` has code in it.** Between `{` and `}` stands an expression — not just a name, but a
 field, a call, an index. What follows a `:` inside one says *how* to write the value rather than
 which value: the first colon that is not inside a call or an index separates the two, so
-`Point(x: 1)` in a hole keeps its own.
+`move(by: 1)` in a hole keeps its own.
 
 Inside an `f"…"`, two braces stand for one: `{{` is a literal `{` and `}}` a literal `}`. An
 escape is not a hole — the `{` in `"\u{0041}"` belongs to the escape — and a `}` on its own is an
@@ -958,7 +958,7 @@ pub struct User {
 ```
 
 ### 4.2. Constructors and Instantiation
-Because fields are private by default, you often cannot initialize a struct directly from another module using the standard `Type(field: value)` syntax. You must provide a public **Constructor**.
+Because fields are private by default, you often cannot initialize a struct directly from another module using the struct literal `Type { field: value }`. You must provide a public **Constructor**.
 
 **The Anonymous Constructor (`pub fn`)**
 Nikaia allows you to define a special function inside an `impl` block that has no name. This function is automatically called when you invoke the Type name like a function `User(...)`.
@@ -973,11 +973,11 @@ impl User {
     // It accepts positional arguments (Subject Zone)
     pub fn(username: String, email: String) -> User {
         // We can access private fields here because we are inside the module
-        return User(
+        return User {
             username: username,
             email: email,
-            is_active: true // Default logic handled internally
-        )
+            is_active: true, // Default logic handled internally
+        }
     }
 }
 ```
@@ -995,10 +995,10 @@ D2), in `std` as in a `.nika` file: `Vec()`, `String()` and `HashMap()` where
 neighbouring language's convention reaching through a hand-written ledger, and
 this language has one of its own.
 
-> **Status:** **neither is built** ([ADR-140](adr/adr-140.md) §5 steps 1 and 4).
-> `Type(field: value)` still parses and this chapter still writes it; `std`'s
-> constructors are still `::new()`. D1 is the first of that record's five
-> migrations, because [ADR-133](adr/adr-133.md)'s call half waits on it.
+> **Status:** **D1 is built** ([ADR-140](adr/adr-140.md) §5 step 1).
+> `Type(field: value)` does not parse as a literal any more — it is a call, and
+> where the name is a type `NK1146` says so and names the braces. D2 is not:
+> `std`'s constructors are still `::new()`.
 
 **A copy with fields changed: `with`.** Every binding is immutable unless it
 says `mut`, so the value a program wants most often is the one it has with one
@@ -1027,7 +1027,7 @@ use users::User
 fn main() {
     // ERROR: Private Fields
     // Direct struct initialization is forbidden because fields are private.
-    // let u = User(username: "A", email: "a@b.com", is_active: true)
+    // let u = User { username: "A", email: "a@b.com", is_active: true }
 
     // OK: Public Factory Constructor
     // Calls the 'pub fn' defined in 'impl User'.
@@ -1258,13 +1258,13 @@ options is declared `fn execute(target_age: i64 = 0)` and called
 `execute(target_age: 30)`; `execute(; target_age: 30)` is refused, so there is
 one spelling. A mixed call keeps its `;`, and keeps it required.
 
-> **Status:** the **signature** half is built and the **call** half is not;
-> today a call needs the leading `;` ([ADR-133](adr/adr-133.md) §5).
-> `fn execute(target_age: i64 = 0)` parses and `fn execute(; target_age: i64 = 0)`
-> is refused. The call was blocked because `execute(target_age: 30)` and the
-> named struct literal `Stats(min: first)` are the same five tokens — and
-> [ADR-140](adr/adr-140.md) D1 unblocks it by taking the named literal out of
-> the language, which is why that migration goes first.
+> **Status:** **built, both halves** ([ADR-133](adr/adr-133.md) §5), and the
+> call half waited on a second record: `execute(target_age: 30)` and the named
+> struct literal `Stats(min: first)` were the same five tokens until
+> [ADR-140](adr/adr-140.md) D1 took the literal out of the language. A **method**
+> call takes the form too, and a driver's deferred parameters (Part II 10.5)
+> write no `;` either, because a receiver stands outside the parentheses and
+> leaves no zone for the separator to stand between.
 
 **Every configuration parameter has a default**, and that is what makes it an
 *option*: a caller may leave it out, and leaving it out is never a question
@@ -1534,7 +1534,7 @@ stands where it happens.
 keep(Shared(connect(url)))                      // an argument
 let p = Pool { db: Shared(connect(url)) }       // a field of a literal
 fn connect(url: String) -> Shared[Connection] {
-    return Shared(Connection(url: url))         // a result
+    return Shared(Connection { url: url })      // a result
 }
 ```
 
@@ -2409,7 +2409,7 @@ fn helper() -> i64 { return 41 }
 ```nika
 // file: src/main.nika
 fn main() {
-    let r = Row(id: helper() + 1)      // no `use`, and no prefix
+    let r = Row { id: helper() + 1 }   // no `use`, and no prefix
     println(f"{r.id}")
 }
 ```

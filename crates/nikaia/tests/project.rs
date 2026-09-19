@@ -630,7 +630,7 @@ fn the_explain_modes_reach_a_project_build() {
         "project-explain",
         "[package]\nname = \"explained\"\nversion = \"0.1.0\"\n",
         "fn main() {\n    \
-             let c = Shared(Conn(id: 1))\n    \
+             let c = Shared(Conn { id: 1 })\n    \
              println(f\"{hold(c)}\")\n\
          }\n",
     );
@@ -715,7 +715,7 @@ fn a_package_reached_through_two_parents_is_one_package() {
     std::fs::write(
         dir.join("deep/src/main.nika"),
         "pub struct Id {\n    pub value: i64\n}\n\n\
-         pub fn make(v: i64) -> Id {\n    return Id(value: v)\n}\n",
+         pub fn make(v: i64) -> Id {\n    return Id { value: v }\n}\n",
     )
     .expect("the shared package");
     std::fs::write(
@@ -800,7 +800,7 @@ fn a_package_is_depended_on_by_path() {
                 "use http\n\
                  \n\
                  fn main() {\n    \
-                     let r = http::Request(path: \"/index\")\n    \
+                     let r = http::Request { path: \"/index\" }\n    \
                      println(http::route(r))\n\
                  }\n",
             ),
@@ -1129,7 +1129,7 @@ fn a_field_a_package_does_not_publish_is_refused() {
                 "pub struct Request { pub id: i64, method: i64 }\n\
                  \n\
                  pub fn get(id: i64) -> Request {\n    \
-                     return Request(id: id, method: 1)\n\
+                     return Request { id: id, method: 1 }\n\
                  }\n\
                  \n\
                  pub fn method_of(r: &Request) -> i64 {\n    \
@@ -1160,7 +1160,7 @@ fn a_field_a_package_does_not_publish_is_refused() {
     std::fs::write(
         app.join("src/main.nika"),
         "use http\n\nfn main() {\n    \
-             let r = http::Request(id: 7, method: 2)\n    \
+             let r = http::Request { id: 7, method: 2 }\n    \
              println(f\"{r.id}\")\n\
          }\n",
     )
@@ -1346,7 +1346,7 @@ fn a_package_may_be_given_another_name() {
                 "pub struct Request { pub id: i64 }\n\
                  \n\
                  pub fn get(id: i64) -> Request {\n    \
-                     return Request(id: id)\n\
+                     return Request { id: id }\n\
                  }\n\
                  \n\
                  pub fn id_of(r: &Request) -> i64 {\n    \
@@ -1359,7 +1359,7 @@ fn a_package_may_be_given_another_name() {
                  \n\
                  fn main() {\n    \
                      let made: h::Request = h::get(7)\n    \
-                     let built = h::Request(id: 35)\n    \
+                     let built = h::Request { id: 35 }\n    \
                      println(f\"{h::id_of(made)} {built.id}\")\n\
                  }\n",
             ),
@@ -1551,12 +1551,12 @@ fn a_trait_a_package_publishes_can_be_implemented_and_called() {
                  \n\
                  impl handler::Handler for Fixed {\n\
                  \x20   fn handle(&self) -> handler::Answer {\n\
-                 \x20       return handler::Answer(text: \"handled\".to_string())\n\
+                 \x20       return handler::Answer { text: \"handled\".to_string() }\n\
                  \x20   }\n\
                  }\n\
                  \n\
                  fn main() {\n\
-                 \x20   let f = Fixed(n: 1)\n\
+                 \x20   let f = Fixed { n: 1 }\n\
                  \x20   println(f\"{handler::render(f.handle())}\")\n\
                  }\n",
             ),

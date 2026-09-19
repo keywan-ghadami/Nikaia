@@ -1950,25 +1950,47 @@ grammar! {
         // Kap 5.1: subjects, then a `;`, then options by name. The separator
         // is the whole protocol - what is before it is data and may be
         // positional, what is after it is configuration and may not.
-        // **The call side of [ADR-133](../../../../docs/specification/adr/adr-133.md)
-        // D1 is not here, and it cannot be until a question is answered.**
         //
-        // D3 says *nothing in expression position begins with a name followed by
-        // a colon*, and that is the one thing about the grammar the record has
-        // wrong: `ctor_lit` above is Kap 4.2's struct literal with named fields,
-        // `Stats(min: first, max: first)`, which is `execute(target_age: 30)`
-        // spelled identically. It is tried before any call, so an options-only
-        // call written the new way is read as a struct literal.
+        // **The options-only list comes first**
+        // ([ADR-133](../../../../docs/specification/adr/adr-133.md) D1), and it
+        // is decided on the second token: an option is `name:` and nothing else
+        // in expression position begins that way, so `f(a, b)` fails it at the
+        // `,` that follows `a` and the positional alternative takes it.
         //
-        // The two constructs share a spelling and a name denotes one of them, so
-        // what tells them apart is **resolution** rather than the parser - and
-        // whether this language lets two constructs share a spelling is a
-        // question rather than work. `docs/open-decisions.md` carries it, and the
-        // leading `;` stays accepted at a call meanwhile, because refusing it
-        // with nothing to replace it would leave such a function uncallable.
+        // D3's premise is true **since**
+        // [ADR-140](../../../../docs/specification/adr/adr-140.md) D1 and was not
+        // before it. What used to stand in the way was the other struct literal,
+        // Kap 4.2's `Stats(min: first, max: first)`, which is
+        // `execute(target_age: 30)` spelled identically and was tried ahead of
+        // every call - so this form was read as a literal for a struct nothing
+        // declares. D1 takes that spelling out of the language: `Name { … }` is
+        // the literal, and `name(field: value)` is a call with options. Where the
+        // name **is** a type, `NK1146` says so and names the brace form, because
+        // the parser can no longer be the one to tell them apart and does not
+        // need to be.
         rule call_arg_list -> (Vec<Expr>, Vec<ConfigArg>) =
-            "(" args:call_args? config:config_args? ")" -> {
+            "(" config:bare_config_args ")" -> { (Vec::new(), config) }
+          // **And the leading `;` is refused rather than accepted beside it**
+          // (D2), which is the signature half's rule reaching the call now that
+          // there is a spelling to send a reader to. The cut is what makes this
+          // the message: without it the alternative fails, the rule backtracks,
+          // and `config_args`' own `;` would parse the old form silently.
+          | "(" ";" => fail(
+                "an argument list with no subjects writes its options without the `;` \
+                 (ADR-133 D1): `execute(target_age: 30)`. The `;` stands between the \
+                 two zones of Kap 5.1 - subjects before it, options after - and where \
+                 one zone is empty it separates nothing. A *mixed* call keeps it, and \
+                 keeps it required."
+            ) -> { (Vec::new(), Vec::new()) }
+          | "(" args:call_args? config:config_args? ")" -> {
                 (args.unwrap_or_default(), config.unwrap_or_default())
+            }
+
+        rule bare_config_args -> Vec<ConfigArg> =
+            head:config_arg tail:config_arg_tail* ","? -> {
+                let mut args = vec![head];
+                args.extend(tail);
+                args
             }
 
         rule call_args -> Vec<Expr> =
@@ -2016,7 +2038,6 @@ grammar! {
           // accident.
           | u:unsafe_expr -> { u }
           | s:struct_lit -> { s }
-          | c:ctor_lit -> { c }
           | b:bool_lit -> { b }
           | n:null_lit -> { n }
           // Before `path_expr`: a PEG keeps the first alternative that matches,
@@ -2030,30 +2051,6 @@ grammar! {
           | b:block_expr -> { b }
           | t:tuple_expr -> { t }
           | p:paren_expr -> { p }
-
-        // Kap 4.2: `Stats(min: first, max: first)` builds the struct, while
-        // `Stats(first)` calls its anonymous constructor. The named form is
-        // told apart by requiring the first field to carry a value - otherwise
-        // `Stats(x)` would read as a struct with one shorthand field.
-        // `type_name` and not `NAME`: a struct declared in another module is
-        // built by its qualified name, `pool::Conn(id: 1)`, exactly as its type
-        // is written in an annotation. The whole path is interned as one name -
-        // which is what the name *is* to a compiler that lowers name for name
-        // (ADR-011 D2) - so `pool::Conn` reaches the checker and the emitter as
-        // it was written.
-        rule ctor_lit -> Expr =
-            name:type_name "(" head:named_field_init
-            tail:field_init_tail* ","? ")"
-            -> {
-                let mut fields = vec![head];
-                fields.extend(tail);
-                Expr::StructLit { name, fields }
-            }
-
-        rule named_field_init -> FieldInit =
-            name:NAME ":" value:expr -> {
-                FieldInit { name, value: Some(value) }
-            }
 
         rule float_lit -> Expr =
             f:FLOAT -> { Expr::LitFloat(f) }
@@ -2205,8 +2202,7 @@ grammar! {
         // refuses has no brace, and the two are separate rules precisely because
         // one of them is a block and the other is not.
         rule head_primary -> Expr =
-            c:ctor_lit -> { c }
-          | b:bool_lit -> { b }
+            b:bool_lit -> { b }
           // Before `path_expr`, for the reason `primary_expr` gives.
           | s:f_str_lit -> { s }
           | p:path_expr -> { p }

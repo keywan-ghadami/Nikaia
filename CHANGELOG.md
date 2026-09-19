@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.19] — 2026-09-19
+
+The first of [ADR-140](docs/specification/adr/adr-140.md)'s five migrations, and
+the record that was waiting on it.
+
+### Changed (the struct literal is the brace form, and `Name(field: value)` goes)
+
+- **[ADR-140](docs/specification/adr/adr-140.md) D1.** `Stats(min: first, max: first)` and `Reading { name, temp }` both built a struct, and `Stats(first)` called the anonymous constructor — so `Foo(x: 1)` went *round* a type's invariants and `Foo(1)` went *through* them, told apart by a colon. `ctor_lit` is out of the grammar, in both the expression rule and the head one, so `Name(field: value)` is a **call** wherever it stands and `Name { … }` is the literal. Eight sites in `examples/`, thirty-four in the tests and six on the pages.
+- **What tells a mistake apart is the checker, which is the shape of the decision.** `NK1146`: a call carrying options whose callee declares a type is the old spelling, and the message names the braces with the fields the line already has. Asked **before** the call resolves, or the answer would be about the anonymous constructor — the silent lowering was `Stats::new()` with the fields dropped, which `rustc` then refused about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)).
+- **And a name nothing declares moved rather than lost its message.** `Widgit(size: 3)` was `NK1135`; it is a call to a name nothing describes now, and silence is the correct answer to one — `Widgit(3)` beside it has always got the same, because this build cannot see whether a dependency declares it and refusing a correct program is what Part III C.4 forbids. The **brace** form still carries the claim.
+
+### Added ([ADR-133](docs/specification/adr/adr-133.md)'s call half, which D1 unblocked)
+
+- **`execute(target_age: 30)` parses, and the leading `;` is refused at a call too.** D3 argued the parser could tell the form apart on the second token because *nothing in expression position begins with a name followed by a colon*; the named literal was exactly that shape, which is what blocked the half. With the literal gone the premise is true as written — *since* ADR-140 and not before it — and the asymmetry the build was in is closed: one spelling per shape, in a signature and at a call.
+- **A driver's deferred parameters write no `;` either.** D3 says ADR-007 D5's typed spread *keeps its `;`, because it stands after a subject in every driver that has one*, which is true of the **signature** — `pub fn execute(&self; ...args: Self::dsl)` — and not of the call: a receiver stands outside the parentheses, so there is no zone for the separator to stand between. `query.execute(target_age: 30)`, which is what Part II 10.5 already wrote.
+
+### Fixed (a method call's options were dropped, and it is older than either record)
+
+- **`q.execute(target_age: 30)` came out as `q.execute()`.** The emitter fills options from the callee's contract, and finding a *method's* entry means resolving the receiver, which it cannot do ([ADR-028](docs/specification/adr/adr-028.md)) — so a method's options reached the language below as nothing at all and `rustc` answered about the arity of a file nobody wrote. Reachable by the leading-`;` form just as well, so older than the spelling that makes it easy to hit.
+- **Closed by the hand-over `lent_args` and `nullable_args` already use.** The checker records the declaration's option order (`Checked::method_options`, keyed by the statement's byte and the method's written name) and the emitter writes the same fill it writes for a call by name. A DSL driver is left alone, because what stands after *its* `;` is one value rather than one argument each.
+- **The specification's lowering floor went up, 47 to 48** — the first time it has moved that way. Part III 15.1's `script.exec(msg: message)` is a program again, which is the one thing a floor is for.
+
 ## [0.0.18] — 2026-09-19
 
 Every question the notes page held is answered, in one round and each the way

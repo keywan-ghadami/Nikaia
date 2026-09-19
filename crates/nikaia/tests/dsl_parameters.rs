@@ -229,10 +229,16 @@ fn an_unknown_parameter_is_an_error_and_names_the_near_miss() {
     assert!(found.iter().any(|f| f.code == "NK1112"), "{found:#?}");
 }
 
-/// The statement may stand on either side of the `;`, and the check does not
-/// care which: Part II 10.5 writes `query.execute(; target_age: …)` with the
-/// statement as the receiver, and the fixture puts it before the `;` as a
-/// subject. Both spell one protocol.
+/// The statement may be the receiver or a subject, and the check does not care
+/// which: Part II 10.5 writes `query.execute(target_age: …)` with the statement
+/// as the receiver, and the fixture puts it before a `;` as a subject. Both
+/// spell one protocol.
+///
+/// **The deferred parameters write no `;` where nothing stands before them**
+/// ([ADR-133](../../../docs/specification/adr/adr-133.md) D1). The *signature*
+/// keeps its own — `pub fn execute(&self; ...args: Self::dsl)` has the subject
+/// D3 names — and a receiver is outside the parentheses, so at the call there
+/// is no zone for the separator to stand between.
 #[test]
 fn the_statement_may_be_the_receiver_or_a_subject() {
     let found = findings(
@@ -242,7 +248,7 @@ fn the_statement_may_be_the_receiver_or_a_subject() {
          }\n\
          fn go() {\n\
          \x20   let query = dsl mysql { SELECT 1 WHERE age >= :target_age } eod\n\
-         \x20   let rows = query.execute(; targt_age: 30)\n\
+         \x20   let rows = query.execute(targt_age: 30)\n\
          }\n",
     );
     assert!(
@@ -268,7 +274,7 @@ fn a_rebound_name_is_no_longer_a_statement() {
          fn go() {\n\
          \x20   let query = dsl mysql { SELECT 1 WHERE age >= :target_age } eod\n\
          \x20   let query = 3\n\
-         \x20   let rows = query.execute(; anything: 30)\n\
+         \x20   let rows = query.execute(anything: 30)\n\
          }\n",
     );
     assert!(

@@ -291,7 +291,7 @@ fn a_method_call_propagates_its_failure() {
         struct Stats { n: i64 }
 
         impl Stats {
-            pub fn(n: i64) -> Stats { return Stats(n: n) }
+            pub fn(n: i64) -> Stats { return Stats { n: n } }
             fn add(&self, v: i64) -> i64 throws {
                 if self.n + v > 100 { throw ZuVoll::Voll }
                 return self.n + v

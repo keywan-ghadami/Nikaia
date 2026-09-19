@@ -58,7 +58,7 @@ fn each_is_an_ordinary_name() {
              fn takes({word}: i64) -> i64 {{ return {word} }}\n\
              fn main() {{\n\
              \x20   let {word} = 1\n\
-             \x20   let r = Row({word}: {word})\n\
+             \x20   let r = Row {{ {word}: {word} }}\n\
              \x20   println(f\"{{takes(r.{word})}}\")\n\
              }}"
         );

@@ -84,7 +84,7 @@ pub struct Tally {
 
 impl Tally {
     pub fn(first: i64) -> Tally sync {
-        return Tally(n: first)
+        return Tally { n: first }
     }
 
     fn bump(&mut self) sync {

@@ -283,8 +283,8 @@ struct User { name: String, home: Address? }
 
 fn find(id: i64) -> User? {
     if id > 0 {
-        let home = Address(city: \"Bletchley\".to_string(), zip: null)
-        return User(name: \"Ada\".to_string(), home: home)
+        let home = Address { city: \"Bletchley\".to_string(), zip: null }
+        return User { name: \"Ada\".to_string(), home: home }
     }
     return null
 }
@@ -330,8 +330,8 @@ struct Address { city: String }
 struct User { name: String, home: Address? }
 
 fn main() {
-    let home = Address(city: \"Bletchley\".to_string())
-    let u = User(name: \"Ada\".to_string(), home: home)
+    let home = Address { city: \"Bletchley\".to_string() }
+    let u = User { name: \"Ada\".to_string(), home: home }
     let city = u.home?.city ?? \"nowhere\".to_string()
     println(f\"{city}\")
 }
@@ -350,7 +350,7 @@ fn reaching_through_a_plain_value_is_refused() {
     let source = "\
 struct User { name: String }
 fn main() {
-    let u = User(name: \"Ada\".to_string())
+    let u = User { name: \"Ada\".to_string() }
     let n = u?.name
     println(f\"{n}\")
 }
@@ -456,7 +456,7 @@ fn shown(what: String?) -> String {
 }
 
 fn main() {
-    let b = Box(label: \"on it\".to_string())
+    let b = Box { label: \"on it\".to_string() }
     println(f\"{shown(b.label)}\")
 }
 ",

@@ -298,7 +298,7 @@ fn a_map_of_structs_types_its_lambda_all_the_way_down() {
         "use std::collections::HashMap\n\
          pub struct Stats { n: i64 }\n\
          impl Stats {\n\
-             pub fn(first: i64) -> Stats { return Stats(n: first) }\n\
+             pub fn(first: i64) -> Stats { return Stats { n: first } }\n\
              fn add(&mut self, x: i64) { self.n += x }\n\
          }\n\
          pub struct Summary { stations: HashMap[&str, Stats] }\n\
@@ -434,7 +434,7 @@ fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
                   fn reads() -> String throws { return io::read_to_string() }\n\
                   pub struct S { n: i64 }\n\
                   impl S {\n\
-                      pub fn(n: i64) -> S { return S(n: n) }\n\
+                      pub fn(n: i64) -> S { return S { n: n } }\n\
                       fn use_it(&self) -> i64 sync { return self.n }\n\
                   }";
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -598,7 +598,7 @@ fn a_method_is_named_the_way_it_is_called() {
     let l = ledger(
         "pub struct Stats { n: i64 }\n\
          impl Stats {\n\
-             pub fn(first: i64) -> Stats { return Stats(n: first) }\n\
+             pub fn(first: i64) -> Stats { return Stats { n: first } }\n\
              fn add(&mut self, x: i64) sync { self.n += x }\n\
          }",
     );
@@ -757,7 +757,7 @@ fn a_function_that_is_not_sync_may_call_anything() {
 fn a_constructor_makes_the_same_promise_or_does_not() {
     let pure = "pub struct S { n: i64 }\n\
                 impl S {\n\
-                    pub fn(n: i64) -> S { return S(n: n) }\n\
+                    pub fn(n: i64) -> S { return S { n: n } }\n\
                     fn use_it(&self) sync { let x = S(1) }\n\
                 }";
     assert!(violations(pure).is_empty(), "{:?}", violations(pure));
@@ -767,7 +767,7 @@ fn a_constructor_makes_the_same_promise_or_does_not() {
     let pausing = "use std::io\n\
                    pub struct S { n: i64 }\n\
                    impl S {\n\
-                       pub fn(n: i64) -> S throws { let t = io::read_to_string() return S(n: n) }\n\
+                       pub fn(n: i64) -> S throws { let t = io::read_to_string() return S { n: n } }\n\
                        fn use_it(&self) sync { let x = S(1) }\n\
                    }";
     let found = violations(pausing);

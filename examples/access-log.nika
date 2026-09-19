@@ -90,7 +90,7 @@ pub struct Counts {
 
 impl Counts {
     pub fn(bytes: i64) -> Counts sync {
-        return Counts(hits: 1, bytes: bytes)
+        return Counts { hits: 1, bytes: bytes }
     }
 
     fn add(&mut self, bytes: i64) sync {
@@ -112,7 +112,7 @@ pub struct Report {
 
 impl Report {
     pub fn() -> Report sync {
-        return Report(paths: HashMap::new(), requests: 0, failures: 0)
+        return Report { paths: HashMap::new(), requests: 0, failures: 0 }
     }
 
     // `sync`: pure computation, no I/O, cannot pause - which is what lets the

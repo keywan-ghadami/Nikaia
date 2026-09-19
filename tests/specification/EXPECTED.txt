@@ -107,7 +107,7 @@
 30-nikaia-tooling.md #6 fragment (as written)  bench "Sorting" {
 30-nikaia-tooling.md #7 refused (as written) [NK1135]  extern "C" {
 30-nikaia-tooling.md #8 fragment (as written)  // Usage of a Rust crate
-30-nikaia-tooling.md #9 fragment (as written)  // main.nika
+30-nikaia-tooling.md #9 lowered (as written)  // main.nika
 30-nikaia-tooling.md #10 refused (as written)  use std::backend::x86
 30-nikaia-tooling.md #11 fragment (as written)  pub fn read_to_string() -> String throws   // all of it…
 30-nikaia-tooling.md #12 lowered (as written) [about-a-refusal]  fn tally() -> i64 throws {          // NK2701 without t…

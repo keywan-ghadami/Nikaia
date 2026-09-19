@@ -389,7 +389,9 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   `Stats(first)` calls the anonymous constructor. So `Foo(x: 1)` bypasses the
   constructor's invariants and `Foo(1)` goes through them, distinguished by a
   colon. **Pick the brace form for the literal** — it cannot be mistaken for a
-  call, and shorthand fields already live there.
+  call, and shorthand fields already live there. *Decided and **built**:*
+  [ADR-140](specification/adr/adr-140.md) D1, with `NK1146` naming the braces —
+  and [ADR-133](specification/adr/adr-133.md)'s call half built on top of it.
 * **Constructor**: `pub fn(first: i32)` (anonymous) in user code, `Type::new()`
   in `std` (`HashMap::new`, `Vec::new`, `String::new`, `Raw::new`,
   `Server::new`) — and `1brc.nika` passes `Summary::new` as a value although
@@ -413,10 +415,11 @@ brace literal, the anonymous constructor with `new` gone from `std`'s own types,
 `::` everywhere, `throws` and `sync` after the result type, and `use` bringing
 nothing in for `std` as for a package. **One record and five migrations**,
 because they are one question — *does this language say one thing one way* — and
-answering them apart would migrate the corpus five times for one property. None
-is built; [`open-work.md`](open-work.md) §2 carries one entry each, with the
-brace literal first, since [ADR-133](specification/adr/adr-133.md)'s call half
-was blocked on exactly the spelling it frees.
+answering them apart would migrate the corpus five times for one property.
+**D1 is built** and the other four are not; [`open-work.md`](open-work.md) §2
+carries one entry each. D1 went first because
+[ADR-133](specification/adr/adr-133.md)'s call half was blocked on exactly the
+spelling it frees, and that half is built too.
 
 ### 3.4 The subject/config protocol at its worst
 
@@ -424,8 +427,12 @@ was blocked on exactly the spelling it frees.
 leading semicolon in an argument list is a shape no reader has seen. Since
 options must be named and subjects must not be, a call with only named
 arguments is unambiguous without the `;`: let `f(opt: 1)` mean `f(; opt: 1)`.
-*Decided since:* [ADR-133](specification/adr/adr-133.md) — `f(opt: 1)` is the
-one form and the leading `;` is refused; a mixed call keeps its `;`. Not built.
+*Decided and **built** since:* [ADR-133](specification/adr/adr-133.md) —
+`f(opt: 1)` is the one form and the leading `;` is refused, in a signature and at
+a call; a mixed call keeps its `;`, and a driver's deferred parameters write none
+either, because a receiver stands outside the parentheses. The call half waited
+on [ADR-140](specification/adr/adr-140.md) D1, which took the construct it
+collided with out of the language.
 
 ### 3.5 Things the specification writes that are not in the language
 

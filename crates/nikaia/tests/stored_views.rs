@@ -199,7 +199,7 @@ fn a_naked_view_put_into_a_struct_that_is_handed_back_is_refused() {
         struct Factory { n: i32 }
         impl Factory {
             fn make(&self, name: &str) -> Reading sync {
-                return Reading(name: name, temp: self.n)
+                return Reading { name: name, temp: self.n }
             }
         }
         "#);
@@ -294,7 +294,7 @@ fn a_view_stored_in_the_subject_is_lowered_with_the_buffer_named() {
     let source = r#"
         struct Summary { label: &str }
         impl Summary {
-            pub fn() -> Summary sync { return Summary(label: "none") }
+            pub fn() -> Summary sync { return Summary { label: "none" } }
             fn record(&mut self, name: &str) sync {
                 self.label = name
             }
@@ -328,7 +328,7 @@ fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
         use std::collections::HashMap
         struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary(stations: HashMap::new()) }
+            pub fn() -> Summary sync { return Summary { stations: HashMap::new() } }
             fn record(&mut self, name: &str, temp: i32) sync {
                 self.stations.insert(name, temp)
             }
@@ -352,7 +352,7 @@ fn a_read_only_call_on_a_view_field_is_lowered_rather_than_refused() {
         use std::collections::HashMap
         struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary(stations: HashMap::new()) }
+            pub fn() -> Summary sync { return Summary { stations: HashMap::new() } }
             fn has(&self, name: &str) -> bool sync {
                 return self.stations.contains_key(name)
             }
@@ -373,7 +373,7 @@ fn a_view_that_reaches_the_field_through_a_local_is_lowered_too() {
         use std::collections::HashMap
         struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary(stations: HashMap::new()) }
+            pub fn() -> Summary sync { return Summary { stations: HashMap::new() } }
             fn record(&mut self, name: &str) sync {
                 let key = name
                 self.stations.insert(key, 1)

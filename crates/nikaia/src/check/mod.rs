@@ -355,6 +355,24 @@ pub struct Checked {
     /// The four-part key is `nullable_args`' and is there for the same reason:
     /// a statement may call one function twice, and `f(a) + f(b)` has two
     /// arguments in one position.
+    /// The **options a method call has**, in the order the declaration gives,
+    /// by the byte the statement starts at and the method's written name
+    /// (Part I 5.1, [ADR-133](../../docs/specification/adr/adr-133.md) D1).
+    ///
+    /// The language below has no named arguments and no defaults, so an option
+    /// becomes positional at the call and a missing one becomes its default.
+    /// For a call **by name** the emitter reads that off the callee's contract
+    /// itself; for a **method** it cannot, because finding the entry means
+    /// resolving the receiver and the emitter has no types
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) — the same
+    /// arrangement `lent_args` and `nullable_args` have.
+    ///
+    /// Without it a method's options were **dropped**: `q.execute(target_age: 30)`
+    /// came out as `q.execute()` and `rustc` answered about the arity of a file
+    /// nobody wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    /// Older than the spelling that makes it easy to hit, because the `;` form
+    /// went down the same path.
+    pub method_options: BTreeMap<(usize, String), Vec<(String, String)>>,
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
@@ -717,6 +735,8 @@ pub struct Propagation {
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// [`Checked::method_options`].
+    pub method_options: BTreeMap<(usize, String), Vec<(String, String)>>,
 }
 
 /// The loops whose step can fail, for a caller that wants only those.
@@ -757,6 +777,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
         lent_lets: checked.lent_lets,
         lent_args: checked.lent_args,
         mut_args: checked.mut_args,
+        method_options: checked.method_options,
     }
 }
 
@@ -2538,6 +2559,7 @@ impl<'a> Checker<'a> {
         // is what writes that. Recorded whether or not the function
         // around it declares `throws` - where it does not, `NK2605`
         // below refuses the program and nothing is emitted at all.
+        self.method_options(method, contract, span);
         self.method_propagates(method, !contract.throws.is_empty(), span);
         // ADR-055 D2, the method half. Either ledger since §6 step 3
         // made `std`'s own pausing entries `async fn`: before it, a
@@ -4625,6 +4647,24 @@ impl<'a> Checker<'a> {
         // walk carries.
         self.a_foreign_call_outside_unsafe(&name, span);
 
+        // **A struct literal written like a call**
+        // ([ADR-140](../../docs/specification/adr/adr-140.md) D1). `Stats(min: 1)`
+        // parsed as Kap 4.2's named literal until D1 took that spelling out of the
+        // language; it is a call with options now, and where the name is a **type**
+        // that is the old form rather than a call anybody meant. Asked here because
+        // the parser cannot ask it - the two forms are one spelling and a name
+        // denotes one of them - and asked before the resolution below, which would
+        // otherwise answer about the anonymous constructor: the silent lowering was
+        // `Stats::new()` with the fields dropped, which `rustc` then refused about a
+        // file nobody wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+        if !config.is_empty() && args.is_empty() && self.declares_a_type(&name) {
+            self.a_literal_written_like_a_call(&name, config, span);
+            for option in config {
+                self.expr(&option.value, span);
+            }
+            return Ty::named(&name);
+        }
+
         // A tuple variant of an enum declared here - `Op::Plus(1)` - is a value
         // of that enum, not a call to a function. Its arguments are still
         // walked, below, with the rest.
@@ -5151,6 +5191,29 @@ impl<'a> Checker<'a> {
     /// cannot fail" but "there is no answer" - and it lands in the set that
     /// *removes* the pair, so an unresolved call leaves the statement's name
     /// alone rather than speaking for it.
+    /// [`Checked::method_options`]: the callee's options, in the declaration's
+    /// order, for the emitter to make positional.
+    ///
+    /// Recorded from the **contract** and not from the call, so a call that
+    /// leaves an option out still gets its default — which is the half the
+    /// emitter could not work out on its own either.
+    fn method_options(&mut self, method: Ident, contract: &FnContract, span: &Span) {
+        let Some(signature) = contract.signature.as_ref() else {
+            return;
+        };
+        if signature.config.is_empty() {
+            return;
+        }
+        let options = signature
+            .config
+            .iter()
+            .map(|option| (option.name.clone(), option.default.clone()))
+            .collect();
+        self.checked
+            .method_options
+            .insert((span.start, self.parsed.text(method).to_string()), options);
+    }
+
     fn method_propagates(&mut self, method: Ident, fails: bool, span: &Span) {
         let key = (span.start, self.parsed.text(method).to_string());
         if fails {
@@ -5974,12 +6037,10 @@ impl<'a> Checker<'a> {
             message: format!("nothing declares a struct called `{name}`"),
             notes: vec![match is_a_function {
                 true => format!(
-                    "`{name}(…: …)` is Kap 4.2's struct literal with named fields, the \
-                     shape `Stats(min: first, max: first)` has - and `{name}` is a \
-                     function. A call whose arguments are all options is written \
-                     `{name}(; option: value)` in this compiler; ADR-133 D1 spells it \
-                     without the `;`, and what stands in the way is that the two forms \
-                     are one spelling (docs/open-decisions.md)"
+                    "a struct literal names a type, and `{name}` is a **function**. A \
+                     call whose arguments are all options is written \
+                     `{name}(option: value)` since ADR-133 D1 - with parentheses and no \
+                     `;`, which is what the braces here would have been"
                 ),
                 false => "a struct literal names a type, and this name is not one Part I \
                           2.2 offers, nor one a ledger declares, nor one this file \
@@ -5987,11 +6048,48 @@ impl<'a> Checker<'a> {
                     .to_string(),
             }],
             help: Some(match is_a_function {
-                true => {
-                    format!("write `{name}(; option: value)` while the `;` is still the spelling")
-                }
+                true => format!("write `{name}(option: value)`"),
                 false => "declare the `struct`, or correct the name".to_string(),
             }),
+        });
+    }
+
+    /// `NK1146`: a struct literal written like a call
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D1).
+    ///
+    /// `Stats(min: first, max: first)` and `Reading { name, temp }` both built a
+    /// struct, and `Stats(first)` called the anonymous constructor - so `Foo(x: 1)`
+    /// went *round* a type's invariants and `Foo(1)` went *through* them, told
+    /// apart by a colon. D1 keeps the braces and gives the parentheses to the
+    /// call, which is also what freed [ADR-133](../../docs/specification/adr/adr-133.md)
+    /// D1's options-only call: the two were one spelling.
+    ///
+    /// The message carries the whole rewrite rather than the rule, because the
+    /// rewrite is mechanical and the reader has the fields in hand.
+    fn a_literal_written_like_a_call(
+        &mut self,
+        name: &str,
+        config: &[ast::ConfigArg],
+        span: &Span,
+    ) {
+        let fields = config
+            .iter()
+            .map(|a| self.parsed.text(a.name).to_string())
+            .collect::<Vec<_>>()
+            .join(": …, ");
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1146",
+            message: format!("a struct literal is written with braces, and `{name}` is a type"),
+            notes: vec![
+                "`Name(field: value)` was a second spelling of `Name { field: value }` \
+                 and is gone (ADR-140 D1): the parentheses are a call now, so \
+                 `Name(a, b)` reaches the anonymous constructor and nothing goes round \
+                 it by carrying a colon"
+                    .to_string(),
+            ],
+            help: Some(format!("write `{name} {{ {fields}: … }}`")),
         });
     }
 

@@ -423,7 +423,7 @@ fn a_type_another_file_declares_can_be_named_and_built() {
                 "pub struct Conn { pub id: i64 }\n\
                  \n\
                  pub fn make() -> Conn {\n\
-                 \x20   return Conn(id: 7)\n\
+                 \x20   return Conn { id: 7 }\n\
                  }\n\
                  \n\
                  pub fn label(c: Conn) -> i64 {\n\
@@ -434,7 +434,7 @@ fn a_type_another_file_declares_can_be_named_and_built() {
                 "main.nika",
                 "fn main() {\n\
                  \x20   let made: Conn = make()\n\
-                 \x20   let built = Conn(id: 35)\n\
+                 \x20   let built = Conn { id: 35 }\n\
                  \x20   println(f\"{label(made)} {label(built)}\")\n\
                  }\n",
             ),
@@ -451,8 +451,8 @@ fn a_type_another_file_declares_can_be_named_and_built() {
 fn a_foreign_type_is_still_checked() {
     for (line, code, says) in [
         ("let c: i64 = make()", "NK1103", "Conn"),
-        ("let c = Conn(nmae: 1)", "NK1107", "nmae"),
-        ("let c = Conn(id: \"seven\")", "NK1106", "Conn.id"),
+        ("let c = Conn { nmae: 1 }", "NK1107", "nmae"),
+        ("let c = Conn { id: \"seven\" }", "NK1106", "Conn.id"),
     ] {
         let (dir, entry) = project(
             "foreign-type-refused",
@@ -462,7 +462,7 @@ fn a_foreign_type_is_still_checked() {
                     "pub struct Conn { pub id: i64 }\n\
                      \n\
                      pub fn make() -> Conn {\n\
-                     \x20   return Conn(id: 7)\n\
+                     \x20   return Conn { id: 7 }\n\
                      }\n",
                 ),
                 ("main.nika", &format!("fn main() {{\n    {line}\n}}\n")),
@@ -521,8 +521,8 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
             (
                 "main.nika",
                 "fn main() {\n\
-                 \x20   let c = Shared(Conn(id: 1))\n\
-                 \x20   let p = Pool(db: c)\n\
+                 \x20   let c = Shared(Conn { id: 1 })\n\
+                 \x20   let p = Pool { db: c }\n\
                  \x20   println(f\"{p.db.id}\")\n\
                  }\n",
             ),
@@ -582,7 +582,7 @@ fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
             (
                 "main.nika",
                 "fn main() {\n\
-                 \x20   let c = Shared(Conn(id: 1))\n\
+                 \x20   let c = Shared(Conn { id: 1 })\n\
                  \x20   println(f\"{hold(c)}\")\n\
                  }\n",
             ),
