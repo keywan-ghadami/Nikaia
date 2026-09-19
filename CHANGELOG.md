@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.56] — 2026-09-19
+
+A handle may be absent, and `T?` is how it says so
+([ADR-155](docs/specification/adr/adr-155.md)) — the question
+[ADR-147](docs/specification/adr/adr-147.md) D3 left open, answered and built
+in the same round.
+
+### Decided ([ADR-155](docs/specification/adr/adr-155.md))
+
+- **The nullable, on a handle, meaning what Part I 2.3 means by it.** `fopen` returns `NULL` where it cannot open the file, `getenv` where the name is not set, and **most of C's handle-returning surface does** — and nothing in a declaration could say it. `??` and `?.` are how a program gets past it; there is no second spelling and no rule of its own.
+- **It costs nothing, and that is D2.** A handle holds a **non-null** address and `T?` is the absence of one — the two states C spells with a pointer and `NULL` — so Rust lays `Option<T>` over the same machine word: a nullable handle is one word, and `&mut sqlite3?` is `sqlite3 **` exactly as C writes it. The **out-parameter works rather than merely typechecking**, which at this boundary is the only kind of working there is.
+- **A declaration that does not say `?` is a claim, and it is checked** (D3). C may still hand back nothing; what the program gets then is an abort naming the declaration rather than a handle that is secretly null. The claim is the author's and the check is the compiler's — the arrangement `sync` on a declaration already has.
+- **`CStr::to_string` lost a failure** (D4). It reported a null address and bad UTF-8 as one `throws`, which conflated *there is no text* with *the bytes are not text*. The first is a **value** now, and what is left is the failure `fs::read_to_string` already has.
+
+### Found by building
+
+- **The hull forced the declaration's *result* to change.** A handle cannot be the declared return type any more: the hull is non-null, so a `NULL` arriving in one is undefined **before** any check could run. So a declaration hands back the address C returned and the hull goes on at the **call** — `from_c` checks the claim, `maybe` reads `NULL` as `None`.
+- **D5, and it was written because the code found it.** `&mut Block?` parsed and the `?` went to the *view*, which is Part I 2.3's own reading and the wrong one here: what C wants is a slot that holds a handle or nothing. A view at this boundary lives for the call and is never absent, so the other reading is a shape nothing writes. Turned around for `&mut T` and `&[T]` only, in both directions of the ledger's type text; a plain `&T?` is untouched.
+
+- **Part III 15.1's fourth block is a program**, so the specification's lowering floor went up again, 58 to 59, and one more of its blocks compiles below. **Six more tests**, twenty-nine in the file; one runs `getenv` both ways, and one runs `posix_memalign`'s out-parameter.
+
+### Open
+
+- **One test**, [ADR-147](docs/specification/adr/adr-147.md) §5 step 5: `sqlite3` end to end. Nothing is in its way any more. It is **not** what proves the four decisions — libc does, on any machine, and four of the twenty-nine tests compile against it and run. What `sqlite3` adds is a real library's surface rather than a libc call each.
+
 ## [0.0.55] — 2026-09-19
 
 Text a C library hands back is a `CStr` that `std` copies

@@ -769,6 +769,23 @@ fn opaque_handles(parsed: &Parsed) -> std::collections::BTreeMap<String, String>
     out
 }
 
+/// What each `extern "C"` declaration hands back, by the name a call writes
+/// ([ADR-155](../../docs/specification/adr/adr-155.md) D3).
+fn foreign_results(parsed: &Parsed) -> std::collections::BTreeMap<String, Type> {
+    let mut out = std::collections::BTreeMap::new();
+    for item in &parsed.program.items {
+        let Item::Extern { declarations, .. } = &item.node else {
+            continue;
+        };
+        for declaration in declarations {
+            if let Some(ret) = &declaration.node.ret_type {
+                out.insert(parsed.text(declaration.node.name).to_string(), ret.clone());
+            }
+        }
+    }
+    out
+}
+
 fn foreign_traits(parsed: &Parsed) -> std::collections::BTreeSet<String> {
     parsed
         .program
@@ -1104,6 +1121,11 @@ struct Emitter<'p> {
     /// which takes it — that call *is* the cleanup, and a handle given away
     /// must not be released twice.
     opaque_handles: std::collections::BTreeMap<String, String>,
+    /// What each `extern "C"` declaration hands back, by the name a call writes
+    /// ([ADR-155](../../docs/specification/adr/adr-155.md) D3). A handle needs
+    /// its hull put on at the call, and whether the declaration said `?`
+    /// decides which one.
+    foreign_results: std::collections::BTreeMap<String, Type>,
     /// Whether these items are the crate root - the one file that may carry
     /// the program's entry point.
     ///
@@ -1150,6 +1172,11 @@ const MAIN: &str = "main";
 /// `contracts::sharing`'s answer ([ADR-037](../../../docs/specification/adr/adr-037.md)
 /// D7).
 use crate::contracts::ty::ARRAY;
+
+/// **`std`'s own handle** ([ADR-147](../../docs/specification/adr/adr-147.md)
+/// D4): text a C library owns, which no `extern "C"` block declares because
+/// `std` does.
+const C_STRING: &str = "CStr";
 
 const SHARED: &str = "Shared";
 /// Part I 6.3's lock, whose shape is decided per value
@@ -1638,6 +1665,7 @@ impl<'p> Emitter<'p> {
             dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
             foreign_params: foreign_params(parsed),
             opaque_handles: opaque_handles(parsed),
+            foreign_results: foreign_results(parsed),
             entry: true,
         }
     }
@@ -2205,15 +2233,40 @@ impl<'p> Emitter<'p> {
     /// this from recursing: a value moved into an `extern "C"` function is the
     /// callee's, and C runs no `Drop`. Measured rather than reasoned — the
     /// release fires once per scope and not twice.
+    ///
+    /// **The address inside is `NonNull`**, which is
+    /// [ADR-155](../../docs/specification/adr/adr-155.md) D2: a handle holds an
+    /// address and `T?` is the absence of one, and those are the two states C
+    /// spells with a pointer and `NULL`. Rust lays `Option<T>` over the same
+    /// word for a type shaped like this, so a nullable handle costs nothing and
+    /// `&mut T?` is `T **` exactly as C writes it — the right words around the
+    /// right memory, which at this boundary is the only kind that counts.
     fn opaque_type(&self, out: &mut Out, handle: &crate::ast::OpaqueType) {
         let name = self.name(handle.name);
         let release = self.name(handle.released_by);
         out.push(&format!(
             "#[repr(transparent)]\n\
              #[derive(Debug)]\n\
-             pub struct {name}(*mut core::ffi::c_void);\n\
+             pub struct {name}(core::ptr::NonNull<core::ffi::c_void>);\n\
              \n\
+             #[allow(dead_code)]\n\
              impl {name} {{\n\
+             \x20   /// What a declaration that says `-> {name}` hands back\n\
+             \x20   /// (ADR-155 D3): the address, or an abort naming the\n\
+             \x20   /// declaration that claimed it would be one.\n\
+             \x20   #[track_caller]\n\
+             \x20   fn from_c(declaration: &str, address: *mut core::ffi::c_void) -> {name} {{\n\
+             \x20       match core::ptr::NonNull::new(address) {{\n\
+             \x20           Some(address) => {name}(address),\n\
+             \x20           None => nikaia_std::foreign::nothing_came_back(declaration),\n\
+             \x20       }}\n\
+             \x20   }}\n\
+             \n\
+             \x20   /// The same, where the declaration **does** say `?` (D1).\n\
+             \x20   fn maybe(address: *mut core::ffi::c_void) -> Option<{name}> {{\n\
+             \x20       core::ptr::NonNull::new(address).map({name})\n\
+             \x20   }}\n\
+             \n\
              \x20   /// The same address, without giving the handle away\n\
              \x20   /// (ADR-147 D3): what a C function is handed is the\n\
              \x20   /// pointer, and this handle stays the caller's to close.\n\
@@ -2272,6 +2325,54 @@ impl<'p> Emitter<'p> {
             return format!("*{} {}", pointing(ty.is_mut), self.foreign_ty(&pointed));
         }
         self.ty(ty, Lifetimes::ELIDED)
+    }
+
+    /// **The hull a call's result needs**, where the callee is a foreign
+    /// declaration handing back a handle
+    /// ([ADR-155](../../docs/specification/adr/adr-155.md) D2, D3): the
+    /// handle's name, and whether the declaration said it **may be absent**.
+    fn handle_from(&self, func: &Expr) -> Option<(String, bool)> {
+        let Expr::Variable(name) = func else {
+            return None;
+        };
+        let declared = self.foreign_results.get(self.text(*name))?;
+        let handle = self.handle_named(declared)?;
+        Some((handle.to_string(), declared.is_nullable))
+    }
+
+    /// The callee as the source wrote it, for a message that names it.
+    fn called_name(&self, func: &Expr) -> String {
+        match func {
+            Expr::Variable(name) => self.text(*name).to_string(),
+            _ => String::new(),
+        }
+    }
+
+    /// The handle a type names, where it names one
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3,
+    /// [ADR-155](../../docs/specification/adr/adr-155.md) D1) — through a `?`,
+    /// because `CStr?` is a handle that may be absent and is still a handle.
+    ///
+    /// `None` for a view or a slice of one: what a `&T` at the boundary is is
+    /// D1's pointer, and the handle is what it points at.
+    fn handle_named(&self, ty: &Type) -> Option<&str> {
+        if ty.is_view || ty.is_slice {
+            return None;
+        }
+        let name = self.text(ty.name);
+        match self.opaque_handles.contains_key(name) || name == C_STRING {
+            true => Some(name),
+            false => None,
+        }
+    }
+
+    /// What the address inside a handle points at, which is the one thing this
+    /// language never looks through.
+    fn pointed_at(&self, ty: &Type) -> &'static str {
+        match self.text(ty.name) == C_STRING {
+            true => "core::ffi::c_char",
+            false => "core::ffi::c_void",
+        }
     }
 
     /// Which shape a declared parameter takes at the C boundary, or `None`
@@ -2363,6 +2464,15 @@ impl<'p> Emitter<'p> {
             ));
         }
         let returned = match &method.ret_type {
+            // **A handle comes back as the address it is**
+            // ([ADR-155](../../docs/specification/adr/adr-155.md) D3), and the
+            // call is where it becomes a handle. Declaring the *type* here
+            // would be a lie the moment C hands back nothing: the hull under a
+            // handle is non-null, so a null arriving in one is undefined
+            // before any check could run.
+            Some(ty) if foreign && self.handle_named(ty).is_some() => {
+                format!("*mut {}", self.pointed_at(ty))
+            }
             Some(ty) => match foreign {
                 true => self.foreign_ty(ty),
                 false => self.ty(ty, Lifetimes::ELIDED),
@@ -4864,7 +4974,24 @@ impl<'p> Emitter<'p> {
             out.push("Box::pin(");
         }
 
+        // **A handle is made at the call and nowhere else**
+        // ([ADR-155](../../docs/specification/adr/adr-155.md) D2, D3). The
+        // declaration hands back the address C returned; the hull goes on here,
+        // where the claim the declaration made can be checked — or, where it
+        // said `?`, where `None` is C's own `NULL`.
+        let hull = self.handle_from(func);
+        if let Some((handle, absent)) = &hull {
+            out.push(&match absent {
+                true => format!("{handle}::maybe("),
+                false => format!("{handle}::from_c(\"{}\", ", self.called_name(func)),
+            });
+        }
+
         self.called(out, func, args, config, depth, flow)?;
+
+        if hull.is_some() {
+            out.push(")");
+        }
 
         if boxed {
             out.push(")");

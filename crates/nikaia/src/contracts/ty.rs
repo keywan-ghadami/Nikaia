@@ -457,6 +457,16 @@ impl Ty {
         if let Ok(n) = text.parse::<i64>() {
             return Ty::Count(n);
         }
+        // **The two boundary shapes are read before the `?`**
+        // ([ADR-155](../../../docs/specification/adr/adr-155.md) D5): on a
+        // `&mut T` or a `&[T]` the trailing `?` is the **pointee's**, so
+        // `&mut sqlite3?` is a slot that holds a handle or nothing rather than
+        // a view that may be absent. A plain `&T?` is untouched and is Part I
+        // 2.3's own nullable view, which is what `let mut m: &str? = null`
+        // writes.
+        if let Some(pointed) = pointed_at(text) {
+            return pointed;
+        }
         // A trailing `?` is Part I 2.3's nullable marker, read before anything
         // else so that `&str?` and `Vec[i64]?` reach the branches below as the
         // types they are nullable *of*. `"?"` alone is `Unknown` and was taken
@@ -466,30 +476,6 @@ impl Ty {
         }
         if let Some(inner) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
             return Ty::Tuple(split_args(inner).iter().map(|p| Ty::parse(p)).collect());
-        }
-        // **What the C boundary lends** (ADR-147 D1), read before the plain `&`
-        // below: `&mut T` and `&[u8]` are shapes of their own, and a `&` with a
-        // name after it is the view every other declaration writes.
-        if let Some(rest) = text.strip_prefix('&').map(str::trim_start) {
-            // `word_off` takes a word off the *end*; this one is at the
-            // front, and the space after it is what keeps `mutable` from being
-            // a type whose name begins with those three letters.
-            let (mutable, rest) = match rest.strip_prefix("mut ") {
-                Some(shorter) => (true, shorter.trim_start()),
-                None => (false, rest),
-            };
-            let slice = rest.starts_with('[') && rest.ends_with(']');
-            if mutable || slice {
-                let inner = match slice {
-                    true => &rest[1..rest.len() - 1],
-                    false => rest,
-                };
-                return Ty::Pointed {
-                    item: Box::new(Ty::parse(inner)),
-                    slice,
-                    mutable,
-                };
-            }
         }
         // `fn(&Stats)`, and `fn()` for a lambda that is handed nothing. Read
         // before the `&`, because a function type is never a view.
@@ -784,6 +770,18 @@ impl Ty {
                     view: false,
                 },
             };
+            // **A `?` on one of these is the *pointee's***
+            // ([ADR-155](../../../docs/specification/adr/adr-155.md) D5), which
+            // is where it parts company with Part I 2.3's own reading of a
+            // trailing `?`. A view at the C boundary lives for the call and is
+            // never absent, so a nullable view would be a shape nothing writes;
+            // `&mut sqlite3?` is the **out-parameter** — a slot that holds a
+            // handle or nothing — and that is what every C library with one
+            // means by it.
+            let item = match ty.is_nullable {
+                true => Ty::Nullable(Box::new(item)),
+                false => item,
+            };
             return Ty::Pointed {
                 item: Box::new(item),
                 slice: ty.is_slice,
@@ -863,8 +861,13 @@ impl fmt::Display for Ty {
                 if *mutable {
                     f.write_str("mut ")?;
                 }
+                // The `?` a nullable pointee carries comes out with it, which
+                // is the spelling `parse` above reads back (ADR-155 D5).
                 match slice {
-                    true => write!(f, "[{item}]"),
+                    true => match item.as_ref() {
+                        Ty::Nullable(inner) => write!(f, "[{inner}]?"),
+                        item => write!(f, "[{item}]"),
+                    },
                     false => write!(f, "{item}"),
                 }
             }
@@ -932,6 +935,48 @@ impl fmt::Display for Ty {
             }
         }
     }
+}
+
+/// **What the C boundary lends**
+/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1), read out of its
+/// text: `&mut T`, `&[T]` and the two together.
+///
+/// A plain `&T` is **not** one of these — that is the view every other
+/// declaration in this language writes, and it stays a `Named` with `view`.
+///
+/// A trailing `?` belongs to the **pointee**
+/// ([ADR-155](../../../docs/specification/adr/adr-155.md) D5), which is why
+/// this is read before `parse` strips one.
+fn pointed_at(text: &str) -> Option<Ty> {
+    let rest = text.strip_prefix('&').map(str::trim_start)?;
+    // The space after `mut` is what keeps `mutable` from being read as a type
+    // whose name begins with those three letters.
+    let (mutable, rest) = match rest.strip_prefix("mut ") {
+        Some(shorter) => (true, shorter.trim_start()),
+        None => (false, rest),
+    };
+    let (rest, absent) = match rest.strip_suffix('?') {
+        Some(shorter) => (shorter.trim_end(), true),
+        None => (rest, false),
+    };
+    let slice = rest.starts_with('[') && rest.ends_with(']');
+    if !mutable && !slice {
+        return None;
+    }
+    let inner = match slice {
+        true => &rest[1..rest.len() - 1],
+        false => rest,
+    };
+    let item = Ty::parse(inner);
+    let item = match absent {
+        true => Ty::Nullable(Box::new(item)),
+        false => item,
+    };
+    Some(Ty::Pointed {
+        item: Box::new(item),
+        slice,
+        mutable,
+    })
 }
 
 /// Whether a value of this type lends a **run** of `item` laid out in memory

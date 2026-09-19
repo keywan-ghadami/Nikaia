@@ -219,8 +219,8 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
         .filter(|v| v.stage == Stage::Lowered)
         .count();
     assert!(
-        lowered >= 58,
-        "{lowered} of {} blocks lower, and 58 did when this floor was last set - \
+        lowered >= 59,
+        "{lowered} of {} blocks lower, and 59 did when this floor was last set - \
          raise it if it is beaten, and read the diff if it is not",
         verdicts.len()
     );

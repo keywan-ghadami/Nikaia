@@ -1172,22 +1172,24 @@ doc = "The value of a decimal digit: `'7'` is `7`.\n\nA character that is not a 
 # answer for it.
 [type."CStr"]
 pub = true
-doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\nIt is what a declaration writes where C hands back a `char *`. Nothing here\nfrees it - the memory is the library's, not the program's - and `to_string`\nis how a program gets text of its own out of it."
+doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\nIt is what a declaration writes where C hands back a `char *`. Nothing here\nfrees it - the memory is the library's, not the program's - and `to_string`\nis how a program gets text of its own out of it. Where the library may find\nnothing, the declaration says `-> CStr?` and the program writes `??`."
 
 # The one function D4 asks for, and the reason it exists: the walk to the zero
 # byte is the thing a program must not have to write, so it is written once,
 # inside `unsafe`, here.
 #
-# `throws` in the two ways this can fail - a null address, and bytes that are
-# not UTF-8 - rather than an abort, because a caller can do something about
-# either. `getenv` finding nothing is an ordinary Tuesday.
+# `throws` in the one way this can fail - bytes that are not UTF-8 - which is
+# what `fs::read_to_string` fails on for the same reason. *There is no text* was
+# the second until [ADR-155](../../docs/specification/adr/adr-155.md) D4 made it
+# a **value**: a declaration says `-> CStr?` where the library may find nothing,
+# and `getenv` finding nothing is an ordinary Tuesday rather than an error.
 [fn."CStr::to_string"]
 pub = true
 sync = true
 touches = []
 throws = ["?"]
 signature = "(CStr) -> String"
-doc = "A copy of the text, owned by whoever asked for it.\n\nIt fails in the two ways this can: the address may be null, which is what\nevery C function that finds nothing hands back, and the bytes may not be\nUTF-8, which text in this language is. The `unsafe` walk to the zero byte is\nhere so that no program has to write one."
+doc = "A copy of the text, owned by whoever asked for it.\n\nIt fails in **one** way: the bytes may not be UTF-8, which text in this\nlanguage is - the same failure `fs::read_to_string` has. *There is no text*\nis a value rather than a failure, because a declaration says `-> CStr?` where\nthe library may find nothing. The `unsafe` walk to the zero byte is here so\nthat no program has to write one."
 
 [type."cli::Args"]
 pub = true

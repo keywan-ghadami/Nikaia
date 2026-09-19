@@ -422,8 +422,12 @@ fn an_opaque_handle_is_an_address_and_a_cleanup() {
     // `repr(transparent)`, because the whole point of the type is its layout:
     // a handle **is** the address, so what C is handed is the pointer.
     assert!(rust.contains("#[repr(transparent)]"), "{rust}");
+    // The hull is **non-null**, which is
+    // [ADR-155](../../../docs/specification/adr/adr-155.md) D2: a handle holds
+    // an address and `T?` is the absence of one, so `Option<T>` is the same
+    // machine word and `&mut T?` is `T **`.
     assert!(
-        rust.contains("pub struct FILE(*mut core::ffi::c_void);"),
+        rust.contains("pub struct FILE(core::ptr::NonNull<core::ffi::c_void>);"),
         "{rust}"
     );
     // Part I 6.4's `cleanup` read at the C boundary: the release runs at the
@@ -593,12 +597,15 @@ fn returned_text_is_copied_by_std() {
                   }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     let rust = lowered(source);
-    // The declaration hands back the handle, and the copy is a `std` call with
-    // no `unsafe` of the program's own around it.
+    // The declaration hands back the **address**, and the hull goes on at the
+    // call, where the claim it made can be checked
+    // ([ADR-155](../../../docs/specification/adr/adr-155.md) D3). The copy is a
+    // `std` call with no `unsafe` of the program's own around it.
     assert!(
-        rust.contains("fn getenv(name: *const u8) -> CStr;"),
+        rust.contains("fn getenv(name: *const u8) -> *mut core::ffi::c_char;"),
         "{rust}"
     );
+    assert!(rust.contains("CStr::from_c(\"getenv\", getenv("), "{rust}");
     assert!(rust.contains("let home = raw.to_string()?;"), "{rust}");
     assert!(
         !rust.contains("unsafe { raw.to_string()"),
@@ -663,6 +670,176 @@ fn main() throws {
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout).trim(),
         "true",
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **A handle that may be absent is a `T?`**
+/// ([ADR-155](../../../docs/specification/adr/adr-155.md) D1), meaning what it
+/// means everywhere else: `??` and `?.` are how a program gets past it.
+#[test]
+fn a_handle_may_be_absent() {
+    let source = "extern \"C\" {\n\
+                  \x20   fn getenv(name: &[u8]) -> CStr?\n\
+                  }\n\
+                  \n\
+                  fn main() throws {\n\
+                  \x20   let home = unsafe { getenv(\"HOME\\0\") }\n\
+                  \x20   println(home?.to_string() ?? \"none\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("CStr::maybe(getenv("), "{rust}");
+    // The declaration hands back the address C returned, because the hull
+    // under a handle is non-null: a null arriving in one is undefined before
+    // any check could run.
+    assert!(
+        rust.contains("fn getenv(name: *const u8) -> *mut core::ffi::c_char;"),
+        "{rust}"
+    );
+}
+
+/// **A declaration that does not say `?` is a claim, and it is checked** (D3).
+///
+/// C may still hand back nothing, and what the program gets then is an abort
+/// naming the declaration — never a handle that is secretly null.
+#[test]
+fn a_declaration_that_claims_a_handle_is_checked() {
+    let rust = lowered(
+        "extern \"C\" {\n\
+         \x20   opaque type FILE released by fclose\n\
+         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fclose(f: FILE) -> i32\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let f = unsafe { fopen(\"/etc/hosts\\0\", \"r\\0\") }\n\
+         \x20   println(\"opened\")\n\
+         }\n",
+    );
+    assert!(rust.contains("FILE::from_c(\"fopen\", fopen("), "{rust}");
+    assert!(
+        rust.contains("nikaia_std::foreign::nothing_came_back(declaration)"),
+        "{rust}"
+    );
+}
+
+/// **The hull under a handle is non-null, which is what makes `T?` free** (D2).
+///
+/// A handle holds an address and `T?` is the absence of one — the two states C
+/// spells with a pointer and `NULL` — so Rust lays `Option<T>` over the same
+/// word and `&mut T?` is `T **` exactly as C writes it.
+#[test]
+fn a_nullable_handle_is_one_machine_word() {
+    let rust = lowered(
+        "extern \"C\" {\n\
+         \x20   opaque type Block released by free\n\
+         \x20   fn posix_memalign(out: &mut Block?, alignment: usize, size: usize) -> i32\n\
+         \x20   fn free(b: Block)\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut room: Block? = null\n\
+         \x20   let rc = unsafe { posix_memalign(room, 64, 128) }\n\
+         \x20   println(f\"{rc}\")\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("pub struct Block(core::ptr::NonNull<core::ffi::c_void>);"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("fn posix_memalign(out: *mut Option<Block>, alignment: usize, size: usize)"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("let mut room: Option<Block> = None;"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("posix_memalign(&mut room, 64, 128)"),
+        "{rust}"
+    );
+}
+
+/// **At the boundary a `?` on a view belongs to what it points at** (D5), and
+/// it is the one place Part I 2.3's own reading is turned around — only for
+/// `&mut T` and `&[T]`. A plain `&T?` stays a nullable view.
+#[test]
+fn the_question_mark_binds_to_the_pointee() {
+    let out = Ty::parse("&mut sqlite3?");
+    assert_eq!(out.text(), "&mut sqlite3?");
+    assert_eq!(Ty::parse(&out.text()), out);
+    let Ty::Pointed { item, .. } = &out else {
+        panic!("{out:?}")
+    };
+    assert!(matches!(item.as_ref(), Ty::Nullable(_)), "{out:?}");
+
+    // Untouched: `let mut m: &str? = null` is Part I 2.3's own example.
+    assert!(matches!(Ty::parse("&str?"), Ty::Nullable(_)));
+}
+
+/// **`there is no text` stopped being a failure and became a value** (D4), so
+/// the copy fails in one way rather than two.
+#[test]
+fn the_copy_fails_in_one_way() {
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let copy = library
+        .functions
+        .get("CStr::to_string")
+        .expect("std describes the copy");
+    assert_eq!(copy.throws, vec!["?".to_string()]);
+    let doc = copy.doc.as_deref().unwrap_or_default();
+    assert!(doc.contains("in **one** way"), "{doc}");
+    assert!(doc.contains("CStr?"), "{doc}");
+}
+
+/// **Measured where it matters: the nullable runs, both ways.**
+///
+/// `HOME` is set and `NIKAIA_NOT_SET` is not, so one call finds text and the
+/// other finds nothing — and finding nothing is a **value** the program reads
+/// with `??` rather than a failure it has to catch.
+#[test]
+fn an_absent_handle_is_a_value_and_runs() {
+    let rust = lowered(
+        r#"
+extern "C" {
+    fn getenv(name: &[u8]) -> CStr?
+}
+
+fn main() throws {
+    let home = unsafe { getenv("HOME\0") }
+    let found = home?.to_string() ?? "none"
+    println(f"{found.len() > 0}")
+    let nope = unsafe { getenv("NIKAIA_NOT_SET\0") }
+    println(nope?.to_string() ?? "none")
+}
+"#,
+    );
+    let dir = common::scratch_dir("absent-handle");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        out.status.success(),
+        "the lowering compiles:\n{said}\n--- the Rust ---\n{rust}"
+    );
+    assert!(
+        !said.contains("warning:"),
+        "and `rustc` says nothing about the file it was handed:\n{said}"
+    );
+    let ran = std::process::Command::new(&binary)
+        .env("HOME", "/home/somebody")
+        .env_remove("NIKAIA_NOT_SET")
+        .output()
+        .expect("run the program");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "true\nnone",
         "{}",
         String::from_utf8_lossy(&ran.stderr)
     );

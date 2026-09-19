@@ -50,8 +50,8 @@ records:
 **How the entries here are found**, which is a method rather than a habit:
 by running the programs the specification prints. `crates/nikaia/tests/specification.rs`
 takes every `nika` block in the three pages as far as it goes and hands the ones
-that lower to `rustc`, against two recorded baselines. Of 133 blocks, 58 are
-programs this compiler takes and 38 of those compile below.
+that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
+programs this compiler takes and 39 of those compile below.
 
 **Two entries are open.**
 
@@ -1132,29 +1132,36 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
-### 2.41. C cannot be handed a handle to fill
+### 2.41. `sqlite3` is not written down as the test that C works
 
-[ADR-147](specification/adr/adr-147.md) is **built**, all five decisions: a
-buffer is a `&[T]` or a `&mut [T]` that lives for the call and lowers to the
-pointer C wants, the call makes the address, either view form away from the
-boundary is `NK1158`, a length beside a buffer that cannot be shown to fit it is
-`NK1159`, a library's handle is an `opaque type … released by …` whose release
-is a `cleanup`, reaching past one is `NK1160`, and text a library hands back is
-a `CStr` that `std` copies inside the one `unsafe` block a program never writes.
-`Pointer[T]` stays `NK1135`, permanently rather than pending. Part III 15.1's
-three blocks compile and run against libc.
+[ADR-147](specification/adr/adr-147.md) and
+[ADR-155](specification/adr/adr-155.md) are **built**, every decision of both: a
+buffer is a `&[T]` or a `&mut [T]` that lives for the call, the call makes the
+address, a length beside a buffer that cannot be shown to fit it is `NK1159`, a
+library's handle is an `opaque type … released by …` whose release is a
+`cleanup`, reaching past one is `NK1160`, text a library hands back is a `CStr`
+that `std` copies, and a handle that may be absent is a `T?` — which costs
+nothing, because a handle holds a non-null address and `T?` is the absence of
+one. `&mut sqlite3?` is `sqlite3 **`, so the out-parameter works rather than
+merely typechecking. `Pointer[T]` stays `NK1135`, permanently.
 
-*What is left is the record's step 5*, `sqlite3` end to end — and it waits on a
-**question** rather than on work. D3's own example is an out-parameter,
-`sqlite3_open(path, db)`, and a handle has nothing to be before the call: C
-writes an uninitialised pointer, this language has no uninitialised binding, and
-D3 gives a handle no constructor, deliberately. That is in
-[`open-decisions.md`](open-decisions.md) with three ways out and a
-recommendation.
+*What is left is one test*, [ADR-147](specification/adr/adr-147.md) §5 step 5:
+`sqlite3` from `sqlite3_open` to `sqlite3_close`, as the record's own check that
+the four decisions are enough. Nothing is in its way any more — the question
+that was is answered.
 
-*What is built meanwhile* is every library whose constructor **hands its handle
-back**, which is `fopen`'s shape and most of C's — and libc is what proves the
-four rather than `sqlite3`, because it is on every machine.
+*It is not what proves the four, and that is worth saying before somebody
+writes it.* libc does, on any machine: four of the twenty-nine tests in
+`crates/nikaia/tests/foreign_pointers.rs` compile against it and run — `strlen`
+and `abs`, `fopen`/`fclose`/`fileno`, `getenv` both ways, and
+`posix_memalign`'s out-parameter. What `sqlite3` adds is a **real library's**
+surface rather than a libc call each, which is the thing a record can be wrong
+about in a way four calls cannot show.
+
+*What it needs:* the declarations, a `.nika` program that opens a database in a
+temporary file and reads a row back, and a test that skips rather than fails
+where the machine has no `libsqlite3` — because a gate that depends on a
+library not every machine has is a gate people learn to ignore.
 
 ### 2.42. `select` is not a keyword, and nothing cancels a task
 
