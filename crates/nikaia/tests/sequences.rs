@@ -1,0 +1,303 @@
+//! `Seq[T]` and `Par[T]`
+//! ([ADR-105](../../../docs/specification/adr/adr-105.md)).
+//!
+//! The ledger's type language had no word for what `keys()`, `chars()` and
+//! `io::lines()` hand back: elements of a type, produced one at a time when
+//! asked for, with no length until the end and nothing laid out in memory. So
+//! those entries said `-> ?`, and because a method is found through its
+//! receiver's type, everything called on such a value was unfound too.
+//!
+//! **A container is not this.** A `Vec[T]` has its elements already, a length
+//! and an index; it is walked *as* a `Seq` by a `for` and is not one.
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use nikaia::contracts::ty::{self, Ty};
+use nikaia::contracts::{Ledger, STD};
+use nikaia::parser::parse_to_ast;
+
+fn library() -> Ledger {
+    Ledger::parse(STD).expect("std's shipped ledger parses")
+}
+
+fn findings(source: &str) -> Vec<nikaia::check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    nikaia::check::check(&parsed, &own, &library()).findings
+}
+
+/// **The two words parse, render and round-trip** (D1, D3).
+///
+/// `sync` and `throws` after the type say what one **step** may do, read as they
+/// are after a function type (ADR-102 D2): without `sync` a step may pause,
+/// without `throws` it cannot fail.
+#[test]
+fn the_words_round_trip() {
+    for written in [
+        "Seq[$K] sync",
+        "Seq[String] throws",
+        "Seq[char] sync throws",
+        "Seq[$T]",
+        "Par[$T] sync",
+        "Seq[HashMap[$K, $V]] sync",
+        "Seq[($K, $V)] sync",
+    ] {
+        let parsed = Ty::parse(written);
+        assert!(
+            matches!(parsed, Ty::Seq { .. }),
+            "`{written}` is a sequence: {parsed:?}"
+        );
+        assert_eq!(parsed.text(), written, "it writes itself back");
+    }
+
+    // **The bracket is matched and not found at the end**, which is what
+    // `Seq[HashMap[$K, $V]] sync` above is for: the tail begins after the
+    // sequence's own `]`.
+    let nested = Ty::parse("Seq[HashMap[$K, $V]] sync");
+    let Ty::Seq { item, is_sync, .. } = &nested else {
+        panic!("a sequence: {nested:?}");
+    };
+    assert!(is_sync);
+    assert_eq!(item.text(), "HashMap[$K, $V]");
+}
+
+/// **A name that merely begins with `Seq` is not one**, and neither is a tail
+/// nobody wrote.
+///
+/// The boundary matters for the same reason `word_off` has one: a type called
+/// `Sequence` ends in nothing and a tail that is not the two words is a claim
+/// the file did not make.
+#[test]
+fn only_the_two_words_may_follow() {
+    for written in ["Sequence[$T]", "Seq", "Seq[$T] of stuff", "Seqx[$T]"] {
+        assert!(
+            !matches!(Ty::parse(written), Ty::Seq { .. }),
+            "`{written}` is not a sequence"
+        );
+    }
+}
+
+/// **`Seq` binds through its item, and `Par` binds against a `Seq`** (D1, D3).
+///
+/// `Seq::collect(Seq[$T]) -> Vec[$T]` is what says a chain hands a `Vec` on, and
+/// D3's *otherwise `Par[T]` has `Seq[T]`'s surface* needs the fallback entry —
+/// written with a `Seq` receiver — to bind against the `Par` that reached it.
+#[test]
+fn a_sequence_binds_through_its_item() {
+    let mut bound = std::collections::BTreeMap::new();
+    ty::bind(
+        &Ty::parse("Seq[$T]"),
+        &Ty::parse("Seq[String] throws"),
+        &mut bound,
+    );
+    assert_eq!(bound.get("T").map(|t| t.text()), Some("String".to_string()));
+
+    // The two words are not compared: they are what a step may do, and an entry
+    // writes the ones its own steps have rather than a demand on the receiver.
+    let mut bound = std::collections::BTreeMap::new();
+    ty::bind(
+        &Ty::parse("Seq[$T]"),
+        &Ty::parse("Par[i64] sync"),
+        &mut bound,
+    );
+    assert_eq!(bound.get("T").map(|t| t.text()), Some("i64".to_string()));
+}
+
+/// **Neither word is in the surface type grammar** (D4).
+///
+/// A program writes `keys()`, `for` and `collect()`; the ledger does the naming.
+/// `Seq` reaches `NK1135` as a type nothing declares, which is what says the
+/// door is shut — and shut by the rule that shuts it for `Widgit`, not by a
+/// special case.
+#[test]
+fn a_program_cannot_write_the_words() {
+    for word in ["Seq", "Par"] {
+        let found: Vec<_> = findings(&format!(
+            "fn f(xs: {word}[i64]) -> i64 {{ return 1 }}\nfn main() {{ println(\"x\") }}"
+        ))
+        .into_iter()
+        .filter(|f| f.code == "NK1135")
+        .collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "`{word}` is not a type a program has: {found:#?}"
+        );
+    }
+}
+
+/// **`keys()` hands back a sequence, and what is called on it resolves** (D1,
+/// and §3's own chain).
+#[test]
+fn the_chain_off_keys_resolves() {
+    let library = library();
+    let keys = library
+        .functions
+        .get("HashMap::keys")
+        .expect("`HashMap::keys` is described");
+    let result = keys
+        .signature
+        .as_ref()
+        .and_then(|s| s.result.clone())
+        .expect("a result");
+    assert_eq!(result.text(), "Seq[$K] sync");
+
+    // And the consumer entries are found under the receiver's own word.
+    for method in ["collect", "count", "nth", "join", "map", "filter"] {
+        assert!(
+            library.functions.contains_key(&format!("Seq::{method}")),
+            "`Seq::{method}` is described"
+        );
+    }
+}
+
+/// **`io::lines()` is a `Seq[String] throws`, which says two things in one
+/// place** (D1, and §3's *`throws` on a `Seq` is the one spelling*).
+///
+/// It said `-> Lines`, a named type whose `iterates` column carried the failing
+/// step. That worked for the `for` and for nothing else: the binding had no type,
+/// so `line.len()` inside the loop was a method on `?`. Six of
+/// `examples/tally.nika`'s `.len()` calls were among the 35 §1 counts.
+#[test]
+fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
+    let program = "fn longest() -> i64 throws {\n\
+                   \x20   let mut best = 0\n\
+                   \x20   for line in io::lines() {\n\
+                   \x20       if line.len() > best { best = line.len() }\n\
+                   \x20   }\n\
+                   \x20   return best\n\
+                   }\n\
+                   fn main() throws { println(f\"{longest()}\") }";
+    let found = findings(program);
+    assert!(
+        found.is_empty(),
+        "the binding has a type and `len` is a method of it: {found:#?}"
+    );
+
+    // **And the step still costs the function its `throws`** — the half the
+    // `iterates` column used to carry alone. Without the word on the function
+    // this is `NK2701`.
+    let without = program.replace("fn longest() -> i64 throws {", "fn longest() -> i64 {");
+    assert!(
+        findings(&without).iter().any(|f| f.code == "NK2701"),
+        "a step of `io::lines()` can fail, and the function has to say so"
+    );
+}
+
+/// **The measurement, kept** ([ADR-105](../../../docs/specification/adr/adr-105.md)
+/// §1 and [ADR-009](../../../docs/specification/adr/adr-009.md) D4).
+///
+/// §1 counts *35 unanswered method calls in the corpus*. The number this
+/// harness reads on the same tree was **38** before these entries and is **33**
+/// after — and the difference matters less than what the trace behind it said:
+/// §1's *every one of the 35 downstream of a `?` that is a sequence* is not
+/// what the corpus shows. Five were. The rest are downstream of a receiver with
+/// no type for other reasons — `tail.drain()` in `json.nika`, `map` on the result
+/// of a `catch` in `access-log.nika` — and they are somebody else's entry.
+///
+/// A ceiling rather than a floor, so that the number can only be beaten: what
+/// this guards is that a later change does not quietly make the corpus less
+/// answerable.
+#[test]
+fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let library = library();
+    let mut files = 0usize;
+    let mut unanswered = 0usize;
+    let mut pending = vec![root.join("examples"), root.join("crates/nikaia-std/src")];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "nika") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read the program");
+            let Ok(parsed) = parse_to_ast(&source) else {
+                continue;
+            };
+            let own = Ledger::infer(&parsed);
+            let checked = nikaia::check::check(&parsed, &own, &library);
+            files += 1;
+            unanswered += checked
+                .methods
+                .values()
+                .map(|c| c.unanswered)
+                .sum::<usize>();
+        }
+    }
+    assert!(files >= 18, "only {files} programs were read");
+    assert!(
+        unanswered <= 33,
+        "{unanswered} unanswered method calls in {files} programs, and 33 is the \
+         ceiling this was last measured at - a rise means a receiver stopped \
+         being typed, and a fall means this number goes down with a sentence \
+         saying what answered them"
+    );
+}
+
+/// **No loose program in the repository is refused by any of this**, which is
+/// Part III C.4's property for a change to the ledger's type language.
+///
+/// *Loose*, because this harness hands each file over alone and a **package** is
+/// several files that see one another with no `use` (Part I 9.1):
+/// `examples/inventory/page.nika` builds an `Entry` its sibling declares, so
+/// `NK1135` there is the harness's limitation and not a refusal of the program.
+/// The files `nikaia --input` sweeps are the ones checkable this way, which is
+/// the top level of `examples/` and `std`'s own sources.
+#[test]
+fn no_loose_program_in_the_repository_is_refused() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let library = library();
+    let mut reported = String::new();
+    let mut checked = 0usize;
+    for path in every_program(&root) {
+        let source = std::fs::read_to_string(&path).expect("read the program");
+        let Ok(parsed) = parse_to_ast(&source) else {
+            continue;
+        };
+        let own = Ledger::infer(&parsed);
+        let name = path.display().to_string();
+        // `fortunes.nika` is the one program that is meant not to build: it
+        // reaches for an `http` package the project does not declare, which is
+        // ADR-122's step 4 and nothing to do with this.
+        if name.contains("fortunes.nika") {
+            continue;
+        }
+        for finding in nikaia::check::check(&parsed, &own, &library)
+            .findings
+            .iter()
+        {
+            reported.push_str(&nikaia::diagnostics::render_finding(
+                finding, &name, &source,
+            ));
+        }
+        checked += 1;
+    }
+    assert!(checked >= 11, "only {checked} programs were checked");
+    assert!(reported.is_empty(), "a program was refused:\n{reported}");
+}
+
+/// The files a `nikaia --input` sweep covers: one program each, no siblings.
+fn every_program(root: &Path) -> Vec<PathBuf> {
+    let mut out = BTreeSet::new();
+    for dir in [root.join("examples"), root.join("crates/nikaia-std/src")] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|e| e == "nika") {
+                out.insert(path);
+            }
+        }
+    }
+    out.into_iter().collect()
+}

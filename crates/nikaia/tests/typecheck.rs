@@ -445,9 +445,14 @@ fn a_fallible_loop_binds_one_name() {
          \x20   for (a, b) in io::lines() { }\n\
          }");
     assert_eq!(code, "NK2701");
+    // **The type is described rather than named**, because
+    // [ADR-105](../../../docs/specification/adr/adr-105.md) D4 says a program
+    // cannot write `Seq[String]`: a message that names a spelling its reader has
+    // no way to type is the shape Part III C.1 is about. It said `Lines` while
+    // `io::lines()` handed back a named type.
     assert_eq!(
         message,
-        "a `for` over `Lines` binds one name, and this binds 2"
+        "a `for` over a sequence of `String` binds one name, and this binds 2"
     );
 }
 
@@ -575,26 +580,26 @@ fn a_parameter_that_accepts_several_types_claims_none() {
 /// written, so a test resting on one being absent is a test that breaks when the
 /// ledger does its job.
 ///
-/// **A signature that says `?` is the stable source**, because it is *written*.
-/// `HashMap::keys` is `(&HashMap[?, ?]) -> ?` in `std.contracts` — the ledger
-/// declining to claim rather than nobody having got to it — so filling it is
-/// `open-decisions.md`'s question about whether the ledger's type language grows,
-/// and not routine work. (By subject rather than by number: entries leave that
-/// page as they are answered, and the ones below move up.) If that question is
-/// ever answered, this fixture is meant to be revisited with it.
+/// **The source is [ADR-024](../../../docs/specification/adr/adr-024.md) D4's
+/// erased generic**, which this comment already called the better one: an absence
+/// the **language** decides rather than one the ledger happens to be silent
+/// about. It became usable when a generic function started lowering with its
+/// `<T>` ([ADR-074](../../../docs/specification/adr/adr-074.md)); before that it
+/// did not compile at all.
 ///
-/// ADR-024 D4's erased generic would be the better source still — an absence the
-/// **language** decides — and it became usable when a generic function started
-/// lowering with its `<T>`
-/// ([ADR-074](../../../docs/specification/adr/adr-074.md)); before that it did
-/// not compile at all.
+/// It used to be `HashMap::keys`, whose signature said `(&HashMap[?, ?]) -> ?` —
+/// and the question this comment pointed at *was* answered:
+/// [ADR-105](../../../docs/specification/adr/adr-105.md) gave the ledger's type
+/// language a word for a produced sequence, so `keys()` is a `Seq[$K] sync` and
+/// handing one to an `i32` is the mismatch it always was. The fixture was meant
+/// to be revisited with that answer, and this is that.
 #[test]
 fn a_value_from_a_signature_that_claims_nothing_fits_anywhere() {
     assert!(findings(
         "fn takes(a: i32) { }\n\
+         fn hand[T](x: T) -> T { return x }\n\
          fn main() {\n\
-         \x20   let counts: HashMap[&str, i64] = HashMap::new()\n\
-         \x20   takes(counts.keys())\n\
+         \x20   takes(hand(1))\n\
          }"
     )
     .is_empty());

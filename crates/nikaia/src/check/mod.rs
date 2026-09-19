@@ -108,6 +108,16 @@ pub struct MethodCalls {
     /// absence of an answer, and an analysis that claims a property must treat
     /// it as such (ADR-027 D2).
     pub unresolved: bool,
+    /// How many such calls, which the boolean above cannot say.
+    ///
+    /// Nothing in the compiler reads it: every analysis wants *is there one*,
+    /// and a count would be a number to be wrong about. It is here for the
+    /// **measurement** [ADR-105](../../docs/specification/adr/adr-105.md) §1
+    /// makes a claim with — *35 unanswered method calls in the corpus, every one
+    /// downstream of a `?` that is a sequence* — so that the claim can be
+    /// checked again rather than remembered. `crates/nikaia/tests/sequences.rs`
+    /// is what checks it.
+    pub unanswered: usize,
     /// Which of `resolved` were reached from inside a **`spawn`** body, and
     /// whether any unresolvable call was
     /// ([ADR-039](../../docs/specification/adr/adr-039.md) D3).
@@ -2419,7 +2429,26 @@ impl<'a> Checker<'a> {
     /// an argument it has to put a `&` in front of is found under `set`,
     /// because `set` is what is written on the line.
     fn call_on(&mut self, on: Ty, method: Ident, args: &[Expr], entry: &str, span: &Span) -> Ty {
-        let Ty::Named { name, .. } = &on else {
+        // **A produced sequence answers under its own word**
+        // ([ADR-105](../../docs/specification/adr/adr-105.md) D1): `Seq` and
+        // `Par` are what the ledger calls the receiver, so `Seq::collect` is
+        // found exactly as `Vec::push` is. A `Par[T]` falls back to `Seq`'s
+        // entries where it has none of its own, which is D3's *otherwise
+        // `Par[T]` has `Seq[T]`'s surface* - one sentence rather than a second
+        // copy of twelve entries.
+        let named;
+        let name = match &on {
+            Ty::Seq { parallel, .. } => {
+                named = match parallel {
+                    true => ty::PAR,
+                    false => ty::SEQ,
+                };
+                Some(named)
+            }
+            Ty::Named { name, .. } => Some(name.as_str()),
+            _ => None,
+        };
+        let Some(name) = name else {
             // The receiver's type is not known, so neither is what this
             // calls. Recorded, because "I could not find out" is an
             // answer somebody downstream has to act on.
@@ -2432,7 +2461,12 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         };
         let key = format!("{name}::{entry}");
-        let Some((key, contract)) = self.method(&key) else {
+        let found = self.method(&key).or_else(|| match &on {
+            // D3's *otherwise `Par[T]` has `Seq[T]`'s surface*.
+            Ty::Seq { parallel: true, .. } => self.method(&format!("{}::{entry}", ty::SEQ)),
+            _ => None,
+        });
+        let Some((key, contract)) = found else {
             // The type is known and no ledger describes this method of
             // it - `HashMap::entry` until something writes it down.
             // **A bound is looked up before anything is refused**
@@ -5314,23 +5348,41 @@ impl<'a> Checker<'a> {
     /// enclosing function must declare `throws`, and the emitter has to make
     /// the step propagate. This records the second and reports the first.
     fn fallible_step(&mut self, over: &Ty, bindings: usize, span: &Span) {
-        let Ty::Named { name, .. } = over else {
-            return;
+        // **Two spellings of one claim, and they are the same claim.**
+        // `[type."io::Lines"] iterates = "throws"` says it of a named type, and
+        // [ADR-105](../../docs/specification/adr/adr-105.md) D1's `throws` after
+        // a `Seq[T]` says it of the sequence a signature hands back — *`throws`
+        // on a `Seq` is the one spelling of a step can fail*, which is that
+        // record's §3. The second is the one a produced sequence can use,
+        // because it has no name in the `types` table to hang a column on.
+        // The name a message uses is the **ledger's** for a named type and a
+        // description for a `Seq`, because D4 says a program cannot write
+        // `Seq[String]` — and a message that names a spelling its reader has no
+        // way to type is the shape Part III C.1 is about.
+        let name = match over {
+            Ty::Named { name, .. } if self.iterates_fallibly(name) => format!("`{name}`"),
+            Ty::Seq {
+                throws: true, item, ..
+            } => match &**item {
+                Ty::Unknown => "a sequence".to_string(),
+                item => format!("a sequence of `{item}`"),
+            },
+            _ => return,
         };
-        if !self.iterates_fallibly(name) {
-            return;
-        }
+        let name = &name;
 
         // A stream of pairs does not exist in `std`, and taking one apart while
         // also unwrapping a failure is a shape to design rather than to guess
         // at (ADR-025 §7).
         if bindings != 1 {
             self.checked.findings.push(Finding {
-            severity: Severity::Error,
+                severity: Severity::Error,
                 span: span.clone(),
                 code: "NK2701",
-                message: format!("a `for` over `{name}` binds one name, and this binds {bindings}"),
-                notes: vec![format!("each turn of `{name}` can fail, and the failure is what the one binding unwraps")],
+                message: format!("a `for` over {name} binds one name, and this binds {bindings}"),
+                notes: vec![format!(
+                    "each turn of {name} can fail, and the failure is what the one binding unwraps"
+                )],
                 help: Some("bind one name and take the pair apart inside the loop".to_string()),
             });
             return;
@@ -5347,7 +5399,7 @@ impl<'a> Checker<'a> {
             code: "NK2701",
             message: "this function can fail because a turn of this loop can fail".to_string(),
             notes: vec![format!(
-                "`{name}` reads as it goes, and a read can fail - so the failure leaves this \
+                "{name} reads as it goes, and a read can fail - so the failure leaves this \
                  function, exactly as a failing call would"
             )],
             help: Some("declare the error: add `throws` to this function".to_string()),
@@ -6768,6 +6820,7 @@ impl<'a> Checker<'a> {
             }
             None => {
                 entry.unresolved = true;
+                entry.unanswered += 1;
                 entry.in_a_task.unresolved |= inside_a_task;
             }
         }
@@ -6899,6 +6952,16 @@ fn element_of(over: &Ty, bindings: usize) -> Ty {
                 _ => Ty::Unknown,
             }
         }
+        // **A produced sequence is what a `for` walks**
+        // ([ADR-105](../../docs/specification/adr/adr-105.md) D1), and its item
+        // is the binding's type: `for c in text.chars()` binds a `char`. A
+        // container is walked *as* a `Seq` by a `for` and is not one, which is
+        // why the arm above stays where it is.
+        //
+        // One binding only, as above: `for (k, v) in map.drain()` takes the
+        // pair apart, and which half is which is the tuple arm's question
+        // rather than this one's.
+        Ty::Seq { item, .. } if bindings == 1 => (**item).clone(),
         _ => Ty::Unknown,
     }
 }

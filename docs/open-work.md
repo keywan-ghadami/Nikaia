@@ -1070,26 +1070,39 @@ absence of the word is not the claim that it may not. So the crossing stays
 `Undecided`, and the day the describer reads fields is the day `NK2501` and
 `NK2502` have something to say.
 
-### 2.18. The ledger says `Seq[T]` and `Par[T]`
+### 2.18. A `Seq` walked twice is not refused
 
-[ADR-105](specification/adr/adr-105.md). Two words join the ledger's type
-language: `Seq[T]` for what is produced step by step, with `sync`/`throws`
-after it for the step, and `Par[T]` for what `par_iter()` hands back, whose
-lambdas must be `sync`. A `Seq` is consumed by walking; a container is not.
-**Nothing of it is built**: nine `std` entries say `-> ?`, and every method
-called on their results is unfound.
+[ADR-105](specification/adr/adr-105.md). **Steps 1 and 2 are built.** `Seq[T]` and
+`Par[T]` are words of the ledger's type language: they parse with the two
+trailing words, write themselves back, bind through their item, answer as a
+**receiver** — `Seq::collect` is found exactly as `Vec::push` is, and a `Par`
+falls back to `Seq`'s entries for D3's *otherwise `Par[T]` has `Seq[T]`'s
+surface* — and a `for` over one binds its item. A program cannot write either
+(D4), and `NK1135` says so by the rule that refuses `Widgit`.
 
-*Evidence:* `open-decisions.md`'s measurement, kept here — 51 unanswered
-method calls across the corpus, 16 closed by filling entries, the remaining
-**35** all downstream of a `?` that is a sequence; `HashMap::keys` as
-`(&HashMap[?, ?]) -> ?`, which costs `keys().collect()`, `names`, and
-`names.sort()` in one line.
+The entries: `HashMap::keys`, `HashMap::values`, `String::chars`, `Vec::drain`,
+`HashMap::drain`, `io::lines`, and six consumers under the receiver's own word.
 
-*What it needs, in the record's order (§5):* the two words in the type
-language's parser; the `std` entries rewritten (`keys`, `values`, `chars`,
-`lines` for file and pipe, `args`, `map`, `filter`, `collect`, `join`,
-`count`, `nth`, `par_iter`); the once-only refusal, which is `keeps` asked
-of a `Seq`; the `sync` demand on a `Par[T]`'s lambda.
+*`io::lines` was the one that mattered.* It said `-> Lines`, a named type whose
+`iterates = "throws"` carried the failing step — which worked for the `for` and
+for nothing else: the binding had no type, so `line.len()` was a method on `?`.
+`Seq[String] throws` says both things in one place, and the fallible-step rule
+reads either.
+
+*And §1's own attribution did not survive the measurement.* *Every one of the 35
+downstream of a `?` that is a sequence* is not what the corpus shows: the harness
+in `crates/nikaia/tests/sequences.rs` reads **38** before these entries and **33**
+after, and the rest are downstream of a receiver with no type for other reasons —
+`tail.drain()` in `json.nika` where `tail` is a field nothing types, `map` on the
+result of a `catch` in `access-log.nika`. **Those are a separate entry**, and the
+number is kept rather than remembered (`MethodCalls::unanswered`).
+
+*What is left is steps 3 and 4:* D2's once-only refusal — *this sequence was
+already walked*, which is `keeps` asked of a `Seq` — and D3's `sync` demand on a
+`Par[T]`'s lambda, which waits on `par_iter` having an entry at all. Nothing in
+`examples/`, in `tests/` or in `std` calls it, so D4's *it waits for a program*
+applies: the **word** is in the type language and binds, and the entry is one line
+the day something asks for it.
 
 ### 2.19. A bound takes a path, and the ledger records traits and `impl`s
 

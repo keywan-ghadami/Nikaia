@@ -231,10 +231,20 @@ throws = ["?"]
 provenance = "trusted"
 signature = "() -> Vec[u8]"
 
+# **A produced sequence, and its step can fail**
+# ([ADR-105](../../docs/specification/adr/adr-105.md) D1). It said `-> Lines`,
+# a named type whose `iterates` column below carried the failing step - which
+# worked for the `for` and for nothing else: `for line in io::lines()` bound a
+# `line` of no type at all, so `line.len()` was a method on `?` and the six
+# `.len()` calls of `examples/tally.nika` were among the 35 §1 counts.
+#
+# `Seq[String] throws` says both things in one place: the element is a `String`,
+# so the binding has a type, and `throws` is the one spelling of *a step can
+# fail*. No `sync`, because a step of this reads the pipe.
 [fn."io::lines"]
 pub = true
 provenance = "trusted"
-signature = "() -> Lines"
+signature = "() -> Seq[String] throws"
 
 [fn."io::read_to_string"]
 pub = true
@@ -557,7 +567,7 @@ signature = "(&HashMap[$K, $V], key: ?) -> $V?"
 pub = true
 sync = true
 touches = []
-signature = "(&HashMap[?, ?]) -> ?"
+signature = "(&HashMap[$K, $V]) -> Seq[$K] sync"
 
 [fn."HashMap::len"]
 pub = true
@@ -575,7 +585,7 @@ signature = "() -> HashMap[?, ?]"
 pub = true
 sync = true
 touches = []
-signature = "(&HashMap[?, ?]) -> ?"
+signature = "(&HashMap[$K, $V]) -> Seq[$V] sync"
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
 # is what `from(f)` says (ADR-029). Sound because the lambda runs *during* the
@@ -641,7 +651,7 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(&String) -> ?"
+signature = "(&String) -> Seq[char] sync"
 
 [fn."String::len"]
 pub = true
@@ -689,13 +699,76 @@ signature = "() -> Vec[?]"
 pub = true
 sync = true
 touches = []
-signature = "(Vec[$T]) -> ?"
+signature = "(Vec[$T]) -> Seq[$T] sync"
 
 [fn."HashMap::drain"]
 pub = true
 sync = true
 touches = []
-signature = "(HashMap[$K, $V]) -> ?"
+signature = "(HashMap[$K, $V]) -> Seq[($K, $V)] sync"
+
+# --- What is produced step by step, and what walks it ------------------------
+#
+# [ADR-105](../../docs/specification/adr/adr-105.md) D1. `Seq[T]` is the
+# ledger's word for elements produced one at a time when asked for, with no
+# length until the end and nothing laid out in memory. It is **not** a type a
+# program can write (D4): a program writes `keys()`, `for` and `collect()`, and
+# these entries do the naming.
+#
+# The two words after it say what one **step** may do, as they do after a
+# function type. `Seq[$K] sync` on `keys` is a step that reads memory; a
+# `map`'s step runs the lambda, so it says neither and a caller reads that as
+# *a step may pause*, which is the answer nobody has to be wrong about.
+#
+# **Every entry here is found by its receiver being a `Seq`**, which is what
+# gives the 35 unanswered method calls of ADR-105 §1 somewhere to resolve.
+
+[fn."Seq::collect"]
+pub = true
+sync = true
+touches = []
+# The walk is what consumes it (D2): the sequence goes in by value.
+signature = "(Seq[$T]) -> Vec[$T]"
+
+[fn."Seq::count"]
+pub = true
+sync = true
+touches = []
+# `i64`, which is what `Vec::len` says for the same reason: this language's
+# integer is not Rust's `usize`, and the emitter writes the cast.
+signature = "(Seq[$T]) -> i64"
+
+[fn."Seq::nth"]
+pub = true
+sync = true
+touches = []
+# **There may not be one**, which is `Args::nth`'s shape one type over.
+signature = "(Seq[$T], at: i64) -> $T?"
+
+[fn."Seq::join"]
+pub = true
+sync = true
+touches = []
+signature = "(Seq[$T], sep: &str) -> String"
+
+# `sync = "from(f)"` for the reason `list::ListExt::map` has it: the step is the
+# lambda, so the caller's own claim is what decides ([ADR-029](../../docs/specification/adr/adr-029.md)
+# D3). The **result's** words are left off for the same reason, one level down:
+# a step of this may pause exactly when the lambda may, and the type language
+# has no way to say *whatever the lambda says*.
+[fn."Seq::map"]
+pub = true
+sync = "from(f)"
+touches = []
+signature = "(Seq[$T], f: fn($T)) -> Seq[?]"
+
+[fn."Seq::filter"]
+pub = true
+sync = "from(f)"
+touches = []
+# The element type survives a filter, which is the one place a `Seq` entry says
+# more than `?`.
+signature = "(Seq[$T], f: fn($T)) -> Seq[$T]"
 
 [fn."Vec::push"]
 pub = true

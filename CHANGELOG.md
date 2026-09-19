@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.16] — 2026-09-19
+
+The ledger's type language gets a word for what is produced step by step, and
+a measurement that one record made about itself turns out to be wrong.
+
+### Added (`Seq[T]` and `Par[T]`, the ledger's words for a produced sequence)
+
+- **[ADR-105](docs/specification/adr/adr-105.md), steps 1 and 2.** The type language had a name, arguments, a variable, a view, a tuple, a function type and `?`, and no word for what `keys()`, `chars()` and `io::lines()` hand back: elements of a type, produced one at a time when asked for, with no length until the end. So those entries said `-> ?`, and because a method is found through its receiver's type, everything called on such a value was unfound too. `Seq[T]` and `Par[T]` now parse with `sync`/`throws` after them for the **step**, write themselves back, bind through their item, answer as a receiver, and a `for` over one binds its item. A program cannot write either, and `NK1135` says so by the rule that refuses `Widgit`.
+- **Written:** `HashMap::keys`, `HashMap::values`, `String::chars`, `Vec::drain`, `HashMap::drain`, `io::lines`, and six consumers under the receiver's own word — `Seq::collect`, `Seq::count`, `Seq::nth`, `Seq::join`, `Seq::map`, `Seq::filter`.
+- **`io::lines` was the one that mattered.** It said `-> Lines`, a named type whose `iterates = "throws"` column carried the failing step — which worked for the `for` and for nothing else: the binding had no type, so `line.len()` inside the loop was a method on `?`, and six of `examples/tally.nika`'s `.len()` calls were among the ones the record counts. `Seq[String] throws` says both things in one place, and the fallible-step rule reads either.
+- **The message describes a `Seq` rather than naming it**: `NK2701` reads *a `for` over a sequence of `String` binds one name*, because a program cannot write `Seq[String]` and a message that names a spelling its reader has no way to type is the shape [Part III C.1](docs/specification/30-nikaia-tooling.md) is about. It said `Lines` before, which the program could not write either.
+- **And one claim the record makes about the corpus did not survive being measured.** *Every one of the 35 unanswered method calls downstream of a `?` that is a sequence* is not what the corpus shows: **38** before these entries and **33** after, with the rest downstream of a receiver with no type for other reasons — `tail.drain()` in `json.nika` where `tail` is a field nothing types, `map` on the result of a `catch` in `access-log.nika`. `MethodCalls::unanswered` exists so that number can be checked again rather than remembered, and `crates/nikaia/tests/sequences.rs` holds it as a ceiling.
+- **`par_iter` has no entry**, which is the record's own *it waits for a program* read strictly: nothing in the tree calls it, and `par_fold` is a grammar driver and not this. The word is in the type language and binds, so the entry is one line the day something asks.
+
 ## [0.0.15] — 2026-09-19
 
 A character that had two readings, and the compiler's answer was an accident of

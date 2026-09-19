@@ -113,11 +113,47 @@ pub enum Ty {
     /// (Part III, 15.2), so a diagnostic that said `Option[String]` would name a
     /// type the program cannot write (Part III, C.1).
     Nullable(Box<Ty>),
+    /// **Elements produced step by step**
+    /// ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1):
+    /// `Seq[T]`, what `keys()`, `chars()` and `xs.map fn …` hand back. Elements
+    /// of a type, produced one at a time when asked for, with no length until
+    /// the end and nothing laid out in memory.
+    ///
+    /// **A container is not this.** A `Vec[T]` has its elements already, a
+    /// length and an index, and is walked as often as one likes; a `Vec`,
+    /// a `HashMap` and a range are walked *as* a `Seq` by a `for` and are not
+    /// one.
+    ///
+    /// `sync` and `throws` after it say what **one step** may do, with
+    /// [ADR-102](../../../../docs/specification/adr/adr-102.md) D2's reading:
+    /// without `sync` a step may pause, without `throws` it cannot fail. A step
+    /// of `io::lines()` reads the pipe, which is why it can do either.
+    ///
+    /// `Par[T]` is the same shape with `parallel` set (D3), and the one
+    /// dimension that needs a second word is the caller's rule: a lambda given
+    /// to a method on a `Par[T]` runs on several cores at once and must be
+    /// `sync`, where one given to a `Seq[T]` may pause.
+    ///
+    /// **Neither word is in the surface type grammar** (D4). A program writes
+    /// `keys()`, `for` and `collect()`; the ledger does the naming.
+    Seq {
+        item: Box<Ty>,
+        is_sync: bool,
+        throws: bool,
+        parallel: bool,
+    },
 }
 
 /// The stamp a lock puts on what it hands out
 /// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D1).
 pub const SEEN: &str = "Seen";
+
+/// The ledger's word for a produced sequence
+/// ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1).
+pub const SEQ: &str = "Seq";
+
+/// The same, where the steps run at once (D3).
+pub const PAR: &str = "Par";
 
 impl Ty {
     pub fn named(name: impl Into<String>) -> Ty {
@@ -358,6 +394,54 @@ impl Ty {
                 };
             }
         }
+        // **`Seq[T] sync throws`, read the way a function type's tail is**
+        // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1): the
+        // two words stand after the type and say what one **step** may do. The
+        // closing bracket is matched rather than found at the end, for the same
+        // reason `fn(` matches its parenthesis - `Seq[HashMap[$K, $V]] sync` has
+        // a `]` in the middle.
+        //
+        // Before the `&`, because a produced sequence is never a view: it is
+        // walked by value (D2), which is what the once-only rule rests on.
+        for (word, parallel) in [(SEQ, false), (PAR, true)] {
+            let Some(rest) = text.strip_prefix(word).map(str::trim_start) else {
+                continue;
+            };
+            let Some(rest) = rest.strip_prefix('[') else {
+                continue;
+            };
+            let Some(close) = closing_bracket(rest) else {
+                continue;
+            };
+            let mut tail = rest[close + 1..].trim();
+            let mut is_sync = false;
+            let mut throws = false;
+            loop {
+                if let Some(shorter) = word_off(tail, "throws") {
+                    throws = true;
+                    tail = shorter;
+                    continue;
+                }
+                if let Some(shorter) = word_off(tail, "sync") {
+                    is_sync = true;
+                    tail = shorter;
+                    continue;
+                }
+                break;
+            }
+            // Anything left over is not this: `Sequence[T] of stuff` is a name
+            // with arguments and a tail nobody wrote, and reading it as a `Seq`
+            // would be a claim the file does not make.
+            if !tail.is_empty() {
+                continue;
+            }
+            return Ty::Seq {
+                item: Box::new(Ty::parse(&rest[..close])),
+                is_sync,
+                throws,
+                parallel,
+            };
+        }
         let (view, rest) = match text.strip_prefix('&') {
             Some(rest) => (true, rest.trim()),
             None => (false, text),
@@ -408,6 +492,20 @@ impl Ty {
                 result: result.as_ref().map(|r| Box::new(r.erase(parameters))),
                 is_sync: *is_sync,
                 throws: *throws,
+            },
+            // The two words are the **step's** and not the item's, so they
+            // travel unchanged while the item is rewritten
+            // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1).
+            Ty::Seq {
+                item,
+                is_sync,
+                throws,
+                parallel,
+            } => Ty::Seq {
+                item: Box::new(item.erase(parameters)),
+                is_sync: *is_sync,
+                throws: *throws,
+                parallel: *parallel,
             },
             // A library's variable is not a Nikaia function's generic, and
             // erasing one is not the other's business.
@@ -464,6 +562,20 @@ impl Ty {
                     .map(|r| Box::new(r.parameterise(parameters))),
                 is_sync: *is_sync,
                 throws: *throws,
+            },
+            // The two words are the **step's** and not the item's, so they
+            // travel unchanged while the item is rewritten
+            // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1).
+            Ty::Seq {
+                item,
+                is_sync,
+                throws,
+                parallel,
+            } => Ty::Seq {
+                item: Box::new(item.parameterise(parameters)),
+                is_sync: *is_sync,
+                throws: *throws,
+                parallel: *parallel,
             },
             Ty::Var { name, view } => Ty::Var {
                 name: name.clone(),
@@ -587,6 +699,25 @@ impl fmt::Display for Ty {
                 if !args.is_empty() {
                     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
                     write!(f, "[{}]", args.join(", "))?;
+                }
+                Ok(())
+            }
+            Ty::Seq {
+                item,
+                is_sync,
+                throws,
+                parallel,
+            } => {
+                let word = match parallel {
+                    true => PAR,
+                    false => SEQ,
+                };
+                write!(f, "{word}[{item}]")?;
+                if *is_sync {
+                    f.write_str(" sync")?;
+                }
+                if *throws {
+                    f.write_str(" throws")?;
                 }
                 Ok(())
             }
@@ -755,6 +886,16 @@ pub fn bind(pattern: &Ty, actual: &Ty, out: &mut std::collections::BTreeMap<Stri
                 bind(pattern, actual, out);
             }
         }
+        // **A produced sequence binds through its item**
+        // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1), so
+        // `Seq::collect(Seq[$T]) -> Vec[$T]` says what a chain hands on. The two
+        // words are not compared: they are what a **step** may do, and a
+        // signature writes the ones its own steps have rather than a demand on
+        // the receiver. `Par` binds against `Seq` for D3's *otherwise `Par[T]`
+        // has `Seq[T]`'s surface* - the entry a `Par` falls back to is written
+        // with a `Seq` receiver and has to bind against the value that reached
+        // it.
+        (Ty::Seq { item: pattern, .. }, Ty::Seq { item: actual, .. }) => bind(pattern, actual, out),
         // The view flag is deliberately not compared: `&HashMap[$K, $V]` must
         // bind against a `HashMap[…]` held by value and the other way round,
         // because a signature writes the receiver the way the method takes it
@@ -877,6 +1018,29 @@ fn closing_paren(text: &str) -> Option<usize> {
     None
 }
 
+/// The `]` that closes the `[` this text is the inside of, if there is one.
+///
+/// [`closing_paren`]'s twin, for
+/// [ADR-105](../../../../docs/specification/adr/adr-105.md) D1's `Seq[T] sync`:
+/// the tail begins after the bracket, so the bracket has to be **matched**
+/// rather than found at the end - `Seq[HashMap[$K, $V]] sync` has one in the
+/// middle.
+fn closing_bracket(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, c) in text.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            ']' => match depth {
+                0 => return Some(at),
+                _ => depth -= 1,
+            },
+            _ => {}
+        }
+    }
+    None
+}
+
 /// `text` without a trailing `word`, where what is left ends at a boundary.
 ///
 /// The boundary is what keeps a type from being clipped: a result called
@@ -927,6 +1091,17 @@ pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty
             result: result.as_ref().map(|r| Box::new(substitute(r, bound))),
             is_sync: *is_sync,
             throws: *throws,
+        },
+        Ty::Seq {
+            item,
+            is_sync,
+            throws,
+            parallel,
+        } => Ty::Seq {
+            item: Box::new(substitute(item, bound)),
+            is_sync: *is_sync,
+            throws: *throws,
+            parallel: *parallel,
         },
         Ty::Nullable(inner) => Ty::Nullable(Box::new(substitute(inner, bound))),
         Ty::Unknown => Ty::Unknown,

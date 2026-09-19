@@ -404,6 +404,18 @@ fn walk(
         Ty::Var { .. } => Crossing::Undecided { part: ty.text() },
         // A lambda is its captures, and nothing writes those down.
         Ty::Fn { .. } => Crossing::Undecided { part: ty.text() },
+        // **A produced sequence is the thing it is walking**
+        // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1), and
+        // nothing says what that is: `keys()` holds a borrow of the map,
+        // `chars()` one of the string, and a `map` holds the lambda's captures
+        // beside whichever of those it was built on. So the answer is the
+        // absence of one, which is not permission (ADR-010 D1) - the same
+        // silence a lambda gets one line up, and for the same reason.
+        //
+        // `Par[T]` is not louder: what `par_iter` hands back crosses by
+        // construction, but the type says nothing about it and a claim nobody
+        // wrote is not one to read.
+        Ty::Seq { .. } => Crossing::Undecided { part: ty.text() },
         // **A `T?` crosses exactly as its `T` does**, because that is what it
         // lowers to: an `Option<T>` is `Send` when `T` is, and it holds one `T`
         // or nothing. Neither answer is changed by the emptiness.

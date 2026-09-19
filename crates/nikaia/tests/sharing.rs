@@ -848,6 +848,10 @@ fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
         // A `Shared[T]?` holds a handle or nothing, and the first is what
         // matters here (Part I 2.3).
         Ty::Nullable(inner) => carries_a_handle(inner),
+        // A sequence of handles is one a handle can be taken out of, exactly as
+        // a `Vec` of them is ([ADR-105](../../../docs/specification/adr/adr-105.md)
+        // D1): what it produces is what it holds, for this question.
+        Ty::Seq { item, .. } => carries_a_handle(item),
         Ty::Unknown | Ty::Var { .. } => false,
     }
 }
