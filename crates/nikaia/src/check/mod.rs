@@ -525,6 +525,17 @@ pub fn check_program(
         pausing_methods: BTreeSet::new(),
         settled_methods: BTreeSet::new(),
         handed_over: None,
+        opaque_handles: parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Extern { opaque, .. } => Some(opaque),
+                _ => None,
+            })
+            .flatten()
+            .map(|h| parsed.text(h.node.name).to_string())
+            .collect(),
         foreign_names: parsed
             .program
             .items
@@ -1112,6 +1123,14 @@ struct Checker<'a> {
     /// from**: a Nikaia function and a C declaration are both entries, and only
     /// one of them has to be called inside an `unsafe` block.
     foreign_names: BTreeSet<String>,
+    /// **The opaque handles this file declares**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3), by name.
+    ///
+    /// A handle is an address the language never dereferences, so it has no
+    /// fields and no indexing — and both are refused here rather than left to
+    /// the language below, where the words would be about a file nobody wrote
+    /// (Part III, C.1).
+    opaque_handles: BTreeSet<String>,
     /// Whether what is being walked stands inside one.
     ///
     /// It reaches inward the way `caught` and `in_lambda` do, and it stops at
@@ -3993,6 +4012,16 @@ impl<'a> Checker<'a> {
                 let Ty::Named { name: ty, .. } = &on else {
                     return Ty::Unknown;
                 };
+                // **A handle has no fields** (ADR-147 D3): it is an address
+                // this language never dereferences, so there is nothing inside
+                // it to name. Before `fields_of`, which would answer `None` and
+                // send the reader to `NK1126`'s *no bound* — a sentence about a
+                // type parameter, which this is not.
+                if self.opaque_handles.contains(ty) {
+                    let ty = ty.clone();
+                    self.a_handle_has_nothing_inside(&ty, &format!("the field `{field}`"), span);
+                    return Ty::Unknown;
+                }
                 let Some(fields) = self.fields_of(ty) else {
                     // `NK1126` where the type is a parameter: nothing will ever
                     // describe `T`, so a field on one is refused here rather
@@ -4349,6 +4378,13 @@ impl<'a> Checker<'a> {
                 let Ty::Named { name, args, .. } = &on else {
                     return Ty::Unknown;
                 };
+                // **And no indexing** (ADR-147 D3), for the same reason: a
+                // handle is one address and not a run of anything.
+                if self.opaque_handles.contains(name) {
+                    let name = name.clone();
+                    self.a_handle_has_nothing_inside(&name, "an index", span);
+                    return Ty::Unknown;
+                }
                 match (name.as_str(), args.as_slice()) {
                     ("Vec" | "List", [item]) => item.clone(),
                     // A map is indexed by its key and yields its value.
@@ -5047,6 +5083,15 @@ impl<'a> Checker<'a> {
 
         if let Some(ty) = variant {
             return Ty::named(&ty);
+        }
+
+        // **A handle is not constructed** (ADR-147 D3): it is an address a C
+        // function hands back, so there is no value of one this language can
+        // make. Refused here rather than below, where `rustc` would say the
+        // tuple struct takes one field and name a type the source never wrote.
+        if self.opaque_handles.contains(&name) {
+            self.a_handle_is_not_made_here(&name, span);
+            return Ty::named(&name);
         }
 
         // **A hull you can observe, you write**
@@ -6846,6 +6891,70 @@ impl<'a> Checker<'a> {
             _ => false,
         };
         wants_a_size && hands_a_number
+    }
+
+    /// `NK1160`: a field or an index reached on an **opaque handle**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+    ///
+    /// A handle is an address this language never dereferences. It is moved and
+    /// stored like any value, and that is all it is — there is nothing inside
+    /// it to name and nothing to count, because what it points at belongs to
+    /// the library that made it.
+    ///
+    /// **Refused here rather than below**, which is the choice this compiler
+    /// makes everywhere ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)):
+    /// what `rustc` would say about a field of a `#[repr(transparent)]` newtype
+    /// is about a file nobody wrote, and it would name the wrapper rather than
+    /// the handle.
+    fn a_handle_has_nothing_inside(&mut self, handle: &str, what: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1160",
+            message: format!("`{handle}` is a handle, and {what} reaches inside it"),
+            notes: vec![format!(
+                "`{handle}` is declared `opaque` - an address this language never \
+                 dereferences, so what it points at belongs to the library that made it \
+                 and has no shape here (ADR-147 D3)"
+            )],
+            help: Some(format!(
+                "hand the handle to a function the `extern \"C\"` block declares - that \
+                 is what a library's own surface is for, and `{handle}` is released by \
+                 the function the block names"
+            )),
+        });
+    }
+
+    /// `NK1160`, the third shape: a **handle** written as a call
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+    ///
+    /// An opaque handle is an address a C function hands back. There is no
+    /// value of one this language can make, so a constructor would have to
+    /// invent an address — and the one thing a handle may never be is a number
+    /// somebody chose.
+    ///
+    /// **The out-parameter shape is why a reader reaches for this.**
+    /// `sqlite3_open(path, db)` wants a handle to fill, and C writes it as an
+    /// uninitialised pointer. What this language does there is a question the
+    /// record does not answer, and it is in
+    /// [`open-decisions.md`](../../docs/open-decisions.md) rather than guessed
+    /// at here.
+    fn a_handle_is_not_made_here(&mut self, handle: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1160",
+            message: format!("`{handle}` is a handle, and nothing here makes one"),
+            notes: vec![format!(
+                "`{handle}` is declared `opaque` - an address a C function hands back - so \
+                 a constructor would have to invent one, and an address somebody chose is \
+                 the one thing a handle may never be (ADR-147 D3)"
+            )],
+            help: Some(format!(
+                "call the function in the `extern \"C\"` block that hands a `{handle}` \
+                 back, and let its `cleanup` end it"
+            )),
+        });
     }
 
     /// **A length beside a view is checked at the call**

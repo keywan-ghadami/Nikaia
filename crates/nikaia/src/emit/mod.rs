@@ -751,6 +751,24 @@ fn foreign_params(parsed: &Parsed) -> std::collections::BTreeMap<String, Vec<Typ
     out
 }
 
+/// The opaque handles this file declares, by name, with the function that ends
+/// each one's life ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+fn opaque_handles(parsed: &Parsed) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for item in &parsed.program.items {
+        let Item::Extern { opaque, .. } = &item.node else {
+            continue;
+        };
+        for handle in opaque {
+            out.insert(
+                parsed.text(handle.node.name).to_string(),
+                parsed.text(handle.node.released_by).to_string(),
+            );
+        }
+    }
+    out
+}
+
 fn foreign_traits(parsed: &Parsed) -> std::collections::BTreeSet<String> {
     parsed
         .program
@@ -1077,6 +1095,15 @@ struct Emitter<'p> {
     /// call by name already ([ADR-011](../../docs/specification/adr/adr-011.md)
     /// D2), and a foreign declaration is a name in this very file.
     foreign_params: std::collections::BTreeMap<String, Vec<Type>>,
+    /// **The opaque handles this file declares, and what releases each**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+    ///
+    /// A handle is **lent** to every declaration but one: it is the address by
+    /// value, and the caller keeps the value so its `cleanup` still runs at the
+    /// end of its scope. The exception is the type's own release function,
+    /// which takes it — that call *is* the cleanup, and a handle given away
+    /// must not be released twice.
+    opaque_handles: std::collections::BTreeMap<String, String>,
     /// Whether these items are the crate root - the one file that may carry
     /// the program's entry point.
     ///
@@ -1610,6 +1637,7 @@ impl<'p> Emitter<'p> {
             library,
             dsl_drivers: crate::dsl::drivers(parsed).into_iter().collect(),
             foreign_params: foreign_params(parsed),
+            opaque_handles: opaque_handles(parsed),
             entry: true,
         }
     }
@@ -2118,12 +2146,25 @@ impl<'p> Emitter<'p> {
             // shape: the grammar takes any string so that the message about an
             // unknown one is this compiler's rather than the backend's about a
             // file nobody wrote (Part III C.1).
-            Item::Extern { abi, declarations } => {
+            Item::Extern {
+                abi,
+                declarations,
+                opaque,
+            } => {
                 if abi != "C" {
                     return Err(refused!(
                         "`extern \"{abi}\"` names an ABI this compiler does not write. \
                          The one it writes is `extern \"C\"` (Part III 15.1)"
                     ));
+                }
+                // **A handle is a type of its own, outside the block**
+                // ([ADR-147](../../docs/specification/adr/adr-147.md) D3). It
+                // is written before the declarations, because they name it.
+                for handle in opaque {
+                    out.from(&handle.span, |out| {
+                        self.opaque_type(out, &handle.node);
+                        Ok(())
+                    })?;
                 }
                 out.push(&format!("extern \"{abi}\" {{\n"));
                 for declaration in declarations {
@@ -2137,6 +2178,57 @@ impl<'p> Emitter<'p> {
             }
             other => Err(refused!("cannot emit item yet: {other:?}")),
         }
+    }
+
+    /// **An opaque handle, and the `cleanup` that ends its life**
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+    ///
+    /// ```ignore
+    /// #[repr(transparent)]
+    /// struct sqlite3(*mut core::ffi::c_void);
+    /// impl Drop for sqlite3 { fn drop(&mut self) { unsafe { sqlite3_close(…) } } }
+    /// ```
+    ///
+    /// **`repr(transparent)` and not a plain newtype**, because the whole point
+    /// of the type is its layout: a handle *is* the address, so `&mut T` at the
+    /// boundary is `T**` the way C writes it, and a handle passed by value is
+    /// the pointer. A newtype Rust may lay out as it likes would be a different
+    /// program at the boundary.
+    ///
+    /// **`Drop` and not a call the author writes**, which is Part I 6.4's
+    /// `cleanup` read at the C boundary: the release runs at the end of the
+    /// handle's scope, so a handle cannot be forgotten. What it cannot answer
+    /// for is a C function that keeps the address past its own call, which is
+    /// the one thing this language cannot check and D3 says so.
+    ///
+    /// **The release takes a handle and is handed one**, which is what keeps
+    /// this from recursing: a value moved into an `extern "C"` function is the
+    /// callee's, and C runs no `Drop`. Measured rather than reasoned — the
+    /// release fires once per scope and not twice.
+    fn opaque_type(&self, out: &mut Out, handle: &crate::ast::OpaqueType) {
+        let name = self.name(handle.name);
+        let release = self.name(handle.released_by);
+        out.push(&format!(
+            "#[repr(transparent)]\n\
+             #[derive(Debug)]\n\
+             pub struct {name}(*mut core::ffi::c_void);\n\
+             \n\
+             impl {name} {{\n\
+             \x20   /// The same address, without giving the handle away\n\
+             \x20   /// (ADR-147 D3): what a C function is handed is the\n\
+             \x20   /// pointer, and this handle stays the caller's to close.\n\
+             \x20   fn lent(&self) -> {name} {{\n\
+             \x20       {name}(self.0)\n\
+             \x20   }}\n\
+             }}\n\
+             \n\
+             impl Drop for {name} {{\n\
+             \x20   fn drop(&mut self) {{\n\
+             \x20       let _released = unsafe {{ {release}(self.lent()) }};\n\
+             \x20   }}\n\
+             }}\n\
+             \n"
+        ));
     }
 
     /// **A type in an `extern "C"` declaration, as the pointer C wants**
@@ -2180,6 +2272,20 @@ impl<'p> Emitter<'p> {
             return format!("*{} {}", pointing(ty.is_mut), self.foreign_ty(&pointed));
         }
         self.ty(ty, Lifetimes::ELIDED)
+    }
+
+    /// Which shape a declared parameter takes at the C boundary, or `None`
+    /// where it is an ordinary value an `i32` is at both ends
+    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3).
+    fn pointer_for(&self, callee: &str, ty: &Type) -> Option<Pointer> {
+        if let Some(release) = self.opaque_handles.get(self.text(ty.name)) {
+            if !ty.is_view && !ty.is_slice {
+                return Some(Pointer::Handle {
+                    give: release == callee,
+                });
+            }
+        }
+        pointer_for(ty)
     }
 
     /// Whether an `extern "C"` declaration takes this position in `size_t`
@@ -6060,12 +6166,19 @@ impl<'p> Emitter<'p> {
                 .foreign_params
                 .get(callee)
                 .and_then(|params| params.get(i))
-                .and_then(pointer_for);
+                .and_then(|ty| self.pointer_for(callee, ty));
             out.push(before);
-            if change {
-                out.push("&mut ");
-            } else if lend {
-                out.push("&");
+            // **Neither `&` at the boundary**, and that is not an ordering
+            // choice: what a C declaration takes is decided by the declaration
+            // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3), and
+            // a Rust reference in front of it would be the wrong address —
+            // `&FILE` is `FILE**` where C wants `FILE*`.
+            if pointer.is_none() {
+                if change {
+                    out.push("&mut ");
+                } else if lend {
+                    out.push("&");
+                }
             }
             if let Some(Pointer::Reference { mutable }) = pointer {
                 out.push(match mutable {
@@ -6123,6 +6236,14 @@ impl<'p> Emitter<'p> {
                     true => ".as_mut_ptr()",
                     false => ".as_ptr()",
                 });
+            }
+            // **A handle is lent unless this call is its cleanup** (D3): the
+            // address goes by value and the caller keeps the handle, so its
+            // release still runs at the end of its scope. The release function
+            // itself takes the handle, and Rust's own move is what keeps it
+            // from being released twice.
+            if let Some(Pointer::Handle { give: false }) = pointer {
+                out.push(".lent()");
             }
             if count {
                 out.push(")");
@@ -6409,6 +6530,15 @@ enum Pointer {
     Run { mutable: bool },
     /// `&T` and `&mut T`: a plain `&`, which Rust coerces to `*const T`.
     Reference { mutable: bool },
+    /// **An opaque handle** (D3), passed as the address by value.
+    ///
+    /// `give` is true for the type's own **release** function and false for
+    /// every other declaration: that one call *is* the cleanup, so the handle
+    /// goes with it and Rust's own move is what keeps it from being released
+    /// twice. Everywhere else the caller keeps the handle, because a C function
+    /// that is handed one does not take it — `fileno(f)` reads it and `f` is
+    /// still the caller's to close.
+    Handle { give: bool },
 }
 
 /// Which of the two a declared parameter is, or `None` where it is an ordinary

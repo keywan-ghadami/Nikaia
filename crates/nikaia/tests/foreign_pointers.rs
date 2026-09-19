@@ -401,3 +401,174 @@ fn a_size_with_no_buffer_before_it_is_left_alone() {
                   }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
 }
+
+/// **A handle is opaque, declared, and released by a `cleanup`** (D3).
+///
+/// The shape every C library with a session in it is made of — a database
+/// connection, an HTTP client, a compressor — and the reason the record exists
+/// beside the buffer: a library that hands one out was unwritable, because
+/// `Pointer[T]` is a type nothing declares.
+#[test]
+fn an_opaque_handle_is_an_address_and_a_cleanup() {
+    let rust = lowered(
+        "extern \"C\" {\n\
+         \x20   opaque type FILE released by fclose\n\
+         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fclose(f: FILE) -> i32\n\
+         }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    // `repr(transparent)`, because the whole point of the type is its layout:
+    // a handle **is** the address, so what C is handed is the pointer.
+    assert!(rust.contains("#[repr(transparent)]"), "{rust}");
+    assert!(
+        rust.contains("pub struct FILE(*mut core::ffi::c_void);"),
+        "{rust}"
+    );
+    // Part I 6.4's `cleanup` read at the C boundary: the release runs at the
+    // end of the handle's scope, so a handle cannot be forgotten.
+    assert!(rust.contains("impl Drop for FILE"), "{rust}");
+    assert!(
+        rust.contains("let _released = unsafe { fclose(self.lent()) };"),
+        "{rust}"
+    );
+}
+
+/// **A handle is lent to every declaration but its release** (D3).
+///
+/// `fileno(f)` reads the handle and `f` is still the caller's to close, so the
+/// address goes by value and the value stays here; `fclose(f)` **is** the
+/// cleanup, so the handle goes with it and Rust's own move is what keeps it
+/// from being released twice.
+///
+/// The `&` [ADR-094](../../../docs/specification/adr/adr-094.md) D1 would
+/// otherwise write is the wrong address as well as the wrong ownership:
+/// `&FILE` is `FILE**` where C wants `FILE*`.
+#[test]
+fn a_handle_is_lent_and_only_its_release_takes_it() {
+    let rust = lowered(
+        "extern \"C\" {\n\
+         \x20   opaque type FILE released by fclose\n\
+         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fclose(f: FILE) -> i32\n\
+         \x20   fn fileno(f: FILE) -> i32\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let f = unsafe { fopen(\"/etc/hosts\\0\", \"r\\0\") }\n\
+         \x20   let fd = unsafe { fileno(f) }\n\
+         \x20   let g = unsafe { fopen(\"/etc/hosts\\0\", \"r\\0\") }\n\
+         \x20   let closed = unsafe { fclose(g) }\n\
+         \x20   println(f\"{fd} {closed}\")\n\
+         }\n",
+    );
+    assert!(rust.contains("fileno(f.lent())"), "{rust}");
+    assert!(rust.contains("fclose(g)"), "{rust}");
+    assert!(!rust.contains("fileno(&f)"), "{rust}");
+}
+
+/// **A handle has no fields and no indexing** (`NK1160`, D3): it is an address
+/// this language never dereferences, so there is nothing inside it to name.
+#[test]
+fn nothing_reaches_inside_a_handle() {
+    let found: Vec<_> = findings(
+        "extern \"C\" {\n\
+         \x20   opaque type FILE released by fclose\n\
+         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fclose(f: FILE) -> i32\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let f = unsafe { fopen(\"/etc/hosts\\0\", \"r\\0\") }\n\
+         \x20   println(f\"{f.handle}\")\n\
+         \x20   println(f\"{f[0]}\")\n\
+         }\n",
+    )
+    .into_iter()
+    .filter(|f| f.code == "NK1160")
+    .collect();
+    assert_eq!(found.len(), 2, "{found:#?}");
+    assert!(
+        found
+            .iter()
+            .any(|f| f.message.contains("the field `handle`")),
+        "{found:#?}"
+    );
+    assert!(
+        found.iter().any(|f| f.message.contains("an index")),
+        "{found:#?}"
+    );
+}
+
+/// **None of the four words is reserved.** The grammar is scannerless, so a
+/// word means something only where a rule asks for it — and `opaque`, `type`,
+/// `released` and `by` are all names a program may want. Reserving a word buys
+/// exactly one thing, the sentence a reader who writes it gets
+/// ([ADR-117](../../../docs/specification/adr/adr-117.md) D2), and this
+/// position says that sentence without taking the word away.
+#[test]
+fn the_four_words_are_still_names() {
+    for word in ["opaque", "type", "released", "by"] {
+        let source = format!(
+            "fn main() {{\n\
+             \x20   let {word} = 3\n\
+             \x20   println(f\"{{{word}}}\")\n\
+             }}\n"
+        );
+        assert!(
+            parse_to_ast(&source).is_ok(),
+            "`{word}` is a name everywhere but the one position that asks for it"
+        );
+    }
+}
+
+/// **Measured where it matters: it compiles against real C, and it runs.**
+///
+/// `fopen`, `fclose` and `fileno` are libc, which every Rust program links
+/// already — so this needs no library the machine may not have. It is the whole
+/// of D3 end to end: the handle, the declarations that take it, the lending,
+/// and the cleanup that fires once at the end of the scope.
+#[test]
+fn a_handle_compiles_and_runs_and_is_released_once() {
+    let rust = lowered(
+        r#"
+extern "C" {
+    opaque type FILE released by fclose
+    fn fopen(path: &[u8], mode: &[u8]) -> FILE
+    fn fclose(f: FILE) -> i32
+    fn fileno(f: FILE) -> i32
+}
+
+fn main() {
+    let f = unsafe { fopen("/etc/hosts\0", "r\0") }
+    let fd = unsafe { fileno(f) }
+    println(f"{fd > 2}")
+}
+"#,
+    );
+    let dir = common::scratch_dir("opaque-handle");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        out.status.success(),
+        "the lowering compiles:\n{said}\n--- the Rust ---\n{rust}"
+    );
+    assert!(
+        !said.contains("improper_ctypes") && !said.contains("warning:"),
+        "and `rustc` says nothing about the file it was handed:\n{said}"
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "true",
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

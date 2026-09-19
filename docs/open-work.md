@@ -50,8 +50,8 @@ records:
 **How the entries here are found**, which is a method rather than a habit:
 by running the programs the specification prints. `crates/nikaia/tests/specification.rs`
 takes every `nika` block in the three pages as far as it goes and hands the ones
-that lower to `rustc`, against two recorded baselines. Of 131 blocks, 56 are
-programs this compiler takes and 35 of those compile below.
+that lower to `rustc`, against two recorded baselines. Of 132 blocks, 57 are
+programs this compiler takes and 37 of those compile below.
 
 **Two entries are open.**
 
@@ -1132,31 +1132,33 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
-### 2.41. C has a buffer and no handle
+### 2.41. C has no `CStr`, and no way to be handed a handle
 
-[ADR-147](specification/adr/adr-147.md) D1 and D2 are **built**: a buffer is a
-`&[T]` or a `&mut [T]` that lives for the call, it lowers to the pointer C
-wants, the call makes the address, either form away from the boundary is
-`NK1158`, and a length beside a buffer that cannot be shown to fit it is
-`NK1159`. So `libc`'s memory surface is callable, Part III 15.1's own block
-compiles and runs, and a count longer than its buffer is refused here rather
-than by the operating system. D5 is built by being a decision: `Pointer[T]`
-stays `NK1135`, permanently rather than pending.
+[ADR-147](specification/adr/adr-147.md) D1, D2, D3 and D5 are **built**: a
+buffer is a `&[T]` or a `&mut [T]` that lives for the call and lowers to the
+pointer C wants, the call makes the address, either view form away from the
+boundary is `NK1158`, a length beside a buffer that cannot be shown to fit it is
+`NK1159`, a library's handle is an `opaque type … released by …` whose release
+is a `cleanup`, and reaching past one — a field, an index, a call — is `NK1160`.
+`Pointer[T]` stays `NK1135`, permanently rather than pending. Part III 15.1's
+two blocks compile and run against libc.
 
-**What is left is the library that hands out a handle** — a database
-connection, an HTTP client, a compressor.
-
-*D3, the handle:* `opaque type sqlite3 released by sqlite3_close` in the block,
-an address the language never dereferences, with the release a `cleanup` the
-compiler runs at the end of its scope (Part I 6.4). It is the shape every C
-library with a session in it is made of.
-
-*D4, returned text:* `getenv` hands back memory the caller does not own. It
-arrives as an opaque `CStr` and one `std` function copies it into a `String`
-inside `unsafe`, written once where every program would otherwise write the
-same loop.
+*D4, returned text:* `getenv` hands back memory the caller does not own and
+whose lifetime is the library's. It arrives as an opaque `CStr` handle, and one
+`std` function copies it into a `String` inside `unsafe` — written once, where
+every program would otherwise write the same loop. The handle half of that is
+built; what is missing is the `std` function and the entry for it.
 
 *And then step 5:* `sqlite3` end to end, as the test that the four are enough.
+It waits on D4 and on the question below, not on work.
+
+*One thing that is a **question** rather than work*, and it is in
+[`open-decisions.md`](open-decisions.md): D3's own example is an
+out-parameter — `sqlite3_open(path, db)` — and a handle has nothing to be
+before the call. C writes an uninitialised pointer; this language has no
+uninitialised binding and gives a handle no constructor, deliberately. What is
+built meanwhile is every library whose constructor **hands its handle back**,
+which is `fopen`'s shape and most of C's.
 
 ### 2.42. `select` is not a keyword, and nothing cancels a task
 

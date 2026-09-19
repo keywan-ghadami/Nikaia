@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.54] — 2026-09-19
+
+A C library's handle is an `opaque type … released by …`
+([ADR-147](docs/specification/adr/adr-147.md) D3).
+
+### Added ([ADR-147](docs/specification/adr/adr-147.md) D3)
+
+- **`opaque type FILE released by fclose`** in an `extern "C"` block. An opaque type is an address the language **never dereferences**: it is moved and stored like any value, and its release is a `cleanup` the compiler runs at the end of its scope (Part I 6.4), so a handle cannot be forgotten. That is the shape every C library with a session in it is made of — a database connection, an HTTP client, a compressor — and none of them was writable before.
+- **`#[repr(transparent)]` over the address, and `Drop` for the cleanup.** The layout is the whole point: a handle *is* the address, so `&mut T` at the boundary is `T**` the way C writes it and a handle passed by value is the pointer. A newtype Rust may lay out as it likes would be a different program at the boundary.
+- **A handle is *lent* to every declaration but its release**, which is D1's lesson one type over. `fileno(f)` reads the handle and `f` is still the caller's to close, so the address goes by value and the value stays here; `fclose(f)` **is** the cleanup, so the handle goes with it and Rust's own move keeps it from being released twice. The `&` [ADR-094](docs/specification/adr/adr-094.md) D1 would otherwise write is the wrong address as well as the wrong ownership — `&FILE` is `FILE**` where C wants `FILE*`, the same mistake Rust's fat `&[T]` would have been in a declaration.
+- **`NK1160` covers all three ways of reaching past a handle**: a field, an index, and a **call** — because an opaque handle has no constructor. There is no value of one this language can make, so a constructor would have to invent an address, and an address somebody chose is the one thing a handle may never be.
+- **None of `opaque`, `type`, `released` and `by` is reserved.** The grammar is scannerless, so a word means something only where a rule asks for it, and all four stay names everywhere else. Reserving one buys exactly the sentence a reader who writes it gets ([ADR-117](docs/specification/adr/adr-117.md) D2), and this position says that sentence without taking the word away.
+- **Five more tests**, twenty in the file. One compiles the lowering with `rustc` against libc's `fopen`, `fclose` and `fileno` and runs it — no library the machine may not have. Part III 15.1's second block is a program too, so the specification's lowering floor went up, 56 to 57, and two more of its blocks compile below.
+
+### Open
+
+- **D3's own example is not a program**, and that is a **question** rather than a gap. `sqlite3_open(path, db)` needs `db` to exist before the call; C writes an uninitialised pointer, this language has no uninitialised binding, and D3 gives a handle no constructor — deliberately. `NK1160` says so rather than letting `rustc` answer. The question is in [`open-decisions.md`](docs/open-decisions.md) with three ways out and a recommendation — the nullable, because `NULL` *is* what C means there and it also answers the failure every handle-returning function has. What is built meanwhile is every library whose constructor hands its handle back, which is `fopen`'s shape and most of C's.
+- **D4's `CStr`** is the record's step 4 and is next.
+
 ## [0.0.53] — 2026-09-19
 
 `docs/open-work.md` holds only what is open.

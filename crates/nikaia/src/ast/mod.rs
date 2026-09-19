@@ -156,6 +156,15 @@ pub enum Item {
     Extern {
         abi: String,
         declarations: Vec<Spanned<TraitMethod>>,
+        /// **The handles the block declares**
+        /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3):
+        /// `opaque type sqlite3 released by sqlite3_close`.
+        ///
+        /// A list beside the declarations rather than a kind of declaration,
+        /// because the two are different shapes: one is a signature and the
+        /// other is a type and the function that ends its life. The block's
+        /// source may interleave them freely; what reads them never has to.
+        opaque: Vec<Spanned<OpaqueType>>,
     },
 
     // Part III, Kap 14.1: test "Name" { ... }
@@ -661,6 +670,33 @@ pub struct Type {
     /// D1 writes, and a bare `[T]` is a value of no size, which this language
     /// has nowhere to put.
     pub is_slice: bool,
+}
+
+/// One line of an `extern "C"` block, before the two shapes are taken apart
+/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3).
+///
+/// The grammar's own type and nothing else's: a block may interleave the two
+/// freely and `Item::Extern` holds them in two lists, so this exists for the
+/// length of one rule's action.
+#[derive(Debug, Clone)]
+pub enum ExternMember {
+    Declared(Spanned<TraitMethod>),
+    Opaque(Spanned<OpaqueType>),
+}
+
+/// **An address this language never dereferences**
+/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3).
+///
+/// `opaque type sqlite3 released by sqlite3_close`. It is moved and stored like
+/// any value, it has no fields and no indexing, and its release is a `cleanup`
+/// the compiler runs at the end of its scope (Part I 6.4) — so a handle cannot
+/// outlive what it names unless a C function makes it, which is the one thing
+/// this language cannot check.
+#[derive(Debug, Clone)]
+pub struct OpaqueType {
+    pub name: Ident,
+    /// The function that ends its life, declared in the same block.
+    pub released_by: Ident,
 }
 
 /// What a function type says besides its parameters

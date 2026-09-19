@@ -939,9 +939,45 @@ grammar! {
         // The ABI is the string the source wrote. Only `"C"` means anything
         // today, and refusing a second one is a **check** rather than a shape,
         // so the grammar takes any string and the ledger pass says which.
+        //
+        // **A block holds two shapes since**
+        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3): a
+        // signature, and an `opaque type … released by …`. They may interleave
+        // freely in the source and are taken apart here, so nothing downstream
+        // has to walk a list of two kinds.
         rule extern_item -> Item =
-            KW_EXTERN abi:STRING "{" declarations:trait_method* "}"
-            -> { Item::Extern { abi, declarations } }
+            KW_EXTERN abi:STRING "{" members:extern_member* "}"
+            -> {
+                let mut declarations = Vec::new();
+                let mut opaque = Vec::new();
+                for member in members {
+                    match member {
+                        ExternMember::Declared(d) => declarations.push(d),
+                        ExternMember::Opaque(o) => opaque.push(o),
+                    }
+                }
+                Item::Extern { abi, declarations, opaque }
+            }
+
+        rule extern_member -> ExternMember =
+            o:opaque_item -> { ExternMember::Opaque(o) }
+          | d:trait_method -> { ExternMember::Declared(d) }
+
+        // **`opaque type T released by f`**
+        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3): an
+        // address the language never dereferences, whose release is a `cleanup`
+        // the compiler runs at the end of its scope (Part I 6.4).
+        //
+        // **None of the four words is reserved**, and that is deliberate. The
+        // grammar is scannerless, so a word only means something where a rule
+        // asks for it — and `opaque`, `type`, `released` and `by` are all names
+        // a program may want. Reserving a word buys exactly one thing, the
+        // sentence a reader who writes it gets
+        // ([ADR-117](../../../../docs/specification/adr/adr-117.md) D2), and
+        // this position can say that sentence without taking the word away.
+        rule opaque_item -> Spanned<OpaqueType> @=
+            KW_OPAQUE KW_TYPE name:NAME KW_RELEASED KW_BY released_by:NAME
+            -> { Spanned::new(OpaqueType { name, released_by }, _span) }
 
         // Kap 4.2: behaviour lives in an `impl`, never in the struct.
         // Kap 4.2 and 4.7: `impl User` gives a type behaviour of its own,
@@ -3005,6 +3041,15 @@ grammar! {
         rule KW_TRUE = "true" not(ident)
         rule KW_UNCHECKED = "unchecked" not(ident)
         rule KW_UNSAFE = "unsafe" not(ident)
+
+        // The four words of `opaque type T released by f`
+        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3). They
+        // are **not** in `RESERVED`: each is a name everywhere else, and this
+        // position is the only one that asks for it.
+        rule KW_OPAQUE = "opaque" not(ident)
+        rule KW_TYPE = "type" not(ident)
+        rule KW_RELEASED = "released" not(ident)
+        rule KW_BY = "by" not(ident)
         rule KW_USE = "use" not(ident)
         rule KW_WHILE = "while" not(ident)
         rule KW_WITH = "with" not(ident)

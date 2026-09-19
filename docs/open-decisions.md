@@ -1,9 +1,11 @@
 # Open decisions — the questions that need the owner
 
-**Nothing is open.** The eight doors the records of the last rounds had left
-open were gathered here so that each would have a recommendation and an owner,
-and the owner took all eight — each the way the entry recommended. They are
-[ADR-147](specification/adr/adr-147.md) to
+**One question is open**, found by building
+[ADR-147](specification/adr/adr-147.md) D3: what a program writes where C wants
+an **out-parameter** for a handle. Before it, the eight doors the records of the
+last rounds had left open were gathered here so that each would have a
+recommendation and an owner, and the owner took all eight — each the way the
+entry recommended. They are [ADR-147](specification/adr/adr-147.md) to
 [ADR-154](specification/adr/adr-154.md).
 
 **That is the shape this page is for**, and it is worth saying once: the
@@ -21,7 +23,55 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-Nothing.
+### A handle C fills in has nothing to be before the call
+
+**What is blocked.** [ADR-147](specification/adr/adr-147.md) D3 writes its own
+example as an out-parameter:
+
+```nika
+extern "C" {
+    opaque type sqlite3 released by sqlite3_close
+    fn sqlite3_open(path: &[u8], db: &mut sqlite3) -> i32
+}
+```
+
+and `sqlite3_open(path, db)` needs `db` to **exist** before the call. C writes
+it as an uninitialised pointer; this language has no uninitialised binding, and
+D3 gives a handle no constructor — deliberately, because an address somebody
+chose is the one thing a handle may never be. So the record's own example is not
+a program. `NK1160` says so rather than letting `rustc` answer, and that is the
+honest state rather than the answer.
+
+**Why it is the owner's.** Every way out is a rule about what a handle *is*,
+not work:
+
+* **A handle may be absent**, so the out-parameter takes a `sqlite3?` and the
+  binding starts `null`. It reads as this language already reads — Part I 2.3 —
+  and it says the true thing about C, where `NULL` is what a failed `fopen`
+  hands back too. What it costs is that every handle then arrives nullable and
+  a program unwraps before it can use one, and that the lowering has to keep
+  `Option<T>` and the pointer the same size, which `repr(transparent)` over a
+  raw pointer does **not** give for free.
+* **The out-parameter becomes a result**, so the declaration is written
+  `fn sqlite3_open(path: &[u8]) -> (i32, sqlite3)` and the compiler makes the
+  slot. It keeps a handle non-null and needs no new type, and it costs a
+  declaration that does not look like the C header it came from — which is the
+  one thing an `extern "C"` block has been able to promise so far.
+* **Nothing**, and the out-parameter shape stays unwritable: a library whose
+  constructor returns its handle (`fopen`) works today, and one that fills an
+  out-parameter waits. That is what is built, and it is a real answer — the
+  buffer's own D5 is the same shape of answer.
+
+**What this file recommends: the first.** `T?` is a type this language already
+has, `NULL` *is* what C means in that position, and the nullable is the only one
+of the three that also answers the failure every handle-returning function has
+(`fopen` returns `NULL` and nothing today says so). The size question is real
+and is the emitter's: a handle that may be absent can lower to the raw pointer
+with `NULL` as the absence, which is exactly how C spells it.
+
+**If the recommendation is wrong**, the second is cheap to move to and the
+third costs nothing at all — no program in the tree writes an out-parameter, so
+this is a decision made before there is anything to break.
 
 ## Answered
 

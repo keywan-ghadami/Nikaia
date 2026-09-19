@@ -2197,17 +2197,26 @@ const OFFERED: &[&str] = &[
 
 /// Every type name this file declares.
 pub fn declared_types(parsed: &Parsed) -> BTreeSet<String> {
-    parsed
-        .program
-        .items
-        .iter()
-        .filter_map(|item| match &item.node {
+    let mut declared: BTreeSet<String> = BTreeSet::new();
+    for item in &parsed.program.items {
+        match &item.node {
             Item::Struct { name, .. } | Item::Enum { name, .. } => {
-                Some(parsed.text(*name).to_string())
+                declared.insert(parsed.text(*name).to_string());
             }
-            _ => None,
-        })
-        .collect()
+            // **An opaque handle is a type this file declares**
+            // ([ADR-147](../../../docs/specification/adr/adr-147.md) D3). It
+            // has no fields and no constructor, but a declaration is what
+            // `NK1135` asks for and this is one - the block that writes it is
+            // the only place its name comes from.
+            Item::Extern { opaque, .. } => {
+                for handle in opaque {
+                    declared.insert(parsed.text(handle.node.name).to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    declared
 }
 
 /// The type parameters an `impl` head declares, in the order it writes them.
