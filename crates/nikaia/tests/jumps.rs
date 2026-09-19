@@ -181,7 +181,7 @@ fn a_break_in_a_catch_handler_leaves_the_loop() {
          }\n\
          \n\
          fn main() {\n\
-         \x20   let mut paths = Vec::new()\n\
+         \x20   let mut paths = Vec()\n\
          \x20   paths.push(\"nothing-here.txt\")\n\
          \x20   println(f\"{read_them(paths)}\")\n\
          }\n";

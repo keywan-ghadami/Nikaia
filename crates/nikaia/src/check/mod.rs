@@ -3362,6 +3362,12 @@ impl<'a> Checker<'a> {
                 // `Op::Times` is a value of the enum that declares it. Anything
                 // else a path can name, this compiler does not resolve.
                 let names: Vec<&str> = segments.iter().map(|s| self.parsed.text(*s)).collect();
+                // **A constructor handed over as a value** is the other half of
+                // [ADR-140](../../docs/specification/adr/adr-140.md) D2, and the
+                // one that record names: `par_fold(M, Summary::new, …)` is how
+                // `1brc.nika` wrote it, against a type declaring an anonymous
+                // constructor and no `new`.
+                self.a_constructor_written_as_new(&names.join("::"), span);
                 match names.as_slice() {
                     [ty, variant] if self.is_variant(ty, variant) => Ty::named(*ty),
                     _ => Ty::Unknown,
@@ -4711,6 +4717,12 @@ impl<'a> Checker<'a> {
         // walk carries.
         self.a_foreign_call_outside_unsafe(&name, span);
 
+        // **A type is constructed by its anonymous constructor**
+        // ([ADR-140](../../docs/specification/adr/adr-140.md) D2), so a written
+        // `Type::new` is the other spelling and is refused — in `std` as in a
+        // `.nika` file, which is the whole of what D2 evens out.
+        self.a_constructor_written_as_new(&name, span);
+
         // **A grammar is entered by an ordinary call**
         // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
         // **path** since [ADR-140](../../docs/specification/adr/adr-140.md) D3.
@@ -4809,10 +4821,28 @@ impl<'a> Checker<'a> {
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
         // whatever its declaration says about `Self`.
+        //
+        // **Unless the declaration already names it with its arguments**
+        // ([ADR-140](../../docs/specification/adr/adr-140.md) D2). A `.nika`
+        // file's constructor is on a type with no parameters, so naming the type
+        // is the whole answer; `std`'s own entries are not — `Vec::new` declares
+        // `-> Vec[?]`, and `Ty::named("Vec")` threw the `[?]` away, so
+        // `let xs = Vec()` came out as a `Vec` and `NK1106` refused it against
+        // every `Vec[T]` it was given to. The rule was right for the one case it
+        // had and wrong for the one D2 brought in.
+        let declared = contract
+            .signature
+            .as_ref()
+            .and_then(|s| s.result.as_ref())
+            .filter(|ty| !matches!(ty, Ty::Unknown))
+            .filter(|ty| !matches!(ty, Ty::Named { name, .. } if name == "Self"));
         let constructed = key
             .strip_suffix("::new")
             .filter(|_| !name.ends_with("::new"))
-            .map(Ty::named);
+            .map(|ty| match declared {
+                Some(declared) => declared.clone(),
+                None => Ty::named(ty),
+            });
         let result = self.arguments(&key, &name, contract, args, &found, &passed, span);
         // **What the arguments tell the signature**
         // ([ADR-074](../../docs/specification/adr/adr-074.md) D2). A free
@@ -6213,6 +6243,47 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// `NK1149`: a type's constructor written `Type::new`
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D2).
+    ///
+    /// The anonymous constructor is what a `.nika` file writes
+    /// (`pub fn(first: i32)`, Part I 4.2) and `new` is Rust's convention
+    /// reaching through a hand-written ledger. One convention, and it is this
+    /// language's own: `Vec()`, `String()`, `HashMap()`, `Stats(first)`.
+    ///
+    /// **Asked of the name and not of the position**, so the value form is
+    /// refused too — `par_fold(M, Summary::new, …)` is how `1brc.nika` wrote it,
+    /// which is the case D2 names.
+    ///
+    /// The ledger's key stays `Type::new`, because that is what the **lowering**
+    /// writes and the lowering is name for name
+    /// ([ADR-011](../../docs/specification/adr/adr-011.md) D2). What this
+    /// refuses is the *source* spelling.
+    fn a_constructor_written_as_new(&mut self, name: &str, span: &Span) {
+        let Some(ty) = name.strip_suffix("::new") else {
+            return;
+        };
+        if !self.own.functions.contains_key(name) && self.library.lookup(name).is_none() {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1149",
+            message: format!("`{ty}` is constructed by its anonymous constructor, not by `new`"),
+            notes: vec![
+                "a type is constructed the way a `.nika` file declares one - `pub fn(first: \
+                 i32)`, Part I 4.2 - and `new` is the neighbouring language's convention \
+                 reaching through a hand-written ledger (ADR-140 D2). One convention, and \
+                 it is this language's own"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `{ty}(…)`, or `{ty}` where the constructor is the value"
+            )),
+        });
+    }
+
     /// `NK1144`: a `let` whose only name is the ignore pattern
     /// ([ADR-126](../../docs/specification/adr/adr-126.md) D2).
     fn a_let_that_binds_nothing(&mut self, span: &Span) {
@@ -6304,7 +6375,18 @@ impl<'a> Checker<'a> {
         if let Some(contract) = self.own.functions.get(&constructed) {
             return Some((constructed, contract));
         }
-        self.library.lookup(name)
+        if let Some(found) = self.library.lookup(name) {
+            return Some(found);
+        }
+        // **`std`'s own types are constructed the same way**
+        // ([ADR-140](../../docs/specification/adr/adr-140.md) D2): `Vec()` is
+        // the anonymous constructor, exactly as `Stats(first)` is for a type a
+        // `.nika` file declares. The ledger's key stays `Vec::new`, because
+        // that is the name the **lowering** writes and the lowering is name for
+        // name ([ADR-011](../../docs/specification/adr/adr-011.md) D2) - what
+        // changes is that the fallback above reaches the library too, where it
+        // used to stop at this unit.
+        self.library.lookup(&constructed)
     }
 
     /// Walk a call's arguments, telling a lambda what it will be handed.

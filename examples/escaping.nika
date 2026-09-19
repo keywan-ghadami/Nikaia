@@ -19,7 +19,7 @@
 //     way to ask for the other behaviour. The comment below is a comment, not a
 //     safety measure - nothing in this file could turn escaping off.
 //   * **The one way to say "this is already markup" is a type.** `html::Raw` is
-//     what the last row uses, and `Raw::new` is the one line to grep for. A
+//     what the last row uses, and `Raw` is the one line to grep for. A
 //     flag at the hole would be a property of the call site, and the same value
 //     reaches many call sites; a type travels with the value.
 //   * **A hole is only legal where escaping is enough.** Move one of these into
@@ -65,8 +65,8 @@ fn table(rows: Vec[Row]) -> String {
 // here is escaped exactly once, by the call that says so.
 fn emphasised(name: &str) -> String {
     // Text becomes markup by being escaped, and the type records that it was.
-    // `Raw::new` is the promise; `html::escape` is what makes it true here.
-    let mut built = String::new()
+    // `Raw` is the promise; `html::escape` is what makes it true here.
+    let mut built = String()
     built.push_str("<em>")
     built.push_str(&html::escape(name))
     built.push_str("</em>")
@@ -77,7 +77,7 @@ fn emphasised(name: &str) -> String {
 }
 
 fn main() {
-    let mut rows = Vec::new()
+    let mut rows = Vec()
     rows.push(Row { name: "Ada", note: "fine", shade: "odd" })
     rows.push(Row { name: "a<b & c", note: "\"quoted\"", shade: "even" })
     rows.push(Row { name: "O'Hara", note: "</td> is not a tag here", shade: "odd" })

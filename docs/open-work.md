@@ -1696,20 +1696,7 @@ or `type` only; the derivation, which makes it a pure function of the sources li
 every other column; and `NK2401` staying silent about prose, because a changed
 sentence is not a changed contract.
 
-### 2.47. `std`'s own types are constructed with `new`
-
-[ADR-140](specification/adr/adr-140.md) D2. `Vec::new()`, `String::new()` and
-`HashMap::new()` are Rust's convention reaching through a hand-written ledger,
-where a `.nika` file writes an anonymous constructor (`pub fn(first: i32)`,
-Part I 4.2). `1brc.nika` passes `Summary::new` as a value although `Summary`
-declares an anonymous constructor and no `new` — a program written against the
-convention it could see.
-
-*What it needs:* `std.contracts`'s entries renamed to `Vec()`, `String()` and
-`HashMap()`, the lowering that puts `::new()` back on the Rust side, the corpus
-and the pages, and `1brc.nika`'s `Summary::new`.
-
-### 2.48. `use std::…` brings a name in and a package's `use` does not
+### 2.47. `use std::…` brings a name in and a package's `use` does not
 
 [ADR-140](specification/adr/adr-140.md) D5.
 [ADR-046](specification/adr/adr-046.md)'s rule is *no name is brought in*, and
@@ -1723,7 +1710,7 @@ all and that is unchanged.
 `crates/nikaia-std/` and on the three pages. Last of the five, because nothing
 waits on it.
 
-### 2.49. The database driver checks the SQL while the program is built
+### 2.48. The database driver checks the SQL while the program is built
 
 [ADR-143](specification/adr/adr-143.md), all of it. The compiler knows no
 SQL: a dialect is a grammar in a driver package. A grammar declares a result

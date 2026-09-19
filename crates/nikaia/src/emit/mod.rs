@@ -3939,6 +3939,21 @@ impl<'p> Emitter<'p> {
             Expr::Variable(name) if flow.changed.contains(name) => {
                 out.push(&format!("(*{})", self.name(*name)))
             }
+            // **A constructor handed over as a value**
+            // ([ADR-140](../../docs/specification/adr/adr-140.md) D2). `Summary`
+            // in value position is the anonymous constructor, and the language
+            // below calls it `Summary::new` — the same two spellings the call
+            // path reconciles, one position over. `par_fold(M, Summary, …)` is
+            // where it is written.
+            //
+            // **Only a name this file declares as a type**, or one the library
+            // publishes with a constructor: anything else is an ordinary name,
+            // and a local that shadows a type is refused a declaration by
+            // [ADR-144](../../docs/specification/adr/adr-144.md) rather than
+            // guessed at here.
+            Expr::Variable(name) if self.constructs_by_name(self.text(*name)) => {
+                out.push(&self.path(&[self.text(*name), "new"]))
+            }
             Expr::Variable(name) => out.push(&self.name(*name)),
             // ADR-017: the template is compiled where it is written. What comes
             // out is the string building a hand-written renderer would do, with
@@ -4637,6 +4652,30 @@ impl<'p> Emitter<'p> {
                 out.push(")");
                 return Ok(());
             }
+
+            // **`std`'s own types are constructed the same way**
+            // ([ADR-140](../../docs/specification/adr/adr-140.md) D2). `Vec()`
+            // is the anonymous constructor and `Vec::new()` is what the
+            // language below calls it — the same two spellings the arm above
+            // reconciles for a type this file declares, one ledger over.
+            //
+            // **Read off the library rather than from a list of three names**,
+            // because `std` gaining a type with a constructor should not need
+            // an edit here: the entry `Name::new` *is* the fact.
+            if self.library.functions.contains_key(&format!("{text}::new")) {
+                // **Through `path`**, because one name below depends on more
+                // than the name: a **trusted** map is `TrustedMap::default()`
+                // and not `TrustedMap::new()`, since `new` exists only for the
+                // default hasher ([ADR-010](../../docs/specification/adr/adr-010.md)
+                // D5). Writing `{text}::new(` here would have taken that back
+                // for every `HashMap()` in a trusted program.
+                out.push(&self.path(&[text, "new"]));
+                out.push("(");
+                let takes = self.takes_a_handle(&format!("{text}::new"));
+                self.args(out, text, args, &takes, depth, flow)?;
+                out.push(")");
+                return Ok(());
+            }
         }
 
         self.expr(out, func, depth, flow)?;
@@ -5112,6 +5151,22 @@ impl<'p> Emitter<'p> {
         // the `impl` provides, so that is the contract to read.
         let constructor = format!("{name}::new");
         self.pauses(&constructor).then_some(constructor)
+    }
+
+    /// Whether a bare name in **value** position is a type's anonymous
+    /// constructor ([ADR-140](../../docs/specification/adr/adr-140.md) D2).
+    ///
+    /// A type this file declares, or one the library publishes with a `::new`
+    /// entry — read off the ledger rather than from a list of three names, for
+    /// the reason the call path gives.
+    fn constructs_by_name(&self, name: &str) -> bool {
+        if self.structs.iter().any(|s| self.text(*s) == name) {
+            return self
+                .own_contracts
+                .functions
+                .contains_key(&format!("{name}::new"));
+        }
+        self.library.functions.contains_key(&format!("{name}::new"))
     }
 
     /// Whether the contracts say a call by name can fail (Kap 7.1).

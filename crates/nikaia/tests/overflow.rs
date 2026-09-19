@@ -525,7 +525,7 @@ fn a_length_is_an_i64_and_the_conversions_are_emitted() {
     let rust = lower(
         &dir,
         "fn main() {\n    \
-             let mut xs = Vec::new()\n    \
+             let mut xs = Vec()\n    \
              xs.push(10)\n    \
              xs.push(20)\n    \
              xs.push(30)\n    \
@@ -576,7 +576,7 @@ fn a_negative_index_aborts_as_an_access_out_of_bounds() {
     let _ = lower(
         &dir,
         "fn main() {\n    \
-             let mut xs = Vec::new()\n    \
+             let mut xs = Vec()\n    \
              xs.push(1)\n    \
              let pos = 0\n    \
              println(f\"{xs[pos - 1]}\")\n\

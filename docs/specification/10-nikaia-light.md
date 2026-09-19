@@ -990,15 +990,21 @@ of anything else, so the colon no longer decides whether a type's invariants are
 gone through or round.
 
 **A type is constructed by its anonymous constructor** ([ADR-140](adr/adr-140.md)
-D2), in `std` as in a `.nika` file: `Vec()`, `String()` and `HashMap()` where
-`Vec::new()`, `String::new()` and `HashMap::new()` stand today. `new` is the
-neighbouring language's convention reaching through a hand-written ledger, and
-this language has one of its own.
+D2), in `std` as in a `.nika` file: `Vec()`, `String()`, `HashMap()`,
+`Stats(first)`. `new` is the neighbouring language's convention reaching through
+a hand-written ledger, and this language has one of its own — a written
+`Type::new` is `NK1149`, in either position, because the constructor handed over
+as a **value** is the same spelling: `par_fold(M, Summary, …)`.
 
-> **Status:** **D1 is built** ([ADR-140](adr/adr-140.md) §5 step 1).
+The ledger keeps writing `Type::new`, and that is not a second spelling: it is
+the name the **lowering** uses, and the lowering is name for name
+([ADR-011](adr/adr-011.md) D2).
+
+> **Status:** **both are built** ([ADR-140](adr/adr-140.md) §5).
 > `Type(field: value)` does not parse as a literal any more — it is a call, and
-> where the name is a type `NK1146` says so and names the braces. D2 is not:
-> `std`'s constructors are still `::new()`.
+> where the name is a type `NK1146` says so and names the braces. `Vec()`,
+> `String()` and `HashMap()` are the constructors, and a written `Type::new` is
+> `NK1149`.
 
 **A copy with fields changed: `with`.** Every binding is immutable unless it
 says `mut`, so the value a program wants most often is the one it has with one
@@ -1100,7 +1106,7 @@ Nikaia includes built-in types for storing groups of data.
 * **Map (HashMap):** Stores key-value pairs.
     ```nika
     use std::collections::HashMap
-    let mut scores = HashMap::new()
+    let mut scores = HashMap()
     scores["Player1"] = 100
     ```
     Reading through the brackets answers a `T?`, because a key is data and may
@@ -1122,7 +1128,7 @@ line above it, so an index is always written where its subject is.
 > **Status:** the **list literal is not built** — `[1, 2, 3]` is a parse error at
 > the `[`, and so is a list *type* written `[User]`
 > ([ADR-135](adr/adr-135.md) §5). Built: the type `Vec[T]`, the tuple, indexing
-> (`xs[0]`), indexed assignment, and `HashMap::new()`.
+> (`xs[0]`), indexed assignment, and `HashMap()`.
 
 ### 4.6. Generics (Type Parameters)
 To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.

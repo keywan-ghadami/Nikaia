@@ -122,7 +122,7 @@ fn a_view_handed_back_in_the_result_it_came_from_is_not_a_finding() {
         r#"
         struct Tally { n: i64 }
         fn count(dna: &str, k: usize) -> HashMap[&str, Tally] {
-            let mut counts: HashMap[&str, Tally] = HashMap::new()
+            let mut counts: HashMap[&str, Tally] = HashMap()
             for i in 0..dna.len() {
                 let fragment = &dna[i..i + k]
                 counts.entry(fragment).or_insert_with fn { Tally(1) }
@@ -300,7 +300,7 @@ fn a_view_stored_in_the_subject_is_lowered_with_the_buffer_named() {
             }
         }
         fn main() {
-            let mut s = Summary::new()
+            let mut s = Summary()
             s.record("Hamburg")
             println(s.label)
         }
@@ -328,14 +328,14 @@ fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
         use std::collections::HashMap
         struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: HashMap::new() } }
+            pub fn() -> Summary sync { return Summary { stations: HashMap() } }
             fn record(&mut self, name: &str, temp: i32) sync {
                 self.stations.insert(name, temp)
             }
             fn count(&self) -> i64 sync { return self.stations.len() }
         }
         fn main() {
-            let mut s = Summary::new()
+            let mut s = Summary()
             s.record("Hamburg", 12)
             println(f"{s.count()}")
         }
@@ -352,13 +352,13 @@ fn a_read_only_call_on_a_view_field_is_lowered_rather_than_refused() {
         use std::collections::HashMap
         struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: HashMap::new() } }
+            pub fn() -> Summary sync { return Summary { stations: HashMap() } }
             fn has(&self, name: &str) -> bool sync {
                 return self.stations.contains_key(name)
             }
         }
         fn main() {
-            let s = Summary::new()
+            let s = Summary()
             println(f"{s.has(\"Hamburg\")}")
         }
     "#;
@@ -373,7 +373,7 @@ fn a_view_that_reaches_the_field_through_a_local_is_lowered_too() {
         use std::collections::HashMap
         struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: HashMap::new() } }
+            pub fn() -> Summary sync { return Summary { stations: HashMap() } }
             fn record(&mut self, name: &str) sync {
                 let key = name
                 self.stations.insert(key, 1)
@@ -381,7 +381,7 @@ fn a_view_that_reaches_the_field_through_a_local_is_lowered_too() {
             fn count(&self) -> i64 sync { return self.stations.len() }
         }
         fn main() {
-            let mut s = Summary::new()
+            let mut s = Summary()
             s.record("Hamburg")
             println(f"{s.count()}")
         }

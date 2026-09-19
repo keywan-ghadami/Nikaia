@@ -95,7 +95,7 @@ fn main() {{
     let {word} = 1
     let b = Box {{ {word}: {word} }}
     let total = holds(b.{word}) + calls(2)
-    let mut xs = Vec::new()
+    let mut xs = Vec()
     xs.push(total)
     for {word} in xs {{
         println(f"{{{word}}}")
@@ -259,7 +259,7 @@ fn every_declaring_position_asks() {
         ("a field", "struct Row {\n    crate: i64,\n}\n\nfn main() {\n    println(\"x\")\n}\n"),
         ("a parameter", "fn takes(crate: i64) -> i64 {\n    return crate\n}\n\nfn main() {\n    println(f\"{takes(1)}\")\n}\n"),
         ("a `let`", "fn main() {\n    let crate = 1\n    println(f\"{crate}\")\n}\n"),
-        ("a `for` binding", "fn main() {\n    let mut xs = Vec::new()\n    xs.push(1)\n    for crate in xs {\n        println(f\"{crate}\")\n    }\n}\n"),
+        ("a `for` binding", "fn main() {\n    let mut xs = Vec()\n    xs.push(1)\n    for crate in xs {\n        println(f\"{crate}\")\n    }\n}\n"),
     ];
     for (what, source) in positions {
         let parsed = parse_to_ast(source).unwrap_or_else(|e| panic!("{what} parses: {e}"));

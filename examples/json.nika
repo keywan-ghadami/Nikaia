@@ -72,9 +72,9 @@ grammar Json_ {
         | "false" -> { Json::Bool(false) }
         | n:NUMBER -> { Json::Number(n) }
         | s:TEXT -> { Json::Text(s) }
-        | "[" "]" -> { Json::Array(Vec::new()) }
+        | "[" "]" -> { Json::Array(Vec()) }
         | "[" items:values "]" -> { Json::Array(items) }
-        | "{" "}" -> { Json::Object(Vec::new()) }
+        | "{" "}" -> { Json::Object(Vec()) }
         | "{" members:members "}" -> { Json::Object(members) }
 
     // A comma-separated list, written the way `calc.nika` writes its operand
@@ -83,7 +83,7 @@ grammar Json_ {
     // the standard repair.
     rule values -> Vec[Json] =
         head:value tail:value_tail* -> {
-            let mut all = Vec::new()
+            let mut all = Vec()
             all.push(head)
             for v in tail.drain() { all.push(v) }
             all
@@ -93,7 +93,7 @@ grammar Json_ {
 
     rule members -> Vec[Member] =
         head:member tail:member_tail* -> {
-            let mut all = Vec::new()
+            let mut all = Vec()
             all.push(head)
             for m in tail.drain() { all.push(m) }
             all
@@ -188,7 +188,7 @@ fn show(value: Json, indent: i64) {
 // a surrogate pair rule, and a decision about what a lone surrogate is worth
 // are a specification of their own.
 fn unescape(raw: &str) -> String {
-    let mut out = String::new()
+    let mut out = String()
     let mut escaped = false
 
     for c in raw.chars() {

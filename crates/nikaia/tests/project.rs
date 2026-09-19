@@ -1238,7 +1238,7 @@ fn every_abort_names_the_nikaia_line() {
             "fn pick(xs: &Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
              \n\
              fn main() {\n    \
-                 let mut xs = Vec::new()\n    \
+                 let mut xs = Vec()\n    \
                  xs.push(1)\n    \
                  let zero = 0\n    \
                  println(f\"{pick(xs, zero - 1)}\")\n\
@@ -1250,7 +1250,7 @@ fn every_abort_names_the_nikaia_line() {
             "fn pick(xs: &Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
              \n\
              fn main() {\n    \
-                 let mut xs = Vec::new()\n    \
+                 let mut xs = Vec()\n    \
                  xs.push(1)\n    \
                  let far = 5\n    \
                  println(f\"{pick(xs, far)}\")\n\

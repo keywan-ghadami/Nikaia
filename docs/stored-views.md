@@ -183,7 +183,7 @@ buffer. It could only refuse, which is what the second increment already does fo
 every destination it cannot name.
 
 **(b) The buffer of every local, not only of every field.** A field's buffer is
-declared. A local's is not: `let mut counts: HashMap[&str, Tally] = HashMap::new()`
+declared. A local's is not: `let mut counts: HashMap[&str, Tally] = HashMap()`
 says the map holds views and says nothing about whose. The second increment
 follows carriers **by name** (a name that ever carries the view keeps carrying it)
 and never treats a local as a destination, precisely because it cannot answer this.
@@ -193,7 +193,7 @@ and never treats a local as a destination, precisely because it cannot answer th
 
 ```nika
 fn count(seq: &str, k: usize) -> HashMap[&str, Tally] {
-    let mut counts: HashMap[&str, Tally] = HashMap::new()
+    let mut counts: HashMap[&str, Tally] = HashMap()
     …
     counts.entry(fragment)…        // fragment is a view of seq
     …

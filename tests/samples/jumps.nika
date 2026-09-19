@@ -50,7 +50,7 @@ fn countdown(start: i64) -> i64 {
 }
 
 fn main() {
-    let mut xs = Vec::new()
+    let mut xs = Vec()
     xs.push(3)
     xs.push(7)
     xs.push(8)

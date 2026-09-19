@@ -173,7 +173,7 @@ fn a_plus_over_two_unknowns_is_not_a_concatenation() {
         "two unknowns",
         r#"
 fn main() {
-    let mut xs = Vec::new()
+    let mut xs = Vec()
     xs.push(1)
     let n = xs.len() + xs.len()
     println(f"{n}")

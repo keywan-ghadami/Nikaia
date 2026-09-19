@@ -277,7 +277,7 @@ impl Row {
 }
 
 fn main() {
-    let mut v = Vec::new()
+    let mut v = Vec()
     v.push(7)
     let r = Row { name: "a".to_string(), tags: v }
     println(f"{r.name()} {r.tags()[0]}")

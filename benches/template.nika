@@ -33,7 +33,7 @@ fn main() {
     let count = cli::args().nth(1) ?? "2000"
     let n: i32 = count.parse() catch { 2000 }
 
-    let mut rows = Vec::new()
+    let mut rows = Vec()
     for i in 0..n {
         rows.push(Row { name: "Hamburg", note: "a note with <angles> & an ampersand" })
     }

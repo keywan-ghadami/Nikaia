@@ -276,7 +276,7 @@ fn a_task_that_names_an_argument_is_refused() {
 fn a_shared_handle_into_a_task_is_not_refused() {
     let found = findings(
         "fn main() {\n\
-         \x20   let counts = Shared(Vec::new())\n\
+         \x20   let counts = Shared(Vec())\n\
          \x20   spawn fn { println(f\"{counts.len()}\") }\n\
          \x20   println(f\"{counts.len()}\")\n\
          }",

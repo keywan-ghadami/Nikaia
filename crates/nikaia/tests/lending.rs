@@ -82,7 +82,7 @@ fn a_for_leaves_the_collection_where_it_was() {
     let printed = ran(
         "for-lends",
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          \x20   xs.push(2)\n\
          \x20   let mut sum = 0\n\
@@ -131,7 +131,7 @@ fn a_for_over_a_parameter_that_is_already_a_view_still_iterates() {
          }\n\
          \n\
          fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(4)\n\
          \x20   xs.push(5)\n\
          \x20   println(f\"{total(&xs)}\")\n\
@@ -152,10 +152,10 @@ fn a_drain_takes_the_elements_away() {
     let printed = ran(
         "for-drains",
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(\"a\".to_string())\n\
          \x20   xs.push(\"b\".to_string())\n\
-         \x20   let mut all = Vec::new()\n\
+         \x20   let mut all = Vec()\n\
          \x20   for x in xs.drain() { all.push(x) }\n\
          \x20   println(f\"{all.len()}\")\n\
          }\n",
@@ -164,7 +164,7 @@ fn a_drain_takes_the_elements_away() {
 
     let rust = lowered(
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          \x20   for x in xs.drain() { println(f\"{x}\") }\n\
          }\n",
@@ -180,7 +180,7 @@ fn a_drain_takes_the_elements_away() {
 fn a_written_ampersand_in_a_for_head_is_refused() {
     let found = findings(
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          \x20   for x in &xs { println(f\"{x}\") }\n\
          }\n",
@@ -191,7 +191,7 @@ fn a_written_ampersand_in_a_for_head_is_refused() {
     // the rule is about the `&` and not about the loop.
     let clean = findings(
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          \x20   for x in xs { println(f\"{x}\") }\n\
          }\n",

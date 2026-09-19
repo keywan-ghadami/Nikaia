@@ -334,7 +334,7 @@ fn a_key_may_be_given_as_something_it_borrows_as() {
 
 /// A receiver that says nothing degrades to `?` rather than guessing.
 ///
-/// `HashMap::new()` gives a map whose type arguments are unknown, so `$V` binds
+/// `HashMap()` gives a map whose type arguments are unknown, so `$V` binds
 /// to nothing and the lambda's parameter is `?`. The chain above simply stops
 /// being able to help, which is the correct failure: an unbound variable is the
 /// absence of a claim, never a claim about a type called `$V`.
@@ -342,7 +342,7 @@ fn a_key_may_be_given_as_something_it_borrows_as() {
 fn an_unknown_element_type_does_not_become_a_claim() {
     let l = ledger(
         "use std::collections::HashMap\n\
-         fn build() { let m = HashMap::new() m.entry(\"x\").and_modify fn { a.whatever() } }",
+         fn build() { let m = HashMap() m.entry(\"x\").and_modify fn { a.whatever() } }",
     );
 
     // `a.whatever()` cannot be resolved, so the claim is refused - and refused
@@ -908,7 +908,7 @@ fn a_source_is_found_inside_a_nested_block() {
 fn the_provenance_chooses_the_map() {
     use nikaia::emit::{emit_program_with_trust, Build};
 
-    let source = "fn main() { let m: HashMap[&str, i64] = HashMap::new() }";
+    let source = "fn main() { let m: HashMap[&str, i64] = HashMap() }";
     let parsed = parse_to_ast(source).expect("parses");
 
     let trusted = emit_program_with_trust(&parsed, Build::default(), Provenance::Trusted)

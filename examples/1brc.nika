@@ -121,7 +121,7 @@ grammar Measurements {
     // aggregation runs entirely in i64 tenths and only becomes f64 at print
     // time. Under --user-parallelism=0 the same grammar runs as a sequential fold.
     pub rule file -> Summary =
-        par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) },
+        par_fold(MEASUREMENT, Summary, fn(acc, m) { acc.record(m) },
                  Summary::merge)
 }
 
@@ -187,7 +187,7 @@ pub struct Summary {
 
 impl Summary {
     pub fn() -> Summary sync {
-        return Summary { stations: HashMap::new() }
+        return Summary { stations: HashMap() }
     }
 
     fn record(&mut self, m: Reading) sync {

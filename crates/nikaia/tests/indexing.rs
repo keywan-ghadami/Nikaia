@@ -74,7 +74,7 @@ fn a_map_written_through_the_brackets_compiles_and_runs() {
 use std::collections::HashMap
 
 fn main() {
-    let mut scores = HashMap::new()
+    let mut scores = HashMap()
     scores["Player1"] = 100
     scores["Player2"] = 7
     println(f"{scores[\"Player1\"]} {scores[\"Player2\"]}")
@@ -94,7 +94,7 @@ fn the_write_is_a_set_and_the_read_is_still_an_index() {
 use std::collections::HashMap
 
 fn main() {
-    let mut scores = HashMap::new()
+    let mut scores = HashMap()
     scores["Player1"] = 100
     println(f"{scores[\"Player1\"]}")
 }
@@ -122,7 +122,7 @@ fn a_sequence_written_through_the_brackets_still_works() {
         "a sequence written through the brackets",
         r#"
 fn main() {
-    let mut xs = Vec::new()
+    let mut xs = Vec()
     xs.push(10)
     xs.push(20)
     xs[0] = 99
@@ -143,7 +143,7 @@ fn a_compound_write_is_still_an_indexed_assignment() {
         "a compound write",
         r#"
 fn main() {
-    let mut xs = Vec::new()
+    let mut xs = Vec()
     xs.push(10)
     xs[0] += 1
     println(f"{xs[0]}")
@@ -173,13 +173,13 @@ fn a_sequence_and_a_map_in_one_program() {
 use std::collections::HashMap
 
 fn main() {
-    let mut xs = Vec::new()
+    let mut xs = Vec()
     xs.push(10)
     xs.push(20)
     xs[0] = 99
     xs[1] += 1
 
-    let mut scores = HashMap::new()
+    let mut scores = HashMap()
     scores["a"] = 1
 
     println(f"{xs[0]} {xs[1]} {scores[\"a\"]}")

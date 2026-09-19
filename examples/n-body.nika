@@ -159,7 +159,7 @@ fn solar_system() -> System {
     let days_per_year = 365.24
     let solar_mass = 4.0 * 3.141592653589793 * 3.141592653589793
 
-    let mut bodies = Vec::new()
+    let mut bodies = Vec()
 
     bodies.push(Body {
         x: 0.0, y: 0.0, z: 0.0,

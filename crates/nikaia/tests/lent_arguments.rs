@@ -201,7 +201,7 @@ fn an_argument_that_is_already_a_view_is_passed_through() {
          fn hand(xs: &Vec[i64]) -> i64 { return total(xs) }\n\
          \n\
          fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(4)\n\
          \x20   xs.push(5)\n\
          \x20   println(f\"{hand(xs)}\")\n\
@@ -331,7 +331,7 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
     let source = "struct Entry { count: i64 }\n\
                   \n\
                   fn read(data: &str) -> Vec[Entry] throws {\n\
-                  \x20   let mut out = Vec::new()\n\
+                  \x20   let mut out = Vec()\n\
                   \x20   out.push(Entry { count: data.len() as i64 })\n\
                   \x20   return out\n\
                   }\n\
@@ -391,7 +391,7 @@ fn a_parameter_a_method_changes_in_place_is_not_lent() {
          }\n\
          \n\
          fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   println(f\"{fill(xs)} {xs.len()}\")\n\
          }\n",
     );
@@ -401,7 +401,7 @@ fn a_parameter_a_method_changes_in_place_is_not_lent() {
     // is about *changing* the receiver and not about calling a method on one.
     let rust = lowered(
         "fn width(xs: Vec[i64]) -> i64 { return xs.len() as i64 }\n\
-         fn main() { let xs = Vec::new() println(f\"{width(xs)}\") }\n",
+         fn main() { let xs = Vec() println(f\"{width(xs)}\") }\n",
     );
     assert!(rust.contains("fn width(xs: &Vec<i64>)"), "{rust}");
 }

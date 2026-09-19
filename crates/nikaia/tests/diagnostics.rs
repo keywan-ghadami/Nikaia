@@ -317,7 +317,7 @@ fn a_note_about_rust_rather_than_the_program_is_dropped() {
 ///
 /// The emitter writes a trusted input's map as `TrustedMap`, which is
 /// `HashMap<K, V, BuildHasherDefault<FxHasher>>` (ADR-010 D5). Measured before
-/// this: `let m = HashMap::new()` — a real defect in the *program*, reported
+/// this: `let m = HashMap()` — a real defect in the *program*, reported
 /// against the right line — said *"type annotations needed for `HashMap<_, _,
 /// BuildHasherDefault<FxHasher>>`"*, naming a hasher nothing in the program
 /// mentions.

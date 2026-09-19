@@ -584,11 +584,29 @@ fn the_grammar_half_of_the_1brc_example_lowers() {
         emitted.contains("rule MEASUREMENT -> Reading<'a> ="),
         "{emitted}"
     );
+    // **`Summary` and not `Summary::new`**, and the difference is the slice
+    // rather than the language ([ADR-140](../../../docs/specification/adr/adr-140.md)
+    // D2). A type is constructed by its anonymous constructor and the emitter
+    // writes the key back — but only for a type this unit **declares**, and the
+    // extraction above takes the grammar and leaves `struct Summary` behind. A
+    // name nothing describes is left alone, which is
+    // [Part III C.4](../../../docs/specification/30-nikaia-tooling.md)'s rule
+    // and is what lets a `.nika` file name a Rust-side item at all.
     assert!(
-        emitted.contains(
-            "par_fold(MEASUREMENT, Summary::new, |acc, m| { acc.record(m) }, Summary::merge)"
-        ),
+        emitted
+            .contains("par_fold(MEASUREMENT, Summary, |acc, m| { acc.record(m) }, Summary::merge)"),
         "{emitted}"
+    );
+    // And the **whole** file, where the `struct` is in the unit, writes the key.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/1brc.nika");
+    let source = std::fs::read_to_string(&path).expect("examples/1brc.nika");
+    let parsed = parse_to_ast(&source).expect("1brc parses");
+    let whole = emit_program(&parsed, Build::default())
+        .expect("1brc lowers")
+        .rust;
+    assert!(
+        whole.contains("par_fold(MEASUREMENT, Summary::new,"),
+        "the constructor is the key where the type is declared"
     );
     assert!(emitted.contains("s:until(\";\" | frame_end)"), "{emitted}");
     assert!(emitted.contains("whole:digit{1,2}"), "{emitted}");

@@ -69,7 +69,7 @@ grammar Log {
     // collected. `par_fold` adds how two partial reports combine, which is all
     // the compiler needs to cut the file and parse the pieces on every core.
     pub rule file -> Report =
-        par_fold(ENTRY, Report::new, fn(acc, e) { acc.record(e) }, Report::merge)
+        par_fold(ENTRY, Report, fn(acc, e) { acc.record(e) }, Report::merge)
 }
 
 // The `_ip` is parsed and dropped: the grammar has to consume it, the report
@@ -112,7 +112,7 @@ pub struct Report {
 
 impl Report {
     pub fn() -> Report sync {
-        return Report { paths: HashMap::new(), requests: 0, failures: 0 }
+        return Report { paths: HashMap(), requests: 0, failures: 0 }
     }
 
     // `sync`: pure computation, no I/O, cannot pause - which is what lets the

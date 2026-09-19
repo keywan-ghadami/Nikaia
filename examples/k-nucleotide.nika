@@ -100,7 +100,7 @@ impl Tally {
 // claim `1brc.nika` makes about station names (Part II, 10.6), on a buffer the
 // program owns rather than one it mapped.
 fn count(dna: &str, k: i64) -> HashMap[&str, Tally] {
-    let mut counts: HashMap[&str, Tally] = HashMap::new()
+    let mut counts: HashMap[&str, Tally] = HashMap()
 
     if dna.len() < k {
         return counts
@@ -125,7 +125,7 @@ fn count(dna: &str, k: i64) -> HashMap[&str, Tally] {
 fn report_frequencies(dna: &str, k: i64) {
     let counts = count(dna, k)
 
-    let mut rows = Vec::new()
+    let mut rows = Vec()
     let mut total = 0
     for (fragment, tally) in counts {
         total += tally.n
@@ -177,7 +177,7 @@ fn main() throws {
     // answer as the default.
     let wanted = cli::args().nth(1) ?? "THREE"
 
-    let mut dna = String::new()
+    let mut dna = String()
     for section in sections {
         if section.header.starts_with(wanted.as_str()) {
             for line in section.lines {

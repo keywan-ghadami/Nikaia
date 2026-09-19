@@ -89,7 +89,7 @@ fn a_list_is_changed_where_it_lies() {
     let printed = ran(
         "list",
         "fn main() {\n\
-         \x20   let log = SharedMut(Vec::new())\n\
+         \x20   let log = SharedMut(Vec())\n\
          \x20   log.update fn(mut entries) { entries.push(1) }\n\
          \x20   log.update fn(mut entries) { entries.push(2) }\n\
          \x20   println(f\"{log.access fn(e) { e.len() }}\")\n\
@@ -155,7 +155,7 @@ fn a_nested_lambda_keeps_the_dereference() {
     let rust = lowered(
         "fn main() {\n\
          \x20   let total = SharedMut(0)\n\
-         \x20   let xs = Vec::new()\n\
+         \x20   let xs = Vec()\n\
          \x20   total.update fn(mut n) {\n\
          \x20       xs.sort_by_key fn(x) { n + x }\n\
          \x20   }\n\
@@ -222,7 +222,7 @@ fn a_block_that_ends_in_a_call_is_not_refused() {
     assert!(!refused(
         "NK1141",
         "fn main() {\n\
-         \x20   let log = SharedMut(Vec::new())\n\
+         \x20   let log = SharedMut(Vec())\n\
          \x20   log.update fn(mut v) { v.push(1) }\n\
          }\n"
     ));
@@ -257,7 +257,7 @@ fn a_lambda_that_is_not_a_door_is_left_alone() {
          \x20   fn bump(&mut self) sync { self.n += 1 }\n\
          }\n\
          fn main() {\n\
-         \x20   let mut counts = HashMap::new()\n\
+         \x20   let mut counts = HashMap()\n\
          \x20   counts.entry(\"a\")\n\
          \x20       .and_modify fn (tally) { tally.bump() }\n\
          \x20       .or_insert_with fn { Tally { n: 1 } }\n\

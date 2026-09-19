@@ -99,7 +99,7 @@ fn a_mut_parameter_changes_the_callers_value() {
          }\n\
          \n\
          fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   fill(xs)\n\
          \x20   println(f\"{xs.len()}\")\n\
          }\n",
@@ -113,7 +113,7 @@ fn a_mut_parameter_changes_the_callers_value() {
 fn the_declaration_and_the_call_gain_the_reference_together() {
     let rust = lowered(
         "fn fill(mut out: Vec[i64]) { out.push(1) }\n\
-         fn main() { let mut xs = Vec::new() fill(xs) }\n",
+         fn main() { let mut xs = Vec() fill(xs) }\n",
     );
     assert!(rust.contains("fn fill(out: &mut Vec<i64>)"), "{rust}");
     assert!(rust.contains("fill(&mut xs)"), "{rust}");
@@ -126,7 +126,7 @@ fn the_declaration_and_the_call_gain_the_reference_together() {
 fn a_mut_parameter_is_not_also_lent() {
     let rust = lowered(
         "fn fill(mut out: Vec[i64]) { out.push(1) }\n\
-         fn main() { let mut xs = Vec::new() fill(xs) }\n",
+         fn main() { let mut xs = Vec() fill(xs) }\n",
     );
     assert!(!rust.contains("&&"), "{rust}");
     assert!(!rust.contains("& mut"), "{rust}");
@@ -211,7 +211,7 @@ fn reading_a_parameter_is_not_changing_it() {
 fn a_shadowed_parameter_is_no_longer_the_parameter() {
     assert!(!refused(
         "fn count(xs: Vec[i64]) -> i64 {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          \x20   return xs.len() as i64\n\
          }\n\
@@ -311,7 +311,7 @@ fn a_changed_let_without_the_word_is_refused() {
     // And a method that changes its subject, which is the same change.
     assert!(refused_let(
         "fn main() {\n\
-         \x20   let xs = Vec::new()\n\
+         \x20   let xs = Vec()\n\
          \x20   xs.push(1)\n\
          }\n"
     ));
@@ -325,7 +325,7 @@ fn a_changed_let_without_the_word_is_refused() {
     ));
     assert!(!refused_let(
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          }\n"
     ));
@@ -338,7 +338,7 @@ fn a_mut_let_compiles_and_runs() {
     let printed = ran(
         "mut-let",
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          \x20   xs.push(2)\n\
          \x20   let mut n = 0\n\
@@ -360,7 +360,7 @@ fn a_mut_let_compiles_and_runs() {
 fn an_inner_binding_does_not_answer_for_an_outer_one() {
     assert!(!refused_let(
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   if true {\n\
          \x20       let xs = 1\n\
          \x20       println(f\"{xs}\")\n\
@@ -380,7 +380,7 @@ fn a_parameter_and_a_let_get_different_codes() {
          \x20   out.push(1)\n\
          }\n\
          fn main() {\n\
-         \x20   let xs = Vec::new()\n\
+         \x20   let xs = Vec()\n\
          \x20   xs.push(1)\n\
          }\n",
     );
@@ -405,7 +405,7 @@ fn a_parameter_and_a_let_get_different_codes() {
 fn only_the_two_written_bindings_are_asked() {
     assert!(!refused_let(
         "fn main() {\n\
-         \x20   let mut xs = Vec::new()\n\
+         \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
          \x20   for x in xs { println(f\"{x}\") }\n\
          }\n"

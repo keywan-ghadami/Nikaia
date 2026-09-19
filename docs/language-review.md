@@ -396,6 +396,10 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   in `std` (`HashMap::new`, `Vec::new`, `String::new`, `Raw::new`,
   `Server::new`) — and `1brc.nika` passes `Summary::new` as a value although
   `Summary` declares an anonymous constructor and no `new`. One convention.
+  *Decided and **built**:* [ADR-140](specification/adr/adr-140.md) D2 — the
+  anonymous one, with `NK1149` on a written `Type::new` in either position. The
+  ledger keeps the key, because that is what the lowering writes; a **package's**
+  types (`Raw`, `Server`) follow the same rule the day their ledger exists.
 * **Path separator**: `Op::Times`, `Summary::merge`, `http::Request` — and
   `Json.value(input)`, `T.fields` (ADR-082, 10.3) with a dot. Same kind of
   thing, two spellings. *Decided and **built**:*
@@ -421,7 +425,7 @@ brace literal, the anonymous constructor with `new` gone from `std`'s own types,
 nothing in for `std` as for a package. **One record and five migrations**,
 because they are one question — *does this language say one thing one way* — and
 answering them apart would migrate the corpus five times for one property.
-**D1, D3 and D4 are built** and the other two are not; [`open-work.md`](open-work.md) §2
+**D1 to D4 are built** and D5 is not; [`open-work.md`](open-work.md) §2
 carries one entry each. D1 went first because
 [ADR-133](specification/adr/adr-133.md)'s call half was blocked on exactly the
 spelling it frees, and that half is built too.

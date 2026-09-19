@@ -478,7 +478,7 @@ fn a_loop_over_something_that_cannot_fail_says_nothing() {
 /// it, and a checker that had an opinion about it would be guessing.
 ///
 /// `push_str` used to stand here and no longer can, because the ledger now says
-/// what `String::new()` hands back (ADR-033 needed its touch set, and a
+/// what `String()` hands back (ADR-033 needed its touch set, and a
 /// signature came with it) - so the receiver has a type, the entry for
 /// `String::push_str` resolves, and three arguments to a method that takes one
 /// is caught. That is the ledger growing and the checker getting sharper
@@ -491,7 +491,7 @@ fn a_method_nobody_wrote_down_says_nothing() {
     // point is that without one nothing is claimed at all.
     assert!(findings(&format!(
         "fn main() {{\n\
-         \x20   let mut out = String::new()\n\
+         \x20   let mut out = String()\n\
          \x20   out.{}(0, \"a\", \"b\")\n\
          }}",
         common::UNDESCRIBED_METHOD

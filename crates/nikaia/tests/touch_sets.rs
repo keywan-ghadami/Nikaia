@@ -319,7 +319,7 @@ fn a_method_call_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
          fn main() throws {\n\
-             let mut out = Vec::new()\n\
+             let mut out = Vec()\n\
              out.push(\"eins\")\n\
              let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
              println(f\"{b.len()}\")\n\

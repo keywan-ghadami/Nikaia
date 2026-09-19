@@ -329,10 +329,10 @@ fn a_witness_is_lent_and_can_be_read_again() {
     let printed = ran(
         "lent",
         "fn main() throws {\n\
-         \x20   let start: Vec[i64] = Vec::new()\n\
+         \x20   let start: Vec[i64] = Vec()\n\
          \x20   let xs = Locked(start)\n\
          \x20   let seen = xs.get()\n\
-         \x20   let neu: Vec[i64] = Vec::new()\n\
+         \x20   let neu: Vec[i64] = Vec()\n\
          \x20   xs.set(neu; after: seen)\n\
          \x20   println(f\"{seen.len()}\")\n\
          }\n",

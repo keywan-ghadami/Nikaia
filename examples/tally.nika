@@ -56,7 +56,7 @@ fn summary(lines: i64, blank: i64; separator: &str = " ") -> String {
 fn main() throws {
     let mut lines = 0
     let mut blank = 0
-    let mut longest = String::new()
+    let mut longest = String()
 
     // Constant memory: one line is alive at a time, and the only thing that
     // outlives a turn is the longest line seen so far - which the program

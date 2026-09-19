@@ -582,12 +582,19 @@ pub(crate) fn reached(
     }
 
     // Then the library, by the name the caller wrote or the one the prelude
-    // makes available unqualified.
-    if let Some((key, contract)) = library.lookup(&name) {
-        return Some(Reached::Library {
-            key,
-            sync: contract.sync.is_sync(),
-        });
+    // makes available unqualified — **and by the constructor's key**, because
+    // `std`'s own types are constructed the same way
+    // ([ADR-140](../../../docs/specification/adr/adr-140.md) D2): `HashMap()`
+    // is the call, `HashMap::new` is what the ledger and the lowering write.
+    // Without the second lookup a `sync` function that built one was refused
+    // against a callee nothing described.
+    for written in [name.clone(), constructed] {
+        if let Some((key, contract)) = library.lookup(&written) {
+            return Some(Reached::Library {
+                key,
+                sync: contract.sync.is_sync(),
+            });
+        }
     }
 
     // **A variant of a type this file declares is a constructor, not a call.**

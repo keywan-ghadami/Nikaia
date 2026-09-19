@@ -233,7 +233,7 @@ fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
 fn a_std_entrys_lambda_keeps_its_plain_closure() {
     let rust = lowered(
         "fn main() {\n\
-         \x20   let xs = Vec::new()\n\
+         \x20   let xs = Vec()\n\
          \x20   let doubled = xs.map fn(n) { n * 2 }\n\
          \x20   println(f\"{doubled.len()}\")\n\
          }\n",

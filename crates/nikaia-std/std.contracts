@@ -637,9 +637,11 @@ touches = []
 returns = "borrows(self)"
 signature = "(&Shared[$T]) -> &$T"
 
-# `String::new()` reaches nothing and hands back an empty one. Four adjacent
-# pairs in `examples/` named it as the callee nobody had described, which is
-# what asked for the entry.
+# `String()` reaches nothing and hands back an empty one. Four adjacent pairs in
+# `examples/` named it as the callee nobody had described, which is what asked
+# for the entry. **The key stays `String::new`** and the spelling is `String()`
+# (ADR-140 D2): the key is what the lowering writes, and the lowering is name
+# for name (ADR-011 D2).
 [fn."String::new"]
 pub = true
 sync = true

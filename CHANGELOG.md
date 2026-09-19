@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.27] — 2026-09-19
+
+[ADR-140](docs/specification/adr/adr-140.md)'s fourth migration, and the record's
+own plan for it was wrong in the one way that mattered.
+
+### Changed (a type is constructed by its anonymous constructor, in `std` too)
+
+- **[ADR-140](docs/specification/adr/adr-140.md) D2.** `Vec()`, `String()`, `HashMap()`, `Stats(first)`. `new` was Rust's convention reaching through a hand-written ledger, which is `language-review.md` §3.3's second row; one convention stays and it is this language's own. A written `Type::new` is **`NK1149`**, asked of the **name** and not of the position — so the constructor handed over as a value goes with it, which is the case the record names: `par_fold(M, Summary, …)` where `1brc.nika` wrote `Summary::new`.
+- **The ledger's keys did not move, and the record had said they would.** `Type::new` is the name the *lowering* writes and the lowering is name for name ([ADR-011](docs/specification/adr/adr-011.md) D2), so renaming the entries would have put a second spelling in the one place there must not be one. What moved is the **resolution**: the `{name}::new` fallback a `.nika` file's own types have always had now reaches the library too, where it stopped at this unit. `Vec()` is one rule with `Stats(first)` rather than a special case.
+- **A qualified name is left alone.** `http::Server::new()` names a package this build cannot see, and whether it should be `http::Server()` is that package's ledger to say — `NK1135`'s convention, one refusal over.
+
+### Fixed (two things the migration found, both older than it)
+
+- **The anonymous-constructor rule threw a type argument away.** It handed back *the type it is on, whatever its declaration says about `Self`* — right for a `.nika` type, which has no parameters, and wrong for `Vec::new`, whose entry declares `-> Vec[?]`: `let xs = Vec()` came out as a plain `Vec` and `NK1106` refused it against every `Vec[T]` it was given to. The declared result is used where it names something; `Self` and the absence of a claim keep the old rule.
+- **And the `sync` walk looked the library up by one spelling.** `contracts::sync` read the written name only, so a `sync` function that built a `HashMap()` was refused against a callee nothing described — `NK2202` on nine programs at once. One loop over the two spellings.
+- **Twenty-one sites in `.nika` files and sixty-four in the tests**, and the tests were the careful half: a test file writes `Vec::new()` in **Rust** as often as in a fixture. What is migrated is what is not followed by a `;` and not inside a `.contains(` about the emitted Rust; `measure.rs` is entirely the second kind and is untouched.
+- **A name this unit does not declare is left alone** (C.4), which is what lets a `.nika` file name a **Rust-side** item at all: `fixtures/measurements.nika` says so in its own header and keeps writing `Summary::new`. The same shape appears in a *slice* of a real program, where a test extracts `1brc.nika`'s grammar without its `struct Summary`, and that test now pins both halves — the slice writes `Summary`, the whole file writes `Summary::new`.
+- **And the map goes through the path rule**, which is where one name below depends on more than the name: at the default provenance a map is the **trusted** one, and `new` exists only for the default hasher ([ADR-010](docs/specification/adr/adr-010.md) D5). Writing `HashMap::new(` straight out of the constructor arm took that back for every `HashMap()` in a trusted program — caught by the test that had been asserting the wrong half of it.
+- *Five tests* in `crates/nikaia/tests/anonymous_constructors.rs`.
+
 ## [0.0.26] — 2026-09-19
 
 The second of the questions is answered, and answering it found two more holes
