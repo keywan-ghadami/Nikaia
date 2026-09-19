@@ -7338,7 +7338,7 @@ impl<'a> Checker<'a> {
             code: "NK1152",
             message: format!("`{callee}` may not be called while the program is built"),
             notes: vec![
-                format!("{because}"),
+                because.to_string(),
                 "the rule is two ledger columns and not a list of allowed functions, so \
                  what a build-time body may do is what the compiler already derives about \
                  every function it sees"

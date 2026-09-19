@@ -5558,22 +5558,32 @@ impl<'p> Emitter<'p> {
             .is_some_and(|contract| !contract.sync.is_sync())
     }
 
-    /// Whether a call to a **library** entry pauses (ADR-055 §6 step 3).
+    /// Whether a call to a **library** entry pauses (ADR-055 §6 step 3), and
+    /// under which key.
     ///
-    /// Separate from [`Emitter::pauses`] because the resolution is: `std`'s
-    /// ledger is keyed by the path a program writes, and a program writes
-    /// `fs::read_to_string` rather than a bare name - so this is an exact
-    /// lookup and never the suffix match a *method* needs.
+    /// **An exact lookup**, and after
+    /// [ADR-150](../../docs/specification/adr/adr-150.md) that is a decision
+    /// rather than an accident. A suffix match here — `read` finding
+    /// `fs::read` — is the emitter *guessing* at a callee the unit does not
+    /// describe, and a unit built from `--input` does not carry the ledger of
+    /// the package beside it: `examples/inventory` writes its own `read`, and a
+    /// name-for-name fallback put an `.await` on a call to a function that is
+    /// not a future. So a `std` function a program writes **bare** is keyed
+    /// bare, which `print` and `println` already were, and `sleep` now is.
+    ///
+    /// The **key** and not a yes, because D6's boxing needs to know which
+    /// function is being called.
     ///
     /// Step 2 deliberately did not ask this: a pausing `std` entry blocked its
     /// thread then, so awaiting one would have been awaiting a value. Step 3 is
     /// what made `std`'s pausing entries `async fn`, and this is the line that
     /// reads them.
-    fn library_pauses(&self, key: &str) -> bool {
+    fn library_pauses(&self, key: &str) -> Option<String> {
         self.library
             .functions
             .get(key)
-            .is_some_and(|contract| !contract.sync.is_sync())
+            .filter(|contract| !contract.sync.is_sync())
+            .map(|_| key.to_string())
     }
 
     /// Whether a call to this callee carries an `.await` (ADR-055 D2).
@@ -5604,16 +5614,34 @@ impl<'p> Emitter<'p> {
             _ => return None,
         };
         let name = self.parsed.unaliased(&name);
-        // This unit's own first, then `std`'s - the order every other name
-        // resolution here uses, because a local name shadows nothing in a
-        // library.
-        if self.pauses(&name) || self.library_pauses(&name) {
-            return Some(name);
-        }
-        // Kap 4.2's anonymous constructor: `Stats(temp)` is a call to the `new`
-        // the `impl` provides, so that is the contract to read.
+        // **This unit's own, then its constructors, then `std`'s — and the
+        // *first* ledger that has the name is the one that answers.**
+        //
+        // The chain matters and not only the order: a program with its own
+        // `fn read` has a name `std` also has, and falling through once the
+        // local entry says *this does not pause* would put an `.await` on a call
+        // to a function that is not a future. `can_fail`, one column over, has
+        // read its two ledgers this way all along.
+        //
+        // Kap 4.2's anonymous constructor is the middle link: `Stats(temp)` is a
+        // call to the `new` the `impl` provides, so that is the contract to
+        // read.
         let constructor = format!("{name}::new");
-        self.pauses(&constructor).then_some(constructor)
+        let resolved = self
+            .own_contracts
+            .functions
+            .get(&name)
+            .map(|contract| (name.clone(), contract))
+            .or_else(|| {
+                self.own_contracts
+                    .functions
+                    .get(&constructor)
+                    .map(|contract| (constructor.clone(), contract))
+            });
+        match resolved {
+            Some((key, contract)) => (!contract.sync.is_sync()).then_some(key),
+            None => self.library_pauses(&name),
+        }
     }
 
     /// Whether a bare name in **value** position is a type's anonymous

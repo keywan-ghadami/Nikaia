@@ -34,6 +34,7 @@ pub mod lock;
 pub mod num;
 pub mod rt;
 pub mod task;
+pub mod time;
 
 /// The parser backend a generated program's grammars run on.
 pub use winnow_grammar;
@@ -64,6 +65,14 @@ pub mod prelude {
     pub use crate::io;
     pub use crate::list::ListExt;
     pub use crate::task;
+    // **A duration and the call that waits one out**
+    // ([ADR-150](../../../docs/specification/adr/adr-150.md) D1, D2). The type
+    // so that `let deadline: Duration = 2.minutes()` can be written, the
+    // extension because `5.seconds()` is a method call and a trait has to be
+    // in scope for one, and `sleep` because Part II 12.4 writes it bare — the
+    // same way `digit_value` is written bare.
+    pub use crate::time;
+    pub use crate::time::{sleep, Duration, DurationExt};
     // `rt` is in the prelude so that the `fn main` the emitter writes can name
     // `rt::start` without a `use` the program did not ask for. Nothing in a
     // `.nika` file reaches it: ADR-038 D3's whole point is that a program says

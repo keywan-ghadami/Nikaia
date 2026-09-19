@@ -1253,3 +1253,105 @@ doc = "Wait for the task and take what it produced.\n\nIt gives the thread up ra
 [type."Shared"]
 pub = true
 doc = "A value several parts of a program own at once.\n\nA caller is not meant to notice it: a function taking `&Connection` accepts a\n`&Shared[Connection]`. Handing a handle on by value makes a second one rather\nthan taking the first away."
+
+# --- A span of time (ADR-150) ------------------------------------------------
+#
+# **The language learns nothing here** (D4): no keyword, no suffix literal, no
+# type in the grammar. What it costs is this block - one type, ten methods and
+# one call - and the reason it is ten rather than five is ADR-048's two integer
+# types: `5` is an `i32` where nothing asks otherwise and `count.minutes()` on a
+# length is an `i64`, so a file holding both needs both halves or one of the two
+# is refused in the language below's words (Part III C.1).
+#
+# `crosses = true` is a claim reviewed like code, and it is an easy one: a
+# duration is a number of ticks and nothing else, so it may go anywhere.
+[type."Duration"]
+pub = true
+crosses = true
+doc = "A span of time: how long something takes, how long to wait, how long is too\nlong.\n\nIt is written `5.seconds()` rather than `5s` - a literal has no suffix in\nthis language, and a rule with an exception in it is one a reader has to\nremember. `seconds`, `millis`, `micros`, `minutes` and `hours` are the five\nnames, on either integer type."
+
+# `touches = []` and `sync = true` for the arithmetic entries' reason: a pure
+# computation that reaches no resource. A count below zero is no time at all
+# rather than an abort, which is the whole of what the implementation decides.
+[fn."i32::hours"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> Duration"
+doc = "This many hours, as a span of time."
+
+[fn."i32::minutes"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> Duration"
+doc = "This many minutes, as a span of time."
+
+[fn."i32::seconds"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> Duration"
+doc = "This many seconds, as a span of time."
+
+[fn."i32::millis"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> Duration"
+doc = "This many thousandths of a second, as a span of time."
+
+[fn."i32::micros"]
+pub = true
+sync = true
+touches = []
+signature = "(i32) -> Duration"
+doc = "This many millionths of a second, as a span of time."
+
+[fn."i64::hours"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> Duration"
+doc = "This many hours, as a span of time."
+
+[fn."i64::minutes"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> Duration"
+doc = "This many minutes, as a span of time."
+
+[fn."i64::seconds"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> Duration"
+doc = "This many seconds, as a span of time."
+
+[fn."i64::millis"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> Duration"
+doc = "This many thousandths of a second, as a span of time."
+
+[fn."i64::micros"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> Duration"
+doc = "This many millionths of a second, as a span of time."
+
+# **A suspension point**, which is what the missing `sync` line says: the thread
+# is given up rather than held, so a program that sleeps runs its other tasks
+# while it does. That is the whole difference between this and the language
+# below's `thread::sleep`, and it is why the entry is here rather than nowhere.
+#
+# No `touches`, and its absence is the fail-closed answer rather than an
+# omission: what a wait orders against is everything, because the point of it is
+# that time passes in between.
+[fn."sleep"]
+pub = true
+signature = "(span: Duration)"
+doc = "Wait out a span of time.\n\nThe thread is given up rather than held, so other tasks run while this waits."

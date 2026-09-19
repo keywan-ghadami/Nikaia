@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.59] — 2026-09-19
+
+A span of time, and the call that waits one out
+([ADR-150](docs/specification/adr/adr-150.md)) — which takes half of Part II
+12.4's *unspecified* mark off the page and leaves `select` the other half.
+
+### Added
+
+- **`5.seconds()`, and four names beside it.** `seconds`, `millis`, `micros`, `minutes` and `hours`, on **either** integer type — ten ledger entries and not five, because `5` is an `i32` where nothing asks otherwise and a count that came from a length is an `i64`, so a file holding both needs both halves or one of the two is refused in the language below's words about a file nobody wrote.
+- **`Duration`, re-exported rather than wrapped.** A wrapper would be a second type with the same meaning and nothing to say that the first one does not. It carries `crosses = true`, which is an easy claim to review: a span is a number of ticks.
+- **`sleep`, and it is a suspension point.** The thread is given up rather than held, so a task started before the wait has its value by the time the wait is over — on the **one** thread `user_parallelism = no` gives a program, which is the test that proves it.
+- **A wait the executor can park on.** Every other `Pending` in this runtime waits for a completion, and the park is how the thread waits for one; a `sleep` waits for nothing a worker posts. So a sleeping future leaves the time it wants in `rt::timer` and the park takes the nearest of them as its bound. One cell and not a queue: every pending future is polled once a round and asks again, so the cell is rebuilt each round rather than kept in step with registrations nobody would remove from.
+- **`crates/nikaia/tests/duration.rs`**: nine tests, four of which build a program and run it.
+
+### Found by building it
+
+- **A duration was a type that moves.** `keeps::moves` names what copies, and a type it does not name is **lent** — so the first program to write `sleep(50.millis())` got a `&` in front of its argument. The same defect [ADR-147](docs/specification/adr/adr-147.md) D2 found one type over, met again because the copy list is a list.
+- **How a bare `std` name is keyed, decided by measurement.** A bare call takes its `.await` from an **exact** lookup, so `sleep`'s entry is `sleep` — as `print` and `println` already were. Resolving a bare name by its last segment instead is the emitter *guessing*: a unit built from `--input` does not carry the ledger of the package beside it, so `examples/inventory`'s own `read` found `fs::read` and took an `.await` for a function that is not a future. The example's committed lowering said so.
+- **The same gap is open one column over, and `docs/open-work.md` now carries it.** `can_fail` does resolve a bare name into `std`, and the one call in the corpus that would show it sits inside a `catch`.
+
+### Changed
+
+- **Part II 12.4's implementation note** says *partly* rather than *not*: `5.seconds()` and `sleep` are built, `select` is not.
+
+### Left open
+
+- **`Duration::seconds(5)`**, which D2 names beside the extension for a computed count. No program has asked, and [ADR-028](docs/specification/adr/adr-028.md) D5 is the rule that an entry exists because one did — `count.seconds()` is what a computed count is already written as.
+
 ## [0.0.58] — 2026-09-19
 
 What blocks the database driver, written down where the next reader looks

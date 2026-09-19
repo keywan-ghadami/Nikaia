@@ -317,6 +317,49 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // a worker that never answers must not become a program that never
         // exits (D5).
         let left = draining_since.map(|since| deadline.saturating_sub(since.elapsed()));
+
+        // **Something is waiting for the clock rather than for a completion**
+        // ([ADR-150](../../../../docs/specification/adr/adr-150.md) D1): a
+        // `sleep` leaves the time it wants in `rt::timer`, and the park below
+        // has nothing to wait for on its own account — `park_for` would answer
+        // *nothing is outstanding* and this loop would either spin or call a
+        // future that behaved correctly a defect.
+        //
+        // So the wait is the timer's, bounded by the nearer of the two bounds
+        // there are, and every alarm is rung afterwards for the reason the I/O
+        // path rings them: which future the clock was for is not something the
+        // executor knows.
+        if let Some(when) = crate::rt::timer::taken() {
+            let rest = when.saturating_duration_since(std::time::Instant::now());
+            let bound = |rest: std::time::Duration| match left {
+                Some(drain) => drain.min(rest),
+                None => rest,
+            };
+            if !rest.is_zero() {
+                // **In the I/O where there is I/O and this thread drives it**,
+                // because a completion the kernel has already accepted is only
+                // reaped by whoever is in the ring - and with tasks on the pool
+                // that thread is the pilot rather than this one.
+                let moved =
+                    on_the_pool == 0 && crate::rt::io::park_for(generation, Some(bound(rest)));
+                if !moved {
+                    // Either there was nothing to park in, or the park gave up
+                    // early. What is left of the span is waited out on the
+                    // bell, which every wake rings.
+                    let rest = when.saturating_duration_since(std::time::Instant::now());
+                    if !rest.is_zero() {
+                        crate::rt::io::wait_for_bell(generation, Some(bound(rest)));
+                    }
+                }
+            }
+            alarm.ring();
+            STARTED.with(|started| {
+                for queued in started.borrow().iter() {
+                    queued.alarm.ring();
+                }
+            });
+            continue;
+        }
         // **At `yes`, with tasks on the pool, this thread waits on the bell and
         // not in the I/O**, because the pool's pilot has the I/O and exactly
         // one thread may. On the completion path that is not a preference: a

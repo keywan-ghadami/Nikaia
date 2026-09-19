@@ -134,6 +134,14 @@ pub fn moves(ty: &super::ty::Ty) -> bool {
                         | "f64"
                         | "bool"
                         | "char"
+                        // **A span of time is a number of ticks**
+                        // ([ADR-150](../../../docs/specification/adr/adr-150.md)
+                        // D1), so it copies - and a `Duration` missing from
+                        // this list was the `usize` defect one type over: the
+                        // first program to write `sleep(50.millis())` got a `&`
+                        // in front of its argument, because a type this list
+                        // does not name is one that **moves**.
+                        | "Duration"
                         // A hull is a handle: handing one on duplicates the
                         // count rather than taking the value away
                         // (ADR-040 D1, D5).

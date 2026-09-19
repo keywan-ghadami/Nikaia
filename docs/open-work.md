@@ -105,6 +105,30 @@ second is the smaller change, since `Expr::LitInt` is an `i64` everywhere else
 and widening it touches every reader. Nothing in the tree writes the number, so
 this is a completeness item rather than a blocker.
 
+### 1.3. A bare call to something no ledger here describes is answered by `std`
+
+*Found by building* [ADR-150](specification/adr/adr-150.md), and it is about
+the **`throws` column**, because the `.await` one was moved out of reach by
+keying `sleep` bare.
+
+A unit built from `--input` carries its own ledger and `std`'s, and **not** the
+ledger of the package beside it. `examples/inventory/main.nika` calls `read`,
+which `examples/inventory/stock.nika` declares — so the emitter finds the name
+in neither of the two ledgers it holds, and `can_fail` then resolves it
+name-for-name into `std`, where `fs::read` is waiting. The answer it gets is
+about a different function.
+
+*Why nothing is broken today:* the one call in the corpus is inside a `catch`,
+which takes the `Result` itself and adds no `?`. The shape that would show it is
+a bare call to a package function that **cannot** fail, from a `throws`
+function, in a unit built from `--input`.
+
+*What it needs:* the emitter to know it has not resolved the name, rather than
+to answer from a ledger that happens to hold the word. Either the package's
+entries reach a single-file build, or a bare name that no ledger here declares
+is answered with *no* rather than with `std`'s — and the second is the smaller
+change and the one that matches what the column beside it already does.
+
 ## 2. Decided and unbuilt
 
 Two things hold across this whole section, and they are here rather than argued
@@ -1177,6 +1201,10 @@ its `cleanup` is adopted, the deadline bounds it. The runtime's race is what
 grammar; the lowering onto the runtime's race; `cancel()` on the handle, over
 the same call; the page's example as a test that runs, and the mark taken off.
 
+*The timeout arm's half is done:* `5.seconds()` and `sleep` are built, so the
+example's second branch is a program already and what is left is the construct
+around it.
+
 ### 2.42. There is no channel
 
 [ADR-149](specification/adr/adr-149.md). Part II 12.5's
@@ -1189,18 +1217,7 @@ the pause on a full `send`; `std::channel` and its four entries, `send` carrying
 no `sync` and `recv` handing back a `T?`; the page's example as a test that
 runs.
 
-### 2.43. There is no duration
-
-[ADR-150](specification/adr/adr-150.md). `5.seconds()` is a method on an
-integer that no ledger describes, and Part II 12.4 carries the *unspecified*
-mark for it. [ADR-148](specification/adr/adr-148.md)'s `select` needs it for
-the timeout arm its example writes.
-
-*What it needs, in the record's order (§5):* `std::time::Duration` and its
-entries; the integer extension, five names; `sleep` taking one; the page's line
-as a test that runs.
-
-### 2.44. The prelude is what the compiler happens to know
+### 2.43. The prelude is what the compiler happens to know
 
 [ADR-154](specification/adr/adr-154.md).
 `crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and
