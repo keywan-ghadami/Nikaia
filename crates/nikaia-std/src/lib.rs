@@ -23,6 +23,7 @@ pub mod cli;
 pub mod concat;
 pub mod count;
 pub mod error;
+pub mod foreign;
 pub mod fs;
 pub mod hash;
 pub mod html;
@@ -51,6 +52,12 @@ pub mod text {
 pub mod prelude {
     pub use crate::cli;
     pub use crate::error::Full;
+    // **The C boundary's one `std` type**
+    // ([ADR-147](../../../docs/specification/adr/adr-147.md) D4): a program
+    // that declares `fn getenv(name: &[u8]) -> CStr` has to be able to name
+    // it, and until [ADR-154](../../../docs/specification/adr/adr-154.md)
+    // decides what the prelude is, this is how a name reaches a program.
+    pub use crate::foreign::CStr;
     pub use crate::fs;
     pub use crate::hash::{TrustedMap, TrustedSet};
     pub use crate::html;

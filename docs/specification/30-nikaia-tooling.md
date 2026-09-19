@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.54 (Draft)
+**Version:** 0.0.55 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -565,9 +565,24 @@ An opaque type is an address the language **never dereferences**. It is moved an
 
 A handle is **lent** to every declaration but its release: `fileno(f)` reads it and `f` is still the caller's to close, where `fclose(f)` takes it and *is* the cleanup. None of `opaque`, `type`, `released` and `by` is a reserved word — the grammar is scannerless, so each means something only in this one position and stays a name everywhere else.
 
+**Text a C library hands back is a `CStr`, and `std` copies it** ([ADR-147](adr/adr-147.md) D4):
+
+```nika
+extern "C" {
+    fn getenv(name: &[u8]) -> CStr
+}
+
+fn main() throws {
+    let raw = unsafe { getenv("HOME\0") }
+    println(raw.to_string())
+}
+```
+
+`getenv` hands back memory the caller does not own, whose lifetime is the library's, and which ends at a zero byte rather than carrying a length. A `CStr` is that address — an opaque handle with **no** cleanup, which is what tells it from the handle above: a `FILE` is the program's to close and a C string is not the program's at all. `to_string` copies it into a `String`, and the `unsafe` walk to the zero byte is written **once**, in `std`, so no program writes one. It **fails** in the two ways it can: a null address, which is what every C function that finds nothing hands back, and bytes that are not UTF-8, which text in this language is.
+
 **There is no raw pointer, and `Pointer[u8]` is not a type** ([ADR-147](adr/adr-147.md) D5, [ADR-124](adr/adr-124.md) §4). Memory this language will index has to arrive with a length it knows, and `malloc` hands back an address and no length — so it has no shape here, which is the decision rather than a gap. A program that needs a buffer makes one in Nikaia and lends it.
 
-> **Implementation status:** Partially implemented. `extern "C"` blocks, `unsafe { … }`, `NK1143`, the four view forms of [ADR-147](adr/adr-147.md) D1, the length check of D2 and the opaque handle of D3 are implemented, with `NK1158` for either view form away from the boundary, `NK1159` for a length that cannot be shown to fit and `NK1160` for reaching past a handle; both blocks above compile and run against libc. The `CStr` copy (D4) is not implemented ([ADR-147](adr/adr-147.md) §5). A handle in an **out-parameter** — D3's own `sqlite3_open` — has nothing to be before the call, which is a question in [`open-decisions.md`](../open-decisions.md) rather than a gap in the work. `Pointer[u8]` is still refused with `NK1135`, which D5 makes permanent rather than pending.
+> **Implementation status:** Implemented, except what one open question holds up. `extern "C"` blocks, `unsafe { … }`, `NK1143` and all five decisions of [ADR-147](adr/adr-147.md) are built — the four view forms, the length check, the opaque handle with its `cleanup`, and the `CStr` copy — with `NK1158` for either view form away from the boundary, `NK1159` for a length that cannot be shown to fit and `NK1160` for reaching past a handle. All three blocks above compile and run against libc. A handle in an **out-parameter** — [ADR-147](adr/adr-147.md) D3's own `sqlite3_open` — has nothing to be before the call, which is a question in [`open-decisions.md`](../open-decisions.md) rather than a gap in the work. `Pointer[u8]` is still refused with `NK1135`, which D5 makes permanent rather than pending.
 
 **A build that lets C call in is a target** ([ADR-062](adr/adr-062.md) D1). An exported entry point may be called twice at once from threads the caller owns. `user_parallelism` bounds user code and cannot answer for a caller's threads, so the answer is a property of the target. Such a build is one artifact, safe at its boundary: the entry points and everything they reach take the safe shape, and the rest of the library keeps the per-value answer.
 

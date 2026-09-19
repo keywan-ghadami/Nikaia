@@ -50,8 +50,8 @@ records:
 **How the entries here are found**, which is a method rather than a habit:
 by running the programs the specification prints. `crates/nikaia/tests/specification.rs`
 takes every `nika` block in the three pages as far as it goes and hands the ones
-that lower to `rustc`, against two recorded baselines. Of 132 blocks, 57 are
-programs this compiler takes and 37 of those compile below.
+that lower to `rustc`, against two recorded baselines. Of 133 blocks, 58 are
+programs this compiler takes and 38 of those compile below.
 
 **Two entries are open.**
 
@@ -1132,33 +1132,29 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
-### 2.41. C has no `CStr`, and no way to be handed a handle
+### 2.41. C cannot be handed a handle to fill
 
-[ADR-147](specification/adr/adr-147.md) D1, D2, D3 and D5 are **built**: a
+[ADR-147](specification/adr/adr-147.md) is **built**, all five decisions: a
 buffer is a `&[T]` or a `&mut [T]` that lives for the call and lowers to the
 pointer C wants, the call makes the address, either view form away from the
 boundary is `NK1158`, a length beside a buffer that cannot be shown to fit it is
 `NK1159`, a library's handle is an `opaque type … released by …` whose release
-is a `cleanup`, and reaching past one — a field, an index, a call — is `NK1160`.
+is a `cleanup`, reaching past one is `NK1160`, and text a library hands back is
+a `CStr` that `std` copies inside the one `unsafe` block a program never writes.
 `Pointer[T]` stays `NK1135`, permanently rather than pending. Part III 15.1's
-two blocks compile and run against libc.
+three blocks compile and run against libc.
 
-*D4, returned text:* `getenv` hands back memory the caller does not own and
-whose lifetime is the library's. It arrives as an opaque `CStr` handle, and one
-`std` function copies it into a `String` inside `unsafe` — written once, where
-every program would otherwise write the same loop. The handle half of that is
-built; what is missing is the `std` function and the entry for it.
+*What is left is the record's step 5*, `sqlite3` end to end — and it waits on a
+**question** rather than on work. D3's own example is an out-parameter,
+`sqlite3_open(path, db)`, and a handle has nothing to be before the call: C
+writes an uninitialised pointer, this language has no uninitialised binding, and
+D3 gives a handle no constructor, deliberately. That is in
+[`open-decisions.md`](open-decisions.md) with three ways out and a
+recommendation.
 
-*And then step 5:* `sqlite3` end to end, as the test that the four are enough.
-It waits on D4 and on the question below, not on work.
-
-*One thing that is a **question** rather than work*, and it is in
-[`open-decisions.md`](open-decisions.md): D3's own example is an
-out-parameter — `sqlite3_open(path, db)` — and a handle has nothing to be
-before the call. C writes an uninitialised pointer; this language has no
-uninitialised binding and gives a handle no constructor, deliberately. What is
-built meanwhile is every library whose constructor **hands its handle back**,
-which is `fopen`'s shape and most of C's.
+*What is built meanwhile* is every library whose constructor **hands its handle
+back**, which is `fopen`'s shape and most of C's — and libc is what proves the
+four rather than `sqlite3`, because it is on every machine.
 
 ### 2.42. `select` is not a keyword, and nothing cancels a task
 

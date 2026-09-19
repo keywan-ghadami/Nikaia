@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.55] — 2026-09-19
+
+Text a C library hands back is a `CStr` that `std` copies
+([ADR-147](docs/specification/adr/adr-147.md) D4) — which completes that
+record's five decisions.
+
+### Added ([ADR-147](docs/specification/adr/adr-147.md) D4)
+
+- **`fn getenv(name: &[u8]) -> CStr`, and `raw.to_string()`.** `getenv` hands back memory the caller does not own, whose lifetime is the library's, and which ends at a zero byte rather than carrying a length. None of those three is something a `String` can be made of without reading it — so the reading is `std`'s, written **once**, inside `unsafe`, where every program would otherwise write the same loop.
+- **A `CStr` is an opaque handle with *no* cleanup**, which is what tells it from D3's: a `FILE` is the program's to close and a C string is not the program's at all, so `std::CStr` frees nothing.
+- **It fails rather than guessing**, in the two ways it can: a null address, which is what every C function that finds nothing hands back, and bytes that are not UTF-8, which text in this language is. Both are `throws` rather than an abort, because a caller can do something about either — `getenv` finding nothing is an ordinary Tuesday, and [Part III A.2](docs/specification/30-nikaia-tooling.md)'s aborts are for what a program's own arithmetic got wrong.
+- **Three more tests**, twenty-three in the file, three of which compile the lowering with `rustc` against libc and run it: `strlen` and `abs` for D1, `fopen`/`fclose`/`fileno` for D3, `getenv` for D4. **libc is what proves the four, not `sqlite3`** — it is on every machine, and the record's step 5 is a test rather than a decision. Part III 15.1's third block is a program too, so the specification's lowering floor went up again, 57 to 58.
+
+### Open
+
+- **Step 5 waits on a question and not on work.** [ADR-147](docs/specification/adr/adr-147.md) D3's own example is an out-parameter, `sqlite3_open(path, db)`, and a handle has nothing to be before the call. That is in [`open-decisions.md`](docs/open-decisions.md) with three ways out and a recommendation. What is built meanwhile is every library whose constructor hands its handle back, which is `fopen`'s shape and most of C's.
+
 ## [0.0.54] — 2026-09-19
 
 A C library's handle is an `opaque type … released by …`

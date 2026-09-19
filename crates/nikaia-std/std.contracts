@@ -1161,6 +1161,34 @@ doc = "The value of a decimal digit: `'7'` is `7`.\n\nA character that is not a 
 # not permission, and would have cost `cli::args` the overlapping that the
 # `touches` line above bought it (ADR-033 §8.1). The claim is a promise about a
 # Rust type, written here and reviewed like code, exactly as `sync = true` is.
+# **Text a C library owns**
+# ([ADR-147](../../docs/specification/adr/adr-147.md) D4). An opaque handle with
+# **no cleanup**, which is what tells it from that record's D3: a `FILE` is ours
+# to close and a C string is not ours at all, so nothing here frees anything.
+#
+# No `crosses` line, and its absence is the honest answer rather than nobody
+# saying: what the address points at is the library's, and whether that library
+# is happy to have it read from another thread is not a question this file can
+# answer for it.
+[type."CStr"]
+pub = true
+doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\nIt is what a declaration writes where C hands back a `char *`. Nothing here\nfrees it - the memory is the library's, not the program's - and `to_string`\nis how a program gets text of its own out of it."
+
+# The one function D4 asks for, and the reason it exists: the walk to the zero
+# byte is the thing a program must not have to write, so it is written once,
+# inside `unsafe`, here.
+#
+# `throws` in the two ways this can fail - a null address, and bytes that are
+# not UTF-8 - rather than an abort, because a caller can do something about
+# either. `getenv` finding nothing is an ordinary Tuesday.
+[fn."CStr::to_string"]
+pub = true
+sync = true
+touches = []
+throws = ["?"]
+signature = "(CStr) -> String"
+doc = "A copy of the text, owned by whoever asked for it.\n\nIt fails in the two ways this can: the address may be null, which is what\nevery C function that finds nothing hands back, and the bytes may not be\nUTF-8, which text in this language is. The `unsafe` walk to the zero byte is\nhere so that no program has to write one."
+
 [type."cli::Args"]
 pub = true
 crosses = true

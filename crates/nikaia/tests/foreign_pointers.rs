@@ -572,3 +572,99 @@ fn main() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **Returned text is a handle a `std` function copies** (D4).
+///
+/// `getenv` hands back memory the caller does not own, whose lifetime is the
+/// library's, and which ends at a zero byte rather than carrying a length.
+/// None of those three is something a `String` can be made of without reading
+/// it — so the reading is `std`'s, written **once**, inside `unsafe`, where
+/// every program would otherwise write the same loop.
+#[test]
+fn returned_text_is_copied_by_std() {
+    let source = "extern \"C\" {\n\
+                  \x20   fn getenv(name: &[u8]) -> CStr\n\
+                  }\n\
+                  \n\
+                  fn main() throws {\n\
+                  \x20   let raw = unsafe { getenv(\"HOME\\0\") }\n\
+                  \x20   let home = raw.to_string()\n\
+                  \x20   println(home)\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    // The declaration hands back the handle, and the copy is a `std` call with
+    // no `unsafe` of the program's own around it.
+    assert!(
+        rust.contains("fn getenv(name: *const u8) -> CStr;"),
+        "{rust}"
+    );
+    assert!(rust.contains("let home = raw.to_string()?;"), "{rust}");
+    assert!(
+        !rust.contains("unsafe { raw.to_string()"),
+        "the `unsafe` is `std`'s and not the program's:\n{rust}"
+    );
+}
+
+/// **The copy fails rather than guessing**, in the two ways it can — a null
+/// address, and bytes that are not UTF-8 — so a caller that does not say
+/// `throws` is refused here rather than by the language below.
+#[test]
+fn the_copy_is_a_call_that_can_fail() {
+    let found: Vec<_> = findings(
+        "extern \"C\" {\n\
+         \x20   fn getenv(name: &[u8]) -> CStr\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let raw = unsafe { getenv(\"HOME\\0\") }\n\
+         \x20   println(raw.to_string())\n\
+         }\n",
+    )
+    .into_iter()
+    .filter(|f| f.code == "NK2605")
+    .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+}
+
+/// **Measured where it matters: it compiles against real C, and it runs.**
+///
+/// `getenv` is libc, and `PATH` is set in every environment a test runs in —
+/// so this is the whole of D4 end to end: the declaration, the handle, the
+/// copy, and text the program owns.
+#[test]
+fn a_c_string_compiles_and_runs() {
+    let rust = lowered(
+        r#"
+extern "C" {
+    fn getenv(name: &[u8]) -> CStr
+}
+
+fn main() throws {
+    let raw = unsafe { getenv("PATH\0") }
+    let path = raw.to_string()
+    println(f"{path.len() > 0}")
+}
+"#,
+    );
+    let dir = common::scratch_dir("c-string");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        out.status.success(),
+        "the lowering compiles:\n{said}\n--- the Rust ---\n{rust}"
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "true",
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
