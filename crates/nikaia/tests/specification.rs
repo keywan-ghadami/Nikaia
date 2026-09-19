@@ -125,6 +125,14 @@ fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
 /// by decision, which is the state every unbuilt record leaves its examples
 /// in. The block comes back as a program with ADR-120 §5's first step, and
 /// the floor goes back up with it.
+///
+/// **Lowered a third time, from 49 to 48**, for the same reason. Part III
+/// 15.1's `script.exec(msg: message)` writes a call whose arguments are all
+/// options without the leading `;`
+/// ([ADR-133](../../../docs/specification/adr/adr-133.md) D1), and the parser
+/// still wants the `;` — so the page is ahead of the compiler by decision.
+/// The block comes back as a program with ADR-133 §5's first step, and the
+/// floor goes back up with it.
 #[test]
 fn most_of_a_third_of_the_specifications_blocks_are_programs() {
     let verdicts = specbook::verdicts(&specbook::specification_dir());
@@ -133,8 +141,8 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
         .filter(|v| v.stage == Stage::Lowered)
         .count();
     assert!(
-        lowered >= 49,
-        "{lowered} of {} blocks lower, and 49 did when this floor was last set - \
+        lowered >= 48,
+        "{lowered} of {} blocks lower, and 48 did when this floor was last set - \
          raise it if it is beaten, and read the diff if it is not",
         verdicts.len()
     );

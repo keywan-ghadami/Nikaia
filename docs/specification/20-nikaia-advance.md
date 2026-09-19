@@ -283,10 +283,10 @@ fn query_users(db: Shared[Database], min_age: i32) {
     } eod
 
     // 2. Execute with typed parameters.
-    // Subject: none (method on self) ; Config: target_age
+    // Subject: none (method on self), so no `;` - only the option (Part I 5.1)
     // Omitting 'target_age' is a compile error - the compiler knows the
     // statement needs it, because it parsed the statement.
-    let users = query.execute(; target_age: min_age)
+    let users = query.execute(target_age: min_age)
 }
 ```
 
@@ -310,13 +310,13 @@ errors in the `.nika` file:
 ```text
 error[NK1112]: `query` needs `:target_age`, and this call does not pass it
   --> users.nika:17:5
-  17 |     let users = query.execute(; targt_age: min_age)
+  17 |     let users = query.execute(targt_age: min_age)
            ^
      = the statement's parameters are `:target_age`
-     help: pass it after the `;`: `target_age: …`
+     help: pass it by name: `target_age: …`
 error[NK1113]: `query` has no parameter `:targt_age`
   --> users.nika:17:5
-  17 |     let users = query.execute(; targt_age: min_age)
+  17 |     let users = query.execute(targt_age: min_age)
            ^
      = the statement's parameters are `:target_age`
      help: did you mean `target_age`?

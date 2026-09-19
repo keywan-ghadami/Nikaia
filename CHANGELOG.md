@@ -1,6 +1,42 @@
 # Changelog
 
-## [Unreleased]
+Since 0.0.8, **every change package raises the patch number by one**, and a
+heading below is one package: what it decided, what it changed, what it left
+open. The version is the specification's; the compiler's crates carry their own.
+
+## [0.0.10] — 2026-09-19
+
+### Decided (three shapes every reader expects, and eight questions written down)
+
+- **[ADR-132](docs/specification/adr/adr-132.md).** `else if`: an `else` whose block is one `if`, with the braces left out. No keyword and no new rule — the chain inherits every rule of `if` — and the emitter writes Rust's own `else if`.
+- **[ADR-133](docs/specification/adr/adr-133.md).** An argument list of options alone writes no `;`: `execute(target_age: 30)` and `fn execute(target_age: i64 = 0)`. The leading `;` is refused, so there is one spelling; a mixed call keeps its `;`. It costs the parser one alternative tried first, because nothing in expression position begins with `name:`. The two places the specification wrote the old form read the new one.
+- **[ADR-134](docs/specification/adr/adr-134.md).** `/* … */` is a comment; it nests as Rust's does, an unclosed one is reported where it opened, and `/** … */` is a comment and not a doc comment.
+- **`open-decisions.md` carries eight questions again**, each with a recommendation: the list literal and its empty form, number literals, `match` patterns, a bare `throw` arm, doc comments and a ledger `doc` column, the two spellings of §3.3, what the specification writes that the language lacks, and the roadmap note for the marketing list.
+
+## [0.0.9] — 2026-09-19
+
+### Decided (what the library boundary had left open)
+
+- **[ADR-127](docs/specification/adr/adr-127.md).** `pub extern "C" struct` is a struct with C's layout that crosses the boundary by value — the `Point` and the `Sample` a C programmer expects to pass, not a handle around two doubles. Fields are numbers, `bool`, `char`, payload-free enums and other such structs, every one `pub`; anything else is `NK1145` naming the handle as the shape. A list of them is an array in and the caller's buffer out; the layout is in the ledger, so `--locked` catches a change; the same type serves a declared C function.
+- **[ADR-128](docs/specification/adr/adr-128.md).** The symbol prefix is the package's name, or one `symbol-prefix` line in `[build]`; no declaration renames itself, so the header stays a projection of the ledger.
+- **[ADR-129](docs/specification/adr/adr-129.md).** The `_async` form hands back a ticket that `<package>_cancel` cancels at the task's next pause point, with `cleanup` run and `done` called exactly once (`E_CANCELLED` when the cancellation came first). A stream is the callback the function already takes: `fn(item) -> bool sync`, whose `false` stops it and whose return is the backpressure. No construct is added.
+- **[ADR-130](docs/specification/adr/adr-130.md).** There is no `extern "wasm"`: a WebAssembly module's exports are C-convention functions, and the target names WebAssembly. The same declarations make a `.wasm` with a generated `.js` and `.d.ts`; the host takes its buffers from `<package>_alloc`, a pausing entry point has only the callback form and the `.js` makes it a Promise driven from the host's event loop.
+- **[ADR-131](docs/specification/adr/adr-131.md).** A binding for another language is a generated file over the C library — `nikaia bind python` over `ctypes`, `nikaia bind js` for the WebAssembly build — and never a second artifact. Java, C# and Go load the C library with their own means; a native Node add-on stays open.
+- [ADR-125](docs/specification/adr/adr-125.md) reads as if it had always said so: the table has the value-struct row, the status table has `-7`, the async form has its ticket, and its §4 keeps only the other direction.
+
+## [0.0.8] — 2026-09-19
+
+Closes what had been unreleased since 0.0.7 — the integrity round (the `Seen`
+stamp, one `update` form, `overlap` keeping every failure, the exit status),
+four reserved words freed and `with` given its construct, the bare-metal
+target, the grammar's vocabulary page, the ring's park, `crosses` three-valued,
+`extern` and `unsafe` reserved with constructs — and ends with its last
+package: **a library for other languages, and the ignore pattern.**
+
+### Decided (a library for other languages, and the ignore pattern)
+
+- **[ADR-125](docs/specification/adr/adr-125.md).** A Nikaia package can be a library for C and for everything that speaks it: `pub extern "C" fn` with a body is an entry point, `artifact = "c-library"` makes the package one, and the header is generated from the ledger. The shape at the boundary is the one every C library that has aged well uses — the caller owns the memory (buffers with size and written count, an allocator the caller may hand over before `init`), every call returns a status and puts its values in out-parameters, a struct is an opaque handle, an enum is numbered in declaration order. A panic is caught at the boundary and poisons the library; a pausing function is exported blocking and as `_async`; a handle carries a lock and a re-entrant call is a status. Nothing of it is built; `open-work.md` carries the seven steps.
+- **[ADR-126](docs/specification/adr/adr-126.md).** `_` is the ignore pattern: it stands in a tuple position, as a parameter of a `fn` or a lambda, and in a `match` arm, and nowhere else. `let _ = expr` is refused with `NK1144` — the statement says the same thing — and `_` is never a value. What it skips is not moved, so the view rule holds. It lowers to Rust's `_`, and an ignored parameter produces no warning below. Only the `match` arm is built.
 
 ### Decided (four of the owner's five open questions)
 

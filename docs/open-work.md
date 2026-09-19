@@ -1401,6 +1401,146 @@ rather than adding it.
 this language already has: most of `libc`'s arithmetic and process surface, and
 none of its memory surface.
 
+### 2.37. A library for other languages
+
+[ADR-125](specification/adr/adr-125.md), all of it. A `pub extern "C" fn`
+with a body is an entry point of a library, and `artifact = "c-library"` in
+`[build]` makes the package one. What a C caller gets is deliberately narrow:
+numbers by value, text and bytes in as pointer and length, text and bytes out
+into a buffer **the caller owns** (size, capacity, written; a `NULL` buffer
+asks for the size), a struct as an opaque handle with `_new` and `_free`, an
+enum as numbered constants in declaration order, an optional as `NULL` or the
+package's `NONE`. Every entry point returns an `int` status and puts its
+values in out-parameters; a `throws` variant is a positive code, the library's
+own failures are the six negative ones, and `<pkg>_last_error` carries the
+site and the secondary list. A caller may hand the library its allocator
+before `init`. A panic is caught at the boundary and poisons the library until
+`shutdown` and `init`. A pausing function is exported blocking and as
+`_async`. Every handle carries a lock, and a re-entrant call on the same
+thread is a status, not a deadlock. The header is generated from the ledger
+and carries its hash.
+
+*What it needs, in the record's order (§5):* the parser and the four refusals;
+the artifact and the safe shape at entry points; the wrapper per entry point;
+the runtime surface (`set_allocator`, `init`, `shutdown`, `last_error`,
+`free`, getters); the blocking and async forms and the handle lock; the
+header generator and the naming; a library called from a C program in
+`examples/`, and the test that links it.
+
+### 2.38. `_` is the ignore pattern
+
+[ADR-126](specification/adr/adr-126.md), all of it but the `match` arm, which
+works today. `_` stands where a name would be bound and nowhere else: a tuple
+position, a parameter of a `fn` or a lambda, a `match` arm. `let _ = expr` is
+refused with `NK1144`, because the statement form says the same thing without
+pretending to bind; `_` is never a value. What `_` skips is not moved, so the
+view rule holds and a temporary ends with its statement. It lowers to Rust's
+`_`, and an ignored parameter produces no unused-variable warning below.
+
+*What it needs, in the record's order (§5):* the parser for the tuple position
+and the parameter; `NK1144`; the emitter passing `_` through, and a test that
+an ignored lambda argument produces no warning below.
+
+### 2.39. A struct crosses the boundary by value
+
+[ADR-127](specification/adr/adr-127.md), all of it. `pub extern "C" struct`
+has C's layout (declaration order, C padding — `#[repr(C)]` below) and crosses
+by value, in, out and as a field; a `Vec` of them is an array in and the
+caller's buffer out, counted in elements; `T?` of one is the `NONE` status.
+Fields are numbers, `bool`, `char`, payload-free enums and other such structs,
+every field `pub`; anything else is `NK1145` naming the handle as the shape.
+No lock around its methods — it is the caller's memory. The layout is in the
+ledger, so `--locked` catches a change. The same type serves a declared C
+function.
+
+*What it needs, in the record's order (§5):* the parser; the field check and
+`NK1145`; the emitter's `repr(C)`, passing, array and buffer; the header's
+`typedef struct` and the ledger's field record; an example beside the
+library's.
+
+### 2.40. The symbol prefix is one line in the build
+
+[ADR-128](specification/adr/adr-128.md), all of it. `symbol-prefix = "hc"` in
+`[build]`, default the package name with `-` written `_`; a C identifier or
+refused. No declaration renames its own symbol.
+
+*What it needs:* the manifest key with its check; the header generator and
+the emitter reading it.
+
+### 2.41. An async call can be cancelled, and a stream is a callback
+
+[ADR-129](specification/adr/adr-129.md), all of it. The `_async` form ends with
+`<package>_op** op` (or `NULL`); `<package>_cancel` cancels the task at its
+next pause point with `cleanup` run; `done` is called exactly once,
+`E_CANCELLED` (`-7`) when the cancellation came first; `<package>_op_free`
+after `done`. A function producing many results takes `fn(item) -> bool sync`,
+whose `false` stops it, and the next item is produced only after the callback
+returned; a returned list of text or handles is refused naming that shape.
+
+*What it needs, in the record's order (§5):* the ticket, `cancel`, `op_free`
+and the code; the `bool` callback row and the refusal message; a streamed file
+and a cancelled fetch in the C example.
+
+### 2.42. A WebAssembly library is the same entry point on another target
+
+[ADR-130](specification/adr/adr-130.md), all of it. `target = "wasm32-unknown"`
+with `artifact = "c-library"` makes `<package>.wasm`, `<package>.js` and
+`<package>.d.ts` from the same declarations; `extern "wasm"` is refused. The
+host takes buffers from `<package>_alloc`/`_free`; no `set_allocator`; a
+handle is an offset wrapped in a class with `free()`; a pausing entry point
+has only the callback form and the `.js` makes it a Promise with an
+`AbortSignal` for cancel, the module's executor driven from the host's event
+loop.
+
+*What it needs, in the record's order (§5):* the target check with the two
+exports and the absent forms; the `.js`/`.d.ts` generator; the executor
+bridge and the Promise form; the library on a page, and the test in Node.
+
+### 2.43. A binding is a generated file over the C library
+
+[ADR-131](specification/adr/adr-131.md), all of it. `nikaia bind python`
+writes a `ctypes` binding from the ledger (exceptions per variant, `str` and
+`bytes` for buffers, classes with `close()` for handles, `IntEnum`, `None`,
+generators for streams, an awaitable for `_async`); `nikaia bind js` is the
+WebAssembly build's `.js`. No second artifact, no native Node add-on.
+
+*What it needs, in the record's order (§5):* the Python generator over the
+example library; the streamed and async forms; the `js` name; a test that
+imports the binding.
+
+### 2.44. `else if`
+
+[ADR-132](specification/adr/adr-132.md), all of it. After `else`, an `if` may
+stand where the block would; the chain is one `if` inside another with the
+inner braces left out, so every rule of `if` holds at every link. The emitter
+writes Rust's `else if` where the `else` block holds one `if` and nothing else;
+the formatter keeps a chain flat and never refolds one.
+
+*What it needs, in the record's order (§5):* the parser's alternative; the
+emitter's flat form and the formatter's line; `examples/http`'s `status_line`
+as a chain, and a test on a three-link chain's value.
+
+### 2.45. The leading `;` is gone
+
+[ADR-133](specification/adr/adr-133.md), all of it. An argument list of options
+alone writes no `;` — `execute(target_age: 30)`, `fn execute(target_age: i64 =
+0)` — and the leading form is a parse error with a message naming the new one.
+A mixed call keeps its `;`, required. One alternative tried first in the call
+rule and in the signature rule, on the second token; no AST change. The two
+specification examples already read the new form.
+
+*What it needs:* the two alternatives and the message; a test that the new
+form parses and the old is refused.
+
+### 2.46. Block comments
+
+[ADR-134](specification/adr/adr-134.md), all of it. `/* … */` anywhere
+whitespace may stand, across lines, nesting, an unclosed one reported at its
+opening; `/** … */` is a comment and not a doc comment.
+
+*What it needs:* `BLOCK_COMMENT` beside `COMMENT` with the nesting count; a
+test with a nested comment in an argument list and a `/*` inside a string.
+
 ## 3. Upkeep
 
 ### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect

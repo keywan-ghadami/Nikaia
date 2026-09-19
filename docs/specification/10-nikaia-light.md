@@ -86,10 +86,15 @@ override those two for a single build ([ADR-037](adr/adr-037.md),
 
 ## Chapter 2: Variables and Data Types
 
-A **comment** begins with `//` and runs to the end of the line. That is the only
-form. There is no block comment — `/* … */` is not one, and does not parse — and
-no doc comment: a `///` is an ordinary comment whose first character happens to
-be a slash.
+A **comment** begins with `//` and runs to the end of the line, or begins with
+`/*` and runs to the matching `*/` — across lines, anywhere whitespace may
+stand, and **nested**: `/* a /* b */ c */` is one comment, so a block that
+already holds one can be commented out ([ADR-134](adr/adr-134.md)). An unclosed
+`/*` is reported where it opened. There is no doc comment: `///` and `/** … */`
+are ordinary comments that happen to begin so.
+
+> **Status:** the block comment is not built; `/*` is a parse error
+> ([ADR-134](adr/adr-134.md) §5).
 
 ### 2.1. Variables and Assignment
 A **Variable** is a named storage location in memory that holds a value. In Nikaia, variables are declared using the `let` keyword.
@@ -128,6 +133,15 @@ inside a function body (Part II, 10.2). The word every neighbouring language
 uses, `const`, would say *this one does not change*, and 2.1 already gives that
 to every binding that does not say `mut`; what the declaration promises is a
 **time**, and `comptime` says so ([ADR-077](adr/adr-077.md)).
+
+**`_` is not a name; it is the ignore pattern** ([ADR-126](adr/adr-126.md)). It
+stands where a name would be bound and says that the value is ignored on
+purpose: a position of a destructured tuple (`let (name, _) = pair()`), a
+parameter a shape dictates (`fn handle(event: Event, _: Context)`, `fn(_,
+value) { … }`), and a `match` arm. `let _ = expr` is refused — a call made for
+its effect is written as the call, and a resource is closed by name — and `_`
+is never a value. What it ignores is not moved, so a `let` over a place stays a
+view of it (6.5). **Not built** beyond the `match` arm.
 
 **`with` is on the list for its construct**: a copy of a value with named
 fields changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
@@ -562,6 +576,23 @@ let status = if age >= 18 {
 }
 ```
 
+After `else`, an `if` may stand where the block would — **`else if`** — and
+a chain is one `if` inside another with the inner braces left out, so every
+rule of `if` holds at every link ([ADR-132](adr/adr-132.md)):
+
+```nika
+let grade = if score >= 90 {
+    "A"
+} else if score >= 80 {
+    "B"
+} else {
+    "C"
+}
+```
+
+> **Status:** `else if` is not built; it is a parse error today
+> ([ADR-132](adr/adr-132.md) §5).
+
 **A condition is an ordinary expression — every one the language has**, with the
 same operators, the same precedence and the same associativity as anywhere else
 ([ADR-087](adr/adr-087.md) D1). `&&`, `||`, `!`, `??`, `as`, `null`, a tuple, a
@@ -760,7 +791,7 @@ A pattern is one of six things, and each is read the way it is written:
 
 | pattern | matches |
 | :--- | :--- |
-| `_` | anything, and binds nothing |
+| `_` | anything, and binds nothing — the **ignore pattern**, which also stands in a tuple position and as a parameter ([ADR-126](adr/adr-126.md)) |
 | `1`, `"text"`, `true`, `'n'` | that value |
 | `Op::Times` | that variant |
 | `Message::Write(text)` | that variant, binding what it carries |
@@ -1135,6 +1166,15 @@ request("https://api.com"; method: "POST", timeout: 5)  // in any order
 // request("https://api.com", 60)      // a positional argument in the named zone
 // request("https://api.com"; timout: 5)  // error[NK1109]: no option `timout`
 ```
+
+**The `;` stands between the two zones, and where one is empty it is not
+written** ([ADR-133](adr/adr-133.md)). A function whose parameters are all
+options is declared `fn execute(target_age: i64 = 0)` and called
+`execute(target_age: 30)`; `execute(; target_age: 30)` is refused, so there is
+one spelling. A mixed call keeps its `;`, and keeps it required.
+
+> **Status:** the options-only form is not built; today it needs the leading
+> `;` ([ADR-133](adr/adr-133.md) §5).
 
 **Every configuration parameter has a default**, and that is what makes it an
 *option*: a caller may leave it out, and leaving it out is never a question
