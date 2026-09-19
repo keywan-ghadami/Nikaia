@@ -39,9 +39,7 @@ Six shapes, none built; `calc.nika` matches `step.0` because it cannot match
 whether a guard is `if` (Rust) and whether a range pattern is `1..=5`
 (Rust) or `1..5` inclusive as the language's own `for` range is not — the
 language's `..` is exclusive, and a pattern reader from Rust expects `..=`.
-*Recommendation:* `if` for the guard; `..=` for an inclusive range pattern,
-`..` never in a pattern, so that the exclusive range and the pattern cannot
-be confused.
+*Recommendation*: if for the guard; .. for the inclusive range pattern, with ..< adopted across the language for exclusive ranges; ..< never in a pattern, so that patterns remain purely inclusive and visually clean.
 
 ### 4. A bare `throw` as a `match` arm
 
