@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.34] — 2026-09-19
+
+The build-time evaluator gets a loop, which is `open-work.md` §2.9's second step.
+
+### Added ([ADR-073](docs/specification/adr/adr-073.md) D5's second stage, continued)
+
+- **A build-time body may loop.** A `for` over a range — `0..n` and `0..=n` — a `while`, `break`, `continue`, and an assignment, because a loop that cannot change anything is not a loop. `fn total(n: i64) -> i64 { let mut t = 0  for i in 0..n { t += i }  return t }` is a function a `comptime` may call now, and `comptime SIX = total(4)` arrives as `const SIX: i32 = 6;`.
+- **What it took was a third answer from a block.** A block used to mean *a value, or an error*; a loop's body is neither — it runs to its end and produces nothing, which is ordinary rather than a failure. `Flow` names the four ways a block ends (a value, fell through, broke, continued), and the frame is passed by reference now because a `for` has to see what its body assigned on the last turn.
+- **And that fixed a shape the `if` had wrong.** `if i > limit { break }` is the *last* statement of its block and hands back no value at all, so reading a last `Stmt::Expr` as *the block's value* refused it. An `if` is a statement here wherever it stands, and what its branch does — fall through, return, break, continue — decides what the block does.
+- **[ADR-075](docs/specification/adr/adr-075.md) D4 is unchanged and stays deliberate:** there is **no step budget**, so a `while` that does not end hangs the build. That is the cost the record accepted. The call *depth* stays bounded, which is the different failure it did not: a recursion without a base case would take this compiler's own stack down with it.
+- **The loop's name does not outlive the loop** (Part I 3.3), which matters here because the frame is now shared: a `for` binding is removed when the loop ends, so a body that reads it afterwards is unevaluable rather than answered with the last turn's number.
+- *Six tests* in `crates/nikaia/tests/build_time.rs`, thirteen there now: both ranges, a `while` whose turns nothing counts, `break` and `continue` in one body, a `return` that leaves the function from inside a loop, and the binding that does not leak.
+
+### Changed (what the refusal says is not in the stage)
+
+- **`NK1127`'s note named the loop as the thing that is missing.** It is not, any more. What is missing is a **value**: a `comptime` hands the language below what Rust's `const` can hold, and today that is one integer or one `bool` — so a list a loop built has nowhere to arrive. The note and Part II 10.2's status paragraph now say that, and `open-work.md` §2.9 records what `push` waits on: [ADR-135](docs/specification/adr/adr-135.md) and [ADR-152](docs/specification/adr/adr-152.md), which are what give a list a type it can cross in.
+
 ## [0.0.33] — 2026-09-19
 
 The build-time evaluator gets a call, which three records have been waiting on.

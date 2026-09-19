@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.33 (Draft)
+**Version:** 0.0.34 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -105,13 +105,20 @@ fn parse_input(input: String) throws {
 > What the initialiser may hold is D5's **second** stage: an integer or a
 > `bool` — literals, arithmetic and comparisons over them and over other
 > constants, an `if` — and a **call** to a function of this program whose body is
-> made of those, including a recursion with a base case. What a called body may
+> made of those, including a recursion with a base case and **a loop**: a `for`
+> over a range, a `while`, `break` and `continue`. What a called body may
 > do is [ADR-075](adr/adr-075.md)'s two ledger columns: it must be `sync` and
 > touch nothing but the build's own parameters, and `NK1152` is what a callee
-> that fails either gets.
+> that fails either gets. There is **no step budget** on the loop, deliberately
+> and with the cost written down ([ADR-075](adr/adr-075.md) D4): a `while` that
+> does not end hangs the build. What is bounded is the call *depth*, which is a
+> different thing — an unbounded recursion would take this compiler's own stack
+> down with it, and that is not the hang D4 accepted.
 >
-> **A loop is not in it**, which is why `Json::value(asset("…"))` above still
-> runs at runtime wherever it is written: running a *grammar* while the program
+> **A value that is not one number or one `bool` is not in it**, which is why
+> `Json::value(asset("…"))` above still runs at runtime wherever it is written:
+> what a `comptime` can carry across is what Rust's `const` can hold, so a list
+> that a loop built has nowhere to arrive. Running a *grammar* while the program
 > is built is a different piece again, and it is compiling the generated parser
 > rather than interpreting the grammar — `docs/open-work.md` says why. A
 > `comptime` binding this compiler cannot evaluate is `NK1127` rather than a
@@ -125,8 +132,8 @@ fn parse_input(input: String) throws {
 > refused by its *type* rather than by its parse. A map that crosses is a **fixed**
 > map, because a closed key set is what a perfect hash needs and the crossing is
 > where it closes; how it is looked up is then the compiler's, the way a map's
-> hasher already is. None of that is built — what is missing is an evaluator that
-> can loop and `push`.
+> hasher already is. None of that is built — the evaluator can loop now, and what
+> is still missing is `push` and an aggregate value for it to build.
 >
 > **The call form above is built** ([ADR-082](adr/adr-082.md) D1, D2): a grammar
 > name stands where a callee stands, every `pub` rule is an entry, and the old

@@ -150,24 +150,131 @@ fn a_callee_from_elsewhere_is_unevaluable() {
     assert_eq!(found[0].code, "NK1127", "{found:#?}");
 }
 
-/// **A loop is not in it yet**, which is `open-work.md` §2.9's second step —
-/// and the note says so rather than leaving a reader to find out.
+/// **A `for` over a range**, which is `open-work.md` §2.9's second step: the
+/// loop the evaluator used to refuse.
 #[test]
-fn a_loop_is_still_unevaluable_and_the_note_says_which_stage() {
+fn a_for_over_a_range_is_evaluated() {
+    let source = "fn total(n: i64) -> i64 {\n\
+                  \x20   let mut t = 0\n\
+                  \x20   for i in 0..n { t += i }\n\
+                  \x20   return t\n\
+                  }\n\
+                  comptime SIX = total(4)\n\
+                  fn main() { println(f\"{SIX}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const SIX: i32 = 6;"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **`..<` and the inclusive range are different loops**, and the evaluator
+/// reads the end the same way the emitter does rather than assuming one.
+#[test]
+fn an_inclusive_range_counts_one_further() {
+    let source = "fn total(n: i64) -> i64 {\n\
+                  \x20   let mut t = 0\n\
+                  \x20   for i in 0..=n { t += i }\n\
+                  \x20   return t\n\
+                  }\n\
+                  comptime TEN = total(4)\n\
+                  fn main() { println(f\"{TEN}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const TEN: i32 = 10;"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **A `while`**, which is the loop
+/// [ADR-075](../../../docs/specification/adr/adr-075.md) D4 said would get no
+/// step budget: this one ends because its body ends it, and nothing here
+/// counted the turns.
+#[test]
+fn a_while_is_evaluated_and_nothing_counts_its_turns() {
+    let source = "fn halvings(n: i64) -> i64 {\n\
+                  \x20   let mut left = n\n\
+                  \x20   let mut steps = 0\n\
+                  \x20   while left > 1 {\n\
+                  \x20       left = left / 2\n\
+                  \x20       steps += 1\n\
+                  \x20   }\n\
+                  \x20   return steps\n\
+                  }\n\
+                  comptime STEPS = halvings(64)\n\
+                  fn main() { println(f\"{STEPS}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const STEPS: i32 = 6;"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **`break` leaves the loop and `continue` starts its next turn**, and the two
+/// are separate statements here for the reason the tree keeps them separate:
+/// one ends a loop and one does not.
+#[test]
+fn break_and_continue_are_both_read() {
+    let source = "fn first_over(limit: i64) -> i64 {\n\
+                  \x20   let mut found = 0\n\
+                  \x20   for i in 0..100 {\n\
+                  \x20       if i % 3 != 0 { continue }\n\
+                  \x20       if i > limit {\n\
+                  \x20           found = i\n\
+                  \x20           break\n\
+                  \x20       }\n\
+                  \x20   }\n\
+                  \x20   return found\n\
+                  }\n\
+                  comptime FOUND = first_over(10)\n\
+                  fn main() { println(f\"{FOUND}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const FOUND: i32 = 12;"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **A `return` out of a loop leaves the function**, not the loop — which is
+/// the one way a loop's body hands a value back at all, since
+/// [ADR-151](../../../docs/specification/adr/adr-151.md) D1 says `break`
+/// carries none.
+#[test]
+fn a_return_inside_a_loop_leaves_the_function() {
+    let source = "fn first_square_over(limit: i64) -> i64 {\n\
+                  \x20   for i in 0..100 {\n\
+                  \x20       if i * i > limit { return i }\n\
+                  \x20   }\n\
+                  \x20   return 0\n\
+                  }\n\
+                  comptime ROOT = first_square_over(50)\n\
+                  fn main() { println(f\"{ROOT}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const ROOT: i32 = 8;"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **The loop's name does not outlive the loop**, which is Part I 3.3's rule
+/// and matters here because the evaluator's frame is shared between a loop and
+/// the body around it.
+#[test]
+fn the_loops_binding_does_not_outlive_it() {
     let found: Vec<_> = findings(
-        "fn total(n: i64) -> i64 {\n\
-         \x20   let mut t = 0\n\
-         \x20   for i in 0..n { t += i }\n\
-         \x20   return t\n\
+        "fn leaks() -> i64 {\n\
+         \x20   for i in 0..3 { }\n\
+         \x20   return i\n\
          }\n\
-         comptime N = total(4)\n",
+         comptime N = leaks()\n",
     )
     .into_iter()
-    .filter(|f| f.code == "NK1127")
+    .filter(|f| f.code == "NK1127" || f.code == "NK1152")
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(
-        found[0].notes.join(" ").contains("A loop is not in it yet"),
-        "{found:#?}"
-    );
 }

@@ -9,7 +9,15 @@
 //! [ADR-072](../../../docs/specification/adr/adr-072.md) waits behind.
 //!
 //! Q4 **is** answered — [ADR-075](../../../docs/specification/adr/adr-075.md)
-//! D1 and D2 say what a build-time body may do — so this is the call.
+//! D1 and D2 say what a build-time body may do — so this is the call, and with
+//! it the **loop**: a `for` over a range, a `while`, `break`, `continue` and an
+//! assignment, because a loop that cannot change anything is not one.
+//!
+//! **What a block means had to grow a third answer.** It used to be *a value or
+//! an error*; a loop's body is neither — it runs to its end and produces
+//! nothing, which is ordinary — so [`Flow`] names the four ways out and the
+//! frame is shared rather than owned, since a `for` has to see what its body
+//! assigned on the last turn.
 //!
 //! **What bounds it is a ledger column and not a list of allowed functions.** A
 //! callee must be `sync` (D1) and its touch set must be empty or exactly the
@@ -37,6 +45,22 @@ use crate::parser::Parsed;
 /// is what that record accepted; what this prevents is a *recursion* that takes
 /// the compiler's stack down with it, which it did not.
 const DEEPEST: usize = 128;
+
+/// How a block ended.
+///
+/// Four ways, and the evaluator needed all four the moment it gained a loop: a
+/// block that **falls through** has no value and is not an error — it is a
+/// loop's body between turns — where before this a block with no value was the
+/// only thing `Unevaluable` could mean.
+#[derive(Debug, Clone, Copy)]
+enum Flow {
+    /// A `return`, or a last statement that is a value.
+    Value(Value),
+    /// Ran to the end and produced nothing.
+    Fell,
+    Broke,
+    Continued,
+}
 
 /// What a build-time expression came to.
 ///
@@ -128,14 +152,25 @@ impl<'a> BuildTime<'a> {
                 cond,
                 then_branch,
                 else_branch,
-            } => match self.expr(cond, frame)? {
-                Value::Bool(true) => self.block(then_branch, frame.clone()),
-                Value::Bool(false) => match else_branch {
-                    Some(block) => self.block(block, frame.clone()),
-                    None => Err(Refusal::Unevaluable),
-                },
-                Value::Int(_) => Err(Refusal::Unevaluable),
-            },
+            } => {
+                let taken = match self.expr(cond, frame)? {
+                    Value::Bool(true) => Some(then_branch),
+                    Value::Bool(false) => else_branch.as_ref(),
+                    Value::Int(_) => return Err(Refusal::Unevaluable),
+                };
+                // **The branch gets a frame of its own**, because an `if` in
+                // value position is not a place a name is assigned from: what
+                // the branch writes is the branch's, and what it hands back is
+                // the value.
+                let Some(block) = taken else {
+                    return Err(Refusal::Unevaluable);
+                };
+                let mut inner = frame.clone();
+                match self.block(block, &mut inner)? {
+                    Flow::Value(value) => Ok(value),
+                    Flow::Fell | Flow::Broke | Flow::Continued => Err(Refusal::Unevaluable),
+                }
+            }
             Expr::Call { func, args, config } if config.is_empty() => {
                 let Expr::Variable(name) = func.as_ref() else {
                     return Err(Refusal::Unevaluable);
@@ -177,6 +212,16 @@ impl<'a> BuildTime<'a> {
         }
         let left = self.expr(lhs, frame)?;
         let right = self.expr(rhs, frame)?;
+        self.operate(op, left, right)
+    }
+
+    /// An operator on two values already in hand.
+    ///
+    /// **Split out of [`binary`](Self::binary) for `+=`**, whose left side is a
+    /// name that is already bound: re-evaluating it as an expression would read
+    /// it a second time, which is the same answer here and would stop being one
+    /// the moment a left side can call anything.
+    fn operate(&self, op: BinaryOp, left: Value, right: Value) -> Result<Value, Refusal> {
         match (left, right) {
             (Value::Int(a), Value::Int(b)) => match op {
                 BinaryOp::Add => a.checked_add(b).map(Value::Int),
@@ -196,6 +241,8 @@ impl<'a> BuildTime<'a> {
             (Value::Bool(a), Value::Bool(b)) => match op {
                 BinaryOp::Eq => Ok(Value::Bool(a == b)),
                 BinaryOp::Ne => Ok(Value::Bool(a != b)),
+                BinaryOp::And => Ok(Value::Bool(a && b)),
+                BinaryOp::Or => Ok(Value::Bool(a || b)),
                 _ => Err(Refusal::Unevaluable),
             },
             _ => Err(Refusal::Unevaluable),
@@ -248,15 +295,21 @@ impl<'a> BuildTime<'a> {
         if args.len() != given.len() {
             return Err(Refusal::Unevaluable);
         }
-        let frame: BTreeMap<String, Value> = args
+        let mut frame: BTreeMap<String, Value> = args
             .iter()
             .map(|name| name.to_string())
             .zip(given.iter().copied())
             .collect();
         self.depth += 1;
-        let out = self.block(&body, frame);
+        let out = self.block(&body, &mut frame);
         self.depth -= 1;
-        out
+        // A body that fell off its end has no value, and a `break` or a
+        // `continue` outside a loop is not a body this evaluator reads — the
+        // checker refuses both long before here, and neither is a value.
+        match out? {
+            Flow::Value(value) => Ok(value),
+            Flow::Fell | Flow::Broke | Flow::Continued => Err(Refusal::Unevaluable),
+        }
     }
 
     /// The parameters and the body of a function this unit declares.
@@ -291,13 +344,17 @@ impl<'a> BuildTime<'a> {
         })
     }
 
-    /// A body: `let`s, an early `return`, and a last statement that is the
-    /// value — which is Part I 3.1's rule for every block, read here.
+    /// A body: `let`s, an early `return`, a loop, and a last statement that is
+    /// the value — which is Part I 3.1's rule for every block, read here.
+    ///
+    /// **The frame is by reference now, and a loop is why.** A body used to get
+    /// a fresh map it owned; a `for` has to see what its body assigned on the
+    /// last turn, and a `while` has to see what its condition reads.
     fn block(
         &mut self,
         block: &Block,
-        mut frame: BTreeMap<String, Value>,
-    ) -> Result<Value, Refusal> {
+        frame: &mut BTreeMap<String, Value>,
+    ) -> Result<Flow, Refusal> {
         let last = block.stmts.len().saturating_sub(1);
         for (at, stmt) in block.stmts.iter().enumerate() {
             match &stmt.node {
@@ -305,35 +362,138 @@ impl<'a> BuildTime<'a> {
                     let [name] = names.as_slice() else {
                         return Err(Refusal::Unevaluable);
                     };
-                    let value = self.expr(value, &frame)?;
+                    let value = self.expr(value, frame)?;
                     frame.insert(self.parsed.text(*name).to_string(), value);
                 }
-                Stmt::Return(Some(value)) => return self.expr(value, &frame),
-                Stmt::Expr(expr) if at == last => return self.expr(expr, &frame),
-                // **An `if` that returns out of both arms is a body's shape**,
-                // and it is not the last statement — `if n < 2 { return 1 }`
-                // followed by the rest is how a base case is written.
+                // A `comptime` inside a body is a `let` that must fold
+                // ([ADR-073](../../../docs/specification/adr/adr-073.md) D2),
+                // and inside a build-time body everything must, so the two are
+                // the same statement here.
+                Stmt::Comptime { name, value, .. } => {
+                    let value = self.expr(value, frame)?;
+                    frame.insert(self.parsed.text(*name).to_string(), value);
+                }
+                Stmt::Assign { target, op, value } => {
+                    let Expr::Variable(name) = target else {
+                        return Err(Refusal::Unevaluable);
+                    };
+                    let name = self.parsed.text(*name).to_string();
+                    let given = self.expr(value, frame)?;
+                    let next = match op {
+                        None => given,
+                        Some(op) => {
+                            let held = frame.get(&name).copied().ok_or(Refusal::Unevaluable)?;
+                            self.operate(*op, held, given)?
+                        }
+                    };
+                    if !frame.contains_key(&name) {
+                        return Err(Refusal::Unevaluable);
+                    }
+                    frame.insert(name, next);
+                }
+                Stmt::Return(Some(value)) => return Ok(Flow::Value(self.expr(value, frame)?)),
+                Stmt::Break => return Ok(Flow::Broke),
+                Stmt::Continue => return Ok(Flow::Continued),
+                Stmt::For {
+                    bindings,
+                    iter,
+                    body,
+                } => {
+                    let flow = self.walk(bindings, iter, body, frame)?;
+                    if let Flow::Value(_) = flow {
+                        return Ok(flow);
+                    }
+                }
+                Stmt::While { cond, body } => {
+                    // **No step budget**
+                    // ([ADR-075](../../../docs/specification/adr/adr-075.md)
+                    // D4), deliberately and with the cost written down: a
+                    // `while` that does not end hangs the build. The call-depth
+                    // limit above is not this and does not become it.
+                    loop {
+                        match self.expr(cond, frame)? {
+                            Value::Bool(true) => {}
+                            Value::Bool(false) => break,
+                            Value::Int(_) => return Err(Refusal::Unevaluable),
+                        }
+                        match self.block(body, frame)? {
+                            Flow::Value(value) => return Ok(Flow::Value(value)),
+                            Flow::Broke => break,
+                            Flow::Fell | Flow::Continued => {}
+                        }
+                    }
+                }
+                // **An `if` is read as a statement here whatever its
+                // position**, which is what a loop's body needs: `if i > n
+                // { break }` is the last statement of its block and hands back
+                // no value at all. A branch that falls through carries on; one
+                // that returns, breaks or continues ends the block.
                 Stmt::Expr(Expr::If {
                     cond,
                     then_branch,
                     else_branch,
                 }) => {
-                    let taken = match self.expr(cond, &frame)? {
+                    let taken = match self.expr(cond, frame)? {
                         Value::Bool(true) => Some(then_branch),
                         Value::Bool(false) => else_branch.as_ref(),
                         Value::Int(_) => return Err(Refusal::Unevaluable),
                     };
                     if let Some(block) = taken {
-                        if returns_out(block) {
-                            return self.block(block, frame.clone());
+                        match self.block(block, frame)? {
+                            Flow::Fell => {}
+                            other => return Ok(other),
                         }
-                        return Err(Refusal::Unevaluable);
                     }
                 }
+                Stmt::Expr(expr) if at == last => return Ok(Flow::Value(self.expr(expr, frame)?)),
                 _ => return Err(Refusal::Unevaluable),
             }
         }
-        Err(Refusal::Unevaluable)
+        Ok(Flow::Fell)
+    }
+
+    /// A `for` over a range, which is the one shape a build-time loop has: a
+    /// list needs a value this evaluator does not carry yet, and that is
+    /// `docs/open-work.md` §2.9's next step rather than this one's.
+    fn walk(
+        &mut self,
+        bindings: &[winnow_grammar::Symbol],
+        iter: &Expr,
+        body: &Block,
+        frame: &mut BTreeMap<String, Value>,
+    ) -> Result<Flow, Refusal> {
+        let [binding] = bindings else {
+            return Err(Refusal::Unevaluable);
+        };
+        let Expr::Range {
+            start,
+            end,
+            inclusive,
+        } = iter
+        else {
+            return Err(Refusal::Unevaluable);
+        };
+        let (Value::Int(start), Value::Int(end)) =
+            (self.expr(start, frame)?, self.expr(end, frame)?)
+        else {
+            return Err(Refusal::Unevaluable);
+        };
+        let name = self.parsed.text(*binding).to_string();
+        let mut at = start;
+        while if *inclusive { at <= end } else { at < end } {
+            frame.insert(name.clone(), Value::Int(at));
+            match self.block(body, frame)? {
+                Flow::Value(value) => return Ok(Flow::Value(value)),
+                Flow::Broke => break,
+                Flow::Fell | Flow::Continued => {}
+            }
+            at = at.checked_add(1).ok_or(Refusal::Unevaluable)?;
+        }
+        // **The binding does not outlive the loop**, which is Part I 3.3's rule
+        // and matters here because the frame is shared: a name the loop bound
+        // must not be readable after it.
+        frame.remove(&name);
+        Ok(Flow::Fell)
     }
 }
 
@@ -346,16 +506,4 @@ impl<'a> BuildTime<'a> {
 /// is for.
 fn is_the_builds_own(touch: &touch::Touch) -> bool {
     touch.text() == "args read"
-}
-
-/// Whether every path out of this block is a `return`.
-///
-/// Read rather than assumed, because a branch that falls through has a value
-/// this evaluator would have to carry past the `if` — which is a shape the
-/// staging leaves for later rather than one to guess at.
-fn returns_out(block: &Block) -> bool {
-    matches!(
-        block.stmts.last().map(|s| &s.node),
-        Some(Stmt::Return(Some(_)))
-    )
 }

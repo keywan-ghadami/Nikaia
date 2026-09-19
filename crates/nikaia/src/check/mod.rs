@@ -7351,9 +7351,11 @@ impl<'a> Checker<'a> {
                         .to_string(),
                     "what it evaluates today is an integer or a `bool` - a literal, \
                          arithmetic and comparisons over literals and over other \
-                         constants, an `if`, and a **call** to a function of this program \
-                         whose body is made of those (ADR-073 D5's second stage). A loop \
-                         is not in it yet, and neither is text"
+                         constants, an `if`, a **call** to a function of this program \
+                         whose body is made of those, and a `for` over a range or a \
+                         `while` inside such a body (ADR-073 D5's second stage). Text is \
+                         not in it yet, and neither is a value that is not one number or \
+                         one `bool`"
                         .to_string(),
                 ],
                 help: Some(format!(
