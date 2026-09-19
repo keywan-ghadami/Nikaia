@@ -241,6 +241,31 @@ pub fn infer(
                         );
                     }
                 }
+                // **A grammar's `pub` rules are leaves too, and they hold**
+                // ([ADR-142](../../../docs/specification/adr/adr-142.md) D1, D2).
+                // An entry has no body in this graph's sense — its action blocks
+                // are checked rather than walked here — and an action may not
+                // pause, so the entry is `sync` and a caller keeps its own claim.
+                //
+                // **Inserted for the reason the trait leaf above is**: without an
+                // entry the callee is absent from `holds` and `unwrap_or(false)`
+                // reads that as *pauses*, which is what made every function that
+                // parses `async` the day
+                // [ADR-140](../../../docs/specification/adr/adr-140.md) D3 turned
+                // the entry into a call by name.
+                Item::Grammar(def) => {
+                    let grammar = parsed.text(def.name).to_string();
+                    for rule in def.rules.iter().filter(|r| r.is_public) {
+                        graph.insert(
+                            format!("{grammar}::{}", parsed.text(rule.name)),
+                            Reach {
+                                blocked: false,
+                                calls: BTreeSet::new(),
+                                runs: None,
+                            },
+                        );
+                    }
+                }
                 _ => {}
             }
         }

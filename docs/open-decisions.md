@@ -1,8 +1,9 @@
 # Open decisions — the questions that need the owner
 
-**Three entries are open**, below, and all three were found by *building*
-rather than by reading — which is the only way this file ever fills up once its
-reading-questions are answered. An answer is an [ADR](specification/adr/), and
+**Two entries are open**, below, and both were found by *building* rather than
+by reading — which is the only way this file fills up once its reading-questions
+are answered. A third left it the day it arrived:
+[ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*. An answer is an [ADR](specification/adr/), and
 the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
 [`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
@@ -11,64 +12,7 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-### 1. May a grammar's action pause?
-
-**Found by building [ADR-140](specification/adr/adr-140.md) D3, and it is a
-defect as well as a question.** A rule's action is arbitrary Nikaia, so it may
-call something that pauses — and this compiler accepts it and emits `.await`
-inside the synchronous parser the `grammar!` macro writes:
-
-```nika
-grammar Nums {
-    pub rule number -> i64 = d:dec[i64](digit+) -> { let t = io::read_to_string() return d }
-}
-```
-
-```text
-error: `await` is only allowed inside `async` functions and blocks
-```
-
-The backend's words about a construct this compiler let through, relayed onto
-the `.nika` line ([ADR-056](specification/adr/adr-056.md)) but still the
-backend's.
-
-**What is blocked:** the `sync` half of [`open-work.md`](open-work.md) §1.1. A
-grammar entry's contract carries no `sync`, so since D3 made the entry a call by
-name every function that parses is `async` — `examples/inventory`'s `read` is
-the measured case. If an action may **not** pause, an entry is `sync` by
-construction and there is nothing to derive; if it may, the derivation has to
-read every action of every `pub` rule, and the entry's column follows the worst
-of them.
-
-*The options.*
-
-1. **An action may not pause**, which is `sync` demanded of it the way
-   [ADR-050](specification/adr/adr-050.md) demands it of an `overlap` branch and
-   Part II 12.6 of a `par_iter` lambda. The refusal is at the action, in this
-   compiler's words, and the entry is `sync` with no inference at all.
-   *Costs:* one check over the action blocks, and a rule a program cannot get
-   round — a parse that wants to read a file mid-rule has to be two passes.
-2. **An action may pause**, and the generated parser becomes `async`. *Costs:*
-   `winnow-grammar` is synchronous and its driver is, so this is a change in a
-   dependency before it is a change here; and `@frame`'s parallel parse
-   ([ADR-009](specification/adr/adr-009.md)) would have to say what an `async`
-   piece means.
-3. **Leave it**, and the program is refused by the backend. *Costs:*
-   [Part III C.1](specification/30-nikaia-tooling.md) for a shape the language
-   allows, which is the class this compiler exists to close.
-
-*Recommendation:* **option 1.** A parser is computation over bytes that are
-already there — that is what makes `@frame`'s parallel parse sound at all — and
-nothing in `examples/`, in `tests/` or in `std` writes an action that pauses.
-It is the cheap answer *today* and the one that keeps the door open: an action
-that may pause can be allowed later without breaking a program, where taking it
-away could not.
-
-*If it is wrong:* option 1 spent is one check and one message, deleted the day
-option 2 lands. Option 2 spent first is work in a dependency for a program
-nobody has written.
-
-### 2. A name that is both a type and a function
+### 1. A name that is both a type and a function
 
 **Found by building [ADR-140](specification/adr/adr-140.md) D1**, and
 [ADR-133](specification/adr/adr-133.md)'s own open question had named the shape:
@@ -116,7 +60,7 @@ always right.
 *If it is wrong:* option 1 spent is a refusal that has to be lifted before
 option 2 could be taken, and nothing in the corpus would notice either way.
 
-### 3. The order of the five big unchecked boxes
+### 2. The order of the five big unchecked boxes
 
 **Written down from a truncated sentence, which is why it is back here.** This
 file's old §8 asked for the order among the HTTP server, `std::db`, the C
@@ -257,7 +201,11 @@ bringing nothing in — which also freed
 was the construct it collided with) and
 [ADR-141](specification/adr/adr-141.md) (six of the specification's nine slips
 corrected on the page and the three that are **constructs** marked *unspecified*
-in place, with the mark given a definition beside the **Status** note's). Each record
+in place, with the mark given a definition beside the **Status** note's) and
+[ADR-142](specification/adr/adr-142.md) (a grammar's action may not pause — the
+entry that arrived and left in one round, because the answer was the demand an
+`overlap` branch and a `par_iter` lambda already carry and the corpus wrote
+nothing that would have to change). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.

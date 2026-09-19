@@ -103,6 +103,15 @@ proved that: six examples write `dsl … from … catch { … }`, which can fail
 [ADR-023](specification/adr/adr-023.md) D9 and carries no contract to say so,
 and all six were refused the first time the refusal ran over `examples/`.
 
+And **a grammar action that pauses, lowered to invalid Rust** — a rule's action
+is arbitrary Nikaia, so it could call something that pauses, and nothing refused
+it: `.await` went into the synchronous parser the `grammar!` macro generates and
+the backend answered *`await` is only allowed inside `async` functions*. It
+waited on a **ruling** rather than on work, and the ruling is
+[ADR-142](specification/adr/adr-142.md) D1 — an action may not pause, which is
+the demand an `overlap` branch and a `par_iter` lambda already carry, in the
+place a parser needs it. `NK2209`.
+
 And **a method call's options, dropped on the way to the language below** —
 `q.execute(target_age: 30)` came out as `q.execute()`, because the emitter fills
 options from the callee's contract and finding a *method's* entry means resolving
@@ -118,8 +127,8 @@ Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**Two entries, below, and both arrived by building something else.** Before them
-this section was empty, and the last entry to leave it was wrong on both of its
+**One entry, below, and it arrived by building something else.** Before it this
+section was empty, and the last entry to leave it was wrong on both of its
 claims. It said an
 accessor cannot hand back a **view** of a field and that the lowering names no
 lifetime. Neither is true, and both were checkable in a minute:
@@ -257,36 +266,7 @@ running the corpus is not a reason to leave a defect open**, and this one had
 been open since the record that named it.
 
 
-### 1.1. A grammar action that pauses lowers to invalid Rust
-
-**Found by probing the entry below**, and it is the other half of it. A rule's
-action is arbitrary Nikaia, so it may call something that pauses — and nothing
-refuses that, so `.await` is emitted inside the synchronous parser the
-`grammar!` macro writes:
-
-```nika
-grammar Nums {
-    pub rule number -> i64 = d:dec[i64](digit+) -> { let t = io::read_to_string() return d }
-}
-```
-
-```text
-error: /tmp/probe/src/main.nika:2:54: `await` is only allowed inside `async`
-       functions and blocks
-```
-
-The backend's words about a construct this compiler let through — relayed onto
-the `.nika` line ([ADR-056](specification/adr/adr-056.md)), which is what keeps
-it from being [Part III C.1](specification/30-nikaia-tooling.md) at its worst,
-and still the backend's.
-
-**It waits on a ruling and not on work**, which is why the fix is one line
-either way and is not written yet: whether an action may pause at all is
-[`open-decisions.md`](open-decisions.md) §1, with the options and a
-recommendation. Nothing in `examples/`, in `tests/` or in `std` writes such an
-action, which is what makes the question free to answer.
-
-### 1.2. A grammar's entry claims nothing, and every caller inherits that
+### 1.1. A grammar's entry claims nothing, and every caller inherits that
 
 **Found by building [ADR-140](specification/adr/adr-140.md) D3**, which is the
 only reason it is visible: a grammar used to be entered through a **method**
@@ -300,23 +280,24 @@ change. `read`, whose body is one `Stock::file(data)`, went from
 `sync = "inferred"`, `keeps = ["data"]`, `touches = []` to none of the three and
 `locks = "?"` — and its lowering went from `pub fn` to `pub async fn`.
 
-**The direction is right and the answer is poor**, which is why this is an entry
-and not a revert. Withholding `sync` on doubt is
+**The direction was right and the answer was poor**, which is why this was an
+entry and not a revert. Withholding a promise on doubt is
 [ADR-010](specification/adr/adr-010.md) D1's polarity, and the *old* answer was
 the analysis failing open: a rule's action is arbitrary Nikaia and could pause,
-and the method shape let the caller keep a promise nobody had derived. What is
-missing is the derivation — a `pub` rule's action blocks are ordinary bodies, so
-`sync`, `keeps`, `touches` and `locks` can be inferred over them and folded into
-the entry the same way a function's are.
+and the method shape let the caller keep a promise nobody had derived.
 
-**Half of it may need no derivation at all.** If an action may not pause —
-[`open-decisions.md`](open-decisions.md) §1, the question §1.1 above raises —
-then an entry is `sync` by construction and only `keeps`, `touches` and `locks`
-are left to infer. So this entry waits on that ruling for its sharpest column
-and can be taken for the other three either way.
+**The sharpest column is answered and the other three are not.**
+[ADR-142](specification/adr/adr-142.md) D1 says an action may not pause, so an
+entry is `sync` by construction and D2 writes the column — `read` is
+`sync = "inferred"` and `pub fn` again. What D1 decided nothing about is what an
+action *keeps*, *touches* or *locks*, so those three are still `?` and still
+want the derivation: a `pub` rule's action blocks are ordinary bodies, and
+`keeps`, `touches` and `locks` can be inferred over them and folded into the
+entry the way a function's are.
 
-*Every example still runs*, at both settings, which is what says this costs
-information rather than correctness.
+*Every example still runs*, at both settings, which is what said this cost
+information rather than correctness — and `sync` has since been paid back in
+full.
 
 ## 2. Decided and unbuilt
 

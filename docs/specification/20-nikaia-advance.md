@@ -468,6 +468,19 @@ and it may read every binding of that alternative. `pub` before `rule` makes
 the rule an entry a call can reach (`Json::value(input)`, [ADR-082](adr/adr-082.md)).
 A rule may take arguments and be used as `list(pair, ",")` is.
 
+**An action may not pause** ([ADR-142](adr/adr-142.md) D1). A call that can is
+refused where it stands, `NK2209`, and a fold's `init`, `step` and `merge` are
+action code for this rule as for every other. It is the demand 12.4's `overlap`
+branch and 12.6's `par_iter` lambda already carry, in the place a parser needs
+it: a parse that can be cut into pieces and run on several cores at once (10.7)
+is one whose steps do not wait on the world — an action that reads a file is a
+second pass wearing a grammar. An action may still **fail**, which is what a
+`pub` rule's `throws` is about, and a grammar may be entered from a body that
+pauses; what is refused is pausing *inside* the parse.
+
+**So an entry is `sync`**, and `nikaia.contracts` says so (D2). A function whose
+body is one `Json::value(text)` keeps its own promise.
+
 **Lexical and syntactic.** A rule whose name starts with an **uppercase**
 letter is lexical: nothing is skipped between its elements. A lowercase name
 is syntactic: the `WS` rule is matched between elements. `WS` defaults to any

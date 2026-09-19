@@ -489,6 +489,7 @@ pub fn check_program(
         set_receiver: None,
         stamped_condition: None,
         inside_a_door: false,
+        inside_an_action: None,
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
@@ -1107,6 +1108,11 @@ struct Checker<'a> {
     /// the lock is open in either of them no code of the program's runs, so
     /// there is nothing that could take a second one.
     inside_a_door: bool,
+    /// The rule whose action is being walked, for
+    /// [ADR-142](../../docs/specification/adr/adr-142.md) D1's refusal - which
+    /// needs the rule's name, because a grammar is a page of rules and a caret
+    /// on a call inside one is not enough to find it.
+    inside_an_action: Option<String>,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -1376,15 +1382,26 @@ impl<'a> Checker<'a> {
                 // `expected`, which is the rule's declared type - what a fold's
                 // `init` and `step` build is the parser backend's arithmetic on
                 // the way to that type, not the type itself.
+                // **An action may not pause**
+                // ([ADR-142](../../docs/specification/adr/adr-142.md) D1), and
+                // a fold's `init`, `step` and `merge` are action code too
+                // ([ADR-092](../../docs/specification/adr/adr-092.md)) - so the
+                // flag is set around both rather than around the block alone.
+                let named = self.parsed.text(rule.name).to_string();
+                let outer_action = self.inside_an_action.replace(named);
                 self.scope.push(frame.iter().map(Local::again).collect());
                 self.folds_in(&alt.pattern.node, &alt.pattern.span);
                 self.scope.pop();
-                let Some(action) = &alt.action else { continue };
+                let Some(action) = &alt.action else {
+                    self.inside_an_action = outer_action;
+                    continue;
+                };
                 let outer = std::mem::replace(&mut self.expected, expected.clone());
                 self.scope.push(frame);
                 let tail_span = action.stmts.last().map(|s| s.span.clone());
                 let tail = self.block(action);
                 self.scope.pop();
+                self.inside_an_action = outer_action;
                 if let (Some(expected), Some(span)) = (&expected, tail_span) {
                     self.expect(&tail, expected, span, "returns", |found, want| {
                         format!("this action builds `{found}`, and its rule declares `{want}`")
@@ -2607,6 +2624,7 @@ impl<'a> Checker<'a> {
         // been awaiting a value rather than a future.
         self.method_pauses(method, !contract.sync.is_sync(), span);
         self.a_call_that_may_pause(contract);
+        self.a_pausing_call_in_an_action(self.parsed.text(method), contract, span);
         // A method call is a written call, so the rule reaches it too
         // (`NK2605`) - and here the receiver's type was known and a
         // ledger described the method, which is the only case this
@@ -4787,6 +4805,7 @@ impl<'a> Checker<'a> {
         self.reachable(&name, contract, span);
         self.may_fail_here(&key, contract, span);
         self.a_call_that_may_pause(contract);
+        self.a_pausing_call_in_an_action(&name, contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
         // whatever its declaration says about `Self`.
@@ -5235,6 +5254,52 @@ impl<'a> Checker<'a> {
         if let Some(handed) = &mut self.handed_over {
             handed.pauses = true;
         }
+    }
+
+    /// **`NK2209`: a call that can pause, inside a grammar's action**
+    /// ([ADR-142](../../docs/specification/adr/adr-142.md) D1).
+    ///
+    /// The demand [ADR-050](../../docs/specification/adr/adr-050.md) makes of an
+    /// `overlap` branch and Part II 12.6 of a `par_iter` lambda, in the place a
+    /// parser needs it: a parse that can be cut into pieces and run on several
+    /// cores at once ([ADR-009](../../docs/specification/adr/adr-009.md)) is one
+    /// whose steps do not wait on the world.
+    ///
+    /// **Asked where both call paths meet**, so the free call and the method
+    /// call are answered by one rule - and **only where the ledger answered**,
+    /// which is every other `sync` rule's convention
+    /// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)): a
+    /// callee nothing describes is not refused, because a refusal on a guess is
+    /// a correct program refused.
+    ///
+    /// Without it the emitter wrote `.await` inside the synchronous parser the
+    /// `grammar!` macro generates, and the backend answered about it.
+    fn a_pausing_call_in_an_action(&mut self, callee: &str, contract: &FnContract, span: &Span) {
+        if contract.sync.is_sync() {
+            return;
+        }
+        let Some(rule) = self.inside_an_action.clone() else {
+            return;
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2209",
+            message: format!("`{rule}`'s action calls `{callee}`, which can pause"),
+            notes: vec![
+                "a grammar's action may not pause (ADR-142 D1): a parser is computation \
+                 over bytes that are already there, which is what makes `@frame`'s parallel \
+                 parse sound (ADR-009) - and the generated parser is an ordinary function, \
+                 so an `.await` inside it is not Rust either"
+                    .to_string(),
+            ],
+            help: Some(
+                "read what the parse needs before the parse and hand it in, or take the \
+                 result apart afterwards - an action that waits on the world is a second \
+                 pass wearing a grammar"
+                    .to_string(),
+            ),
+        });
     }
 
     /// Where a method call stands in ADR-023 D8's propagation, for the emitter

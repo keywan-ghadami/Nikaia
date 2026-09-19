@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.23] — 2026-09-19
+
+The first of the three questions is answered, and answering it pays back what
+[ADR-140](docs/specification/adr/adr-140.md) D3 had cost.
+
+### Added ([ADR-142](docs/specification/adr/adr-142.md): a grammar's action may not pause)
+
+- **`NK2209`.** A rule's action is arbitrary Nikaia, so it could call something that pauses — and nothing refused it: `.await` went into the synchronous parser the `grammar!` macro generates and the backend answered *`await` is only allowed inside `async` functions*, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class for a shape the language allows. The demand is the one [ADR-050](docs/specification/adr/adr-050.md) makes of an `overlap` branch and Part II 12.6 of a `par_iter` lambda, in the place a parser needs it: a parse that can be cut into pieces and run on several cores at once ([ADR-009](docs/specification/adr/adr-009.md)) is one whose steps do not wait on the world.
+- **A fold's `init`, `step` and `merge` are action code too** ([ADR-092](docs/specification/adr/adr-092.md)), so the flag is set around the pattern's lambdas and not around the block alone. Asked at the one place the free call and the method call already meet, and only where the ledger answered — a callee nothing describes is not refused (C.4). The message names the **rule**, because a grammar is a page of rules and a caret on a call inside one is not enough to find it.
+- **So an entry is `sync`, and the ledger says so.** Asserted and not inferred, because it is a rule of the language rather than a property of this grammar.
+
+### Fixed (the `async` ADR-140 D3 had spread through every parsing program)
+
+- **The column was not enough on its own.** The fixpoint in `contracts::sync` reads this unit's call graph, a grammar entry has no node in it, and `holds.get(callee).unwrap_or(false)` reads an absent node as *pauses* — the same trap [ADR-109](docs/specification/adr/adr-109.md) D1's comment names for a trait method, with the same answer: the entry is inserted as a **leaf** that holds. `examples/inventory`'s `read` is `pub fn` again and its ledger says `sync = "inferred"`.
+- **`keeps`, `touches` and `locks` do not come back, and should not.** D1 decided what an action may not do to *time* and nothing about what it keeps or touches, so `read` still has `locks = "?"` — a restriction added on doubt, which is [ADR-010](docs/specification/adr/adr-010.md) D1's polarity the right way round. Those three are the derivation `open-work.md` §1.1 still names, and the record's §4 says so.
+- *Five tests* in `crates/nikaia/tests/grammar_actions.rs`.
+
 ## [0.0.22] — 2026-09-19
 
 `docs/open-decisions.md` was empty for one round. Three questions went back on

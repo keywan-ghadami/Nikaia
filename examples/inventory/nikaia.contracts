@@ -16,11 +16,13 @@ inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 
 [fn."Stock::file"]
 pub = true
+sync = true
 throws = ["?"]
 signature = "(input: ?) -> Vec[Entry]"
 
 [fn."read"]
 pub = true
+sync = "inferred"
 throws = ["?"]
 locks = "?"
 signature = "(data: &str) -> Vec[Entry]"

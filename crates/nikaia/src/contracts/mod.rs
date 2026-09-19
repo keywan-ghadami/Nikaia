@@ -1138,6 +1138,21 @@ impl Ledger {
                                 FnContract {
                                     public: true,
                                     throws: vec![UNNAMED_ERROR.to_string()],
+                                    // **An action may not pause**
+                                    // ([ADR-142](../../../docs/specification/adr/adr-142.md)
+                                    // D1), so every entry is `sync` — asserted
+                                    // and not inferred, because it is a rule of
+                                    // the language rather than a property of
+                                    // this grammar, and `NK2209` is what
+                                    // happens when an action contradicts it.
+                                    //
+                                    // It is also what takes back the `async`
+                                    // that reaching the entry by **name**
+                                    // ([ADR-140](../../../docs/specification/adr/adr-140.md)
+                                    // D3) had spread through every parsing
+                                    // program: a caller reads this column, and
+                                    // before it there was nothing in it.
+                                    sync: Sync::Asserted,
                                     signature: Some(Signature {
                                         mutable: Vec::new(),
                                         // The input, as every entry takes it: the

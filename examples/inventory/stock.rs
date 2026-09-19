@@ -38,7 +38,7 @@ pub struct Entry<'a> {
     pub count: i64,
 }
 
-pub async fn read(data: &str) -> Result<Vec<Entry<'_>>, Box<dyn std::error::Error>> {
+pub fn read(data: &str) -> Result<Vec<Entry<'_>>, Box<dyn std::error::Error>> {
     Ok({
         use winnow::Parser;
         let _source = &*data;
