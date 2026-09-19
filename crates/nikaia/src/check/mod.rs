@@ -502,6 +502,8 @@ pub fn check_program(
             .collect(),
         inside_unsafe: false,
         moved_into_a_task: Vec::new(),
+        walked: Vec::new(),
+        receiver_name: None,
         read_at: Vec::new(),
         written_at: Vec::new(),
         opaque_methods: BTreeSet::new(),
@@ -1005,6 +1007,23 @@ struct Checker<'a> {
     /// reads inside the task's body are the move itself and lie inside that
     /// span, so "after the task" means after the statement closes.
     moved_into_a_task: Vec<(String, Ty, usize)>,
+    /// **A name whose sequence was walked** (`NK2702`,
+    /// [ADR-105](../../docs/specification/adr/adr-105.md) D2): the name, the type
+    /// it held, and the byte the walking statement **ends** on.
+    ///
+    /// `moved_into_a_task`'s shape and for its reason: the question is about what
+    /// comes *after* the walk, and a single pass reaches a later statement later.
+    /// The statement's end and not its start, because the walk itself is a read
+    /// inside that statement.
+    walked: Vec<(String, Ty, usize)>,
+    /// The **name** of the receiver of the method call being walked, where it is
+    /// a plain name ([ADR-105](../../docs/specification/adr/adr-105.md) D2).
+    ///
+    /// `set_receiver`'s arrangement and for its reason: the rule wants the name
+    /// and runs in `call_on`, where the contract is in hand and the receiver's
+    /// expression is not. `None` for a temporary — `map.keys().collect()` walks
+    /// one, and a temporary has no second use to refuse.
+    receiver_name: Option<String>,
     /// Every place a local name was read, by the byte its statement starts at.
     ///
     /// The other half of the same question. Reads and not writes: an assignment
@@ -1554,6 +1573,12 @@ impl<'a> Checker<'a> {
         // **`NK2101`, once the whole body has been seen.** The question is what
         // comes *after* a `spawn`, and a single pass reaches a later statement
         // later - so it is asked here rather than at the `spawn`.
+        // **`NK2702` first, because it borrows what the next one takes**
+        // ([ADR-105](../../docs/specification/adr/adr-105.md) D2). A second walk
+        // is a later statement and a single pass reaches one later, so both
+        // questions are asked here; `a_task_took_what_is_used_again` empties
+        // `read_at`, and this one reads it.
+        self.a_sequence_was_walked_twice();
         self.a_task_took_what_is_used_again();
 
         self.expected = outer;
@@ -2490,6 +2515,16 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         };
         self.reached_method(Some(&key));
+        // **A method that walks a produced sequence consumes it**
+        // ([ADR-105](../../docs/specification/adr/adr-105.md) D2): every `Seq`
+        // entry writes its receiver `(Seq[$T], …)` and not `&Seq[$T]`, so the
+        // signature is what says so rather than a list of method names. A
+        // container's methods take a view and are untouched.
+        if matches!(&on, Ty::Seq { .. }) && walks_by_value(contract) {
+            if let Some(name) = self.receiver_name.clone() {
+                self.walked.push((name, on.clone(), span.end));
+            }
+        }
         // ADR-023 D8: the failure leaves at the call, and the emitter
         // is what writes that. Recorded whether or not the function
         // around it declares `throws` - where it does not, `NK2605`
@@ -3102,6 +3137,11 @@ impl<'a> Checker<'a> {
                 self.the_caller_writes_no_reference(iter, span, "a `for` lends what it iterates");
                 let over = self.expr(iter, span);
                 self.fallible_step(&over, bindings.len(), span);
+                // **A `for` walks a produced sequence, and that consumes it**
+                // ([ADR-105](../../docs/specification/adr/adr-105.md) D2). A
+                // container is walked by view and as often as one likes, which
+                // is why the record is keyed on the type being a `Seq`.
+                self.a_sequence_is_walked(iter, &over, span);
                 let element = element_of(&over, bindings.len());
                 let frame: Vec<Local> = bindings
                     .iter()
@@ -3456,6 +3496,15 @@ impl<'a> Checker<'a> {
                         _ => Some("this lock".to_string()),
                     },
                 );
+                // The same carrying, for D2's once-only rule, and `None` where
+                // the receiver is a temporary.
+                let outer_named = std::mem::replace(
+                    &mut self.receiver_name,
+                    match receiver.as_ref() {
+                        Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+                        _ => None,
+                    },
+                );
                 self.a_door_that_is_not_written(&on, &written, span);
                 // **`NK2203`, the method half**: which entry `other.get()` goes
                 // to is the type checker's answer (ADR-028), so it is asked
@@ -3515,6 +3564,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 let value = self.call_on(on, *method, args, &written, span);
+                self.receiver_name = outer_named;
                 self.at_a_write_door = outer_door;
                 self.inside_a_door = outer_inside;
                 self.set_receiver = outer_receiver;
@@ -5202,6 +5252,92 @@ impl<'a> Checker<'a> {
                 )),
             });
         }
+    }
+
+    /// Note that `iter`'s sequence was walked here, where it is a plain name
+    /// ([ADR-105](../../docs/specification/adr/adr-105.md) D2).
+    ///
+    /// **A name and nothing else**, which is the narrowing `NK2101` has for the
+    /// same reason: `map.keys().collect()` walks a temporary, and a temporary has
+    /// no second use to refuse.
+    fn a_sequence_is_walked(&mut self, iter: &Expr, over: &Ty, span: &Span) {
+        if !matches!(over, Ty::Seq { .. }) {
+            return;
+        }
+        let Expr::Variable(name) = iter else {
+            return;
+        };
+        let name = self.parsed.text(*name).to_string();
+        self.walked.push((name, over.clone(), span.end));
+    }
+
+    /// **`NK2702`: a sequence walked a second time**
+    /// ([ADR-105](../../docs/specification/adr/adr-105.md) D2).
+    ///
+    /// A produced sequence is walked **once**: the walk takes it by value, which
+    /// is ADR-094 D2's *a value walked is a value kept*, and there is nothing
+    /// left afterwards. A container is walked by view and as often as one likes,
+    /// which is why nothing here asks about a `Vec`.
+    ///
+    /// **`NK2101`'s analysis with one word changed**, deliberately: the shape is
+    /// the same question — a name used after something took it — and an
+    /// assignment in between **revives** it, because giving the name a value
+    /// again is a correct program.
+    fn a_sequence_was_walked_twice(&mut self) {
+        let walked = std::mem::take(&mut self.walked);
+        let read = &self.read_at;
+        let written = &self.written_at;
+        let mut said: BTreeSet<usize> = BTreeSet::new();
+        let mut findings = Vec::new();
+
+        for (name, ty, at) in walked {
+            let Some(&(_, used)) = read
+                .iter()
+                .filter(|(seen, when)| seen == &name && *when >= at)
+                .min_by_key(|(_, when)| *when)
+            else {
+                continue;
+            };
+            if written
+                .iter()
+                .any(|(seen, when)| seen == &name && *when >= at && *when <= used)
+            {
+                continue;
+            }
+            // Once per site: a name walked twice and read three times is one
+            // mistake, and three carets on it is three readings of the same line.
+            if !said.insert(used) {
+                continue;
+            }
+            let item = match &ty {
+                Ty::Seq { item, .. } => item.text(),
+                _ => "?".to_string(),
+            };
+            findings.push(Finding {
+                code: "NK2702",
+                severity: Severity::Error,
+                span: Span {
+                    start: used,
+                    end: used,
+                },
+                message: format!("`{name}` is a sequence that was already walked"),
+                notes: vec![
+                    format!(
+                        "a sequence of `{item}` produces its elements as they are asked \
+                         for, so walking it consumes it - a `for`, a `collect()`, a \
+                         `count()` and every other walk takes it by value (ADR-094 D2)"
+                    ),
+                    "a `Vec` is not this: a container has its elements already and is \
+                     walked by view, as often as you like"
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "collect it first and walk the collection: \
+                     `let {name} = {name}.collect()`"
+                )),
+            });
+        }
+        self.checked.findings.extend(findings);
     }
 
     /// **`NK2104`: two branches of an `overlap` meet on something**
@@ -6944,6 +7080,22 @@ impl<'a> Checker<'a> {
 /// Only a list with one element type and one binding: `for (k, v) in map`
 /// takes apart a pair whose shape Stage 0 has no signature for, and a view of
 /// a collection yields views whose spelling the language below chooses.
+/// Whether a method takes its receiver **by value**, which for a produced
+/// sequence is what consumes it ([ADR-105](../../docs/specification/adr/adr-105.md) D2).
+///
+/// Read off the signature rather than off a list of names: every `Seq` entry
+/// writes `(Seq[$T], …)` and a container's writes `(&Vec[$T], …)`, so the file
+/// that describes the method is what says whether the walk keeps it.
+fn walks_by_value(contract: &FnContract) -> bool {
+    let Some(signature) = &contract.signature else {
+        return false;
+    };
+    matches!(
+        signature.params.first().map(|(_, ty)| ty),
+        Some(Ty::Seq { .. })
+    )
+}
+
 fn element_of(over: &Ty, bindings: usize) -> Ty {
     match over {
         Ty::Named { name, args, view } if bindings == 1 && !view && args.len() == 1 => {

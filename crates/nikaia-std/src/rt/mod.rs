@@ -1098,6 +1098,14 @@ mod tests {
     /// is not heard is a hang rather than a panic, and a test that hung would
     /// report this defect by never finishing. The bound is the harness this test
     /// brings with it.
+    ///
+    /// **The bound is generous on purpose**, and what it is generous about is not
+    /// the mechanism. `io_workers` is **one** by default and this harness runs the
+    /// suite in parallel, so every in-process readiness wait queues behind the
+    /// others on one thread, and a wait ahead of these two holds it for as long as
+    /// its own timeout. A hang is unbounded, so a bound of a minute tells the two
+    /// apart while a bound of ten seconds went red under a loaded whole-workspace
+    /// run and green on its own.
     #[test]
     fn a_future_fed_from_a_worker_finishes_under_block_on() {
         use std::io::Write;
@@ -1105,37 +1113,48 @@ mod tests {
         use std::sync::Arc;
 
         let (reader, mut writer) = std::io::pipe().expect("a pipe");
-        // A task that is alive and waiting on something its own thread cannot
-        // provide, which is what makes the executor **park** rather than spin
-        // round a ready queue - `Yield` would have kept it ready and hidden the
-        // very defect this is about.
-        let slot = exec::Slot::<()>::empty();
+        // **A task that is alive and waiting on another worker operation**, which
+        // is what makes the executor **park** rather than spin round a ready
+        // queue - `Yield` would have kept it ready and hidden the very defect
+        // this is about.
+        //
+        // *A worker operation and not a `Slot`*, and the difference is the whole
+        // reason this reads the way it does: a `Slot` filled from an ordinary
+        // thread is outside the runtime's accounting, so `pending()` can be zero
+        // while a task waits for one - and `exec::block_on` then panics about a
+        // waker nobody arranged, correctly, because nothing it can see will move.
+        // The first version of this test did that and failed under a loaded
+        // whole-workspace run while passing alone.
+        let (second, mut poking) = std::io::pipe().expect("a second pipe");
         let ran = Arc::new(AtomicBool::new(false));
 
         // Both arrive after the executor has had time to park, so what wakes it
         // is a worker's reply and not a poll that was going to be ready anyway.
-        let filling = Arc::clone(&slot);
         let writing = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
             writer.write_all(b"x").expect("the peer writes");
-            filling.fill(());
+            poking.write_all(b"y").expect("and the second");
         });
 
         let (told, heard) = std::sync::mpsc::channel();
-        let joined = Arc::clone(&slot);
         let finished = Arc::clone(&ran);
         std::thread::Builder::new()
             .name("adr-121-block-on".to_string())
             .spawn(move || {
                 exec::start(async move {
-                    exec::Waiting::on(joined).await;
+                    let _ = io::waiting(
+                        &second,
+                        Interest::Readable,
+                        Some(std::time::Duration::from_secs(2)),
+                    )
+                    .await;
                     finished.store(true, Ordering::SeqCst);
                 });
                 let ready = exec::block_on(async {
                     io::waiting(
                         &reader,
                         Interest::Readable,
-                        Some(std::time::Duration::from_secs(5)),
+                        Some(std::time::Duration::from_secs(2)),
                     )
                     .await
                 });
@@ -1144,7 +1163,7 @@ mod tests {
             .expect("the driving thread starts");
 
         let ready = heard
-            .recv_timeout(std::time::Duration::from_secs(10))
+            .recv_timeout(std::time::Duration::from_secs(60))
             .unwrap_or_else(|_| {
                 panic!(
                     "`block_on` never came back: a future fed from a worker did not wake \

@@ -297,6 +297,27 @@ impl Ty {
                     && (*asy || !*bsy)
                     && (!*at || *bt)
             }
+            // **Two sequences fit when their items do**
+            // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1), and
+            // the two words are read as a function type's are one arm up: a
+            // sequence whose steps never pause goes where pausing is allowed, and
+            // one whose steps cannot fail goes where failing is. `Par` fits
+            // `Seq` and not the other way round, which is D3 - a `Par`'s surface
+            // *is* a `Seq`'s, and a `Seq` is not promised to run at once.
+            (
+                Ty::Seq {
+                    item: a,
+                    is_sync: asy,
+                    throws: at,
+                    parallel: ap,
+                },
+                Ty::Seq {
+                    item: b,
+                    is_sync: bsy,
+                    throws: bt,
+                    parallel: bp,
+                },
+            ) => a.fits(b) && (*asy || !*bsy) && (!*at || *bt) && (*ap || !*bp),
             // A variable that reaches a comparison was never bound, and an
             // unbound variable is the absence of a claim rather than a claim
             // about a type called `$V`. `substitute` is supposed to have

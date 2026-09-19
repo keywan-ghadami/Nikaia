@@ -1070,7 +1070,7 @@ absence of the word is not the claim that it may not. So the crossing stays
 `Undecided`, and the day the describer reads fields is the day `NK2501` and
 `NK2502` have something to say.
 
-### 2.18. A `Seq` walked twice is not refused
+### 2.18. `par_iter` has no entry to demand `sync` of
 
 [ADR-105](specification/adr/adr-105.md). **Steps 1 and 2 are built.** `Seq[T]` and
 `Par[T]` are words of the ledger's type language: they parse with the two
@@ -1097,12 +1097,20 @@ after, and the rest are downstream of a receiver with no type for other reasons 
 result of a `catch` in `access-log.nika`. **Those are a separate entry**, and the
 number is kept rather than remembered (`MethodCalls::unanswered`).
 
-*What is left is steps 3 and 4:* D2's once-only refusal — *this sequence was
-already walked*, which is `keeps` asked of a `Seq` — and D3's `sync` demand on a
-`Par[T]`'s lambda, which waits on `par_iter` having an entry at all. Nothing in
-`examples/`, in `tests/` or in `std` calls it, so D4's *it waits for a program*
-applies: the **word** is in the type language and binds, and the entry is one line
-the day something asks for it.
+*Step 3 is built too.* D2's once-only rule is `NK2702`: a name whose sequence a
+walk consumed is refused where it is read again, and what counts as a walk is read
+**off the signature** — every `Seq` entry writes its receiver `(Seq[$T], …)` and a
+container's writes `(&Vec[$T], …)`. It is `NK2101`'s analysis with one word
+changed, so an assignment revives the name and a temporary is not asked about. The
+fit gained its arm with it, which the first build had missed: a
+`Seq[String] throws` did not fit a `Seq[String] throws`.
+
+*What is left is step 4 alone,* and it waits on a program rather than on work:
+D3's `sync` demand on a `Par[T]`'s lambda needs `par_iter` to have an entry to
+demand it of, and nothing in `examples/`, in `tests/` or in `std` calls it —
+`par_fold` is a grammar driver and not this. D4's *it waits for a program* applies:
+the **word** is in the type language and binds, so the entry is one line the day
+something asks for it, and the demand is the line after.
 
 ### 2.19. A bound takes a path, and the ledger records traits and `impl`s
 

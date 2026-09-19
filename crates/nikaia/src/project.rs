@@ -800,7 +800,18 @@ pub fn check(
         ));
     }
     let tasks = count("NK21");
-    let rules = findings.len() - types - crossings - aliases - tasks;
+    // **A sequence walked twice is not a place that can fail**
+    // ([ADR-105](../../docs/specification/adr/adr-105.md) D2), so it does not
+    // land in the line below: the way out is a `collect()` and not a `throws`,
+    // which is the same reason the two `NK21xx` rules have lines of their own.
+    let walked = count("NK2702");
+    if walked > 0 {
+        refused.push(format!(
+            "{walked} sequence{} walked a second time",
+            plural(walked)
+        ));
+    }
+    let rules = findings.len() - types - crossings - aliases - tasks - walked;
     if rules > 0 {
         refused.push(format!(
             "{rules} place{} that can fail without saying so",

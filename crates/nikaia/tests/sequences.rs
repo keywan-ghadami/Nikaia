@@ -301,3 +301,155 @@ fn every_program(root: &Path) -> Vec<PathBuf> {
     }
     out.into_iter().collect()
 }
+
+// --- D2: a sequence is walked once -------------------------------------------
+
+/// A second walk of a named sequence is refused (`NK2702`).
+fn walked_twice(source: &str) -> Vec<nikaia::check::Finding> {
+    findings(source)
+        .into_iter()
+        .filter(|f| f.code == "NK2702")
+        .collect()
+}
+
+/// **A `for` walks it, and a second `for` is refused** (D2).
+#[test]
+fn a_second_for_over_a_sequence_is_refused() {
+    let found = walked_twice(
+        "fn twice() -> i64 throws {\n\
+         \x20   let lines = io::lines()\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in lines { n += 1 }\n\
+         \x20   for line in lines { n += 1 }\n\
+         \x20   return n\n\
+         }\n\
+         fn main() throws { println(f\"{twice()}\") }",
+    );
+    assert_eq!(found.len(), 1, "one refusal: {found:#?}");
+    let notes = found[0].notes.join(" ");
+    assert!(notes.contains("walking it consumes it"), "{notes}");
+    assert!(
+        notes.contains("a `Vec` is not this"),
+        "and the pair that says what a container does: {notes}"
+    );
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .expect("a way out")
+            .contains("collect it first"),
+        "{:?}",
+        found[0].help
+    );
+
+    // One walk is a correct program.
+    assert!(walked_twice(
+        "fn once() -> i64 throws {\n\
+         \x20   let lines = io::lines()\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in lines { n += 1 }\n\
+         \x20   return n\n\
+         }\n\
+         fn main() throws { println(f\"{once()}\") }",
+    )
+    .is_empty());
+}
+
+/// **A method that takes it by value walks it too** (D2).
+///
+/// Read off the signature and not off a list of names: every `Seq` entry writes
+/// its receiver `(Seq[$T], …)` and a container's writes `(&Vec[$T], …)`, so the
+/// file that describes the method is what says whether the walk keeps it.
+#[test]
+fn a_walking_method_consumes_the_sequence() {
+    let found = walked_twice(
+        "fn both() -> i64 throws {\n\
+         \x20   let lines = io::lines()\n\
+         \x20   let held = lines.collect()\n\
+         \x20   let n = lines.count()\n\
+         \x20   return n\n\
+         }\n\
+         fn main() throws { println(f\"{both()}\") }",
+    );
+    assert_eq!(found.len(), 1, "one refusal: {found:#?}");
+}
+
+/// **A container is walked as often as one likes** (D2), which is the half that
+/// matters: a refusal that reached a `Vec` would refuse most programs there are.
+#[test]
+fn a_container_is_not_consumed_by_walking_it() {
+    assert!(walked_twice(
+        "fn twice(xs: Vec[i64]) -> i64 {\n\
+         \x20   let mut n = 0\n\
+         \x20   for x in xs { n += x }\n\
+         \x20   for x in xs { n += x }\n\
+         \x20   return n\n\
+         }\n\
+         fn main() { println(\"ok\") }",
+    )
+    .is_empty());
+}
+
+/// **An assignment revives the name**, which is `NK2101`'s own rule one word
+/// over: giving the name a value again is a correct program.
+#[test]
+fn a_name_given_another_sequence_may_be_walked_again() {
+    assert!(walked_twice(
+        "fn revived() -> i64 throws {\n\
+         \x20   let mut lines = io::lines()\n\
+         \x20   let mut n = 0\n\
+         \x20   for line in lines { n += 1 }\n\
+         \x20   lines = io::lines()\n\
+         \x20   for line in lines { n += 1 }\n\
+         \x20   return n\n\
+         }\n\
+         fn main() throws { println(f\"{revived()}\") }",
+    )
+    .is_empty());
+}
+
+/// **A temporary has no second use to refuse** (D2, and `NK2101`'s narrowing).
+///
+/// `map.keys().collect()` walks a sequence nobody named, so there is nothing to
+/// say about it — and a refusal keyed on the type rather than on a name would
+/// have had to invent one.
+#[test]
+fn a_walk_of_a_temporary_says_nothing() {
+    assert!(walked_twice(
+        "fn f() -> i64 {\n\
+         \x20   let counts: HashMap[&str, i64] = HashMap::new()\n\
+         \x20   let names = counts.keys().collect()\n\
+         \x20   return names.len()\n\
+         }\n\
+         fn main() { println(f\"{f()}\") }",
+    )
+    .is_empty());
+}
+
+/// **Two sequences fit when their items do, and `Par` fits `Seq`** (D1, D3).
+///
+/// The fit had no arm for the new type at first, which said that a
+/// `Seq[String] throws` did not fit a `Seq[String] throws` — found by the
+/// assignment above, whose message read *this is X, and what it is assigned to
+/// is X*.
+#[test]
+fn a_sequence_fits_a_sequence() {
+    let seq = Ty::parse("Seq[String] throws");
+    assert!(seq.fits(&seq), "a type fits itself");
+    assert!(
+        Ty::parse("Seq[String] sync").fits(&Ty::parse("Seq[String]")),
+        "steps that never pause go where pausing is allowed"
+    );
+    assert!(
+        !Ty::parse("Seq[String]").fits(&Ty::parse("Seq[String] sync")),
+        "and not the other way round"
+    );
+    assert!(
+        Ty::parse("Par[i64] sync").fits(&Ty::parse("Seq[i64] sync")),
+        "a `Par`'s surface is a `Seq`'s (D3)"
+    );
+    assert!(
+        !Ty::parse("Seq[i64] sync").fits(&Ty::parse("Par[i64] sync")),
+        "and a `Seq` is not promised to run at once"
+    );
+}
