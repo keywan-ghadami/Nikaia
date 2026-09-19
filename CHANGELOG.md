@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.31] — 2026-09-19
+
+Eight doors the records had left open on purpose, taken in one sitting — each
+the way its entry recommended. `docs/open-decisions.md` is empty again.
+
+### Added (eight records, [ADR-147](docs/specification/adr/adr-147.md) to [ADR-154](docs/specification/adr/adr-154.md))
+
+- **[ADR-147](docs/specification/adr/adr-147.md): the C boundary has a view and an opaque handle, and no raw pointer.** [ADR-124](docs/specification/adr/adr-124.md) §4 left `Pointer[T]` undeclared on purpose and that cost most of C — every function with a pointer in its signature. The thing to prevent is the dangling **dereference**, and the two shapes real C libraries are made of each get a form that makes one impossible by construction: a **buffer** is a view that lives for the call, with its length checked against it at the call site; a **handle** is an `opaque type … released by …` whose release is a `cleanup`. `malloc` stays unwritable **by design** — memory the language will index arrives with a length the language knows.
+- **[ADR-148](docs/specification/adr/adr-148.md): `select { … }` keeps the first branch to finish, and a task handle has `cancel()`.** Syntax and not a function, because an arm binds a name and then runs a block. It spends a keyword knowingly ([ADR-084](docs/specification/adr/adr-084.md)): `overlap` runs its branches and keeps every result, `select` runs them and keeps the first, and a language with one and not the other has half a pair. The semantics were already built ([ADR-006](docs/specification/adr/adr-006.md) D3); `cancel()` costs nothing new, since the runtime already cancels a loser.
+- **[ADR-149](docs/specification/adr/adr-149.md): a channel is `std`'s, and only bounded.** `send` pauses when the channel is full, so a `sync` body cannot send on one and the ledger's column says so without a rule about channels; `recv` hands back a `T?` and `null` is the ordinary end of a stream. **No `unbounded()`** — a capacity is a promise about memory, and a program that wants unbounded writes a large number and has said it.
+- **[ADR-150](docs/specification/adr/adr-150.md): a duration is `std::time::Duration`, written `5.seconds()`.** A `std` type and a `std` extension; **no suffix literal**, because `5s` would reopen for one type the form [ADR-136](docs/specification/adr/adr-136.md) §4 declined for numbers, and a rule with an exception is one a reader has to remember rather than apply.
+- **[ADR-152](docs/specification/adr/adr-152.md): a fixed-size array is `Array[T, N]`.** Two records' doors close with one type — [ADR-127](docs/specification/adr/adr-127.md) §4's C field and [ADR-135](docs/specification/adr/adr-135.md) §4's container that does not allocate. Rust's `[T; N]` is a new type form; this language writes every parameterised type in brackets already. The genuinely new part is an **integer** argument in the type language.
+- **[ADR-153](docs/specification/adr/adr-153.md): a native Node add-on waits for a program**, and when one asks it is generated C over the C library — **not** a `napi` dependency in the emitted crate, which would make a second artifact and reopen *which artifact is the program*. Deciding now costs nothing and building now does not, which is the whole argument; writing it down means the shape will not have to be chosen under the pressure of the program that wants it.
+- **[ADR-154](docs/specification/adr/adr-154.md): the prelude is a written list, small and closed.** [ADR-140](docs/specification/adr/adr-140.md) D5 said the prelude was *unchanged* — unchanged from nothing written down: the line is drawn by a Rust module grown one `pub use` at a time, and it carries `fs`, `io`, `cli`, `html` and `task`, so **a program can read a file without saying so**. The list is the containers, the printing functions, `assert`, `panic` and the numeric conversions; the rule behind it is *nothing that does I/O but printing, nothing that pauses*, which is also what makes it safe for a profile with no filesystem. `HashMap` is the first thing outside it.
+
+### Changed ([ADR-151](docs/specification/adr/adr-151.md): the one of the eight that was already built)
+
+- **`break` carries no value, and `NK1133`'s help now names the two shapes that do.** The refusal existed; the decision behind it did not, so [ADR-138](docs/specification/adr/adr-138.md) §4 could reasonably have been read as *undecided* by whoever touched the loop next. A loop is a statement and hands back unit — one construct that is sometimes a value and sometimes not is the ambiguity `if` was spared by being an expression always. The help said *bind it before the `break`*, which is one of the two shapes and not the one a reader usually wants; it names the `return` one too now, second, because that is how a search loop is written.
+
+### Changed (the pages)
+
+- **All three *unspecified* marks are gone**, one round after [ADR-141](docs/specification/adr/adr-141.md) D3 invented the form for them: `select`, the channel and the duration each carry a **Status** note now — *decided and not built*. The convention stays on [`specification/README.md`](docs/specification/README.md), because the next construct written ahead of a decision will want it.
+- **`docs/open-work.md` §2 gains six entries**, one per unbuilt record; [ADR-153](docs/specification/adr/adr-153.md) deliberately gets none, which is the difference between *not yet built* and *not to be built until asked*.
+
 ## [0.0.30] — 2026-09-19
 
 The question the last record made answerable, answered the same day.

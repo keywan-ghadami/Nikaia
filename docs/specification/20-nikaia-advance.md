@@ -975,11 +975,14 @@ select {
 ```
 *Note: When one branch wins, the other task is automatically cancelled and cleaned up.*
 
-> **Unspecified.** This writes a construct the language does not have and no
-> record decides — `select { … }` itself, and the duration literal
-> `5.seconds()` inside it. It is here for the shape of the example; the
-> decision is taken when Part I chapter 8 is next opened
-> ([ADR-141](adr/adr-141.md) D2).
+> **Status:** **decided and not built.** `select` is
+> [ADR-148](adr/adr-148.md) — a block whose arms bind, the first branch to
+> finish wins, the losers are cancelled with the teardown
+> [ADR-006](adr/adr-006.md) D3 already describes, and the handle `spawn`
+> returns gains `cancel()` so that a program's cancel and a loser's are one
+> mechanism. `5.seconds()` is [ADR-150](adr/adr-150.md): a `std::time::Duration`
+> and a `std` extension on the integers, with no suffix literal. Neither parses
+> today; `docs/open-work.md` carries both.
 
 > **Status:** not built. `select` is not a keyword in the parser and the block
 > above is a parse error, so nothing races two tasks today and the teardown rule
@@ -992,10 +995,13 @@ select {
 ### 12.5. Channels (Message Passing)
 Instead of locking shared memory, Nikaia encourages **Message Passing**.
 
-> **Unspecified.** This writes a construct the language does not have and no
-> record decides: whether a channel is `std`'s or the language's, and what it
-> is called, is taken when Part I chapter 8 is next opened
-> ([ADR-141](adr/adr-141.md) D2).
+> **Status:** **decided and not built** ([ADR-149](adr/adr-149.md)). It is
+> `std`'s and not the language's — two values and two methods say everything
+> this example says — and only **bounded**: `send` pauses when the channel is
+> full, so a `sync` body cannot send on one and the ledger's column is what says
+> so; `recv` hands back a `T?` and `null` means every sender is gone. The value
+> type must `crosses` ([ADR-123](adr/adr-123.md)), checked where `tx` moves into
+> the `spawn` as any move is. `docs/open-work.md` carries it.
 
 ```nika
 // Subject: 100 (capacity)

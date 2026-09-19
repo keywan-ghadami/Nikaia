@@ -1728,6 +1728,105 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
+### 2.49. `Pointer[T]` is undeclared, and C is `getpid`
+
+[ADR-147](specification/adr/adr-147.md). Every C function whose signature has a
+pointer in it is unwritable: all of `libc`'s memory surface, and every library
+that hands out a handle — a database connection, an HTTP client, a compressor.
+`extern "C" { fn malloc(size: usize) -> Pointer[u8] }` is `NK1135`, because
+`Pointer[T]` is a type nothing declares, and
+[ADR-124](specification/adr/adr-124.md) §4 left it that way on purpose.
+
+**What the record adds is not a pointer.** A buffer is a **view** that lives
+for the call, with a length parameter checked against it at the call site; a
+handle is an `opaque type … released by …`, an address the language never
+dereferences whose release is a `cleanup`. Both make a dangling dereference
+impossible by construction, and `malloc` stays unwritable by design — memory
+the language will index arrives with a length the language knows.
+
+*What it needs, in the record's order (§5):* the view forms in an `extern`
+declaration; the length check and its refusal; the opaque type, with its
+`cleanup`; `CStr` and the `std` function that copies it; `sqlite3` end to end
+as the test that the four are enough.
+
+### 2.50. `select` is not a keyword, and nothing cancels a task
+
+[ADR-148](specification/adr/adr-148.md). Part II 12.4's block is a parse error
+and carries [ADR-141](specification/adr/adr-141.md) D2's *unspecified* mark —
+while the **semantics** have been built since
+[ADR-006](specification/adr/adr-006.md) D3: the loser stops at its pause point,
+its `cleanup` is adopted, the deadline bounds it. The runtime's race is what
+[ADR-129](specification/adr/adr-129.md)'s C `cancel` already leans on.
+
+*And a program cannot say stop to something it started*, because losing a
+`select` is the only thing that cancels a task today.
+
+*What it needs, in the record's order (§5):* the keyword, the block and the arm
+grammar; the lowering onto the runtime's race; `cancel()` on the handle, over
+the same call; the page's example as a test that runs, and the mark taken off.
+
+### 2.51. There is no channel
+
+[ADR-149](specification/adr/adr-149.md). Part II 12.5's
+`let (tx, rx) = channel::bounded(100)` names nothing, and carries the
+*unspecified* mark. Nothing in it needs syntax — two values, two methods, and
+the tuple `let` is built ([ADR-098](specification/adr/adr-098.md)).
+
+*What it needs, in the record's order (§5):* the runtime's bounded queue, with
+the pause on a full `send`; `std::channel` and its four entries, `send` carrying
+no `sync` and `recv` handing back a `T?`; the page's example as a test that
+runs.
+
+### 2.52. There is no duration
+
+[ADR-150](specification/adr/adr-150.md). `5.seconds()` is a method on an
+integer that no ledger describes, and Part II 12.4 carries the *unspecified*
+mark for it. [ADR-148](specification/adr/adr-148.md)'s `select` needs it for
+the timeout arm its example writes.
+
+*What it needs, in the record's order (§5):* `std::time::Duration` and its
+entries; the integer extension, five names; `sleep` taking one; the page's line
+as a test that runs.
+
+### 2.53. There is no fixed-size array
+
+[ADR-152](specification/adr/adr-152.md), and **after**
+[ADR-135](specification/adr/adr-135.md), because the literal is that record's.
+Two doors close with one type: [ADR-127](specification/adr/adr-127.md) §4's C
+field `[f64; 3]`, and [ADR-135](specification/adr/adr-135.md) §4's container
+that does not allocate — which [ADR-119](specification/adr/adr-119.md)'s
+`startup` profile needs on its first day, since a `Vec` wants an allocator that
+profile has none of.
+
+**The new part is an integer argument in the type language.** Every parameter
+so far has been a type, and `Array[T, N]` wants a `comptime` integer.
+
+*What it needs, in the record's order (§5):* the integer argument and
+`Array[T, N]` parsing, binding and writing itself back; the literal taking the
+array type from its use, and the length refusal; the lowering to `[T; N]`, and
+indexing; the C field, laid out as C lays it out.
+
+### 2.54. The prelude is what the compiler happens to know
+
+[ADR-154](specification/adr/adr-154.md).
+`crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and
+carries `fs`, `io`, `cli`, `html`, `task`, `ListExt`, `Full`, `digit_value` and
+`HashMap` — every one reachable from a `.nika` file with no `use`. So **a
+program can read a file without saying so**, which is the sentence
+[ADR-140](specification/adr/adr-140.md) D5 was written to make it say.
+
+*And there is only one list.* The Nikaia-level prelude and the emitter's are the
+same module, which is the piece that does not exist rather than the piece that
+is wrong: what a program may name and what the generated file needs to compile
+are different questions.
+
+*What it needs, in the record's order (§5):* D1's list on Part I's first page,
+so the promise is written before it is enforced; the two preludes separated; the
+names outside the list refused without a `use`, which is `NK1117` with a help
+naming the line to add; the corpus and the pages. **Measure the corpus before
+the change**: every `fs::`, `io::`, `cli::`, `html::` and `HashMap` in
+`examples/` needs a `use` line it never needed.
+
 ## 3. Upkeep
 
 ### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect

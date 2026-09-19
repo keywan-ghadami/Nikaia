@@ -1,16 +1,17 @@
 # Open decisions — the questions that need the owner
 
-**Eight entries are open**, below — the doors the records of the last rounds
-left open on purpose, gathered here so that each has a recommendation and an
-owner. The order of the five big pieces is answered on the roadmap page (the
-HTTP server last). A question found by building rarely stays long: four of the
-five this file held yesterday are records already —
-[ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*,
-[ADR-143](specification/adr/adr-143.md), *the driver checks the SQL at build
-time*, [ADR-144](specification/adr/adr-144.md), *a name denotes one thing*, and
-[ADR-146](specification/adr/adr-146.md), *a `match` covers every case* — which
-arrived and left the same day, and whose recommendation had written `_` for the
-rest one record before [ADR-145](specification/adr/adr-145.md) made it `else`.
+**Nothing is open.** The eight doors the records of the last rounds had left
+open were gathered here so that each would have a recommendation and an owner,
+and the owner took all eight — each the way the entry recommended. They are
+[ADR-147](specification/adr/adr-147.md) to
+[ADR-154](specification/adr/adr-154.md).
+
+**That is the shape this page is for**, and it is worth saying once: the
+entries were written to be *answerable* — what is blocked, the options, a
+recommendation, and what either direction costs if it is wrong — and eight
+answers arrived in one sitting because there was nothing left to work out at
+the moment of deciding. A question without a recommendation is work handed
+back.
 An answer is an [ADR](specification/adr/), and
 the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
@@ -20,203 +21,7 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-### 1. A pointer for the C direction
-
-**Left open by [ADR-124](specification/adr/adr-124.md) §4**, and it is the
-only part of that record not built: `extern "C" { fn malloc(size: usize) ->
-Pointer[u8] }` is refused with `NK1135`, because `Pointer[T]` is a type nothing
-declares. *A pointer that outlives what it points at is the one thing this
-language is built not to allow.*
-
-**What is blocked:** every C function whose signature has a pointer in it —
-all of `libc`'s memory surface, and every C library that hands out a handle
-(a database connection, an HTTP client, a compressor), which is every C library
-worth calling. `getpid` compiles; nothing with a buffer or a handle does.
-
-*The options.*
-
-1. **`Pointer[T]`, a raw pointer** — Rust's `*mut T`, dereferenced inside
-   `unsafe`. *Costs:* the language admits a value that can dangle, and every
-   dereference is a hole in the borrow story that the compiler cannot close.
-2. **Two shapes, and no raw pointer.** *A view for the call:* `&T`, `&mut T`,
-   `&[u8]`, `&mut [u8]` in a declaration lower to the pointer and live for the
-   call, as every view does; a length is a separate named `usize` parameter,
-   and the compiler checks it against the view at the call site
-   (`read(fd, buf, count)` with `count <= buf.len()` or a refusal). *An opaque
-   handle:* declared in the block — `opaque type sqlite3 released by
-   sqlite3_close` — an address the language never dereferences, movable and
-   storable, whose release is a `cleanup` the compiler runs at the end of its
-   scope, so a handle cannot outlive what it names unless a C function says so.
-   Returned text (`getenv`) is an opaque `CStr` handle a `std` function copies
-   inside `unsafe`. `malloc` stays unwritable **by design**: memory the language
-   would index has to arrive with a length the language knows. *Costs:* the two
-   declaration forms, the length check, the handle's cleanup, and a `std`
-   function for C strings.
-3. **Leave it**, and C is `getpid`.
-
-*Recommendation:* **option 2.** The thing to prevent is the dangling
-*dereference*, and both shapes make one impossible by construction; together
-they cover what real C libraries look like — handles and buffers — and they
-are the language's own words (a view, a `cleanup`) said at the boundary, which
-is how [ADR-125](specification/adr/adr-125.md) answered the other direction.
-
-*If it is wrong:* option 2 is the safe subset of option 1, so nothing spent is
-lost the day a raw pointer is admitted; option 1 first cannot be narrowed later.
-
-### 2. `select`, and the one word that cancels a task
-
-Part II 12.4 writes `select { result = heavy_math() => { … }  _ =
-sleep(5.seconds()) => { throw Timeout::TooSlow } }` and marks it *unspecified*
-([ADR-141](specification/adr/adr-141.md) D2). The **semantics** exist — the
-loser stops at its pause point, its `cleanup` is adopted, the deadline bounds
-it — and the runtime's race is what [ADR-129](specification/adr/adr-129.md)'s
-C `cancel` already leans on. What is missing is the construct, and a word:
-today nothing but `select` cancels a task, so a program cannot say *stop* to
-something it started.
-
-*The questions:* whether `select` is syntax or a function (syntax — a branch
-binds a name and runs a block, which no function parameter can); the arm's
-form; and whether the handle `spawn` returns has a `cancel()`.
-
-*The options.*
-
-1. **`select` as a block construct**, arms `pattern = expr => { … }` with the
-   ignore pattern for a branch whose value is not wanted; cancellation only
-   through losing a `select`. *Costs:* a keyword — the most expensive thing a
-   language adds ([ADR-084](specification/adr/adr-084.md)) — the arm grammar,
-   and the lowering onto the runtime's race.
-2. **Option 1, and `cancel()` on the handle `spawn` returns**, with exactly the
-   semantics of losing a `select`, so that a program's own cancel and
-   [ADR-129](specification/adr/adr-129.md)'s C `cancel` are one mechanism.
-   *Costs:* option 1's and one method.
-3. **`select` as a library over a `Task` type.** *Costs:* the winner's value
-   cannot be bound to a name without syntax, so the example on the page cannot
-   be written.
-
-*Recommendation:* **option 2.** `overlap { … }` set the precedent for this
-family — a block that runs its parts at once — and `select` is its sibling that
-keeps one; a language with `overlap` and no `select` has half a pair. The
-`cancel()` costs nothing new because the runtime already does it for a loser.
-
-*If it is wrong:* `cancel()` alone is not enough, because it cannot bind the
-winner's value; the keyword is the part that cannot be taken back.
-
-### 3. A channel: `std`'s, and only bounded
-
-Part II 12.5 writes `let (tx, rx) = channel::bounded(100)`, `tx.send(…)`,
-`rx.recv()`, and marks it *unspecified*. Nothing in it needs syntax: two
-values, two methods, and the tuple `let` is built
-([ADR-098](specification/adr/adr-098.md)). The questions are where it lives and
-what it promises.
-
-*The options.*
-
-1. **`std::channel` with `bounded(n)` only.** `send` **pauses** when the
-   channel is full — so a `sync` body cannot send on one, which the ledger says
-   by itself; `recv` returns `T?`, `null` once every sender is gone; the value
-   type must `cross` ([ADR-123](specification/adr/adr-123.md)), checked where
-   `tx` moves into a `spawn` as any move is. *Costs:* one module in `std` over
-   the runtime's queue.
-2. **Option 1 plus `unbounded()`.** *Costs:* a memory leak with a name, and a
-   `send` that never pauses, which is the one thing a program cannot reason
-   about under load.
-3. **A language construct.** *Costs:* syntax for what two methods say.
-
-*Recommendation:* **option 1.** A capacity is a promise about memory, and the
-language makes programs say their promises; a program that wants "unbounded"
-writes a large number and has said it.
-
-*If it is wrong:* `unbounded()` is additive; a bounded channel cannot be
-taken away once written.
-
-### 4. The duration: `5.seconds()`
-
-Part II 12.4's `sleep(5.seconds())` writes a value of a type nothing declares.
-The questions are the type (`std::time::Duration`, no dispute) and the spelling.
-
-*The options.*
-
-1. **Methods on integers in `std`** — `5.seconds()`, `250.millis()` — as an
-   extension `std::time` provides, plus the constructors
-   (`Duration::seconds(5)`). *Costs:* nothing in the language; a trait impl in
-   `std`.
-2. **A suffix literal**, `5s`, `250ms`. *Costs:* a literal form
-   [ADR-136](specification/adr/adr-136.md) §4 already declined for numbers
-   (*the digits are a spelling; the use gives the type*), reopened for one type.
-3. **Constructors only.** *Costs:* `sleep(Duration::seconds(5))` where every
-   example on the page reads `5.seconds()`.
-
-*Recommendation:* **option 1.** It is what the pages already write, it is
-`std`'s and not the language's, and it keeps the literal rule whole.
-
-*If it is wrong:* a suffix is additive, and the method form loses nothing to it.
-
-### 5. `break` with a value
-
-[ADR-138](specification/adr/adr-138.md) §4: Rust's `break x` hands a value out
-of a `loop`; this language has no unconditional loop
-([ADR-070](specification/adr/adr-070.md)), so `while true { … break x }` would
-be the only home for it, and `NK1133` refuses it today.
-
-*Recommendation:* **keep the refusal**, and make its message name the two
-shapes that carry a value out of a loop: a `let` before it that the loop
-assigns, or a function whose loop `return`s. A `while` is a statement, its
-value is unit, and one construct that is sometimes a value and sometimes not
-is the ambiguity `if` was spared by being an expression always.
-
-*If it is wrong:* additive later; the refusal costs nothing but a message.
-
-### 6. A fixed-size array
-
-Two records point here: [ADR-127](specification/adr/adr-127.md) §4 (a field
-`[f64; 3]` of a C value struct) and [ADR-135](specification/adr/adr-135.md) §4
-(a container that does not allocate, which the bare-metal target's `startup`
-profile will ask for on its first day).
-
-*The questions:* the spelling and the literal. Rust's `[T; N]` is a new type
-form; the language's type grammar already writes every parameterised type with
-brackets, `Vec[T]`, `Shared[T]`.
-
-*Recommendation:* **`Array[T, N]`**, the bracket generic the type language has,
-with `N` a `comptime` integer; by value; indexed as a list is, with the abort
-of [ADR-114](specification/adr/adr-114.md) out of range; a literal `[1.0, 2.0,
-3.0]` takes the array type where the use asks for one, which is
-[ADR-135](specification/adr/adr-135.md)'s rule for the empty list extended to a
-full one. No new syntax, and both records' doors close.
-
-*If it is wrong:* the type's name is the only thing to change.
-
-### 7. A native Node add-on
-
-[ADR-130](specification/adr/adr-130.md) and [ADR-131](specification/adr/adr-131.md)
-give Node the WebAssembly build, and what a WebAssembly module cannot reach on
-Node — the filesystem, a socket of its own — is left open. A host marketing
-named runs Node.
-
-*Recommendation:* **not until a program asks**, and when one does, `nikaia bind
-node` generates an N-API shim **in C over the C library** — generated source
-the host's own toolchain compiles, as the Python binding is generated source
-the host's own `ctypes` loads — and not a Rust-side `napi` dependency in the
-emitted crate. That keeps [ADR-131](specification/adr/adr-131.md) D1 whole: one
-artifact, and every binding a file over it.
-
-*If it is wrong:* nothing is spent until the generator is written.
-
-### 8. What needs no `use`: the prelude
-
-[ADR-140](specification/adr/adr-140.md) D5 decided how `use` works and left
-what needs none — `Vec`, `String`, `println` — undecided, so the line is drawn
-by what the compiler happens to know.
-
-*Recommendation:* **a written list on Part I's first page, small and closed**:
-the containers a program cannot do without (`Vec`, `String`, `Bytes`), the
-printing functions, `assert`, `panic`, and the numeric conversions — nothing
-that does I/O but printing, nothing that pauses. Everything else, `HashMap`
-first, is `use std::…`. A name joins the list by a record.
-
-*If it is wrong:* adding to a prelude is additive; removing from one breaks
-programs, which is the argument for starting small.
-
+Nothing.
 
 ## Answered
 
@@ -337,6 +142,29 @@ second declaration is refused — the entry that turned out to be **three**
 holes rather than the one it asked about: a `trait` and a `grammar` were not
 counted at all, and everything else was counted only when the build had a
 manifest) and
+[ADR-147](specification/adr/adr-147.md) (the C boundary has a view and an
+opaque handle, and no raw pointer — the thing to prevent is the dangling
+*dereference*, and both shapes make one impossible by construction) and
+[ADR-148](specification/adr/adr-148.md) (`select { … }` keeps the first branch
+to finish, and a task handle has `cancel()` — `overlap`'s missing half, which
+is the argument for the keyword) and
+[ADR-149](specification/adr/adr-149.md) (a channel is `std`'s and only bounded
+— a capacity is a promise about memory, and this language makes programs say
+their promises) and
+[ADR-150](specification/adr/adr-150.md) (a duration is `std::time::Duration`
+written `5.seconds()`, with no suffix literal, so
+[ADR-136](specification/adr/adr-136.md)'s rule keeps no exception) and
+[ADR-151](specification/adr/adr-151.md) (`break` carries no value, and the
+refusal names the two shapes that do — the one of the eight that was already
+built and needed only its reason written down) and
+[ADR-152](specification/adr/adr-152.md) (a fixed-size array is `Array[T, N]`,
+which closes two records' doors with one type and adds no type form) and
+[ADR-153](specification/adr/adr-153.md) (a native Node add-on waits for a
+program, and is generated C over the C library — the entry whose answer is
+*not yet*, written down so the shape is decided before the pressure is) and
+[ADR-154](specification/adr/adr-154.md) (the prelude is a written list, small
+and closed — nothing that does I/O but printing, nothing that pauses, and
+`HashMap` is the first thing outside it) and
 [ADR-146](specification/adr/adr-146.md) (a `match` covers every case, and the
 refusal is this compiler's — the entry that only ever decided *whose message*,
 since the backend has been enforcing it all along on a Nikaia line) and
@@ -396,6 +224,16 @@ roadmap sentence that was reconstructed rather than read. None of the three was
 findable by reading — the first two are what the compiler does when a program
 does something nobody had written, and the third is what a truncated edit leaves
 behind.
+
+**Then it filled up a second way, and emptied a second time.** Eight doors that
+accepted records had left open *on purpose* were gathered here — a pointer for
+C, `select`, a channel, a duration, `break x`, a fixed array, a Node add-on, the
+prelude — and all eight were answered in one sitting. That is not the page
+working differently; it is the same page reading its own instruction: each entry
+had already done the deciding work, so what was left was the owner saying yes.
+A door left open by a record is a question whether or not anyone has tripped
+over it yet, and writing it down here is what turns *we did not decide that* into
+*that is decided*.
 
 **That is the state to write down rather than to enjoy.** A page with nothing on
 it never means there are no questions; it means none has been *found* yet, and

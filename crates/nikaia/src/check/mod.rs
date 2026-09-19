@@ -7286,8 +7286,15 @@ impl<'a> Checker<'a> {
                 "`{word}` takes no value: a loop is a statement here and hands back nothing, \
                  so `{word} x` is two statements rather than one (Part I, 3.3)"
             )],
+            // **The two shapes that carry a value out of a loop**
+            // ([ADR-151](../../docs/specification/adr/adr-151.md) D2), and the
+            // `return` one is second because that is what a search loop is
+            // usually written as. It said *bind it before the `break`* alone,
+            // which is one of the two and not the one a reader wants.
             help: Some(format!(
-                "delete it - or, where a value was meant, bind it before the `{word}`"
+                "delete it - or, where a value was meant: a `let` before the loop that \
+                 the loop assigns, or a `return`, where the function has nothing left to \
+                 do after the `{word}`"
             )),
         });
     }

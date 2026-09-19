@@ -29,5 +29,11 @@ compiler has not caught up. An **Unspecified** mark stands under a construct
 nobody has decided at all, kept on the page because the shape it was written
 for is worth keeping and removing it would lose the argument with it.
 
+**No page carries the mark today.** The three it was written for — `select`, a
+channel and a duration — were decided in one round
+([ADR-148](adr/adr-148.md), [ADR-149](adr/adr-149.md),
+[ADR-150](adr/adr-150.md)) and each carries a **Status** note now. The form
+stays, because the next construct written ahead of a decision will want it.
+
 For what belongs in this directory and what belongs in the notes, see
 [`docs/README.md`](../README.md).

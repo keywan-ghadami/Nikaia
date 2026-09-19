@@ -326,6 +326,11 @@ fn a_loop_inside_a_lambda_is_a_loop_a_break_may_leave() {
 /// `NK1133`: **`break i` is two statements**, and the second is not reached.
 /// The shape the refusal exists for — a `break` in Rust carries a value and
 /// here it does not, so the value would be dropped in silence.
+///
+/// **And the help names the two shapes that do carry a value out of a loop**
+/// ([ADR-151](../../../docs/specification/adr/adr-151.md) D2). It said *bind it
+/// before the `break`* alone, which is one of the two and not the one a reader
+/// usually wants: a search loop is written with a `return`.
 #[test]
 fn a_value_written_after_a_break_is_refused() {
     let (code, message) = one("fn f(n: i64) -> i64 {\n\
@@ -336,6 +341,33 @@ fn a_value_written_after_a_break_is_refused() {
          }\n");
     assert_eq!(code, "NK1133");
     assert!(message.contains("is reached"), "{message}");
+}
+
+/// The help, on its own, because the message above is the *claim* and this is
+/// the way out ([ADR-151](../../../docs/specification/adr/adr-151.md) D2, and
+/// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md): a rule a
+/// reader cannot act on is an obstacle).
+#[test]
+fn the_help_names_a_let_before_the_loop_and_a_return() {
+    let parsed = parse_to_ast(
+        "fn f(n: i64) -> i64 {\n\
+         \x20   for i in 0..n {\n\
+         \x20       break i\n\
+         \x20   }\n\
+         \x20   return 0\n\
+         }\n",
+    )
+    .expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger");
+    let found = check::check(&parsed, &own, &library)
+        .findings
+        .into_iter()
+        .find(|f| f.code == "NK1133")
+        .expect("the refusal");
+    let help = found.help.as_deref().expect("a way out");
+    assert!(help.contains("`let` before the loop"), "{help}");
+    assert!(help.contains("`return`"), "{help}");
 }
 
 /// The same rule, reached by the other door: a line left below a `break`.
