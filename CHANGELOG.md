@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.39] — 2026-09-19
+
+The first of the three parts is rewritten to the language standard.
+
+### Changed (Part II follows `STYLE.md`)
+
+- **Every section of Part II** states the rule first, then its consequence, then at most one *Design rationale* ending in the record. History, argument, measurements, test names, prior-art asides and the second person are gone from the page; what they said is in the records. Rules that lived only inside old status notes — the `comptime` declaration and its stages, `NK1127` against `NK1152`, the `update_all` refusal, the `select` and channel semantics — stand in the section's prose.
+- **Every status note** has the one form, `> **Implementation status:** <value>.`, with plain facts and every diagnostic code and record link the old note carried.
+- **Two claims the page made and no record does are gone:** 11.1 no longer calls the `yes` executor *work-stealing* (it is a pool of futures over `user-pool`, [ADR-055](docs/specification/adr/adr-055.md) §6), and expression capture is stated as decided against ([ADR-143](docs/specification/adr/adr-143.md) D5) rather than as open.
+- **Every ```` ```nika ```` block is byte for byte as it was**, checked by `scripts/check-spec-blocks.py`; the specification test is unchanged.
+- Parts I and III follow in the next packages.
+
 ## [0.0.38] — 2026-09-19
 
 The specification gets a language standard of its own, ahead of the editorial
