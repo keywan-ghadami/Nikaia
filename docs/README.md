@@ -17,15 +17,16 @@ the two is a bug and the disagreement gets recorded.
 * [Part III — Tooling](specification/30-nikaia-tooling.md): the CLI, the
   ledger, `std`, the diagnostics contract.
 
-A spec section states the rule and, where the rule is surprising, *why it is the
-rule in one or two sentences* — then links the ADR. It does **not** carry
-instruction counts, timings, what an alternative would have cost, what an
-earlier draft said, or what was discovered while implementing it. Those are the
-next two sections.
+The three parts follow one language standard,
+[`specification/STYLE.md`](specification/STYLE.md): rule, then consequence, then
+at most one short *Design rationale* ending in the ADR. A page carries no
+history, no argument, no instruction counts and no timings. Those are the next
+two sections.
 
-A rule specified ahead of the compiler says so in a short **Status** note naming
-what is built and what is not. That note is maintained; a stale one is a defect,
-because a reader cannot tell a plan from a promise.
+A rule specified ahead of the compiler says so in a status note of one form,
+`> **Implementation status:** <value>.`, with a controlled vocabulary of six
+values. That note is maintained; a stale one is a defect, because a reader
+cannot tell a plan from a promise.
 
 ## 2. The decisions — [`specification/adr/`](specification/adr)
 

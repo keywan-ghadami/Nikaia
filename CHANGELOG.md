@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.38] — 2026-09-19
+
+The specification gets a language standard of its own, ahead of the editorial
+pass that applies it.
+
+### Added (the specification's language standard)
+
+- **`docs/specification/STYLE.md`**, normative for the three parts: a section states the rule, then its consequence, then at most one short *Design rationale* that ends in the record; no history, no argument, no reader, one idea per sentence, lowercase common nouns, one word per thing (a `[build]` key is a *build option*, `nikaia-runtime.toml` holds *runtime configuration*). A status note has one form, `> **Implementation status:** <value>.`, with six values: Implemented, Partially implemented, Not implemented, Reserved, Withdrawn, Unspecified. A rule is sober; a principle may be pointed, as a block quote after the rule it fixes.
+- **`scripts/check-spec-blocks.py`** guards an editorial pass: every ```` ```nika ```` block of the three parts is a test, and the script refuses a pass that changed, added or removed one.
+- The specification's README and `docs/README.md` point at the standard. The three parts themselves are rewritten to it in the next package.
 ## [0.0.37] — 2026-09-19
 
 `a..b` includes its end and `a..<b` does not, everywhere in the language — and

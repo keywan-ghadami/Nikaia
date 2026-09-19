@@ -9,31 +9,26 @@ here, one of the two is a bug.
 | [Part II — Concurrency and Metaprogramming](20-nikaia-advance.md) | concurrency, parallelism, macros, the grammar protocol |
 | [Part III — Tooling](30-nikaia-tooling.md) | the CLI, the manifest, the contract ledger, `std`, the diagnostics contract |
 
-A section states the rule and, where the rule is surprising, why it is the rule
-in a sentence or two — then links the decision. **Why** the language is this way
-lives next door, one record per decision: [the ADRs](adr/README.md).
+The three parts are written to one **language standard**,
+[`STYLE.md`](STYLE.md): a section states the rule, then its consequence, then
+at most one short *Design rationale* that ends in the record holding the
+argument. **Why** the language is this way lives next door, one record per
+decision: [the ADRs](adr/README.md). The specification does not argue and does
+not remember; it points.
 
-A rule specified ahead of the compiler carries a short **Status** note saying
-what is built and what is not, because a reader cannot otherwise tell a plan
-from a promise.
+A rule the compiler does not fully carry out yet is followed by a status note
+in one form, `> **Implementation status:** <value>.`, with one of six values —
+Implemented, Partially implemented, Not implemented, Reserved, Withdrawn,
+Unspecified — and one to three factual sentences after it: what is built, which
+diagnostic fires today, and the record whose §5 carries the work. **Unspecified**
+marks a construct the page shows and no record decides
+([ADR-141](adr/adr-141.md) D3); no page carries it today, since `select`, the
+channel and the duration were decided ([ADR-148](adr/adr-148.md),
+[ADR-149](adr/adr-149.md), [ADR-150](adr/adr-150.md)).
 
-An example that is ahead of the *language* carries a different mark:
-
-> **Unspecified.** This writes a construct the language does not have and no
-> record decides. It is here for the shape of the example; the decision is
-> named where it will be taken.
-
-The two are not the same state ([ADR-141](adr/adr-141.md) D3). A **Status**
-note stands under a rule that *is* decided — a record says what happens and the
-compiler has not caught up. An **Unspecified** mark stands under a construct
-nobody has decided at all, kept on the page because the shape it was written
-for is worth keeping and removing it would lose the argument with it.
-
-**No page carries the mark today.** The three it was written for — `select`, a
-channel and a duration — were decided in one round
-([ADR-148](adr/adr-148.md), [ADR-149](adr/adr-149.md),
-[ADR-150](adr/adr-150.md)) and each carries a **Status** note now. The form
-stays, because the next construct written ahead of a decision will want it.
+`scripts/check-spec-blocks.py` guards an editorial pass: every ```` ```nika ````
+block of the three parts is a test, and the script refuses a pass that changed
+one.
 
 For what belongs in this directory and what belongs in the notes, see
 [`docs/README.md`](../README.md).
