@@ -339,17 +339,21 @@ Ordered by how early a newcomer meets it. Each was reproduced unless marked
 
 | construct | today |
 | :--- | :--- |
-| `else if` | **parse error** — `expected '{'; found 'if'`. Every language has it; the examples work around it with nested blocks and sequential `if`s (`http/src/main.nika:status_line`). |
+| `else if` | **parse error** — `expected '{'; found 'if'`. Every language has it; the examples work around it with nested blocks and sequential `if`s (`http/src/main.nika:status_line`). *Decided since:* [ADR-132](specification/adr/adr-132.md) — an `else` whose block is one `if`, braces left out; not built. |
 | `let (a, b) = pair` | was a parse error at `61849da`; **built since** by [ADR-098](specification/adr/adr-098.md), a flat tuple of names. |
 | `[1, 2, 3]` | parse error. A list literal is the first thing a scripting-language reader types. `Vec::new()` then `push`, four times, is what `n-body.nika` and `jumps.nika` do instead. |
 | `1_000_000`, `0xFF`, `0b1010` | `NK1117: nothing declares _000_000`. A language with `u8`, `Bytes`, `wrapping_shl`, an x86 DSL and a benchmark full of physical constants has no hex and no digit groups. |
 | tuple, or-, range-, guarded, nested patterns in `match` | parse error on `(1, y) =>`. `calc.nika` matches `step.0` because it cannot match `step`. Six pattern shapes, none composable. |
 | `..` rest in a struct pattern | parse error *(spec status)*. |
 | a bare `throw` as a match arm | parse error; must be `{ throw error }`. |
-| block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. |
+| block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. *Decided since:* [ADR-134](specification/adr/adr-134.md) — `/* … */`, nesting, not a doc comment; doc comments are in `open-decisions.md`. |
 | a function that never returns | needed an unreachable `return 0` at `61849da`; **built since** by [ADR-093](specification/adr/adr-093.md). |
 
-None of these needs a decision. They need an afternoon each.
+None of these needs a decision. They need an afternoon each. *Since:* the rows
+without a pointer — the list literal, number literals, `match` patterns, `..`,
+the bare `throw` arm — are in `open-decisions.md`, because each turned out to
+have one question in it (what an empty literal is, how a range pattern is
+spelled) that the owner answers.
 
 ### 3.2 Reserved words that block ordinary names
 
@@ -401,7 +405,8 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   no `use` at all. Probe confirms the import works. Two rules for one keyword,
   and the one the spec argues for is the one `std` does not follow.
 * **An option without the `;`**: 17.1 writes `io::read_to_string(trusted:
-  false)`; 5.1 says a named argument stands after the `;`.
+  false)`; 5.1 says a named argument stands after the `;`. *Decided since:*
+  [ADR-133](specification/adr/adr-133.md) — 17.1 was right.
 
 ### 3.4 The subject/config protocol at its worst
 
@@ -409,6 +414,8 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
 leading semicolon in an argument list is a shape no reader has seen. Since
 options must be named and subjects must not be, a call with only named
 arguments is unambiguous without the `;`: let `f(opt: 1)` mean `f(; opt: 1)`.
+*Decided since:* [ADR-133](specification/adr/adr-133.md) — `f(opt: 1)` is the
+one form and the leading `;` is refused; a mixed call keeps its `;`. Not built.
 
 ### 3.5 Things the specification writes that are not in the language
 

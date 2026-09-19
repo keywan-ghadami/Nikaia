@@ -826,7 +826,7 @@ fn main() {
     } eod
 
     // Subject: none ; Config: msg
-    script.exec(; msg: message)
+    script.exec(msg: message)
 }
 ```
 

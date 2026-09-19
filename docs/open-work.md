@@ -1518,6 +1518,39 @@ WebAssembly build's `.js`. No second artifact, no native Node add-on.
 example library; the streamed and async forms; the `js` name; a test that
 imports the binding.
 
+### 2.44. `else if`
+
+[ADR-132](specification/adr/adr-132.md), all of it. After `else`, an `if` may
+stand where the block would; the chain is one `if` inside another with the
+inner braces left out, so every rule of `if` holds at every link. The emitter
+writes Rust's `else if` where the `else` block holds one `if` and nothing else;
+the formatter keeps a chain flat and never refolds one.
+
+*What it needs, in the record's order (§5):* the parser's alternative; the
+emitter's flat form and the formatter's line; `examples/http`'s `status_line`
+as a chain, and a test on a three-link chain's value.
+
+### 2.45. The leading `;` is gone
+
+[ADR-133](specification/adr/adr-133.md), all of it. An argument list of options
+alone writes no `;` — `execute(target_age: 30)`, `fn execute(target_age: i64 =
+0)` — and the leading form is a parse error with a message naming the new one.
+A mixed call keeps its `;`, required. One alternative tried first in the call
+rule and in the signature rule, on the second token; no AST change. The two
+specification examples already read the new form.
+
+*What it needs:* the two alternatives and the message; a test that the new
+form parses and the old is refused.
+
+### 2.46. Block comments
+
+[ADR-134](specification/adr/adr-134.md), all of it. `/* … */` anywhere
+whitespace may stand, across lines, nesting, an unclosed one reported at its
+opening; `/** … */` is a comment and not a doc comment.
+
+*What it needs:* `BLOCK_COMMENT` beside `COMMENT` with the nesting count; a
+test with a nested comment in an argument list and a `/*` inside a string.
+
 ## 3. Upkeep
 
 ### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect

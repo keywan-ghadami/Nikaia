@@ -1,13 +1,100 @@
 # Open decisions — the questions that need the owner
 
-**Nothing is open**, below — the file is a page of what has been answered and
-nothing else, for the first time. Nothing answered lives here: an
-answer is an [ADR](specification/adr/), and the moment a question is answered its
-entry leaves this file rather than staying with a note on it. What is merely
-**unbuilt** is in [`open-work.md`](open-work.md) — an ADR said what happens and
-the compiler does not do it yet, which needs work and not a ruling.
+**Eight entries are open**, below. An answer is an [ADR](specification/adr/),
+and the moment a question is answered its entry leaves this file rather than
+staying with a note on it. What is merely **unbuilt** is in
+[`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
+not do it yet, which needs work and not a ruling. Each entry says what the
+question is, why it is the owner's, and what this file recommends.
 
-The twenty-two entries this file used to carry are gone that way, twenty to
+## Open
+
+### 1. What a list literal is: `[1, 2, 3]`, and the empty one
+
+The literal is table stakes (`language-review.md` §3.1) and the parser has no
+`[` in expression position, so the syntax is free. Two questions are the
+owner's: what `[]` is (a `Vec` of the first type a later use gives it, as a
+number literal takes its width — [ADR-060](specification/adr/adr-060.md)'s rule
+applied to a container — or a refusal asking for the type), and whether a
+literal at the start of a statement after an expression is an index or a new
+literal (Rust and JavaScript answer this differently). *Recommendation:*
+`[]` takes the type from the first use and is refused where none exists;
+a `[` at the start of a line begins a literal, because an index across a
+line break is a shape nobody writes.
+
+### 2. Number literals: `1_000_000`, `0xFF`, `0b1010`, `0o17`
+
+`NK1117` today (*nothing declares `_000_000`*). The forms are Rust's and the
+lowering is verbatim. The one question: does a hexadecimal literal take the
+first type that holds it as a decimal does ([ADR-060](specification/adr/adr-060.md)),
+or is `0xFF` a `u8` because eight bits were written? *Recommendation:* the
+same rule as decimal — a literal is a value, and the digits it was written in
+are a spelling — so `0xFF` is an `i32` unless a use says otherwise.
+
+### 3. `match` patterns: tuple, or, range, guard, nested, and `..` in a struct
+
+Six shapes, none built; `calc.nika` matches `step.0` because it cannot match
+`step`. Each is Rust's and lowers verbatim. The owner's questions are two:
+whether a guard is `if` (Rust) and whether a range pattern is `1..=5`
+(Rust) or `1..5` inclusive as the language's own `for` range is not — the
+language's `..` is exclusive, and a pattern reader from Rust expects `..=`.
+*Recommendation:* `if` for the guard; `..=` for an inclusive range pattern,
+`..` never in a pattern, so that the exclusive range and the pattern cannot
+be confused.
+
+### 4. A bare `throw` as a `match` arm
+
+`=> throw NotFound` is a parse error; it must be `=> { throw NotFound }`.
+The question is whether `throw` (and `return`, `break`, `continue`) are
+expressions of the never type ([ADR-093](specification/adr/adr-093.md) has
+the type) or statements that need a block. *Recommendation:* expressions of
+the never type, as Rust has them, so that an arm, an `??` right side and an
+`else` branch may all end in one.
+
+### 5. Doc comments, and a `doc` column in the ledger
+
+`///` is an ordinary comment ([ADR-134](specification/adr/adr-134.md) D3
+keeps it so). The ledger ships and the prompt bundle is on the roadmap, and
+neither has anywhere to take a sentence about a function from. The question
+is whether a doc comment is a language feature (a `doc` column in
+`nikaia.contracts`, a `///` the parser keeps, `nikaia doc`) or a convention
+the tooling reads. *Recommendation:* a language feature — the ledger is the
+one place a consumer reads, and a sentence that is not in it is not read.
+
+### 6. Two spellings for one thing (`language-review.md` §3.3)
+
+Five pairs, each needing a pick: the struct literal `Stats(min: 1)` beside
+`Reading { name, temp }`; the anonymous constructor beside `Type::new()`; the
+path separator `::` beside the dot of `Json.value(input)`; `throws` before
+`->` beside after; `use` bringing in a name for `std` and none for a package.
+*Recommendation:* the brace literal, the anonymous constructor with `new`
+gone from `std`'s own types, `::` everywhere, `throws` after the type, and
+`use` as [ADR-046](specification/adr/adr-046.md) says with `std` brought in
+line. Each is a record of its own, and each costs an example migration.
+
+### 7. The specification writes things the language does not have (§3.5)
+
+`neg.is_some()`, a postfix `?`, `List[T]` for `Vec[T]`, a lambda carrying
+`sync`, a string where an enum was argued for, an error raised as a
+positional constructor, `5.seconds()`, `channel::bounded`, `select { … }`.
+Most are corrections a page can take without a ruling; three are not — the
+`select` block, the duration literal and the channel — because each is a
+construct. *Recommendation:* correct the six; decide the three when their
+chapter (Part I 8) is next opened, and mark them *unspecified* until then.
+
+### 8. A roadmap note for the marketing wish list
+
+Bosch, Siemens, Schwarz IT, SAP each want a different thing, and the order
+the compiler builds them in is the owner's. *Recommendation:* the HTTP server
+first (every demo stands on it), `std::db` second, the C library
+([ADR-125](specification/adr/adr-125.md)) third, the query DSL fourth; the
+bare-metal target ([ADR-119](specification/adr/adr-119.md)) after the server
+and the C library, since it reuses their allocator and baked settings. One
+paragraph in `project_status_and_roadmap.md` would say it.
+
+## Answered
+
+The entries this file used to carry are gone that way, most to
 their records and two because they were never questions for the owner at all —
 the second being whether a word-sized shared value drops its lock, which is a
 **performance idea** and is documented as one in

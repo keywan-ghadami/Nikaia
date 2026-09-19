@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.10] — 2026-09-19
+
+### Decided (three shapes every reader expects, and eight questions written down)
+
+- **[ADR-132](docs/specification/adr/adr-132.md).** `else if`: an `else` whose block is one `if`, with the braces left out. No keyword and no new rule — the chain inherits every rule of `if` — and the emitter writes Rust's own `else if`.
+- **[ADR-133](docs/specification/adr/adr-133.md).** An argument list of options alone writes no `;`: `execute(target_age: 30)` and `fn execute(target_age: i64 = 0)`. The leading `;` is refused, so there is one spelling; a mixed call keeps its `;`. It costs the parser one alternative tried first, because nothing in expression position begins with `name:`. The two places the specification wrote the old form read the new one.
+- **[ADR-134](docs/specification/adr/adr-134.md).** `/* … */` is a comment; it nests as Rust's does, an unclosed one is reported where it opened, and `/** … */` is a comment and not a doc comment.
+- **`open-decisions.md` carries eight questions again**, each with a recommendation: the list literal and its empty form, number literals, `match` patterns, a bare `throw` arm, doc comments and a ledger `doc` column, the two spellings of §3.3, what the specification writes that the language lacks, and the roadmap note for the marketing list.
+
 ## [0.0.9] — 2026-09-19
 
 ### Decided (what the library boundary had left open)
