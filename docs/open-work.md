@@ -123,15 +123,22 @@ and closed by the hand-over `lent_args` and `nullable_args` already use
 `script.exec(msg: message)` is the block that proves it: the specification's
 lowering floor went **up**, 47 to 48, for the first time it has moved that way.
 
+And **an array inside another type, with no literal that fits it** — `let grid:
+Vec[Array[f64, 2]] = [[1.0, 2.0], [3.0, 4.0]]` was refused although it is right,
+because a literal takes the array type from its **use** and the first reading of
+that read the type it was given **whole**. Filed against
+[ADR-152](specification/adr/adr-152.md) by the change that built it and closed by
+the next one: the answer descends with the literal now, so a `Vec[T]` is walked
+*through* where an array is what it holds.
+
 Each is in the CHANGELOG with what it
 was and what fixed it; a fixed entry kept here only makes the list longer to
 read.
 
-**One entry, below, and it arrived by building something else.** Before it this
-section was empty, and the last entry to leave it was wrong on both of its
-claims. It said an
-accessor cannot hand back a **view** of a field and that the lowering names no
-lifetime. Neither is true, and both were checkable in a minute:
+**Two entries, below, and the older of them arrived by building something
+else.** Before it this section was empty, and the last entry to leave it was
+wrong on both of its claims: it said an accessor cannot hand back a **view** of
+a field, and that the lowering names no lifetime. Neither is true, and both were checkable in a minute:
 
 ```nika
 fn name_of(&self) -> &str { return &self.name }   // compiles and runs
@@ -158,10 +165,10 @@ for a `Vec` field as well as for text.
 Everything this section has held was found the same way — by running the programs the specification prints,
 which is `crates/nikaia/tests/specification.rs` now rather than a habit: it takes
 every `nika` block in the three pages as far as it goes and hands the ones that
-lower to `rustc`, against two recorded baselines. Of 127 blocks, 50 are programs
-this compiler takes and 32 of those compile below — the newest of them being
-Part II 12.2's `set(neu; after: stand)`
-([ADR-111](specification/adr/adr-111.md) D5), which lowers and compiles.
+lower to `rustc`, against two recorded baselines. Of 131 blocks, 55 are programs
+this compiler takes and 35 of those compile below — the newest of them being
+Part I 4.5's `struct Vector3 { parts: Array[f64, 3] }`
+([ADR-152](specification/adr/adr-152.md)), which lowers and compiles.
 
 What left: a trait whose method **pauses** is `NK1129`, an `impl` that disagrees
 with its trait about which methods exist is `NK1130`, Part I 4.5's map example
@@ -352,33 +359,6 @@ negation folded in the parser where it sits directly in front of one — and the
 second is the smaller change, since `Expr::LitInt` is an `i64` everywhere else
 and widening it touches every reader. Nothing in the tree writes the number, so
 this is a completeness item rather than a blocker.
-
-### 1.3. An array inside another type has no literal
-
-*Found by building* [ADR-152](specification/adr/adr-152.md), and it is the one
-position that record's D4 does not reach: a literal takes the array type from
-its **use**, and a use one level down is not read.
-
-*Reproduction:*
-
-```nika
-let grid: Vec[Array[f64, 2]] = [[1.0, 2.0], [3.0, 4.0]]
-```
-
-`error[NK1103]: this is `Vec[Vec[?]]`, and the `let` says `Vec[Array[f64, 2]]``
-— a correct program refused, which is [Part III
-C.4](specification/30-nikaia-tooling.md)'s class and the one thing this compiler
-may not do. Four positions write a use today (an annotated `let`, a call
-argument, a declared result and a struct literal's field) and each reads the
-type it was given whole; none of them walks *into* it beside the literal.
-
-*What it needs:* the answer to descend together with the literal — a wanted type
-and a value walked in step, so that the `n`th element of a literal meets the
-`n`th argument of the type. That is the shape the empty list's rule will want
-too, so it is one piece of work rather than two.
-
-*What it does not need:* a guess. Refusing is the correct half of this; what is
-missing is accepting the program that is right.
 
 ## 2. Decided and unbuilt
 

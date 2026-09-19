@@ -6820,40 +6820,75 @@ impl<'a> Checker<'a> {
     /// always used. One message, and no code of its own for a mismatch that is
     /// not new.
     ///
+    /// **And it descends with the literal.** The first reading of *the use* read
+    /// the type it was given whole, which refused
+    /// `let grid: Vec[Array[f64, 2]] = [[1.0, 2.0], [3.0, 4.0]]` — a correct
+    /// program, which is [Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)'s class. So a
+    /// `Vec[T]` is walked *through* where an array is what it holds, and an
+    /// array's own elements are walked the same way.
+    ///
     /// `None` where the use asks for anything else, and the caller keeps the
     /// `Vec` the walk produced.
     fn array_literal(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
-        let Ty::Named { name, args, .. } = want else {
+        let (
+            Ty::Named {
+                name, args: wanted, ..
+            },
+            Expr::ListLit { items, at },
+        ) = (want, value)
+        else {
             return None;
         };
-        if name != ty::ARRAY {
-            return None;
-        }
-        let [_, Ty::Count(n)] = args.as_slice() else {
-            return None;
-        };
-        let Expr::ListLit { items, at } = value else {
-            return None;
+        // **`Array[T, N]` is the container this is about**, and `Vec[T]` is here
+        // only to be walked *through*: `Vec[Array[f64, 2]]` asks for an array
+        // one level down, and a rule that read the type it was given whole
+        // refused `[[1.0, 2.0], [3.0, 4.0]]` — a correct program, which is the
+        // one thing this may not do (Part III, C.4).
+        //
+        // A `Vec` is walked only where an array is somewhere inside it, so a
+        // list of anything else reaches this and leaves it untouched.
+        let (element, count) = match (name.as_str(), wanted.as_slice()) {
+            (ty::ARRAY, [element, Ty::Count(n)]) => (element, Some(*n)),
+            ("Vec", [element]) if holds_an_array(element) => (element, None),
+            _ => return None,
         };
         // **The length is part of the type** (D4), so a literal that does not
         // match `N` is refused naming both numbers - and `want` goes back, so
         // that the caller's own fit stays quiet about a type it would otherwise
         // report a second time in numbers the reader has to compare by eye.
-        if items.len() as i64 != *n {
-            self.a_list_the_wrong_length_for_its_array(items.len(), *n, span);
-            return Some(want.clone());
+        if let Some(n) = count {
+            if items.len() as i64 != n {
+                self.a_list_the_wrong_length_for_its_array(items.len(), n, span);
+                return Some(want.clone());
+            }
+            self.checked.array_literals.insert(*at);
         }
-        self.checked.array_literals.insert(*at);
-        // `Vec[E]` is what the walk hands back and `E` is what the elements
-        // agreed on; `Unknown` where they said nothing, which is the silence
-        // every unanswered question here keeps (Part III, C.4).
-        let agreed = match found {
+        // What the walk agreed this container's elements are - `Vec[E]`'s `E`,
+        // and `Unknown` where they said nothing, which is the silence every
+        // unanswered question here keeps (Part III, C.4).
+        let held = match found {
             Ty::Named { args, .. } => args.first().cloned().unwrap_or(Ty::Unknown),
             _ => Ty::Unknown,
         };
+        // **And an element that is itself an array takes its own shape, one
+        // level down.** Every element of one literal is the same type, so the
+        // first answer is the argument — but all of them are walked, because
+        // each one's length is its own refusal and each one's byte is its own
+        // line for the emitter.
+        let mut agreed: Option<Ty> = None;
+        for item in items {
+            if let Some(inner) = self.array_literal(&held, element, item, span) {
+                agreed.get_or_insert(inner);
+            }
+        }
+        let agreed = agreed.unwrap_or(held);
         Some(Ty::Named {
-            name: ty::ARRAY.to_string(),
-            args: vec![agreed, Ty::Count(*n)],
+            name: name.clone(),
+            args: match count {
+                Some(n) => vec![agreed, Ty::Count(n)],
+                None => vec![agreed],
+            },
             view: false,
         })
     }
@@ -8778,6 +8813,21 @@ fn a_view_of(ty: &Ty) -> String {
     match ty {
         Ty::Named { name, args, .. } if args.is_empty() && name == "String" => "&str".to_string(),
         other => format!("&{}", other.text()),
+    }
+}
+
+/// Whether an `Array[T, N]` is anywhere inside a type.
+///
+/// What it guards is the walk **through** a container in
+/// [`Checker::array_literal`]: a `Vec[T]` is opened only where an array is what
+/// it holds, so a list of anything else reaches that rule and leaves it
+/// untouched ([ADR-152](../../docs/specification/adr/adr-152.md) D4).
+fn holds_an_array(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, .. } => name == ty::ARRAY || args.iter().any(holds_an_array),
+        Ty::Tuple(parts) => parts.iter().any(holds_an_array),
+        Ty::Nullable(inner) => holds_an_array(inner),
+        _ => false,
     }
 }
 

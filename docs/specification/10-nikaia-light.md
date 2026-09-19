@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.48 (Draft)
+**Version:** 0.0.49 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -1129,11 +1129,12 @@ takes its element type from its use. The length is part of the type, so
 `Array[f64, 3]` and `Array[f64, 4]` are different types and a literal whose
 length does not match `N` is refused with `NK1157` naming both numbers.
 
-> **Implementation status:** Implemented for the positions a use is written in —
+> **Implementation status:** Implemented. A use is written in four positions —
 > an annotated `let`, an argument, a declared result and a struct literal's
-> field. A slice of an array, an integer parameter of anything else, and a
-> default value for an unwritten element are all left open
-> ([ADR-152](adr/adr-152.md) §4).
+> field — and the answer descends with the literal, so `Vec[Array[f64, 2]]` and
+> `Array[Array[i64, 2], 2]` take their shape too. A slice of an array, an
+> integer parameter of anything else, and a default value for an unwritten
+> element are all left open ([ADR-152](adr/adr-152.md) §4).
 
 > **Implementation status:** Implemented. The literal, its trailing comma, the
 > element type, `NK1154`, `NK1153` and the `[` that begins a line are built

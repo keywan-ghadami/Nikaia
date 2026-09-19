@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.49] — 2026-09-19
+
+The array literal's answer descends with the literal, which closes the defect
+0.0.48 filed against itself.
+
+### Fixed ([ADR-152](docs/specification/adr/adr-152.md) D4)
+
+- **A correct program was refused.** `let grid: Vec[Array[f64, 2]] = [[1.0, 2.0], [3.0, 4.0]]` came back *this is `Vec[Vec[?]]`, and the `let` says `Vec[Array[f64, 2]]`* — the literal takes the array type from its **use**, and the first reading of that read the type it was given **whole**, so a use one level down was not read. That is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s class and the one thing this compiler may not do.
+- **A `Vec[T]` is walked *through* where an array is what it holds**, and an array's own elements are walked the same way, so `Array[Array[i64, 2], 2]` lowers both levels. A list of anything else reaches the rule and leaves it untouched: the walk is guarded on the wanted type actually holding an array.
+- **Every element is walked and not only the first.** The type answer is the same for all of them, but each element's length is its own refusal and each element's byte is its own line for the emitter — so a short literal in second position is found.
+- **Four more tests** in `crates/nikaia/tests/fixed_size_array.rs`, one per half of the fix.
+
 ## [0.0.48] — 2026-09-19
 
 A fixed-size array is `Array[T, N]`

@@ -213,6 +213,73 @@ fn an_element_of_the_wrong_type_is_the_lets_own_refusal() {
     assert!(found[0].message.contains("Array[&str, 1]"), "{found:#?}");
 }
 
+/// **An array inside another type takes its shape too**, which is the position
+/// D4's rule did not reach when it was first built: four positions write a use
+/// and each read the type it was given whole, so `Vec[Array[f64, 2]]` refused
+/// the literal that is right for it — a correct program refused, which is
+/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md)'s class.
+#[test]
+fn a_vec_of_arrays_takes_its_shape_one_level_down() {
+    let source = "fn main() {\n\
+                  \x20   let grid: Vec[Array[f64, 2]] = [[1.0, 2.0], [3.0, 4.0]]\n\
+                  \x20   println(f\"{grid[0][1]}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("let grid: Vec<[f64; 2]> = vec![[1.0, 2.0], [3.0, 4.0]];"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **And an array of arrays**, where the walk through is the outer array's own.
+#[test]
+fn an_array_of_arrays_lowers_both_levels() {
+    let source = "fn main() {\n\
+                  \x20   let deep: Array[Array[i64, 2], 2] = [[1, 2], [3, 4]]\n\
+                  \x20   println(f\"{deep[1][0]}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("let deep: [[i64; 2]; 2] = [[1, 2], [3, 4]];"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **Every element is walked and not only the first**, because each one's
+/// length is its own refusal — the short one is the second here.
+#[test]
+fn an_inner_literal_of_the_wrong_length_is_refused_wherever_it_stands() {
+    let found: Vec<_> = findings(
+        "fn main() {\n\
+         \x20   let bad: Vec[Array[i64, 2]] = [[1, 2], [3]]\n\
+         \x20   println(f\"{bad.len()}\")\n\
+         }\n",
+    )
+    .into_iter()
+    .filter(|f| f.code == "NK1157")
+    .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(found[0].message.contains("1 element,"), "{found:#?}");
+}
+
+/// **A list of anything else is untouched by the walk through**: a `Vec[T]` is
+/// opened only where an array is what it holds.
+#[test]
+fn a_plain_list_is_still_a_vec() {
+    let source = "fn main() {\n\
+                  \x20   let plain: Vec[i64] = [1, 2, 3]\n\
+                  \x20   println(f\"{plain.len()}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("let plain: Vec<i64> = vec![1, 2, 3];"),
+        "{}",
+        lowered(source)
+    );
+}
+
 /// **D3, measured where it matters: it compiles, it runs, and `len()` is the
 /// `N` it was declared with** — known while the program is built, because
 /// `[T; N]::len` is a constant below.
