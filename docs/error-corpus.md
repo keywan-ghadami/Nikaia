@@ -53,7 +53,7 @@ to a row, the row says so.
 | A1 | `struct S { name: &str` ⏎ `temp: i32 }` | `,` or `}` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `,` in the note |
 | A2 | `fn f(a: i32 b: i32) {}` | `,` or `)` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` ``, `,` in the note |
 | A3 | `fn f() {` ⏎ `let x = 1` | `}` at end of input | ⚠️ 17 tokens | ✅ ``expected `}` `` |
-| A4 | `let xs = [1, 2` | `,` or `]` | ⚠️ `` `//`, whitespace `` | ✅ `expected expression`, at the `[` |
+| A4 | `let xs = [1, 2` | `,` or `]` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `]` ``, `,` in the note |
 | A5 | `struct S { a: i32,, b: i32 }` | a field name | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, identifier in the note |
 
 A1 and A2 are the honest answers rather than the ideal ones, and worth saying
@@ -68,9 +68,14 @@ error was recorded as one more "something else could have gone here". An
 element that read four tokens and did not finish is now a requirement, and the
 brace leads.
 
-A4 is the clearest remaining case of the whitespace skip winning on *progress*:
-it is tried at the start of every rule, so at a position no real parser reached
-it is trivially the furthest thing that failed.
+A4 **moved when the list literal was built**
+([ADR-135](specification/adr/adr-135.md)). It used to be the clearest remaining
+case of the whitespace skip winning on *progress* — tried at the start of every
+rule, so at a position no real parser reached it was trivially the furthest
+thing that failed — because nothing in the grammar began with a `[` and the
+expression rule failed there. Now `list_lit` reads the `[`, gets as far as the
+end of the line and requires its `]`, so the requirement leads and the `,` is
+in the note beside it: the same shape A1 and A2 have, and for the same reason.
 
 ## B. An operand is missing
 
@@ -219,10 +224,10 @@ they are new arrivals rather than regressions: they were silent before.
 
 What A4, B1 and G1 turned out to be is worth keeping, because they were filed
 as something else for two rounds. They reported whitespace and were never a
-trivia problem: in `let xs = [1, 2` — Nikaia has no list literal, so nothing
-can start at the `[` — `let` and `xs` each parse as an expression statement,
-and the alternative that *would* have said `expected expression` there is
-abandoned when the shorter parse wins. `alt` drops what a losing alternative
+trivia problem: in `let xs = [1, 2` — Nikaia had no list literal then, so
+nothing could start at the `[` — `let` and `xs` each parse as an expression
+statement, and the alternative that *would* have said `expected expression`
+there is abandoned when the shorter parse wins. `alt` drops what a losing alternative
 found, so the only error left at that offset was the whitespace skip, which
 is then the furthest thing that failed. Two repairs were tried against this
 file and reverted before the third worked; upstream `TODO.md` carried all

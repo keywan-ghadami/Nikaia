@@ -864,7 +864,7 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
             children.push(start);
             children.push(end);
         }
-        Expr::Tuple(parts) => children.extend(parts),
+        Expr::Tuple(parts) | Expr::ListLit(parts) => children.extend(parts),
         Expr::StructLit { fields, .. } => {
             children.extend(fields.iter().filter_map(|f| f.value.as_ref()))
         }

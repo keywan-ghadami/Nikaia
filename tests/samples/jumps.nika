@@ -50,10 +50,6 @@ fn countdown(start: i64) -> i64 {
 }
 
 fn main() {
-    let mut xs = Vec()
-    xs.push(3)
-    xs.push(7)
-    xs.push(8)
-    xs.push(10)
+    let xs = [3, 7, 8, 10]
     println(f"{first_even(xs)} {triangle(4)} {countdown(5)}")
 }

@@ -30,7 +30,7 @@
 10-nikaia-light.md #30 lowered (as written) [about-a-refusal]  // file: main.nika
 10-nikaia-light.md #31 lowered (as written)  // Defining behavior for the User struct
 10-nikaia-light.md #32 lowered (as written)  enum Message {
-10-nikaia-light.md #33 fragment (as written)  let numbers = [1, 2, 3, 4]
+10-nikaia-light.md #33 lowered (a body)  let numbers = [1, 2, 3, 4]
 10-nikaia-light.md #34 refused (a body) [NK1117]  names.sort()                                  // by name
 10-nikaia-light.md #35 lowered (a body)  let pair = ("*", 3)          // (&str, i64)
 10-nikaia-light.md #36 lowered (items, then a body)  use std::collections::HashMap
@@ -44,7 +44,7 @@
 10-nikaia-light.md #44 refused (a body) [NK1117]  let ids = users.map fn(user) { user.id }
 10-nikaia-light.md #45 refused (a body) [NK1117]  Server::new()
 10-nikaia-light.md #46 refused (a body) [NK1117]  // The count comes from the list, so a local may be cal…
-10-nikaia-light.md #47 fragment (as written)  let prefix = "User: "
+10-nikaia-light.md #47 lowered (a body)  let prefix = "User: "
 10-nikaia-light.md #48 lowered (a body) [about-a-refusal]  let prefix = "Log: "
 10-nikaia-light.md #49 fragment (as written) [sketch]  fn serve(db: &Connection) { … }
 10-nikaia-light.md #50 lowered (a body) [sketch]  let db = SharedMut(postgres::connect("…"))
@@ -96,15 +96,15 @@
 20-nikaia-advance.md #19 fragment (as written) [about-a-refusal sketch]  let account_a = SharedMut(Account(…))
 20-nikaia-advance.md #20 fragment (as written)  select {
 20-nikaia-advance.md #21 lowered (a body)  // Subject: 100 (capacity)
-20-nikaia-advance.md #22 fragment (as written)  let pixels = [/* 1 million pixels */]
-20-nikaia-advance.md #23 fragment (as written)  let data = [1, 2, 3]
+20-nikaia-advance.md #22 lowered (a body)  let pixels = [/* 1 million pixels */]
+20-nikaia-advance.md #23 lowered (a body)  let data = [1, 2, 3]
 20-nikaia-advance.md #24 refused (a body) [NK1117]  // Subject: The Task (Lambda)
 30-nikaia-tooling.md #1 lowered (as written)  // build.nika
 30-nikaia-tooling.md #2 refused (a body) [NK1117]  test "Addition" {
 30-nikaia-tooling.md #3 fragment (as written)  fn divide(a: i32, b: i32) -> i32 {
 30-nikaia-tooling.md #4 fragment (as written)  struct User { name: String, age: i32 }
 30-nikaia-tooling.md #5 fragment (as written)  impl Generator for User {
-30-nikaia-tooling.md #6 fragment (as written)  bench "Sorting" {
+30-nikaia-tooling.md #6 refused (a body) [NK1117]  bench "Sorting" {
 30-nikaia-tooling.md #7 refused (as written) [NK1135]  extern "C" {
 30-nikaia-tooling.md #8 fragment (as written)  // Usage of a Rust crate
 30-nikaia-tooling.md #9 lowered (as written)  // main.nika

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.34 (Draft)
+**Version:** 0.0.35 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -1133,10 +1133,20 @@ where nothing ever says, it is refused asking for the type rather than guessing
 one. A `[` at the **start of a line** begins a literal and never an index of the
 line above it, so an index is always written where its subject is.
 
-> **Status:** the **list literal is not built** — `[1, 2, 3]` is a parse error at
-> the `[`, and so is a list *type* written `[User]`
-> ([ADR-135](adr/adr-135.md) §5). Built: the type `Vec[T]`, the tuple, indexing
-> (`xs[0]`), indexed assignment, and `HashMap()`.
+> **Status:** the **list literal is built** ([ADR-135](adr/adr-135.md) §5): the
+> literal and its trailing comma, the element type the elements agree on and
+> `NK1154` where two do not, `[]` from the annotation or from a later use and
+> `NK1153` where nothing ever uses it, and the `[` that begins a line. What is
+> **not** built is the list *type* written `[User]`, and deliberately: `Vec[T]`
+> is the spelling and a second one is [ADR-140](adr/adr-140.md)'s whole subject.
+> Built beside it: the tuple, indexing (`xs[0]`), indexed assignment, and
+> `HashMap()`.
+>
+> One case is left to the language below rather than answered here, for
+> [Part III C.4](30-nikaia-tooling.md)'s reason: `[]` whose only uses cannot
+> give it an element type — `xs.len()` and nothing else. Refusing it would mean
+> deciding which uses count, and deciding that wrongly is a correct program
+> refused; what silence costs is a backend message instead of this one.
 
 ### 4.6. Generics (Type Parameters)
 To avoid writing the same code for different data types, Nikaia uses **Generics**. You define a type parameter inside square brackets `[...]`.

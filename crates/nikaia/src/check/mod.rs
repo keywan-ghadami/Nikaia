@@ -526,6 +526,7 @@ pub fn check_program(
         receiver_name: None,
         read_at: Vec::new(),
         written_at: Vec::new(),
+        empty_lists: BTreeMap::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
         checked: Checked::default(),
@@ -647,6 +648,38 @@ pub enum Narrowing {
 /// Whether an expression **can only** be a value: a name, a literal, an
 /// operator, a field, an index.
 ///
+/// What kind of value an element of a list literal is, where that much is known
+/// without a type ([ADR-135](../../docs/specification/adr/adr-135.md) D1).
+///
+/// **A literal first**, because that is the case the type cannot answer: a bare
+/// `1` fits every numeric type, so it arrives as `?` and two of those say
+/// nothing about each other. A number and a piece of text do.
+///
+/// `i64` and `f64` are one kind here, deliberately: this is a **coarse** answer
+/// used only to refuse, and a finer one would refuse `[1, 1.5]` on a reading of
+/// the literals rather than of the program.
+fn element_kind(expr: &Expr, ty: &Ty) -> Option<&'static str> {
+    match expr {
+        Expr::LitInt(_) | Expr::LitFloat(_) => return Some("a number"),
+        Expr::LitStr(_) | Expr::LitInterpolated(_) => return Some("text"),
+        Expr::LitChar(_) => return Some("a character"),
+        Expr::LitBool(_) => return Some("a `bool`"),
+        _ => {}
+    }
+    let Ty::Named { name, .. } = ty else {
+        return None;
+    };
+    match name.as_str() {
+        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize" | "f32" | "f64" => {
+            Some("a number")
+        }
+        "str" | "String" => Some("text"),
+        "char" => Some("a character"),
+        "bool" => Some("a `bool`"),
+        _ => None,
+    }
+}
+
 /// The half of `NK1141`'s question that is safe to answer from the shape. A
 /// call and a method call are deliberately not here: whether one comes to a
 /// value is a question about its callee, and answering it wrongly is a correct
@@ -827,6 +860,14 @@ struct Local {
     /// program refused* ([Part III
     /// C.4](../../docs/specification/30-nikaia-tooling.md)).
     immutable: Option<Immutable>,
+    /// Where the `let` stands, for a binding whose value was an **empty list**
+    /// and whose element type nothing has said yet
+    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2).
+    ///
+    /// On the binding rather than in a map, for the reason `immutable` gives:
+    /// the scope is the one `scope` already keeps, so an inner `let xs = []`
+    /// and an outer `xs` are two questions and not one.
+    empty_list: Option<usize>,
 }
 
 /// A binding that did not say `mut`: where it was written, and which of the two
@@ -865,6 +906,7 @@ impl Local {
             ty: local.ty.clone(),
             constant: local.constant,
             immutable: local.immutable.clone(),
+            empty_list: local.empty_list,
         }
     }
 
@@ -874,6 +916,7 @@ impl Local {
             ty,
             constant: None,
             immutable: None,
+            empty_list: None,
         }
     }
 }
@@ -1054,6 +1097,15 @@ struct Checker<'a> {
     /// a correct program - so those are collected separately.
     read_at: Vec<(String, usize)>,
     written_at: Vec<(String, usize)>,
+    /// The `let`s in the body being walked whose value was an **empty list**
+    /// and whose element type nothing has said yet
+    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2), by the `let`'s
+    /// byte: the name, and where to put the caret.
+    ///
+    /// An entry **leaves** when the name is read, because a use is what gives
+    /// an empty list its element type; what is left when the body ends is a
+    /// list nothing will ever constrain, and that is `NK1153`.
+    empty_lists: BTreeMap<usize, (String, Span)>,
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
@@ -1565,6 +1617,7 @@ impl<'a> Checker<'a> {
                 constant: None,
                 // **D3**: without the word, a body that changes this parameter
                 // is `NK1138`.
+                empty_list: None,
                 immutable: (!arg.mutable).then(|| Immutable {
                     at: arg.span.clone(),
                     kind: Kind::Parameter,
@@ -1595,8 +1648,18 @@ impl<'a> Checker<'a> {
 
         self.scope.push(frame);
         let tail_span = body.stmts.last().map(|s| s.span.clone());
+        let outer_lists = std::mem::take(&mut self.empty_lists);
         let tail = self.block(body);
         self.scope.pop();
+
+        // **`NK1153`, once the whole body has been seen**
+        // ([ADR-135](../../docs/specification/adr/adr-135.md) D2), for
+        // `NK2101`'s reason one page down: the use that gives an empty list its
+        // element type stands *after* the `let`, and a single pass reaches a
+        // later statement later.
+        for (name, at) in std::mem::replace(&mut self.empty_lists, outer_lists).into_values() {
+            self.an_empty_list_with_no_element_type(&name, &at);
+        }
 
         // The last expression of a body is what the function hands back, so it
         // answers to the declared type exactly as a `return` does - unless the
@@ -2369,6 +2432,7 @@ impl<'a> Checker<'a> {
             name: self.parsed.text(name).to_string(),
             ty,
             constant: None,
+            empty_list: None,
             immutable: asked.then(|| Immutable {
                 at: span.clone(),
                 kind: Kind::Parameter,
@@ -3123,6 +3187,21 @@ impl<'a> Checker<'a> {
                         found
                     }
                 };
+                // **An empty list has no element type, and D2 says where one
+                // comes from**
+                // ([ADR-135](../../docs/specification/adr/adr-135.md)): the
+                // first use that needs one. An annotation is that use and
+                // answers it here; without one the question is left open and
+                // asked again when the body has been walked, because the use
+                // that answers it stands *after* this line.
+                let pending = match (ty, value) {
+                    (None, Expr::ListLit(items)) if items.is_empty() => {
+                        self.empty_lists
+                            .insert(span.start, (name.clone(), span.clone()));
+                        Some(span.start)
+                    }
+                    _ => None,
+                };
                 // **Only an immutable `let` carries its value forward.** A
                 // `mut` one may be given another before the name is read again,
                 // and this checker does not follow assignments - so the value
@@ -3142,6 +3221,7 @@ impl<'a> Checker<'a> {
                     name,
                     ty: bound,
                     constant,
+                    empty_list: pending,
                     // **Part I 2.1**: without the word, a change to this name
                     // is `NK1139`. The span is the statement's, which is the
                     // `let` itself — a binding has no narrower one.
@@ -3341,6 +3421,13 @@ impl<'a> Checker<'a> {
                 // `NK2101`: where this name is read, for the question a `spawn`
                 // asks about what comes after it.
                 self.read_at.push((name.to_string(), span.start));
+                // **D2's question, answered where every name is read**
+                // ([ADR-135](../../docs/specification/adr/adr-135.md)): an
+                // empty list takes its element type from its first use, so a
+                // use - any use - is what says one exists.
+                if let Some(at) = self.binding(name).and_then(|local| local.empty_list) {
+                    self.empty_lists.remove(&at);
+                }
                 match self.lookup(name) {
                     Some(ty) => ty,
                     None => {
@@ -4055,6 +4142,11 @@ impl<'a> Checker<'a> {
             }
 
             Expr::Tuple(parts) => Ty::Tuple(parts.iter().map(|p| self.expr(p, span)).collect()),
+
+            // **`[1, 2, 3]` is a `Vec[T]`**
+            // ([ADR-135](../../docs/specification/adr/adr-135.md) D1), and `T`
+            // is what the elements agree on.
+            Expr::ListLit(items) => self.list_literal(items, span),
 
             // A `?` unwraps a failure, a `??` unwraps an absence, an index
             // reaches into a container and a range is an iterator: four things
@@ -6381,6 +6473,139 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **`[1, 2, 3]`**, and what its type is
+    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D1).
+    ///
+    /// The elements are walked in order and the first one that has a type is
+    /// what the rest answer to. A type this checker could not work out is
+    /// **silence** and not a disagreement: Stage 0 knows the type of rather
+    /// less than half of what a program writes, and a refusal on doubt is
+    /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s correct
+    /// program refused.
+    ///
+    /// **Once per literal.** Three elements that disagree with the first are
+    /// one mistake, so the walk stops reporting after the first pair - but it
+    /// keeps *walking*, because an element is an expression and a mistake
+    /// inside one is still a mistake.
+    fn list_literal(&mut self, items: &[Expr], span: &Span) -> Ty {
+        let mut agreed = Ty::Unknown;
+        let mut kind: Option<(&'static str, String)> = None;
+        let mut said = false;
+        for item in items {
+            let found = self.expr(item, span);
+            // **A number beside text, where neither has a type yet.** A bare
+            // `1` fits every numeric type and so it arrives here as `?` - which
+            // is right, and which would let `[1, "two"]` past to be answered by
+            // the backend about a file nobody wrote
+            // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+            // The **kind** is the part of a literal that is known without a
+            // type, and two kinds that differ is a disagreement whatever the
+            // types say.
+            if let Some(shape) = element_kind(item, &found) {
+                match &kind {
+                    None => kind = Some((shape, found.text())),
+                    Some((first, written)) if *first != shape && !said => {
+                        said = true;
+                        let (first, written) = (*first, written.clone());
+                        self.a_list_whose_elements_disagree(first, &written, shape, &found, span);
+                    }
+                    Some(_) => {}
+                }
+            }
+            if found.is_unknown() {
+                continue;
+            }
+            if agreed.is_unknown() {
+                agreed = found;
+                continue;
+            }
+            if !found.fits(&agreed) && !said {
+                said = true;
+                let first = agreed.clone();
+                self.a_list_whose_elements_disagree(
+                    element_kind(item, &first).unwrap_or("a value"),
+                    &first.text(),
+                    "a value",
+                    &found,
+                    span,
+                );
+            }
+        }
+        Ty::Named {
+            name: "Vec".to_string(),
+            args: vec![agreed],
+            view: false,
+        }
+    }
+
+    /// `NK1154`: two elements of one list literal are not the same type
+    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D1).
+    ///
+    /// **Named rather than widened.** A list holds one type, so the two are a
+    /// mistake in one of them and the message says which two - exactly as a
+    /// `let` with an annotation does, which is the shape this borrows.
+    fn a_list_whose_elements_disagree(
+        &mut self,
+        first_kind: &str,
+        first: &str,
+        other_kind: &str,
+        other: &Ty,
+        span: &Span,
+    ) {
+        // What to call each side: its **type** where this checker worked one
+        // out, and its **kind** where it did not - `a number`, `text` - because
+        // a caret with `?` on both sides of *and a list holds one type* says
+        // nothing a reader can act on.
+        let name = |kind: &str, ty: &str| match ty {
+            "?" | "" => kind.to_string(),
+            ty => format!("`{ty}`"),
+        };
+        let (first, other) = (name(first_kind, first), name(other_kind, &other.text()));
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1154",
+            message: format!("this list holds {first} and {other}, and a list holds one type"),
+            notes: vec![
+                "the element type is what the elements agree on, and the first one that \
+                 has a type is what the rest answer to (Part I, 2.2)"
+                    .to_string(),
+            ],
+            help: Some("convert the one that does not fit, or write two lists".to_string()),
+        });
+    }
+
+    /// `NK1153`: an empty list whose element type nothing ever says
+    /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2).
+    ///
+    /// **Refused and not guessed.** A default element type would be a type
+    /// nobody wrote, and claiming something the program does not say is the one
+    /// thing this checker may never do
+    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Asked only where nothing at all uses the name**, which is the case D2
+    /// writes down. A use this checker cannot read a type out of -
+    /// `xs.len()` and nothing else - leaves the question to the language below
+    /// rather than answering it wrongly, for C.4's reason again: the cost of
+    /// silence is a backend message, and the cost of speaking is a correct
+    /// program refused.
+    fn an_empty_list_with_no_element_type(&mut self, name: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1153",
+            message: format!("`{name}` is an empty list with no element type"),
+            notes: vec![
+                "an empty list carries no element type, so it takes one from the first use \
+                 that needs one - and nothing here uses it (Part I, 2.2)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write the type - `let {name}: Vec[i64] = []` - or give it a first element"
+            )),
+        });
+    }
+
     /// `NK1152`: a build-time body the rule forbids
     /// ([ADR-075](../../docs/specification/adr/adr-075.md) D1, D2).
     ///
@@ -6527,6 +6752,7 @@ impl<'a> Checker<'a> {
             ty,
             constant,
             immutable: None,
+            empty_list: None,
         });
     }
 

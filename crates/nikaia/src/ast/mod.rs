@@ -300,6 +300,17 @@ pub enum Expr {
     /// `(a, b)` - Kap 4.5. Two or more values of different types, with no
     /// name for the pair and none for its parts.
     Tuple(Vec<Expr>),
+
+    /// `[1, 2, 3]` - a list, and `[]` an empty one
+    /// ([ADR-135](../../../docs/specification/adr/adr-135.md) D1).
+    ///
+    /// **Its type is `Vec[T]`** and there is no second container behind the
+    /// brackets: Part I 2.2 offers one, and this writes that one down. What `T`
+    /// is, is what the elements agree on; an **empty** literal says nothing and
+    /// takes its element type from the first use that needs one (D2), which is
+    /// [ADR-060](../../../docs/specification/adr/adr-060.md)'s rule for a
+    /// number literal one level up.
+    ListLit(Vec<Expr>),
     /// `"…"` - Kap 2.5. **Inert text.** A `{` is a brace and nothing else, so
     /// a program that writes JSON, CSS or a regular expression says what it
     /// means. The body is kept as written, escapes and all, for the same

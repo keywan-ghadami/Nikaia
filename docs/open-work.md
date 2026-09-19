@@ -786,9 +786,10 @@ only where it is not last.
 aggregate value, so [ADR-079](specification/adr/adr-079.md) §3's table can be
 *computed* and has nowhere to arrive: what a `comptime` hands to the language
 below is what Rust's `const` can hold, and today that is one integer or one
-`bool`. So this waits on [ADR-135](specification/adr/adr-135.md) (the list
-literal) and [ADR-152](specification/adr/adr-152.md) (`Array[T, N]`), which are
-what gives a list a type it can cross in. Text is not in it either.
+`bool`. [ADR-135](specification/adr/adr-135.md)'s literal is **built**, so a
+list can be *written* now; what is still missing is a type it can cross in, and
+that is [ADR-152](specification/adr/adr-152.md)'s `Array[T, N]` — a `Vec`
+allocates and Rust's `const` cannot hold one. Text is not in it either.
 
 *Why it is work and not a question:* three records decided what may happen and
 none of them can happen.
@@ -1639,28 +1640,7 @@ formatter is born with, and **the formatter itself is the entry**. Nothing else 
 the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
 compiler's own Rust and no `.nika` file has ever been formatted by a tool.
 
-### 2.42. There is no list literal
-
-[ADR-135](specification/adr/adr-135.md). `[1, 2, 3]` is a parse error at the `[`,
-and so is a list *type* written `[User]`. Every program in `examples/` that wants
-a list builds it a `push` at a time, which `language-review.md` §3.1 calls the
-one piece of table stakes this language is missing.
-
-**The two rulings are what the entry has and the parser does not.** `[]` takes
-its element type from the first use that says one and is **refused** where none
-ever does — no default element type, because guessing one is Part III C.4's
-*never refuse a correct program* traded for a wrong program that compiles. And a
-`[` at the **start of a line** begins a literal rather than indexing the line
-above it, which is the reading Rust and JavaScript both decline to take.
-
-*What it needs, in the record's order (§5):* the literal in expression position
-with the statement-start rule; the element type agreed across the elements, and
-the refusal naming two that do not agree; `[]` deferred to its first use, and refused
-where nothing ever constrains it; the list *type* `[T]` left out, because
-`Vec[T]` is the spelling and a second one is [ADR-140](specification/adr/adr-140.md)'s
-whole subject.
-
-### 2.43. A number literal takes no separator and no radix prefix
+### 2.42. A number literal takes no separator and no radix prefix
 
 [ADR-136](specification/adr/adr-136.md). `let n = 1_000_000` is the number `1`
 beside a name `_000_000` that nothing declares, and `0xFF` is `0` beside `xFF`.
@@ -1679,7 +1659,7 @@ anywhere, including a diagnostic's text.
 the prefix; the constant fold reading them so `NK1116` and `NK1118` answer about
 the value; `NK1117`'s help losing its `1_000` clause, and a test per form.
 
-### 2.44. Six `match` pattern shapes are missing, and the range spelling is the old one
+### 2.43. Six `match` pattern shapes are missing, and the range spelling is the old one
 
 [ADR-137](specification/adr/adr-137.md). A tuple, an or-pattern, a range, a
 guard, a nested pattern and `..` for a struct's rest are all missing, and the
@@ -1701,7 +1681,7 @@ state the rule already and keep their examples until this step, so that no block
 leaves the lowering floor for nothing; `calc.nika` matching `step`, and a test per
 shape.
 
-### 2.45. `throw`, `return`, `break` and `continue` are statements
+### 2.44. `throw`, `return`, `break` and `continue` are statements
 
 [ADR-138](specification/adr/adr-138.md). `=> throw NotFound` is a parse error, so
 is `?? throw Missing`, and so is an `else` branch that is one `return`. Each has
@@ -1719,7 +1699,7 @@ checker, so a `match` whose arms are a value and a `throw` is typed by the value
 the specification's error chapter and `examples/` written without the braces, and
 a test per position — an arm, a `??` right side, an `else`.
 
-### 2.46. The ledger has nowhere to put a sentence
+### 2.45. The ledger has nowhere to put a sentence
 
 [ADR-139](specification/adr/adr-139.md). `nikaia.contracts` **ships** with a
 package and is the one file a consumer's compiler reads about a dependency — every
@@ -1735,7 +1715,7 @@ or `type` only; the derivation, which makes it a pure function of the sources li
 every other column; and `NK2401` staying silent about prose, because a changed
 sentence is not a changed contract.
 
-### 2.47. `use std::…` brings a name in and a package's `use` does not
+### 2.46. `use std::…` brings a name in and a package's `use` does not
 
 [ADR-140](specification/adr/adr-140.md) D5.
 [ADR-046](specification/adr/adr-046.md)'s rule is *no name is brought in*, and
@@ -1749,7 +1729,7 @@ all and that is unchanged.
 `crates/nikaia-std/` and on the three pages. Last of the five, because nothing
 waits on it.
 
-### 2.48. The database driver checks the SQL while the program is built
+### 2.47. The database driver checks the SQL while the program is built
 
 [ADR-143](specification/adr/adr-143.md), all of it. The compiler knows no
 SQL: a dialect is a grammar in a driver package. A grammar declares a result
@@ -1767,7 +1747,7 @@ build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
 both grammars and the schema check; the example with a misspelled column
 refused.
 
-### 2.49. `Pointer[T]` is undeclared, and C is `getpid`
+### 2.48. `Pointer[T]` is undeclared, and C is `getpid`
 
 [ADR-147](specification/adr/adr-147.md). Every C function whose signature has a
 pointer in it is unwritable: all of `libc`'s memory surface, and every library
@@ -1788,7 +1768,7 @@ declaration; the length check and its refusal; the opaque type, with its
 `cleanup`; `CStr` and the `std` function that copies it; `sqlite3` end to end
 as the test that the four are enough.
 
-### 2.50. `select` is not a keyword, and nothing cancels a task
+### 2.49. `select` is not a keyword, and nothing cancels a task
 
 [ADR-148](specification/adr/adr-148.md). Part II 12.4's block is a parse error
 and carries [ADR-141](specification/adr/adr-141.md) D2's *unspecified* mark —
@@ -1804,7 +1784,7 @@ its `cleanup` is adopted, the deadline bounds it. The runtime's race is what
 grammar; the lowering onto the runtime's race; `cancel()` on the handle, over
 the same call; the page's example as a test that runs, and the mark taken off.
 
-### 2.51. There is no channel
+### 2.50. There is no channel
 
 [ADR-149](specification/adr/adr-149.md). Part II 12.5's
 `let (tx, rx) = channel::bounded(100)` names nothing, and carries the
@@ -1816,7 +1796,7 @@ the pause on a full `send`; `std::channel` and its four entries, `send` carrying
 no `sync` and `recv` handing back a `T?`; the page's example as a test that
 runs.
 
-### 2.52. There is no duration
+### 2.51. There is no duration
 
 [ADR-150](specification/adr/adr-150.md). `5.seconds()` is a method on an
 integer that no ledger describes, and Part II 12.4 carries the *unspecified*
@@ -1827,7 +1807,7 @@ the timeout arm its example writes.
 entries; the integer extension, five names; `sleep` taking one; the page's line
 as a test that runs.
 
-### 2.53. There is no fixed-size array
+### 2.52. There is no fixed-size array
 
 [ADR-152](specification/adr/adr-152.md), and **after**
 [ADR-135](specification/adr/adr-135.md), because the literal is that record's.
@@ -1845,7 +1825,7 @@ so far has been a type, and `Array[T, N]` wants a `comptime` integer.
 array type from its use, and the length refusal; the lowering to `[T; N]`, and
 indexing; the C field, laid out as C lays it out.
 
-### 2.54. The prelude is what the compiler happens to know
+### 2.53. The prelude is what the compiler happens to know
 
 [ADR-154](specification/adr/adr-154.md).
 `crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and

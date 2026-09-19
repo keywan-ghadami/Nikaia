@@ -4079,6 +4079,20 @@ impl<'p> Emitter<'p> {
                 }
                 out.push(")");
             }
+            // **`vec![…]`, which is what a `Vec` already is below**
+            // ([ADR-135](../../../docs/specification/adr/adr-135.md) D1). Part
+            // I 2.2 offers one container and the literal writes that one, so
+            // there is no second shape to choose between here.
+            Expr::ListLit(items) => {
+                out.push("vec![");
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(", ");
+                    }
+                    self.expr(out, item, depth, flow)?;
+                }
+                out.push("]");
+            }
             Expr::Field { base, name } => {
                 self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!(".{}", self.name(*name)));
@@ -6528,7 +6542,7 @@ pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
                 visit_expr(&arm.body, f);
             }
         }
-        Expr::Tuple(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
+        Expr::Tuple(parts) | Expr::ListLit(parts) => parts.iter().for_each(|p| visit_expr(p, f)),
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr(base, f),
         Expr::StructLit { fields, .. } => fields
             .iter()

@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.35] — 2026-09-19
+
+The list literal, which `language-review.md` called the one piece of table
+stakes this language was missing.
+
+### Added ([ADR-135](docs/specification/adr/adr-135.md))
+
+- **`[1, 2, 3]` is a program.** The elements are expressions, a trailing comma is allowed, and the type is `Vec[T]` where `T` is what the elements agree on. `vec![…]` below, which is what a `Vec` already is there. Nothing in the grammar began with a `[` in expression position, so the syntax was free and the only cost was the record's two rulings.
+- **`NK1154`: two elements that do not agree**, naming both. Where an element has no type yet — a bare `1` fits every numeric type, so it arrives as `?` — it names the **kind** instead: *this list holds a number and `&str`*. That is what keeps `[1, "two"]` from reaching `rustc` as a question about a file nobody wrote (Part III C.1). Once per literal, because three elements that disagree with the first are one mistake.
+- **`NK1153`: an empty list whose element type nothing ever says** (D2). `[]` carries none, so it takes one from the first use that needs one — `let xs: Vec[i64] = []`, or a later `push` — and a default would be a type nobody wrote (C.4). Asked once the whole body has been walked, because the use that answers it stands after the `let`, and asked only where **nothing at all** uses the name: a use this checker cannot read a type out of is left to the language below rather than answered wrongly.
+- **A `[` at the start of a line begins a literal** (D3), and this was the piece with a cost. The generator skips the implicit whitespace *before* an alternative is tried, so by the time the index rule runs the line break in front of it is consumed and gone — and a PEG only looks ahead. The grammar now records where each run of trivia ended and whether it held a line break (`Trivia`, its one `state`), and a hand-written `same_line` reads it back; it consumes nothing. **Measured**, because it is on the hottest path there is — the implicit skip runs between the tokens of every syntactic rule: 200 parses of the whole corpus, six runs each against the commit before it, and the two are inside the noise of this machine (best 0.89s against 1.08s, median 1.06 against 1.10 — the *new* one ahead, which is what within-noise looks like). What it closed is C.1's class exactly: `println(f"{n}")` on one line and `[n].len()` on the next lowered to `println!("{}", n)[…]`.
+- **`examples/` rewritten where a literal was what was meant**: `n-body.nika`'s five bodies, `escaping.nika`'s three rows and `tests/samples/jumps.nika`'s four numbers were each a `Vec()` and a run of `push`es. The ones built in a **loop** stayed as they were, because there a `push` is what the program means.
+- *Twelve tests* in `crates/nikaia/tests/list_literal.rs`, and the specification's lowering floor went **49 to 53**: Part I's two list blocks and Part II 12.6's and 12.7's are programs now.
+
+### Fixed (a specification block that said `mut` nowhere and needed it)
+
+- **Part III 14.3's `bench "Sorting"` sorted a `let` that was not `mut`.** It was a fragment nothing could read until the literal existed; now it lowers far enough to be refused, and the refusal is right — `list.sort()` changes what it is called on. `NK1139`, and the block says `let mut list` now. The block stays refused, because `bench` is still not a word this language has.
+
+### Changed (A4 in the error corpus)
+
+- **`let xs = [1, 2` moved.** It was the clearest remaining case of the whitespace skip winning on *progress* — nothing began with a `[`, so at that position no real parser had reached it. Now `list_lit` reads the `[`, gets to the end of the line and requires its `]`: the requirement leads and the `,` is in the note, which is the shape A1 and A2 already have.
+
 ## [0.0.34] — 2026-09-19
 
 The build-time evaluator gets a loop, which is `open-work.md` §2.9's second step.

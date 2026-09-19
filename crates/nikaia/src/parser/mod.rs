@@ -1,9 +1,65 @@
 // crates/nikaia/src/parser/mod.rs
 use crate::ast;
 use anyhow::Result;
-use winnow::stream::LocatingSlice;
+use winnow::stream::{LocatingSlice, Location};
 use winnow::Parser;
-use winnow_grammar::{grammar, InternerContext, ParseContext, ParseInput, Symbol};
+use winnow_grammar::error::ParseError;
+use winnow_grammar::{grammar, InternerContext, ParseContext, ParseInput, StateOf, Symbol};
+
+/// Where the last run of whitespace ended, and whether it held a line break.
+///
+/// **The grammar's one piece of state, and it exists for one rule**
+/// ([ADR-135](../../../docs/specification/adr/adr-135.md) D3): a `[` at the
+/// start of a line begins a list literal rather than indexing the line above
+/// it. The generator skips the implicit whitespace *before* an alternative is
+/// tried, so by the time the index rule runs the line break is already behind
+/// it and gone — this is what keeps it.
+///
+/// **Idempotent, which is what backtracking asks of state**: what whitespace
+/// stands at a position is a property of the input, so a branch that reads it
+/// and then loses has written the same answer a branch that wins would.
+#[derive(Clone, Debug, Default)]
+pub struct Trivia {
+    /// Where the run ended. Compared against a token's start, so trivia that
+    /// ended somewhere else is trivia this token does not follow.
+    end: usize,
+    /// Whether it held a `\n`.
+    newline: bool,
+}
+
+impl Trivia {
+    /// Record a run of trivia.
+    ///
+    /// A comment that a line break ran straight into **carries** the flag, so
+    /// `\n/* c */[1]` is a line that begins with a `[` exactly as `\n[1]` is.
+    fn ran(&mut self, at: std::ops::Range<usize>, newline: bool) {
+        let carried = self.end == at.start && self.newline;
+        self.end = at.end;
+        self.newline = newline || carried;
+    }
+
+    /// Whether the token at this byte is the first thing on its line.
+    fn began_a_line(&self, at: usize) -> bool {
+        self.end == at && self.newline
+    }
+}
+
+/// A token that is **not** the first thing on its line
+/// ([ADR-135](../../../docs/specification/adr/adr-135.md) D3).
+///
+/// Written by hand because the question is about what is *behind* the position
+/// and a PEG only looks ahead: the grammar records the whitespace it skips
+/// ([`Trivia`]) and this reads it back. It consumes nothing.
+fn same_line<'a, S>(i: &mut ParseInput<'a, S>) -> Result<(), ParseError>
+where
+    S: Clone + std::fmt::Debug + StateOf<Trivia>,
+{
+    let at = i.current_token_start();
+    match StateOf::<Trivia>::state(&mut i.state.user_state).began_a_line(at) {
+        true => Err(ParseError::from_stream(i)),
+        false => Ok(()),
+    }
+}
 
 // --- Public API ---
 
@@ -93,12 +149,12 @@ impl Parsed {
 /// literal, so they are parsed here, with the program's own interner so that
 /// the symbols they produce mean the same as everywhere else.
 pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::Expr> {
-    let context = ParseContext::<()> {
+    let context = ParseContext::<Trivia> {
         interner: interner.clone(),
         ..Default::default()
     };
 
-    let mut stream = ParseInput::<()> {
+    let mut stream = ParseInput::<Trivia> {
         state: context,
         input: LocatingSlice::new(input),
     };
@@ -384,10 +440,10 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // spans, `ParseContext` carries the shared parser state including the
     // interner. Cloning the interner out shares it (it is an `Arc` inside), so
     // the handles in the AST stay resolvable after parsing.
-    let context = ParseContext::<()>::default();
+    let context = ParseContext::<Trivia>::default();
     let interner = context.interner.clone();
 
-    let mut stream = ParseInput::<()> {
+    let mut stream = ParseInput::<Trivia> {
         state: context,
         input: LocatingSlice::new(input),
     };
@@ -532,6 +588,12 @@ grammar! {
         use crate::ast::*;
         use winnow::ascii::{digit1, multispace1};
 
+        state Trivia;
+
+        // Declared so the validator knows the name; the parser itself is above
+        // ([ADR-135](../../../../docs/specification/adr/adr-135.md) D3).
+        extern rule same_line -> ();
+
         // --- Entry Point ---
         // Rule 'program' -> generates 'parse_program'
         pub rule program -> Program =
@@ -545,9 +607,15 @@ grammar! {
         // All three are UPPERCASE on purpose - a lowercase `comment` would be
         // syntactic, so the generator would insert `WS` between *its* tokens,
         // and `WS` calls it. That cycle recurses until the stack is gone.
-        rule WSE = multispace1
+        //
+        // **All three record where they ended**
+        // ([ADR-135](../../../../docs/specification/adr/adr-135.md) D3), which
+        // is the only way a later rule can find out that a line break stood in
+        // front of it: the generator skips trivia before an alternative is
+        // tried, so the break is gone by the time anything could look.
+        rule WSE = w:multispace1 @ at -> { _state.user().ran(at, w.contains('\n')) }
         rule WS = (WSE | COMMENT | BLOCK_COMMENT)*
-        rule COMMENT = "//" until(line_ending)
+        rule COMMENT @= "//" until(line_ending) -> { _state.user().ran(_span, false) }
 
         // **`/* … */`, and it nests**
         // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D1, D2).
@@ -573,7 +641,8 @@ grammar! {
         // **A `/*` inside a string literal is text** (D1), and `STRING` below
         // needs no help to say so: it is a lexical rule, so no implicit `WS`
         // runs between its characters and nothing here is ever asked.
-        rule BLOCK_COMMENT # "block comment" = "/*" => BLOCK_INNER* "*/"
+        rule BLOCK_COMMENT # "block comment" @= "/*" => BLOCK_INNER* "*/"
+            -> { _state.user().ran(_span, false) }
 
         // One step inside a block comment: a nested comment, or one character
         // that is not the close. **Tried in that order**, which is the whole of
@@ -1952,7 +2021,14 @@ grammar! {
                 Postfix::SafeMethod(name, args, config)
             }
           | "?." name:SEGMENT -> { Postfix::SafeField(name) }
-          | "[" index:expr "]" -> {
+          // **`[` on a line of its own is a list literal and not an index**
+          // ([ADR-135](../../../../docs/specification/adr/adr-135.md) D3). An
+          // index is written on the line its receiver is on; an index across a
+          // line break is a shape nobody writes, and reading it as one costs
+          // every reader of every list literal a moment of doubt. Rust and
+          // JavaScript both chose the other way and both carry the footgun in
+          // their style guides.
+          | same_line "[" index:expr "]" -> {
                 Postfix::Index(Box::new(index))
             }
           // `not("?")`: `??` is the null-coalescing operator (Kap 3.5), and a
@@ -2101,6 +2177,7 @@ grammar! {
           | b:block_expr -> { b }
           | t:tuple_expr -> { t }
           | p:paren_expr -> { p }
+          | l:list_lit -> { l }
 
         rule float_lit -> Expr =
             f:FLOAT -> { Expr::LitFloat(f) }
@@ -2270,6 +2347,7 @@ grammar! {
           // is a parenthesised expression until the comma.
           | t:tuple_expr -> { t }
           | p:paren_expr -> { p }
+          | l:list_lit -> { l }
           // **Last, and measured there** (D5). In `primary_expr` this stands
           // near the front because the brace-led forms around it constrain the
           // order; here nothing does - `dsl` is a reserved word, so no other
@@ -2291,6 +2369,24 @@ grammar! {
 
         rule paren_expr -> Expr =
             "(" e:expr ")" -> { e }
+
+        // **Part I 2.2's one container, written down**
+        // ([ADR-135](../../../../docs/specification/adr/adr-135.md) D1):
+        // `[1, 2, 3]`, `[]`, and a trailing comma allowed because a list is
+        // what a program grows a line at a time.
+        //
+        // Nothing else in an expression begins with a `[`, so the position in
+        // the alternation is free; it stands beside the other bracketed forms
+        // where a reader looks for it.
+        rule list_lit -> Expr =
+            "[" items:list_items? "]" -> { Expr::ListLit(items.unwrap_or_default()) }
+
+        rule list_items -> Vec<Expr> =
+            head:expr tail:call_args_tail* ","? -> {
+                let mut items = vec![head];
+                items.extend(tail);
+                items
+            }
 
         // **Part I 8.2: `spawn fn { … }`, and that is the one spelling.**
         //

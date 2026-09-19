@@ -561,7 +561,9 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             walk(parsed, lhs, out);
             walk(parsed, rhs, out);
         }
-        Expr::Tuple(parts) => parts.iter().for_each(|part| walk(parsed, part, out)),
+        Expr::Tuple(parts) | Expr::ListLit(parts) => {
+            parts.iter().for_each(|part| walk(parsed, part, out))
+        }
 
         // A name that is not a callee's is a value from somewhere else, and the
         // closure this is lowered into would have to capture it. It performs
@@ -1049,7 +1051,9 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             names_in(parsed, base, out);
             names_in(parsed, index, out);
         }
-        Expr::Tuple(parts) => parts.iter().for_each(|p| names_in(parsed, p, out)),
+        Expr::Tuple(parts) | Expr::ListLit(parts) => {
+            parts.iter().for_each(|p| names_in(parsed, p, out))
+        }
         Expr::Coalesce { value, fallback } => {
             names_in(parsed, value, out);
             names_in(parsed, fallback, out);

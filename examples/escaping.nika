@@ -77,10 +77,11 @@ fn emphasised(name: &str) -> String {
 }
 
 fn main() {
-    let mut rows = Vec()
-    rows.push(Row { name: "Ada", note: "fine", shade: "odd" })
-    rows.push(Row { name: "a<b & c", note: "\"quoted\"", shade: "even" })
-    rows.push(Row { name: "O'Hara", note: "</td> is not a tag here", shade: "odd" })
+    let rows = [
+        Row { name: "Ada", note: "fine", shade: "odd" },
+        Row { name: "a<b & c", note: "\"quoted\"", shade: "even" },
+        Row { name: "O'Hara", note: "</td> is not a tag here", shade: "odd" },
+    ]
 
     println(f"{table(rows)}")
     println(f"{emphasised(\"Ada\")}")

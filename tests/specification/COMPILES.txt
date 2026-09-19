@@ -17,11 +17,13 @@
 10-nikaia-light.md #30 error[E0425]
 10-nikaia-light.md #31 error[E0425]
 10-nikaia-light.md #32 compiles
+10-nikaia-light.md #33 compiles
 10-nikaia-light.md #35 compiles
 10-nikaia-light.md #36 compiles
 10-nikaia-light.md #37 compiles
 10-nikaia-light.md #39 error[E0425]
 10-nikaia-light.md #40 compiles
+10-nikaia-light.md #47 compiles
 10-nikaia-light.md #48 compiles
 10-nikaia-light.md #50 error[E0433]
 10-nikaia-light.md #51 error[E0433]
@@ -41,6 +43,8 @@
 20-nikaia-advance.md #17 compiles
 20-nikaia-advance.md #18 compiles
 20-nikaia-advance.md #21 error[E0433]
+20-nikaia-advance.md #22 error[E0599]
+20-nikaia-advance.md #23 error[E0425]
 30-nikaia-tooling.md #1 error[E0433]
 30-nikaia-tooling.md #9 error[E0599]
 30-nikaia-tooling.md #12 compiles

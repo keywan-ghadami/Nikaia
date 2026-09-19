@@ -35,10 +35,23 @@ in program
 
 === A4
 Parse error:
-expected expression; found unexpected token `[` at line 2, column 14
-   2 |     let xs = [1, 2
-                    ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
+expected `]`; found unexpected token `}` at line 3, column 1
+   3 | }
+       ^
+note: also possible here: `!=`, `%`, `&&`, `*`, `+`, `,`, `-`, `..=`, `..`, `.`, `//`, `/`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `as`, `catch`, `||`, block comment
+in list_lit
+in primary_expr
+in postfix_expr
+in unary_expr
+in cast_expr
+in mul_expr
+in add_expr
+in cmp_expr
+in and_expr
+in or_expr
+in range_expr
+in coalesce_expr
+in catch_expr
 in expr
 in let_stmt
 in stmt
@@ -65,7 +78,7 @@ Parse error:
 expected expression; found unexpected token `}` at line 4, column 1
    4 | }
        ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `[`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in expr
 in let_stmt
 in stmt
@@ -81,11 +94,11 @@ Parse error:
 expected expression; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `[`, `f"`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in COMMENT
 in item 1
 in WS
-in paren_expr
+in list_lit
 in primary_expr
 in postfix_expr
 in unary_expr
@@ -113,7 +126,7 @@ Parse error:
 expected one of: `!`, `-`, `false`, `true`; found unexpected token `{` at line 2, column 8
    2 |     if { }
               ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `dsl`, `f"`, `null`, block comment, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `[`, `dsl`, `f"`, `null`, block comment, digits, identifier
 in KW_FALSE
 in bool_lit
 in head_primary
@@ -155,7 +168,7 @@ Parse error:
 expected expression; found unexpected token `)` at line 2, column 18
    2 |     let z = f(1, )
                         ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `[`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in expr
 in call_args_tail
 in item 1
@@ -422,7 +435,7 @@ Parse error:
 expected expression; found unexpected token `“` at line 2, column 13
    2 |     let x = “hi”
                    ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
+note: also possible here: `"`, `&`, `'`, `(`, `//`, `[`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `unsafe`, `{`, block comment, digits, identifier
 in expr
 in let_stmt
 in stmt
