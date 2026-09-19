@@ -148,7 +148,7 @@ fn the_keywords_themselves_are_untouched() {
         "use utils\n\nfn main() {\n    utils::f()\n}",
         "fn main() {\n    let s = seq { println(\"a\") }\n}",
         "fn main() {\n    spawn fn { println(\"a\") }\n}",
-        "fn main() {\n    match 1 {\n        _ => println(\"x\")\n    }\n}",
+        "fn main() {\n    match 1 {\n        else => println(\"x\")\n    }\n}",
         "fn main() {\n    while true { }\n}",
     ] {
         parse_to_ast(source).unwrap_or_else(|e| panic!("{source}\n{e:#}"));

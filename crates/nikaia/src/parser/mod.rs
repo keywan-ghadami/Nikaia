@@ -2366,9 +2366,29 @@ grammar! {
             b:block -> { Expr::Block(b) }
           | e:expr -> { e }
 
-        // `_` first, and only where no name follows it: `_name` is a name.
+        // **The catch-all arm is `else`**
+        // ([ADR-145](../../../../docs/specification/adr/adr-145.md) D1), and a
+        // bare `_` there is refused with the replacement in the message. The
+        // last arm is *everything else*, which is what `else` means one
+        // construct over and what `_` does not:
+        // [ADR-126](../../../../docs/specification/adr/adr-126.md) is careful
+        // that `_` means **ignore a value that arrived**, and nothing arrives
+        // here.
+        //
+        // Refused in the parser because this is where the two spellings meet,
+        // and `only where no name follows it` is still the `UNDERSCORE` rule's
+        // own condition - `_name` is a name and reaches the alternative below.
         rule match_pattern -> MatchPattern =
-            UNDERSCORE -> { MatchPattern::Wildcard }
+            KW_ELSE -> { MatchPattern::Otherwise }
+          | UNDERSCORE fail(
+                "a `match`'s catch-all arm is written `else` (ADR-145 D1): \
+                 `else => \"other\"`. `_` is the ignore pattern and says something \
+                 different - it ignores a value that *arrived*, in a tuple \
+                 position or a parameter (ADR-126 D1) - and nothing arrives at \
+                 the arm taken when none of the others matched. `else` is what \
+                 that is called one construct over, and this language already \
+                 has it."
+            ) -> { MatchPattern::Otherwise }
           | l:pattern_lit -> { MatchPattern::Literal(l) }
           | path:pattern_path "(" bindings:ident_list ")" -> {
                 MatchPattern::Tuple { path, bindings }

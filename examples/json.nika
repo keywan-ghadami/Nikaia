@@ -200,7 +200,7 @@ fn unescape(raw: &str) -> String {
                 'b' => { out.push_str("\u{0008}") }
                 'f' => { out.push_str("\u{000C}") }
                 // `\"`, `\\` and `\/` stand for themselves.
-                _ => { out.push(c) }
+                else => { out.push(c) }
             }
             escaped = false
         } else {
@@ -237,7 +237,7 @@ fn longest(value: &Json) -> i64 {
             return best
         }
 
-        _ => { return 0 }
+        else => { return 0 }
     }
 }
 

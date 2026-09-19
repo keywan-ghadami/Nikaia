@@ -7366,7 +7366,7 @@ impl<'a> Checker<'a> {
     /// variant carries is not in the ledger yet.
     fn pattern_bindings(&self, pattern: &MatchPattern) -> Vec<Local> {
         match pattern {
-            MatchPattern::Wildcard | MatchPattern::Literal(_) => Vec::new(),
+            MatchPattern::Otherwise | MatchPattern::Literal(_) => Vec::new(),
             // A single segment binds; `Op::Times` names a variant.
             MatchPattern::Path(segments) if segments.len() == 1 => {
                 vec![Local::free(

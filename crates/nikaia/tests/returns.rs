@@ -78,7 +78,7 @@ const VOID_MATCH: &str = "fn note(n: i64) {\n\
      fn announce(n: i64) {\n\
      \x20   match n {\n\
      \x20       0 => { return note(n) }\n\
-     \x20       _ => { println(f\"n is {n}\") }\n\
+     \x20       else => { println(f\"n is {n}\") }\n\
      \x20   }\n\
      \x20   println(\"checked\")\n\
      }\n\
@@ -104,7 +104,7 @@ fn a_return_in_a_match_arm_leaves_a_function_that_returns_nothing() {
 const VALUE_MATCH: &str = "fn pick(n: i64) -> i64 {\n\
      \x20   match n {\n\
      \x20       1 => { return 10 }\n\
-     \x20       _ => { 20 }\n\
+     \x20       else => { 20 }\n\
      \x20   }\n\
      \x20   30\n\
      }\n\

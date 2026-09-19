@@ -698,7 +698,7 @@ fn a_head_holds_a_tuple() {
 fn a_brace_led_form_reaches_a_head_through_parentheses() {
     let source = "fn main() {\n\
          \x20   let n = 1\n\
-         \x20   if (match n { 1 => 10, _ => 20 }) > 15 {\n\
+         \x20   if (match n { 1 => 10, else => 20 }) > 15 {\n\
          \x20       println(\"high\")\n\
          \x20   } else {\n\
          \x20       println(\"low\")\n\

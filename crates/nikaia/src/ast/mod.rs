@@ -611,8 +611,14 @@ pub struct MatchArm {
 /// name (ADR-011 D2) and no pattern means something different in the two.
 #[derive(Debug, Clone)]
 pub enum MatchPattern {
-    /// `_`
-    Wildcard,
+    /// `else`: the arm taken when none of the others matched
+    /// ([ADR-145](../../../docs/specification/adr/adr-145.md) D1).
+    ///
+    /// **Not `Wildcard`**, which the node was called while the arm was written
+    /// `_`: [ADR-126](../../../docs/specification/adr/adr-126.md) argues
+    /// against that word for `_` itself, and it is wrong here twice over —
+    /// nothing is being matched loosely, and nothing arrived to be ignored.
+    Otherwise,
     /// `1`, `"text"`, `true`
     Literal(Expr),
     /// `Op::Times`, and a bare name - which *binds*, as it does in the

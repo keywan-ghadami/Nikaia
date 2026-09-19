@@ -631,7 +631,7 @@ if p == (P { x: 1 }) {          // the parentheses say which `{` is which
     …
 }
 
-if (match n { 1 => 10, _ => 20 }) > 15 {
+if (match n { 1 => 10, else => 20 }) > 15 {
     …
 }
 ```
@@ -817,7 +817,7 @@ let value = 2
 match value {
     1 => println("One"),
     2 => println("Two"),
-    _ => println("Something else"), // '_' catches all other values
+    else => println("Something else"), // `else` is the arm taken when nothing above matched
 }
 ```
 
@@ -825,7 +825,7 @@ A pattern is one of six things, and each is read the way it is written:
 
 | pattern | matches |
 | :--- | :--- |
-| `_` | anything, and binds nothing — the **ignore pattern**, which also stands in a tuple position and as a parameter ([ADR-126](adr/adr-126.md)) |
+| `else` | anything, and binds nothing — the arm taken when none above it matched, the word `if` uses for the same idea ([ADR-145](adr/adr-145.md)). `_` in this position is refused: it is the **ignore pattern**, which stands in a tuple position and as a parameter ([ADR-126](adr/adr-126.md)), and nothing arrives at a catch-all arm |
 | `1`, `"text"`, `true`, `'n'` | that value |
 | `Op::Times` | that variant |
 | `Message::Write(text)` | that variant, binding what it carries |
@@ -2047,7 +2047,7 @@ let config = load() catch {
             eprintln(f"config broken at line {line}")
             return
         }
-        _ => throw error
+        else => throw error
     }
 }
 ```
@@ -2055,7 +2055,7 @@ let config = load() catch {
 > **Status:** the patterns of 3.4 are built. Two things in the example above are
 > not: **`..` in a named pattern**, so a `match` cannot yet bind some fields and
 > ignore the rest, and a bare `throw` as an arm's body — write the arm as a
-> block, `_ => { throw error }`.
+> block, `else => { throw error }`.
 
 Two sets, and they are not the same one. The **variants of an error type** are closed, a `match`
 over them is exhaustive, and adding one is a breaking change — correctly. The **set of error types**

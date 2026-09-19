@@ -146,7 +146,7 @@ fn a_set_under_a_stamped_condition_is_refused() {
              \x20   let stand = kasse.get()\n\
              \x20   match stand {\n\
              \x20       0 => kasse.set(1),\n\
-             \x20       _ => kasse.set(2),\n\
+             \x20       else => kasse.set(2),\n\
              \x20   }\n\
              }\n",
             "NK2205"

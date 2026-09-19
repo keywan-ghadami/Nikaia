@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.29] — 2026-09-19
+
+One character back from a meaning it did not have.
+
+### Changed ([ADR-145](docs/specification/adr/adr-145.md): a `match`'s catch-all arm is `else`)
+
+- **`else => …` where `_ => …` stood**, and `_` in that position is **`NK1150`** from the parser, with the replacement in the message. The last arm is *everything else*, and it was written with a character borrowed from the ignore pattern — which says something different: [ADR-126](docs/specification/adr/adr-126.md) is careful that `_` means *ignore a value that arrived*, neither bind it nor use it, and even argues against calling it a wildcard. Nothing arrives at a catch-all arm.
+- **It costs no word, and that is most of the argument.** `else` is already reserved and already reads as *the branch taken when nothing before it matched* ([ADR-132](docs/specification/adr/adr-132.md)); [ADR-084](docs/specification/adr/adr-084.md) calls a keyword the most expensive thing a language adds, and this adds none. The lowering is Rust's `_`, which is what the arm was before.
+- **`_` keeps every other position** [ADR-126](docs/specification/adr/adr-126.md) gives it — a tuple position, a parameter — and the nested one [ADR-137](docs/specification/adr/adr-137.md) D1 will give it, for the same reason: those are values arriving. Three become two.
+- **`_` never parsed inside a pattern anyway**, which is what made that free: a variant's bindings are an `ident_list` and `NAME` rejects a bare `_`, so the whole-arm position was the only one a `match` had. No case analysis was needed to take it away.
+- **The AST node was renamed with it**: `MatchPattern::Wildcard` is `MatchPattern::Otherwise`, because *wildcard* was the wrong word twice over — nothing is matched loosely, and nothing is ignored.
+- **Two arms in `examples/`**, six blocks on the pages, ten in the tests, and the examples of the two records that write the arm — [ADR-126](docs/specification/adr/adr-126.md) D1 and [ADR-137](docs/specification/adr/adr-137.md) D1 — each with a line saying which record moved it.
+- *Six tests* in `crates/nikaia/tests/match_else.rs`.
+
 ## [0.0.28] — 2026-09-19
 
 [ADR-140](docs/specification/adr/adr-140.md)'s fourth migration, and the record's

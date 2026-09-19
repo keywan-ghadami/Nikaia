@@ -49,7 +49,7 @@ fn the_ignore_pattern_stands_where_a_name_would_be_bound() {
              let (first, _) = pair()\n\
              let tag = \"x\".to_string()\n\
              let n = twice(1, fn(_) { 3 })\n\
-             let m = match first { 0 => 1, _ => 2 }\n\
+             let m = match first { 0 => 1, else => 2 }\n\
              println(f\"{handle(first, tag)} {n} {m}\")\n\
          }",
     )

@@ -457,7 +457,7 @@ fn a_match_lowers_every_pattern_shape() {
         "        Message::Move { x, y } => 2,\n",
         "        7 => 3,\n",
         "        other => 4,\n",
-        "        _ => 5,\n",
+        "        else => 5,\n",
         "    }\n",
         "}\n"
     );
@@ -468,6 +468,10 @@ fn a_match_lowers_every_pattern_shape() {
         "Message::Move { x, y } => 2,",
         "7 => 3,",
         "other => 4,",
+        // **The one arm whose spelling differs below**: the source writes
+        // `else` ([ADR-145](../../../docs/specification/adr/adr-145.md) D1) and
+        // the language below has `_`, which is what the arm was written with
+        // here before.
         "_ => 5,",
     ] {
         assert!(emitted.contains(arm), "missing `{arm}`:\n{emitted}");
@@ -478,7 +482,7 @@ fn a_match_lowers_every_pattern_shape() {
 /// trap `if`'s condition has, and the same answer.
 #[test]
 fn a_match_value_is_not_read_as_a_struct_literal() {
-    let source = "fn f(v: i32) -> i32 {\n    return match v {\n        _ => 1,\n    }\n}\n";
+    let source = "fn f(v: i32) -> i32 {\n    return match v {\n        else => 1,\n    }\n}\n";
     let emitted = emit(source, Build::default());
     assert!(emitted.contains("match v {"), "{emitted}");
 }

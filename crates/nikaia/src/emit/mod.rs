@@ -5339,7 +5339,9 @@ impl<'p> Emitter<'p> {
                 .join(", ")
         };
         match pattern {
-            MatchPattern::Wildcard => out.push("_"),
+            // Rust's own catch-all, which is what the arm was before
+            // ([ADR-145](../../docs/specification/adr/adr-145.md) D3).
+            MatchPattern::Otherwise => out.push("_"),
             MatchPattern::Literal(value) => self.expr(out, value, depth, flow)?,
             MatchPattern::Path(p) => out.push(&path(p)),
             MatchPattern::Tuple { path: p, bindings } => {
