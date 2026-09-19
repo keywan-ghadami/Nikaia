@@ -17,7 +17,7 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  <img src="https://img.shields.io/badge/version-0.0.7-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.8-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
   <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
@@ -363,11 +363,11 @@ already parse.
 Nikaia is an experiment conducted in the open, and the specification is far ahead of the
 compiler. Concretely:
 
-* ✅ **Specification 0.0.7** — syntax, build switches, unified types, borrow model, cleanup
-  semantics, grammar protocol. Thirty-six [ADRs](docs/specification/adr/README.md) record
-  *why*, including the ones that reverse an earlier decision.
-* 🚧 **0.0.8 (unreleased)** — tethered slices in user structs, parallel parsing, input
-  provenance. See the [CHANGELOG](CHANGELOG.md).
+* ✅ **Specification 0.0.8** — syntax, build switches, unified types, borrow model, cleanup
+  semantics, grammar protocol, the integrity round, the bare-metal target, a library for
+  other languages. The [ADRs](docs/specification/adr/README.md) record *why*, including the
+  ones that reverse an earlier decision. Since 0.0.8 every change package raises the patch
+  number by one; the [CHANGELOG](CHANGELOG.md) is one heading per package.
 * 🚧 **Bootstrap compiler (Stage 0)** — a Rust front-end that lowers a `.nika` file to readable
   Rust and drives `rustc` to produce a binary; that is the `rust` backend, it is the only code
   generator, and it is what a bare `nikaia` uses
@@ -387,6 +387,7 @@ Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
 - [x] **Spec 0.0.5:** syntax, build switches, unified types.
 - [x] **Spec 0.0.6:** borrow model without lifetime annotations; cleanup under implicit async.
 - [x] **Spec 0.0.7:** scannerless grammar protocol, DSLs as expressions, hardware instructions as libraries.
+- [x] **Spec 0.0.8:** the integrity round, the bare-metal target, a library for other languages — and from here on, a version per change package.
 - [x] **Manifesto:** the soul and philosophy of the project.
 - [ ] **Bootstrap compiler:** the transpiler in Rust (Stage 0).
   - [x] The grammar protocol: `grammar` onto `grammar!`, `@frame` onto `#[frame]`, and

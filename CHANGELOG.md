@@ -1,6 +1,17 @@
 # Changelog
 
-## [Unreleased]
+Since 0.0.8, **every change package raises the patch number by one**, and a
+heading below is one package: what it decided, what it changed, what it left
+open. The version is the specification's; the compiler's crates carry their own.
+
+## [0.0.8] — 2026-09-19
+
+Closes what had been unreleased since 0.0.7 — the integrity round (the `Seen`
+stamp, one `update` form, `overlap` keeping every failure, the exit status),
+four reserved words freed and `with` given its construct, the bare-metal
+target, the grammar's vocabulary page, the ring's park, `crosses` three-valued,
+`extern` and `unsafe` reserved with constructs — and ends with its last
+package: **a library for other languages, and the ignore pattern.**
 
 ### Decided (a library for other languages, and the ignore pattern)
 
