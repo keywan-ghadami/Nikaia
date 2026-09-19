@@ -4,18 +4,37 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
-## [0.0.25] — 2026-09-19
+## [0.0.26] — 2026-09-19
 
 The second of the questions is answered, and answering it found two more holes
 than it had asked about.
 
-### Added ([ADR-143](docs/specification/adr/adr-143.md): a name denotes one thing)
+### Added ([ADR-144](docs/specification/adr/adr-144.md): a name denotes one thing)
 
 - **`NK1148`.** The second declaration is refused, with the caret on the one that arrived and the note naming the first. `fn`, `struct`, `enum`, `trait` and `grammar` declare a name; a **method** does not — it belongs to its type, and two types may each have a `len` — nor does a **rule**, which belongs to its grammar and is reached as `Json::value`.
 - **It was asked about one shape and there were three.** A name that is both a type and a function was the case [ADR-140](docs/specification/adr/adr-140.md) D1's build had picked in silence, and it is the smallest of them. A `trait` and a `grammar` were not counted at all, so `trait Foo` beside `struct Foo` was accepted through **every** path. And everything else — two `struct Foo`s, two `fn f`s, a `struct` and an `enum` of one name — was counted only when the build went through a **manifest**: `nikaia --input` skips the module layer, which is how the corpus, the specification's blocks and a reader's first program are all compiled. Each of them lowered and `rustc` answered `E0428` about a file nobody wrote.
 - **So the rule moved rather than being added.** The per-file case is the checker's, which every build runs; `modules.rs` keeps its refusal for what only it can say — two **files** under one name, with both paths in the message — and skips a pair that is the same file, which it used to serve badly, naming one file twice in a sentence about two.
 - **[ADR-140](docs/specification/adr/adr-140.md) D1's `NK1146` is always right now**, because the case that made its help wrong cannot be declared: it says *write `Foo { n: … }`*, and that is the only `Foo` there can be.
 - *Six tests* in `crates/nikaia/tests/one_name.rs`.
+
+### Noted (a flake written down instead of having its bound raised again)
+
+- **`a_future_fed_from_a_worker_finishes_under_block_on`** ([ADR-121](docs/specification/adr/adr-121.md) D3) passes alone a hundred times and has failed three times inside a loaded whole-workspace run, each on an unrelated change, with two clean runs after every failure. Its bound was raised once, ten seconds to sixty, and raising it again is the wrong fix repeated: the mechanism is **contention**, not slowness — `io_workers` defaults to one, the harness runs in parallel, and every in-process readiness wait queues behind the others on that one thread, so a wait ahead holds it for as long as its own timeout. `open-work.md` §3.2 carries it as a suspicion with the three ways out, because no reproduction on demand exists.
+
+## [0.0.25] — 2026-09-19
+
+The LINQ question leaves `open-decisions.md`, and the answer's first draft is
+corrected on the way: the compiler checks no SQL, because it knows no dialect.
+
+### Decided ([ADR-143](docs/specification/adr/adr-143.md): the driver checks the SQL at build time, `std::db` is the protocol)
+
+- **The dialect is a grammar in a driver package**, and the compiler runs it as it runs every grammar; nothing SQL-shaped is in the compiler, and a vendor's database is a package its vendor writes.
+- **One intrinsic, `meta::column(name, type)`**, the third and last of the hybrid binding: a grammar declares the result columns and the compiler derives the **row type** from them as it derives the parameter type from the holes, so `u.emial` is *nothing declares `emial`* and a nullable column is `T?`.
+- **The schema is a build-time argument of the block** — `dsl sqlite(schema: app) { … } eod`, named, no `;`, resolved from a `comptime` asset — and the driver's DDL grammar reads it, so a missing column is a build error at the query. No live database while building.
+- **`std::db` is the protocol and nothing more**: the traits, the statement, the row values. `http` left `std` because nothing depended on it; `db`'s protocol stays because two drivers and every program that changes drivers depend on it.
+- **No expression capture and no ORM.** [ADR-088](docs/specification/adr/adr-088.md) §3's open capability is closed by not adding it; a query in memory is the `Seq` combinators, the row type is the mapping. The sentence for marketing is D6.
+- Part II 10.5 has the third intrinsic and the paragraph; Part III's `std::db` section is rewritten; the roadmap's "query DSL" says what it is.
+
 
 ## [0.0.24] — 2026-09-19
 

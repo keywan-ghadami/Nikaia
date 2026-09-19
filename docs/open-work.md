@@ -1723,6 +1723,24 @@ all and that is unchanged.
 `crates/nikaia-std/` and on the three pages. Last of the five, because nothing
 waits on it.
 
+### 2.49. The database driver checks the SQL while the program is built
+
+[ADR-143](specification/adr/adr-143.md), all of it. The compiler knows no
+SQL: a dialect is a grammar in a driver package. A grammar declares a result
+column with `meta::column(name, type)`, the third and last intrinsic of the
+hybrid binding, and the compiler derives the statement's row type from the
+columns as it derives the parameter type from the holes. A `dsl` block takes
+build-time arguments, named, no `;` — `dsl sqlite(schema: app) { … } eod` —
+resolved from `comptime` values, and the driver's grammar reads the schema
+with its own DDL grammar and refuses a missing column at the query. `std::db`
+is the protocol only (traits, statement, row values); `sqlite` and the rest
+are packages. No expression capture, no ORM; `raw(text)` for dynamic SQL.
+
+*What it needs, in the record's order (§5):* `meta::column` and the row type;
+build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
+both grammars and the schema check; the example with a misspelled column
+refused.
+
 ## 3. Upkeep
 
 ### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect
@@ -1814,7 +1832,33 @@ A stale **Status** note is a defect in its own right
 ([`README.md`](README.md) §1), because a reader cannot tell a plan from a promise -
 so this section being empty is a state to try to keep rather than a milestone.
 
-### 3.2. Eight citations named an entry by its number and meant another one
+### 3.2. The ring's `block_on` test flakes under a loaded whole-workspace run, and the bound is not the cause
+
+`rt::tests::a_future_fed_from_a_worker_finishes_under_block_on`
+([ADR-121](specification/adr/adr-121.md) D3) passes alone — a hundred times —
+and has failed three times this month inside `cargo test --workspace --release`,
+each time on a different unrelated change. Two clean whole-workspace runs follow
+every failure.
+
+**Its bound has already been raised once, from ten seconds to sixty, and that
+was the wrong fix to repeat.** The mechanism is contention rather than slowness:
+`io_workers` defaults to **one**, the harness runs the suite in parallel, and
+every in-process readiness wait in the workspace queues behind the others on
+that one thread — so a wait ahead of this one holds it for as long as *its* own
+timeout, and the sum can pass a minute with nothing wrong. Raising the number
+again buys a longer wait for the same race.
+
+*What would actually settle it*, in the order of how much it costs: give the
+tests that wait on readiness a runtime of their own rather than the process's;
+or mark them `#[serial]` so they cannot queue behind one another; or have the
+harness run `nikaia-std`'s runtime tests in a single thread.
+
+**A suspicion and not a fact about the runtime**, which is what the head of this
+file asks for: no reproduction on demand exists, and every attempt to force one
+has passed. What is known is the mechanism above and that no change to the
+runtime has been in flight on any of the three occasions.
+
+### 3.3. Eight citations named an entry by its number and meant another one
 
 Found by reading, in the round that closed the `catch` binding and again in the
 one after it. The page's own head says to cite by **subject** and not by number;
@@ -1851,7 +1895,7 @@ entry is the evidence that it has to be applied rather than merely written.
 
 *Evidence:* the eight sentences above, each read against the page as it stands.
 
-### 3.3. Two examples write a postfix `??` the language does not have
+### 3.4. Two examples write a postfix `??` the language does not have
 
 Part I 3.5 defines `??` as **null coalescing** — `a ?? b`, a fallback when the
 left side is null — and nothing else. There is no postfix unwrap in that section,

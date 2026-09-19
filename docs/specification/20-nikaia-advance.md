@@ -275,8 +275,11 @@ While 10.3 reads *Nikaia*'s own types, the `dsl` keyword embeds **foreign syntax
 | :--- | :--- | :--- |
 | `meta::capture(id)` | compile time, from the surrounding scope | assembly operands, table names — anything meaning *this variable, here* |
 | `meta::parameter(name, type)` | runtime, as a named argument | SQL placeholders — anything the statement should be *reusable* over |
+| `meta::column(name, type)` | build time, declared by the grammar | the statement's **result**: one field per column, so a row is a type ([ADR-143](adr/adr-143.md) D2) |
 
 Both are needed. Capturing a variable is exactly right for assembly. It is exactly wrong for a SQL prepared statement: baking the values into the statement definition destroys the reuse that makes preparing it worthwhile.
+
+The third intrinsic is what makes a query's **result** typed without the compiler knowing any SQL: a database driver's grammar reads the statement and the schema — a build-time argument of the block, `dsl sqlite(schema: app) { … } eod`, resolved from a `comptime` value — and declares the columns; the compiler builds the row type from them as it builds the parameter type from the holes. A column the schema lacks is the grammar's error at the query, while the program is built ([ADR-143](adr/adr-143.md)). The compiler itself knows no dialect and never will; a vendor's database is a package.
 
 > **A recurring idea.** This immediate/deferred split is the same distinction the language already draws for lambda capture (`@immediate` borrows, `@detached` moves — Part I, 5.4) and for resource teardown (`task::scope` finishes now, a cancelled cleanup is parked — [ADR-006](adr/adr-006.md), D3). When you meet it a fourth time, it will mean the same thing: *does this resolve here, or later?*
 

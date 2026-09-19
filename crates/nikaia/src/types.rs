@@ -113,7 +113,7 @@ fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
 }
 
 /// **`NK1148`: a name declared twice in one file**
-/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D1).
+/// ([ADR-144](../../../docs/specification/adr/adr-144.md) D1).
 ///
 /// Across files this is `modules::one_namespace`, which has something this does
 /// not — two paths to name ([ADR-047](../../../docs/specification/adr/adr-047.md)
@@ -143,7 +143,7 @@ fn declared_once(parsed: &Parsed, out: &mut Vec<Finding>) {
 }
 
 /// What declares a name, and what it is called in the message
-/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D2).
+/// ([ADR-144](../../../docs/specification/adr/adr-144.md) D2).
 ///
 /// Five items and no more. A **method** belongs to its type and two types may
 /// each have a `len`; a **rule** belongs to its grammar and is reached as
@@ -174,7 +174,7 @@ fn declared_twice(name: &str, first: &str, second: &str, span: &Span) -> Finding
         code: "NK1148",
         message: format!("`{name}` is declared twice in this file: {kinds}"),
         notes: vec![
-            "a name denotes one thing (ADR-143 D1), so a line that writes it has one \
+            "a name denotes one thing (ADR-144 D1), so a line that writes it has one \
              meaning and no rule is needed about which declaration wins - the files of a \
              package share one namespace for the same reason (Part I, 9.1)"
                 .to_string(),

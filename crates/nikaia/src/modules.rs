@@ -234,7 +234,7 @@ fn read_unit(
 /// Part III C.1 forbids - and it would name a line the user never wrote.
 ///
 /// **Two files and not one**
-/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D3). A name declared
+/// ([ADR-144](../../../docs/specification/adr/adr-144.md) D3). A name declared
 /// twice in *one* file is `NK1148` in the checker, which every build runs -
 /// where this runs only for a build that has a manifest. This kept the one-file
 /// case for as long as it was the only rule there was, and served it badly:
@@ -271,7 +271,7 @@ fn one_namespace(units: &[Unit]) -> Result<()> {
 /// `Json::value` ([ADR-140](../../../docs/specification/adr/adr-140.md) D3).
 ///
 /// **A `trait` and a `grammar` are among them**
-/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D2), and were not:
+/// ([ADR-144](../../../docs/specification/adr/adr-144.md) D2), and were not:
 /// `trait Foo` beside `struct Foo` was accepted through every path, including
 /// this one, and `rustc` answered about the generated file.
 fn declared_names(parsed: &Parsed) -> Vec<String> {

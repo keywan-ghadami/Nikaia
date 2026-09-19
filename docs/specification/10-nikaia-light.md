@@ -2459,7 +2459,7 @@ without `use http` is refused, so a file still lists what it depends on at the t
 (D4). And **one name per file**: two packages that end up under the same name, by
 alias or by collision, is an error rather than a rule about which wins (D5).
 
-**A name denotes one thing** ([ADR-143](adr/adr-143.md) D1), and the second
+**A name denotes one thing** ([ADR-144](adr/adr-144.md) D1), and the second
 declaration is refused — `NK1148`, with the caret on the one that arrived. A
 `fn`, a `struct`, an `enum`, a `trait` and a `grammar` declare a name; a
 **method** belongs to its type and two types may each have a `len`, and a

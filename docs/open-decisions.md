@@ -1,9 +1,11 @@
 # Open decisions — the questions that need the owner
 
-**Two entries are open**, below. A question found by building rarely stays long:
-two of the four this file held yesterday are records already —
-[ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*, and
-[ADR-143](specification/adr/adr-143.md), *a name denotes one thing*. An answer is an [ADR](specification/adr/), and
+**One entry is open**, below. A question found by building rarely stays long:
+three of the four this file held yesterday are records already —
+[ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*,
+[ADR-143](specification/adr/adr-143.md), *the driver checks the SQL at build
+time*, and [ADR-144](specification/adr/adr-144.md), *a name denotes one thing*.
+An answer is an [ADR](specification/adr/), and
 the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
 [`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
@@ -43,75 +45,6 @@ holds.
 
 *If it is wrong:* nothing is built on it — the cost is a roadmap paragraph a
 reader takes for the owner's and is not.
-
-### 2. The answer to "LINQ": the SQL DSL with rows typed from the schema, and no expression capture
-
-**Asked by marketing** (SAP and DATEV want "LINQ and an ORM"), and the language
-already has most of an answer that is better than the one asked for — which is
-why this needs the owner to say so rather than a record to invent something.
-
-*What LINQ is, read carefully.* Two things under one name. **LINQ to objects**
-is `where`, `select`, `orderBy` over an in-memory collection: this language has
-that as `filter`, `map`, `fold` over a `Vec` and a `Seq`
-([ADR-105](specification/adr/adr-105.md)), with lambdas, and nothing is missing
-but the keyword spelling nobody needs. **LINQ to SQL** is the interesting half:
-the compiler keeps `u.age > 18` as an **expression tree**, and a *provider*
-translates it into SQL at runtime. That is the part every user learns to
-distrust — the expression the provider cannot translate fails at runtime,
-the SQL it emits is nobody's and reads that way, and the N+1 query is invisible
-in the source. [ADR-088](specification/adr/adr-088.md) §3 names expression
-capture as *the one capability that would be genuinely new*, needed by exactly
-this use case, and left it undecided.
-
-*What this language does instead*, today, in Part II 10.5: the SQL is written
-**as SQL**, in the dialect the database runs, inside `dsl mysql { … } eod`; the
-compiler parses it at build time with the dialect's grammar, so a typo is a
-compile error; every `:hole` is a **typed parameter** the call must pass by
-name, so a missing or misspelled one is `NK1112`/`NK1113`; and the statement is
-prepared once and reused. No translation layer, no provider, no tree: what
-the reader sees is what the database receives. That is better than LINQ to SQL
-at the thing LINQ to SQL was for — catching the query's mistakes before it runs.
-
-*What it lacks, and what the question is.* Two things LINQ has and 10.5 does
-not: the **result** is untyped (a row is a row; `name` and `email` are not
-fields of anything until the program says so), and the query is not checked
-against the **schema** (a column that does not exist is found by the
-database). Both are one piece: the schema read at build time.
-
-*The options.*
-
-1. **Expression capture**, and a LINQ-shaped provider over it. *Costs:* the
-   one construct ADR-088 kept off the list, a second query language beside SQL,
-   a translation layer whose failures are runtime, and the readability argument
-   of Part II 10.4 given up for one use case.
-2. **The SQL DSL as it is, plus the schema at build time.** The grammar's driver
-   takes the schema as a build-time input — `asset("schema.sql")` in a
-   `comptime` initialiser is the mechanism [ADR-116](specification/adr/adr-116.md)
-   already has — and the statement's **result type is derived**: a struct with
-   one field per selected column, named and typed from the schema, so
-   `for u in users { println(u.email) }` is checked and `u.emial` is `NK1117`.
-   A column the schema does not have is a compile error at the query. The
-   parameters are already typed. *Costs:* a schema grammar per dialect (DDL,
-   the small subset that declares tables and columns), the driver reading a
-   build-time asset, and the derived row type — no new construct, no
-   evaluator beyond what `dsl` already runs at build time. An "ORM" is not
-   added: the row type **is** the mapping, and a migration is a SQL file.
-3. **Leave 10.5 as it is** and answer "no LINQ". *Costs:* the honest answer to
-   the first half of the ask and none to the second; the untyped row is the
-   thing a demo would be asked about first.
-
-*Recommendation:* **option 2**, and this sentence to marketing: *Nikaia does
-not translate your code into SQL; you write the SQL your database runs, and
-the compiler checks it — the syntax, every parameter, every column against
-your schema — before it runs, and gives you a typed row back. What LINQ
-promised, without the provider.* For in-memory queries the answer is the
-`Seq` combinators, and no keyword. It also says what the roadmap's "query
-DSL fourth" **is**: this, which is why `std::db` stands before it — the
-driver the schema is read for has to exist first.
-
-*If it is wrong:* option 2 spent is a schema grammar and a derived type, both
-of which stay useful under option 1; option 1 spent first is a construct that
-cannot be taken back.
 
 ## Answered
 
@@ -227,11 +160,16 @@ in place, with the mark given a definition beside the **Status** note's) and
 entry that arrived and left in one round, because the answer was the demand an
 `overlap` branch and a `par_iter` lambda already carry and the corpus wrote
 nothing that would have to change) and
-[ADR-143](specification/adr/adr-143.md) (a name denotes one thing, and the
+[ADR-144](specification/adr/adr-144.md) (a name denotes one thing, and the
 second declaration is refused — the entry that turned out to be **three**
 holes rather than the one it asked about: a `trait` and a `grammar` were not
 counted at all, and everything else was counted only when the build had a
-manifest). Each record
+manifest) and
+[ADR-143](specification/adr/adr-143.md) (the database driver checks the SQL at
+build time against the schema — the "LINQ" the question was really about, and
+the answer is that this language already had the better half of it: the SQL is
+written as SQL and checked before it runs, so what was missing was the schema
+and a typed row rather than an expression tree). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.
