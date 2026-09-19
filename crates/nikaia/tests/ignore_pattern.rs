@@ -150,24 +150,30 @@ fn the_ignore_pattern_is_not_an_expression() {
 /// **A name that begins with `_` is still a name**, which is what the two
 /// lookaheads in front of the ignore pattern buy.
 ///
-/// `_count` and `_0` are ordinary names, and the `_000` of `1_000` is the one
-/// `NK1117` reports about — *a number is written in digits with no separators*.
-/// A rule that read every leading underscore as the ignore pattern would have
-/// taken that message away.
+/// `_count` and `_0` are ordinary names. The second half of this test used to
+/// be `1_000`, whose `_000` was a name `NK1117` reported about; since
+/// [ADR-136](../../../docs/specification/adr/adr-136.md) that is the number
+/// `1000`, so what stands here now is the case the lookaheads are actually
+/// for — a **leading** underscore, which no number form has and every language
+/// with both reads as a name.
 #[test]
 fn a_name_beginning_with_an_underscore_is_a_name() {
     let rust = lowered("fn main() { let _count = 1 let _0 = 2 println(f\"{_count} {_0}\") }")
         .expect("both are names");
     assert!(rust.contains("_count"), "{rust}");
 
-    let found: Vec<_> = findings("fn main() { let n = 1_000 println(f\"{n}\") }")
+    let found: Vec<_> = findings("fn main() { println(f\"{_000}\") }")
         .into_iter()
         .filter(|f| f.code == "NK1117")
         .collect();
     assert!(
         found.iter().any(|f| f.message.contains("_000")),
-        "the separator message survives: {found:#?}"
+        "a leading underscore is a name: {found:#?}"
     );
+
+    // And the form it replaced is a number now, with nothing left to report.
+    let separated = findings("fn main() { let n = 1_000 println(f\"{n}\") }");
+    assert!(separated.is_empty(), "{separated:#?}");
 }
 
 /// **An ignored lambda argument produces no warning below** (D4, and §5's third

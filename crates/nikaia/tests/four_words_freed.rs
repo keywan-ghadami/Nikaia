@@ -185,5 +185,9 @@ fn every_other_name_is_answered_as_before() {
     assert_eq!(found.len(), 1, "{found:#?}");
     let help = found[0].help.as_deref().expect("a way out");
     assert!(help.contains("declare it with `let`"), "{help}");
-    assert!(help.contains("`1_000`"), "{help}");
+    assert!(help.contains("no such keyword"), "{help}");
+    // **And it stopped explaining `1_000`**
+    // ([ADR-136](../../../docs/specification/adr/adr-136.md)): that form is a
+    // number now, so the clause that named it as a misparse was wrong.
+    assert!(!help.contains("`1_000`"), "{help}");
 }

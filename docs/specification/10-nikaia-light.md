@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.35 (Draft)
+**Version:** 0.0.36 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -262,10 +262,22 @@ the name beside it is refused, as `NK1117`, because nothing declares it
 stands on its own is read as a name, so `assert c` and `unsafe { … }` are
 refused the same way rather than being read as constructs that are not there.
 
-> **Status:** the separator and the three radix prefixes are **not built**
-> ([ADR-136](adr/adr-136.md) §5). Today `1_000` is the number `1` beside the
-> name `_000` and `0xFF` is `0` beside `xFF`, and `NK1117`'s help still names
-> the `1_000` case.
+> **Status:** **built** ([ADR-136](adr/adr-136.md) §5). All four forms, the
+> float's separator, and the underscore refused where it does not stand between
+> digits; `NK1117`'s help no longer names the `1_000` case, because it is a
+> number. A digit the radix does not have — `0b1210`, `0o19` — is refused too,
+> and not as a nicety: without it the number ends at the bad digit and what
+> follows is a second number nobody wrote, which is the same misparse one prefix
+> along.
+>
+> A **leading** underscore is not one of the four forms and never was: `_000` is
+> a name, in every language that has both, and a rule that read it as part of a
+> number would take `let _1 = 5` away.
+>
+> And a number too wide for an `i64` is now **refused**. It used to take this
+> compiler down — the parser read the digits with `parse().unwrap()` — which is
+> the class [Part III C.1](30-nikaia-tooling.md) is about at its sharpest: the
+> program was wrong and the compiler crashed.
 
 **These four are the integer types a program writes.** The compiler accepts more
 — `u32`, `u64` and the machine-width `usize` among them — and the specification

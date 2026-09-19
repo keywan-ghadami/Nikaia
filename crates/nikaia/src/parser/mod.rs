@@ -61,6 +61,115 @@ where
     }
 }
 
+/// Part I 2.2's number, in the four spellings
+/// ([ADR-136](../../../docs/specification/adr/adr-136.md) D1): `255`,
+/// `1_000_000`, `0xFF`, `0b1010` and `0o17`.
+///
+/// **Written by hand for two reasons.** The grammar's character classes are
+/// `digit` and `any`, so *a binary digit* and *a hexadecimal digit* have no
+/// spelling in it; and a number that does not fit has to be **refused**, which
+/// an action cannot do — it used to `unwrap` a failed `parse`, so
+/// `99999999999999999999` took this compiler down rather than the program.
+///
+/// **The separator is not in the value** (D3): what comes back is the number,
+/// and `1_000` is `1000` to everything downstream including a diagnostic's
+/// text. **The radix is a spelling** (D2): `0xFF` is `255` and takes the first
+/// type that holds it, exactly as `255` does
+/// ([ADR-060](../../../docs/specification/adr/adr-060.md)).
+fn number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i64, ParseError>
+where
+    S: Clone + std::fmt::Debug,
+{
+    let bytes = winnow::stream::AsBStr::as_bstr(i);
+    // **Lower-case, and only at the front** (D1). `0X` and `0B` are not second
+    // spellings: one form per thing is the rule this language keeps.
+    let (radix, prefix) = match bytes {
+        [b'0', b'x', ..] => (16u32, 2),
+        [b'0', b'b', ..] => (2u32, 2),
+        [b'0', b'o', ..] => (8u32, 2),
+        _ => (10u32, 0),
+    };
+    let mut value = String::new();
+    let mut at = prefix;
+    let mut after_separator = false;
+    let mut wrong = None;
+    while at < bytes.len() {
+        let c = bytes[at] as char;
+        if c.is_digit(radix) {
+            value.push(c);
+            after_separator = false;
+            at += 1;
+            continue;
+        }
+        // **An underscore stands between digits and nowhere else** (D1): not
+        // beside the prefix, not doubled, not last.
+        if c == '_' {
+            if value.is_empty() || after_separator {
+                wrong = Some(
+                    "an underscore in a number stands between digits: `1_000_000`, \
+                     never `1__0` and never beside the radix prefix (Part I, 2.2)",
+                );
+                break;
+            }
+            after_separator = true;
+            at += 1;
+            continue;
+        }
+        break;
+    }
+    if wrong.is_none() {
+        if value.is_empty() {
+            // A prefix with no digits is a refusal, because `0x` is nothing
+            // else; no digits at all is simply not a number here, and the
+            // alternative that wanted one says so in the ordinary way.
+            if prefix == 0 {
+                return Err(ParseError::from_stream(i).add_expected("digits"));
+            }
+            wrong = Some("a radix prefix takes at least one digit (Part I, 2.2)");
+        } else if after_separator {
+            wrong = Some(
+                "an underscore in a number stands between digits, so a number does not \
+                 end in one (Part I, 2.2)",
+            );
+        } else if prefix > 0 && at < bytes.len() && (bytes[at] as char).is_ascii_alphanumeric() {
+            // **A digit the radix does not have** — `0b1210`, `0o19` — is the
+            // misparse this record is about, one prefix along: without this the
+            // number ends at the bad digit and what follows is a second number
+            // nobody wrote.
+            wrong = Some(match radix {
+                2 => "`0b` takes the digits `0` and `1` (Part I, 2.2)",
+                8 => "`0o` takes the digits `0` to `7` (Part I, 2.2)",
+                _ => "`0x` takes the digits `0` to `9` and `a` to `f` (Part I, 2.2)",
+            });
+        }
+    }
+    let number = match wrong {
+        Some(_) => 0,
+        None => match i64::from_str_radix(&value, radix) {
+            Ok(number) => number,
+            Err(_) => {
+                wrong = Some(
+                    "this number does not fit the widest integer this language has, \
+                     which is `i64` (Part I, 2.2)",
+                );
+                0
+            }
+        },
+    };
+    // **The caret goes on the character that is wrong**, and getting there
+    // means walking to it: a diagnostic is ranked by how far the parse got, so
+    // a refusal built at the start of the literal loses to the float rule's
+    // failure further along — which is a true sentence about this parser and no
+    // help at all to a reader.
+    let _ = winnow::stream::Stream::next_slice(i, at);
+    match wrong {
+        Some(message) => Err(ParseError::from_stream(i)
+            .with_message(message)
+            .with_priority(winnow_grammar::error::PRIO_STRUCTURAL)),
+        None => Ok(number),
+    }
+}
+
 // --- Public API ---
 
 /// A parsed program together with the interner that produced its identifiers.
@@ -590,9 +699,11 @@ grammar! {
 
         state Trivia;
 
-        // Declared so the validator knows the name; the parser itself is above
-        // ([ADR-135](../../../../docs/specification/adr/adr-135.md) D3).
+        // Declared so the validator knows the name; the parsers themselves are
+        // above ([ADR-135](../../../../docs/specification/adr/adr-135.md) D3,
+        // [ADR-136](../../../../docs/specification/adr/adr-136.md) D1).
         extern rule same_line -> ();
+        extern rule number_lit -> i64;
 
         // --- Entry Point ---
         // Rule 'program' -> generates 'parse_program'
@@ -2189,10 +2300,10 @@ grammar! {
         // gets lost. The text is kept as written and handed to the language
         // below, which spells a float literal the same way.
         rule FLOAT -> String =
-            w:digit1 "." f:digit1 e:EXPONENT? -> {
+            w:DIGITS "." f:DIGITS e:EXPONENT? -> {
                 format!("{w}.{f}{}", e.unwrap_or_default())
             }
-          | w:digit1 e:EXPONENT -> { format!("{w}{e}") }
+          | w:DIGITS e:EXPONENT -> { format!("{w}{e}") }
 
         rule EXPONENT -> String =
             "e" "-" d:digit1 -> { format!("e-{d}") }
@@ -2893,12 +3004,31 @@ grammar! {
         rule char_lit -> Expr =
             c:CHAR -> { Expr::LitChar(c) }
 
+        // **The four spellings are one rule and it is written in Rust**
+        // ([ADR-136](../../../../docs/specification/adr/adr-136.md)): see
+        // `number_lit` above for why.
         rule int_lit -> Expr =
-            d:digits -> {
-                Expr::LitInt(d.parse().unwrap())
-            }
+            n:number_lit -> { Expr::LitInt(n) }
 
+        // **A tuple's part is a plain run of digits** and takes neither form:
+        // `t.0` is a *field name* that happens to be a number
+        // ([ADR-098](../../../../docs/specification/adr/adr-098.md)), so a
+        // separator in it would be a separator in a name.
         rule digits -> String =
             d:digit1 -> { d.to_string() }
+
+        // A run of decimal digits with D1's separator in it, and the separator
+        // is not in what comes back (D3). What `FLOAT` counts in: `1_000.5` is
+        // a number and `1_000` beside `.5` is two.
+        rule DIGITS -> String =
+            head:digit1 rest:DIGIT_GROUP* -> {
+                let mut all = head.to_string();
+                for group in rest {
+                    all.push_str(&group);
+                }
+                all
+            }
+
+        rule DIGIT_GROUP -> String = "_" d:digit1 -> { d.to_string() }
     }
 }

@@ -1756,6 +1756,11 @@ impl<'a> Checker<'a> {
     /// let n = 1_000            ->  let n = 1;  _000;
     /// ```
     ///
+    /// **The third one is history now**
+    /// ([ADR-136](../../docs/specification/adr/adr-136.md)): `1_000` is the
+    /// number `1000`, so this message stopped naming it — a help text that
+    /// explains a form the language has is worse than no help at all.
+    ///
     /// Every one of those reached `rustc`, which refused it about a file nobody
     /// wrote - the Part III C.1 class. The boundary rules stop the *worse* half,
     /// where the word was swallowed into a neighbour; this stops the rest, here,
@@ -1809,10 +1814,8 @@ impl<'a> Checker<'a> {
                 // about a name.
                 Some(instead) => instead.to_string(),
                 None => format!(
-                    "if `{name}` is meant to be a value, declare it with `let`; if it is meant \
-                     to be a keyword, this language has no such keyword - and a number is \
-                     written in digits with no separators, so `1_000` is `1` beside the name \
-                     `_000` (Part I, 2.2)"
+                    "if `{name}` is meant to be a value, declare it with `let`; if it is \
+                     meant to be a keyword, this language has no such keyword"
                 ),
             }),
         });

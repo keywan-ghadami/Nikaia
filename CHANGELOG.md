@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.36] — 2026-09-19
+
+`1_000_000`, `0xFF`, `0b1010` and `0o17`, and a number too wide for an `i64`
+stops taking this compiler down.
+
+### Added ([ADR-136](docs/specification/adr/adr-136.md))
+
+- **The four forms.** The grammar is scannerless, so none of these was a syntax error before: `1_000` was the number `1` beside a name `_000` that nothing declares, and `0xFF` was `0` beside `xFF` — a **misparse**, which is Part III C.1's class and the one `NK1117` was built to report rather than hand to `rustc`. An underscore stands between digits and nowhere else, and a float takes the separator (`1_000.5`) and no prefix. It has to: without it `1_000` stands beside `.5`, and `.5` on a number is a *tuple part*.
+- **The radix is a spelling** (D2): `0xFF` is `255`, taking the first type that holds it exactly as `255` does. A width read off the digits would make `0x0FF` wider than `0xFF` — a type that depends on how many zeroes somebody typed.
+- **The separator is not in the value anywhere** (D3), a diagnostic's text included: `let n: i32 = 3_000_000_000` says *`3000000000` does not fit*, because that is the number, and reading somebody's own spelling back at them says nothing.
+- **`NK1117`'s help lost its `1_000` clause**, which is the point: it explained a misparse that is now a number, and a help text that explains a form the language has is worse than no help at all.
+- **Written as an `extern rule`**, and for two reasons the grammar language gives rather than a preference. Its character classes are `digit` and `any`, so *a hexadecimal digit* and *a binary digit* have no spelling in it; and an action cannot **fail**. **Measured**, because it is tried at every primary position: 100 parses of the whole corpus, best of five, against the commit before it — the two are inside this machine's noise (0.43s against 0.44s).
+- *Ten tests* in `crates/nikaia/tests/number_literal.rs`.
+
+### Fixed (a number too wide for an `i64` crashed the compiler)
+
+- **`let n = 99999999999999999999` panicked.** The action read the digits with `parse().unwrap()`, so the program was wrong and *this compiler* fell over — Part III C.1 at its sharpest. It is a refusal now, naming `i64` as the widest integer this language has.
+- **And a digit the radix does not have is refused**: `0b1210`, `0o19`. Without it the number ends at the bad digit and what follows is a second number nobody wrote, which is the same misparse one prefix along.
+- **The caret goes on the character that is wrong.** A diagnostic is ranked by how far the parse got, so a refusal built at the start of a literal loses to the float rule's failure further along — a true sentence about this parser and no help at all to a reader.
+
 ## [0.0.35] — 2026-09-19
 
 The list literal, which `language-review.md` called the one piece of table

@@ -1222,9 +1222,12 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
 fn an_undeclared_name_inside_an_expression_is_refused_too() {
     for (source, name) in [
         ("fn main() { let n = q + 1 }", "q"),
-        // The misparse the statement rule was built for, one position over: a
-        // number with a separator in it is a number beside a name (Part I 2.2).
-        ("fn main() { let n = 1_000 }", "_000"),
+        // The misparse the statement rule was built for, one position over. It
+        // used to be `1_000`, which was a number beside a name; since
+        // [ADR-136](../../../docs/specification/adr/adr-136.md) that is the
+        // number `1000`, and what is left of the reading is the leading
+        // underscore, which is a name in every language that has both.
+        ("fn main() { let n = _000 + 1 }", "_000"),
         // A name followed by a block, which used to be `quote { … }` here: that
         // parsed as `let q = quote` beside a block and lowered in silence, and
         // this is the row of `docs/spec-promises.md` it answered. `quote` is a
@@ -1433,8 +1436,10 @@ fn a_divisor_that_is_not_a_proven_zero_is_not_mentioned() {
 ///
 /// * `assert c` - a keyword this language does not have;
 /// * `unsafe { … }` - the same, with a block after it;
-/// * `let n = 1_000` - Part I 2.2 is deliberate that this is `1` beside the name
-///   `_000`, and the reading is right; being *accepted* was not.
+/// * `let n = 1_000` - which *was* `1` beside the name `_000`, and is the
+///   number `1000` since [ADR-136](../../../docs/specification/adr/adr-136.md).
+///   It stands here as `_000` alone, which is the part of that reading the
+///   language kept: a **leading** underscore is a name.
 #[test]
 fn a_word_this_language_does_not_know_is_refused() {
     // **`unsafe` used to be one of these and is a construct now**
@@ -1449,10 +1454,7 @@ fn a_word_this_language_does_not_know_is_refused() {
     );
     for (source, name) in [
         ("fn main() {\n    let c = true\n    assert c\n}", "assert"),
-        (
-            "fn main() {\n    let n = 1_000\n    println(f\"{n}\")\n}",
-            "_000",
-        ),
+        ("fn main() {\n    println(f\"{_000}\")\n}", "_000"),
     ] {
         let (code, message) = one(source);
         assert_eq!(code, "NK1117", "{source}");
