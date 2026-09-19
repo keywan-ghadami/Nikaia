@@ -1723,6 +1723,24 @@ all and that is unchanged.
 `crates/nikaia-std/` and on the three pages. Last of the five, because nothing
 waits on it.
 
+### 2.49. The database driver checks the SQL while the program is built
+
+[ADR-143](specification/adr/adr-143.md), all of it. The compiler knows no
+SQL: a dialect is a grammar in a driver package. A grammar declares a result
+column with `meta::column(name, type)`, the third and last intrinsic of the
+hybrid binding, and the compiler derives the statement's row type from the
+columns as it derives the parameter type from the holes. A `dsl` block takes
+build-time arguments, named, no `;` — `dsl sqlite(schema: app) { … } eod` —
+resolved from `comptime` values, and the driver's grammar reads the schema
+with its own DDL grammar and refuses a missing column at the query. `std::db`
+is the protocol only (traits, statement, row values); `sqlite` and the rest
+are packages. No expression capture, no ORM; `raw(text)` for dynamic SQL.
+
+*What it needs, in the record's order (§5):* `meta::column` and the row type;
+build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with
+both grammars and the schema check; the example with a misspelled column
+refused.
+
 ## 3. Upkeep
 
 ### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect

@@ -1359,34 +1359,42 @@ Some modules are only available, or behave restrictively, depending on the machi
 > `Send`: a task holding something that may not cross a thread is refused by the
 > backend rather than here. `task::scope` is not built.
 
-**`std::db` (Universal SQL)**
-Nikaia provides a unified SQL interface, starting with SQLite, designed to abstract the underlying platform constraints completely.
+**`std::db` (the protocol, and nothing else)** ([ADR-143](adr/adr-143.md))
+`std::db` holds what two database drivers must agree on without depending on one another: the `Connection` and `Transaction` traits, the `Statement` protocol a `dsl` block's prepared statement speaks, and the values a row may carry — the language's numbers, `bool`, `String`, `Bytes`, and `T?` for `NULL`. **No SQL, no grammar, no dialect**: the compiler knows none, and a dialect is a grammar in a **driver package** — `sqlite`, `postgres`, a vendor's own — which also brings the DDL grammar for the schema, the connection, and the target adapter.
 
+* **The driver checks the query while the program is built.** `dsl sqlite(schema: app) { SELECT name, email FROM users WHERE age >= :min_age } eod` hands the statement and a schema file (a `comptime` asset) to the driver's grammar: a missing table or column is a build error at the query, every `:hole` is a typed named parameter, and the grammar declares the result columns with `meta::column`, from which the compiler derives a **row type** with named, typed fields (Part II 10.5). No live database is opened while building; whether the one opened at runtime still matches the file is the driver's check at `open`.
 * **Zero-Blocking Guarantee:** Database operations are implicitly asynchronous. They never block the Event Loop, nor the Compute Scheduler where there is one.
-* **Architecture Adapter:** The implementation switches automatically based on the compilation target:
-    * **Native Targets:** Utilizes the runtime's own dedicated I/O thread to offload blocking filesystem operations.
-    * **WASM Targets:** Automatically spawns a **Web Worker** and utilizes the **OPFS** (Origin Private File System). This enables native-grade, persistent SQL performance in the browser without freezing the UI thread.
+* **Architecture Adapter**, the driver's: on native targets the runtime's own I/O thread carries the blocking calls; on the web a **Web Worker** with **OPFS** (Origin Private File System) does, so a persistent database runs in the browser without freezing the UI thread.
+* **No expression capture and no object-relational mapper**: a query in memory is the `Seq` combinators, the row type is the mapping, a migration is a SQL file. Dynamic SQL is a driver's `raw(text)` with untyped, `Untrusted` rows.
 
 > **Status:** not built. The I/O thread the native adapter would offload to
 > does exist ([ADR-038](adr/adr-038.md) D4): it starts before `main`, and what
 > runs on it is `std`'s own code — which is why it may exist at
 > `user_parallelism = no` at all (ADR-037 D2). Nothing of `std::db` itself
-> exists, and no record decides which SQLite binding it would be. An earlier
-> draft of this section named `tokio-rusqlite`, which is exactly the kind of
-> dependency-by-repetition [ADR-038](adr/adr-038.md) §1 was written about.
+> exists, `meta::column` and a block's build-time arguments are not built, and
+> no record decides which SQLite binding the `sqlite` driver would stand on
+> ([ADR-143](adr/adr-143.md) §4). An earlier draft of this section named
+> `tokio-rusqlite`, which is exactly the kind of dependency-by-repetition
+> [ADR-038](adr/adr-038.md) §1 was written about.
 
 ```nika
-use std::db::sqlite
+use sqlite                                    // a driver package, not `std`
+
+let app = comptime asset("schema.sql")        // the schema, read while building
 
 fn query_data() {
-    // Transparently starts the required Sidecar (Thread or Worker)
+    // Transparently starts the required sidecar (thread or worker)
     let db = sqlite::open("app.db")
-    
-    // The `sql` grammar validates the syntax while the program is built.
-    // At runtime, it performs an async round-trip to the sidecar.
-    let active_users = dsl sql db {
-        SELECT * FROM users WHERE last_login > 0
+
+    // The driver's grammar checks the statement against the schema while
+    // the program is built, and declares the columns; the row has fields.
+    let active_users = dsl sqlite(schema: app) {
+        SELECT name, last_login FROM users WHERE last_login > :since
     } eod
+
+    for u in active_users.execute(db; since: 0) {
+        println(u.name)
+    }
 }
 ```
 

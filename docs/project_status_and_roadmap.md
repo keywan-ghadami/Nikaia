@@ -180,7 +180,9 @@ read rather than this paragraph.
 **The unchecked boxes are not in a random order either**, and the order among
 the big ones is this: the **HTTP server** first, because every demo stands on
 it; **`std::db`** second; the **C library** ([ADR-125](specification/adr/adr-125.md))
-third; the **query DSL** fourth; and the **bare-metal target**
+third; the **query DSL** fourth — which is the driver's build-time check
+against the schema and the typed row ([ADR-143](specification/adr/adr-143.md)),
+not a query language; and the **bare-metal target**
 ([ADR-119](specification/adr/adr-119.md)) after the server and the C library,
 since it reuses their allocator and their baked settings — which is the order
 that record already schedules itself into.

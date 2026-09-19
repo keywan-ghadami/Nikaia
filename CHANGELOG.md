@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.25] — 2026-09-19
+
+The LINQ question leaves `open-decisions.md`, and the answer's first draft is
+corrected on the way: the compiler checks no SQL, because it knows no dialect.
+
+### Decided ([ADR-143](docs/specification/adr/adr-143.md): the driver checks the SQL at build time, `std::db` is the protocol)
+
+- **The dialect is a grammar in a driver package**, and the compiler runs it as it runs every grammar; nothing SQL-shaped is in the compiler, and a vendor's database is a package its vendor writes.
+- **One intrinsic, `meta::column(name, type)`**, the third and last of the hybrid binding: a grammar declares the result columns and the compiler derives the **row type** from them as it derives the parameter type from the holes, so `u.emial` is *nothing declares `emial`* and a nullable column is `T?`.
+- **The schema is a build-time argument of the block** — `dsl sqlite(schema: app) { … } eod`, named, no `;`, resolved from a `comptime` asset — and the driver's DDL grammar reads it, so a missing column is a build error at the query. No live database while building.
+- **`std::db` is the protocol and nothing more**: the traits, the statement, the row values. `http` left `std` because nothing depended on it; `db`'s protocol stays because two drivers and every program that changes drivers depend on it.
+- **No expression capture and no ORM.** [ADR-088](docs/specification/adr/adr-088.md) §3's open capability is closed by not adding it; a query in memory is the `Seq` combinators, the row type is the mapping. The sentence for marketing is D6.
+- Part II 10.5 has the third intrinsic and the paragraph; Part III's `std::db` section is rewritten; the roadmap's "query DSL" says what it is.
+
 ## [0.0.24] — 2026-09-19
 
 The first of the three questions is answered, and answering it pays back what

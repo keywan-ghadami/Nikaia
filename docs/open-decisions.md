@@ -1,6 +1,6 @@
 # Open decisions — the questions that need the owner
 
-**Three entries are open**, below, and all three were found by *building* or by
+**Two entries are open**, below, and both were found by *building* or by
 being *asked for* rather than by reading — which is the only way this file fills
 up once its reading-questions are answered. A fourth left it the day it arrived:
 [ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*. An answer is an [ADR](specification/adr/), and
@@ -91,75 +91,6 @@ holds.
 
 *If it is wrong:* nothing is built on it — the cost is a roadmap paragraph a
 reader takes for the owner's and is not.
-
-### 3. The answer to "LINQ": the SQL DSL with rows typed from the schema, and no expression capture
-
-**Asked by marketing** (SAP and DATEV want "LINQ and an ORM"), and the language
-already has most of an answer that is better than the one asked for — which is
-why this needs the owner to say so rather than a record to invent something.
-
-*What LINQ is, read carefully.* Two things under one name. **LINQ to objects**
-is `where`, `select`, `orderBy` over an in-memory collection: this language has
-that as `filter`, `map`, `fold` over a `Vec` and a `Seq`
-([ADR-105](specification/adr/adr-105.md)), with lambdas, and nothing is missing
-but the keyword spelling nobody needs. **LINQ to SQL** is the interesting half:
-the compiler keeps `u.age > 18` as an **expression tree**, and a *provider*
-translates it into SQL at runtime. That is the part every user learns to
-distrust — the expression the provider cannot translate fails at runtime,
-the SQL it emits is nobody's and reads that way, and the N+1 query is invisible
-in the source. [ADR-088](specification/adr/adr-088.md) §3 names expression
-capture as *the one capability that would be genuinely new*, needed by exactly
-this use case, and left it undecided.
-
-*What this language does instead*, today, in Part II 10.5: the SQL is written
-**as SQL**, in the dialect the database runs, inside `dsl mysql { … } eod`; the
-compiler parses it at build time with the dialect's grammar, so a typo is a
-compile error; every `:hole` is a **typed parameter** the call must pass by
-name, so a missing or misspelled one is `NK1112`/`NK1113`; and the statement is
-prepared once and reused. No translation layer, no provider, no tree: what
-the reader sees is what the database receives. That is better than LINQ to SQL
-at the thing LINQ to SQL was for — catching the query's mistakes before it runs.
-
-*What it lacks, and what the question is.* Two things LINQ has and 10.5 does
-not: the **result** is untyped (a row is a row; `name` and `email` are not
-fields of anything until the program says so), and the query is not checked
-against the **schema** (a column that does not exist is found by the
-database). Both are one piece: the schema read at build time.
-
-*The options.*
-
-1. **Expression capture**, and a LINQ-shaped provider over it. *Costs:* the
-   one construct ADR-088 kept off the list, a second query language beside SQL,
-   a translation layer whose failures are runtime, and the readability argument
-   of Part II 10.4 given up for one use case.
-2. **The SQL DSL as it is, plus the schema at build time.** The grammar's driver
-   takes the schema as a build-time input — `asset("schema.sql")` in a
-   `comptime` initialiser is the mechanism [ADR-116](specification/adr/adr-116.md)
-   already has — and the statement's **result type is derived**: a struct with
-   one field per selected column, named and typed from the schema, so
-   `for u in users { println(u.email) }` is checked and `u.emial` is `NK1117`.
-   A column the schema does not have is a compile error at the query. The
-   parameters are already typed. *Costs:* a schema grammar per dialect (DDL,
-   the small subset that declares tables and columns), the driver reading a
-   build-time asset, and the derived row type — no new construct, no
-   evaluator beyond what `dsl` already runs at build time. An "ORM" is not
-   added: the row type **is** the mapping, and a migration is a SQL file.
-3. **Leave 10.5 as it is** and answer "no LINQ". *Costs:* the honest answer to
-   the first half of the ask and none to the second; the untyped row is the
-   thing a demo would be asked about first.
-
-*Recommendation:* **option 2**, and this sentence to marketing: *Nikaia does
-not translate your code into SQL; you write the SQL your database runs, and
-the compiler checks it — the syntax, every parameter, every column against
-your schema — before it runs, and gives you a typed row back. What LINQ
-promised, without the provider.* For in-memory queries the answer is the
-`Seq` combinators, and no keyword. It also says what the roadmap's "query
-DSL fourth" **is**: this, which is why `std::db` stands before it — the
-driver the schema is read for has to exist first.
-
-*If it is wrong:* option 2 spent is a schema grammar and a derived type, both
-of which stay useful under option 1; option 1 spent first is a construct that
-cannot be taken back.
 
 ## Answered
 

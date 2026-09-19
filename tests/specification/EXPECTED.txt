@@ -126,5 +126,5 @@
 30-nikaia-tooling.md #25 fragment (as written)  pub fn map(path: Path, root: Root) -> Mapped throws    …
 30-nikaia-tooling.md #26 fragment (as written)  pub fn exists(path: Path, root: Root) -> bool throws
 30-nikaia-tooling.md #27 refused (a body) [NK1109,NK1117,NK2605]  // A service that processes files uploaded by strangers:
-30-nikaia-tooling.md #28 fragment (as written)  use std::db::sqlite
+30-nikaia-tooling.md #28 fragment (as written)  use sqlite                                    // a driv…
 30-nikaia-tooling.md #29 fragment (as written)  // std::collections::List
