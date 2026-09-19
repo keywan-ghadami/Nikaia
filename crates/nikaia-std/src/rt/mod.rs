@@ -838,10 +838,29 @@ pub mod io {
             #[cfg(not(target_os = "linux"))]
             Files::Completion => unreachable!("no completion queue off Linux"),
             Files::Blocking => {
+                let mut count = super::FINISHED.lock().unwrap_or_else(|e| e.into_inner());
+                // **The count is read before `pending()`, and that ordering is
+                // the correctness** — the same sentence `exec::block_on` writes
+                // above its own read, one layer down, and the layer where it
+                // was missing.
+                //
+                // An operation answered *between* the caller's poll and this
+                // call has already left `pending`, so asking *"is anything
+                // outstanding?"* first answers **no** about a reply that is
+                // sitting in a channel nobody has looked at since. The caller
+                // then hears *nothing can move* and either spins out its
+                // `cleanup-deadline` (`block_on`'s drain: *1 background task(s)
+                // did not finish*) or panics about a waker nobody arranged —
+                // both about a task whose answer had already arrived.
+                //
+                // Measured before this: `a_future_fed_from_a_worker_finishes_under_block_on`
+                // went red about two runs in five of its binary.
+                if *count > since {
+                    return true;
+                }
                 if runtime.pending() == 0 {
                     return false;
                 }
-                let mut count = super::FINISHED.lock().unwrap_or_else(|e| e.into_inner());
                 match limit {
                     None => {
                         while *count <= since {
@@ -1106,8 +1125,23 @@ mod tests {
     /// its own timeout. A hang is unbounded, so a bound of a minute tells the two
     /// apart while a bound of ten seconds went red under a loaded whole-workspace
     /// run and green on its own.
+    ///
+    /// **And it runs twenty times**, which is not belt and braces: what it
+    /// catches is a **race**, and a race caught once in two and a half runs is
+    /// a test that reports *no defect* three times out of five. Twenty rounds
+    /// of a coin that lands red two times in five come up green by luck once in
+    /// twenty-five thousand runs. The defect it is pinning is the completion
+    /// that landed *before* the round that would have waited for it: the park
+    /// then has nothing to wait for and rings nobody's alarm, and a task whose
+    /// future stores no waker is never polled again (`exec::block_on`).
     #[test]
     fn a_future_fed_from_a_worker_finishes_under_block_on() {
+        for _ in 0..20 {
+            a_future_fed_from_a_worker_finishes_under_block_on_once();
+        }
+    }
+
+    fn a_future_fed_from_a_worker_finishes_under_block_on_once() {
         use std::io::Write;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;

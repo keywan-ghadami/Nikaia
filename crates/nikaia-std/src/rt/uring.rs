@@ -378,9 +378,6 @@ impl Ring {
         limit: Option<std::time::Duration>,
     ) -> bool {
         self.arm_bell();
-        if self.unreaped == 0 && !elsewhere {
-            return false;
-        }
         // **A bell already answered is not waited for**, which is D3's *a hang
         // is the failure this may not have* as one line of code.
         //
@@ -397,9 +394,21 @@ impl Ring {
         // have been drained already shows up here as a count that has moved,
         // and any ring after this line finds the poll armed and the counter
         // above zero.
+        //
+        // **And it is asked before the two counts below**, which is where this
+        // was wrong: an operation answered between the caller's poll and this
+        // call has already left `pending`, so `elsewhere` is `false` and
+        // `unreaped` is zero, and the early return said *nothing to wait for*
+        // about a reply that was already in a channel. The caller then either
+        // panicked about a waker nobody arranged or spun out its
+        // `cleanup-deadline` and abandoned the task. The count is the thing
+        // that remembers; it has to be read first.
         if super::io::generation() > since {
             self.reap();
             return true;
+        }
+        if self.unreaped == 0 && !elsewhere {
+            return false;
         }
         let before = self.moved;
         match limit {

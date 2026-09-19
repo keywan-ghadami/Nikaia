@@ -186,6 +186,11 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
     let alarm = Alarm::woken();
     let waker = waker_for(alarm.clone());
     let mut context = Context::from_waker(&waker);
+    // **The completion count everything here was last polled against.** An I/O
+    // future stores no waker, so what says *poll everyone again* is this count
+    // moving — which the park below says too, and could not say about a
+    // completion that landed before the round it would have waited in.
+    let mut polled_at = crate::rt::io::generation();
 
     loop {
         // **Read before polling, and that ordering is the correctness.** An I/O
@@ -194,6 +199,24 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // rather than waiting for a wake that has already happened
         // (`rt::io::generation`).
         let generation = crate::rt::io::generation();
+
+        // **A completion that landed before this round is one everybody has to
+        // hear about.** The park rings every alarm when it *waits* for one and
+        // gets it; it cannot ring them for one that had already arrived, and a
+        // task whose future stores no waker then has a clear alarm and is never
+        // polled again — so `block_on`'s drain waits out the whole
+        // `cleanup-deadline` and abandons a task whose answer was already in
+        // its channel ([ADR-055](../../../../docs/specification/adr/adr-055.md)
+        // D5 says it runs, and it did not).
+        if generation != polled_at {
+            polled_at = generation;
+            alarm.ring();
+            STARTED.with(|started| {
+                for queued in started.borrow().iter() {
+                    queued.alarm.ring();
+                }
+            });
+        }
 
         if outcome.is_none() && alarm.take() {
             if let Poll::Ready(value) = main.as_mut().poll(&mut context) {

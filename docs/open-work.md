@@ -299,44 +299,44 @@ entry the way a function's are.
 information rather than correctness — and `sync` has since been paid back in
 full.
 
-### A task nobody joined is left unwoken, about two runs in five
+**And one more left it, filed in the change before this one and closed in this
+one:** *a task nobody joined was left unwoken, about two runs in five.*
 
-*Not found by a search and not by this round's work*: `nikaia-std`'s own
-`a_future_fed_from_a_worker_finishes_under_block_on` goes red in roughly two of
-every five runs of its test binary, alone and under a loaded whole-workspace
-run alike, and has done through every change of this session. It is a test doing
-its job, so it is filed as what it found rather than as a flaky gate.
+`nikaia-std`'s `a_future_fed_from_a_worker_finishes_under_block_on` had been red
+at that rate through every change of a long session, and it was not a slow test.
+It was **four instances of one mistake**, and the mistake has a name: *an
+operation that has already answered is invisible to a caller that asks whether
+anything is outstanding.*
 
-*What it says when it fails:*
+The count of I/O completions (`rt::io::generation`) is what remembers that an
+answer arrived; `pending` is what says one is still coming. A reply lands in its
+channel, `pending` drops, and for a moment **neither** says anything — so a
+caller that reads `pending` first concludes *nothing can move*. `exec::block_on`
+then either panicked about a waker nobody arranged or spun out the whole
+`cleanup-deadline` and abandoned a task whose answer was already in its channel,
+which is [ADR-055](specification/adr/adr-055.md) D5 — *a task nobody joins still
+runs* — quietly false.
 
-```text
-nikaia: 1 background task(s) did not finish within the 30s cleanup deadline
-        and were abandoned
-assertion failed: the task nobody joined still ran to its end (ADR-055 D5)
-```
+*The four:*
 
-*Reproduction:* `cargo test --release -p nikaia-std --lib` — a few times; it is
-green about three runs in five. The test writes a byte into each of two pipes
-100 ms after the executor has parked. One readiness wait is `block_on`'s own and
-the other belongs to a task started with `exec::start` and never joined.
-`block_on`'s wait is answered every time; the **task's** is not.
+| where | what it read first | what it should read first |
+| :--- | :--- | :--- |
+| [`uring::Ring::park`](../crates/nikaia-std/src/rt/uring.rs) | `unreaped == 0 && !elsewhere` → *nothing to wait for* | the count. The generation check was **already there**, three lines below the early return that made it unreachable |
+| [`io::park_for`](../crates/nikaia-std/src/rt/mod.rs), the blocking half | `pending() == 0` → `false` | the same count, for the same reason, on the other mechanism |
+| [`worker::run`](../crates/nikaia-std/src/rt/worker.rs) | dropped `pending` and *then* rang the bell | the bell first, so the two are never both silent |
+| [`exec::block_on`](../crates/nikaia-std/src/rt/exec.rs) | rang the tasks' alarms only after a park that **waited** | also when the count moved before the round began — an I/O future stores no waker, so the count is the only thing that can say *poll everyone again* |
 
-*What that means, and it is worse than a slow test.*
-[ADR-055](specification/adr/adr-055.md) D5 promises that a task nobody joins
-still runs, and `exec::block_on` implements it — the drain at the bottom of its
-loop waits for the started queue to empty. The drain is reached and parks, and
-nothing wakes it: the wait's own deadline would answer it at two seconds if the
-worker reported at all, so what is missing is a **wake**, not a result. That is
-the shape [ADR-121](specification/adr/adr-121.md) D3 exists to keep out, one
-task over from the one it was written for.
+*Each one is load-bearing*, which the measurements say rather than the reasoning:
+closing them one at a time took the failure rate from about four runs in five
+(with the test strengthened, below) to three in five, to one in six, to none in
+twenty-seven.
 
-*Why it is here and not fixed in the change that found it:* it is a defect in
-the executor's wake path and the changes it was found beside are the parser's.
-Filing it with the reproduction and the two facts above — the drain is reached,
-the deadline is not what expires — is what the next session needs; guessing at a
-repair beside unrelated work is how a second defect gets added to a first.
+*And the test was the other half.* It caught a **race** once in two and a half
+runs, which is a test that reports *no defect* three times out of five — so it
+runs its body twenty times now. Twenty rounds of a coin that lands red two times
+in five come up green by luck once in twenty-five thousand runs.
 
-### The most negative `i64` has no spelling
+### The most negative `i64` has no spelling### The most negative `i64` has no spelling
 
 *Found by building* [ADR-136](specification/adr/adr-136.md), and small enough
 that it is here rather than in §2: `-9223372036854775808` is refused, because

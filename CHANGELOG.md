@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.43] — 2026-09-19
+
+A task nobody joined was left unwoken about two runs in five. Four instances of
+one mistake, and the test that had been reporting it was reporting it three
+times too rarely.
+
+### Fixed (an answered operation was invisible in both counts)
+
+- **The mistake has a name:** *an operation that has already answered is invisible to a caller that asks whether anything is outstanding.* The count of I/O completions (`rt::io::generation`) is what remembers that an answer arrived; `pending` is what says one is still coming. A reply lands in its channel, `pending` drops, and for a moment **neither** says anything — so a caller that reads `pending` first concludes *nothing can move*. `exec::block_on` then either panicked about a waker nobody arranged or spun out the whole `cleanup-deadline` and abandoned a task whose answer was already in its channel. That is [ADR-055](docs/specification/adr/adr-055.md) D5 — *a task nobody joins still runs* — quietly false, and [ADR-121](docs/specification/adr/adr-121.md) D3's *a hang is the failure this may not have* with it.
+- **`uring::Ring::park` read `unreaped == 0 && !elsewhere` first.** The generation check was **already there**, three lines below the early return that made it unreachable — so the fix is an ordering and not a new idea, and the comment that argued for it was right all along about a line it could not reach.
+- **`io::park_for`'s blocking half read `pending() == 0` first**, which is the same mistake on the other mechanism. Fixed the same way, because leaving it would be knowingly keeping one of the two.
+- **A worker dropped `pending` and *then* rang the bell.** The other order's argument was that a woken caller should see the finished count rather than the one before it; it costs nothing to be wrong that way round, because a `pending` that is briefly one too high only ever makes a caller **wait** instead of declaring the runtime stuck.
+- **And `exec::block_on` rang the tasks' alarms only after a park that *waited*.** An I/O future stores no waker, so the completion count is the only thing that can say *poll everyone again* — and it has to be able to say it about a completion that landed before the round began.
+- *Each of the four is load-bearing*, which the measurements say rather than the reasoning: closing them one at a time took the failure rate from about four runs in five to three in five, to one in six, to **none in twenty-seven**.
+
+### Changed (the test that was finding it three times too rarely)
+
+- **`a_future_fed_from_a_worker_finishes_under_block_on` runs its body twenty times.** It catches a **race**, and a race caught once in two and a half runs is a test that reports *no defect* three times out of five — which is how this stood red through a long session while every individual re-run came back green. Twenty rounds of a coin that lands red two times in five come up green by luck once in twenty-five thousand runs.
 ## [0.0.42] — 2026-09-19
 
 ### Fixed (one count)

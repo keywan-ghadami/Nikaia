@@ -200,12 +200,26 @@ fn run(outbox: &Mutex<Receiver<Op>>, pending: &AtomicUsize) {
             return;
         }
         perform(op);
-        pending.fetch_sub(1, Ordering::SeqCst);
-        // The reply is on its way; this says *that* one is, for a caller parked
-        // on "whichever finishes first" (`rt::ring_the_bell`). Rung after the
-        // count drops, so a parked executor that wakes and looks at `pending`
-        // sees the finished state rather than the one before it.
+        // **The bell first and the count second**, which is the opposite of
+        // what this did and the ordering the caller needs.
+        //
+        // The reply is in its channel by now; the bell says *an answer landed*
+        // and `pending` says *something is still outstanding*. A caller that
+        // finds neither concludes **nothing can move** — `exec::block_on`
+        // panics about a waker nobody arranged, or spins out its
+        // `cleanup-deadline` and abandons the task. Dropping the count first
+        // opened exactly that window: for the few instructions between the two
+        // writes, an operation that had already answered was invisible in both.
+        //
+        // The other order's argument was that a woken caller should see the
+        // finished count rather than the one before it. It costs nothing to be
+        // wrong that way round: the caller re-polls, finds the reply, and a
+        // `pending` that is briefly one too high only ever makes it **wait**
+        // instead of declaring the runtime stuck. Measured before this:
+        // `a_future_fed_from_a_worker_finishes_under_block_on` went red about
+        // two runs in five of its binary.
         super::ring_the_bell();
+        pending.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
