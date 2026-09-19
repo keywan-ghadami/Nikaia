@@ -7,7 +7,7 @@
 // lent for the call (`&[u8]`), an **opaque handle** with its `cleanup`
 // (`sqlite3`, `sqlite3_stmt`), a handle that **may be absent** filled through an
 // out-parameter ([ADR-155](../../docs/specification/adr/adr-155.md) D1), and
-// **text the library owns** copied once by `std` (`CStr`).
+// **text the library owns** copied once by `std` (`foreign::CStr`).
 //
 // What closes the database and the statement is written **nowhere**: each
 // handle's release runs at the end of its scope, which is Part I 6.4's
@@ -15,16 +15,18 @@
 //
 // Build it with `-l sqlite3`.
 
+use std::foreign
+
 extern "C" {
     opaque type sqlite3 released by sqlite3_close
     opaque type sqlite3_stmt released by sqlite3_finalize
 
     fn sqlite3_open(path: &[u8], out: &mut sqlite3?) -> i32
     fn sqlite3_close(db: sqlite3) -> i32
-    fn sqlite3_prepare_v2(db: sqlite3, sql: &[u8], bytes: i32, out: &mut sqlite3_stmt?, tail: &mut CStr?) -> i32
+    fn sqlite3_prepare_v2(db: sqlite3, sql: &[u8], bytes: i32, out: &mut sqlite3_stmt?, tail: &mut foreign::CStr?) -> i32
     fn sqlite3_finalize(stmt: sqlite3_stmt) -> i32
     fn sqlite3_step(stmt: sqlite3_stmt) -> i32
-    fn sqlite3_column_text(stmt: sqlite3_stmt, column: i32) -> CStr?
+    fn sqlite3_column_text(stmt: sqlite3_stmt, column: i32) -> foreign::CStr?
 }
 
 enum Refused {
@@ -48,7 +50,7 @@ fn main() throws {
     let db = slot ?? throw Refused::NoDatabase
 
     let mut ready: sqlite3_stmt? = null
-    let mut tail: CStr? = null
+    let mut tail: foreign::CStr? = null
     let prepared = unsafe { sqlite3_prepare_v2(db, "select 'hello, C'\0", -1, ready, tail) }
     println(f"prepared {prepared}")
     let stmt = ready ?? throw Refused::NoStatement

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.63 (Draft)
+**Version:** 0.0.64 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -121,13 +121,12 @@ the list matters more than its contents.
 rather than a file of the compiler's.
 
 > **Implementation status:** Partially implemented. The rule is enforced for a
-> **function**: a name that lives in a `std` module is refused without its
-> prefix, and a prefix is refused without its `use`, both with `NK1117` and the
-> line to add. Two things are not. **`Bytes`, `assert` and `panic` are named by
-> the list and do not exist**, each its own piece of work; and `HashMap`,
-> `Duration` and `CStr` are **types**, which this rule does not yet reach — a
-> type keyed without a module in `std`'s ledger is still written bare
-> ([ADR-154](adr/adr-154.md) §5). `docs/open-work.md` carries both.
+> **function** and for a **type**: a name that lives in a `std` module is
+> refused without its prefix — `NK1117` for a function, `NK1135` for a type —
+> and a prefix is refused without its `use`, each with the line to add.
+> **`Bytes`, `assert` and `panic` are named by the list and do not exist**, and
+> each is its own piece of work ([ADR-154](adr/adr-154.md) §5).
+> `docs/open-work.md` carries them.
 
 ---
 
@@ -1122,7 +1121,9 @@ The standard library provides types for groups of values.
     fields.
 * **Map (HashMap):** key-value pairs.
     ```nika
-    let mut scores = HashMap()
+use std::collections
+
+    let mut scores = collections::HashMap()
     scores["Player1"] = 100
     ```
     Reading a map through the brackets gives a `T?`, because a key is data and

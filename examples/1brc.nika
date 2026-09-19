@@ -37,6 +37,7 @@
 use std::fs
 use std::cli
 use std::text
+use std::collections
 
 // ---------------------------------------------------------------------------
 // 1. A grammar for the file
@@ -182,12 +183,12 @@ impl Stats {
 // past the mapping, the *map* would take one handle on the buffer and the keys
 // would stay offsets - never one handle per key (ADR-008, D4).
 pub struct Summary {
-    stations: HashMap[&str, Stats],
+    stations: collections::HashMap[&str, Stats],
 }
 
 impl Summary {
     pub fn() -> Summary sync {
-        return Summary { stations: HashMap() }
+        return Summary { stations: collections::HashMap() }
     }
 
     fn record(&mut self, m: Reading) sync {

@@ -37,6 +37,7 @@
 
 use std::fs
 use std::cli
+use std::collections
 
 grammar Log {
 
@@ -104,14 +105,14 @@ impl Counts {
 }
 
 pub struct Report {
-    paths: HashMap[&str, Counts],
+    paths: collections::HashMap[&str, Counts],
     requests: i64,
     failures: i64,
 }
 
 impl Report {
     pub fn() -> Report sync {
-        return Report { paths: HashMap(), requests: 0, failures: 0 }
+        return Report { paths: collections::HashMap(), requests: 0, failures: 0 }
     }
 
     // `sync`: pure computation, no I/O, cannot pause - which is what lets the

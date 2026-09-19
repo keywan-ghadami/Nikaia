@@ -195,16 +195,24 @@ fn declared_twice(name: &str, first: &str, second: &str, span: &Span) -> Finding
 /// maintained beside those would be a second thing to forget.
 fn known_names(parsed: &Parsed, own: &Ledger, library: &Ledger) -> BTreeSet<String> {
     let mut known: BTreeSet<String> = BUILT_IN.iter().map(|n| n.to_string()).collect();
-    for ledger in [own, library] {
-        for key in ledger.types.keys() {
-            known.insert(key.clone());
-            // A library writes the module in front of its types
-            // (`fs::Mapped`), and a program writes the suffix where the module
-            // is in scope - name-for-name resolution, the same rule
-            // `Ledger::method` uses.
-            if let Some((_, last)) = key.rsplit_once("::") {
-                known.insert(last.to_string());
-            }
+    // **`std`'s types by the key and nothing else**, since
+    // [ADR-154](../../../docs/specification/adr/adr-154.md): a type that lives in
+    // a module is written with it, `fs::Mapped` and `collections::HashMap`, and
+    // what needs no prefix is the list on Part I 1.3 — whose names are keyed
+    // **bare** there, so the key *is* the rule. It used to insert the last
+    // segment too, which is name-for-name resolution and is what made the
+    // prelude a set nobody could state.
+    known.extend(library.types.keys().cloned());
+    // **This program's own, by the key and by the last segment**, and that is
+    // not the same question: a package's ledger keys its types with the
+    // package's name (`http::Request`) and the files **of that package** write
+    // them bare, because they share one namespace
+    // ([ADR-047](../../../docs/specification/adr/adr-047.md) D1). A consumer
+    // writes the prefix, which the key answers.
+    for key in own.types.keys() {
+        known.insert(key.clone());
+        if let Some((_, last)) = key.rsplit_once("::") {
+            known.insert(last.to_string());
         }
     }
     // A type declared in this very unit, which the ledger handed to this walk
@@ -240,10 +248,6 @@ const BUILT_IN: &[&str] = &[
     "str",
     "Self",
     "Vec",
-    "HashMap",
-    "BTreeMap",
-    "HashSet",
-    "BTreeSet",
     "Shared",
     "SharedMut",
     "Locked",
@@ -501,7 +505,7 @@ fn written_at(
     if !ty.is_tuple && ty.code.is_none() {
         let name = parsed.text(ty.name);
         if !known.contains(name) && !name.contains("::") {
-            out.push(nothing_declares(name, span));
+            out.push(nothing_declares(name, known, span));
         }
     }
     for argument in &ty.generics {
@@ -609,21 +613,60 @@ fn only_at_the_c_boundary(slice: bool, span: &Span) -> Finding {
 /// name a dependency does declare would be
 /// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md) — a correct
 /// program refused — which is the one thing this may not do.
-fn nothing_declares(name: &str, span: &Span) -> Finding {
+/// The modules of `std` a type may live in
+/// ([ADR-154](../../../docs/specification/adr/adr-154.md) D3).
+///
+/// Written out because the help says `use std::…`, and that sentence is only
+/// true of `std`: a package's own prefix is the package's name and comes with a
+/// message of its own. Read off the ledger keys the compiler already has, so a
+/// module `std` grows is one line here and not a second list.
+const STD_MODULES: &[&str] = &[
+    "cli",
+    "collections",
+    "channel",
+    "foreign",
+    "fs",
+    "io",
+    "time",
+];
+
+fn nothing_declares(name: &str, known: &BTreeSet<String>, span: &Span) -> Finding {
+    // **Where a ledger has the type in a module, the name is not missing — the
+    // prefix is** ([ADR-154](../../../docs/specification/adr/adr-154.md) D3).
+    // `HashMap` is the case the record is named for: it is
+    // `collections::HashMap`, and the help is the two lines that make it one.
+    let in_a_module = known
+        .iter()
+        .filter(|key| key.ends_with(&format!("::{name}")))
+        .find_map(|key| key.split_once("::").map(|(module, _)| module.to_string()))
+        .filter(|module| STD_MODULES.contains(&module.as_str()));
     Finding {
         severity: Severity::Error,
         span: span.clone(),
         code: "NK1135",
-        message: format!("nothing declares the type `{name}`"),
-        notes: vec![
-            "a type is one Part I 2.2 offers, one this program declares with `struct` or \
-             `enum`, one `std` publishes, or a parameter the declaration around it names \
-             (Part I, 2.2)"
+        message: match &in_a_module {
+            Some(_) => format!("`{name}` is written without its module"),
+            None => format!("nothing declares the type `{name}`"),
+        },
+        notes: vec![match &in_a_module {
+            Some(module) => format!(
+                "`{module}::{name}` is what it is called, and a type that lives in a module is \
+                 reached through it - what needs no prefix is the list on Part I's first page \
+                 (Part I, 1.3)"
+            ),
+            None => "a type is one Part I 2.2 offers, one this program declares with `struct` or \
+                     `enum`, one `std` publishes, or a parameter the declaration around it names \
+                     (Part I, 2.2)"
                 .to_string(),
-        ],
-        help: Some(format!(
-            "declare `{name}` with `struct` or `enum`, or write a type that exists - a \
-             misspelling is the usual cause"
-        )),
+        }],
+        help: Some(match &in_a_module {
+            Some(module) => format!(
+                "write `use std::{module}` at the top of the file, and `{module}::{name}` here"
+            ),
+            None => format!(
+                "declare `{name}` with `struct` or `enum`, or write a type that exists - a \
+                 misspelling is the usual cause"
+            ),
+        }),
     }
 }

@@ -201,6 +201,21 @@ pub const PAR: &str = "Par";
 /// [`Ty::Count`].
 pub const ARRAY: &str = "Array";
 
+/// A type's own name, with the module it lives in taken off.
+///
+/// **Since [ADR-154](../../../docs/specification/adr/adr-154.md) D3 a `std`
+/// type carries its module**: `collections::HashMap`, `time::Duration`,
+/// `foreign::CStr`. The module says where the name is *reached from* and the
+/// last segment is the type, so every rule here that names a type by hand — the
+/// copy list, the crossing analysis's containers, the hash a map gets — asks
+/// this rather than the written name.
+pub fn base(name: &str) -> &str {
+    match name.rsplit_once("::") {
+        Some((_, last)) => last,
+        None => name,
+    }
+}
+
 impl Ty {
     pub fn named(name: impl Into<String>) -> Ty {
         Ty::Named {

@@ -105,11 +105,13 @@ pub fn moves(ty: &super::ty::Ty) -> bool {
         // the way a tuple of three `i64` is and `Array[String, 3]` is moved the
         // way one of three `String` is. The count among the arguments answers
         // **no** on its own, which is what makes `any` right here.
-        Ty::Named { name, args, .. } if name == super::ty::ARRAY => args.iter().any(moves),
+        Ty::Named { name, args, .. } if super::ty::base(name) == super::ty::ARRAY => {
+            args.iter().any(moves)
+        }
         Ty::Named { name, view, .. } => {
             !view
                 && !matches!(
-                    name.as_str(),
+                    super::ty::base(name),
                     "i8" | "i16"
                         | "i32"
                         | "i64"

@@ -18,11 +18,27 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
     nikaia::check::check(&parsed, &own, &library).findings
 }
 
-/// **A `use` that names a type is refused** (D5), and the way out is to drop
-/// the line.
+/// **A `use` that names a type is refused** (D5), and since
+/// [ADR-154](../../../docs/specification/adr/adr-154.md) D3 the way out is the
+/// **module**: `HashMap` lives in one, so the line to write is
+/// `use std::collections` and the name is `collections::HashMap`.
 #[test]
 fn a_use_that_names_a_type_is_refused() {
     let found: Vec<_> = findings("use std::collections::HashMap\nfn main() { }\n")
+        .into_iter()
+        .filter(|f| f.code == "NK1156")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    let help = found[0].help.as_deref().unwrap_or_default();
+    assert!(help.contains("use std::collections"), "{help}");
+    assert!(help.contains("collections::HashMap"), "{help}");
+}
+
+/// **A type that needs no `use` at all is told to drop the line**, which is the
+/// other half: `String` is on Part I 1.3's list and is written bare.
+#[test]
+fn a_use_that_names_a_type_from_the_list_says_to_drop_the_line() {
+    let found: Vec<_> = findings("use std::String\nfn main() { }\n")
         .into_iter()
         .filter(|f| f.code == "NK1156")
         .collect();
@@ -34,13 +50,13 @@ fn a_use_that_names_a_type_is_refused() {
         .contains("drop the line"));
 }
 
-/// **And the name works with no `use` at all**, which is the prelude and is
-/// unchanged: what goes is the `use` *acting differently* depending on what
-/// follows it.
+/// **A map is reached through its module** — `use std::collections` and
+/// `collections::HashMap`, which is D3 and the name that makes the prelude a
+/// rule rather than a tidy-up.
 #[test]
 fn the_prelude_needs_no_use() {
-    let source = "fn main() {\n\
-                  \x20   let mut scores = HashMap()\n\
+    let source = "use std::collections\n\nfn main() {\n\
+                  \x20   let mut scores = collections::HashMap()\n\
                   \x20   scores[\"a\"] = 1\n\
                   \x20   println(f\"{scores.len()}\")\n\
                   }\n";

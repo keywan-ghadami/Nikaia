@@ -111,9 +111,9 @@ fn a_method_call_is_resolved_through_the_receiver() {
 #[test]
 fn a_higher_order_method_hands_on_what_its_lambda_does() {
     let l = ledger(
-        "         use std::io\n\
-         fn pure(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }\n\
-         fn pausing(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { io::read() catch { } } }",
+        "use std::collections\n\n         use std::io\n\
+         fn pure(m: collections::HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }\n\
+         fn pausing(m: collections::HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { io::read() catch { } } }",
     );
 
     assert_eq!(l.functions["pure"].sync, Sync::Inferred);
@@ -294,12 +294,12 @@ fn a_helper_that_uses_an_iterator_method_may_be_called_from_a_lock() {
 #[test]
 fn a_map_of_structs_types_its_lambda_all_the_way_down() {
     let l = ledger(
-        "         pub struct Stats { n: i64 }\n\
+        "use std::collections\n\n         pub struct Stats { n: i64 }\n\
          impl Stats {\n\
              pub fn(first: i64) -> Stats { return Stats { n: first } }\n\
              fn add(&mut self, x: i64) { self.n += x }\n\
          }\n\
-         pub struct Summary { stations: HashMap[&str, Stats] }\n\
+         pub struct Summary { stations: collections::HashMap[&str, Stats] }\n\
          impl Summary {\n\
              fn record(&mut self, name: &str, v: i64) {\n\
                  self.stations.entry(name).and_modify fn (stats) { stats.add(v) }.or_insert_with fn { Stats(v) }\n\
@@ -320,7 +320,7 @@ fn a_map_of_structs_types_its_lambda_all_the_way_down() {
 /// variable says what flows *out*; `?` stays for what flows *in*.
 #[test]
 fn a_key_may_be_given_as_something_it_borrows_as() {
-    let source = "                  fn find(m: HashMap[String, i64]) -> i64 { let hit = m.get(\"x\") return 1 }";
+    let source = "use std::collections\n\n                  fn find(m: collections::HashMap[String, i64]) -> i64 { let hit = m.get(\"x\") return 1 }";
     let parsed = parse_to_ast(source).expect("the source parses");
     let library = Ledger::parse(STD).expect("std's ledger parses");
     let own = Ledger::infer(&parsed);
@@ -338,7 +338,7 @@ fn a_key_may_be_given_as_something_it_borrows_as() {
 #[test]
 fn an_unknown_element_type_does_not_become_a_claim() {
     let l = ledger(
-        "         fn build() { let m = HashMap() m.entry(\"x\").and_modify fn { a.whatever() } }",
+        "use std::collections\n\n         fn build() { let m = collections::HashMap() m.entry(\"x\").and_modify fn { a.whatever() } }",
     );
 
     // `a.whatever()` cannot be resolved, so the claim is refused - and refused
@@ -974,7 +974,7 @@ fn a_source_is_found_inside_a_nested_block() {
 fn the_provenance_chooses_the_map() {
     use nikaia::emit::{emit_program_with_trust, Build};
 
-    let source = "fn main() { let m: HashMap[&str, i64] = HashMap() }";
+    let source = "use std::collections\n\nfn main() { let m: collections::HashMap[&str, i64] = collections::HashMap() }";
     let parsed = parse_to_ast(source).expect("parses");
 
     let trusted = emit_program_with_trust(&parsed, Build::default(), Provenance::Trusted)
@@ -1053,7 +1053,12 @@ fn the_four_lengths_are_i64_and_are_all_called_len() {
         .collect();
     assert_eq!(
         lengths,
-        vec!["HashMap::len", "String::len", "Vec::len", "str::len"],
+        vec![
+            "String::len",
+            "Vec::len",
+            "collections::HashMap::len",
+            "str::len",
+        ],
         "the four D1 names"
     );
     for key in &lengths {

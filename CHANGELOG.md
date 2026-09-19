@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.64] — 2026-09-19
+
+The prelude's **type** half
+([ADR-154](docs/specification/adr/adr-154.md) D3) — which is the decision the
+record is named for: *`HashMap` is the first thing outside the list*.
+
+### Added
+
+- **A type that lives in a `std` module is written with it**, and `NK1135` says so with the two lines to write: *`HashMap` is written without its module*, help: `use std::collections`, and `collections::HashMap` here. `HashMap`, `HashSet`, `BTreeMap` and `BTreeSet` became `collections::…`; `CStr`, `Duration`, `Sender` and `Receiver` went into the modules they live in.
+- **A type's methods went with it**, because a method belongs to its type: `collections::HashMap::len`, which is the shape `fs::Mapped::deref` already had.
+
+### Changed
+
+- **The rules that name a type by hand now ask for the type**, not for where it is reached from: the copy list, the crossing analysis's containers, the indexing rule, the hash a map gets and the C boundary's `CStr` all read the last segment, through one function that says why.
+- **A package's own types stay reachable bare inside the package** — `http::Request` is the ledger's key and `Request` is what the files of `http` write, because they share one namespace. Only `std`'s side dropped the last-segment reading.
+- **`NK1156`'s help** names the module for a type that has one and says *drop the line* only for a type on the list.
+
+### Found by building it
+
+- **A signature's parameter was split at the first `:`.** `&collections::HashMap[$K, $V]` was read as a parameter **named** `collections` whose type was `:HashMap[$K, $V]`, so every call on a map met `NK1101` about an argument count nobody had written. The split now steps over a `::`.
+- **The same parser's other half**, found one record earlier by `channel::bounded` and confirmed here: a parameter list that ended at the last `)` in the text, which is the *result's* where a result has parentheses in it.
+
+### Left open
+
+- **`Bytes`, `assert` and `panic`** are on Part I 1.3's list and do not exist. A name on a prelude's list that does not exist is the one direction it can be wrong in without anybody noticing, because nothing reaches it.
+- **`eprint`** is in the compiler and not in D1's text. It joined by being needed, which is the direction D4 was written against.
+- **`TaskHandle` and the hulls stay bare**, and that is on purpose: `Shared`, `SharedMut` and `Locked` are the language's rather than a module's, and a program has no reason to write `TaskHandle`.
+
 ## [0.0.63] — 2026-09-19
 
 The prelude is a written list, small and closed

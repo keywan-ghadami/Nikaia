@@ -585,13 +585,13 @@ touches = []
 signature = "(f64) -> i64"
 doc = "The whole part of an `f64`, as an `i64`, with the digits that do not fit\ndropped.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits."
 
-[fn."HashMap::entry"]
+[fn."collections::HashMap::entry"]
 pub = true
 sync = true
 mutates = true
 touches = []
 keeps = ["key"]
-signature = "(&HashMap[$K, $V], key: ?) -> Entry[$V]"
+signature = "(&collections::HashMap[$K, $V], key: ?) -> Entry[$V]"
 doc = "The place in the map this key names, whether or not anything is there yet.\n\nOne lookup rather than two: `or_insert` puts a value in where there is none,\nand `and_modify` changes the one that is. The map **keeps** the key."
 
 # `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
@@ -607,39 +607,39 @@ doc = "The place in the map this key names, whether or not anything is there yet
 # `Option` surface through a hole. So the ledger refused the correct program and
 # accepted the one this language has its own words for, which is Part III C.4's
 # rule standing on its head.
-[fn."HashMap::get"]
+[fn."collections::HashMap::get"]
 pub = true
 sync = true
 touches = []
-signature = "(&HashMap[$K, $V], key: ?) -> $V?"
+signature = "(&collections::HashMap[$K, $V], key: ?) -> $V?"
 doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?`: the\nshape a program writes is `counts.get(k) ?? 0`, or `counts.get(k)?.field`."
 
-[fn."HashMap::keys"]
+[fn."collections::HashMap::keys"]
 pub = true
 sync = true
 touches = []
-signature = "(&HashMap[$K, $V]) -> Seq[$K] sync"
+signature = "(&collections::HashMap[$K, $V]) -> Seq[$K] sync"
 doc = "The keys, one at a time.\n\nA map has no order of its own, so a program that prints one says which order\nit means."
 
-[fn."HashMap::len"]
+[fn."collections::HashMap::len"]
 pub = true
 sync = true
 touches = []
-signature = "(&HashMap[?, ?]) -> i64"
+signature = "(&collections::HashMap[?, ?]) -> i64"
 doc = "How many pairs the map holds."
 
-[fn."HashMap::new"]
+[fn."collections::HashMap::new"]
 pub = true
 sync = true
 touches = []
-signature = "() -> HashMap[?, ?]"
+signature = "() -> collections::HashMap[?, ?]"
 doc = "A map with nothing in it. It is written `HashMap()`."
 
-[fn."HashMap::values"]
+[fn."collections::HashMap::values"]
 pub = true
 sync = true
 touches = []
-signature = "(&HashMap[$K, $V]) -> Seq[$V] sync"
+signature = "(&collections::HashMap[$K, $V]) -> Seq[$V] sync"
 doc = "The values, one at a time, in the order the keys come out in."
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
@@ -771,11 +771,11 @@ touches = []
 signature = "(Vec[$T]) -> Seq[$T] sync"
 doc = "The elements, one at a time, **taken out** of the list.\n\nWhat a `for` over this binds is owned rather than lent, so an element may be\nhanded to something that keeps it - and the list goes with them, because\nthat is what taking them out means."
 
-[fn."HashMap::drain"]
+[fn."collections::HashMap::drain"]
 pub = true
 sync = true
 touches = []
-signature = "(HashMap[$K, $V]) -> Seq[($K, $V)] sync"
+signature = "(collections::HashMap[$K, $V]) -> Seq[($K, $V)] sync"
 doc = "The pairs, one at a time, **taken out** of the map.\n\nWhat a `for` over this binds is owned rather than lent, so a key or a value\nmay be handed to something that keeps it - and the map goes with them,\nbecause that is what taking them out means."
 
 # --- What is produced step by step, and what walks it ------------------------
@@ -1170,7 +1170,7 @@ doc = "The value of a decimal digit: `'7'` is `7`.\n\nA character that is not a 
 # saying: what the address points at is the library's, and whether that library
 # is happy to have it read from another thread is not a question this file can
 # answer for it.
-[type."CStr"]
+[type."foreign::CStr"]
 pub = true
 doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\nIt is what a declaration writes where C hands back a `char *`. Nothing here\nfrees it - the memory is the library's, not the program's - and `to_string`\nis how a program gets text of its own out of it. Where the library may find\nnothing, the declaration says `-> CStr?` and the program writes `??`."
 
@@ -1183,12 +1183,12 @@ doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\
 # the second until [ADR-155](../../docs/specification/adr/adr-155.md) D4 made it
 # a **value**: a declaration says `-> CStr?` where the library may find nothing,
 # and `getenv` finding nothing is an ordinary Tuesday rather than an error.
-[fn."CStr::to_string"]
+[fn."foreign::CStr::to_string"]
 pub = true
 sync = true
 touches = []
 throws = ["?"]
-signature = "(CStr) -> String"
+signature = "(foreign::CStr) -> String"
 doc = "A copy of the text, owned by whoever asked for it.\n\nIt fails in **one** way: the bytes may not be UTF-8, which text in this\nlanguage is - the same failure `fs::read_to_string` has. *There is no text*\nis a value rather than a failure, because a declaration says `-> CStr?` where\nthe library may find nothing. The `unsafe` walk to the zero byte is here so\nthat no program has to write one."
 
 [type."cli::Args"]
@@ -1287,7 +1287,7 @@ doc = "A value several parts of a program own at once.\n\nA caller is not meant 
 #
 # `crosses = true` is a claim reviewed like code, and it is an easy one: a
 # duration is a number of ticks and nothing else, so it may go anywhere.
-[type."Duration"]
+[type."time::Duration"]
 pub = true
 crosses = true
 doc = "A span of time: how long something takes, how long to wait, how long is too\nlong.\n\nIt is written `5.seconds()` rather than `5s` - a literal has no suffix in\nthis language, and a rule with an exception in it is one a reader has to\nremember. `seconds`, `millis`, `micros`, `minutes` and `hours` are the five\nnames, on either integer type."
@@ -1299,70 +1299,70 @@ doc = "A span of time: how long something takes, how long to wait, how long is t
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> Duration"
+signature = "(i32) -> time::Duration"
 doc = "This many hours, as a span of time."
 
 [fn."i32::minutes"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> Duration"
+signature = "(i32) -> time::Duration"
 doc = "This many minutes, as a span of time."
 
 [fn."i32::seconds"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> Duration"
+signature = "(i32) -> time::Duration"
 doc = "This many seconds, as a span of time."
 
 [fn."i32::millis"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> Duration"
+signature = "(i32) -> time::Duration"
 doc = "This many thousandths of a second, as a span of time."
 
 [fn."i32::micros"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> Duration"
+signature = "(i32) -> time::Duration"
 doc = "This many millionths of a second, as a span of time."
 
 [fn."i64::hours"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> Duration"
+signature = "(i64) -> time::Duration"
 doc = "This many hours, as a span of time."
 
 [fn."i64::minutes"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> Duration"
+signature = "(i64) -> time::Duration"
 doc = "This many minutes, as a span of time."
 
 [fn."i64::seconds"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> Duration"
+signature = "(i64) -> time::Duration"
 doc = "This many seconds, as a span of time."
 
 [fn."i64::millis"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> Duration"
+signature = "(i64) -> time::Duration"
 doc = "This many thousandths of a second, as a span of time."
 
 [fn."i64::micros"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> Duration"
+signature = "(i64) -> time::Duration"
 doc = "This many millionths of a second, as a span of time."
 
 # **In `std::time` and not in the prelude**
@@ -1381,7 +1381,7 @@ doc = "This many millionths of a second, as a span of time."
 # that time passes in between.
 [fn."time::sleep"]
 pub = true
-signature = "(span: Duration)"
+signature = "(span: time::Duration)"
 doc = "Wait out a span of time.\n\nThe thread is given up rather than held, so other tasks run while this waits."
 
 # --- Message passing (ADR-149) -----------------------------------------------
@@ -1399,14 +1399,14 @@ doc = "Wait out a span of time.\n\nThe thread is given up rather than held, so o
 pub = true
 sync = true
 touches = []
-signature = "(capacity: i64) -> (Sender[$T], Receiver[$T])"
+signature = "(capacity: i64) -> (channel::Sender[$T], channel::Receiver[$T])"
 doc = "A channel of `capacity` values, and its two ends.\n\nThere is no unbounded channel: a capacity is a promise about memory, and an\nunbounded one is a `send` that never pauses. A program that wants *unbounded*\nwrites a large number - and has said it."
 
-[type."Sender"]
+[type."channel::Sender"]
 pub = true
 doc = "The sending end of a channel.\n\nHanding it into a `spawn` is where the crossing check asks whether what the\nchannel carries may go to another thread."
 
-[type."Receiver"]
+[type."channel::Receiver"]
 pub = true
 doc = "The receiving end of a channel.\n\n`recv` hands back a `T?`, and `null` means every sender is gone."
 
@@ -1419,15 +1419,41 @@ doc = "The receiving end of a channel.\n\n`recv` hands back a `T?`, and `null` m
 #
 # No `touches`, which is the fail-closed answer: what a send orders against is
 # whatever the other end does with the value.
-[fn."Sender::send"]
+[fn."channel::Sender::send"]
 pub = true
-signature = "(&Sender[$T], value: ?)"
+signature = "(&channel::Sender[$T], value: ?)"
 doc = "Put a value in, waiting for room where there is none.\n\nIt gives the thread up rather than holding it, so other work runs while this\nwaits."
 
 # **`-> $T?`**, and the `?` is D3: a closed channel is the ordinary **end** of a
 # stream rather than a failure, so `??` is what reads it (Part I 3.5) and
 # nothing here `throws`.
-[fn."Receiver::recv"]
+[fn."channel::Receiver::recv"]
 pub = true
-signature = "(&Receiver[$T]) -> $T?"
+signature = "(&channel::Receiver[$T]) -> $T?"
 doc = "The next value, or `null` where every sender is gone.\n\nA closed channel is the ordinary end of a stream and not a failure, so `??`\nis what reads it. It gives the thread up rather than holding it."
+
+# --- The collections outside the prelude (ADR-154 D3) ------------------------
+#
+# **`HashMap` is the first thing outside the list**, and it is the name that
+# makes that a rule rather than a tidy-up: a map is common enough to argue for,
+# and `use std::collections` is one line, and a list that grows by *common
+# enough* has no floor.
+#
+# They are here rather than in the compiler's built-in names because that is what
+# puts them in a **module**: an entry keyed `collections::HashMap` is one a
+# program reaches through its prefix, which is the whole of the rule.
+[type."collections::HashMap"]
+pub = true
+doc = "A table from keys to values.\n\nIt is reached through its module: `use std::collections` and\n`collections::HashMap` where it is needed (Part I, 1.3)."
+
+[type."collections::HashSet"]
+pub = true
+doc = "A set of values, in no order.\n\nIt is reached through its module, as every name outside the prelude is."
+
+[type."collections::BTreeMap"]
+pub = true
+doc = "A table from keys to values, kept in the keys' order.\n\nIt is reached through its module, as every name outside the prelude is."
+
+[type."collections::BTreeSet"]
+pub = true
+doc = "A set of values, kept in their order.\n\nIt is reached through its module, as every name outside the prelude is."

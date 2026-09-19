@@ -35,6 +35,7 @@
 
 use std::io
 use std::cli
+use std::collections
 
 // ---------------------------------------------------------------------------
 // 1. FASTA
@@ -99,8 +100,8 @@ impl Tally {
 // pointers and lengths rather than a million small strings. That is the same
 // claim `1brc.nika` makes about station names (Part II, 10.6), on a buffer the
 // program owns rather than one it mapped.
-fn count(dna: &str, k: i64) -> HashMap[&str, Tally] {
-    let mut counts: HashMap[&str, Tally] = HashMap()
+fn count(dna: &str, k: i64) -> collections::HashMap[&str, Tally] {
+    let mut counts: collections::HashMap[&str, Tally] = collections::HashMap()
 
     if dna.len() < k {
         return counts

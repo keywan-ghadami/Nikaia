@@ -452,7 +452,7 @@ fn walk(
                 .map(|p| walk(p, own, library, into, seen, depth - 1)),
         ),
         Ty::Named { name, args, .. } => {
-            if PLAIN.contains(&name.as_str()) {
+            if PLAIN.contains(&super::ty::base(name)) {
                 // A plain type with arguments is not the plain type: `String[T]`
                 // is a name this compiler does not know.
                 return match args.is_empty() {
@@ -460,7 +460,7 @@ fn walk(
                     false => Crossing::Undecided { part: ty.text() },
                 };
             }
-            if CONTAINERS.contains(&name.as_str()) {
+            if CONTAINERS.contains(&super::ty::base(name)) {
                 // A container with no arguments said nothing about what it
                 // holds, and what it holds is the whole question.
                 if args.is_empty() {

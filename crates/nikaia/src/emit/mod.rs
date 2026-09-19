@@ -1190,6 +1190,16 @@ use crate::contracts::ty::ARRAY;
 /// `std` does.
 const C_STRING: &str = "CStr";
 
+/// A written type's own name, with the module it is reached through taken off
+/// ([ADR-154](../../docs/specification/adr/adr-154.md) D3).
+///
+/// `foreign::CStr` is what a declaration writes now; what this file asks about
+/// is the **type**, which is the last segment. The full name is what goes into
+/// the emitted Rust, because the module is in `std`'s own prelude there.
+fn base(name: &str) -> &str {
+    crate::contracts::ty::base(name)
+}
+
 const SHARED: &str = "Shared";
 /// Part I 6.3's lock, whose shape is decided per value
 /// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
@@ -2376,7 +2386,7 @@ impl<'p> Emitter<'p> {
             return None;
         }
         let name = self.text(ty.name);
-        match self.opaque_handles.contains_key(name) || name == C_STRING {
+        match self.opaque_handles.contains_key(name) || base(name) == C_STRING {
             true => Some(name),
             false => None,
         }
@@ -2385,7 +2395,7 @@ impl<'p> Emitter<'p> {
     /// What the address inside a handle points at, which is the one thing this
     /// language never looks through.
     fn pointed_at(&self, ty: &Type) -> &'static str {
-        match self.text(ty.name) == C_STRING {
+        match base(self.text(ty.name)) == C_STRING {
             true => "core::ffi::c_char",
             false => "core::ffi::c_void",
         }
@@ -5203,12 +5213,15 @@ impl<'p> Emitter<'p> {
             if let [module, name] = segments.as_slice() {
                 let module = self.text(*module).to_string();
                 let name = self.text(*name).to_string();
-                let key = format!("{name}::new");
+                // **The key carries the module**, because that is where the
+                // ledger keeps a type that lives in one: `collections::HashMap`
+                // and its `::new` beside it.
+                let key = format!("{module}::{name}::new");
                 if self.library.functions.contains_key(&key) {
                     out.push(&format!("{module}::{}", self.path(&[&name, "new"])));
                     out.push("(");
                     let takes = self.takes_a_handle(&key);
-                    self.args(out, &name, args, &takes, depth, flow)?;
+                    self.args(out, &key, args, &takes, depth, flow)?;
                     out.push(")");
                     return Ok(());
                 }

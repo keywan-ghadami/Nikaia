@@ -586,8 +586,8 @@ fn main() {
 /// every program would otherwise write the same loop.
 #[test]
 fn returned_text_is_copied_by_std() {
-    let source = "extern \"C\" {\n\
-                  \x20   fn getenv(name: &[u8]) -> CStr\n\
+    let source = "use std::foreign\n\nextern \"C\" {\n\
+                  \x20   fn getenv(name: &[u8]) -> foreign::CStr\n\
                   }\n\
                   \n\
                   fn main() throws {\n\
@@ -605,7 +605,10 @@ fn returned_text_is_copied_by_std() {
         rust.contains("fn getenv(name: *const u8) -> *mut core::ffi::c_char;"),
         "{rust}"
     );
-    assert!(rust.contains("CStr::from_c(\"getenv\", getenv("), "{rust}");
+    assert!(
+        rust.contains("foreign::CStr::from_c(\"getenv\", getenv("),
+        "{rust}"
+    );
     assert!(rust.contains("let home = raw.to_string()?;"), "{rust}");
     assert!(
         !rust.contains("unsafe { raw.to_string()"),
@@ -619,8 +622,8 @@ fn returned_text_is_copied_by_std() {
 #[test]
 fn the_copy_is_a_call_that_can_fail() {
     let found: Vec<_> = findings(
-        "extern \"C\" {\n\
-         \x20   fn getenv(name: &[u8]) -> CStr\n\
+        "use std::foreign\n\nextern \"C\" {\n\
+         \x20   fn getenv(name: &[u8]) -> foreign::CStr\n\
          }\n\
          \n\
          fn main() {\n\
@@ -643,8 +646,10 @@ fn the_copy_is_a_call_that_can_fail() {
 fn a_c_string_compiles_and_runs() {
     let rust = lowered(
         r#"
+use std::foreign
+
 extern "C" {
-    fn getenv(name: &[u8]) -> CStr
+    fn getenv(name: &[u8]) -> foreign::CStr
 }
 
 fn main() throws {
@@ -681,8 +686,8 @@ fn main() throws {
 /// means everywhere else: `??` and `?.` are how a program gets past it.
 #[test]
 fn a_handle_may_be_absent() {
-    let source = "extern \"C\" {\n\
-                  \x20   fn getenv(name: &[u8]) -> CStr?\n\
+    let source = "use std::foreign\n\nextern \"C\" {\n\
+                  \x20   fn getenv(name: &[u8]) -> foreign::CStr?\n\
                   }\n\
                   \n\
                   fn main() throws {\n\
@@ -691,7 +696,7 @@ fn a_handle_may_be_absent() {
                   }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     let rust = lowered(source);
-    assert!(rust.contains("CStr::maybe(getenv("), "{rust}");
+    assert!(rust.contains("foreign::CStr::maybe(getenv("), "{rust}");
     // The declaration hands back the address C returned, because the hull
     // under a handle is non-null: a null arriving in one is undefined before
     // any check could run.
@@ -788,7 +793,7 @@ fn the_copy_fails_in_one_way() {
     let library = Ledger::parse(STD).expect("std ships a ledger");
     let copy = library
         .functions
-        .get("CStr::to_string")
+        .get("foreign::CStr::to_string")
         .expect("std describes the copy");
     assert_eq!(copy.throws, vec!["?".to_string()]);
     let doc = copy.doc.as_deref().unwrap_or_default();
@@ -805,8 +810,10 @@ fn the_copy_fails_in_one_way() {
 fn an_absent_handle_is_a_value_and_runs() {
     let rust = lowered(
         r#"
+use std::foreign
+
 extern "C" {
-    fn getenv(name: &[u8]) -> CStr?
+    fn getenv(name: &[u8]) -> foreign::CStr?
 }
 
 fn main() throws {
@@ -882,7 +889,7 @@ fn sqlite3_from_end_to_end() {
         "out: *mut Option<sqlite3>",
         "let mut slot: Option<sqlite3> = None;",
         // D4: text the library owns, copied by `std`.
-        "CStr::maybe(sqlite3_column_text(",
+        "foreign::CStr::maybe(sqlite3_column_text(",
     ] {
         assert!(
             rust.contains(expected),

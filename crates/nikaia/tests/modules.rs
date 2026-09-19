@@ -629,8 +629,8 @@ fn a_program_that_imports_nothing_may_still_use_a_map() {
         "no-import",
         &[(
             "main.nika",
-            "fn main() {\n\
-             \x20   let mut m = HashMap()\n\
+            "use std::collections\n\nfn main() {\n\
+             \x20   let mut m = collections::HashMap()\n\
              \x20   m.insert(\"a\", 1)\n\
              \x20   println(f\"{m.len()}\")\n\
              }\n",

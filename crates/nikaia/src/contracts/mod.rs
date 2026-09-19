@@ -577,7 +577,7 @@ impl Signature {
         let mut mutable: Vec<String> = Vec::new();
         let params = ty::split_args(positional)
             .iter()
-            .map(|part| match part.split_once(':') {
+            .map(|part| match split_at_the_name(part) {
                 Some((name, ty)) => {
                     // **`mut` is part of the parameter and not of its type**
                     // (ADR-094 D3): it says who changes the value, which is
@@ -625,6 +625,29 @@ impl Signature {
             result,
         })
     }
+}
+
+/// A parameter's `name: T`, split at the colon that is **not** part of a `::`.
+///
+/// `split_once(':')` was here, and `collections::HashMap` is what broke it
+/// ([ADR-154](../../../docs/specification/adr/adr-154.md) D3 put a `std` type in
+/// a module): the receiver `&collections::HashMap[$K, $V]` was read as a
+/// parameter **named** `collections` whose type was `:HashMap[$K, $V]`, so
+/// every call on a map met `NK1101` about an argument count nobody wrote.
+fn split_at_the_name(part: &str) -> Option<(&str, &str)> {
+    let bytes = part.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b':' {
+            if bytes.get(at + 1) == Some(&b':') {
+                at += 2;
+                continue;
+            }
+            return Some((&part[..at], &part[at + 1..]));
+        }
+        at += 1;
+    }
+    None
 }
 
 /// The byte of the `)` that closes the `(` this text is already inside.

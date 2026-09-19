@@ -33,7 +33,7 @@
 10-nikaia-light.md #33 lowered (a body)  let numbers = [1, 2, 3, 4]
 10-nikaia-light.md #34 refused (a body) [NK1117]  names.sort()                                  // by name
 10-nikaia-light.md #35 lowered (a body)  let pair = ("*", 3)          // (&str, i64)
-10-nikaia-light.md #36 lowered (a body)  let mut scores = HashMap()
+10-nikaia-light.md #36 lowered (items, then a body)  use std::collections
 10-nikaia-light.md #37 lowered (items, then a body)  struct Vector3 { parts: Array[f64, 3] }
 10-nikaia-light.md #38 lowered (as written)  struct Box[T] {
 10-nikaia-light.md #39 refused (as written) [about-a-refusal NK1126]  fn shout[T](x: T) -> String {
@@ -109,7 +109,7 @@
 30-nikaia-tooling.md #7 lowered (as written)  extern "C" {
 30-nikaia-tooling.md #8 lowered (as written)  extern "C" {
 30-nikaia-tooling.md #9 lowered (as written)  extern "C" {
-30-nikaia-tooling.md #10 lowered (as written)  extern "C" {
+30-nikaia-tooling.md #10 lowered (as written)  use std::foreign
 30-nikaia-tooling.md #11 fragment (as written)  // Usage of a Rust crate
 30-nikaia-tooling.md #12 lowered (as written)  // main.nika
 30-nikaia-tooling.md #13 refused (as written)  use std::backend::x86

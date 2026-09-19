@@ -99,9 +99,11 @@ fn no_program_in_the_repository_keeps_a_naked_view() {
 fn a_view_inside_a_struct_is_not_a_finding() {
     assert!(findings(
         r#"
+use std::collections
+
         @borrowed
         struct Reading { name: &str, temp: i32 }
-        struct Summary { stations: HashMap[&str, i32] }
+        struct Summary { stations: collections::HashMap[&str, i32] }
         impl Summary {
             fn record(&mut self, m: Reading) sync {
                 self.stations.insert(m.name, m.temp)
@@ -120,9 +122,11 @@ fn a_view_inside_a_struct_is_not_a_finding() {
 fn a_view_handed_back_in_the_result_it_came_from_is_not_a_finding() {
     assert!(findings(
         r#"
+use std::collections
+
         struct Tally { n: i64 }
-        fn count(dna: &str, k: usize) -> HashMap[&str, Tally] {
-            let mut counts: HashMap[&str, Tally] = HashMap()
+        fn count(dna: &str, k: usize) -> collections::HashMap[&str, Tally] {
+            let mut counts: collections::HashMap[&str, Tally] = collections::HashMap()
             for i in 0..dna.len() {
                 let fragment = &dna[i..i + k]
                 counts.entry(fragment).or_insert_with fn { Tally(1) }
@@ -325,9 +329,11 @@ fn a_view_stored_in_the_subject_is_lowered_with_the_buffer_named() {
 #[test]
 fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
     let source = r#"
-                struct Summary { stations: HashMap[&str, i32] }
+use std::collections
+
+                struct Summary { stations: collections::HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: HashMap() } }
+            pub fn() -> Summary sync { return Summary { stations: collections::HashMap() } }
             fn record(&mut self, name: &str, temp: i32) sync {
                 self.stations.insert(name, temp)
             }
@@ -348,9 +354,11 @@ fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
 #[test]
 fn a_read_only_call_on_a_view_field_is_lowered_rather_than_refused() {
     let source = r#"
-                struct Summary { stations: HashMap[&str, i32] }
+use std::collections
+
+                struct Summary { stations: collections::HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: HashMap() } }
+            pub fn() -> Summary sync { return Summary { stations: collections::HashMap() } }
             fn has(&self, name: &str) -> bool sync {
                 return self.stations.contains_key(name)
             }
@@ -368,9 +376,11 @@ fn a_read_only_call_on_a_view_field_is_lowered_rather_than_refused() {
 #[test]
 fn a_view_that_reaches_the_field_through_a_local_is_lowered_too() {
     let source = r#"
-                struct Summary { stations: HashMap[&str, i32] }
+use std::collections
+
+                struct Summary { stations: collections::HashMap[&str, i32] }
         impl Summary {
-            pub fn() -> Summary sync { return Summary { stations: HashMap() } }
+            pub fn() -> Summary sync { return Summary { stations: collections::HashMap() } }
             fn record(&mut self, name: &str) sync {
                 let key = name
                 self.stations.insert(key, 1)

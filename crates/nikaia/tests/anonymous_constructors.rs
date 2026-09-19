@@ -39,10 +39,10 @@ fn refusals(source: &str) -> Vec<nikaia::check::Finding> {
 #[test]
 fn stds_types_are_called_like_a_constructor() {
     let rust = lowered(
-        "fn main() {\n\
+        "use std::collections\n\nfn main() {\n\
          \x20   let mut xs = Vec()\n\
          \x20   let s = String()\n\
-         \x20   let m = HashMap()\n\
+         \x20   let m = collections::HashMap()\n\
          \x20   xs.push(1)\n\
          \x20   println(f\"{xs.len()} {s.len()} {m.len()}\")\n\
          }\n",

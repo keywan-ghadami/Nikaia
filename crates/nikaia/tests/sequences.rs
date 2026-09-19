@@ -134,8 +134,8 @@ fn the_chain_off_keys_resolves() {
     let library = library();
     let keys = library
         .functions
-        .get("HashMap::keys")
-        .expect("`HashMap::keys` is described");
+        .get("collections::HashMap::keys")
+        .expect("`collections::HashMap::keys` is described");
     let result = keys
         .signature
         .as_ref()
@@ -418,8 +418,8 @@ fn a_name_given_another_sequence_may_be_walked_again() {
 #[test]
 fn a_walk_of_a_temporary_says_nothing() {
     assert!(walked_twice(
-        "fn f() -> i64 {\n\
-         \x20   let counts: HashMap[&str, i64] = HashMap()\n\
+        "use std::collections\n\nfn f() -> i64 {\n\
+         \x20   let counts: collections::HashMap[&str, i64] = collections::HashMap()\n\
          \x20   let names = counts.keys().collect()\n\
          \x20   return names.len()\n\
          }\n\

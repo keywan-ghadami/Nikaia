@@ -134,7 +134,7 @@ fn a_signature_that_hands_back_a_tuple_parses() {
     assert_eq!(signature.arguments()[0].1.to_string(), "i64");
     assert_eq!(
         signature.result.as_ref().map(|t| t.to_string()),
-        Some("(Sender[$T], Receiver[$T])".to_string())
+        Some("(channel::Sender[$T], channel::Receiver[$T])".to_string())
     );
 }
 
@@ -166,7 +166,7 @@ fn a_closed_channel_hands_back_nothing() {
 fn a_sync_body_may_not_send() {
     let source = "use std::channel\n\
          \n\
-         fn quiet(tx: Sender[i64]) sync {\n\
+         fn quiet(tx: channel::Sender[i64]) sync {\n\
                   \x20   tx.send(1)\n\
                   }\n\
                   \n\

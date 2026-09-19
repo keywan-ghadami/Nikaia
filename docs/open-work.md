@@ -1161,31 +1161,26 @@ arbitrary value.
 step 1. Neither is small, and the harness delivers nothing a reader of a program
 would notice — which is worth knowing before it is started rather than after.
 
-### 2.41. The prelude's type half, and three names on its list that do not exist
+### 2.41. Three names the prelude promises and `std` does not have
 
-[ADR-154](specification/adr/adr-154.md). The **function** half is built: a name
-that lives in a `std` module is refused without its prefix, a prefix is refused
-without its `use`, and both say the line to add. What is left is three pieces,
-and none of them is large.
+[ADR-154](specification/adr/adr-154.md). The rule is built for a function and
+for a type; what is left is D1's own list naming three things that do not exist.
 
-*The type half.* `HashMap`, `Duration` and `CStr` are keyed in `std`'s ledger
-**without** a module, so the rule cannot reach them and a program still writes
-them bare. D3's spelling already **works** — `use std::collections` and
-`collections::HashMap` resolves, lowers and picks the right hash — so what is
-missing is only the refusal of the bare one, which wants those three entries
-re-keyed the way `fs::Mapped` already is: `collections::HashMap`,
-`time::Duration`, `foreign::CStr`. The corpus writes `HashMap` in three files
-and `CStr` in one.
-
-*Three names the list promises and `std` does not have.* **`Bytes`**,
-**`assert`** and **`panic`** are on D1's list on Part I 1.3 and do not exist.
-Each is its own piece of work, and `Bytes` carries a question the record left
-open on purpose (§4): whether it is `std`'s or the language's.
+**`Bytes`**, **`assert`** and **`panic`** are on the list on Part I 1.3 and are
+not in `std`. Each is its own piece of work, and `Bytes` carries a question the
+record left open on purpose (§4): whether it is `std`'s or the language's. A
+name on the list that does not exist is the one direction a prelude can be wrong
+in without anybody noticing — nothing refuses it, because nothing reaches it.
 
 *And one the list does not promise and `std` has.* `eprint` is keyed bare, so it
 needs no `use`; D1's text writes `eprintln` and not `eprint`. Whether it belongs
 is a sentence for whoever revisits the list — D4 says a name joins by a record,
 and this one joined by being needed.
+
+*What stays bare on purpose:* `Shared`, `SharedMut` and `Locked` are the
+language's ([ADR-064](specification/adr/adr-064.md)) rather than a module's, and
+a `TaskHandle` is what a `spawn` hands back — a program has no reason to write
+the name, so moving it would cost a migration and buy nothing.
 
 ## 3. Upkeep
 

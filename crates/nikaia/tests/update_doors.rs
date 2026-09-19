@@ -252,12 +252,12 @@ fn a_door_block_that_changes_without_the_word_is_refused() {
 fn a_lambda_that_is_not_a_door_is_left_alone() {
     assert!(!refused(
         "NK1138",
-        "struct Tally { n: i64 }\n\
+        "use std::collections\n\nstruct Tally { n: i64 }\n\
          impl Tally {\n\
          \x20   fn bump(&mut self) sync { self.n += 1 }\n\
          }\n\
          fn main() {\n\
-         \x20   let mut counts = HashMap()\n\
+         \x20   let mut counts = collections::HashMap()\n\
          \x20   counts.entry(\"a\")\n\
          \x20       .and_modify fn (tally) { tally.bump() }\n\
          \x20       .or_insert_with fn { Tally { n: 1 } }\n\

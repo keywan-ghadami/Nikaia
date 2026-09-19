@@ -1587,8 +1587,16 @@ impl<'a> Checker<'a> {
                     .as_ref()
                     .is_some_and(|s| s.params.first().is_some_and(|(name, _)| name == "self"))
         };
-        let a_type =
-            self.library.types.contains_key(last) || self.library.functions.keys().any(on_a_value);
+        // **By the last segment**, because a `std` type carries its module since
+        // [ADR-154](../../docs/specification/adr/adr-154.md) D3: the key is
+        // `collections::HashMap` and the word after the last `::` of the `use`
+        // is `HashMap`.
+        let a_type = self
+            .library
+            .types
+            .keys()
+            .any(|key| crate::contracts::ty::base(key) == last)
+            || self.library.functions.keys().any(on_a_value);
         if !a_type {
             return;
         }
@@ -4514,7 +4522,11 @@ impl<'a> Checker<'a> {
                     self.a_handle_has_nothing_inside(&name, "an index", span);
                     return Ty::Unknown;
                 }
-                match (name.as_str(), args.as_slice()) {
+                // The **last segment**, because a `std` type carries its module
+                // since [ADR-154](../../docs/specification/adr/adr-154.md) D3 and
+                // what is indexed is the type rather than where it is reached
+                // from.
+                match (crate::contracts::ty::base(name), args.as_slice()) {
                     ("Vec" | "List", [item]) => item.clone(),
                     // A map is indexed by its key and yields its value.
                     ("HashMap" | "Map", [_, value]) => value.clone(),
@@ -8779,18 +8791,45 @@ impl<'a> Checker<'a> {
 
     /// A method on a type, by the name `Type::method` the ledger records it
     /// under. A library writes the module in front of it (`fs::Mapped::deref`)
-    /// and the receiver's type does not carry one, so the suffix is what
-    /// matches - name-for-name resolution, as everywhere else.
+    /// and the receiver's type may or may not carry one, so both directions are
+    /// tried.
+    ///
+    /// **The receiver's own module is dropped on the second try**, since
+    /// [ADR-154](../../docs/specification/adr/adr-154.md) D3 put a type in one:
+    /// a value of `collections::HashMap` has its methods keyed `HashMap::len`,
+    /// because the module is where the **type** lives and the method belongs to
+    /// the type. This is not the bare-name resolution that record took away —
+    /// there the question was *which entry does this word mean*, and here the
+    /// receiver's type is in hand and its last segment is that type's name.
     fn method(&self, key: &str) -> Option<(String, &'a FnContract)> {
         if let Some(contract) = self.own.functions.get(key) {
             return Some((key.to_string(), contract));
         }
         let suffix = format!("::{key}");
-        self.library
+        let found = self
+            .library
             .functions
             .iter()
             .find(|(name, _)| *name == key || name.ends_with(&suffix))
-            .map(|(name, contract)| (name.clone(), contract))
+            .map(|(name, contract)| (name.clone(), contract));
+        if found.is_some() {
+            return found;
+        }
+        // `collections::HashMap::len` was asked for; `HashMap::len` is the key.
+        let (_, without_the_module) = key.split_once("::")?;
+        if !without_the_module.contains("::") {
+            return None;
+        }
+        self.own
+            .functions
+            .get(without_the_module)
+            .map(|contract| (without_the_module.to_string(), contract))
+            .or_else(|| {
+                self.library
+                    .functions
+                    .get(without_the_module)
+                    .map(|contract| (without_the_module.to_string(), contract))
+            })
     }
 
     /// The fields of a type, when something knows them.

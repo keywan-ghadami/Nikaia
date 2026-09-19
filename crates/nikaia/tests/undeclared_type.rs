@@ -86,7 +86,7 @@ fn every_kind_of_declared_name_is_left_alone() {
     for source in [
         "fn f(a: i64, b: f64, c: bool, d: char, e: String, g: &str) { }\nfn main() { }\n",
         "fn f(a: u8, b: usize, c: i128) { }\nfn main() { }\n",
-        "fn f(a: Vec[i64], b: HashMap[&str, i64], c: BTreeMap[&str, i64]) { }\nfn main() { }\n",
+        "use std::collections\n\nfn f(a: Vec[i64], b: collections::HashMap[&str, i64], c: collections::BTreeMap[&str, i64]) { }\nfn main() { }\n",
         "fn f(a: Shared[i64], b: SharedMut[i64]) { }\nfn main() { }\n",
         "struct Row { n: i64 }\nfn f(a: Row) { }\nfn main() { }\n",
         "enum Colour { Red, Green }\nfn f(a: Colour) { }\nfn main() { }\n",
