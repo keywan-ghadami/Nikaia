@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Decided (a library for other languages, and the ignore pattern)
+
+- **[ADR-125](docs/specification/adr/adr-125.md).** A Nikaia package can be a library for C and for everything that speaks it: `pub extern "C" fn` with a body is an entry point, `artifact = "c-library"` makes the package one, and the header is generated from the ledger. The shape at the boundary is the one every C library that has aged well uses — the caller owns the memory (buffers with size and written count, an allocator the caller may hand over before `init`), every call returns a status and puts its values in out-parameters, a struct is an opaque handle, an enum is numbered in declaration order. A panic is caught at the boundary and poisons the library; a pausing function is exported blocking and as `_async`; a handle carries a lock and a re-entrant call is a status. Nothing of it is built; `open-work.md` carries the seven steps.
+- **[ADR-126](docs/specification/adr/adr-126.md).** `_` is the ignore pattern: it stands in a tuple position, as a parameter of a `fn` or a lambda, and in a `match` arm, and nowhere else. `let _ = expr` is refused with `NK1144` — the statement says the same thing — and `_` is never a value. What it skips is not moved, so the view rule holds. It lowers to Rust's `_`, and an ignored parameter produces no warning below. Only the `match` arm is built.
+
 ### Decided (four of the owner's five open questions)
 
 - **[ADR-121](docs/specification/adr/adr-121.md).** The runtime's two completion paths differed in one thing: a worker's reply could not wake an executor parked on the ring, so standard input could not suspend and `rt::io::wait` could not be awaited. An eventfd on the ring, always armed, that the bell writes to, makes every worker operation awaitable at once; a hang is the failure this may not have, so the test that a worker reply does not wake a ring park is inverted and kept.

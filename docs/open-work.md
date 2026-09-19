@@ -1411,6 +1411,46 @@ rather than adding it.
 this language already has: most of `libc`'s arithmetic and process surface, and
 none of its memory surface.
 
+### 2.37. A library for other languages
+
+[ADR-125](specification/adr/adr-125.md), all of it. A `pub extern "C" fn`
+with a body is an entry point of a library, and `artifact = "c-library"` in
+`[build]` makes the package one. What a C caller gets is deliberately narrow:
+numbers by value, text and bytes in as pointer and length, text and bytes out
+into a buffer **the caller owns** (size, capacity, written; a `NULL` buffer
+asks for the size), a struct as an opaque handle with `_new` and `_free`, an
+enum as numbered constants in declaration order, an optional as `NULL` or the
+package's `NONE`. Every entry point returns an `int` status and puts its
+values in out-parameters; a `throws` variant is a positive code, the library's
+own failures are the six negative ones, and `<pkg>_last_error` carries the
+site and the secondary list. A caller may hand the library its allocator
+before `init`. A panic is caught at the boundary and poisons the library until
+`shutdown` and `init`. A pausing function is exported blocking and as
+`_async`. Every handle carries a lock, and a re-entrant call on the same
+thread is a status, not a deadlock. The header is generated from the ledger
+and carries its hash.
+
+*What it needs, in the record's order (§5):* the parser and the four refusals;
+the artifact and the safe shape at entry points; the wrapper per entry point;
+the runtime surface (`set_allocator`, `init`, `shutdown`, `last_error`,
+`free`, getters); the blocking and async forms and the handle lock; the
+header generator and the naming; a library called from a C program in
+`examples/`, and the test that links it.
+
+### 2.38. `_` is the ignore pattern
+
+[ADR-126](specification/adr/adr-126.md), all of it but the `match` arm, which
+works today. `_` stands where a name would be bound and nowhere else: a tuple
+position, a parameter of a `fn` or a lambda, a `match` arm. `let _ = expr` is
+refused with `NK1144`, because the statement form says the same thing without
+pretending to bind; `_` is never a value. What `_` skips is not moved, so the
+view rule holds and a temporary ends with its statement. It lowers to Rust's
+`_`, and an ignored parameter produces no unused-variable warning below.
+
+*What it needs, in the record's order (§5):* the parser for the tuple position
+and the parameter; `NK1144`; the emitter passing `_` through, and a test that
+an ignored lambda argument produces no warning below.
+
 ## 3. Upkeep
 
 ### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect

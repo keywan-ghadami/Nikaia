@@ -129,6 +129,15 @@ uses, `const`, would say *this one does not change*, and 2.1 already gives that
 to every binding that does not say `mut`; what the declaration promises is a
 **time**, and `comptime` says so ([ADR-077](adr/adr-077.md)).
 
+**`_` is not a name; it is the ignore pattern** ([ADR-126](adr/adr-126.md)). It
+stands where a name would be bound and says that the value is ignored on
+purpose: a position of a destructured tuple (`let (name, _) = pair()`), a
+parameter a shape dictates (`fn handle(event: Event, _: Context)`, `fn(_,
+value) { … }`), and a `match` arm. `let _ = expr` is refused — a call made for
+its effect is written as the call, and a resource is closed by name — and `_`
+is never a value. What it ignores is not moved, so a `let` over a place stays a
+view of it (6.5). **Not built** beyond the `match` arm.
+
 **`with` is on the list for its construct**: a copy of a value with named
 fields changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
 
@@ -760,7 +769,7 @@ A pattern is one of six things, and each is read the way it is written:
 
 | pattern | matches |
 | :--- | :--- |
-| `_` | anything, and binds nothing |
+| `_` | anything, and binds nothing — the **ignore pattern**, which also stands in a tuple position and as a parameter ([ADR-126](adr/adr-126.md)) |
 | `1`, `"text"`, `true`, `'n'` | that value |
 | `Op::Times` | that variant |
 | `Message::Write(text)` | that variant, binding what it carries |

@@ -373,6 +373,10 @@ contextual, and the build-time read is `asset("…")`; and
 [ADR-117](specification/adr/adr-117.md) frees `loop`, `const`, `macro` and
 `quote`, moving their messages to `NK1117`'s help. `with` stays, for the
 copy-with-changes construct the language lacks — its own record.
+Beside the words, `_`: it was a name the parser knew only in a `match` arm.
+[ADR-126](specification/adr/adr-126.md) makes it the ignore pattern — a tuple
+position, a parameter, a `match` arm, and nowhere else — and refuses
+`let _ = expr` with `NK1144`.
 
 ### 3.3 Two spellings for one thing, several times over
 
