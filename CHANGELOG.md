@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.20] — 2026-09-19
+
+[ADR-140](docs/specification/adr/adr-140.md)'s second migration, and a test that
+had been holding a claim it could not check.
+
+### Changed (`throws` and `sync` stand after the result type)
+
+- **[ADR-140](docs/specification/adr/adr-140.md) D4.** `fn f() throws -> String` and `fn f() -> String throws` both parsed, and the specification wrote both — Part II `fn add(…) sync`, Part III `pub fn read(path: Path) -> Bytes throws`, Part I 7.1 `fn fetch_config() throws -> String`. The second is the language: it is the order [ADR-102](docs/specification/adr/adr-102.md) D1 already fixes for a function *type*, where the trailing words are greedy, so a declaration and a type read the same way round. The pre-arrow form is a parse error whose message names the order.
+- **A declaration with no result type is untouched**, because there is nothing for the word to be before or after. `fn tick() sync { … }` still parses, and that is what decides where the refusal's cut goes: **after the arrow, not after the word**. A `sync` alone is not the old form; a `sync` followed by a `->` is.
+- **Seventeen sites, and none of them in `examples/`** — fifteen in `errors_lowering.rs`, one in `returns.rs`, one in `function_types.rs`, two on Part I 7.1. The corpus had never written the form the error-handling chapter taught.
+- **The one shape it takes away is one nothing can write.** ADR-102 D1's greedy rule gives the trailing words on `fn make() -> fn(i64) -> i64 sync` to the **result type**, and that record's note pointed at the pre-arrow form as the way to mean the function's own promise instead. A function type in a result is `NK1142` until D5's boxed lowering exists, so no program is waiting on the distinction; D5 owes it a spelling the day it lands, and ADR-102's note says so now.
+
+- **And `sync` now stands before `throws`**, which the record did not say and one slot decides. `fn f() throws sync { … }` used to parse because `throws` took the slot before the arrow and `sync` the one after it — legal only because there were two. The order in the one that is left is ADR-102 D1's and D4's own example. Refused with a sentence rather than with *expected `{`*, because the form was legal a version ago; nothing in the tree wrote it but one line of a test.
+
+### Fixed (the test guarding that greedy rule was asking the wrong question)
+
+- **`a_trailing_sync_belongs_to_the_type_it_follows` read the ledger**, and `sync` is *inferred* from the body — an empty body pauses at nothing, so the ledger said *sync* whichever of the two the trailing word attached to, and the assertion held for the wrong reason. It reads the **AST** now: the declaration's `is_sync` is false and the result type's is true, which is the claim the record makes.
+
 ## [0.0.19] — 2026-09-19
 
 The first of [ADR-140](docs/specification/adr/adr-140.md)'s five migrations, and

@@ -16,6 +16,7 @@ mod common;
 
 use std::process::Command;
 
+use nikaia::ast::Item;
 use nikaia::contracts::ty::Ty;
 use nikaia::contracts::{Ledger, STD};
 use nikaia::emit::{emit_program, Build};
@@ -454,15 +455,53 @@ fn a_body_that_also_pauses_keeps_no_claim() {
 
 /// **The trailing words are greedy**, which settles the one ambiguity D1 does
 /// not name: in `fn make() -> fn(i64) -> i64 sync` the `sync` belongs to the
-/// *result type*. A function whose own promise is meant writes it before the
-/// arrow, which the declaration grammar accepts already.
+/// *result type*.
+///
+/// **And the declaration's own pre-arrow form is gone**
+/// ([ADR-140](../../../docs/specification/adr/adr-140.md) D4), which is what
+/// D1's note used to point at as the way to mean the other thing. Nothing can
+/// write that shape today — a function type in a **result** is `NK1142` until
+/// D5's boxed lowering exists — so what it costs is a spelling for a program
+/// that does not compile, and D5 is the record that owes one.
 #[test]
 fn a_trailing_sync_belongs_to_the_type_it_follows() {
-    let source = "fn make() sync -> fn(i64) -> i64 { }\n";
-    let parsed = parse_to_ast(source).expect("the source parses");
-    let ledger = Ledger::infer(&parsed);
-    assert!(
-        ledger.functions["make"].sync.is_sync(),
-        "the `sync` before the arrow is the function's own"
+    let parsed = parse_to_ast("fn make() -> fn(i64) -> i64 sync { }\n").expect("the source parses");
+    // **The AST and not the ledger**, which is what this test used to ask and
+    // could not have answered: `sync` is *inferred* from the body, and an empty
+    // body pauses at nothing — so the ledger says `sync` whichever of the two
+    // the word attached to, and the old assertion held for the wrong reason.
+    let Item::Fn {
+        is_sync, ret_type, ..
+    } = &parsed.program.items[0].node
+    else {
+        panic!("a function");
+    };
+    assert!(!is_sync, "the trailing `sync` is not the declaration's");
+    let code = ret_type
+        .as_ref()
+        .and_then(|t| t.code.as_ref())
+        .expect("the result is a function type");
+    assert!(code.is_sync, "it is the result type's");
+}
+
+/// **The pre-arrow form is refused, and the message names the order**
+/// ([ADR-140](../../../docs/specification/adr/adr-140.md) D4).
+#[test]
+fn a_promise_before_the_arrow_is_refused() {
+    let said = format!(
+        "{:#}",
+        parse_to_ast("fn load() throws -> String { return \"a\".to_string() }")
+            .expect_err("the pre-arrow form is a parse error")
     );
+    assert!(said.contains("stand after the result type"), "{said}");
+    assert!(said.contains("fn f() -> String throws"), "{said}");
+}
+
+/// **A declaration with no result type writes the word where it always did**,
+/// because there is nothing for it to be before or after — which is why the
+/// refusal's cut sits after the arrow and not after the word.
+#[test]
+fn a_promise_with_no_result_type_is_untouched() {
+    let parsed = parse_to_ast("fn tick() sync { }\n").expect("it parses");
+    assert!(Ledger::infer(&parsed).functions["tick"].sync.is_sync());
 }

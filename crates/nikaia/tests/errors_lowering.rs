@@ -93,7 +93,7 @@ fn throw_leaves_the_function() {
     let rust = emit(
         r#"
         enum ConfigError { NotFound }
-        fn load() throws -> i64 {
+        fn load() -> i64 throws {
             throw ConfigError::NotFound
         }
         "#,
@@ -138,7 +138,7 @@ fn an_error_is_declared_raised_caught_and_printed() {
             }
         }
 
-        fn load(path: String) throws -> String {
+        fn load(path: String) -> String throws {
             throw ConfigError::NotFound(path)
         }
 
@@ -210,11 +210,11 @@ fn a_written_call_propagates_its_failure() {
             }
         }
 
-        fn load(path: String) throws -> String {
+        fn load(path: String) -> String throws {
             throw ConfigError::NotFound(path)
         }
 
-        fn ruft(path: String) throws -> String {
+        fn ruft(path: String) -> String throws {
             return load(path)
         }
 
@@ -419,16 +419,31 @@ fn throws_with_a_type_is_refused_with_the_reason() {
     assert!(message.contains("ADR-023 D1"), "{message}");
     assert!(message.contains("nikaia.contracts"), "{message}");
 
-    // And every legal placement still parses - `sync` after `throws` included,
-    // which is what the refusal has to look past.
+    // And every legal placement still parses. **`sync` before `throws`**, in
+    // both positions, since [ADR-140](../../../docs/specification/adr/adr-140.md)
+    // D4 left one slot: `fn b() throws sync { }` used to parse only because the
+    // two words sat in different ones.
     for legal in [
         "fn a() throws { }",
-        "fn b() throws sync { }",
-        "fn c() throws -> i64 { return 1 }",
-        "fn d() -> i64 throws { return 1 }",
+        "fn b() sync throws { }",
+        "fn c() -> i64 throws { return 1 }",
+        "fn d() -> i64 sync { return 1 }",
         "fn e() -> i64 sync throws { return 1 }",
     ] {
         assert!(parse_to_ast(legal).is_ok(), "{legal} should parse");
+    }
+
+    // And the other order is refused with the sentence, rather than with
+    // *expected `{`* about a form that was legal a version ago.
+    for backwards in [
+        "fn f() throws sync { }",
+        "fn g() -> i64 throws sync { return 1 }",
+    ] {
+        let said = format!(
+            "{:#}",
+            parse_to_ast(backwards).expect_err("`throws sync` must not parse")
+        );
+        assert!(said.contains("`sync` stands before `throws`"), "{said}");
     }
 }
 
@@ -441,7 +456,7 @@ fn the_ledger_names_the_errors_a_function_throws() {
     let ledger = ledger_for(
         r#"
         enum ConfigError { NotFound }
-        fn load() throws -> i64 { throw ConfigError::NotFound }
+        fn load() -> i64 throws { throw ConfigError::NotFound }
         "#,
     );
     assert!(
@@ -458,9 +473,9 @@ fn an_error_set_grows_through_a_caller() {
         r#"
         enum ConfigError { NotFound }
         enum NetError { Timeout }
-        fn load() throws -> i64 { throw ConfigError::NotFound }
-        fn fetch() throws -> i64 { throw NetError::Timeout }
-        fn both() throws -> i64 { let a = load() return fetch() }
+        fn load() -> i64 throws { throw ConfigError::NotFound }
+        fn fetch() -> i64 throws { throw NetError::Timeout }
+        fn both() -> i64 throws { let a = load() return fetch() }
         "#,
     );
     let both = ledger
@@ -481,8 +496,8 @@ fn mutual_recursion_settles() {
     let ledger = ledger_for(
         r#"
         enum E { X }
-        fn ping(n: i32) throws -> i32 { if n == 0 { throw E::X } return pong(n - 1) }
-        fn pong(n: i32) throws -> i32 { return ping(n - 1) }
+        fn ping(n: i32) -> i32 throws { if n == 0 { throw E::X } return pong(n - 1) }
+        fn pong(n: i32) -> i32 throws { return ping(n - 1) }
         "#,
     );
     let pong = ledger
@@ -500,7 +515,7 @@ fn mutual_recursion_settles() {
 /// the direction ADR-010 D1 calls a vulnerability generator.
 #[test]
 fn what_cannot_be_named_is_a_question_mark() {
-    let ledger = ledger_for(r#"fn reads() throws -> String { return io::read_to_string() }"#);
+    let ledger = ledger_for(r#"fn reads() -> String throws { return io::read_to_string() }"#);
     assert!(
         ledger.contains(r#"throws = ["?"]"#),
         "`std`'s failures have no Nikaia name yet:\n{ledger}"
@@ -511,7 +526,7 @@ fn what_cannot_be_named_is_a_question_mark() {
 /// caller already relies on, and inference is here to say more than it.
 #[test]
 fn a_declared_throws_keeps_its_entry() {
-    let ledger = ledger_for(r#"fn maybe() throws -> i64 { return 1 }"#);
+    let ledger = ledger_for(r#"fn maybe() -> i64 throws { return 1 }"#);
     assert!(ledger.contains(r#"throws = ["?"]"#), "{ledger}");
 }
 
@@ -608,7 +623,7 @@ fn a_throw_carries_the_site_it_came_from() {
     let rust = emit(
         r#"
         enum E { X }
-        fn load() throws -> i64 { throw E::X }
+        fn load() -> i64 throws { throw E::X }
         "#,
     );
     assert!(
@@ -659,7 +674,7 @@ fn short_is_safe_and_full_is_asked_for() {
             }
         }
 
-        fn load(path: String) throws -> String {
+        fn load(path: String) -> String throws {
             throw ConfigError::NotFound(path)
         }
 

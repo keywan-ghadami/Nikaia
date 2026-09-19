@@ -1897,7 +1897,7 @@ These are expected problems: a file is missing, a connection drops, an input doe
 format. A function that can fail says so with `throws`.
 
 ```nika
-fn fetch_config() throws -> String {
+fn fetch_config() -> String throws {
     let file = fs::read("config.txt")   // can fail
     return net::send(file)              // can fail too
 }
@@ -1909,9 +1909,11 @@ order [ADR-102](adr/adr-102.md) D1 already fixed for a function *type*, so a
 declaration and a type read the same way round; the form before the arrow stops
 parsing, with a message naming the order.
 
-> **Status:** **both orders parse today** ([ADR-140](adr/adr-140.md) §5 step 2),
-> and this chapter's examples still write the one that goes. One order is the
-> language; refusing the other is unbuilt.
+> **Status:** **built** ([ADR-140](adr/adr-140.md) §5). The pre-arrow form is a
+> parse error whose message names the order, and this chapter writes the one
+> that stays. A declaration with **no** result type writes the word where it
+> always did — `fn tick() sync { … }` — because there is nothing for it to be
+> before or after.
 
 **`throws` names no types.** What a function can fail *with* follows from its body, so the compiler
 infers it whole-program and writes it to `nikaia.contracts` (Part III, 13.5). Writing it into the
@@ -1974,7 +1976,7 @@ keeps `break x` from becoming a quietly dropped value (3.3).
 that declares `throws` — that is all of it. No operator, no sigil:
 
 ```nika
-fn load() throws -> Config {
+fn load() -> Config throws {
     let text = fetch_config()   // if it fails, `load` fails
     return parse(text)
 }

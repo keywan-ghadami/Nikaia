@@ -1652,19 +1652,7 @@ or `type` only; the derivation, which makes it a pure function of the sources li
 every other column; and `NK2401` staying silent about prose, because a changed
 sentence is not a changed contract.
 
-### 2.47. `throws` and `sync` parse on either side of the arrow
-
-[ADR-140](specification/adr/adr-140.md) D4. `fn f() throws -> String` and
-`fn f() -> String throws` both parse, and the second is the language:
-[ADR-102](specification/adr/adr-102.md) D1 already fixed that order for a
-function *type*, where the trailing words are greedy, so a declaration and a type
-read the same way round.
-
-*What it needs:* the pre-arrow form out of the declaration grammar with a message
-naming the order, and the pages that write it — Part I 7.1's first example among
-them.
-
-### 2.48. A grammar's rule is reached through a dot
+### 2.47. A grammar's rule is reached through a dot
 
 [ADR-140](specification/adr/adr-140.md) D3. `Json.value(input)` reaches a rule of
 the grammar `Json`, and `Op::Times` reaches a variant of an enum. A grammar's name
@@ -1676,7 +1664,7 @@ side happens to be.
 naming the replacement, and Part II 10.2, 10.3 and 11 rewritten with the
 `examples/` that enter a grammar.
 
-### 2.49. `std`'s own types are constructed with `new`
+### 2.48. `std`'s own types are constructed with `new`
 
 [ADR-140](specification/adr/adr-140.md) D2. `Vec::new()`, `String::new()` and
 `HashMap::new()` are Rust's convention reaching through a hand-written ledger,
@@ -1689,7 +1677,7 @@ convention it could see.
 `HashMap()`, the lowering that puts `::new()` back on the Rust side, the corpus
 and the pages, and `1brc.nika`'s `Summary::new`.
 
-### 2.50. `use std::…` brings a name in and a package's `use` does not
+### 2.49. `use std::…` brings a name in and a package's `use` does not
 
 [ADR-140](specification/adr/adr-140.md) D5.
 [ADR-046](specification/adr/adr-046.md)'s rule is *no name is brought in*, and

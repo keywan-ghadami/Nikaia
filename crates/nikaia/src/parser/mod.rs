@@ -686,12 +686,11 @@ grammar! {
             name:NAME
             generics:generic_list?
             params:fn_params
-            sync_before:kw_sync?
-            throws_before:kw_throws?
+            promise_before_the_arrow?
             ret:return_type_arrow?
-            sync_after:kw_sync?
-            throws_after:kw_throws?
+            promise:promise_after_the_type
             -> {
+                let (sync, throws) = promise;
                 Spanned::new(TraitMethod {
                     name,
                     generics: generics.unwrap_or_default(),
@@ -699,8 +698,8 @@ grammar! {
                     args: params.args,
                     config: params.config,
                     ret_type: ret,
-                    is_sync: sync_before.is_some() || sync_after.is_some(),
-                    throws: throws_before.is_some() || throws_after.is_some(),
+                    is_sync: sync,
+                    throws,
                 }, _span)
             }
 
@@ -709,25 +708,30 @@ grammar! {
         rule kw_sync -> () = KW_SYNC -> { () }
         rule kw_pub -> () = KW_PUB -> { () }
 
-        // `sync` and `throws` are accepted on either side of the return type,
-        // and both sides are used: Part II writes `fn add(…) sync`, Part III
-        // `pub fn read(path: Path) -> Bytes throws`, and Part I 7.1
-        // `fn fetch_config() throws -> String`. The comment used to claim this
-        // while the rule gave `throws` only the trailing slot, so the form the
-        // error-handling chapter uses did not parse.
+        // **`sync` and `throws` stand after the result type**
+        // ([ADR-140](../../../../docs/specification/adr/adr-140.md) D4), which
+        // is the order [ADR-102](../../../../docs/specification/adr/adr-102.md)
+        // D1 already fixed for a function *type* - one order in a declaration
+        // and in a type. Both sides used to parse and the specification wrote
+        // both: Part II `fn add(…) sync`, Part III
+        // `pub fn read(path: Path) -> Bytes throws`, Part I 7.1
+        // `fn fetch_config() throws -> String`.
+        //
+        // A declaration with **no** result type writes them in the same place,
+        // because there is nothing for them to be before or after:
+        // `fn tick() sync { … }` is untouched.
         rule fn_item -> Item =
             vis:kw_pub?
             KW_FN
             name:NAME?
             generics:generic_list?
             params:fn_params
-            sync_before:kw_sync?
-            throws_before:kw_throws?
+            promise_before_the_arrow?
             ret:return_type_arrow?
-            sync_after:kw_sync?
-            throws_after:kw_throws?
+            promise:promise_after_the_type
             body:block
             -> {
+                let (sync, throws) = promise;
                 Item::Fn {
                     name,
                     generics: generics.unwrap_or_default(),
@@ -737,11 +741,57 @@ grammar! {
                     spread: params.spread,
                     ret_type: ret,
                     body,
-                    is_sync: sync_before.is_some() || sync_after.is_some(),
+                    is_sync: sync,
                     is_public: vis.is_some(),
-                    throws: throws_before.is_some() || throws_after.is_some(),
+                    throws,
                 }
             }
+
+        // The refusal, and it needs a rule of its own because the message is
+        // the whole point: without it the parser offers `{` where a reader
+        // wrote `throws` and says nothing about the order
+        // ([ADR-140](../../../../docs/specification/adr/adr-140.md) D4).
+        //
+        // **The cut sits after the arrow**, so the word alone is not enough to
+        // fire it: `fn tick() sync { … }` matches `kw_sync`, finds no `->`,
+        // backtracks, and the trailing slot takes the same word one position
+        // later. Only a promise *followed by* an arrow is the old form.
+        // **`sync` stands before `throws`**, which is the order
+        // [ADR-102](../../../../docs/specification/adr/adr-102.md) D1 fixes for
+        // a function type and the order
+        // [ADR-140](../../../../docs/specification/adr/adr-140.md) D4's own
+        // example writes. `fn f() throws sync { … }` used to parse, and only by
+        // accident: `throws` took the slot before the arrow and `sync` the one
+        // after it, and D4 leaves one slot. The refusal is here because
+        // *expected `{`* is what a reader would otherwise get for a form that
+        // was legal a version ago.
+        rule promise_after_the_type -> (bool, bool) =
+            kw_throws kw_sync fail(
+                "`sync` stands before `throws` (ADR-140 D4, ADR-102 D1): write \
+                 `sync throws`. It is the order a function *type* has had since \
+                 ADR-102, and `throws sync` used to parse here only because the \
+                 two words sat in different slots - one before the result type \
+                 and one after it - which D4 leaves as one."
+            ) -> { (true, true) }
+          | s:kw_sync? t:kw_throws? -> { (s.is_some(), t.is_some()) }
+
+        rule promise_before_the_arrow -> () =
+            kw_sync kw_throws? "->" => fail(
+                "`sync` and `throws` stand after the result type (ADR-140 D4): \
+                 write `fn f() -> String sync`. That is the order ADR-102 D1 \
+                 already fixes for a function *type*, where the trailing words \
+                 are greedy, so a declaration and a type read the same way \
+                 round. A declaration with no result type writes the word in \
+                 the same place it always did."
+            ) -> { () }
+          | kw_throws kw_sync? "->" => fail(
+                "`throws` and `sync` stand after the result type (ADR-140 D4): \
+                 write `fn f() -> String throws`. That is the order ADR-102 D1 \
+                 already fixes for a function *type*, where the trailing words \
+                 are greedy, so a declaration and a type read the same way \
+                 round. A declaration with no result type writes the word in \
+                 the same place it always did."
+            ) -> { () }
 
         // ADR-023 D1: `throws` carries no type list. The specification itself
         // wrote one in four places, so a reader will try it, and a parse error

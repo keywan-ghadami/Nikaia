@@ -58,11 +58,11 @@
 10-nikaia-light.md #58 lowered (as written)  @borrowed
 10-nikaia-light.md #59 fragment (as written) [sketch]  @borrowed
 10-nikaia-light.md #60 lowered (a body)  let mut users = load_users()
-10-nikaia-light.md #61 lowered (as written)  fn fetch_config() throws -> String {
+10-nikaia-light.md #61 lowered (as written)  fn fetch_config() -> String throws {
 10-nikaia-light.md #62 refused (as written) [NK1135]  enum ConfigError {
 10-nikaia-light.md #63 refused (a body) [NK1117]  if !fs::exists(path) {
 10-nikaia-light.md #64 fragment (as written)  let user = find(id) ?? throw NotFound(id)
-10-nikaia-light.md #65 refused (as written) [NK1135]  fn load() throws -> Config {
+10-nikaia-light.md #65 refused (as written) [NK1135]  fn load() -> Config throws {
 10-nikaia-light.md #66 lowered (a body)  let config = load() catch {
 10-nikaia-light.md #67 fragment (as written)  let config = load() catch {
 10-nikaia-light.md #68 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…

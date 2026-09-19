@@ -401,7 +401,10 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   thing, two spellings.
 * **`throws` and `sync` on either side of `->`**: `fn f() throws -> String`
   (7.1) and `fn f() -> String throws` (3.3, every example). The parser takes
-  both. One order; after the type reads best.
+  both. One order; after the type reads best. *Decided and **built**:*
+  [ADR-140](specification/adr/adr-140.md) D4 — after the type, which is the
+  order [ADR-102](specification/adr/adr-102.md) D1 already fixed for a function
+  *type*; the pre-arrow form is a parse error that names the order.
 * **`use`**: for a package *no name is brought in* (ADR-046) — but `use
   std::collections::HashMap` brings in `HashMap`, and `Vec` and `String` need
   no `use` at all. Probe confirms the import works. Two rules for one keyword,
@@ -416,7 +419,7 @@ brace literal, the anonymous constructor with `new` gone from `std`'s own types,
 nothing in for `std` as for a package. **One record and five migrations**,
 because they are one question — *does this language say one thing one way* — and
 answering them apart would migrate the corpus five times for one property.
-**D1 is built** and the other four are not; [`open-work.md`](open-work.md) §2
+**D1 and D4 are built** and the other three are not; [`open-work.md`](open-work.md) §2
 carries one entry each. D1 went first because
 [ADR-133](specification/adr/adr-133.md)'s call half was blocked on exactly the
 spelling it frees, and that half is built too.
