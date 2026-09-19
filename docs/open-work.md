@@ -1588,7 +1588,7 @@ asks for the size), a struct as an opaque handle with `_new` and `_free`, an
 enum as numbered constants in declaration order, an optional as `NULL` or the
 package's `NONE`. Every entry point returns an `int` status and puts its
 values in out-parameters; a `throws` variant is a positive code, the library's
-own failures are the six negative ones, and `<pkg>_last_error` carries the
+own failures are the seven negative ones, and `<pkg>_last_error` carries the
 site and the secondary list. A caller may hand the library its allocator
 before `init`. A panic is caught at the boundary and poisons the library until
 `shutdown` and `init`. A pausing function is exported blocking and as

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.41 (Draft)
+**Version:** 0.0.42 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -551,7 +551,7 @@ generates `<package>.h` from the ledger. What a C programmer sees follows two ru
 owns the memory, and a call never surprises.
 
 * every entry point returns a status (`0` is `<PACKAGE>_OK`, the error variants are numbered per
-  library, six negative codes are the boundary's own) and a value travels in an out-parameter;
+  library, seven negative codes are the boundary's own) and a value travels in an out-parameter;
   `<package>_last_error` renders the failure with its site and its `secondary` list, per thread;
 * a text or byte result is written into the **caller's buffer** (`out, cap, written`; `NULL` asks
   the size; too small is a status with the size that would do), and the caller may supply the

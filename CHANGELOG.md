@@ -4,6 +4,12 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.42] — 2026-09-19
+
+### Fixed (one count)
+
+- The library boundary has **seven** negative status codes since [ADR-129](docs/specification/adr/adr-129.md) added `E_CANCELLED`; Part III 15.1, the ADR index and `open-work.md` said six.
+
 ## [0.0.41] — 2026-09-19
 
 The third part is rewritten to the language standard, and the editorial pass
