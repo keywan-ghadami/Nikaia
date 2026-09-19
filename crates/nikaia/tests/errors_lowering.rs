@@ -119,7 +119,11 @@ fn there_is_no_postfix_question_mark() {
 /// the postfix `?` must not take its first character with it.
 #[test]
 fn coalescing_still_parses() {
-    let rust = emit(r#"fn main() { let p = cli::args().nth(1) ?? "x" }"#);
+    let rust = emit(
+        r#"use std::cli
+
+fn main() { let p = cli::args().nth(1) ?? "x" }"#,
+    );
     assert!(rust.contains("unwrap_or_else"), "{rust}");
 }
 
@@ -515,7 +519,11 @@ fn mutual_recursion_settles() {
 /// the direction ADR-010 D1 calls a vulnerability generator.
 #[test]
 fn what_cannot_be_named_is_a_question_mark() {
-    let ledger = ledger_for(r#"fn reads() -> String throws { return io::read_to_string() }"#);
+    let ledger = ledger_for(
+        r#"use std::io
+
+fn reads() -> String throws { return io::read_to_string() }"#,
+    );
     assert!(
         ledger.contains(r#"throws = ["?"]"#),
         "`std`'s failures have no Nikaia name yet:\n{ledger}"
@@ -567,7 +575,8 @@ fn a_function_that_cannot_fail_has_no_entry() {
 /// computed is never published.
 #[test]
 fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
-    let source = "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+    let source =
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
                   fn ruft() -> String { return liest() }\n\
                   fn main() { }";
 
@@ -604,7 +613,7 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
     // Declared, the entry says what is true - and says it with `"?"`, because
     // `std`'s failures have no Nikaia name (ADR-024 D1).
     let declared = ledger_for(
-        "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
          fn ruft() -> String throws { return liest() }\n\
          fn main() { }",
     );

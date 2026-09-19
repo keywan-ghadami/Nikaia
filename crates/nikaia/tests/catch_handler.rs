@@ -129,6 +129,8 @@ fn main() {
 fn the_reproduction_compiles_without_a_warning() {
     let rust = lowered(
         r#"
+use std::cli
+
 fn main() {
     let steps = cli::args().nth(1) ?? "1000"
     let n: i32 = steps.parse() catch { 1000 }

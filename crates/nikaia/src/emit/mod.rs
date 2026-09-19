@@ -3436,6 +3436,21 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// The same, for a name that may carry its module
+    /// ([ADR-154](../../docs/specification/adr/adr-154.md) D3).
+    ///
+    /// `collections::HashMap` is the spelling a program writes once `HashMap`
+    /// is outside the prelude, and the question this answers is about the
+    /// **type** and not about the prefix: the prefix rides through untouched,
+    /// so the annotation and the constructor cannot disagree about which hash a
+    /// map got.
+    fn mapped_path(&self, name: &str) -> String {
+        match name.rsplit_once("::") {
+            Some((module, last)) => format!("{module}::{}", self.map_name(last)),
+            None => self.map_name(name).to_string(),
+        }
+    }
+
     /// The name a type is written with below, which for one name depends on the
     /// value and not only on the name.
     ///
@@ -3471,7 +3486,7 @@ impl<'p> Emitter<'p> {
             // `unaliased`, for the reason [`Emitter::path`] gives: a type may be
             // written with this file's own name for the package that declares it
             // ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
-            _ => self.parsed.unaliased(self.map_name(name)),
+            _ => self.parsed.unaliased(&self.mapped_path(name)),
         }
     }
 
@@ -5170,6 +5185,33 @@ impl<'p> Emitter<'p> {
                 self.args(out, text, args, &takes, depth, flow)?;
                 out.push(")");
                 return Ok(());
+            }
+        }
+
+        // **The same constructor, written with its module in front**
+        // ([ADR-154](../../docs/specification/adr/adr-154.md) D3):
+        // `collections::HashMap()` is `HashMap()` reached the way the prelude's
+        // list says a name outside it is reached. The arm above answers the bare
+        // spelling and this one the qualified, off the same fact — the entry
+        // `Name::new`.
+        //
+        // The module rides along into the emitted Rust, because `std`'s own
+        // prelude publishes the module and the name a **trusted** program gets
+        // is in it too (`collections::TrustedMap`). What the prefix must not do
+        // is reach `map_name`, which answers about a *type*.
+        if let Expr::Path(segments) = func {
+            if let [module, name] = segments.as_slice() {
+                let module = self.text(*module).to_string();
+                let name = self.text(*name).to_string();
+                let key = format!("{name}::new");
+                if self.library.functions.contains_key(&key) {
+                    out.push(&format!("{module}::{}", self.path(&[&name, "new"])));
+                    out.push("(");
+                    let takes = self.takes_a_handle(&key);
+                    self.args(out, &name, args, &takes, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
+                }
             }
         }
 

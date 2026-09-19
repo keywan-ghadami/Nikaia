@@ -117,7 +117,7 @@ fn a_name_with_a_package_in_front_is_somebody_elses_question() {
         "a qualified name is the import rules' business, not this walk's"
     );
     assert!(
-        refused("fn f(a: &fs::Mapped) { }\nfn main() { }\n").is_empty(),
+        refused("use std::fs\n\nfn f(a: &fs::Mapped) { }\nfn main() { }\n").is_empty(),
         "and a `std` type resolves, by its own name and by its suffix"
     );
 }

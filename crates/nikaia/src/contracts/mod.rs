@@ -1462,24 +1462,27 @@ impl Ledger {
         )
     }
 
-    /// A function by the name a caller wrote, or by the name the prelude makes
-    /// available unqualified.
+    /// A function by the name a caller wrote.
     ///
-    /// Matching on the last segment is name-for-name resolution (ADR-011 D2)
-    /// rather than import tracking, and it is what a compiler without a module
-    /// graph can honestly do.
+    /// **Exactly the name, since
+    /// [ADR-154](../../../docs/specification/adr/adr-154.md)**: a `std` entry
+    /// that lives in a module is reached through the module, `text::digit_value`
+    /// and not `digit_value`, and what needs no prefix is the list on Part I's
+    /// first page — whose entries are keyed **bare** here, so the exact lookup
+    /// is the whole rule.
+    ///
+    /// It used to match on the last segment, which was name-for-name resolution
+    /// (ADR-011 D2) rather than import tracking, and it is what a compiler
+    /// without a module graph could honestly do before there was a written
+    /// list. What it cost, beyond the prelude being undefined, was answering
+    /// about the **wrong function**: a program with its own `fn read` found
+    /// `io::read` in a unit that does not carry the ledger of the package
+    /// beside it, and the `throws` column then spoke for a callee nobody had
+    /// resolved.
     pub fn lookup(&self, name: &str) -> Option<(String, &FnContract)> {
-        if let Some(contract) = self.functions.get(name) {
-            return Some((name.to_string(), contract));
-        }
-        if name.contains("::") {
-            return None;
-        }
-        let suffix = format!("::{name}");
         self.functions
-            .iter()
-            .find(|(key, _)| key.ends_with(&suffix))
-            .map(|(key, contract)| (key.clone(), contract))
+            .get(name)
+            .map(|contract| (name.to_string(), contract))
     }
 
     /// Every entry a bare method name could resolve to.

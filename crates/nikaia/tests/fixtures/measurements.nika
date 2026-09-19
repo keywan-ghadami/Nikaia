@@ -10,6 +10,8 @@
 // with `use super::*`, so a name the .nika file does not declare is resolved
 // where the grammar is placed.
 
+use std::text
+
 grammar Measurements {
 
     // Up to the semicolon - or to the end of the frame, whichever comes first.
@@ -22,8 +24,8 @@ grammar Measurements {
         neg:"-"? whole:digit{1,2} "." frac:digit
         -> {
             let mut value = 0
-            for d in whole.chars() { value = value * 10 + digit_value(d) }
-            value = value * 10 + digit_value(frac)
+            for d in whole.chars() { value = value * 10 + text::digit_value(d) }
+            value = value * 10 + text::digit_value(frac)
             if neg.is_some() { -value } else { value }
         }
 

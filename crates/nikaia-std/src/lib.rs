@@ -55,6 +55,7 @@ pub mod prelude {
     pub use crate::channel;
     pub use crate::channel::{Receiver, Sender};
     pub use crate::cli;
+    pub use crate::collections;
     pub use crate::error::Full;
     // **The C boundary's one `std` type**
     // ([ADR-147](../../../docs/specification/adr/adr-147.md) D4): a program
@@ -83,4 +84,26 @@ pub mod prelude {
     pub use crate::rt;
     pub use crate::text::digit_value;
     pub use std::collections::HashMap;
+
+    // **The modules a `.nika` file reaches through a prefix**
+    // ([ADR-154](../../../docs/specification/adr/adr-154.md) D3, D5): `use
+    // std::text` then `text::digit_value`, and the same for the rest. They are
+    // here because the generated Rust writes the prefix the source wrote — the
+    // **emitter's** prelude is not the program's list, and this is the half
+    // that answers *what the generated file needs to compile*.
+    pub use crate::foreign;
+    pub use crate::text;
+}
+
+/// **What `use std::collections` reaches**
+/// ([ADR-154](../../../docs/specification/adr/adr-154.md) D3).
+///
+/// A module of this crate and not a re-export of the language below's, because
+/// one name in it is **ours**: which hash a map gets follows the provenance of
+/// the program's input ([ADR-010](../../../docs/specification/adr/adr-010.md)
+/// D5), so `collections::HashMap` in a trusted program is written
+/// `collections::TrustedMap` and has to resolve.
+pub mod collections {
+    pub use crate::hash::{TrustedMap, TrustedSet};
+    pub use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 }

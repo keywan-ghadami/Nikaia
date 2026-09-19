@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.62 (Draft)
+**Version:** 0.0.63 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -83,6 +83,51 @@ defect; without the check, the same defect would appear as a silent hang
 > **Implementation status:** Not implemented. Nothing refuses the nesting of
 > Part II 12.3, no re-entrancy check is emitted, and `nikaia.toml` has no key
 > for this option ([ADR-039](adr/adr-039.md) §4).
+
+### 1.3. The prelude
+Some names need no `use`. They are these, and there are no others
+([ADR-154](adr/adr-154.md) D1):
+
+* the containers a program cannot do without: **`Vec`**, **`String`**,
+  **`Bytes`**;
+* the printing functions: **`println`**, **`print`**, **`eprintln`**;
+* **`assert`** and **`panic`**;
+* the numeric conversions 2.2 already offers.
+
+Everything else in the standard library is reached the way a package is
+reached: `use std::fs` at the top of the file, and `fs::read_to_string(path)`
+where it is used (9.1, [ADR-140](adr/adr-140.md) D5).
+
+**The rule the list is built from** is that nothing in it does I/O but
+printing, and nothing in it pauses (D2). Reading a file is a thing a program
+should say it does, and `use std::fs` is that sentence. It is also what makes
+the list safe on a machine with no filesystem: the list does not have to be cut
+down for one (Part III 17.2).
+
+**`HashMap` is the first thing outside it** (D3), and it is the name that makes
+this a rule rather than a tidy-up: a map is common enough to argue for, and
+`use std::collections` is one line, and a list that grows by *common enough*
+has no floor. So `collections::HashMap` where it is used, which is 9.1's shape
+one library over.
+
+**A name joins the list by a record and never by being needed once** (D4).
+Additive is the easy direction and it is the one that ends with everything in
+the list; a name in it has to be argued for, with the rule above as the bar. A
+prelude is also very hard to take back: every name in it is a name some program
+writes without importing, and removing one breaks that program. So the size of
+the list matters more than its contents.
+
+*Design rationale:* a reader finds out what needs no `use` by reading this page
+rather than a file of the compiler's.
+
+> **Implementation status:** Partially implemented. The rule is enforced for a
+> **function**: a name that lives in a `std` module is refused without its
+> prefix, and a prefix is refused without its `use`, both with `NK1117` and the
+> line to add. Two things are not. **`Bytes`, `assert` and `panic` are named by
+> the list and do not exist**, each its own piece of work; and `HashMap`,
+> `Duration` and `CStr` are **types**, which this rule does not yet reach — a
+> type keyed without a module in `std`'s ledger is still written bare
+> ([ADR-154](adr/adr-154.md) §5). `docs/open-work.md` carries both.
 
 ---
 
@@ -732,6 +777,8 @@ can fail. When it does, the loop stops and **the failure leaves the function**,
 exactly as a failing call would (Chapter 7). The function declares it:
 
 ```nika
+use std::io
+
 fn tally() -> i64 throws {           // without `throws`: error[NK2701]
     let mut n = 0
     for line in io::lines() { n += 1 }
@@ -1821,6 +1868,8 @@ Two things are guaranteed:
     I/O call (Chapter 8), and a borrowed value stays valid across the pause:
 
     ```nika
+use std::fs
+
     fn report(config: &Config) {
         let name = &config.name       // borrow
         let data = fs::read("log")    // the function pauses here (I/O)...
@@ -2051,6 +2100,8 @@ drops, an input does not fit the format. A function that can fail says so with
 `throws`.
 
 ```nika
+use std::fs
+
 fn fetch_config() -> String throws {
     let file = fs::read("config.txt")   // can fail
     return net::send(file)              // can fail too
@@ -2631,8 +2682,10 @@ library rather than a package ([ADR-030](adr/adr-030.md) D1). **It brings no
 name in either** ([ADR-140](adr/adr-140.md) D5): it names a module and the
 module's items are reached through it, exactly as a package's prefix works. A
 `use` whose last segment is a **type** is refused with `NK1156`, because it
-does nothing: `Vec`, `String` and `HashMap` need no `use` at all, and that is
-the prelude.
+does nothing: what needs no `use` is the list in 1.3, and a type is not reached
+by naming it twice. `HashMap` is **not** on that list
+([ADR-154](adr/adr-154.md) D3): it is `use std::collections` and
+`collections::HashMap`, the same shape this section gives a package.
 
 A diagnostic names the **package** rather than the alias: the type is
 `http::Request` whatever one file calls the package, and the `use` line that

@@ -1,7 +1,7 @@
 //! A span of time, and the call that waits one out
 //! ([ADR-150](../../../docs/specification/adr/adr-150.md)).
 //!
-//! Part II 12.4 wrote `sleep(5.seconds())` and
+//! Part II 12.4 wrote `time::sleep(5.seconds())` and
 //! [ADR-141](../../../docs/specification/adr/adr-141.md) D2 marked it
 //! *unspecified*: the type was not in dispute, only where it lived and how it
 //! was spelled. D1 answers `std::time::Duration`, D2 answers *a method on an
@@ -71,9 +71,11 @@ fn output(purpose: &str, source: &str) -> (String, std::time::Duration) {
 fn the_five_names_are_methods_on_an_integer() {
     for name in ["seconds", "millis", "micros", "minutes", "hours"] {
         let source = format!(
-            "fn main() {{\n\
+            "use std::time\n\
+         \n\
+         fn main() {{\n\
              \x20   let span = 5.{name}()\n\
-             \x20   sleep(span)\n\
+             \x20   time::sleep(span)\n\
              }}\n"
         );
         assert!(
@@ -97,7 +99,7 @@ fn the_five_names_are_methods_on_an_integer() {
 #[test]
 fn a_suffix_is_not_a_duration() {
     assert!(
-        parse_to_ast("fn main() { sleep(5s) }\n").is_err(),
+        parse_to_ast("use std::time\n\nfn main() { time::sleep(5s) }\n").is_err(),
         "`5s` is not a spelling this language has (ADR-150 D3)"
     );
 }
@@ -108,15 +110,15 @@ fn a_suffix_is_not_a_duration() {
 /// This is the `usize` defect one type over
 /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D2): a type the copy
 /// list does not name is one that **moves**, and the first program to write
-/// `sleep(50.millis())` was the first to meet it.
+/// `time::sleep(50.millis())` was the first to meet it.
 #[test]
 fn a_span_is_not_lent() {
-    let rust = lowered("fn main() { sleep(50.millis()) }\n");
+    let rust = lowered("use std::time\n\nfn main() { time::sleep(50.millis()) }\n");
     assert!(
-        rust.contains("sleep(50.millis())"),
+        rust.contains("time::sleep(50.millis())"),
         "a duration copies, so nothing lends it\n{rust}"
     );
-    assert!(!rust.contains("sleep(&"), "{rust}");
+    assert!(!rust.contains("time::sleep(&"), "{rust}");
 }
 
 /// **`sleep` is a suspension point**, which is the missing `sync` line in the
@@ -130,8 +132,8 @@ fn a_span_is_not_lent() {
 /// does not carry the ledger of the package beside it.
 #[test]
 fn a_sleep_carries_an_await() {
-    let rust = lowered("fn main() { sleep(1.millis()) }\n");
-    assert!(rust.contains("sleep(1.millis()).await;"), "{rust}");
+    let rust = lowered("use std::time\n\nfn main() { time::sleep(1.millis()) }\n");
+    assert!(rust.contains("time::sleep(1.millis()).await;"), "{rust}");
     assert!(rust.contains("async fn __nikaia_main()"), "{rust}");
 }
 
@@ -141,10 +143,12 @@ fn a_sleep_carries_an_await() {
 /// D1).
 #[test]
 fn a_count_may_be_either_integer() {
-    let source = "fn main() {\n\
+    let source = "use std::time\n\
+         \n\
+         fn main() {\n\
                   \x20   let wide: i64 = 2\n\
-                  \x20   sleep(wide.millis())\n\
-                  \x20   sleep(3.millis())\n\
+                  \x20   time::sleep(wide.millis())\n\
+                  \x20   time::sleep(3.millis())\n\
                   }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
 }
@@ -155,8 +159,10 @@ fn a_count_may_be_either_integer() {
 fn a_sleeping_program_compiles_and_runs() {
     let (printed, took) = output(
         "duration-sleeps",
-        "fn main() {\n\
-         \x20   sleep(120.millis())\n\
+        "use std::time\n\
+         \n\
+         fn main() {\n\
+         \x20   time::sleep(120.millis())\n\
          \x20   println(\"awake\")\n\
          }\n",
     );
@@ -178,9 +184,11 @@ fn a_sleeping_program_compiles_and_runs() {
 fn a_sleep_lets_the_other_task_run() {
     let (printed, _) = output(
         "duration-yields",
-        "fn main() {\n\
+        "use std::time\n\
+         \n\
+         fn main() {\n\
          \x20   let handle = spawn fn { 21 * 2 }\n\
-         \x20   sleep(80.millis())\n\
+         \x20   time::sleep(80.millis())\n\
          \x20   let answer = handle.join()\n\
          \x20   println(f\"{answer}\")\n\
          }\n",
@@ -195,9 +203,11 @@ fn a_sleep_lets_the_other_task_run() {
 fn a_span_below_zero_is_no_wait() {
     let (printed, took) = output(
         "duration-negative",
-        "fn main() {\n\
+        "use std::time\n\
+         \n\
+         fn main() {\n\
          \x20   let back: i64 = 0 - 5\n\
-         \x20   sleep(back.seconds())\n\
+         \x20   time::sleep(back.seconds())\n\
          \x20   println(\"through\")\n\
          }\n",
     );
@@ -209,7 +219,9 @@ fn a_span_below_zero_is_no_wait() {
 /// program may still use the word for its own.
 #[test]
 fn nothing_here_is_a_keyword() {
-    let source = "fn seconds(of: i64) -> i64 { return of * 2 }\n\
+    let source = "use std::time\n\
+         \n\
+         fn seconds(of: i64) -> i64 { return of * 2 }\n\
                   \n\
                   fn main() {\n\
                   \x20   let doubled = seconds(3)\n\
@@ -217,7 +229,11 @@ fn nothing_here_is_a_keyword() {
                   }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
-        lowered(source).contains("fn seconds(of: i64) -> i64"),
+        lowered(source).contains(
+            "use std::time\n\
+         \n\
+         fn seconds(of: i64) -> i64"
+        ),
         "{}",
         lowered(source)
     );

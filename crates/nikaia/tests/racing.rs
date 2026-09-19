@@ -65,12 +65,14 @@ fn output(purpose: &str, source: &str) -> String {
 #[test]
 fn an_arm_binds_and_then_runs_a_block() {
     let rust = lowered(
-        "fn slow() -> i64 { return 7 }\n\
+        "use std::time\n\
+         \n\
+         fn slow() -> i64 { return 7 }\n\
          \n\
          fn main() {\n\
          \x20   select {\n\
          \x20       result = slow() => { println(f\"{result}\") }\n\
-         \x20       _ = sleep(50.millis()) => { println(\"too slow\") }\n\
+         \x20       _ = time::sleep(50.millis()) => { println(\"too slow\") }\n\
          \x20   }\n\
          }\n",
     );
@@ -90,7 +92,9 @@ fn an_arm_binds_and_then_runs_a_block() {
 #[test]
 fn every_arm_is_a_block_of_its_own() {
     let rust = lowered(
-        "fn a() -> i64 { return 1 }\n\
+        "use std::time\n\
+         \n\
+         fn a() -> i64 { return 1 }\n\
          fn b() -> i64 { return 2 }\n\
          fn c() -> i64 { return 3 }\n\
          \n\
@@ -115,7 +119,9 @@ fn every_arm_is_a_block_of_its_own() {
 /// the language below, so nothing has to be translated.
 #[test]
 fn an_underscore_arm_binds_nothing() {
-    let source = "fn a() -> i64 { return 1 }\n\
+    let source = "use std::time\n\
+         \n\
+         fn a() -> i64 { return 1 }\n\
                   fn b() -> i64 { return 2 }\n\
                   \n\
                   fn main() {\n\
@@ -135,7 +141,9 @@ fn an_underscore_arm_binds_nothing() {
 #[test]
 fn one_arm_is_refused_with_its_reason() {
     let parsed = parse_to_ast(
-        "fn a() -> i64 { return 1 }\n\
+        "use std::time\n\
+         \n\
+         fn a() -> i64 { return 1 }\n\
          \n\
          fn main() {\n\
          \x20   select {\n\
@@ -161,7 +169,7 @@ fn select_is_a_reserved_word() {
         "`select` is reserved (ADR-148 D1)"
     );
     assert!(
-        parse_to_ast("fn main() { let select = 3 }\n").is_err(),
+        parse_to_ast("use std::time\n\nfn main() { let select = 3 }\n").is_err(),
         "a reserved word is not a name"
     );
 }
@@ -172,12 +180,14 @@ fn select_is_a_reserved_word() {
 fn the_first_to_finish_is_the_one_that_is_kept() {
     let printed = output(
         "select-first",
-        "fn quick() -> i64 { return 42 }\n\
+        "use std::time\n\
+         \n\
+         fn quick() -> i64 { return 42 }\n\
          \n\
          fn main() {\n\
          \x20   select {\n\
          \x20       answer = quick() => { println(f\"{answer}\") }\n\
-         \x20       _ = sleep(5.seconds()) => { println(\"too slow\") }\n\
+         \x20       _ = time::sleep(5.seconds()) => { println(\"too slow\") }\n\
          \x20   }\n\
          }\n",
     );
@@ -190,10 +200,12 @@ fn the_first_to_finish_is_the_one_that_is_kept() {
 fn a_sleeping_arm_loses_to_a_ready_one() {
     let printed = output(
         "select-sleeping",
-        "fn main() {\n\
+        "use std::time\n\
+         \n\
+         fn main() {\n\
          \x20   select {\n\
-         \x20       _ = sleep(5.seconds()) => { println(\"too slow\") }\n\
-         \x20       _ = sleep(1.millis()) => { println(\"soon enough\") }\n\
+         \x20       _ = time::sleep(5.seconds()) => { println(\"too slow\") }\n\
+         \x20       _ = time::sleep(1.millis()) => { println(\"soon enough\") }\n\
          \x20   }\n\
          }\n",
     );
@@ -209,7 +221,9 @@ fn a_sleeping_arm_loses_to_a_ready_one() {
 fn the_pages_own_example_runs() {
     let printed = output(
         "select-page",
-        "enum Timeout { TooSlow }\n\
+        "use std::time\n\
+         \n\
+         enum Timeout { TooSlow }\n\
          \n\
          impl Error for Timeout {\n\
          \x20   fn message(&self) -> String {\n\
@@ -224,7 +238,7 @@ fn the_pages_own_example_runs() {
          fn main() throws {\n\
          \x20   select {\n\
          \x20       result = heavy_math() => { println(f\"{result}\") }\n\
-         \x20       _ = sleep(5.millis()) => { throw Timeout::TooSlow }\n\
+         \x20       _ = time::sleep(5.millis()) => { throw Timeout::TooSlow }\n\
          \x20   }\n\
          }\n",
     );
@@ -235,12 +249,14 @@ fn the_pages_own_example_runs() {
 /// `match`: only the winner has a value.
 #[test]
 fn a_failing_arm_propagates_from_its_own_body() {
-    let source = "fn risky() -> i64 throws { return 3 }\n\
+    let source = "use std::time\n\
+         \n\
+         fn risky() -> i64 throws { return 3 }\n\
                   \n\
                   fn main() throws {\n\
                   \x20   select {\n\
                   \x20       n = risky() => { println(f\"{n}\") }\n\
-                  \x20       _ = sleep(5.seconds()) => { println(\"too slow\") }\n\
+                  \x20       _ = time::sleep(5.seconds()) => { println(\"too slow\") }\n\
                   \x20   }\n\
                   }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
@@ -258,7 +274,9 @@ fn a_failing_arm_propagates_from_its_own_body() {
 /// no program can ask.
 #[test]
 fn a_handle_can_be_cancelled() {
-    let source = "fn main() {\n\
+    let source = "use std::time\n\
+         \n\
+         fn main() {\n\
                   \x20   let handle = spawn fn { 1 + 1 }\n\
                   \x20   handle.cancel()\n\
                   \x20   println(\"stopped\")\n\
@@ -279,13 +297,15 @@ fn a_handle_can_be_cancelled() {
 fn a_cancelled_task_stops_at_its_pause_point() {
     let printed = output(
         "select-cancel-stops",
-        "fn main() {\n\
+        "use std::time\n\
+         \n\
+         fn main() {\n\
          \x20   let handle = spawn fn {\n\
-         \x20       sleep(50.millis())\n\
+         \x20       time::sleep(50.millis())\n\
          \x20       println(\"the task finished\")\n\
          \x20   }\n\
          \x20   handle.cancel()\n\
-         \x20   sleep(150.millis())\n\
+         \x20   time::sleep(150.millis())\n\
          \x20   println(\"main finished\")\n\
          }\n",
     );
@@ -299,12 +319,14 @@ fn a_cancelled_task_stops_at_its_pause_point() {
 fn a_task_that_is_not_cancelled_still_runs() {
     let printed = output(
         "select-uncancelled",
-        "fn main() {\n\
+        "use std::time\n\
+         \n\
+         fn main() {\n\
          \x20   let handle = spawn fn {\n\
-         \x20       sleep(10.millis())\n\
+         \x20       time::sleep(10.millis())\n\
          \x20       println(\"the task finished\")\n\
          \x20   }\n\
-         \x20   sleep(100.millis())\n\
+         \x20   time::sleep(100.millis())\n\
          \x20   println(\"main finished\")\n\
          }\n",
     );

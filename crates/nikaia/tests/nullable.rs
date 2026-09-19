@@ -374,7 +374,7 @@ fn main() {
 /// would refuse a correct program (Part III, C.4).
 #[test]
 fn reaching_through_an_unknown_receiver_is_not_refused() {
-    let source = "\
+    let source = "use std::cli\n\n\
 fn main() {
     let whatever = cli::args().nth(1)
     let n = whatever?.something

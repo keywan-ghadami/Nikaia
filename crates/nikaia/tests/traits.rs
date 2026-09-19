@@ -362,6 +362,8 @@ fn trait_is_a_reserved_word() {
 fn an_implementation_that_pauses_is_refused_where_the_trait_says_sync() {
     let found = findings(
         r#"
+use std::fs
+
 trait Loader {
     fn load(&self) -> String sync throws
 }
@@ -525,6 +527,8 @@ fn main() {
 fn an_implementation_that_fails_is_refused_where_the_trait_says_it_cannot() {
     let found = findings(
         r#"
+use std::fs
+
 trait Loader {
     fn load(&self) -> String
 }

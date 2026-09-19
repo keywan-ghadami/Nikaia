@@ -95,14 +95,15 @@ fn a_call_with_too_few_arguments_is_reported() {
 /// ledger worth shipping (Part III, 13.5).
 #[test]
 fn a_call_into_std_is_checked_against_the_shipped_ledger() {
-    let (code, message) = one("fn main() throws { let text = io::read_to_string(\"x\") }");
+    let (code, message) =
+        one("use std::io\n\nfn main() throws { let text = io::read_to_string(\"x\") }");
     assert_eq!(code, "NK1101");
     assert_eq!(
         message,
         "`io::read_to_string` takes 0 arguments, and this call passes 1"
     );
     assert_eq!(
-        findings("fn main() throws { let text = io::read_to_string(\"x\") }")[0]
+        findings("use std::io\n\nfn main() throws { let text = io::read_to_string(\"x\") }")[0]
             .help
             .as_deref(),
         Some("call it as `io::read_to_string()`")
@@ -327,9 +328,13 @@ fn options_are_not_counted_as_arguments() {
 /// `std`'s options are read from the ledger it ships, like everything else.
 #[test]
 fn an_option_of_a_library_function_is_checked_from_its_ledger() {
-    assert!(findings("fn main() throws { fs::write(\"o\", \"x\"; append: true) }").is_empty());
+    assert!(
+        findings("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\"; append: true) }")
+            .is_empty()
+    );
 
-    let (code, message) = one("fn main() throws { fs::write(\"o\", \"x\"; apend: true) }");
+    let (code, message) =
+        one("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\"; apend: true) }");
     assert_eq!(code, "NK1109");
     assert_eq!(message, "`fs::write` has no option `apend`");
 }
@@ -397,7 +402,7 @@ fn a_hole_that_does_not_parse_is_not_the_checkers_business() {
 /// fails the enclosing function, and the compiler makes you declare it.
 #[test]
 fn a_loop_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
-    let (code, message) = one("fn count() -> i64 {\n\
+    let (code, message) = one("use std::io\n\nfn count() -> i64 {\n\
          \x20   let mut n = 0\n\
          \x20   for line in io::lines() { n += 1 }\n\
          \x20   return n\n\
@@ -413,7 +418,7 @@ fn a_loop_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
 #[test]
 fn a_loop_that_can_fail_is_fine_where_the_failure_may_leave() {
     assert!(findings(
-        "fn count() -> i64 throws {\n\
+        "use std::io\n\nfn count() -> i64 throws {\n\
          \x20   let mut n = 0\n\
          \x20   for line in io::lines() { n += 1 }\n\
          \x20   return n\n\
@@ -428,7 +433,7 @@ fn a_loop_that_can_fail_is_fine_where_the_failure_may_leave() {
 /// matching on the name `io::lines` - the name is not there to match.
 #[test]
 fn naming_the_stream_first_does_not_hide_it() {
-    let (code, _) = one("fn count() -> i64 {\n\
+    let (code, _) = one("use std::io\n\nfn count() -> i64 {\n\
          \x20   let stream = io::lines()\n\
          \x20   let mut n = 0\n\
          \x20   for line in stream { n += 1 }\n\
@@ -441,7 +446,7 @@ fn naming_the_stream_first_does_not_hide_it() {
 /// also taking a pair apart is a shape to design rather than to guess at.
 #[test]
 fn a_fallible_loop_binds_one_name() {
-    let (code, message) = one("fn count() throws {\n\
+    let (code, message) = one("use std::io\n\nfn count() throws {\n\
          \x20   for (a, b) in io::lines() { }\n\
          }");
     assert_eq!(code, "NK2701");
@@ -535,7 +540,9 @@ fn a_generic_parameter_is_not_a_type() {
 /// the field cannot be looked up, and nothing is claimed about it.
 #[test]
 fn a_field_of_an_unknown_type_says_nothing() {
-    assert!(findings("fn label(r: &fs::Mapped) -> &str { return r.nmae }").is_empty());
+    assert!(
+        findings("use std::fs\n\nfn label(r: &fs::Mapped) -> &str { return r.nmae }").is_empty()
+    );
 }
 
 /// `for (k, v) in map` takes apart a pair whose shape Stage 0 has no signature
@@ -557,7 +564,7 @@ fn a_loop_over_pairs_binds_nothing() {
 #[test]
 fn a_parameter_that_accepts_several_types_claims_none() {
     assert!(findings(
-        "fn main() throws {\n\
+        "use std::fs\nuse std::io\n\nfn main() throws {\n\
          \x20   let text = io::read_to_string()\n\
          \x20   let path = \"out.txt\"\n\
          \x20   fs::write(path, text)\n\
@@ -566,7 +573,7 @@ fn a_parameter_that_accepts_several_types_claims_none() {
     .is_empty());
 
     // …and the arity is still checked, which is the half that survives.
-    let (code, _) = one("fn main() throws { fs::write(\"out.txt\") }");
+    let (code, _) = one("use std::fs\n\nfn main() throws { fs::write(\"out.txt\") }");
     assert_eq!(code, "NK1101");
 }
 
@@ -609,7 +616,7 @@ fn a_value_from_a_signature_that_claims_nothing_fits_anywhere() {
 /// the same rule and what the example above stopped being able to show.
 #[test]
 fn a_value_from_a_written_signature_is_measured_against_the_parameter() {
-    let (code, _) = one("fn takes(a: i32) { }\n\
+    let (code, _) = one("use std::cli\n\nfn takes(a: i32) { }\n\
          fn main() { takes(cli::args().nth(1)) }");
     assert_eq!(code, "NK1102", "a `String?` is not an `i32`");
 }
@@ -689,7 +696,7 @@ fn the_type_of_a_literal_is_read_off_its_first_character() {
 #[test]
 fn a_written_call_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
     let (code, message) = one(
-        "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
          fn ruft() -> String { return liest() }",
     );
     assert_eq!(code, "NK2605");
@@ -725,11 +732,13 @@ fn the_note_quotes_the_callees_contract_and_the_help_is_a_way_out() {
 /// never do is refuse one.
 #[test]
 fn a_declared_throws_or_a_catch_is_the_end_of_it() {
-    let declared = "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+    let declared =
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
                     fn ruft() -> String throws { return liest() }";
     assert!(findings(declared).is_empty(), "{:#?}", findings(declared));
 
-    let caught = "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+    let caught =
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
                   fn ruft() -> String { return liest() catch { return \"\".to_string() } }";
     assert!(findings(caught).is_empty(), "{:#?}", findings(caught));
 }
@@ -743,7 +752,7 @@ fn a_declared_throws_or_a_catch_is_the_end_of_it() {
 #[test]
 fn a_catch_handler_is_not_itself_caught() {
     let (code, _) = one(
-        "fn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
          fn ruft() -> String { return liest() catch { return liest() } }",
     );
     assert_eq!(code, "NK2605");
@@ -952,7 +961,7 @@ fn a_view_of_a_generic_type_fits_the_same_view() {
 fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
     assert!(
         findings(
-            "fn count(text: &str) -> i64 { return 1 }\n\
+            "use std::fs\n\nfn count(text: &str) -> i64 { return 1 }\n\
              fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(m) }"
         )
         .is_empty(),
@@ -965,7 +974,7 @@ fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
 /// words.
 #[test]
 fn a_transparent_container_does_not_fit_just_anything() {
-    let (code, message) = one("fn count(n: &i64) -> i64 { return 1 }\n\
+    let (code, message) = one("use std::fs\n\nfn count(n: &i64) -> i64 { return 1 }\n\
          fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(&m) }");
     assert_eq!(code, "NK1102");
     assert!(message.contains("&Mapped"), "{message}");
@@ -1479,7 +1488,7 @@ fn a_name_something_declares_is_not_refused() {
         // a struct declared here
         "struct Conn { id: i64 }\n\nfn f() {\n    Conn\n}",
         // `error`, which a `catch` block binds
-        "fn f(p: &str) {\n    fs::read_to_string(p) catch { println(f\"{error}\") }\n}",
+        "use std::fs\n\nfn f(p: &str) {\n    fs::read_to_string(p) catch { println(f\"{error}\") }\n}",
     ] {
         assert!(
             findings(source).is_empty(),

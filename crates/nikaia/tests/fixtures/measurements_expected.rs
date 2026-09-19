@@ -5,6 +5,8 @@ use winnow_grammar::grammar;
 #[allow(unused_imports)]
 pub use nikaia_std::prelude::*;
 
+// use std::text
+
 grammar! {
     grammar Measurements {
 
@@ -16,8 +18,8 @@ grammar! {
             neg:"-"? whole:digit{1,2} "." frac:digit
             -> {
                 let mut value = 0;
-                for d in whole.chars() { value = value * 10 + digit_value(d); }
-                value = value * 10 + digit_value(frac);
+                for d in whole.chars() { value = value * 10 + text::digit_value(d); }
+                value = value * 10 + text::digit_value(frac);
                 if neg.is_some() { -value } else { value }
             }
 

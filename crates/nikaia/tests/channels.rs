@@ -57,7 +57,9 @@ fn output(purpose: &str, source: &str) -> String {
 fn the_pages_own_example_runs() {
     let printed = output(
         "channel-page",
-        "fn main() {\n\
+        "use std::channel\n\
+         \n\
+         fn main() {\n\
          \x20   let (tx, rx) = channel::bounded(100)\n\
          \x20   spawn fn {\n\
          \x20       tx.send(\"Calculation complete\")\n\
@@ -75,7 +77,9 @@ fn the_pages_own_example_runs() {
 #[test]
 fn both_ends_pause_and_the_receiver_hands_back_a_nullable() {
     let rust = lowered(
-        "fn main() {\n\
+        "use std::channel\n\
+         \n\
+         fn main() {\n\
          \x20   let (tx, rx) = channel::bounded(4)\n\
          \x20   spawn fn { tx.send(1) }\n\
          \x20   let n = rx.recv() ?? 0\n\
@@ -95,7 +99,9 @@ fn both_ends_pause_and_the_receiver_hands_back_a_nullable() {
 #[test]
 fn the_capacity_is_not_lent() {
     let rust = lowered(
-        "fn main() {\n\
+        "use std::channel\n\
+         \n\
+         fn main() {\n\
          \x20   let (tx, rx) = channel::bounded(100)\n\
          \x20   spawn fn { tx.send(1) }\n\
          \x20   let n = rx.recv() ?? 0\n\
@@ -139,7 +145,9 @@ fn a_signature_that_hands_back_a_tuple_parses() {
 fn a_closed_channel_hands_back_nothing() {
     let printed = output(
         "channel-closed",
-        "fn main() {\n\
+        "use std::channel\n\
+         \n\
+         fn main() {\n\
          \x20   let (tx, rx) = channel::bounded(4)\n\
          \x20   spawn fn { tx.send(5) }\n\
          \x20   let first = rx.recv() ?? 0\n\
@@ -156,7 +164,9 @@ fn a_closed_channel_hands_back_nothing() {
 /// about channels, because the ledger's column *is* the rule.
 #[test]
 fn a_sync_body_may_not_send() {
-    let source = "fn quiet(tx: Sender[i64]) sync {\n\
+    let source = "use std::channel\n\
+         \n\
+         fn quiet(tx: Sender[i64]) sync {\n\
                   \x20   tx.send(1)\n\
                   }\n\
                   \n\
@@ -224,7 +234,9 @@ fn a_channel_is_answered_by_what_it_carries() {
 fn a_full_channel_waits_for_room() {
     let printed = output(
         "channel-backpressure",
-        "fn main() {\n\
+        "use std::channel\n\
+         \n\
+         fn main() {\n\
          \x20   let (tx, rx) = channel::bounded(1)\n\
          \x20   spawn fn {\n\
          \x20       tx.send(1)\n\

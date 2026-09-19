@@ -36,6 +36,7 @@
 
 use std::fs
 use std::cli
+use std::text
 
 // ---------------------------------------------------------------------------
 // 1. A grammar for the file
@@ -79,8 +80,8 @@ grammar Measurements {
         neg:"-"? whole:digit{1,2} "." frac:digit
         -> {
             let mut value = 0
-            for d in whole.chars() { value = value * 10 + digit_value(d) }
-            value = value * 10 + digit_value(frac)
+            for d in whole.chars() { value = value * 10 + text::digit_value(d) }
+            value = value * 10 + text::digit_value(frac)
             if neg != null { -value } else { value }
         }
 

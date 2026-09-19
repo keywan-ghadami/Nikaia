@@ -1365,6 +1365,12 @@ touches = []
 signature = "(i64) -> Duration"
 doc = "This many millionths of a second, as a span of time."
 
+# **In `std::time` and not in the prelude**
+# ([ADR-154](../../docs/specification/adr/adr-154.md) D2): the rule the list is
+# built from is that nothing in it pauses, and this is the one entry here that
+# does. So it is `use std::time` and `time::sleep(…)`, and Part II 12.4's line
+# is written that way.
+#
 # **A suspension point**, which is what the missing `sync` line says: the thread
 # is given up rather than held, so a program that sleeps runs its other tasks
 # while it does. That is the whole difference between this and the language
@@ -1373,7 +1379,7 @@ doc = "This many millionths of a second, as a span of time."
 # No `touches`, and its absence is the fail-closed answer rather than an
 # omission: what a wait orders against is everything, because the point of it is
 # that time passes in between.
-[fn."sleep"]
+[fn."time::sleep"]
 pub = true
 signature = "(span: Duration)"
 doc = "Wait out a span of time.\n\nThe thread is given up rather than held, so other tasks run while this waits."

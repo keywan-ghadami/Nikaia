@@ -105,30 +105,6 @@ second is the smaller change, since `Expr::LitInt` is an `i64` everywhere else
 and widening it touches every reader. Nothing in the tree writes the number, so
 this is a completeness item rather than a blocker.
 
-### 1.3. A bare call to something no ledger here describes is answered by `std`
-
-*Found by building* [ADR-150](specification/adr/adr-150.md), and it is about
-the **`throws` column**, because the `.await` one was moved out of reach by
-keying `sleep` bare.
-
-A unit built from `--input` carries its own ledger and `std`'s, and **not** the
-ledger of the package beside it. `examples/inventory/main.nika` calls `read`,
-which `examples/inventory/stock.nika` declares — so the emitter finds the name
-in neither of the two ledgers it holds, and `can_fail` then resolves it
-name-for-name into `std`, where `fs::read` is waiting. The answer it gets is
-about a different function.
-
-*Why nothing is broken today:* the one call in the corpus is inside a `catch`,
-which takes the `Result` itself and adds no `?`. The shape that would show it is
-a bare call to a package function that **cannot** fail, from a `throws`
-function, in a unit built from `--input`.
-
-*What it needs:* the emitter to know it has not resolved the name, rather than
-to answer from a ledger that happens to hold the word. Either the package's
-entries reach a single-file build, or a bare name that no ledger here declares
-is answered with *no* rather than with `std`'s — and the second is the smaller
-change and the one that matches what the column beside it already does.
-
 ## 2. Decided and unbuilt
 
 Two things hold across this whole section, and they are here rather than argued
@@ -1185,26 +1161,31 @@ arbitrary value.
 step 1. Neither is small, and the harness delivers nothing a reader of a program
 would notice — which is worth knowing before it is started rather than after.
 
-### 2.41. The prelude is what the compiler happens to know
+### 2.41. The prelude's type half, and three names on its list that do not exist
 
-[ADR-154](specification/adr/adr-154.md).
-`crates/nikaia-std/src/lib.rs`'s `prelude` was grown one `pub use` at a time and
-carries `fs`, `io`, `cli`, `html`, `task`, `ListExt`, `Full`, `digit_value` and
-`HashMap` — every one reachable from a `.nika` file with no `use`. So **a
-program can read a file without saying so**, which is the sentence
-[ADR-140](specification/adr/adr-140.md) D5 was written to make it say.
+[ADR-154](specification/adr/adr-154.md). The **function** half is built: a name
+that lives in a `std` module is refused without its prefix, a prefix is refused
+without its `use`, and both say the line to add. What is left is three pieces,
+and none of them is large.
 
-*And there is only one list.* The Nikaia-level prelude and the emitter's are the
-same module, which is the piece that does not exist rather than the piece that
-is wrong: what a program may name and what the generated file needs to compile
-are different questions.
+*The type half.* `HashMap`, `Duration` and `CStr` are keyed in `std`'s ledger
+**without** a module, so the rule cannot reach them and a program still writes
+them bare. D3's spelling already **works** — `use std::collections` and
+`collections::HashMap` resolves, lowers and picks the right hash — so what is
+missing is only the refusal of the bare one, which wants those three entries
+re-keyed the way `fs::Mapped` already is: `collections::HashMap`,
+`time::Duration`, `foreign::CStr`. The corpus writes `HashMap` in three files
+and `CStr` in one.
 
-*What it needs, in the record's order (§5):* D1's list on Part I's first page,
-so the promise is written before it is enforced; the two preludes separated; the
-names outside the list refused without a `use`, which is `NK1117` with a help
-naming the line to add; the corpus and the pages. **Measure the corpus before
-the change**: every `fs::`, `io::`, `cli::`, `html::` and `HashMap` in
-`examples/` needs a `use` line it never needed.
+*Three names the list promises and `std` does not have.* **`Bytes`**,
+**`assert`** and **`panic`** are on D1's list on Part I 1.3 and do not exist.
+Each is its own piece of work, and `Bytes` carries a question the record left
+open on purpose (§4): whether it is `std`'s or the language's.
+
+*And one the list does not promise and `std` has.* `eprint` is keyed bare, so it
+needs no `use`; D1's text writes `eprintln` and not `eprint`. Whether it belongs
+is a sentence for whoever revisits the list — D4 says a name joins by a record,
+and this one joined by being needed.
 
 ## 3. Upkeep
 

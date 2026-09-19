@@ -77,7 +77,7 @@ fn a_constant_can_read_the_one_above_it() {
 #[test]
 fn a_pausing_callee_is_refused() {
     let found: Vec<_> = findings(
-        "fn slow() -> i64 throws {\n\
+        "use std::io\n\nfn slow() -> i64 throws {\n\
          \x20   let t = io::read_to_string()\n\
          \x20   return t.len()\n\
          }\n\

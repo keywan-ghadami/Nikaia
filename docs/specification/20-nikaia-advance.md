@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.62 (Draft)
+**Version:** 0.0.63 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -623,6 +623,8 @@ Every function in Nikaia may pause unless it says otherwise. The `sync` keyword 
 Two worlds follow: the pausable world, which is the default, and the **`sync` world** of computation.
 
 ```nika
+use std::fs
+
 // 'sync' guarantees one thing: I will never pause.
 fn calculate_physics(mut obj: Object) sync {   // `mut`: it changes the caller's value (6.5)
     obj.x += obj.velocity
@@ -886,15 +888,17 @@ The property is not 12.2's ordering rule. That two writing doors onto the *same*
 `select` runs several tasks and keeps the result of the one that finishes *first*.
 
 ```nika
+use std::time
+
 select {
     // Case 1: Computation finishes first
     result = heavy_math() => { return result }
-    
+
     // Case 2: Timeout happens first
-    _ = sleep(5.seconds()) => { throw Timeout::TooSlow }
+    _ = time::sleep(5.seconds()) => { throw Timeout::TooSlow }
 }
 ```
-`select` is a block whose arms bind ([ADR-148](adr/adr-148.md)). The first branch to finish wins. The losers are cancelled with the teardown [ADR-006](adr/adr-006.md) D3 describes, and the handle `spawn` returns gains `cancel()`, so a program's cancel and a loser's are one mechanism. `5.seconds()` is a `std::time::Duration`, made by a `std` extension on the integers; there is no suffix literal ([ADR-150](adr/adr-150.md)). The error a branch throws is an **enum variant**, because an error type is an `enum` ([ADR-023](adr/adr-023.md) D1, [ADR-141](adr/adr-141.md) D1).
+`select` is a block whose arms bind ([ADR-148](adr/adr-148.md)). The first branch to finish wins. The losers are cancelled with the teardown [ADR-006](adr/adr-006.md) D3 describes, and the handle `spawn` returns gains `cancel()`, so a program's cancel and a loser's are one mechanism. `5.seconds()` is a `std::time::Duration`, made by a `std` extension on the integers; there is no suffix literal ([ADR-150](adr/adr-150.md)). `sleep` lives in `std::time` and is written with it, because the prelude's rule is that nothing in it pauses (Part I 1.3, [ADR-154](adr/adr-154.md) D2). The error a branch throws is an **enum variant**, because an error type is an `enum` ([ADR-023](adr/adr-023.md) D1, [ADR-141](adr/adr-141.md) D1).
 
 `select` and `overlap` are a **pair** ([ADR-148](adr/adr-148.md) D4): both start every branch at once, and the difference is what they keep — `overlap` keeps every result ([ADR-050](adr/adr-050.md)), `select` keeps the first. A block needs at least two arms, because one arm has nothing to race against, and at most eight, which is what `std` writes a vehicle for.
 
@@ -918,6 +922,8 @@ Nikaia offers **message passing** beside shared memory. A channel is `std`'s and
 > and a capacity below one is refused.
 
 ```nika
+use std::channel
+
 // Subject: 100 (capacity)
 let (tx, rx) = channel::bounded(100)
 

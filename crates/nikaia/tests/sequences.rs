@@ -161,7 +161,9 @@ fn the_chain_off_keys_resolves() {
 /// `examples/tally.nika`'s `.len()` calls were among the 35 §1 counts.
 #[test]
 fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
-    let program = "fn longest() -> i64 throws {\n\
+    let program = "use std::io\n\
+                   \n\
+                   fn longest() -> i64 throws {\n\
                    \x20   let mut best = 0\n\
                    \x20   for line in io::lines() {\n\
                    \x20       if line.len() > best { best = line.len() }\n\
@@ -316,7 +318,7 @@ fn walked_twice(source: &str) -> Vec<nikaia::check::Finding> {
 #[test]
 fn a_second_for_over_a_sequence_is_refused() {
     let found = walked_twice(
-        "fn twice() -> i64 throws {\n\
+        "use std::io\n\nfn twice() -> i64 throws {\n\
          \x20   let lines = io::lines()\n\
          \x20   let mut n = 0\n\
          \x20   for line in lines { n += 1 }\n\
@@ -344,7 +346,7 @@ fn a_second_for_over_a_sequence_is_refused() {
 
     // One walk is a correct program.
     assert!(walked_twice(
-        "fn once() -> i64 throws {\n\
+        "use std::io\n\nfn once() -> i64 throws {\n\
          \x20   let lines = io::lines()\n\
          \x20   let mut n = 0\n\
          \x20   for line in lines { n += 1 }\n\
@@ -363,7 +365,7 @@ fn a_second_for_over_a_sequence_is_refused() {
 #[test]
 fn a_walking_method_consumes_the_sequence() {
     let found = walked_twice(
-        "fn both() -> i64 throws {\n\
+        "use std::io\n\nfn both() -> i64 throws {\n\
          \x20   let lines = io::lines()\n\
          \x20   let held = lines.collect()\n\
          \x20   let n = lines.count()\n\
@@ -395,7 +397,7 @@ fn a_container_is_not_consumed_by_walking_it() {
 #[test]
 fn a_name_given_another_sequence_may_be_walked_again() {
     assert!(walked_twice(
-        "fn revived() -> i64 throws {\n\
+        "use std::io\n\nfn revived() -> i64 throws {\n\
          \x20   let mut lines = io::lines()\n\
          \x20   let mut n = 0\n\
          \x20   for line in lines { n += 1 }\n\

@@ -245,7 +245,7 @@ fn the_expression_lambda_says_it_was_removed() {
 #[test]
 fn a_loop_whose_step_can_fail_unwraps_the_step() {
     let rust = emit(
-        "fn count() -> i64 throws {\n\
+        "use std::io\n\nfn count() -> i64 throws {\n\
          \x20   let mut n = 0\n\
          \x20   for line in io::lines() { n += 1 }\n\
          \x20   return n\n\
@@ -261,7 +261,7 @@ fn a_loop_whose_step_can_fail_unwraps_the_step() {
 
     // …and naming the stream first is the same loop (D7).
     let rust = emit(
-        "fn count() -> i64 throws {\n\
+        "use std::io\n\nfn count() -> i64 throws {\n\
          \x20   let stream = io::lines()\n\
          \x20   let mut n = 0\n\
          \x20   for line in stream { n += 1 }\n\
@@ -322,13 +322,13 @@ fn an_option_becomes_a_positional_argument_in_declaration_order() {
 /// …and `std`'s options come from the ledger `std` ships, by the same path.
 #[test]
 fn a_library_option_is_filled_in_from_the_shipped_ledger() {
-    let rust = emit("fn main() throws { fs::write(\"o\", \"x\"; append: true) }");
+    let rust = emit("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\"; append: true) }");
     assert!(
         rust.contains(r#"fs::write("o", "x", true, true)"#),
         "{rust}"
     );
 
-    let rust = emit("fn main() throws { fs::write(\"o\", \"x\") }");
+    let rust = emit("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\") }");
     assert!(
         rust.contains(r#"fs::write("o", "x", false, true)"#),
         "{rust}"

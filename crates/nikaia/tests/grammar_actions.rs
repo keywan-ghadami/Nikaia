@@ -34,7 +34,7 @@ fn ledger_for(source: &str) -> Ledger {
 #[test]
 fn a_pausing_call_in_an_action_is_refused() {
     let found: Vec<_> = findings(
-        "grammar Nums {\n\
+        "use std::io\n\ngrammar Nums {\n\
          \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { let t = io::read_to_string() return d }\n\
          }\n\
          fn read(text: &str) -> i64 { return Nums::number(text) catch { 0 } }\n",
@@ -58,7 +58,7 @@ fn a_pausing_call_in_an_action_is_refused() {
 #[test]
 fn a_pausing_call_in_a_folds_step_is_refused() {
     let found: Vec<_> = findings(
-        "grammar Nums {\n\
+        "use std::io\n\ngrammar Nums {\n\
          \x20   rule N -> i64 = d:dec[i64](digit+) -> { d }\n\
          \x20   pub rule file -> i64 = fold(N, zero, fn(acc, m) { io::read_to_string() acc })\n\
          }\n\
@@ -77,7 +77,7 @@ fn a_pausing_call_in_a_folds_step_is_refused() {
 #[test]
 fn an_ordinary_action_and_a_pausing_caller_are_left_alone() {
     let found: Vec<_> = findings(
-        "grammar Nums {\n\
+        "use std::io\n\ngrammar Nums {\n\
          \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d + 1 }\n\
          }\n\
          fn read() -> i64 throws {\n\

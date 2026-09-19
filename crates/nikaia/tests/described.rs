@@ -75,7 +75,7 @@ fn a_crate_is_named_once_however_often_it_is_called() {
 /// correct program refused, which is the worse of the two mistakes.
 #[test]
 fn a_name_the_build_did_not_declare_is_left_alone() {
-    let source = "fn main() {\n\
+    let source = "use std::io\n\nfn main() {\n\
                   \x20   let a = http::ok(\"hi\")\n\
                   \x20   let b = io::read_to_string()\n\
                   \x20   let c = regx::compile(\"x\")\n\

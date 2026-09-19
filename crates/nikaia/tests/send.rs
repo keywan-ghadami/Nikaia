@@ -210,7 +210,7 @@ fn an_ordinary_value_crosses_into_a_task() {
 #[test]
 fn a_value_whose_type_is_not_written_down_is_not_refused() {
     let clean = crossings(
-        "fn report(path: String) throws {\n\
+        "use std::fs\n\nfn report(path: String) throws {\n\
              let handle = fs::map(path) catch { return }\n\
              spawn fn { println(f\"{handle.len()}\") }\n\
          }",

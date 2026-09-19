@@ -262,7 +262,7 @@ fn a_written_ampersand_at_a_method_call_is_left_alone() {
 #[test]
 fn an_argument_no_signature_describes_keeps_its_written_ampersand() {
     assert!(!refused(
-        "fn main() {\n\
+        "use std::fs\n\nfn main() {\n\
          \x20   let out = \"/tmp/x\".to_string()\n\
          \x20   let text = \"hi\".to_string()\n\
          \x20   fs::write(&out, &text) catch { return }\n\

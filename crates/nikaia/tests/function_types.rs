@@ -206,7 +206,7 @@ fn throws_on_the_type_is_the_result_a_throws_function_has() {
 /// future — so there is nothing left to refuse.
 #[test]
 fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
-    let source = "fn run(f: fn() -> String) -> String { return f() }\n\
+    let source = "use std::io\n\nfn run(f: fn() -> String) -> String { return f() }\n\
                   fn main() { let said = run(fn() { return io::read_to_string() })\n\
                   \x20   println(f\"{said}\") }\n";
     // It lowers, which is what "refused at the build" meant: the emitter used
@@ -283,7 +283,7 @@ fn a_function_type_outside_a_parameter_is_refused_here() {
 #[test]
 fn a_pausing_lambda_handed_to_a_sync_type_is_refused() {
     let refused = findings(
-        "fn on_tick(handler: fn() sync) { }\n\
+        "use std::io\n\nfn on_tick(handler: fn() sync) { }\n\
          fn main() { on_tick(fn() { let t = io::read_to_string() }) }\n",
     );
     let about = refused
@@ -446,7 +446,7 @@ fn a_kept_parameter_is_answered_from_the_type() {
 #[test]
 fn a_body_that_also_pauses_keeps_no_claim() {
     let parsed = parse_to_ast(
-        "fn twice(x: i64, f: fn(i64) -> i64) -> i64 { let t = io::read_to_string()\n\
+        "use std::io\n\nfn twice(x: i64, f: fn(i64) -> i64) -> i64 { let t = io::read_to_string()\n\
          \x20   return f(x) }\n",
     )
     .expect("the source parses");

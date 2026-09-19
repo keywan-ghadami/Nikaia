@@ -163,7 +163,7 @@ fn a_trait_method_that_really_pauses_in_the_file_next_door_is_still_refused() {
         &[
             (
                 "helper.nika",
-                "pub fn reads() -> String {\n\
+                "use std::io\n\npub fn reads() -> String {\n\
                  \x20   return io::read_to_string() catch { \"\" }\n\
                  }\n",
             ),
@@ -212,7 +212,7 @@ fn sync_is_inferred_across_the_files_of_a_package() {
         &[
             (
                 "helper.nika",
-                "pub fn plain(n: i64) -> i64 {\n\
+                "use std::io\n\npub fn plain(n: i64) -> i64 {\n\
                  \x20   return n + 1\n\
                  }\n\
                  \n\

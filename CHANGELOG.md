@@ -4,6 +4,36 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.63] — 2026-09-19
+
+The prelude is a written list, small and closed
+([ADR-154](docs/specification/adr/adr-154.md)) — the **function** half of it,
+which is the half that had a mechanism waiting for it.
+
+### Added
+
+- **Part I 1.3 carries the list**, so a reader finds out what needs no `use` by reading one page rather than a file of the compiler's. The rule it is built from is written beside it: nothing in it does I/O but printing, and nothing in it pauses.
+- **Two refusals, both `NK1117` with the line to add.** A name that lives in a `std` module written without its prefix — *`std` has `text::digit_value`*, help: write `use std::text`, and `text::digit_value(…)` here. And a module used before it is introduced — *`fs` is used here and introduced nowhere*, which is Part I 9.1's D4 for `std` rather than for a package.
+- **The emitter's prelude is its own** (D5): it grew `collections`, `text` and `foreign`, because the generated Rust now writes the prefix the source wrote. `std::collections` is a module of `nikaia-std` and not a re-export, because one name in it is ours: which hash a map gets follows the provenance of the program's input.
+- **`collections::HashMap` works end to end** — the annotation, the constructor and the trusted-hash swap, which now reads the **last** segment so the type and the value cannot disagree about which map it is.
+
+### Found by building it
+
+- **The list is not a list.** The enforceable form of D1 turned out to be a fact about the ledger: `std`'s entries that live in a module are keyed `module::name`, and the ones that need no `use` — `print`, `println`, `eprint`, `eprintln` — are keyed **bare**. So the prelude *is* the bare keys, and adding a name to it is exactly what D4 says: a record, and a line in `std.contracts` keyed without a module. No second list in the compiler to drift from the page.
+- **`Ledger::lookup` matched on the last segment, which made the question unanswerable.** `digit_value` and `text::digit_value` were one name to it. It matches exactly now — and that closed a defect `docs/open-work.md` was carrying: a program with its own `fn read` found `io::read`, in a unit that does not carry the ledger of the package beside it, and the `throws` column then spoke for a callee nobody had resolved.
+- **`sleep` moved into `std::time` by D2's own rule.** The rule the list is built from is that nothing in it pauses, and that was the one entry that did. Part II 12.4's line is `time::sleep(5.seconds())`.
+- **The corpus cost far less than the record feared.** It expected every `fs::`, `io::`, `cli::` and `html::` in `examples/` to need a `use` line it never had; the `.nika` corpus already wrote them almost everywhere. What it came to was two files, fifty-four inline sources in the test suite and six blocks of the specification.
+
+### Changed
+
+- **`NK1156`'s help** names the module where the type has one — `use std::fs` and `fs::Mapped` — instead of telling a reader to drop a line they will need.
+
+### Left open
+
+- **The type half.** `HashMap`, `Duration` and `CStr` are keyed without a module, so the rule cannot reach them and the bare spelling is still accepted. D3's spelling **works**; what is missing is the refusal, which wants those three re-keyed the way `fs::Mapped` already is.
+- **`Bytes`, `assert` and `panic`** are on the list and do not exist.
+- **`eprint` is in the compiler and not in D1's text.** It joined by being needed, which is the direction D4 was written against.
+
 ## [0.0.62] — 2026-09-19
 
 A channel is `std`'s, and only bounded

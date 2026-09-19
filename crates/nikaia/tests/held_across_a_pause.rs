@@ -76,7 +76,7 @@ fn bound_before_a_pause_and_named_after_it() {
 fn a_value_used_after_a_pause_is_held() {
     assert_eq!(
         held(
-            "fn work() -> i64 { return 1 }\n\
+            "use std::fs\n\nfn work() -> i64 { return 1 }\n\
              fn main() {\n\
              \x20   spawn fn {\n\
              \x20       let n = work()\n\
@@ -96,7 +96,7 @@ fn a_value_used_after_a_pause_is_held() {
 fn a_value_finished_with_before_the_pause_is_not_held() {
     assert!(
         held(
-            "fn work() -> i64 { return 1 }\n\
+            "use std::fs\n\nfn work() -> i64 { return 1 }\n\
              fn main() {\n\
              \x20   spawn fn {\n\
              \x20       let n = work()\n\
@@ -135,7 +135,7 @@ fn a_task_that_never_pauses_holds_nothing() {
 #[test]
 fn a_captured_name_is_the_other_halfs_question() {
     assert!(held(
-        "fn main() {\n\
+        "use std::fs\n\nfn main() {\n\
          \x20   let message = \"hello\"\n\
          \x20   spawn fn {\n\
          \x20       let text = fs::read_to_string(\"log\") catch { return }\n\

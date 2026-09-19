@@ -508,6 +508,27 @@ pub fn check_program(
         inside_a_door: false,
         inside_an_action: None,
         inside_a_sync_function: None,
+        std_in_scope: parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Import { path, .. } if path.len() == 2 => {
+                    (parsed.text(path[0]) == "std").then(|| parsed.text(path[1]).to_string())
+                }
+                _ => None,
+            })
+            .collect(),
+        std_modules: library
+            .functions
+            .keys()
+            .chain(library.types.keys())
+            .filter_map(|key| key.split_once("::").map(|(prefix, _)| prefix.to_string()))
+            .filter(|prefix| {
+                !library.types.contains_key(prefix)
+                    && !library.functions.contains_key(&format!("{prefix}::new"))
+            })
+            .collect(),
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
@@ -1265,6 +1286,17 @@ struct Checker<'a> {
     /// [ADR-149](../../docs/specification/adr/adr-149.md) D2, and reachable
     /// before it through `TaskHandle::join`.
     inside_a_sync_function: Option<String>,
+    /// The `std` modules this file wrote a `use std::…` for
+    /// ([ADR-154](../../docs/specification/adr/adr-154.md), Part I 9.1's
+    /// *a prefix is introduced before it is used*).
+    std_in_scope: BTreeSet<String>,
+    /// Every module `std`'s ledger has entries in — the prefix of a key that is
+    /// not a type's name.
+    ///
+    /// Read off the ledger and not written here, so a `std` that grows a module
+    /// needs no edit in this file. `fs::Mapped` is a **type in** a module, so
+    /// `fs` is one of these and `HashMap` is not.
+    std_modules: BTreeSet<String>,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -1570,10 +1602,27 @@ impl<'a> Checker<'a> {
                  as for a package - and `{last}` is a type, so this line does nothing \
                  at all"
             )],
-            help: Some(format!(
-                "drop the line: `{last}` is a name this compiler already knows, and it \
-                 is written `{last}` wherever it is needed"
-            )),
+            // **Where the type lives in a module, the way out is the module**
+            // ([ADR-154](../../docs/specification/adr/adr-154.md)): `use
+            // std::fs::Mapped` is refused, and *drop the line* would be wrong
+            // advice — `fs::Mapped` needs `use std::fs` in front of it like
+            // every other name in that module. Only a type `std` keys **without**
+            // a module needs no line at all, and Part I 1.3 is the list of what
+            // that is.
+            help: Some(
+                match self.library.types.keys().find_map(|key| {
+                    key.strip_suffix(&format!("::{last}"))
+                        .map(|module| module.to_string())
+                }) {
+                    Some(module) => format!(
+                        "write `use std::{module}`, and `{module}::{last}` wherever it is needed"
+                    ),
+                    None => format!(
+                        "drop the line: `{last}` is a name that needs no `use` (Part I, 1.3), and \
+                     it is written `{last}` wherever it is needed"
+                    ),
+                },
+            ),
         });
     }
 
@@ -4594,6 +4643,107 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **`NK1117`: a `std` name written without its module**
+    /// ([ADR-154](../../docs/specification/adr/adr-154.md) D1).
+    ///
+    /// The list on Part I's first page is what needs no `use`, and every entry
+    /// on it is keyed **bare** in the ledger — so a name nothing here declares,
+    /// which `std` has exactly one module entry for, is a name written without
+    /// its prefix. The message names the line to add, because a refusal whose
+    /// way out is one line should hand that line over (Part III, C.2).
+    ///
+    /// **Only where nothing else could have declared it**, which is the same
+    /// list `nothing_declares_it` keeps and for the same reason: refusing a
+    /// correct program is the one thing this checker may never do
+    /// (Part III, C.4). A name a local, a parameter, this unit's own ledger, a
+    /// type declared here, a module or a grammar answers never reaches here.
+    fn a_std_name_without_its_module(&mut self, name: &str, span: &Span) {
+        if name.contains("::") {
+            return;
+        }
+        let known = self.binding(name).is_some()
+            || self.resolve(name).is_some()
+            || self.structs.contains_key(name)
+            || self.enums.contains_key(name)
+            || self.own.types.contains_key(name)
+            || self.modules.contains(name)
+            || self.grammars.contains_key(name)
+            || MultiLock::named(name).is_some()
+            || is_hull(name);
+        if known {
+            return;
+        }
+        let suffix = format!("::{name}");
+        let keys: Vec<&String> = self
+            .library
+            .functions
+            .keys()
+            .filter(|key| key.ends_with(&suffix))
+            .collect();
+        // **One entry and not several.** Where two modules have the name, the
+        // compiler does not know which was meant and saying so would be a
+        // guess; `NK1117` still says the name is undeclared, which is true.
+        let [key] = keys.as_slice() else {
+            return;
+        };
+        let Some((module, _)) = key.split_once("::") else {
+            return;
+        };
+        if !self.std_modules.contains(module) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1117",
+            message: format!("nothing declares `{name}`"),
+            notes: vec![
+                format!("`std` has `{key}`, and a name that lives in a module is reached through it (Part I, 1.3)"),
+                "what needs no `use` is the list on Part I's first page, and it is small on purpose: every name in it is one some program writes without importing, and removing one breaks that program (ADR-154 D1, D4)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write `use std::{module}` at the top of the file, and `{key}(…)` here"
+            )),
+        });
+    }
+
+    /// **`NK1117`: a module used before it is introduced**
+    /// ([ADR-154](../../docs/specification/adr/adr-154.md), Part I 9.1's D4 for
+    /// `std` rather than for a package).
+    ///
+    /// `fs::read_to_string(p)` without `use std::fs` at the top. A file lists
+    /// what it depends on, and a reader should not have to know which module a
+    /// prefix belongs to in order to find out.
+    ///
+    /// **Only a module `std`'s ledger has**, so a package's prefix and a name
+    /// this compiler cannot see are both left alone (Part III, C.4).
+    fn a_module_used_before_it_is_introduced(&mut self, name: &str, span: &Span) {
+        let Some((module, _)) = name.split_once("::") else {
+            return;
+        };
+        if !self.std_modules.contains(module) || self.std_in_scope.contains(module) {
+            return;
+        }
+        // A module of **this program** wins: a package called `text` beside a
+        // `std::text` is the consumer's to name apart, and until they collide
+        // the local one is what the prefix means.
+        if self.modules.contains(module) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1117",
+            message: format!("`{module}` is used here and introduced nowhere"),
+            notes: vec![
+                "a file lists what it depends on at the top, and `std` is reached the way a package is (Part I, 9.1, ADR-140 D5)"
+                    .to_string(),
+            ],
+            help: Some(format!("write `use std::{module}` at the top of the file")),
+        });
+    }
+
     /// **`a`, `b` and `c` were a lambda's arguments, and are not** (`NK1117`).
     ///
     /// [ADR-049](../../../../docs/specification/adr/adr-049.md) D1 withdrew the
@@ -5094,6 +5244,13 @@ impl<'a> Checker<'a> {
         // `Type::new` is the other spelling and is refused — in `std` as in a
         // `.nika` file, which is the whole of what D2 evens out.
         self.a_constructor_written_as_new(&name, span);
+
+        // **What needs no `use` is the list on Part I's first page**
+        // ([ADR-154](../../docs/specification/adr/adr-154.md) D1), and these two
+        // are the halves of the rule: a name that lives in a module written
+        // without it, and a module used without being introduced.
+        self.a_std_name_without_its_module(&name, span);
+        self.a_module_used_before_it_is_introduced(&name, span);
 
         // **A grammar is entered by an ordinary call**
         // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
