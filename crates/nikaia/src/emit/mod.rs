@@ -4063,6 +4063,14 @@ impl<'p> Emitter<'p> {
                 for arm in arms {
                     out.push(&pad);
                     self.match_pattern(out, &arm.pattern, depth + 1, flow)?;
+                    // **The guard is Rust's own**
+                    // ([ADR-137](../../../docs/specification/adr/adr-137.md)
+                    // D2), written with the same word, so this is a
+                    // transcription like everything else about a pattern.
+                    if let Some(guard) = &arm.guard {
+                        out.push(" if ");
+                        self.expr(out, guard, depth + 1, flow)?;
+                    }
                     out.push(" => ");
                     self.expr(out, &arm.body, depth + 1, flow)?;
                     out.push(",\n");
@@ -5358,11 +5366,49 @@ impl<'p> Emitter<'p> {
             MatchPattern::Otherwise => out.push("_"),
             MatchPattern::Literal(value) => self.expr(out, value, depth, flow)?,
             MatchPattern::Path(p) => out.push(&path(p)),
-            MatchPattern::Tuple { path: p, bindings } => {
-                out.push(&format!("{}({})", path(p), names(bindings)));
+            // **The parts are patterns**, so this recurses — which is the whole
+            // of what *nested* means
+            // ([ADR-137](../../docs/specification/adr/adr-137.md) D1). An empty
+            // path is the bare tuple `(0, 0)`, which names no type.
+            MatchPattern::Tuple { path: p, parts } => {
+                out.push(&path(p));
+                out.push("(");
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        out.push(", ");
+                    }
+                    self.match_pattern(out, part, depth, flow)?;
+                }
+                out.push(")");
             }
-            MatchPattern::Named { path: p, bindings } => {
-                out.push(&format!("{} {{ {} }}", path(p), names(bindings)));
+            MatchPattern::Named {
+                path: p,
+                bindings,
+                rest,
+            } => {
+                let inside = match (bindings.is_empty(), rest) {
+                    (true, _) => "..".to_string(),
+                    (false, true) => format!("{}, ..", names(bindings)),
+                    (false, false) => names(bindings),
+                };
+                out.push(&format!("{} {{ {inside} }}", path(p)));
+            }
+            MatchPattern::Or(alternatives) => {
+                for (i, alternative) in alternatives.iter().enumerate() {
+                    if i > 0 {
+                        out.push(" | ");
+                    }
+                    self.match_pattern(out, alternative, depth, flow)?;
+                }
+            }
+            // **`..=`, because a pattern's range includes both ends** (D3) and
+            // that is how the language below spells one. The two spellings mean
+            // the same set; one of them is this language's and the other is
+            // Rust's.
+            MatchPattern::Range { start, end } => {
+                self.expr(out, start, depth, flow)?;
+                out.push("..=");
+                self.expr(out, end, depth, flow)?;
             }
         }
         Ok(())

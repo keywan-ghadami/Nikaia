@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.43 (Draft)
+**Version:** 0.0.44 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -824,16 +824,18 @@ is **never**, so an arm that throws sits beside an arm that hands back a value,
 and the `match` is that value's type:
 
 ```nika
-match step.0 {
-    Op::Times  => { value = value * step.1 }
-    Op::Divide => { value = value / step.1 }
+match step {
+    (Op::Times, n)  => { value = value * n }
+    (Op::Divide, n) => { value = value / n }
 }
 ```
 
 > **Implementation status:** Partially implemented. The six rows of the first
-> table and the completeness check are built. The six shapes of the second
-> table are not built ([ADR-137](adr/adr-137.md) §5). A bare `throw` as an arm
-> is not built; today it is written `=> { throw NotFound }`
+> table, the six shapes of the second and the completeness check are built
+> ([ADR-137](adr/adr-137.md) §5). A guarded arm covers nothing, so a `match`
+> whose only catch-all carries an `if` is still `NK1151`. Alternatives of an
+> `|` pattern that bind different names are refused with `NK1155`. A bare
+> `throw` as an arm is not built; today it is written `=> { throw NotFound }`
 > ([ADR-138](adr/adr-138.md) §5).
 
 ### 3.5. Null Safety Operators
@@ -2175,9 +2177,8 @@ let config = load() catch {
 ```
 
 > **Implementation status:** Partially implemented. The patterns of 3.4 are
-> built. `..` in a named pattern is not built, so a `match` cannot yet bind some
-> fields and ignore the rest ([ADR-137](adr/adr-137.md) §5). A bare `throw` as
-> an arm's body is not built; the arm is written as a block,
+> built, `..` in a named pattern among them ([ADR-137](adr/adr-137.md) §5). A
+> bare `throw` as an arm's body is not built; the arm is written as a block,
 > `else => { throw error }` ([ADR-138](adr/adr-138.md) §5).
 
 **Two sets differ.** The **variants of an error type** are closed: a `match`

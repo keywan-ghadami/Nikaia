@@ -2594,10 +2594,22 @@ grammar! {
                 Expr::Match { value: Box::new(value), arms }
             }
 
+        // **The guard is `if` and it stands on the arm**
+        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D2): the
+        // pattern says which values reach the arm and the guard says which of
+        // those it takes, so an or-pattern has one guard rather than one per
+        // alternative.
+        //
+        // `head_expr` and not `expr`, for `if`'s own reason one construct over:
+        // what follows the condition is `=>` here rather than a `{`, but a
+        // struct literal in the guard would still swallow the arm's body if the
+        // body is a block, and the head chain is where that is already decided.
         rule match_arm -> MatchArm =
-            pattern:match_pattern "=>" body:match_arm_body ","? -> {
-                MatchArm { pattern, body }
+            pattern:match_pattern guard:match_guard? "=>" body:match_arm_body ","? -> {
+                MatchArm { pattern, guard, body }
             }
+
+        rule match_guard -> Expr = KW_IF e:head_expr -> { e }
 
         rule match_arm_body -> Expr =
             b:block -> { Expr::Block(b) }
@@ -2615,7 +2627,22 @@ grammar! {
         // Refused in the parser because this is where the two spellings meet,
         // and `only where no name follows it` is still the `UNDERSCORE` rule's
         // own condition - `_name` is a name and reaches the alternative below.
+        // **An or-pattern is the outermost shape**
+        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D1), so it
+        // is this rule and the one below is *one* alternative. `(0, y) | (y, 0)`
+        // is one arm; a `|` inside a tuple's parts is the same rule one level
+        // down, because a part is a whole pattern.
         rule match_pattern -> MatchPattern =
+            head:match_alternative tail:match_or_tail+ -> {
+                let mut all = vec![head];
+                all.extend(tail);
+                MatchPattern::Or(all)
+            }
+          | p:match_alternative -> { p }
+
+        rule match_or_tail -> MatchPattern = "|" p:match_alternative -> { p }
+
+        rule match_alternative -> MatchPattern =
             KW_ELSE -> { MatchPattern::Otherwise }
           | UNDERSCORE fail(
                 "a `match`'s catch-all arm is written `else` (ADR-145 D1): \
@@ -2626,14 +2653,49 @@ grammar! {
                  that is called one construct over, and this language already \
                  has it."
             ) -> { MatchPattern::Otherwise }
-          | l:pattern_lit -> { MatchPattern::Literal(l) }
-          | path:pattern_path "(" bindings:ident_list ")" -> {
-                MatchPattern::Tuple { path, bindings }
+          // **A range before a bare literal**, or the literal takes the start
+          // and leaves the `..` stranded. Inclusive at both ends (D3), and
+          // `..<` is deliberately not here: a pattern is one shape, and an
+          // exclusive range is written by moving the end (D4).
+          | start:pattern_lit ".." end:pattern_lit -> {
+                MatchPattern::Range { start, end }
             }
-          | path:pattern_path "{" bindings:ident_list "}" -> {
-                MatchPattern::Named { path, bindings }
+          | pattern_lit "..<" fail(
+                "`..<` is not written in a pattern (ADR-137 D4). A pattern's \
+                 range includes both ends, and one that stops earlier is \
+                 written by moving the end: `200..298`."
+            ) -> { MatchPattern::Literal(Expr::LitInt(0)) }
+          | l:pattern_lit -> { MatchPattern::Literal(l) }
+          // **A bare tuple**, which names no type: `(0, 0)`.
+          | "(" parts:match_part_list ")" -> {
+                MatchPattern::Tuple { path: Vec::new(), parts }
+            }
+          | path:pattern_path "(" parts:match_part_list ")" -> {
+                MatchPattern::Tuple { path, parts }
+            }
+          | path:pattern_path "{" bindings:ident_list rest:named_rest? "}" -> {
+                MatchPattern::Named { path, bindings, rest: rest.is_some() }
+            }
+          // `Point { .. }` - every field, none of them named.
+          | path:pattern_path "{" ".." "}" -> {
+                MatchPattern::Named { path, bindings: Vec::new(), rest: true }
             }
           | path:pattern_path -> { MatchPattern::Path(path) }
+
+        // `, ..` - the fields this pattern does not name (D1).
+        rule named_rest = "," ".."
+
+        // **A part is a whole pattern**, which is what makes a pattern nest:
+        // `Event::Click(Point { x, .. })` is a tuple whose one part is a named
+        // pattern ([ADR-137](../../../../docs/specification/adr/adr-137.md) D1).
+        rule match_part_list -> Vec<MatchPattern> =
+            head:match_pattern tail:match_part_tail* ","? -> {
+                let mut parts = vec![head];
+                parts.extend(tail);
+                parts
+            }
+
+        rule match_part_tail -> MatchPattern = "," p:match_pattern -> { p }
 
         // --- Keywords ---
         //

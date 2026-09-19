@@ -614,6 +614,18 @@ pub enum VariantFields {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: MatchPattern,
+    /// `if x == y` after the pattern
+    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D2).
+    ///
+    /// **The word is `if`**, which is the one every neighbouring language uses
+    /// for this and the one this language already uses for a condition; a
+    /// second word for the same idea would be a keyword spent on nothing.
+    ///
+    /// On the *arm* and not on the pattern, because that is what it is: the
+    /// pattern says which values reach the arm and the guard says which of
+    /// those the arm takes, and an or-pattern has one guard rather than one per
+    /// alternative.
+    pub guard: Option<Expr>,
     pub body: Expr,
 }
 
@@ -635,17 +647,43 @@ pub enum MatchPattern {
     /// `Op::Times`, and a bare name - which *binds*, as it does in the
     /// language below. One rule, drawn in one place.
     Path(Vec<Ident>),
-    /// `Message::Write(text)`
+    /// `Message::Write(text)`, `(0, y)`, `Event::Click(Point { x, .. })`
+    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D1).
+    ///
+    /// **The parts are patterns**, which is what makes a pattern nest: a
+    /// binding is a one-segment `Path`, so `Message::Write(text)` is what it
+    /// always was and `Event::Click(Point { x, .. })` is the same shape one
+    /// level deeper.
+    ///
+    /// An empty `path` is the **bare** tuple `(0, 0)`, which names no type.
     Tuple {
         path: Vec<Ident>,
-        bindings: Vec<Ident>,
+        parts: Vec<MatchPattern>,
     },
     /// `Message::Move { x, y }` - shorthand only, because a rename is a `let`
     /// in the arm and needs no syntax of its own.
     Named {
         path: Vec<Ident>,
         bindings: Vec<Ident>,
+        /// `..` for the fields this pattern does not name
+        /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D1).
+        rest: bool,
     },
+    /// `(0, y) | (y, 0)` - one arm, several shapes
+    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D1).
+    ///
+    /// **Every alternative binds the same set of names**, which is the rule
+    /// that keeps the arm's body answerable: a name the body reads has to be
+    /// bound whichever alternative matched. `NK1155` is the refusal.
+    Or(Vec<MatchPattern>),
+    /// `200..299` - a range, **inclusive at both ends**
+    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D3).
+    ///
+    /// A pattern is a set of values and a reader reads it as one; there is no
+    /// counting-to-`n` in it, which is what makes the exclusive reading natural
+    /// in a `for` and unnatural here. `..<` is never written in a pattern (D4):
+    /// an exclusive range is written by moving the end.
+    Range { start: Expr, end: Expr },
 }
 
 #[derive(Debug, Clone)]

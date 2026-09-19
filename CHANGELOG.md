@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.44] — 2026-09-19
+
+The six `match` pattern shapes, which is the rest of
+[ADR-137](docs/specification/adr/adr-137.md) and the line the record opened
+with: `calc.nika` matched `step.0` because it could not match `step`.
+
+### Added ([ADR-137](docs/specification/adr/adr-137.md) D1, D2, D3)
+
+- **A tuple pattern, an or-pattern, an inclusive range, a guard, a nested pattern, and `..` for a struct's rest.** `(0, 0)`, `(0, y) | (y, 0)`, `200..299`, `(x, y) if x == y`, `Event::Click(Point { x, .. })`, `Point { .. }`.
+- **What made them nest is one change in the tree**: a tuple pattern's parts are **patterns** rather than names. A binding is a one-segment path, so `Message::Write(text)` is what it always was and `Event::Click(Point { x, .. })` is the same shape one level deeper — the emitter, the binding walk and the refusal below all recurse, and none of them has a case for *nested*.
+- **The guard stands on the arm and not on the pattern**, because that is what it is: the pattern says which values reach the arm and the guard says which of those the arm takes. An or-pattern therefore has one guard rather than one per alternative — and a **guarded arm covers nothing**, which the completeness check had to learn: the values the guard turns away reach the arms below. Rust reads it the same way, which is what keeps this compiler's answer and the backend's from disagreeing.
+- **`NK1155`: the alternatives of an `|` pattern bind different names.** Every alternative binds the same set, because the arm's body reads those names and does not know which alternative matched. Recursive, so an `|` inside a tuple's part is the same refusal one level down.
+- **`..<` is refused in a pattern** (D4), naming the way to write an exclusive one: move the end. A pattern is one shape.
+- **And a parked question is answered** ([ADR-146](docs/specification/adr/adr-146.md) §4): an or-pattern **does** count as coverage, one case per variant it names. That record said so and waited on the form to exist.
+- **`calc.nika` matches the pair**: `match step { (Op::Times, n) => … }`, where it read `step.0` and then `step.1` in every arm. *Eleven tests* in `crates/nikaia/tests/match_patterns.rs`.
+
+### Fixed (two claims Part III's rewrite carried back)
+
+- **The diagnostics table said `NK1117` refuses the `_000` of `1_000`** and that `NK1127`'s *call is D5's second stage and is not implemented*. Both were true before 0.0.33 and 0.0.36 and were reintroduced by the editorial pass, which rewrote the page from what it said rather than from what the compiler does. `1_000` is the number `1000`, and the build-time call — and the loop — are built.
+
 ## [0.0.43] — 2026-09-19
 
 A task nobody joined was left unwoken about two runs in five. Four instances of

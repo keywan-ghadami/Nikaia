@@ -67,13 +67,17 @@ grammar Calc {
     // A tuple carries the pair, and the operator itself is an `enum`: there are
     // exactly two, which is what a sum type says. Written as a `&str` it would
     // be one comparison away from a typo the compiler cannot see.
+    //
+    // The `match` reads the **pair**, which is ADR-137 D1's tuple pattern: this
+    // said `match step.0` and then `step.1` in each arm until the shape existed,
+    // and naming the parts twice is how a reader loses which is which.
     rule term -> i64 =
         head:factor tail:mul_tail* -> {
             let mut value = head
             for step in tail {
-                match step.0 {
-                    Op::Times => { value = value * step.1 }
-                    Op::Divide => { value = value / step.1 }
+                match step {
+                    (Op::Times, n) => { value = value * n }
+                    (Op::Divide, n) => { value = value / n }
                 }
             }
             value

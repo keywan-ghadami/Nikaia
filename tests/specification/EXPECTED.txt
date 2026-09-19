@@ -22,7 +22,7 @@
 10-nikaia-light.md #22 lowered (as written)  fn tally() -> i64 throws {           // without `throws…
 10-nikaia-light.md #23 lowered (a body)  let mut n = 0
 10-nikaia-light.md #24 lowered (a body)  let value = 2
-10-nikaia-light.md #25 refused (a body) [NK1117]  match step.0 {
+10-nikaia-light.md #25 refused (a body) [NK1117]  match step {
 10-nikaia-light.md #26 refused (a body) [NK1117]  // If find_user returns null, 'name' becomes null.
 10-nikaia-light.md #27 lowered (as written)  // file: users.nika
 10-nikaia-light.md #28 refused (as written) [NK1135]  // file: users.nika

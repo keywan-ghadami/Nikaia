@@ -648,6 +648,23 @@ pub enum Narrowing {
 /// Whether an expression **can only** be a value: a name, a literal, an
 /// operator, a field, an index.
 ///
+/// Whether a pattern matches every value of its type
+/// ([ADR-137](../../docs/specification/adr/adr-137.md) D1,
+/// [ADR-145](../../docs/specification/adr/adr-145.md) D1).
+///
+/// **A bare name is a catch-all, and covers**: one segment and no brackets is
+/// the binding form — `Op::Times` is two, and `Message::Write(text)` is a
+/// tuple. An **or-pattern** covers where one of its alternatives does, which
+/// makes `Op::Plus | else` the odd thing it looks like and not a hole.
+fn catches_everything(pattern: &MatchPattern) -> bool {
+    match pattern {
+        MatchPattern::Otherwise => true,
+        MatchPattern::Path(path) => path.len() == 1,
+        MatchPattern::Or(alternatives) => alternatives.iter().any(catches_everything),
+        _ => false,
+    }
+}
+
 /// What kind of value an element of a list literal is, where that much is known
 /// without a type ([ADR-135](../../docs/specification/adr/adr-135.md) D1).
 ///
@@ -3561,8 +3578,20 @@ impl<'a> Checker<'a> {
                 let mut result: Option<Ty> = None;
                 let mut agree = true;
                 for arm in arms {
+                    // **Every alternative of an or-pattern binds the same
+                    // names** ([ADR-137](../../docs/specification/adr/adr-137.md)
+                    // D1), asked before the body is walked so that the body's
+                    // scope is one this checker can stand behind.
+                    self.an_or_pattern_that_binds_unevenly(&arm.pattern, span);
                     let frame = self.pattern_bindings(&arm.pattern);
                     self.scope.push(frame);
+                    // **The guard is walked inside the arm's scope** (D2): it
+                    // reads the names the pattern bound, and a condition is a
+                    // `bool` here exactly as anywhere else.
+                    if let Some(guard) = &arm.guard {
+                        let found = self.expr(guard, span);
+                        self.expect_bool(&found, span, "a `match` arm's guard is a condition");
+                    }
                     let ty = self.expr(&arm.body, span);
                     self.scope.pop();
                     match &result {
@@ -6352,15 +6381,103 @@ impl<'a> Checker<'a> {
     /// only where nothing does is the scrutinee's type asked about at all — an
     /// `else` ([ADR-145](../../docs/specification/adr/adr-145.md)) or a bare
     /// name, which binds and matches anything (D2).
+    /// The variants one pattern names, recursing through an or-pattern
+    /// ([ADR-137](../../docs/specification/adr/adr-137.md) D1).
+    ///
+    /// A **tuple's parts** are deliberately not walked: a part names a variant
+    /// of some *other* type, and what this is collecting is the cases of the
+    /// one being matched on.
+    fn variants_named(&self, pattern: &MatchPattern, out: &mut BTreeSet<String>) {
+        match pattern {
+            MatchPattern::Path(path)
+            | MatchPattern::Tuple { path, .. }
+            | MatchPattern::Named { path, .. } => {
+                if let Some(last) = path.last() {
+                    out.insert(self.parsed.text(*last).to_string());
+                }
+            }
+            MatchPattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.variants_named(alternative, out);
+                }
+            }
+            MatchPattern::Otherwise | MatchPattern::Literal(_) | MatchPattern::Range { .. } => {}
+        }
+    }
+
+    /// **`NK1155`: an or-pattern whose alternatives do not bind the same
+    /// names** ([ADR-137](../../docs/specification/adr/adr-137.md) D1).
+    ///
+    /// That rule is what keeps the arm's body answerable: a name the body reads
+    /// has to be bound whichever alternative matched, and `(0, y) | (x, 0)` is
+    /// a body that can read `y` or `x` and never knows which.
+    ///
+    /// **Refused here rather than below.** `rustc` refuses it too, in a message
+    /// about a generated file ([Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md)) — and it is a rule
+    /// of *this* language, stated by the record that added the form.
+    ///
+    /// Recursive, because a pattern nests: an or-pattern inside a tuple's part
+    /// is the same rule one level down.
+    fn an_or_pattern_that_binds_unevenly(&mut self, pattern: &MatchPattern, span: &Span) {
+        match pattern {
+            MatchPattern::Or(alternatives) => {
+                let first: BTreeSet<String> =
+                    self.pattern_names(&alternatives[0]).into_iter().collect();
+                for alternative in &alternatives[1..] {
+                    let names: BTreeSet<String> =
+                        self.pattern_names(alternative).into_iter().collect();
+                    if names != first {
+                        let missing: Vec<String> =
+                            first.symmetric_difference(&names).cloned().collect();
+                        self.checked.findings.push(Finding {
+                            severity: Severity::Error,
+                            span: span.clone(),
+                            code: "NK1155",
+                            message: format!(
+                                "the alternatives of this pattern bind different names: \
+                                 `{}`",
+                                missing.join("`, `")
+                            ),
+                            notes: vec![
+                                "every alternative of an `|` pattern binds the same set of \
+                                 names, because the arm's body reads them and does not know \
+                                 which alternative matched (Part I, 3.4)"
+                                    .to_string(),
+                            ],
+                            help: Some(
+                                "bind the same names in each alternative, or write one arm \
+                                 per shape"
+                                    .to_string(),
+                            ),
+                        });
+                        break;
+                    }
+                }
+                for alternative in alternatives {
+                    self.an_or_pattern_that_binds_unevenly(alternative, span);
+                }
+            }
+            MatchPattern::Tuple { parts, .. } => {
+                for part in parts {
+                    self.an_or_pattern_that_binds_unevenly(part, span);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn a_match_that_misses_a_case(&mut self, on: &Ty, arms: &[ast::MatchArm], span: &Span) {
-        let catches_everything = arms.iter().any(|arm| match &arm.pattern {
-            MatchPattern::Otherwise => true,
-            // **A bare name is a catch-all, and covers** (D2). One segment and
-            // no brackets is the binding form - `Op::Times` is two, and
-            // `Message::Write(text)` is a `Tuple`.
-            MatchPattern::Path(path) => path.len() == 1,
-            _ => false,
-        });
+        // **A guarded arm covers nothing** (
+        // [ADR-137](../../docs/specification/adr/adr-137.md) D2): the pattern
+        // says which values reach it and the guard says which of those it
+        // takes, so the rest of them reach the arms below. Rust reads it the
+        // same way, which is what keeps this compiler's answer and the
+        // backend's from disagreeing.
+        let catches_everything = arms
+            .iter()
+            .filter(|arm| arm.guard.is_none())
+            .any(|arm| catches_everything(&arm.pattern));
         if catches_everything {
             return;
         }
@@ -6399,17 +6516,16 @@ impl<'a> Checker<'a> {
             self.a_case_is_missing("else", span);
             return;
         };
-        let named: BTreeSet<String> = arms
-            .iter()
-            .filter_map(|arm| match &arm.pattern {
-                MatchPattern::Path(path)
-                | MatchPattern::Tuple { path, .. }
-                | MatchPattern::Named { path, .. } => {
-                    path.last().map(|last| self.parsed.text(*last).to_string())
-                }
-                _ => None,
-            })
-            .collect();
+        // **An or-pattern names every variant in it**
+        // ([ADR-137](../../docs/specification/adr/adr-137.md) D1, and
+        // [ADR-146](../../docs/specification/adr/adr-146.md) §4's question
+        // answered by building it): `Op::Plus | Op::Minus => …` is two cases
+        // covered by one arm. A **guarded** arm names none, for the reason
+        // above.
+        let mut named: BTreeSet<String> = BTreeSet::new();
+        for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
+            self.variants_named(&arm.pattern, &mut named);
+        }
         let missing: Vec<String> = variants
             .iter()
             .filter(|variant| !named.contains(*variant))
@@ -7829,20 +7945,44 @@ impl<'a> Checker<'a> {
     /// The names a `match` arm brings into scope, all of them unknown: what a
     /// variant carries is not in the ledger yet.
     fn pattern_bindings(&self, pattern: &MatchPattern) -> Vec<Local> {
+        self.pattern_names(pattern)
+            .into_iter()
+            .map(|name| Local::free(name, Ty::Unknown))
+            .collect()
+    }
+
+    /// The names one pattern binds, in the order it writes them.
+    ///
+    /// **Recursive, because a pattern nests**
+    /// ([ADR-137](../../docs/specification/adr/adr-137.md) D1): a tuple's parts
+    /// are patterns, so `Event::Click(Point { x, .. })` binds what the part
+    /// inside it binds.
+    ///
+    /// **An or-pattern hands back its first alternative's names**, which is the
+    /// answer that is right *once `NK1155` has run*: every alternative binds the
+    /// same set, so any of them will do — and where they do not, the refusal is
+    /// the finding rather than a scope this guessed at.
+    fn pattern_names(&self, pattern: &MatchPattern) -> Vec<String> {
         match pattern {
-            MatchPattern::Otherwise | MatchPattern::Literal(_) => Vec::new(),
+            MatchPattern::Otherwise | MatchPattern::Literal(_) | MatchPattern::Range { .. } => {
+                Vec::new()
+            }
             // A single segment binds; `Op::Times` names a variant.
             MatchPattern::Path(segments) if segments.len() == 1 => {
-                vec![Local::free(
-                    self.parsed.text(segments[0]).to_string(),
-                    Ty::Unknown,
-                )]
+                vec![self.parsed.text(segments[0]).to_string()]
             }
             MatchPattern::Path(_) => Vec::new(),
-            MatchPattern::Tuple { bindings, .. } | MatchPattern::Named { bindings, .. } => bindings
+            MatchPattern::Tuple { parts, .. } => {
+                parts.iter().flat_map(|p| self.pattern_names(p)).collect()
+            }
+            MatchPattern::Named { bindings, .. } => bindings
                 .iter()
-                .map(|b| Local::free(self.parsed.text(*b).to_string(), Ty::Unknown))
+                .map(|b| self.parsed.text(*b).to_string())
                 .collect(),
+            MatchPattern::Or(alternatives) => alternatives
+                .first()
+                .map(|first| self.pattern_names(first))
+                .unwrap_or_default(),
         }
     }
 }
