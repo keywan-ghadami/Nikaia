@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.17] — 2026-09-19
+
+Four words leave the reserved list, and the sentence each of them was paying
+for moves to the refusal every stray name already gets.
+
+### Changed (`loop`, `const`, `macro` and `quote` are names)
+
+- **[ADR-117](docs/specification/adr/adr-117.md), all of it.** Reserving a word buys exactly one thing, and it is the sentence a reader who writes it gets. These four were reserved *against* the possibility of a construct rather than for one, which is the ground [ADR-051](docs/specification/adr/adr-051.md) D1 does not accept — and `NK1117` can say that sentence about an ordinary name. `RESERVED_WORDS` is 36 where it was 40; `for loop in loops`, `let quote = '"'` and a field called `macro` are names like any other.
+- **What each used to be told a reserved word, the undeclared-name refusal tells a stray one**: `loop { … }` is answered with *write `while true { … }`*, `const X = …` with *write `comptime X = …`*, and `macro` or `quote` with *Nikaia has no macros; generating code from a type's shape is `comptime` and a bound*. Where the word **is** declared there is nothing to say and nothing is said.
+- **Each sentence ends by saying the word is an ordinary name otherwise**, which the record did not ask for and which is the half a reader who *did* mean a name needs: without it, *there is no unconditional loop keyword* sends somebody who wrote `let loop = 3` looking for a keyword they never wanted.
+- **`const` and `loop` joined the emitter's escape list**, which is the record's *answered as it is for `type`*: they were not there because a Nikaia name could not be one of them, and now it can. `let mut loop = 1` lowers to `let mut r#loop = 1`, compiles and runs. `macro` moves back **into** the sweep `reserved_below.rs` keeps, because the escape can fire for it again; `quote` is a keyword in neither language and needs nothing, which makes it that test's control rather than a fourth case.
+- **`with` did not leave** ([ADR-118](docs/specification/adr/adr-118.md)): it is reserved *for* a construct, which is the one ground that holds.
+
 ## [0.0.16] — 2026-09-19
 
 The ledger's type language gets a word for what is produced step by step, and

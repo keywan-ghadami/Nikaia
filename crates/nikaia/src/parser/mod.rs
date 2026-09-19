@@ -133,11 +133,11 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 40] = [
-    "as", "break", "catch", "comptime", "const", "continue", "dsl", "else", "enum", "extern",
-    "false", "fn", "for", "from", "grammar", "if", "impl", "in", "let", "loop", "macro", "match",
-    "mut", "null", "overlap", "pub", "quote", "return", "self", "spawn", "struct", "sync", "throw",
-    "throws", "trait", "true", "unsafe", "use", "while", "with",
+pub const RESERVED_WORDS: [&str; 36] = [
+    "as", "break", "catch", "comptime", "continue", "dsl", "else", "enum", "extern", "false", "fn",
+    "for", "from", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub",
+    "return", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true", "unsafe",
+    "use", "while", "with",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -2366,7 +2366,6 @@ grammar! {
         rule KW_BREAK = "break" not(ident)
         rule KW_CATCH = "catch" not(ident)
         rule KW_COMPTIME = "comptime" not(ident)
-        rule KW_CONST = "const" not(ident)
         rule KW_CONTINUE = "continue" not(ident)
         rule KW_DSL = "dsl" not(ident)
         rule KW_ELSE = "else" not(ident)
@@ -2382,15 +2381,12 @@ grammar! {
         rule KW_IMPL = "impl" not(ident)
         rule KW_IN = "in" not(ident)
         rule KW_LET = "let" not(ident)
-        rule KW_LOOP = "loop" not(ident)
-        rule KW_MACRO = "macro" not(ident)
         rule KW_MATCH = "match" not(ident)
         rule KW_MUT = "mut" not(ident)
         rule KW_NULL = "null" not(ident)
         rule KW_OVERLAP = "overlap" not(ident)
         rule KW_PAR_FOLD = "par_fold" not(ident)
         rule KW_PUB = "pub" not(ident)
-        rule KW_QUOTE = "quote" not(ident)
         rule KW_RETURN = "return" not(ident)
         rule KW_RULE = "rule" not(ident)
         rule KW_SELF = "self" not(ident)
@@ -2475,34 +2471,31 @@ grammar! {
           | KW_USE -> { 0 }
           | KW_WHILE -> { 0 }
 
-        // **The words nothing in the grammar uses yet**
-        // ([ADR-071](../../../../docs/specification/adr/adr-071.md) for the
-        // three control-flow ones,
-        // [ADR-084](../../../../docs/specification/adr/adr-084.md) D1 for
-        // `const`, which differs from them in being reserved *for* a construct
-        // rather than against the possibility of one). They are
-        // here for the reason `overlap` was here before its construct existed:
-        // a word is free to reserve while no program uses it and breaks
-        // programs afterwards. A half of their own rather than two more arms on
-        // `RESERVED_B`, because the alternation's width is what forced the
-        // split in the first place and three is not worth testing the edge of.
+        // **Four words left this half**
+        // ([ADR-117](../../../../docs/specification/adr/adr-117.md) D1): `loop`,
+        // `const`, `macro` and `quote` are names now. They were reserved
+        // *against* the possibility of a construct rather than for one, which is
+        // the ground [ADR-051](../../../../docs/specification/adr/adr-051.md) D1
+        // asks for — and reserving a word buys exactly one thing, which is the
+        // sentence a reader who writes it gets. `NK1117` can say that sentence
+        // about a name, so the words were paying for nothing (D2).
+        //
+        // **`with` stays because it is about to mean something**
+        // ([ADR-118](../../../../docs/specification/adr/adr-118.md)), which is D3:
+        // reserved *for* a construct is the one ground that holds.
         //
         // **`trait` is the one here that has a construct**
         // ([ADR-078](../../../../docs/specification/adr/adr-078.md) D1): it is in
-        // this half because `RESERVED_B` is where the width broke last time, not
-        // because nothing uses it. It is also the one word here that was found as
-        // a *name* rather than reserved on purpose — `let trait = 3` was a legal
-        // program that `rustc` refused about the generated file
+        // this half because `RESERVED_B` is where the alternation's width broke
+        // last time, not because nothing uses it. It is also the one word here
+        // that was found as a *name* rather than reserved on purpose — `let trait
+        // = 3` was a legal program that `rustc` refused about the generated file
         // ([ADR-076](../../../../docs/specification/adr/adr-076.md) §1).
         rule RESERVED_C -> u8 =
             KW_BREAK -> { 0 }
           | KW_COMPTIME -> { 0 }
-          | KW_CONST -> { 0 }
           | KW_CONTINUE -> { 0 }
-          | KW_LOOP -> { 0 }
           | KW_TRAIT -> { 0 }
-          | KW_MACRO -> { 0 }
-          | KW_QUOTE -> { 0 }
           | KW_WITH -> { 0 }
           // **Reserved with their constructs**
           // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D1), which

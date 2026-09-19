@@ -770,9 +770,9 @@ fn std_ledger() -> crate::contracts::Ledger {
 /// escape to write. They are refused instead (`NK1128`, and `NK1119` for
 /// `self`), which is [ADR-076](../../../docs/specification/adr/adr-076.md) D3.
 const RESERVED_BELOW: &[&str] = &[
-    "abstract", "async", "await", "become", "box", "do", "dyn", "extern", "final", "macro", "mod",
-    "move", "override", "priv", "ref", "static", "trait", "try", "type", "typeof", "unsafe",
-    "unsized", "virtual", "where", "yield",
+    "abstract", "async", "await", "become", "box", "const", "do", "dyn", "extern", "final", "loop",
+    "macro", "mod", "move", "override", "priv", "ref", "static", "trait", "try", "type", "typeof",
+    "unsafe", "unsized", "virtual", "where", "yield",
 ];
 
 /// A source name, written so the language below can read it.
@@ -787,9 +787,17 @@ const RESERVED_BELOW: &[&str] = &[
 ///
 /// **Escaped rather than reserved**, which is
 /// [ADR-076](../../../docs/specification/adr/adr-076.md) D1: reserving these
-/// twenty-four words in Nikaia would let the backend decide what this language's
-/// vocabulary is, and `type` is the field name of every tagged record anybody
-/// has ever written.
+/// words in Nikaia would let the backend decide what this language's vocabulary
+/// is, and `type` is the field name of every tagged record anybody has ever
+/// written.
+///
+/// **`const` and `loop` joined the list when they left Nikaia's own**
+/// ([ADR-117](../../../docs/specification/adr/adr-117.md) D1), which is that
+/// record's *answered as it is for `type`*: they were not here before because a
+/// Nikaia name could not be one of them, and now it can. `macro` was already
+/// here, and `quote` is a keyword in neither language. The three the backend
+/// cannot escape at all — `crate`, `super` and `Self` — are `NK1128`'s and not
+/// this list's.
 ///
 /// Borrowed where nothing changes, which is every name in every program written
 /// today.

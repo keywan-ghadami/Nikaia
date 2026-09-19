@@ -1285,17 +1285,7 @@ language's words, where the old spelling was a parse fragment.
 table with the `dsl X from e` message matching the bare word; `asset("…")`
 when the second stage of `comptime` lands; the two `fs` entries.
 
-### 2.28. `loop`, `const`, `macro` and `quote` are names
-
-[ADR-117](specification/adr/adr-117.md). The four leave the reserved list,
-and what each used to be told a reserved word, the undeclared-name refusal
-tells a stray one: *write `while true`*, *write `comptime`*, *Nikaia has no
-macros*. **Nothing of it is built**: the four are in `parser::RESERVED_WORDS`.
-
-*What it needs, in the record's order (§5):* the four out of the parser's
-table; the three help texts on `NK1117` and a test per word.
-
-### 2.29. `with` is a copy of a value with named fields changed
+### 2.28. `with` is a copy of a value with named fields changed
 
 [ADR-118](specification/adr/adr-118.md). `p with { x: p.x + 1 }` is a new
 value of the same type; the braces are the literal's, only the top level, the
@@ -1307,7 +1297,7 @@ the checker's field resolution and refusals, the enum operand refused; the
 lowering to a struct expression with a base; `examples/1brc.nika`'s `Stats`
 and a test.
 
-### 2.30. A target without an operating system
+### 2.29. A target without an operating system
 
 [ADR-119](specification/adr/adr-119.md). A bare-metal target with
 `user_parallelism` pinned to `no`; `no_std` emission with a target prelude
@@ -1323,7 +1313,7 @@ has one Rust half. Scheduled after the HTTP server.
 profile; build-time settings and the deadline; the availability rows and a
 first program.
 
-### 2.31. A grammar's action is the block after the pattern, and two borrowed names go
+### 2.30. A grammar's action is the block after the pattern, and two borrowed names go
 
 [ADR-120](specification/adr/adr-120.md). Part II 10.8 is the normative page
 of everything a grammar may write. A rule's action is `{ … }` after its
@@ -1340,7 +1330,7 @@ which now write the new form and are fragments until the parser takes it.
 with the arrow form refused; the emitter writing the engine's arrow; the two
 names refused; the examples rewritten.
 
-### 2.32. The ring's park hears the bell
+### 2.31. The ring's park hears the bell
 
 [ADR-121](specification/adr/adr-121.md). **Built, except `io::lines`.** The ring
 carries an eventfd with a poll always armed and its own user data; the bell
@@ -1362,7 +1352,7 @@ would be a hang where there had been a panic — which is D3 read strictly.
 of it is an `Iterator::next`, and the `for` over a stream that would give it a
 suspension point is undecided.
 
-### 2.33. A function-typed parameter lowers by its type
+### 2.32. A function-typed parameter lowers by its type
 
 [ADR-122](specification/adr/adr-122.md). Without `sync` the future shape, run
 or kept; with `sync` a plain closure; the refusal of a pausing lambda at a run
@@ -1390,7 +1380,7 @@ writable now, and what it waits on is `examples/http/` declaring `route` — whi
 is ADR-102's consequence and needs the package rewritten rather than the
 compiler changed.
 
-### 2.34. `nikaia describe` does not write `crosses`
+### 2.33. `nikaia describe` does not write `crosses`
 
 [ADR-123](specification/adr/adr-123.md). **Built, except the command.** The
 column has three values, the ledger writes and reads both claims and stays
@@ -1419,7 +1409,7 @@ against the `.nika` line. `a_described_foreign_call_is_not_asked_about_crossing`
 asserts the silence so nobody rediscovers it. A column for it is a **question**
 and belongs in [`open-decisions.md`](open-decisions.md) when somebody asks it.
 
-### 2.35. A C declaration cannot name a pointer
+### 2.34. A C declaration cannot name a pointer
 
 [ADR-124](specification/adr/adr-124.md) §4, and the only part of that record
 left. `extern` and `unsafe` are reserved words with constructs, an
@@ -1438,7 +1428,7 @@ rather than adding it.
 this language already has: most of `libc`'s arithmetic and process surface, and
 none of its memory surface.
 
-### 2.36. A library for other languages
+### 2.35. A library for other languages
 
 [ADR-125](specification/adr/adr-125.md), all of it. A `pub extern "C" fn`
 with a body is an entry point of a library, and `artifact = "c-library"` in
@@ -1464,7 +1454,7 @@ the runtime surface (`set_allocator`, `init`, `shutdown`, `last_error`,
 header generator and the naming; a library called from a C program in
 `examples/`, and the test that links it.
 
-### 2.37. A struct crosses the boundary by value
+### 2.36. A struct crosses the boundary by value
 
 [ADR-127](specification/adr/adr-127.md), all of it. `pub extern "C" struct`
 has C's layout (declaration order, C padding — `#[repr(C)]` below) and crosses
@@ -1481,7 +1471,7 @@ function.
 `typedef struct` and the ledger's field record; an example beside the
 library's.
 
-### 2.38. The symbol prefix is one line in the build
+### 2.37. The symbol prefix is one line in the build
 
 [ADR-128](specification/adr/adr-128.md), all of it. `symbol-prefix = "hc"` in
 `[build]`, default the package name with `-` written `_`; a C identifier or
@@ -1490,7 +1480,7 @@ refused. No declaration renames its own symbol.
 *What it needs:* the manifest key with its check; the header generator and
 the emitter reading it.
 
-### 2.39. An async call can be cancelled, and a stream is a callback
+### 2.38. An async call can be cancelled, and a stream is a callback
 
 [ADR-129](specification/adr/adr-129.md), all of it. The `_async` form ends with
 `<package>_op** op` (or `NULL`); `<package>_cancel` cancels the task at its
@@ -1504,7 +1494,7 @@ returned; a returned list of text or handles is refused naming that shape.
 and the code; the `bool` callback row and the refusal message; a streamed file
 and a cancelled fetch in the C example.
 
-### 2.40. A WebAssembly library is the same entry point on another target
+### 2.39. A WebAssembly library is the same entry point on another target
 
 [ADR-130](specification/adr/adr-130.md), all of it. `target = "wasm32-unknown"`
 with `artifact = "c-library"` makes `<package>.wasm`, `<package>.js` and
@@ -1519,7 +1509,7 @@ loop.
 exports and the absent forms; the `.js`/`.d.ts` generator; the executor
 bridge and the Promise form; the library on a page, and the test in Node.
 
-### 2.41. A binding is a generated file over the C library
+### 2.40. A binding is a generated file over the C library
 
 [ADR-131](specification/adr/adr-131.md), all of it. `nikaia bind python`
 writes a `ctypes` binding from the ledger (exceptions per variant, `str` and
@@ -1531,7 +1521,7 @@ WebAssembly build's `.js`. No second artifact, no native Node add-on.
 example library; the streamed and async forms; the `js` name; a test that
 imports the binding.
 
-### 2.42. `nikaia fmt` does not exist
+### 2.41. `nikaia fmt` does not exist
 
 [ADR-132](specification/adr/adr-132.md). **Built, except the formatter's line.**
 After `else`, an `if` may stand where the block would: the `else` rule has a
@@ -1555,7 +1545,7 @@ formatter is born with, and **the formatter itself is the entry**. Nothing else 
 the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
 compiler's own Rust and no `.nika` file has ever been formatted by a tool.
 
-### 2.43. An options-only call and a named struct literal are one spelling
+### 2.42. An options-only call and a named struct literal are one spelling
 
 [ADR-133](specification/adr/adr-133.md). **The signature half is built:**
 `fn execute(target_age: i64 = 0)` parses, a mixed signature keeps its `;` and

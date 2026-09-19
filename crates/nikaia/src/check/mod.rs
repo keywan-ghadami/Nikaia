@@ -1698,12 +1698,21 @@ impl<'a> Checker<'a> {
                  read as a name, and a name has to be declared somewhere (Part I, 9.1)"
                     .to_string(),
             ],
-            help: Some(format!(
-                "if `{name}` is meant to be a value, declare it with `let`; if it is meant to \
-                 be a keyword, this language has no such keyword - and a number is written in \
-                 digits with no separators, so `1_000` is `1` beside the name `_000` \
-                 (Part I, 2.2)"
-            )),
+            help: Some(match a_word_that_was_reserved(&name) {
+                // **What each word used to be told a reserved one, this tells a
+                // stray one** ([ADR-117](../../docs/specification/adr/adr-117.md)
+                // D2). Reserving a word buys exactly one thing, which is the
+                // sentence a reader who writes it gets; the four that left the
+                // list were paying for nothing, because this message can say it
+                // about a name.
+                Some(instead) => instead.to_string(),
+                None => format!(
+                    "if `{name}` is meant to be a value, declare it with `let`; if it is meant \
+                     to be a keyword, this language has no such keyword - and a number is \
+                     written in digits with no separators, so `1_000` is `1` beside the name \
+                     `_000` (Part I, 2.2)"
+                ),
+            }),
         });
     }
 
@@ -7094,6 +7103,34 @@ fn walks_by_value(contract: &FnContract) -> bool {
         signature.params.first().map(|(_, ty)| ty),
         Some(Ty::Seq { .. })
     )
+}
+
+/// The sentence a word that used to be reserved gets instead
+/// ([ADR-117](../../docs/specification/adr/adr-117.md) D2).
+///
+/// `None` for every other name, which keeps the general help exactly as it was:
+/// this adds a sentence where the word is one of the four and changes nothing
+/// anywhere else. Where the word **is** declared — a local, a parameter, a field
+/// — the caller never gets here, which is D2's *nothing is said*.
+fn a_word_that_was_reserved(name: &str) -> Option<&'static str> {
+    match name {
+        "loop" => Some(
+            "there is no unconditional loop keyword: write `while true { … }` (Part I, 3.3). \
+             `loop` is an ordinary name otherwise, so `let loop = 3` is a program",
+        ),
+        "const" => Some(
+            "a value the compiler must work out while it builds is `comptime X = …` \
+             (Part II, 10.2) - the word says *time* rather than *mutability*, which is what \
+             `const` means in the languages it comes from. `const` is an ordinary name \
+             otherwise",
+        ),
+        "macro" | "quote" => Some(
+            "Nikaia has no macros: generating code from a type's shape is `comptime` and a \
+             bound (Part II, 10.3), and a grammar is how text becomes a program \
+             (Part II, 10.1). Both words are ordinary names otherwise",
+        ),
+        _ => None,
+    }
 }
 
 fn element_of(over: &Ty, bindings: usize) -> Ty {
