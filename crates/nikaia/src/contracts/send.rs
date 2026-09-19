@@ -464,7 +464,25 @@ fn walk(
             // arguments, which is why a `crosses` type with arguments is not
             // read further: nothing in `std` has one, and the day something
             // does, it is the arguments that want a rule.
-            if contract.crosses && args.is_empty() {
+            //
+            // **And `crosses = false` is the row the destination's refusals
+            // were built for** ([ADR-123](../../../../docs/specification/adr/adr-123.md)
+            // D1): before it there was no way for a described type to answer
+            // *may not*, so `NK2501` and `NK2502` had nothing to fire on.
+            //
+            // It answers with **or without** arguments, and the asymmetry with
+            // `May` above is the polarity and not an oversight: a promise is
+            // withheld where the claim might not reach (a `T` the line did not
+            // speak about), and a restriction is kept where it might
+            // (ADR-010 D1). Nothing a value of such a type is wrapped in makes
+            // it crossable.
+            if contract.crosses.may_not() {
+                return Crossing::MayNot {
+                    part: ty.text(),
+                    at: None,
+                };
+            }
+            if contract.crosses.may() && args.is_empty() {
                 return Crossing::May;
             }
             Some(contract.fields.as_slice())

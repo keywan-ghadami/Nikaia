@@ -13,17 +13,26 @@
 # column's third answer, *may* - neither is something a Rust signature can tell
 # anybody, and reading silence as "nothing" is the polarity ADR-010 D1 forbids.
 #
-# **And no `crosses` on the type below, which is the honest answer rather than a
-# gap.** `LocalHandle` holds an `Rc<String>` and is not `Send` - but that follows
-# from its *fields*, and a reader of signatures does not have them. D3's table
-# says `Send` **on a type** means it may cross; the absence of the word is not
-# the claim that it may not. So the crossing stays `Undecided`, which is C.5's
-# third answer and is not permission. The day the describer reads fields, this
-# line is where `NK2501` and `NK2502` finally have something to say -
-# `docs/open-work.md` carries that.
+# **And `crosses = false` on the type below, which is the claim this file could
+# not make until [ADR-123](../../../../docs/specification/adr/adr-123.md).**
+# `LocalHandle` holds an `Rc<String>` and is not `Send`. That follows from its
+# *fields* rather than from a signature, which is why the column used to be left
+# out here: D3's table says `Send` **on a type** means it may cross, and the
+# absence of the word is not the claim that it may not. The column took two
+# values - `true` and silence - so *may not* was unsayable and the refusals at
+# the destination had nothing to fire on.
+#
+# D1 gives it a third value and D2 says who writes it: a describer that reads
+# fields, which `nikaia describe` will and which is ADR-104's step 2. Until it
+# exists this line is hand-written like the rest of the file, and the `inference`
+# below says which part of the crate was read for it.
 
 version = 2
-inference = "described-from-signatures"
+# `+fields` is the one claim here that no signature could give: `crosses = false`
+# is read from `LocalHandle`'s `Rc<String>` ([ADR-123](../../../../docs/specification/adr/adr-123.md)
+# D2), which is a field and not a signature. Named so that a reviewer knows which
+# part of the crate to check it against.
+inference = "described-from-signatures+fields"
 
 # The crate's source, so the description is believed while it holds and demanded
 # again when it moves (D5, on ADR-100 D3's rule). **Nothing compares it yet**:
@@ -65,5 +74,11 @@ signature = "(value: $T) -> String"
 
 # **An empty field list means "nothing recorded" and not "nothing inside"**
 # (Part III 15.2). The fields are Rust's and no signature names them.
+#
+# `crosses = false` is the exception, and the only claim in this file that comes
+# from a field: the `Rc<String>` inside is a thing the language below marks as
+# not sendable, which is what D2 says a field reader may conclude from
+# ([ADR-123](../../../../docs/specification/adr/adr-123.md)).
 [type."hyper_shim::LocalHandle"]
 pub = true
+crosses = false

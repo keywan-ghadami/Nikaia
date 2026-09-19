@@ -17,17 +17,21 @@
 //! repository writes `Shared` - `Shared` is unbuilt, and this check is what has
 //! to exist before it lands.
 //!
-//! **Since [ADR-037](../../../docs/specification/adr/adr-037.md) D6 the second
-//! half has no input, and that is stated rather than worked around.** `Shared`
-//! was the one type `contracts::send` answered `may not` about; D6 gives it one
-//! representation at both settings, so it is answered by what it holds and no
-//! type in the language is refused a crossing. So the programs below that used
-//! to produce `NK2501` and `NK2502` now assert **silence**, the walk's own tests
-//! in `contracts::send` keep the refusal arm and its sentences whole, and the
-//! two codes stay built for the next type whose expansion moves with the switch.
-//! What is *not* here any more is an end-to-end rendering of either code, and
-//! there is no honest way to write one: a refusal can only come from a type the
-//! records name, and they name none.
+//! **Since [ADR-037](../../../docs/specification/adr/adr-037.md) D6 no type *in
+//! the language* is refused a crossing**, and that is stated rather than worked
+//! around. `Shared` was the one `contracts::send` answered `may not` about; D6
+//! gives it one representation at both settings, so it is answered by what it
+//! holds. The programs below that used to produce `NK2501` and `NK2502` for a
+//! `Shared` therefore assert **silence**.
+//!
+//! **What does answer *may not* is a described type that says so**
+//! ([ADR-123](../../../docs/specification/adr/adr-123.md) D1). The ledger's
+//! `crosses` column took two values, `true` and absent, so no described type
+//! could make the claim and both codes had nothing to fire on for two records'
+//! worth of time. `crosses = false` is the third value and the end of that: the
+//! two tests at the bottom of this file are the first end-to-end rendering of
+//! either code, and `examples/foreign-runtime/`'s handle over an `Rc<String>` is
+//! the type that needed it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -56,6 +60,44 @@ fn crossings(source: &str) -> Vec<Finding> {
         .into_iter()
         .filter(|f| f.code.starts_with("NK25"))
         .collect()
+}
+
+/// The same, against a library ledger written here rather than `std`'s.
+///
+/// What [ADR-123](../../../docs/specification/adr/adr-123.md) is about is a
+/// **described** type's claim, and nothing `std` ships says `crosses = false` -
+/// a `std` type that may not cross a thread would be a `std` bug. So the type
+/// under test is described in the test, the way
+/// `examples/foreign-runtime/crossing/contracts/hyper_shim.contracts` describes
+/// the real one.
+fn crossings_against(library: &str, source: &str) -> Vec<Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(library).expect("the test's ledger parses");
+    check::check(&parsed, &own, &library)
+        .findings
+        .into_iter()
+        .filter(|f| f.code.starts_with("NK25"))
+        .collect()
+}
+
+/// A ledger describing one Rust function and the type it hands back, with
+/// whatever `crosses` is given for that type.
+fn describing(crosses: &str) -> String {
+    format!(
+        "version = 2\n\
+         toolchain = \"probe\"\n\
+         inference = \"probe\"\n\
+         \n\
+         [fn.\"fremd::ortsgebunden\"]\n\
+         pub = true\n\
+         sync = true\n\
+         signature = \"(name: String) -> fremd::LocalHandle\"\n\
+         \n\
+         [type.\"fremd::LocalHandle\"]\n\
+         pub = true\n\
+         {crosses}"
+    )
 }
 
 /// What `project::check` does with a program, which is where the build switch
@@ -596,7 +638,7 @@ fn a_library_type_says_it_may_cross_and_the_overlap_stays() {
         .get("cli::Args")
         .expect("`cli::Args` is described");
     assert!(
-        args.crosses,
+        args.crosses.may(),
         "the claim is what keeps `cli::args` overlapping"
     );
     assert_eq!(
@@ -628,4 +670,189 @@ fn a_library_type_says_it_may_cross_and_the_overlap_stays() {
         ),
         Crossing::Undecided { .. }
     ));
+}
+
+// --- ADR-123: the column's third value, and the first refusals to reach it ----
+
+/// **The three answers a `crosses` line gives**
+/// ([ADR-123](../../../docs/specification/adr/adr-123.md) D1).
+///
+/// `true` is *may*, `false` is *may not*, and leaving the line out is
+/// *undecided*, which is not permission and not a refusal. A boolean could hold
+/// the first and the third; the middle one is what the destination's refusals
+/// were built for and had never been handed.
+#[test]
+fn a_crosses_line_says_may_may_not_or_nothing() {
+    let answer = |ledger: &str, ty: Ty| {
+        let library = Ledger::parse(ledger).expect("the test's ledger parses");
+        send::crossing(&ty, &Ledger::empty(), &library, send::Destination::Ours)
+    };
+
+    assert_eq!(
+        answer(&describing("crosses = true\n"), Ty::named("LocalHandle")),
+        Crossing::May,
+        "`true` is the claim it may, as it always was"
+    );
+    assert!(matches!(
+        answer(&describing(""), Ty::named("LocalHandle")),
+        Crossing::Undecided { .. }
+    ));
+    let refused = answer(&describing("crosses = false\n"), Ty::named("LocalHandle"));
+    assert!(
+        matches!(&refused, Crossing::MayNot { part, .. } if part == "LocalHandle"),
+        "`false` is the claim it may not, and names the type: {refused:#?}"
+    );
+
+    // **And it answers with arguments too, where `true` does not.** The
+    // asymmetry is the polarity rather than an oversight (ADR-010 D1): a promise
+    // is withheld where the line might not have spoken about the `T`, and a
+    // restriction is kept, because nothing a value is wrapped in makes it
+    // crossable.
+    let wrapped = answer(
+        &describing("crosses = false\n"),
+        Ty::parse("LocalHandle[String]"),
+    );
+    assert!(
+        matches!(wrapped, Crossing::MayNot { .. }),
+        "a restriction is kept where a promise would be withheld: {wrapped:#?}"
+    );
+    assert!(matches!(
+        answer(
+            &describing("crosses = true\n"),
+            Ty::parse("LocalHandle[String]")
+        ),
+        Crossing::Undecided { .. }
+    ));
+}
+
+/// **`crosses = false` renders, re-parses, and a third spelling is refused.**
+///
+/// The round trip matters because the ledger is a **committed** file: a column
+/// that could be written and not read again would make a derivation differ from
+/// the file it came from, which is what `ledger_determinism.rs` exists about.
+#[test]
+fn the_column_survives_being_written_and_read_again() {
+    let written = Ledger::parse(&describing("crosses = false\n")).expect("it parses");
+    let rendered = written.render();
+    assert!(
+        rendered.contains("crosses = false"),
+        "the claim is written out: {rendered}"
+    );
+    let again = Ledger::parse(&rendered).expect("what it wrote parses");
+    assert_eq!(
+        again.types.get("fremd::LocalHandle").map(|t| t.crosses),
+        written.types.get("fremd::LocalHandle").map(|t| t.crosses),
+    );
+
+    // A ledger that never said `false` says exactly what it said, which is D1's
+    // *every ledger already written keeps its meaning*.
+    let silent = Ledger::parse(&describing("")).expect("it parses");
+    assert!(!silent.render().contains("crosses"), "{}", silent.render());
+
+    // And a spelling that is neither is refused rather than guessed at: reading
+    // it as either value would put a claim in the file that nobody wrote.
+    let wrong = Ledger::parse(&describing("crosses = \"maybe\"\n"));
+    let said = format!("{:#}", wrong.expect_err("`maybe` is not an answer"));
+    assert!(said.contains("`crosses` is `true` or `false`"), "{said}");
+}
+
+/// **`NK2501` fires for the first time**: a described type that may not cross,
+/// used inside a task.
+///
+/// Part II 11.2's rule has been built and tested since ADR-005 §1 Group B, and
+/// until [ADR-123](../../../docs/specification/adr/adr-123.md) nothing could
+/// reach it - the only type `contracts::send` answered *may not* about was
+/// `Shared`, and ADR-037 D6 took that away. This is the program the message was
+/// always for.
+#[test]
+fn a_described_type_that_may_not_cross_is_refused_into_a_task() {
+    let found = crossings_against(
+        &describing("crosses = false\n"),
+        "fn ueber() {\n\
+             let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+             spawn fn { println(f\"{handle}\") }\n\
+         }",
+    );
+    assert_eq!(found.len(), 1, "exactly one refusal: {found:#?}");
+    let finding = &found[0];
+    assert_eq!(finding.code, "NK2501");
+    assert!(finding.message.contains("`handle`"), "{}", finding.message);
+    let notes = finding.notes.join(" ");
+    assert!(notes.contains("thread of its own"), "{notes}");
+    assert!(notes.contains("LocalHandle"), "{notes}");
+
+    // And the same program is silent where the line says nothing, which is what
+    // keeps the refusal a claim about the ledger rather than about the shape.
+    assert!(
+        crossings_against(
+            &describing(""),
+            "fn ueber() {\n\
+                 let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+                 spawn fn { println(f\"{handle}\") }\n\
+             }",
+        )
+        .is_empty(),
+        "nothing recorded is not a refusal (ADR-010 D1)"
+    );
+}
+
+/// **`NK2502` fires for the first time**: the same value handed to a call this
+/// compiler cannot see the end of.
+///
+/// ADR-038 D7's first rule, which is the one `examples/foreign-runtime/crossing`
+/// is a program about: a foreign call may put what it is given on a thread it
+/// owns, so a value that may not cross may not go into one.
+#[test]
+fn a_described_type_that_may_not_cross_is_refused_into_a_foreign_call() {
+    let found = crossings_against(
+        &describing("crosses = false\n"),
+        "fn ueber() {\n\
+             let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+             fremd::irgendwohin(handle)\n\
+         }",
+    );
+    assert_eq!(found.len(), 1, "exactly one refusal: {found:#?}");
+    let finding = &found[0];
+    assert_eq!(finding.code, "NK2502");
+    assert!(finding.message.contains("`handle`"), "{}", finding.message);
+    assert!(
+        finding.notes.join(" ").contains("LocalHandle"),
+        "{:#?}",
+        finding.notes
+    );
+}
+
+/// **And a *described* foreign call is asked nothing, which is the hole the
+/// claim exposes rather than one it makes.**
+///
+/// `examples/foreign-runtime/crossing` is the program: its handle now says
+/// `crosses = false`, and it is handed to `hyper_shim::across_a_thread`, which
+/// the description names. `NK2502` asks its question of a call **nothing**
+/// describes (ADR-038 D7's own words), so a described one is not asked - and no
+/// column says whether a described foreign function puts what it is given on a
+/// thread. So that program is still refused by `rustc`'s `Send` bound, against
+/// the `.nika` line, exactly as `foreign_runtime.rs` records.
+///
+/// Asserted rather than left to be discovered: this is the silence somebody will
+/// read as a bug, and the day a column answers it, this test is what changes.
+#[test]
+fn a_described_foreign_call_is_not_asked_about_crossing() {
+    let library = describing("crosses = false\n")
+        + "\n\
+           [fn.\"fremd::ueber_einen_thread\"]\n\
+           pub = true\n\
+           sync = true\n\
+           keeps = [\"value\"]\n\
+           signature = \"(value: $T) -> String\"\n";
+    assert!(
+        crossings_against(
+            &library,
+            "fn ueber() {\n\
+                 let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+                 let text = fremd::ueber_einen_thread(handle)\n\
+             }",
+        )
+        .is_empty(),
+        "a described call is not asked, so nothing here is refused"
+    );
 }

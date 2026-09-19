@@ -375,6 +375,44 @@ impl Lock {
     }
 }
 
+/// **Whether a value of a type may cross a thread, and *may not* is an answer**
+/// ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1).
+///
+/// Three values because the crossing verdict has three
+/// ([ADR-045](../../../../docs/specification/adr/adr-045.md)), and a boolean
+/// could only reach two of them: a described type could say *may* or say
+/// nothing, so the refusals that fire on *may not* had nothing to fire on. The
+/// shape is [`Lock`]'s, for the same reason it is - reading *nothing said* as
+/// *no* refuses correct programs, and reading it as *yes* is a promise that
+/// fails open ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Crosses {
+    /// `crosses = true`: a value of this type **may** cross a thread.
+    May,
+    /// `crosses = false`: it **may not**, which is the claim
+    /// `examples/foreign-runtime/`'s handle over an `Rc<String>` needed and
+    /// could not make.
+    MayNot,
+    /// Nothing written. **Not permission**: the compiler will not put such a
+    /// value on a thread of its own choosing, and it will not refuse a program
+    /// for it either - the two differ in who is to blame.
+    #[default]
+    Undecided,
+}
+
+impl Crosses {
+    /// Whether the type promised it crosses: `May` and nothing else.
+    pub fn may(self) -> bool {
+        matches!(self, Crosses::May)
+    }
+
+    /// Whether the type said it does not: `MayNot` and nothing else. This is
+    /// what a refusal may be raised on.
+    pub fn may_not(self) -> bool {
+        matches!(self, Crosses::MayNot)
+    }
+}
+
 /// A function's parameters and result.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Signature {
@@ -573,7 +611,9 @@ pub struct TypeContract {
     /// Every field, with its type - what a checker needs to say that `r.nmae`
     /// is not a field of `Row`.
     pub fields: Vec<FieldContract>,
-    /// A value of this type **may cross a thread** (ADR-005 §1 Group B).
+    /// Whether a value of this type **may cross a thread** (ADR-005 §1 Group B),
+    /// and *may not* is one of the three things it can say
+    /// ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1).
     ///
     /// Written by hand and never inferred, because it only ever answers for a
     /// type whose parts this compiler cannot see: a Nikaia `struct` records its
@@ -586,8 +626,10 @@ pub struct TypeContract {
     /// So this is the same kind of line as `sync = true` on a Rust function - a
     /// promise about a body this compiler does not read, written in the file
     /// that ships and reviewed like code. Its absence is never "it may not"; it
-    /// is "nobody said", and the two differ in who is to blame.
-    pub crosses: bool,
+    /// is "nobody said", and the two differ in who is to blame. **What says *it
+    /// may not* is the line itself**, `crosses = false`, which is the answer the
+    /// destination's refusals are for.
+    pub crosses: Crosses,
     /// Iterating a value of this type can **fail** (ADR-025 D6).
     ///
     /// A `for` over one is a place the enclosing function can fail from, and
@@ -1065,7 +1107,7 @@ impl Ledger {
                                 // Never inferred: a `struct` declared here records
                                 // its fields, and `contracts::send` walks those.
                                 // The key exists for types whose parts are Rust.
-                                crosses: false,
+                                crosses: Crosses::Undecided,
                                 // Nothing a `.nika` file declares iterates at all
                                 // yet, let alone fallibly: the types that do are
                                 // `std`'s, and `std` writes them down (ADR-025 D6).
@@ -1509,8 +1551,13 @@ impl Ledger {
                         .join(", ")
                 ));
             }
-            if contract.crosses {
-                out.push_str("crosses = true\n");
+            // Both claims are written and the third is silence, which is what
+            // makes every ledger already on disk mean what it meant
+            // ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1).
+            match contract.crosses {
+                Crosses::May => out.push_str("crosses = true\n"),
+                Crosses::MayNot => out.push_str("crosses = false\n"),
+                Crosses::Undecided => {}
             }
             if contract.iterates_fallibly {
                 out.push_str("iterates = \"throws\"\n");
@@ -1649,7 +1696,23 @@ impl Ledger {
                     match key {
                         "pub" => entry.public = value == "true",
                         "borrowed" => entry.borrowed = value == "true",
-                        "crosses" => entry.crosses = value == "true",
+                        // Refused rather than guessed at, for `iterates`'
+                        // reason: a third spelling is a claim somebody meant to
+                        // make, and reading it as either of the two would put a
+                        // promise or a restriction in the file that nobody wrote.
+                        "crosses" => {
+                            entry.crosses = match value {
+                                "true" => Crosses::May,
+                                "false" => Crosses::MayNot,
+                                _ => {
+                                    return Err(anyhow!(
+                                        "line {}: `crosses` is `true` or `false`, not `{value}` \
+                                         - and leaving the line out is the third answer",
+                                        at()
+                                    ))
+                                }
+                            }
+                        }
                         "tethered" => entry.tethered = string_list(value, at())?,
                         "iterates" => {
                             let value = unquote(value, at())?;

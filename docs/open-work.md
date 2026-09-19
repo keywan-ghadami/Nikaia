@@ -1369,18 +1369,34 @@ writable now, and what it waits on is `examples/http/` declaring `route` — whi
 is ADR-102's consequence and needs the package rewritten rather than the
 compiler changed.
 
-### 2.34. `crosses` says *no* as well as *yes*
+### 2.34. `nikaia describe` does not write `crosses`
 
-[ADR-123](specification/adr/adr-123.md). `crosses = false` is the claim a
-type may not cross a thread; absent stays *nothing recorded*; the describer
-writes it from a foreign type's fields. **Nothing of it is built**: the column
-is a boolean.
+[ADR-123](specification/adr/adr-123.md). **Built, except the command.** The
+column has three values, the ledger writes and reads both claims and stays
+silent for the third, a third spelling is refused rather than guessed at, the
+crossing verdict answers *may not* off `crosses = false`, and
+`examples/foreign-runtime/`'s three descriptions say it for the handle over an
+`Rc<String>`. `NK2501` and `NK2502` have their first end-to-end tests — the
+first either code has ever had, because no type the records named could answer
+*may not* until now.
 
-*Evidence:* `examples/foreign-runtime/`'s `LocalHandle` over an `Rc<String>`.
+**What is left is D2's *who* rather than its *what*:** `nikaia describe` writing
+the column from a foreign type's fields, which is §2.17's step 2 and waits with
+it. Meanwhile the line is hand-written like the rest of the description, and the
+file says which part of the crate was read for it —
+`inference = "described-from-signatures+fields"`, because `crosses = false` is
+the one claim there that no signature could give.
 
-*What it needs, in the record's order (§5):* the column three-valued; the
-verdict reading `false`; the describer and the example's description; the
-refusals' tests firing.
+*And one hole the claim exposed rather than made, which is not this record's.*
+`NK2502` asks its question of a call **nothing** describes, which is ADR-038 D7's
+own wording, so a *described* foreign call is not asked — and no column says
+whether a described foreign function puts what it is given on a thread.
+`examples/foreign-runtime/crossing` is that shape exactly: its handle says
+`crosses = false` and it is handed to `hyper_shim::across_a_thread`, which the
+description names, so the program is still refused by `rustc`'s `Send` bound
+against the `.nika` line. `a_described_foreign_call_is_not_asked_about_crossing`
+asserts the silence so nobody rediscovers it. A column for it is a **question**
+and belongs in [`open-decisions.md`](open-decisions.md) when somebody asks it.
 
 ### 2.35. A C declaration cannot name a pointer
 

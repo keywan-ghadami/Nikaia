@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.12] — 2026-09-19
+
+The ledger column that could only say *yes*, and the two refusals that had
+spent two records waiting for something to refuse.
+
+### Changed (`crosses` says *no* as well as *yes*)
+
+- **[ADR-123](docs/specification/adr/adr-123.md), D1 and D2 except the command.** Whether a value may cross a thread has three answers and the ledger's column had two: `crosses = true` was *may* and absent was *undecided*, so no described type could say *may not* and the refusals that fire on it had never fired. `contracts::Crosses` is the three values; the ledger writes both claims and stays silent for the third, so every file already on disk means what it meant; a third spelling is **refused** rather than guessed at, on `iterates`' precedent — reading it as either value would put a claim in the file that nobody wrote.
+- **`NK2501` and `NK2502` have their first end-to-end tests**, which is the first either code has ever had. `Shared` was the one type `contracts::send` answered *may not* about and [ADR-037](docs/specification/adr/adr-037.md) D6 took that away; what answers now is a described type that says so. `examples/foreign-runtime/`'s three descriptions say it for the handle over an `Rc<String>` — the type the record exists for.
+- **One asymmetry the record did not name.** `crosses = true` on a type *with* arguments is not read as permission, because the line may not have spoken about the `T`. `crosses = false` **is** read, arguments or not: a promise is withheld where it might not reach and a restriction is kept ([ADR-010](docs/specification/adr/adr-010.md) D1), because nothing a value is wrapped in makes it crossable.
+- **And one hole the claim exposed rather than made.** `NK2502` asks its question of a call **nothing** describes, which is [ADR-038](docs/specification/adr/adr-038.md) D7's own wording, so a *described* foreign call is not asked — and no column says whether a described foreign function puts what it is given on a thread. `examples/foreign-runtime/crossing` is that shape: its handle says `crosses = false`, it is handed to a function the description names, and it is still `rustc`'s `Send` bound that refuses it against the `.nika` line. A test asserts the silence so nobody rediscovers it; a column for it is a question and not work.
+- **What is left is `nikaia describe` writing the column**, which is D2's *who* rather than its *what* and waits on [ADR-104](docs/specification/adr/adr-104.md)'s step 2. Until then the line is hand-written, and the description says which part of the crate was read for it: `inference = "described-from-signatures+fields"`, because `crosses = false` is the one claim there that no signature could give.
+
 ## [0.0.11] — 2026-09-19
 
 0.0.8 decided the ring's park and left it unbuilt. This is the package that
