@@ -170,8 +170,6 @@ and has no key to add.
 [ADR-031](specification/adr/adr-031.md)'s live example, with a failing `add`:
 
 ```nika
-use std::collections::HashMap
-
 enum ZuVoll { Voll }
 
 pub struct Stats { n: i64 }

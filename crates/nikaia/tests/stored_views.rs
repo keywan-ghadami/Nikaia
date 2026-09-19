@@ -325,8 +325,7 @@ fn a_view_stored_in_the_subject_is_lowered_with_the_buffer_named() {
 #[test]
 fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
     let source = r#"
-        use std::collections::HashMap
-        struct Summary { stations: HashMap[&str, i32] }
+                struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
             pub fn() -> Summary sync { return Summary { stations: HashMap() } }
             fn record(&mut self, name: &str, temp: i32) sync {
@@ -349,8 +348,7 @@ fn a_view_handed_to_a_call_on_the_subject_is_lowered_too() {
 #[test]
 fn a_read_only_call_on_a_view_field_is_lowered_rather_than_refused() {
     let source = r#"
-        use std::collections::HashMap
-        struct Summary { stations: HashMap[&str, i32] }
+                struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
             pub fn() -> Summary sync { return Summary { stations: HashMap() } }
             fn has(&self, name: &str) -> bool sync {
@@ -370,8 +368,7 @@ fn a_read_only_call_on_a_view_field_is_lowered_rather_than_refused() {
 #[test]
 fn a_view_that_reaches_the_field_through_a_local_is_lowered_too() {
     let source = r#"
-        use std::collections::HashMap
-        struct Summary { stations: HashMap[&str, i32] }
+                struct Summary { stations: HashMap[&str, i32] }
         impl Summary {
             pub fn() -> Summary sync { return Summary { stations: HashMap() } }
             fn record(&mut self, name: &str) sync {

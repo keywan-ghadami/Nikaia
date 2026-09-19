@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.47] — 2026-09-19
+
+`use std::collections::HashMap` is refused, which completes
+[ADR-140](docs/specification/adr/adr-140.md): all five of its decisions are
+built.
+
+### Added ([ADR-140](docs/specification/adr/adr-140.md) D5)
+
+- **A `use` brings no name in, for `std` as for a package.** [ADR-046](docs/specification/adr/adr-046.md) D2's rule is the language's and `std` was the one place it was not followed — and it turned out the compiler **already did nothing** with such a line: the module layer skipped every `std` import, the checker never looked at one, and the emitter wrote it back as a comment. `HashMap` works with no `use` at all. So what this removes is not behaviour; it is a line that *reads* like an import and is not one.
+- **`NK1156`, and the question it asks is *does the name have a receiver*.** A module and a type read the same way in a ledger key — `fs::read_to_string` and `HashMap::len` are both `X::y` — so what tells them apart is the `self`: a type's entries are called on a value and a module's are not. And it must be a method of *this* name rather than of something inside it, or `fs::Mapped::deref` would make `fs` a type.
+- **A module nothing describes yet is left alone.** `use std::db::postgres` and `use std::backend::x86` name modules of a surface that does not exist, and refusing on one is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s correct program refused.
+- **The migration was two `.nika` files, three tests and three pages.** *Six tests* in `crates/nikaia/tests/std_imports.rs`, one of which walks every `.nika` file in the tree.
+
 ## [0.0.46] — 2026-09-19
 
 A doc comment is a language feature, and the ledger carries it

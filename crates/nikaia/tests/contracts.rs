@@ -111,8 +111,7 @@ fn a_method_call_is_resolved_through_the_receiver() {
 #[test]
 fn a_higher_order_method_hands_on_what_its_lambda_does() {
     let l = ledger(
-        "use std::collections::HashMap\n\
-         use std::io\n\
+        "         use std::io\n\
          fn pure(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }\n\
          fn pausing(m: HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { io::read() catch { } } }",
     );
@@ -295,8 +294,7 @@ fn a_helper_that_uses_an_iterator_method_may_be_called_from_a_lock() {
 #[test]
 fn a_map_of_structs_types_its_lambda_all_the_way_down() {
     let l = ledger(
-        "use std::collections::HashMap\n\
-         pub struct Stats { n: i64 }\n\
+        "         pub struct Stats { n: i64 }\n\
          impl Stats {\n\
              pub fn(first: i64) -> Stats { return Stats { n: first } }\n\
              fn add(&mut self, x: i64) { self.n += x }\n\
@@ -322,8 +320,7 @@ fn a_map_of_structs_types_its_lambda_all_the_way_down() {
 /// variable says what flows *out*; `?` stays for what flows *in*.
 #[test]
 fn a_key_may_be_given_as_something_it_borrows_as() {
-    let source = "use std::collections::HashMap\n\
-                  fn find(m: HashMap[String, i64]) -> i64 { let hit = m.get(\"x\") return 1 }";
+    let source = "                  fn find(m: HashMap[String, i64]) -> i64 { let hit = m.get(\"x\") return 1 }";
     let parsed = parse_to_ast(source).expect("the source parses");
     let library = Ledger::parse(STD).expect("std's ledger parses");
     let own = Ledger::infer(&parsed);
@@ -341,8 +338,7 @@ fn a_key_may_be_given_as_something_it_borrows_as() {
 #[test]
 fn an_unknown_element_type_does_not_become_a_claim() {
     let l = ledger(
-        "use std::collections::HashMap\n\
-         fn build() { let m = HashMap() m.entry(\"x\").and_modify fn { a.whatever() } }",
+        "         fn build() { let m = HashMap() m.entry(\"x\").and_modify fn { a.whatever() } }",
     );
 
     // `a.whatever()` cannot be resolved, so the claim is refused - and refused

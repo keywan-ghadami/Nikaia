@@ -33,7 +33,7 @@
 10-nikaia-light.md #33 lowered (a body)  let numbers = [1, 2, 3, 4]
 10-nikaia-light.md #34 refused (a body) [NK1117]  names.sort()                                  // by name
 10-nikaia-light.md #35 lowered (a body)  let pair = ("*", 3)          // (&str, i64)
-10-nikaia-light.md #36 lowered (items, then a body)  use std::collections::HashMap
+10-nikaia-light.md #36 lowered (a body)  let mut scores = HashMap()
 10-nikaia-light.md #37 lowered (as written)  struct Box[T] {
 10-nikaia-light.md #38 refused (as written) [about-a-refusal NK1126]  fn shout[T](x: T) -> String {
 10-nikaia-light.md #39 lowered (as written)  trait Summarize {

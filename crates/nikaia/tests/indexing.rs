@@ -71,7 +71,6 @@ fn a_map_written_through_the_brackets_compiles_and_runs() {
     let printed = ran(
         "a map written through the brackets",
         r#"
-use std::collections::HashMap
 
 fn main() {
     let mut scores = HashMap()
@@ -91,7 +90,6 @@ fn the_write_is_a_set_and_the_read_is_still_an_index() {
     let rust = lowered(
         "a map's two directions",
         r#"
-use std::collections::HashMap
 
 fn main() {
     let mut scores = HashMap()
@@ -170,7 +168,6 @@ fn a_sequence_and_a_map_in_one_program() {
     let printed = ran(
         "both containers",
         r#"
-use std::collections::HashMap
 
 fn main() {
     let mut xs = Vec()

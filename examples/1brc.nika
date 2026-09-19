@@ -36,7 +36,6 @@
 
 use std::fs
 use std::cli
-use std::collections::HashMap
 
 // ---------------------------------------------------------------------------
 // 1. A grammar for the file

@@ -1446,9 +1446,73 @@ impl<'a> Checker<'a> {
                     self.expected = outer;
                 }
                 Item::Grammar(grammar) => self.grammar(grammar),
+                // **A `use` brings no name in, for `std` as for a package**
+                // ([ADR-140](../../docs/specification/adr/adr-140.md) D5).
+                Item::Import { path, .. } => self.an_import_that_brings_a_name_in(path, &item.span),
                 _ => {}
             }
         }
+    }
+
+    /// `NK1156`: a `use` that names a **type** rather than a module
+    /// ([ADR-140](../../docs/specification/adr/adr-140.md) D5).
+    ///
+    /// [ADR-046](../../docs/specification/adr/adr-046.md) D2's rule is *no name
+    /// is brought in*, and `std` was the one place it was not followed:
+    /// `use std::collections::HashMap` parsed, and what it did was **nothing** —
+    /// `HashMap` works with no `use` at all, because it is a name this compiler
+    /// already knows. A line that reads like an import and does nothing is the
+    /// shape this record is about.
+    ///
+    /// **Asked of the ledger and not of a list**, and the question is *does it
+    /// have a receiver*. A module and a type read the same way in a key —
+    /// `fs::read_to_string` and `HashMap::len` are both `X::y` — so what tells
+    /// them apart is the **`self`**: a type's entries are called on a value and
+    /// a module's are not. So `use std::fs` names a module and is left alone,
+    /// and `use std::collections::HashMap` names a type and is not.
+    ///
+    /// `use std::db::postgres` and `use std::backend::x86` name modules nothing
+    /// describes yet, and are left alone too: refusing on a surface that does
+    /// not exist is [Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)'s correct program
+    /// refused.
+    fn an_import_that_brings_a_name_in(&mut self, path: &[Ident], span: &Span) {
+        let segments: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
+        let ["std", _, ..] = segments.as_slice() else {
+            return;
+        };
+        let last = segments[segments.len() - 1];
+        // A method **of this name**, and not of something inside it:
+        // `fs::Mapped::deref` is called on a value and says that `Mapped` is a
+        // type, which is true and is not a fact about `fs`.
+        let on_a_value = |key: &String| {
+            key.strip_prefix(&format!("{last}::"))
+                .is_some_and(|rest| !rest.contains("::"))
+                && self.library.functions[key]
+                    .signature
+                    .as_ref()
+                    .is_some_and(|s| s.params.first().is_some_and(|(name, _)| name == "self"))
+        };
+        let a_type =
+            self.library.types.contains_key(last) || self.library.functions.keys().any(on_a_value);
+        if !a_type {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1156",
+            message: format!("`use {}` brings no name in", segments.join("::")),
+            notes: vec![format!(
+                "a `use` names a module and brings no name in (Part I, 9.1), for `std` \
+                 as for a package - and `{last}` is a type, so this line does nothing \
+                 at all"
+            )],
+            help: Some(format!(
+                "drop the line: `{last}` is a name this compiler already knows, and it \
+                 is written `{last}` wherever it is needed"
+            )),
+        });
     }
 
     /// A grammar's action blocks are Nikaia, and they build the rule's value.

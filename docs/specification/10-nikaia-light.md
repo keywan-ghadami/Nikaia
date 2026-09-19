@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.46 (Draft)
+**Version:** 0.0.47 (Draft)
 **Date:** 2026-09-19
 
 ---
@@ -1075,7 +1075,6 @@ The standard library provides types for groups of values.
     fields.
 * **Map (HashMap):** key-value pairs.
     ```nika
-    use std::collections::HashMap
     let mut scores = HashMap()
     scores["Player1"] = 100
     ```
@@ -2598,9 +2597,11 @@ one namespace down from *two files of a package may not declare the same name*.
 
 `use std::fs` is the one `use` with a path in it, and it names the standard
 library rather than a package ([ADR-030](adr/adr-030.md) D1). **It brings no
-name in either** ([ADR-140](adr/adr-140.md) D5): `use std::collections`, then
-`collections::HashMap`, exactly as a package's prefix works. `Vec`, `String`
-and `HashMap` need no `use`: that is the prelude.
+name in either** ([ADR-140](adr/adr-140.md) D5): it names a module and the
+module's items are reached through it, exactly as a package's prefix works. A
+`use` whose last segment is a **type** is refused with `NK1156`, because it
+does nothing: `Vec`, `String` and `HashMap` need no `use` at all, and that is
+the prelude.
 
 A diagnostic names the **package** rather than the alias: the type is
 `http::Request` whatever one file calls the package, and the `use` line that
@@ -2615,8 +2616,9 @@ directory of loose examples is a directory of programs.
 > a file beside this one, a `use` naming no dependency, one name twice
 > (`NK1148`), and the braced and glob forms are refused
 > ([ADR-046](adr/adr-046.md) §5, [ADR-144](adr/adr-144.md) §5). `use http as h`
-> is built for a call, a type and a struct literal. Not built: `use std::…`
-> still brings a name in ([ADR-140](adr/adr-140.md) §5 step 5); a package's own
+> is built for a call, a type and a struct literal. A `use std::…` naming a
+> type is refused with `NK1156` ([ADR-140](adr/adr-140.md) §5 step 5). Not
+> built: a package's own
 > package dependencies are refused rather than resolved; and a version does not
 > yet find a package, which resolves through Cargo under the crate name
 > `nikaia_<name>` ([ADR-103](adr/adr-103.md) §5).
