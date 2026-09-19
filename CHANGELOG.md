@@ -4,7 +4,7 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
-## [0.0.27] — 2026-09-19
+## [0.0.28] — 2026-09-19
 
 [ADR-140](docs/specification/adr/adr-140.md)'s fourth migration, and the record's
 own plan for it was wrong in the one way that mattered.
@@ -23,6 +23,20 @@ own plan for it was wrong in the one way that mattered.
 - **A name this unit does not declare is left alone** (C.4), which is what lets a `.nika` file name a **Rust-side** item at all: `fixtures/measurements.nika` says so in its own header and keeps writing `Summary::new`. The same shape appears in a *slice* of a real program, where a test extracts `1brc.nika`'s grammar without its `struct Summary`, and that test now pins both halves — the slice writes `Summary`, the whole file writes `Summary::new`.
 - **And the map goes through the path rule**, which is where one name below depends on more than the name: at the default provenance a map is the **trusted** one, and `new` exists only for the default hasher ([ADR-010](docs/specification/adr/adr-010.md) D5). Writing `HashMap::new(` straight out of the constructor arm took that back for every `HashMap()` in a trusted program — caught by the test that had been asserting the wrong half of it.
 - *Five tests* in `crates/nikaia/tests/anonymous_constructors.rs`.
+
+## [0.0.27] — 2026-09-19
+
+The last question of the previous round is answered, and the doors the records
+left open on purpose are gathered on the open page with a recommendation each.
+
+### Decided (the order of the five big pieces: the HTTP server last)
+
+- **The owner's order** on `project_status_and_roadmap.md`: `std::db` first, the C library second, the query DSL third, the bare-metal target fourth, the **HTTP server last**. [ADR-119](docs/specification/adr/adr-119.md) and [ADR-125](docs/specification/adr/adr-125.md) schedule themselves accordingly, as if they always had.
+
+### Added (nine open decisions, each with a recommendation)
+
+- A pointer for the C direction (recommended: a view for the call and an opaque handle with a named release, no raw pointer); `select` and a `cancel()` on a spawned task; a channel in `std`, bounded only; the duration as `std` methods on integers; `match` exhaustive with `_`; `break` with a value kept refused; a fixed-size array as `Array[T, N]`; a native Node add-on not until asked, and then a generated C shim; the prelude as a small written list.
+
 
 ## [0.0.26] — 2026-09-19
 
