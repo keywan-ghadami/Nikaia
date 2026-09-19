@@ -1401,7 +1401,7 @@ rather than adding it.
 this language already has: most of `libc`'s arithmetic and process surface, and
 none of its memory surface.
 
-### 2.37. A library for other languages
+### 2.36. A library for other languages
 
 [ADR-125](specification/adr/adr-125.md), all of it. A `pub extern "C" fn`
 with a body is an entry point of a library, and `artifact = "c-library"` in
@@ -1427,7 +1427,7 @@ the runtime surface (`set_allocator`, `init`, `shutdown`, `last_error`,
 header generator and the naming; a library called from a C program in
 `examples/`, and the test that links it.
 
-### 2.38. `_` is the ignore pattern
+### 2.37. `_` is the ignore pattern
 
 [ADR-126](specification/adr/adr-126.md), all of it but the `match` arm, which
 works today. `_` stands where a name would be bound and nowhere else: a tuple
@@ -1441,7 +1441,7 @@ view rule holds and a temporary ends with its statement. It lowers to Rust's
 and the parameter; `NK1144`; the emitter passing `_` through, and a test that
 an ignored lambda argument produces no warning below.
 
-### 2.39. A struct crosses the boundary by value
+### 2.38. A struct crosses the boundary by value
 
 [ADR-127](specification/adr/adr-127.md), all of it. `pub extern "C" struct`
 has C's layout (declaration order, C padding — `#[repr(C)]` below) and crosses
@@ -1458,7 +1458,7 @@ function.
 `typedef struct` and the ledger's field record; an example beside the
 library's.
 
-### 2.40. The symbol prefix is one line in the build
+### 2.39. The symbol prefix is one line in the build
 
 [ADR-128](specification/adr/adr-128.md), all of it. `symbol-prefix = "hc"` in
 `[build]`, default the package name with `-` written `_`; a C identifier or
@@ -1467,7 +1467,7 @@ refused. No declaration renames its own symbol.
 *What it needs:* the manifest key with its check; the header generator and
 the emitter reading it.
 
-### 2.41. An async call can be cancelled, and a stream is a callback
+### 2.40. An async call can be cancelled, and a stream is a callback
 
 [ADR-129](specification/adr/adr-129.md), all of it. The `_async` form ends with
 `<package>_op** op` (or `NULL`); `<package>_cancel` cancels the task at its
@@ -1481,7 +1481,7 @@ returned; a returned list of text or handles is refused naming that shape.
 and the code; the `bool` callback row and the refusal message; a streamed file
 and a cancelled fetch in the C example.
 
-### 2.42. A WebAssembly library is the same entry point on another target
+### 2.41. A WebAssembly library is the same entry point on another target
 
 [ADR-130](specification/adr/adr-130.md), all of it. `target = "wasm32-unknown"`
 with `artifact = "c-library"` makes `<package>.wasm`, `<package>.js` and
@@ -1496,7 +1496,7 @@ loop.
 exports and the absent forms; the `.js`/`.d.ts` generator; the executor
 bridge and the Promise form; the library on a page, and the test in Node.
 
-### 2.43. A binding is a generated file over the C library
+### 2.42. A binding is a generated file over the C library
 
 [ADR-131](specification/adr/adr-131.md), all of it. `nikaia bind python`
 writes a `ctypes` binding from the ledger (exceptions per variant, `str` and
@@ -1508,7 +1508,7 @@ WebAssembly build's `.js`. No second artifact, no native Node add-on.
 example library; the streamed and async forms; the `js` name; a test that
 imports the binding.
 
-### 2.44. `else if`
+### 2.43. `else if`
 
 [ADR-132](specification/adr/adr-132.md), all of it. After `else`, an `if` may
 stand where the block would; the chain is one `if` inside another with the
@@ -1520,7 +1520,7 @@ the formatter keeps a chain flat and never refolds one.
 emitter's flat form and the formatter's line; `examples/http`'s `status_line`
 as a chain, and a test on a three-link chain's value.
 
-### 2.45. The leading `;` is gone
+### 2.44. The leading `;` is gone
 
 [ADR-133](specification/adr/adr-133.md), all of it. An argument list of options
 alone writes no `;` — `execute(target_age: 30)`, `fn execute(target_age: i64 =
@@ -1532,7 +1532,7 @@ specification examples already read the new form.
 *What it needs:* the two alternatives and the message; a test that the new
 form parses and the old is refused.
 
-### 2.46. Block comments
+### 2.45. Block comments
 
 [ADR-134](specification/adr/adr-134.md), all of it. `/* … */` anywhere
 whitespace may stand, across lines, nesting, an unclosed one reported at its
