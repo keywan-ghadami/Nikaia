@@ -83,12 +83,10 @@ chapter (Part I 8) is next opened, and mark them *unspecified* until then.
 
 ### 8. A roadmap note for the marketing wish list
 
-Bosch, Siemens, Schwarz IT, SAP each want a different thing, and the order
-the compiler builds them in is the owner's. *Recommendation:* the HTTP server
-first (every demo stands on it), `std::db` second, the C library
+*Recommendation:*  `std::db` second, the C library
 ([ADR-125](specification/adr/adr-125.md)) third, the query DSL fourth; the
-bare-metal target ([ADR-119](specification/adr/adr-119.md)) after the server
-and the C library, since it reuses their allocator and baked settings. One
+bare-metal target ([ADR-119](specification/adr/adr-119.md)) after that the server
+an. One
 paragraph in `project_status_and_roadmap.md` would say it.
 
 ### 9. `execute(target_age: 30)` and `Stats(min: first)` are one spelling
