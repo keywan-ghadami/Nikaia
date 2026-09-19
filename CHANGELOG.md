@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.60] — 2026-09-19
+
+Three sweep failures that are not failures, measured once and written down.
+
+### Found
+
+- **A loop of `nikaia --input` over every `.nika` file in the tree reports three refusals, and all three are the loop's method.** `examples/hello-http/src/main.nika` and `examples/fortunes.nika` write `use http`, and a package reached by name is declared in `[dependencies]` — which lives in `nikaia.toml`, which `--input` does not read. `nikaia build` inside `examples/hello-http` compiles it and its dependency and finishes clean. `examples/inventory/page.nika` is one file of a package whose `Entry` is declared beside it, so compiled alone it is `NK1135` doing its job.
+- **What is actually open about `fortunes.nika` is neither of those.** It is written at specification level, and `examples/README.md` lists its gaps: **G6**, the runtime binding that lets a handler see the request ([ADR-018](docs/specification/adr/adr-018.md)), and the `postgres` block — the database driver, which is itself blocked. Its `render` lowers and runs today.
+
+### Changed
+
+- **`docs/open-work.md`** §3 carries it, so the next reader does not measure it again. The corpus check to trust is the test suite, which builds each project the way a project is built.
+
+### Left open
+
+- Nothing new.
+
 ## [0.0.59] — 2026-09-19
 
 A span of time, and the call that waits one out

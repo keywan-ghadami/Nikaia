@@ -1356,6 +1356,31 @@ The Part III 17.1 example was rewritten while this was found; ADR-018's stands,
 because an ADR is written once and the correction belongs to whatever answers
 the question above.
 
+### 3.3. Three corpus files cannot be compiled with `--input`, and none of them is broken
+
+A sweep that runs `nikaia --input` over every `.nika` file in the tree reports
+three failures, and **all three are the sweep's method rather than the corpus**.
+They are written down here so that the next reader does not measure them again.
+
+* **`examples/hello-http/src/main.nika`** and **`examples/fortunes.nika`** write
+  `use http`. A package reached by name is declared in `[dependencies]`, which
+  lives in `nikaia.toml`, which `--input` does not read — so the refusal is
+  correct and says so. `nikaia build` inside `examples/hello-http` compiles it
+  and its `http` dependency and finishes clean; `crates/nikaia/tests/project.rs`
+  is where that is a gate.
+* **`examples/inventory/page.nika`** is one file of a package whose `Entry` is
+  declared in `stock.nika` beside it. Compiled alone it is a file referring to a
+  type nothing in it declares, which is `NK1135` doing its job.
+
+*What is actually open about `fortunes.nika`* is neither of these: it is written
+at specification level and `examples/README.md` lists its gaps — **G6**, the
+runtime binding that lets a handler see the request
+([ADR-018](specification/adr/adr-018.md)), and the `postgres` block, which is the
+database driver above and is itself blocked. Its `render` lowers and runs today.
+
+*So the corpus check to trust is the test suite*, which builds each project the
+way a project is built, and not a loop over every file.
+
 ## 4. Where the other lists are
 
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) — the phases,
