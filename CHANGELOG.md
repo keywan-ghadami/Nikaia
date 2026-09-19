@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.41] — 2026-09-19
+
+The third part is rewritten to the language standard, and the editorial pass
+that began with `STYLE.md` is complete.
+
+### Changed (Part III follows `STYLE.md`)
+
+- **Every section of Part III** states the rule first, then its consequence, then at most one *Design rationale* ending in the record. The manifest's and the runtime configuration's TOML comments are facts about their keys; the ledger's column table, the `std` module pages and the availability table keep every row; the diagnostics table of C.3 keeps every code and its rule, with the `NK21xx` row that stood twice reduced to one.
+- **Every status note** has the one form, `> **Implementation status:** <value>.`, twenty-eight of them, with plain facts and every diagnostic code and record link the old note carried.
+- **Three defects the page carried are corrected:** the availability section no longer sends portable code to `fs::lines` and `fs::bytes`, which [ADR-025](docs/specification/adr/adr-025.md) D3 withdrew; the target without an operating system cites [ADR-119](docs/specification/adr/adr-119.md) rather than the `extern` record; two internal section references that pointed at sections that had moved point at the right ones.
+- **Every ```` ```nika ```` block of the three parts is byte for byte as it was**, checked by `scripts/check-spec-blocks.py`; the specification test is unchanged.
+
 ## [0.0.40] — 2026-09-19
 
 The second of the three parts is rewritten to the language standard.
