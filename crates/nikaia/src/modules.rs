@@ -232,11 +232,21 @@ fn read_unit(
 /// of them a line means. Refused here and not left to `rustc`: it would report a
 /// duplicate definition against the generated file, which is exactly what
 /// Part III C.1 forbids - and it would name a line the user never wrote.
+///
+/// **Two files and not one**
+/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D3). A name declared
+/// twice in *one* file is `NK1148` in the checker, which every build runs -
+/// where this runs only for a build that has a manifest. This kept the one-file
+/// case for as long as it was the only rule there was, and served it badly:
+/// a sentence about two files, naming one of them twice.
 fn one_namespace(units: &[Unit]) -> Result<()> {
     let mut seen: BTreeMap<String, PathBuf> = BTreeMap::new();
     for unit in units {
         for name in declared_names(&unit.parsed) {
             if let Some(first) = seen.get(&name) {
+                if first == &unit.path {
+                    continue;
+                }
                 return Err(crate::diagnostics::refuse(format!(
                     "`{name}` is declared twice in this package: in {} and in {}.\n\
                      The files of a package share one namespace (Part I, 9.1), so a name \
@@ -256,7 +266,14 @@ fn one_namespace(units: &[Unit]) -> Result<()> {
 /// The names a file declares: what `one_namespace` counts.
 ///
 /// A method is not among them - it belongs to its type and two types may each
-/// have a `len`. An `impl` block declares nothing of its own.
+/// have a `len`. An `impl` block declares nothing of its own, and neither does a
+/// **rule** of a grammar: it belongs to its grammar and is reached as
+/// `Json::value` ([ADR-140](../../../docs/specification/adr/adr-140.md) D3).
+///
+/// **A `trait` and a `grammar` are among them**
+/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D2), and were not:
+/// `trait Foo` beside `struct Foo` was accepted through every path, including
+/// this one, and `rustc` answered about the generated file.
 fn declared_names(parsed: &Parsed) -> Vec<String> {
     parsed
         .program
@@ -264,9 +281,10 @@ fn declared_names(parsed: &Parsed) -> Vec<String> {
         .iter()
         .filter_map(|item| match &item.node {
             Item::Fn { name, .. } => name.map(|name| parsed.text(name).to_string()),
-            Item::Struct { name, .. } | Item::Enum { name, .. } => {
+            Item::Struct { name, .. } | Item::Enum { name, .. } | Item::Trait { name, .. } => {
                 Some(parsed.text(*name).to_string())
             }
+            Item::Grammar(def) => Some(parsed.text(def.name).to_string()),
             _ => None,
         })
         .collect()

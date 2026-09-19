@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.25] — 2026-09-19
+
+The second of the questions is answered, and answering it found two more holes
+than it had asked about.
+
+### Added ([ADR-143](docs/specification/adr/adr-143.md): a name denotes one thing)
+
+- **`NK1148`.** The second declaration is refused, with the caret on the one that arrived and the note naming the first. `fn`, `struct`, `enum`, `trait` and `grammar` declare a name; a **method** does not — it belongs to its type, and two types may each have a `len` — nor does a **rule**, which belongs to its grammar and is reached as `Json::value`.
+- **It was asked about one shape and there were three.** A name that is both a type and a function was the case [ADR-140](docs/specification/adr/adr-140.md) D1's build had picked in silence, and it is the smallest of them. A `trait` and a `grammar` were not counted at all, so `trait Foo` beside `struct Foo` was accepted through **every** path. And everything else — two `struct Foo`s, two `fn f`s, a `struct` and an `enum` of one name — was counted only when the build went through a **manifest**: `nikaia --input` skips the module layer, which is how the corpus, the specification's blocks and a reader's first program are all compiled. Each of them lowered and `rustc` answered `E0428` about a file nobody wrote.
+- **So the rule moved rather than being added.** The per-file case is the checker's, which every build runs; `modules.rs` keeps its refusal for what only it can say — two **files** under one name, with both paths in the message — and skips a pair that is the same file, which it used to serve badly, naming one file twice in a sentence about two.
+- **[ADR-140](docs/specification/adr/adr-140.md) D1's `NK1146` is always right now**, because the case that made its help wrong cannot be declared: it says *write `Foo { n: … }`*, and that is the only `Foo` there can be.
+- *Six tests* in `crates/nikaia/tests/one_name.rs`.
+
 ## [0.0.24] — 2026-09-19
 
 The first of the three questions is answered, and answering it pays back what

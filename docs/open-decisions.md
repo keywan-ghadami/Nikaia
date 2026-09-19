@@ -1,9 +1,9 @@
 # Open decisions — the questions that need the owner
 
-**Three entries are open**, below, and all three were found by *building* or by
-being *asked for* rather than by reading — which is the only way this file fills
-up once its reading-questions are answered. A fourth left it the day it arrived:
-[ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*. An answer is an [ADR](specification/adr/), and
+**Two entries are open**, below. A question found by building rarely stays long:
+two of the four this file held yesterday are records already —
+[ADR-142](specification/adr/adr-142.md), *a grammar's action may not pause*, and
+[ADR-143](specification/adr/adr-143.md), *a name denotes one thing*. An answer is an [ADR](specification/adr/), and
 the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
 [`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
@@ -12,55 +12,7 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-### 1. A name that is both a type and a function
-
-**Found by building [ADR-140](specification/adr/adr-140.md) D1**, and
-[ADR-133](specification/adr/adr-133.md)'s own open question had named the shape:
-*a rule for a name that is both a type and a function — which the grammar allows
-today and nothing in the corpus writes*. D1 removed the collision between the
-two constructs and left this one untouched, and the build picked an answer in
-silence:
-
-```nika
-struct Foo { n: i64 }
-fn Foo(n: i64 = 0) -> i64 { return n }
-
-let a = Foo(n: 1)   // error[NK1146]: … `Foo` is a type
-                    // help: write `Foo { n: … }`
-```
-
-The type wins, so the **function is uncallable** through the only spelling
-[ADR-133](specification/adr/adr-133.md) D1 gives it — and the help sends the
-reader to a line that builds the struct, which is a *different program*. A wrong
-help is worse than none.
-
-**What is blocked:** nothing anybody has written; no `.nika` file in the tree
-declares both. What is at stake is a message that is currently misleading, and a
-rule that exists by accident rather than by decision.
-
-*The options.*
-
-1. **A name denotes one thing**, and declaring both is refused at the second
-   declaration. *Costs:* one check over the item list and one message; the
-   language loses nothing it uses.
-2. **Both may be declared**, and the *call* form belongs to the function while
-   the *brace* form belongs to the type — which is what the two spellings
-   already mean everywhere else. *Costs:* `NK1146` has to ask whether the name
-   is also a function before it fires, and a reader has to hold a rule that
-   `Foo(n: 1)` and `Foo { n: 1 }` are two different programs.
-3. **Leave it**, and fix only the help. *Costs:* the rule stays an accident, and
-   the next record that touches either construct meets it again.
-
-*Recommendation:* **option 1.** It is the same sentence the language already
-says about two files declaring one name and about two packages under one alias —
-[ADR-046](specification/adr/adr-046.md) D5's *one name per file*, applied one
-namespace over — and it is the only option under which `NK1146`'s help is
-always right.
-
-*If it is wrong:* option 1 spent is a refusal that has to be lifted before
-option 2 could be taken, and nothing in the corpus would notice either way.
-
-### 2. The order of the five big unchecked boxes
+### 1. The order of the five big unchecked boxes
 
 **Written down from a truncated sentence, which is why it is back here.** This
 file's old §8 asked for the order among the HTTP server, `std::db`, the C
@@ -92,7 +44,7 @@ holds.
 *If it is wrong:* nothing is built on it — the cost is a roadmap paragraph a
 reader takes for the owner's and is not.
 
-### 3. The answer to "LINQ": the SQL DSL with rows typed from the schema, and no expression capture
+### 2. The answer to "LINQ": the SQL DSL with rows typed from the schema, and no expression capture
 
 **Asked by marketing** (SAP and DATEV want "LINQ and an ORM"), and the language
 already has most of an answer that is better than the one asked for — which is
@@ -274,7 +226,12 @@ in place, with the mark given a definition beside the **Status** note's) and
 [ADR-142](specification/adr/adr-142.md) (a grammar's action may not pause — the
 entry that arrived and left in one round, because the answer was the demand an
 `overlap` branch and a `par_iter` lambda already carry and the corpus wrote
-nothing that would have to change). Each record
+nothing that would have to change) and
+[ADR-143](specification/adr/adr-143.md) (a name denotes one thing, and the
+second declaration is refused — the entry that turned out to be **three**
+holes rather than the one it asked about: a `trait` and a `grammar` were not
+counted at all, and everything else was counted only when the build had a
+manifest). Each record
 holds its own reasoning, its alternatives and what they cost; reading the answer
 here *and* there was two copies of one thing, and the copy that goes stale is
 always the notes page.

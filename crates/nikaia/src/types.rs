@@ -15,7 +15,7 @@
 // question about a *written name* rather than about a value's type, so it needs
 // the item tree and neither the scope stack nor the inference.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Item, Span, Stmt, Type};
 use crate::check::{Finding, Severity};
@@ -25,6 +25,7 @@ use crate::parser::Parsed;
 /// Every type name written in this unit that nothing accounts for.
 pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
     let mut found = Vec::new();
+    declared_once(parsed, &mut found);
     let known = known_names(parsed, own, library);
     let traits = known_traits(parsed, own, library);
     for item in &parsed.program.items {
@@ -107,6 +108,80 @@ fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
         ],
         help: Some(format!(
             "declare `{name}` with `trait`, or leave the bound off - a parameter without              one may be moved and passed and nothing else (ADR-074 D5)"
+        )),
+    }
+}
+
+/// **`NK1148`: a name declared twice in one file**
+/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D1).
+///
+/// Across files this is `modules::one_namespace`, which has something this does
+/// not — two paths to name ([ADR-047](../../../docs/specification/adr/adr-047.md)
+/// D1). Inside one file nothing said it, unless the build happened to go through
+/// a manifest: `nikaia --input` skips the module layer, and that is the path the
+/// corpus, the specification's blocks and a reader's first program all take. So
+/// `struct Foo` beside `fn Foo` lowered, and `rustc` answered `E0428` about a
+/// file nobody wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **Here and not in the module layer**, because every build runs the checker
+/// and only some builds run that.
+fn declared_once(parsed: &Parsed, out: &mut Vec<Finding>) {
+    let mut seen: BTreeMap<String, &'static str> = BTreeMap::new();
+    for item in &parsed.program.items {
+        let Some((name, kind)) = declares(parsed, &item.node) else {
+            continue;
+        };
+        match seen.get(&name) {
+            // **The caret is on the second**, because that is the one that
+            // arrived and the one to move; the note names the first.
+            Some(first) => out.push(declared_twice(&name, first, kind, &item.span)),
+            None => {
+                seen.insert(name, kind);
+            }
+        }
+    }
+}
+
+/// What declares a name, and what it is called in the message
+/// ([ADR-143](../../../docs/specification/adr/adr-143.md) D2).
+///
+/// Five items and no more. A **method** belongs to its type and two types may
+/// each have a `len`; a **rule** belongs to its grammar and is reached as
+/// `Json::value`; a field, a variant, a type parameter and an `impl` block
+/// declare nothing at this level.
+fn declares(parsed: &Parsed, item: &Item) -> Option<(String, &'static str)> {
+    match item {
+        Item::Fn { name, .. } => name.map(|name| (parsed.text(name).to_string(), "fn")),
+        Item::Struct { name, .. } => Some((parsed.text(*name).to_string(), "struct")),
+        Item::Enum { name, .. } => Some((parsed.text(*name).to_string(), "enum")),
+        Item::Trait { name, .. } => Some((parsed.text(*name).to_string(), "trait")),
+        Item::Grammar(def) => Some((parsed.text(def.name).to_string(), "grammar")),
+        _ => None,
+    }
+}
+
+/// The message [`declared_once`] raises. Two of a kind get the same sentence as
+/// two of different kinds, because the reader is doing the same thing either
+/// way: finding out which of two declarations a line means.
+fn declared_twice(name: &str, first: &str, second: &str, span: &Span) -> Finding {
+    let kinds = match first == second {
+        true => format!("both as a `{first}`"),
+        false => format!("as a `{first}` and as a `{second}`"),
+    };
+    Finding {
+        severity: Severity::Error,
+        span: span.clone(),
+        code: "NK1148",
+        message: format!("`{name}` is declared twice in this file: {kinds}"),
+        notes: vec![
+            "a name denotes one thing (ADR-143 D1), so a line that writes it has one \
+             meaning and no rule is needed about which declaration wins - the files of a \
+             package share one namespace for the same reason (Part I, 9.1)"
+                .to_string(),
+        ],
+        help: Some(format!(
+            "rename one of the two - a `struct` and its anonymous constructor are already \
+             one name, so `{name}` cannot also be a function of its own"
         )),
     }
 }

@@ -2459,6 +2459,15 @@ without `use http` is refused, so a file still lists what it depends on at the t
 (D4). And **one name per file**: two packages that end up under the same name, by
 alias or by collision, is an error rather than a rule about which wins (D5).
 
+**A name denotes one thing** ([ADR-143](adr/adr-143.md) D1), and the second
+declaration is refused — `NK1148`, with the caret on the one that arrived. A
+`fn`, a `struct`, an `enum`, a `trait` and a `grammar` declare a name; a
+**method** belongs to its type and two types may each have a `len`, and a
+**rule** belongs to its grammar and is reached as `Json::value`. That is the
+same sentence one namespace down from *two files of a package may not declare
+the same name*, and it is why that one needs no rule about which declaration a
+line means.
+
 `use std::fs` is the one `use` with a path in it, and it names the library rather
 than a package of yours ([ADR-030](adr/adr-030.md) D1). **It brings no name in
 either** ([ADR-140](adr/adr-140.md) D5): `use std::collections` then
