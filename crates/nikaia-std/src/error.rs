@@ -46,6 +46,15 @@ pub struct Raised {
     /// it and wrote it into the binary as text.
     origin: &'static str,
     trace: Option<Backtrace>,
+    /// **The failures that joined this one**
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), in the order
+    /// they joined.
+    ///
+    /// Empty until something joins, which costs nothing on the path where
+    /// nothing fails. What fills it is an `overlap` whose later branches failed
+    /// too (D2): the block waits for every branch, so when it ends every
+    /// outcome is known and the list is a **fact** rather than a race.
+    secondary: Vec<Box<dyn Error>>,
 }
 
 impl Raised {
@@ -68,6 +77,9 @@ impl Raised {
             }
             _ => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
         }
+        for later in &self.secondary {
+            out.push_str(&indented(&later.full()));
+        }
         out
     }
 
@@ -83,9 +95,10 @@ impl fmt::Display for Raised {
     }
 }
 
+/// The same for the boxed channel, and for the same reason.
 impl fmt::Debug for Raised {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (raised at {})", self.inner, self.origin)
+        f.write_str(&self.full())
     }
 }
 
@@ -107,6 +120,7 @@ where
         // `force_capture`, not `capture`: `capture` additionally requires
         // `RUST_BACKTRACE`, so `NIKAIA_TRACE=1` alone would capture nothing.
         trace: tracing().then(Backtrace::force_capture),
+        secondary: Vec::new(),
     })
 }
 
@@ -129,6 +143,17 @@ pub struct Thrown<E> {
     inner: E,
     origin: &'static str,
     trace: Option<Backtrace>,
+    /// The failures that joined this one
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+    ///
+    /// **Of this channel's own type**, which is what makes the list possible at
+    /// all: a joining block hands every branch the same channel
+    /// ([ADR-164](../../../docs/specification/adr/adr-164.md) D2), so the
+    /// failures that meet here are the same kind of thing as the one they meet.
+    /// Each keeps its own envelope, so each keeps the site
+    /// [ADR-023](../../../docs/specification/adr/adr-023.md) D6 gives it — and
+    /// a secondary with secondaries of its own is D3's tree.
+    secondary: Vec<Thrown<E>>,
 }
 
 impl<E> Thrown<E> {
@@ -140,12 +165,13 @@ impl<E> Thrown<E> {
     /// the envelope is not thrown away — `error.full()` needs it and so does
     /// `throw error` (D3) — so it comes back beside the error rather than
     /// around it, and the handler holds both.
-    pub fn split(self) -> (E, Site) {
+    pub fn split(self) -> (E, Site<E>) {
         (
             self.inner,
             Site {
                 origin: self.origin,
                 trace: self.trace,
+                secondary: self.secondary,
             },
         )
     }
@@ -159,9 +185,42 @@ impl<E> Thrown<E> {
 impl<E: fmt::Display> Thrown<E> {
     /// Everything, for an operator — [`Raised::full`]'s answer for a named
     /// error.
+    ///
+    /// **With what joined it, indented under it**
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1). An outage
+    /// that took two of three loads down reads as two failures, the second
+    /// under the first, rather than as one with the rest gone.
     pub fn full(&self) -> String {
-        full_form(&self.inner, self.origin, self.trace.as_ref())
+        self.long(true)
     }
+
+    /// The long form, told whether to say anything about the trace.
+    ///
+    /// **A secondary says nothing about it**: the note is about how this
+    /// *process* was started, so repeating it under every joined failure says
+    /// the same thing three times and buries the failures.
+    fn long(&self, note_trace: bool) -> String {
+        let mut out = full_form_with(&self.inner, self.origin, self.trace.as_ref(), note_trace);
+        for later in &self.secondary {
+            out.push_str(&indented(&later.long(false)));
+        }
+        out
+    }
+}
+
+/// One joined failure, under the one it joined
+/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+///
+/// Every line of it moves right, not only the first, so a secondary that has
+/// secondaries of its own reads as the tree D3 makes it: the depth on the page
+/// is the depth in the list.
+fn indented(full: &str) -> String {
+    let mut out = String::from("\n  and then:");
+    for line in full.lines() {
+        out.push_str("\n  ");
+        out.push_str(line);
+    }
+    out
 }
 
 /// What the language put around a thrown error: where it was raised, and the
@@ -171,18 +230,27 @@ impl<E: fmt::Display> Thrown<E> {
 /// It exists because a handler is handed the **error** and still has to be able
 /// to answer both of the questions the envelope answers. Carrying it beside the
 /// error is what lets `match error { … }` be the plain match the source wrote.
-pub struct Site {
+pub struct Site<E> {
     origin: &'static str,
     trace: Option<Backtrace>,
+    /// What joined the error this site belongs to
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), kept beside
+    /// the error for the same reason the site is: a handler is handed the
+    /// **error**, and both of the things the envelope holds have to stay
+    /// reachable from where it was opened.
+    secondary: Vec<Thrown<E>>,
 }
 
-impl Site {
+impl<E> Site<E> {
     /// `error.full()` in a handler a named channel reached: the message, the
     /// site, and the trace if there is one.
     ///
     /// The same string [`Thrown::full`] builds, from the two halves the handler
     /// holds rather than from one value.
-    pub fn full_of<E: fmt::Display>(&self, error: &E) -> String {
+    pub fn full_of(&self, error: &E) -> String
+    where
+        E: fmt::Display,
+    {
         full_form(error, self.origin, self.trace.as_ref())
     }
 
@@ -193,12 +261,23 @@ impl Site {
     /// error on is not where it was raised, and re-capturing here would make it
     /// look like it was ([ADR-023](../../../docs/specification/adr/adr-023.md)
     /// D6).
-    pub fn refill<E>(self, error: E) -> Thrown<E> {
+    pub fn refill(self, error: E) -> Thrown<E> {
         Thrown {
             inner: error,
             origin: self.origin,
             trace: self.trace,
+            // **And what joined it travels on with it.** A handler that passes
+            // an error along passes what came with it; dropping the list here
+            // would make `throw error` the one place a failure quietly loses
+            // the others ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+            secondary: self.secondary,
         }
+    }
+
+    /// The failures that joined this one, for a handler that reads them
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+    pub fn secondary(&self) -> &[Thrown<E>] {
+        &self.secondary
     }
 }
 
@@ -208,12 +287,32 @@ fn full_form<E: fmt::Display>(
     origin: &'static str,
     trace: Option<&Backtrace>,
 ) -> String {
-    let mut out = format!("{error}\n  raised at {origin}");
+    full_form_with(error, origin, trace, true)
+}
+
+/// The same, told whether to say anything about the trace
+/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+fn full_form_with<E: fmt::Display>(
+    error: &E,
+    origin: &'static str,
+    trace: Option<&Backtrace>,
+    note_trace: bool,
+) -> String {
+    // **An envelope with no site says so in the sentence that already existed**
+    // ([ADR-159](../../../docs/specification/adr/adr-159.md) D3). Since
+    // [ADR-115](../../../docs/specification/adr/adr-115.md) D1 a library's
+    // error may be enveloped for the sake of the **list**, and *raised at
+    // (below Nikaia)* would be this compiler inventing a place.
+    let mut out = match origin == BELOW_SITE {
+        true => format!("{error}\n{BELOW}"),
+        false => format!("{error}\n  raised at {origin}"),
+    };
     match trace {
         Some(t) if t.status() == BacktraceStatus::Captured => {
             out.push_str(&format!("\n{t}"));
         }
-        _ => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
+        _ if note_trace => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
+        _ => {}
     }
     out
 }
@@ -224,9 +323,16 @@ impl<E: fmt::Display> fmt::Display for Thrown<E> {
     }
 }
 
+/// **What an uncaught failure prints**, which is where the list is read most
+/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+///
+/// A `main` that hands back an `Err` is printed by the language below through
+/// `Debug`, so this is the operator's view of a program that stopped — and a
+/// short form there would be the one place the failures that joined are
+/// dropped on the floor. It is the long form, with them under it.
 impl<E: fmt::Display> fmt::Debug for Thrown<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (raised at {})", self.inner, self.origin)
+        f.write_str(&self.full())
     }
 }
 
@@ -247,6 +353,64 @@ pub fn throwing<E>(error: E, origin: &'static str) -> Thrown<E> {
         inner: error,
         origin,
         trace: tracing().then(Backtrace::force_capture),
+        secondary: Vec::new(),
+    }
+}
+
+/// **A library's error, put in an envelope** — [ADR-115](../../../docs/specification/adr/adr-115.md)
+/// D1 read against [ADR-159](../../../docs/specification/adr/adr-159.md) D2.
+///
+/// That record said a library's error travels **bare**, because there is no
+/// `throw` in this program to have a site. That holds for the site and not for
+/// the list: an `overlap` that combines failures is the language doing
+/// something, so there is something to attach even where nothing was raised
+/// here. Where a function's body joins, its channel is the envelope and this is
+/// what a `?` from a callee with a bare one converts through.
+///
+/// The site stays absent, which [`Full`] already has words for.
+impl<E> From<E> for Thrown<E> {
+    fn from(error: E) -> Thrown<E> {
+        Thrown {
+            inner: error,
+            origin: BELOW_SITE,
+            trace: None,
+            secondary: Vec::new(),
+        }
+    }
+}
+
+/// What the origin says for an error no `throw` of this program raised.
+const BELOW_SITE: &str = "(below Nikaia)";
+
+/// **What a joining block does with the failures after the first**
+/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D2).
+///
+/// The first failure in written order is the block's
+/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5) and every later
+/// one joins its list, in written order. One trait so that
+/// [`crate::task::combine2`] and its arities need to know only that the channel
+/// can take one, whichever of the envelopes it is.
+pub trait Joined {
+    /// Put `later` in this error's list, after whatever is already there.
+    fn joined_by(&mut self, later: Self);
+}
+
+impl<E> Joined for Thrown<E> {
+    fn joined_by(&mut self, later: Thrown<E>) {
+        self.secondary.push(later);
+    }
+}
+
+/// **The boxed channel joins through a downcast**, which is the price of the
+/// box rather than a shortcut: what is inside it is a [`Raised`] wherever this
+/// program raised it, and an error from below Nikaia has no envelope to hold a
+/// list. A failure that joins one of those is dropped, and that is the one case
+/// the list cannot cover — named here rather than discovered.
+impl Joined for Box<dyn Error> {
+    fn joined_by(&mut self, later: Box<dyn Error>) {
+        if let Some(raised) = self.downcast_mut::<Raised>() {
+            raised.secondary.push(later);
+        }
     }
 }
 
@@ -328,6 +492,59 @@ mod tests {
     fn without_the_switch_the_absence_is_stated() {
         let e = raise(Boom, "conf.nika:12");
         assert!(e.full().contains("NIKAIA_TRACE=1"), "{}", e.full());
+    }
+
+    /// **A failure that joined is under the one it joined**
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1, D2), in the
+    /// order they joined.
+    #[test]
+    fn what_joined_is_printed_under_it() {
+        let mut first = throwing(Boom, "load.nika:3");
+        first.joined_by(throwing(Boom, "load.nika:9"));
+        let full = first.full();
+
+        assert_eq!(full.matches("boom").count(), 2, "{full}");
+        assert!(full.contains("raised at load.nika:3"), "{full}");
+        assert!(full.contains("raised at load.nika:9"), "{full}");
+        assert!(
+            full.find("load.nika:3") < full.find("load.nika:9"),
+            "the one that was joined comes first:\n{full}"
+        );
+        assert!(full.contains("and then:"), "{full}");
+    }
+
+    /// **And the trace note is said once**, because it is about how this
+    /// *process* was started: repeating it under every joined failure says the
+    /// same thing three times and buries them.
+    #[test]
+    fn the_trace_note_is_not_repeated_under_each() {
+        let mut first = throwing(Boom, "load.nika:3");
+        first.joined_by(throwing(Boom, "load.nika:9"));
+        assert_eq!(first.full().matches("NIKAIA_TRACE").count(), 1);
+    }
+
+    /// **An envelope with no site says so**, which is the sentence
+    /// [ADR-159](../../../docs/specification/adr/adr-159.md) D3 already had.
+    /// Since D1 a library's error may be enveloped for the sake of the list,
+    /// and *raised at (below Nikaia)* would be this compiler inventing a place.
+    #[test]
+    fn an_enveloped_error_from_below_still_has_no_site() {
+        let below: Thrown<Boom> = Boom.into();
+        let full = below.full();
+        assert!(full.contains("no site recorded"), "{full}");
+        assert!(!full.contains("raised at"), "{full}");
+    }
+
+    /// **The list survives `throw error`** (D1): a handler that passes an error
+    /// along passes what came with it, or that would be the one place a
+    /// failure quietly loses the others.
+    #[test]
+    fn passing_an_error_on_keeps_what_joined_it() {
+        let mut first = throwing(Boom, "load.nika:3");
+        first.joined_by(throwing(Boom, "load.nika:9"));
+        let (error, site) = first.split();
+        assert_eq!(site.secondary().len(), 1);
+        assert!(site.refill(error).full().contains("load.nika:9"));
     }
 
     /// An error from below Nikaia has no site, and says that instead of

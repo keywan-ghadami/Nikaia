@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.89] — 2026-09-20
+
+**An `overlap` keeps every failure** ([ADR-115](docs/specification/adr/adr-115.md)
+D1 and D2, built by [ADR-170](docs/specification/adr/adr-170.md)) — and
+`docs/open-decisions.md` has nothing open.
+
+### Added
+
+- **Every error carries the failures that joined it**, and an `overlap`'s later failing branches join the winner's list in **written** order. The first in written order is still the block's ([ADR-050](docs/specification/adr/adr-050.md) D5); what changed is that the rest are under it rather than gone. The block waits for every branch, so when `combine<n>` runs every outcome is known and the list is a **fact** rather than a race — which is the reason D2 gives for not cancelling the rest at the first failure.
+- **An uncaught failure prints it, indented.** A `main` that hands back an `Err` is printed by the language below through `Debug`, so that is the operator's view of a program that stopped, and a short form there would be the one place the joined failures are dropped on the floor. Every line of a joined failure moves right, so the depth on the page is the depth in the list. The *no trace* note is said **once**, on the primary: it is about how this process was started, and repeating it under every failure says one thing three times and buries them.
+
+### Decided
+
+- **Where the list lives when the channel has no envelope: option A**, which the owner answered and added was always the plan and only badly documented. That is the reading [ADR-170](docs/specification/adr/adr-170.md) takes: [ADR-159](docs/specification/adr/adr-159.md) D2's *a library's error travels bare* was about the **site**, never about the list. An `overlap` that combines failures is **the language doing something**, so there is something to attach even where nothing was raised here — and the envelope it puts on still says *no site recorded*, which is D3's own sentence.
+- **Of the channel's own type.** A joining block hands every branch the same channel ([ADR-164](docs/specification/adr/adr-164.md) D2), so the failures that meet there are the same kind of thing as the one they meet. Each keeps its own envelope and so its site, and a secondary with secondaries of its own is D3's tree with nothing further to build for the shape.
+
+### The one case it cannot cover
+
+- A failure that joins an error from **below** Nikaia — one with no envelope at all — is dropped. That is the boxed channel's downcast finding nothing, and it is the price of the box; named here rather than discovered.
+
+### What this leaves
+
+- `docs/open-work.md` §2.25 is now the **cleanup half**: D3's attachment, D4's `error.secondary` as a value a program reads (which needs a Nikaia type for *a list of errors* before it is work), and whether the list survives a hop to a caller with a bare channel of its own.
+- **A test written as a tripwire was turned over.** [ADR-163](docs/specification/adr/adr-163.md)'s package asserted that a second failing branch is **nowhere**, calling it *the line that changes the day §2.25 is built*. This is that day, and it now asserts the second failure is printed under the first.
+
 ## [0.0.88] — 2026-09-20
 
 A type says what **reading it** touches, and I/O under a lock is refused

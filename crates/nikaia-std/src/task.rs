@@ -278,10 +278,33 @@ macro_rules! overlapping {
 macro_rules! combining {
     ($name:ident, $($branch:ident : $value:ident),+) => {
         #[allow(non_snake_case, clippy::too_many_arguments)]
-        pub fn $name<$($value),+, E>(
+        pub fn $name<$($value),+, E: crate::error::Joined>(
             $($branch: Result<$value, E>),+
         ) -> Result<($($value),+), E> {
-            Ok(($($branch?),+))
+            // **Every failure, and the first in written order is the block's**
+            // ([ADR-050](../../../docs/specification/adr/adr-050.md) D5,
+            // [ADR-115](../../../docs/specification/adr/adr-115.md) D2). The
+            // block waited for every branch, so when this runs every outcome is
+            // known and the list is a fact rather than a race - which is the
+            // reason D2 gives for not cancelling the rest at the first failure.
+            let mut failed: Vec<E> = Vec::new();
+            $(
+                let $branch = match $branch {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        failed.push(e);
+                        None
+                    }
+                };
+            )+
+            let mut failed = failed.into_iter();
+            if let Some(mut first) = failed.next() {
+                for later in failed {
+                    first.joined_by(later);
+                }
+                return Err(first);
+            }
+            Ok(($($branch.expect("no branch failed")),+))
         }
     };
 }

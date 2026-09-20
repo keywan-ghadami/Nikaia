@@ -879,35 +879,39 @@ value"* today.
 `as_ref()`; the tether analysis reading the result as a view; the translation
 removed and a test that uses the receiver again.
 
-### 2.25. An `overlap` keeps every failure
+### 2.25. An `overlap` keeps every failure — the cleanup half
 
-[ADR-115](specification/adr/adr-115.md). Every error carries a `secondary`
-list; an `overlap`'s later failing branches join the winner's list in written
-order, a cleanup error while unwinding joins the same list, and a log or
-`nikaia explain` prints the list indented. `catch` is unchanged. **Nothing of
-it is built**: the block's join drops every failure but the first, and a
-cleanup error attached below cannot be read by a program.
+[ADR-115](specification/adr/adr-115.md) D1 and D2 are **built**
+([ADR-170](specification/adr/adr-170.md)): every error carries the failures
+that joined it, an `overlap`'s later failing branches join the winner's list in
+written order, and an uncaught failure prints them indented under it. The
+question that blocked it — where the list lives when the channel has no
+envelope — was answered **A**: a body that joins puts one on.
 
-*What it needs, in the record's order (§5):* the list on the error carrier
-and the printer; the `overlap` join appending; the cleanup attachment
-through the list; Part I 8.1.2's example and a test with two failing
-branches.
+*What is left, in the record's order:*
 
-*The opening move is built.* The block **combines** rather than returning at
-the first `Err` ([ADR-164](specification/adr/adr-164.md) D1):
-`nikaia_std::task::combine<n>` takes the branches' results in written order and
-is the only code that ever holds them all, which is where the list goes. D4's
-own written example — `overlap { … } catch { … }` — compiles and runs, and the
-handler binds what the branches threw (D2).
+* **D3's cleanup attachment.** The shape is there — a secondary with
+  secondaries of its own is the tree that record wants — and the attachment is
+  not: a cleanup that fails while a branch is already failing should join
+  **that branch's** error, and today it is attached below in the language
+  below's own way with nothing a program can read.
+* **D4's `error.secondary` as a value a program reads.**
+  `throw LoadFailed(error, error.secondary)` is that record's own written
+  example. The list is what a log and an operator see today; handing it to a
+  constructor needs a Nikaia type for *a list of errors*, which nothing writes
+  down yet — so this is a question about the type language before it is work.
+* **Whether the list survives a hop to a caller with a bare channel of its
+  own.** [ADR-170](specification/adr/adr-170.md) D1 covers the body the block
+  is written in and says so: the block, its `catch` and the function around
+  them, which is where a handler is written. A caller that propagates such a
+  failure has a channel of its own, and making the envelope travel is the
+  transitive version — a derived column like `locks`, and worth its own
+  measurement rather than a guess.
 
-**And what is left is blocked on a question**, which
-[`open-decisions.md`](open-decisions.md) now carries: D1 says *every* error
-carries the list, and two of the four channels have nowhere to put one — a
-library's error travels **bare** ([ADR-159](specification/adr/adr-159.md) D2)
-and a generated sum's members each keep their own. Those two are the common
-ones: a function that only reads files has `io::IoError` as its whole set,
-which is exactly this record's *three loads, two of them failing on the same
-outage*. Steps 1 and 3 of §5 wait on the answer; step 2's loop exists.
+*And one case the list cannot cover, named rather than discovered:* a failure
+that joins an error from **below** Nikaia, which has no envelope at all, is
+dropped. That is the boxed channel's downcast finding nothing, and it is the
+price of the box.
 
 ### 2.26. `from` is a name, and a file a build reads is `asset("…")`
 

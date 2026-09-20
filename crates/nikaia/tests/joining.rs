@@ -247,11 +247,16 @@ fn a_branch_travels_in_the_functions_own_channel() {
     assert_eq!(output("joining-own-channel", &source), "c d");
 }
 
-/// **And a library's channel, which travels bare**
-/// ([ADR-159](../../../docs/specification/adr/adr-159.md) D2).
+/// **And a library's channel** — which travelled **bare** until
+/// [ADR-115](../../../docs/specification/adr/adr-115.md) D1 put an envelope on
+/// it for the sake of the `secondary` list.
 ///
-/// The same defect from the other side: the `?` on a branch had to convert a
-/// box into an `io::IoError`, which it cannot.
+/// The defect this was written for is the same from the other side: the `?` on
+/// a branch had to convert a box into the channel, which it cannot. What
+/// changed since is *which* channel, not that the branch carries the
+/// function's: [ADR-159](../../../docs/specification/adr/adr-159.md) D2's
+/// reason was about the **site**, and the envelope this puts on still says
+/// *no site recorded*.
 #[test]
 fn a_branch_travels_in_a_librarys_channel_too() {
     let source = "use std::fs\n\
@@ -264,23 +269,28 @@ fn a_branch_travels_in_a_librarys_channel_too() {
                   \x20   println(f\"{r.0} {r.1}\")\n\
                   }\n";
     let rust = lowered(source);
-    assert!(rust.contains("Ok::<_, io::IoError>("), "{rust}");
+    assert!(
+        rust.contains("Ok::<_, nikaia_std::error::Thrown<io::IoError>>("),
+        "{rust}"
+    );
 }
 
-/// **D5 still holds, and this is the failure ADR-115 is about.**
+/// **D5 still holds, and the second failure is kept** — which is
+/// [ADR-115](../../../docs/specification/adr/adr-115.md) D2, and the line this
+/// test was written to have changed.
 ///
-/// Two branches fail; the first in **written** order is the block's error and
-/// the second is dropped. That is
-/// [ADR-050](../../../docs/specification/adr/adr-050.md) D5 and it is correct —
-/// what [ADR-115](../../../docs/specification/adr/adr-115.md) adds is keeping
-/// the other one, which is not built. The assertion is here so that the day it
-/// is, this is the line that has to change.
+/// Two branches fail. The first in **written** order is the block's error
+/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5), which is
+/// unchanged and is the only order the source has. What is new is that the
+/// second one is **under** it rather than gone: the block waits for every
+/// branch, so when it ends every outcome is known and the list is a fact
+/// rather than a race.
 ///
-/// Written with the failure leaving `main`. The same block with a `catch` on
-/// it is [ADR-164](../../../docs/specification/adr/adr-164.md)'s, below, and
-/// drops the second failure in exactly the same way.
+/// Written with the failure leaving `main`, because that is where an operator
+/// reads it: a `main` that hands back an `Err` is printed through `Debug`, and
+/// a short form there would be the one place the joined failures are dropped.
 #[test]
-fn the_first_failure_in_written_order_is_still_the_blocks() {
+fn the_block_keeps_every_failure_and_the_first_still_wins() {
     let source = format!(
         "{OWN_ERROR}\n\
          fn main() throws {{\n\
@@ -292,7 +302,7 @@ fn the_first_failure_in_written_order_is_still_the_blocks() {
          }}\n"
     );
     let rust = lowered(&source);
-    let dir = common::scratch_dir("joining-first-failure");
+    let dir = common::scratch_dir("joining-every-failure");
     let file = dir.join("main.rs");
     std::fs::write(&file, &rust).expect("write the Rust");
     let binary = dir.join("program");
@@ -307,13 +317,23 @@ fn the_first_failure_in_written_order_is_still_the_blocks() {
         .expect("the program runs");
     let said = String::from_utf8_lossy(&ran.stderr).into_owned();
     let _ = std::fs::remove_dir_all(&dir);
+
     assert!(!ran.status.success(), "a failing block fails the program");
     assert!(
         said.contains("a is missing"),
         "the first branch in written order is the block's failure:\n{said}"
     );
-    // **And the second failure is nowhere**, which is the whole of ADR-115.
-    assert!(!said.contains("is broken"), "{said}");
+    // **And the second is there now**, which is the whole of ADR-115.
+    assert!(
+        said.contains("is broken"),
+        "the later failure joined rather than being dropped:\n{said}"
+    );
+    // **Under it, not beside it**: the order on the page is the order they
+    // joined, which is written order.
+    let first = said.find("a is missing").expect("the first");
+    let second = said.find("is broken").expect("the second");
+    assert!(first < second, "the winner is printed first:\n{said}");
+    assert!(said.contains("and then:"), "{said}");
 }
 
 // ---------------------------------------------------------------------------
