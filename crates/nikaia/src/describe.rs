@@ -92,6 +92,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     let wanted = names_the_program_writes(root, crate_word)?;
     let mut scraped = BTreeMap::new();
     let mut types = BTreeSet::new();
+    let mut fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut hashes = BTreeMap::new();
     for (relative, text) in &sources.files {
         hashes.insert(
@@ -103,8 +104,9 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
                 Item::Fn(function) => {
                     scraped.insert(function.name.clone(), function);
                 }
-                Item::Struct(name) => {
-                    types.insert(name);
+                Item::Struct(declared) => {
+                    types.insert(declared.name.clone());
+                    fields.insert(declared.name.clone(), declared.fields);
                 }
             }
         }
@@ -138,6 +140,10 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
             format!("{crate_word}::{name}"),
             TypeContract {
                 public: true,
+                // **The one claim that comes from a field**
+                // ([ADR-123](../../docs/specification/adr/adr-123.md) D2), and
+                // the one thing here a Rust *signature* could never say.
+                crosses: crosses(fields.get(&name).map(Vec::as_slice)),
                 ..TypeContract::default()
             },
         );
@@ -363,8 +369,33 @@ fn names_the_program_writes(root: &Path, crate_word: &str) -> Result<BTreeSet<St
 /// A `pub` item a signature scraper found.
 enum Item {
     Fn(Function),
-    Struct(String),
+    Struct(Struct),
 }
+
+/// One `pub struct`, with the field types a reader can see.
+struct Struct {
+    name: String,
+    /// The text of each field's type, or **empty** where this could not read
+    /// the body — a tuple struct, a `{` it could not match. Empty is *nobody
+    /// looked*, which is a different answer from *it holds nothing*.
+    fields: Vec<String>,
+}
+
+/// The type constructors that make a value **not sendable** in the language
+/// below ([ADR-123](../../docs/specification/adr/adr-123.md) D2).
+///
+/// **`Cell` and `RefCell` are deliberately not here**, and D2's own list names
+/// one of them. They are `!Sync`, not `!Send`: a `Cell<T>` may be *moved* to
+/// another thread exactly when its `T` may, and it is being *looked at* from
+/// two threads that Rust forbids. A draft that wrote `crosses = false` for one
+/// would put a claim in the file that is false, and a reviewer would have to
+/// undo it — which is the opposite of what D5 asks a review to do. The record
+/// carries the correction.
+const NOT_SENDABLE: &[&str] = &["Rc<", "rc::Rc<", "*const ", "*mut ", "NonNull<"];
+
+/// The type constructors a field may be wrapped in without changing the
+/// answer, for the `crosses = true` half.
+const PASSES_THROUGH: &[&str] = &["Vec<", "Option<", "Box<", "VecDeque<"];
 
 /// One `pub fn`, as its signature reads.
 struct Function {
@@ -519,6 +550,61 @@ impl Function {
     }
 }
 
+/// Whether a value of a type may cross a thread, read off its **fields**
+/// ([ADR-123](../../docs/specification/adr/adr-123.md) D2).
+///
+/// Three answers and the third is the common one. `false` where a field holds
+/// something the language below marks as not sendable, which a field reader can
+/// see and a reviewer can check; `true` where every field is something this
+/// knows to be sendable; and **nothing** where it cannot tell — a field of
+/// another crate's type, a tuple struct, a body this could not read. Silence is
+/// *nobody said*, which is not permission
+/// ([ADR-010](../../docs/specification/adr/adr-010.md) D1) and not a refusal
+/// either.
+///
+/// **The `true` half is narrow on purpose.** A promise that a value may cross
+/// is a promise a *refusal* is withheld on, so it is made only where every
+/// field is a scalar, a `String`, or one of those inside a container that
+/// changes nothing. An `Arc<T>` is `Send` exactly when its `T` is `Send` **and**
+/// `Sync`, which is two questions a scraper does not have; it falls to silence.
+fn crosses(fields: Option<&[String]>) -> crate::contracts::Crosses {
+    use crate::contracts::Crosses;
+    let Some(fields) = fields.filter(|fields| !fields.is_empty()) else {
+        return Crosses::Undecided;
+    };
+    if fields
+        .iter()
+        .any(|ty| NOT_SENDABLE.iter().any(|marker| ty.contains(marker)))
+    {
+        return Crosses::MayNot;
+    }
+    match fields.iter().all(|ty| plainly_sendable(ty)) {
+        true => Crosses::May,
+        false => Crosses::Undecided,
+    }
+}
+
+/// Whether one field's type is something this can say crosses, with nothing
+/// left over to be wrong about.
+fn plainly_sendable(ty: &str) -> bool {
+    let ty = ty.trim();
+    if let Some(rest) = ty.strip_prefix('&') {
+        // A view crosses where what it points at does — and whether *that* is
+        // a view of something borrowed for long enough is a lifetime question
+        // this does not have. Silence.
+        let _ = rest;
+        return false;
+    }
+    for wrapper in PASSES_THROUGH {
+        if let Some(inner) = generic_of(ty, wrapper.trim_end_matches('<')) {
+            return split_top_level(&inner)
+                .iter()
+                .all(|part| plainly_sendable(part));
+        }
+    }
+    PLAIN.contains(&ty) || ty == "String"
+}
+
 /// A view of a type, which the ledger's language writes with the `&` on the
 /// name.
 fn view_of(ty: Ty) -> Ty {
@@ -590,7 +676,10 @@ fn items_of(text: &str) -> Vec<Item> {
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
             if !name.is_empty() {
-                out.push(Item::Struct(name));
+                let after =
+                    at + (line.len() - trimmed.len()) + (trimmed.len() - rest.len()) + name.len();
+                let fields = fields_at(&bytes, after);
+                out.push(Item::Struct(Struct { name, fields }));
             }
             continue;
         }
@@ -614,6 +703,45 @@ fn items_of(text: &str) -> Vec<Item> {
         }
     }
     out
+}
+
+/// The **types** of a struct's fields, where the body can be read.
+///
+/// Empty for a tuple struct and for a body this could not match — both of
+/// which are *nobody looked* rather than *it holds nothing*, which is the
+/// difference [`crosses`] rests on. A field's **name** is not wanted: what a
+/// value may do on another thread is a question about what it holds, and the
+/// names of the parts are the crate's own business.
+fn fields_at(text: &[char], from: usize) -> Vec<String> {
+    let mut at = from;
+    // A type parameter list, which this reads past: a `crosses` that depends on
+    // one is what ADR-123 §4 leaves undecided, and a field of type `T` is not
+    // plainly sendable anyway, so the answer falls to silence either way.
+    if text.get(at) == Some(&'<') {
+        let Some(close) = matching(text, at, '<', '>') else {
+            return Vec::new();
+        };
+        at = close + 1;
+    }
+    while text.get(at).is_some_and(|c| c.is_whitespace()) {
+        at += 1;
+    }
+    if text.get(at) != Some(&'{') {
+        return Vec::new();
+    }
+    let Some(close) = matching(text, at, '{', '}') else {
+        return Vec::new();
+    };
+    split_top_level(&text[at + 1..close].iter().collect::<String>())
+        .into_iter()
+        .filter_map(|field| {
+            // A comment line inside the body has no `:` and is skipped by the
+            // same rule that skips anything else this cannot read.
+            let (_, ty) = field.rsplit_once(':')?;
+            Some(ty.trim().to_string())
+        })
+        .filter(|ty| !ty.is_empty())
+        .collect()
 }
 
 /// Every line of a text with the character offset it starts at.

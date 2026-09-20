@@ -136,14 +136,86 @@ fn a_signature_is_translated_by_the_table() {
     // a reviewer to fill (D5), never a guess.
     assert!(text.contains("signature = \"(x: ?) -> u8\""), "{text}");
 
-    // The type an entry names gets an entry of its own, and **no `crosses`**:
-    // whether a value of it may cross a thread follows from its *fields*, and a
-    // reader of signatures does not have them (ADR-123 D2).
+    // The type an entry names gets an entry of its own, and its `crosses`:
+    // whether a value of it may cross a thread follows from its *fields*, which
+    // the describer reads (ADR-123 D2): `Handle`'s one field is a `u32`.
     assert!(
-        text.contains("[type.\"fremd::Handle\"]\npub = true\n"),
+        text.contains("[type.\"fremd::Handle\"]\npub = true\ncrosses = true\n"),
         "{text}"
     );
-    assert!(!text.contains("crosses"), "{text}");
+}
+
+/// **The one claim that comes from a field** — `crosses`
+/// ([ADR-123](../../../docs/specification/adr/adr-123.md) D2), and the one
+/// thing here a Rust *signature* could never say.
+///
+/// Three answers and the third is the common one: `false` where a field holds
+/// something the language below marks as not sendable, `true` where every field
+/// is something the scraper knows to be sendable, and **nothing** where it
+/// cannot tell. Silence is *nobody said*, which is not permission
+/// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1) and not a refusal
+/// either.
+#[test]
+fn a_types_fields_answer_whether_it_crosses() {
+    let root = project(
+        "crosses",
+        "pub struct Held { inner: std::rc::Rc<String> }\n\
+         pub struct Pointed { at: *const u8 }\n\
+         pub struct Plain { n: i64, name: String, more: Vec<i64> }\n\
+         pub struct Opaque { held: OtherCratesThing }\n\
+         pub struct Counted { shared: std::sync::Arc<String> }\n\
+         pub struct Tuple(i64);\n\
+         pub fn a(x: Held) -> i64 { 0 }\n\
+         pub fn b(x: Pointed) -> i64 { 0 }\n\
+         pub fn c(x: Plain) -> i64 { 0 }\n\
+         pub fn d(x: Opaque) -> i64 { 0 }\n\
+         pub fn e(x: Counted) -> i64 { 0 }\n\
+         pub fn f(x: Tuple) -> i64 { 0 }\n",
+        "fn main() {\n\
+         \x20   fremd::a(1)\n\
+         \x20   fremd::b(1)\n\
+         \x20   fremd::c(1)\n\
+         \x20   fremd::d(1)\n\
+         \x20   fremd::e(1)\n\
+         \x20   fremd::f(1)\n\
+         }\n",
+    );
+    let text = entries(&root);
+    let says = |name: &str| {
+        let at = text
+            .find(&format!("[type.\"fremd::{name}\"]"))
+            .unwrap_or_else(|| panic!("no entry for {name}:\n{text}"));
+        let rest = &text[at..];
+        let end = rest[1..].find("\n[").map(|e| e + 1).unwrap_or(rest.len());
+        rest[..end].to_string()
+    };
+
+    // An `Rc` and a raw pointer are what D2 names, and a field reader sees both.
+    assert!(says("Held").contains("crosses = false"), "{}", says("Held"));
+    assert!(
+        says("Pointed").contains("crosses = false"),
+        "{}",
+        says("Pointed")
+    );
+
+    // Every field a scalar, a `String`, or one of those in a container that
+    // changes nothing.
+    assert!(
+        says("Plain").contains("crosses = true"),
+        "{}",
+        says("Plain")
+    );
+
+    // **And silence for the rest**, which is the common answer rather than the
+    // exception: a field of another crate's type says nothing, and an `Arc<T>`
+    // is `Send` exactly when its `T` is `Send` *and* `Sync` — two questions a
+    // scraper does not have.
+    assert!(!says("Opaque").contains("crosses"), "{}", says("Opaque"));
+    assert!(!says("Counted").contains("crosses"), "{}", says("Counted"));
+
+    // A tuple struct's body is not read at all, and *nobody looked* is not
+    // *it holds nothing*.
+    assert!(!says("Tuple").contains("crosses"), "{}", says("Tuple"));
 }
 
 /// **An entry exists because a program asked for it** ([ADR-028](../../../docs/specification/adr/adr-028.md)
@@ -232,10 +304,12 @@ fn a_crate_nothing_declares_is_not_described() {
 /// This is that claim, tested — and it needs no network, because the crate is
 /// in the tree.
 ///
-/// **Two lines of the reviewed file are not in the draft, and both are D5.**
-/// `crosses = false` on `LocalHandle` is read from a *field* and no signature
-/// names it; the comments are a reviewer's. Everything else matches entry for
-/// entry.
+/// **One thing in the reviewed file is not in the draft, and it is the
+/// comments** — a reviewer's, and the only part of D5's review a command cannot
+/// do. `crosses = false` on `LocalHandle` **is** in the draft since the
+/// describer reads fields ([ADR-123](../../../docs/specification/adr/adr-123.md)
+/// D2), which is the line ADR-104 §5 said the crossing refusals were waiting
+/// for.
 #[test]
 fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
     for (project, expected) in [
@@ -251,7 +325,7 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
             vec![
                 "[fn.\"hyper_shim::across_a_thread\"]\npub = true\nsync = true\nkeeps = [\"value\"]\nsignature = \"(value: $T) -> String\"",
                 "[fn.\"hyper_shim::local_handle\"]\npub = true\nsync = true\nkeeps = [\"name\"]\nsignature = \"(name: String) -> hyper_shim::LocalHandle\"",
-                "[type.\"hyper_shim::LocalHandle\"]\npub = true",
+                "[type.\"hyper_shim::LocalHandle\"]\npub = true\ncrosses = false",
             ],
         ),
         (

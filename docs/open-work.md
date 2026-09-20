@@ -714,17 +714,14 @@ which is a silence and not an answer — no manifest in this repository reaches
 it, and the day one does it is a refusal to write. A **suspicion** rather than a
 defect: nothing reproduces it.
 
-*And something else waits on **one line** of the describer.* The entry above
-about the crossing refusals being unreachable into **our own code** is
-unreachable because no type answers `MayNot` there, and a described foreign type
-is the first thing that could. The description ships **no** `crosses` on
-`hyper_shim::LocalHandle`, and that is the honest answer rather than a gap: the
-type is not `Send` because of its **fields**, and a reader of signatures does
-not have them — D3's table says `Send` *on a type* means it may cross, and the
-absence of the word is not the claim that it may not. So the crossing stays
-`Undecided`. The column is **read** now wherever it is written, so the day the
-describer reads fields is the day `NK2501` has something to say; `NK2502` and
-`NK2503` also need the call itself to be one nothing describes, which is
+*And the line something else was waiting on is written.* The describer reads a
+`pub struct`'s **fields** now ([ADR-123](specification/adr/adr-123.md) D2), so
+`crosses = false` on `hyper_shim::LocalHandle` is the command's answer rather
+than a hand's — which is what the entry above about the crossing refusals being
+unreachable into **our own code** was waiting for: a described foreign type is
+the first thing that can answer `MayNot` there, and `NK2501` has something to
+say the day a program `spawn`s one. `NK2502` and `NK2503` need more than that —
+the call itself has to be one nothing describes — which is
 [`open-decisions.md`](open-decisions.md)'s question about a described foreign
 function and a thread.
 

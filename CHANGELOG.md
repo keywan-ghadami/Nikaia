@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.99] — 2026-09-20
+
+**The describer reads fields**
+([ADR-123](docs/specification/adr/adr-123.md) D2) — the one line three entries
+were waiting on, and the last thing in the reviewed description that a hand had
+written.
+
+### Added
+
+- **`crosses` from a `pub struct`'s fields**, which is the one claim in a description that a Rust *signature* could never make. Three answers and the third is the common one: `false` where a field holds an `Rc` or a raw pointer, `true` where every field is a scalar, a `String`, or one of those inside a container that changes nothing, and **nothing** where it cannot tell. Silence is *nobody said*, which is not permission ([ADR-010](docs/specification/adr/adr-010.md) D1) and not a refusal either.
+- **The draft for `examples/foreign-runtime/` is now the reviewed file entirely**, comments aside. `crosses = false` on `LocalHandle` was the one line of it that a hand had written, and ADR-104 §5 said so: *the day the describer reads fields is the day `NK2501` has something to say*.
+
+### Fixed
+
+- **D2's own list needed one correction, and a field reader is where it shows.** The record names *an `Rc`, a raw pointer, a `Cell`*. The first two are `!Send`; a **`Cell` is not** — it is `!Sync`. A `Cell<T>` may be *moved* to another thread exactly when its `T` may; what Rust forbids is looking at one from two threads at once. A draft that wrote `crosses = false` for a `Cell` would put a claim in the file that is **false**, and a reviewer would have to undo it — the opposite of what D5 asks a review to do. So `Cell` and `RefCell` are not on the list the describer reads, and the record carries the correction.
+- The `true` half is narrow for the same reason read the other way: a promise is what a refusal is withheld on. An `Arc<T>` is `Send` exactly when its `T` is `Send` **and** `Sync` — two questions a field reader does not have — so it falls to silence, as does a field of another crate's type and a tuple struct, whose body is not read at all. *Nobody looked* is not *it holds nothing*.
+
 ## [0.0.98] — 2026-09-20
 
 **The hash rule holds** ([ADR-104](docs/specification/adr/adr-104.md) D5, on
