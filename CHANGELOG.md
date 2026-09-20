@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.105] — 2026-09-20
+
+**A field of a generic `impl` reaches the body as a type**, which is the half of
+[ADR-074](docs/specification/adr/adr-074.md) D1 that was written down and not
+held — and three refusals the language owes came back with it.
+
+### Fixed
+
+- **`self` inside `impl Holder[T]` was typed as a bare `Holder`**, binding none of the declaration's parameters. So `self.value`'s `T` was substituted against an empty map and came out `?` — and `?` is the one thing this checker says nothing about. The receiver is built from the head's own brackets now: `Holder[T]` inside `impl Holder[T]`, `Holder[i64]` inside `impl Holder[i64]`.
+- **Three refusals were silent through a field and are not any more.** `self.value.to_uppercase()` on an unbounded `T` is `NK1126`, the same sentence a parameter gets. `return self.value` where the method declares `-> i64` is `NK1104`. `return self.value` out of a `&self` is `NK1131`, whose way out — *declare the result `&T`* — is a type the program can write, and the test compiles the lowering to say so.
+- **Each of the three went to `rustc` before**, about the generated file, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class exactly — the one the generics tests were written against in the first place.
+- **And `impl Holder[i64]` now types its fields as `i64`**, which is the other half of reading the head's brackets: arithmetic on `self.it` was arithmetic on a `?`.
+
+### Found
+
+- **A bound is declared and not enforced.** `trait Speaks`, `impl Speaks for Dog` and `[T: Speaks]` are built and check against each other ([ADR-078](docs/specification/adr/adr-078.md)) — but nothing asks whether the *argument's* type implements the bound, so `tell(rock)` where `Rock` implements nothing is accepted here and refused below as *the trait bound `Rock: Speaks` is not satisfied*. C.1's class again, and the reason the roadmap's generics box is a half rather than done.
+- **A bound still cannot name a path**: `[T: greet::Speaks]` is a parse error at the `:`.
+
+### Changed
+
+- **The roadmap's generics box said the wrong thing in both directions.** *Parser has basic support, but the lowering needs full integration* was stale — the lowering has been built and `rustc`-tested since ADR-074 — while *open* was too generous about the bound. It is `[~]` now, with what makes it a half written in it: 21.5 of 26 in the language, 25.5 of 40 overall.
+- **`open-work.md` §2.18's *nothing of it is built* is retired**, replaced by its four steps with where each one stands, measured rather than remembered: the trait table is built, the path in the grammar and the `impl` table's union are not.
+
 ## [0.0.104] — 2026-09-20
 
 **The README stops being a second copy, and the roadmap says how far along it is

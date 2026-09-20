@@ -302,3 +302,182 @@ fn main() {
         "the slot names a type, so nothing is declared:\n{rust}"
     );
 }
+
+/// D1 **through a field**, which is where it was not held. `self` inside
+/// `impl Holder[T]` used to be typed as a bare `Holder`, binding none of the
+/// declaration's parameters — so `self.value`'s `T` was substituted against an
+/// empty map and came out `?`, and a `?` is the one thing this checker says
+/// nothing about. The member goes to `rustc` as
+/// *no method named `to_uppercase` found for type parameter `T`*, about a file
+/// nobody wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn a_member_on_the_impls_parameter_is_refused_through_a_field() {
+    let found = findings(
+        r#"
+struct Holder[T] {
+    value: T,
+}
+
+impl Holder[T] {
+    fn shout(&self) -> String {
+        return self.value.to_uppercase()
+    }
+}
+
+fn main() {
+    let h = Holder { value: "hi" }
+    println(h.shout())
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1126")
+        .unwrap_or_else(|| panic!("NK1126, the same as for a parameter: {found:#?}"));
+    assert!(
+        refusal.message.contains("`T`") && refusal.message.contains("to_uppercase"),
+        "it names the parameter and the member: {}",
+        refusal.message
+    );
+}
+
+/// The slot half, and the same sentence
+/// `a_parameter_does_not_fit_a_concrete_slot_inside_the_body` gets for an
+/// argument: the body did not pick `T`, so a `T` is not an `i64` here either.
+#[test]
+fn the_impls_parameter_does_not_fit_a_concrete_slot_through_a_field() {
+    let found = findings(
+        r#"
+struct Holder[T] {
+    value: T,
+}
+
+impl Holder[T] {
+    fn count(self) -> i64 {
+        return self.value
+    }
+}
+
+fn main() {
+    let h = Holder { value: 7 }
+    println(f"{h.count()}")
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1104")
+        .unwrap_or_else(|| panic!("NK1104: {found:#?}"));
+    assert!(
+        refusal.message.contains("`T`") && refusal.message.contains("i64"),
+        "it names both sides: {}",
+        refusal.message
+    );
+}
+
+/// `NK1131` over a parameter. A `T` is not known to copy — no bound says so and
+/// none can — so handing one out of a borrowed subject takes a piece out of
+/// something the method does not own, exactly as a `String` does. The help is
+/// worth reading for the same reason: it offers `&T`, which is a type this
+/// program can write.
+#[test]
+fn a_field_of_the_impls_parameter_cannot_leave_a_borrowed_subject() {
+    let found = findings(
+        r#"
+struct Holder[T] {
+    value: T,
+}
+
+impl Holder[T] {
+    fn get(&self) -> T {
+        return self.value
+    }
+}
+
+fn main() {
+    let h = Holder { value: 7 }
+    println(f"{h.get()}")
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1131")
+        .unwrap_or_else(|| panic!("NK1131: {found:#?}"));
+    assert!(
+        refusal.notes.iter().any(|n| n.contains("`T`")),
+        "the note names the type the field has: {:#?}",
+        refusal.notes
+    );
+    assert!(
+        refusal.help.as_deref().is_some_and(|h| h.contains("`&T`")),
+        "the way out is a type this program can write: {:?}",
+        refusal.help
+    );
+}
+
+/// And the correct program is still correct — which is the half that matters,
+/// because a check that reaches a `T` could just as easily refuse every use of
+/// one. Compiled rather than merely accepted: `&T` out of a `&self` is the way
+/// out the refusal above offers, and it is only advice if it builds.
+#[test]
+fn an_impl_over_a_parameter_still_hands_its_field_out() {
+    compiled(
+        "an impl over a parameter",
+        r#"
+struct Holder[T] {
+    value: T,
+}
+
+impl Holder[T] {
+    fn taken(self) -> T {
+        return self.value
+    }
+
+    fn seen(&self) -> &T {
+        return &self.value
+    }
+}
+
+fn main() {
+    let h = Holder { value: 21 }
+    println(f"{h.seen()}")
+    println(f"{h.taken()}")
+}
+"#,
+    );
+}
+
+/// `impl Holder[i64]` names a type in that slot, so inside **that** body the
+/// field is an `i64` and arithmetic on it is arithmetic — which is the other
+/// half of reading the head's brackets, and was `?` before for the same reason.
+#[test]
+fn an_impl_at_one_type_types_its_fields_as_that_type() {
+    let found = findings(
+        r#"
+struct Holder[T] {
+    it: T,
+}
+
+impl Holder[i64] {
+    fn wrong(&self) -> String {
+        return self.it
+    }
+}
+
+fn main() {
+    let h = Holder { it: 21 }
+    println(h.wrong())
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1104")
+        .unwrap_or_else(|| panic!("NK1104, and the field is an `i64`: {found:#?}"));
+    assert!(
+        refusal.message.contains("i64"),
+        "it names what the head put in the slot: {}",
+        refusal.message
+    );
+}

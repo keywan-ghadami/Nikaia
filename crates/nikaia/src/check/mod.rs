@@ -588,6 +588,7 @@ pub fn check_against(
         struct_parameters: BTreeMap::new(),
         borrowing_self: false,
         enclosing: BTreeMap::new(),
+        subject_arguments: Vec::new(),
         throwing: false,
         caught: false,
         guarded: None,
@@ -1140,6 +1141,24 @@ struct Checker<'a> {
     /// method and has to start from what the `impl` put in scope rather than
     /// from nothing.
     enclosing: BTreeMap<String, Vec<String>>,
+    /// **What the `impl` header writes in its own brackets**, in declaration
+    /// order - `[T]` for `impl Holder[T]`, `[i64]` for `impl Holder[i64]`.
+    ///
+    /// The receiver's type is built from this rather than from the bare name,
+    /// and that is what lets a field reach the body as something
+    /// ([ADR-074](../../docs/specification/adr/adr-074.md) D1). `self` typed as
+    /// a bare `Holder` binds none of the struct's parameters, so `self.value`
+    /// substituted a `T` nothing had bound and came out `?` - and a `?` is the
+    /// one thing this checker says nothing about. Every refusal a `T` earns as
+    /// a *parameter* - `NK1126` for a member on it, `NK1104` for a slot it does
+    /// not fit, `NK1131` for handing one out of a borrowed subject - was silent
+    /// through a field, and the program went to `rustc` about the generated
+    /// file, which is [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s
+    /// class.
+    ///
+    /// Empty outside an `impl`, and empty for one whose target takes no
+    /// arguments - which is the same as what it was before.
+    subject_arguments: Vec<Ty>,
     /// Whether it declared `throws` - which is what says a failure may leave
     /// it, whether the failing call was written or implicit (ADR-025 D1).
     throwing: bool,
@@ -1601,12 +1620,28 @@ impl<'a> Checker<'a> {
                             .into_iter()
                             .map(|name| (name, Vec::new()))
                             .collect();
+                    // **The head's own brackets, as types.** `impl Holder[T]`
+                    // writes a parameter and `impl Holder[i64]` writes a type,
+                    // and `Ty::from_ast` needs to know nothing about which: a
+                    // parameter's in-body representation *is* its name as a
+                    // type (`Ty::Named { name: "T" }`), which is what
+                    // `type_parameters` above is keyed by and what `NK1126`
+                    // reads. So one line answers both, and the receiver below
+                    // binds the struct's parameters the way any other value of
+                    // that type does (ADR-074 D2).
+                    let arguments: Vec<Ty> = target
+                        .generics
+                        .iter()
+                        .map(|g| Ty::from_ast(self.parsed, g))
+                        .collect();
                     let target = self.parsed.text(target.name).to_string();
                     for method in methods {
                         self.enclosing = outer.clone();
+                        self.subject_arguments = arguments.clone();
                         self.function(&method.node, Some(&target));
                     }
                     self.enclosing = BTreeMap::new();
+                    self.subject_arguments = Vec::new();
                 }
                 // A test and a bench are code, and nothing about them is
                 // exempt from the language's rules (Part III, 14.1 and 13.4).
@@ -1924,9 +1959,16 @@ impl<'a> Checker<'a> {
 
         let mut frame: Vec<Local> = Vec::new();
         if let Some(receiver) = receiver {
+            // With the `impl` head's arguments (`subject_arguments`): `self`
+            // inside `impl Holder[T]` is a `Holder[T]` and not a bare `Holder`,
+            // so `self.value` binds the declaration's `T` and reaches the body
+            // as a type rather than as `?`.
             let ty = match target {
-                Some(target) if receiver.is_ref => Ty::view(target),
-                Some(target) => Ty::named(target),
+                Some(target) => Ty::Named {
+                    name: target.to_string(),
+                    args: self.subject_arguments.clone(),
+                    view: receiver.is_ref,
+                },
                 None => Ty::Unknown,
             };
             frame.push(Local::free("self".to_string(), ty));

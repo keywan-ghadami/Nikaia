@@ -788,15 +788,31 @@ is unchanged; the ledger gains a `trait` table whose methods are ordinary
 `fn` entries, and an `impl` table written where the `impl` stands, so that
 *does `T` implement `A`* is the union over every ledger a program reads. A
 call through a bound resolves to the implementing type's own entry.
-**Nothing of it is built.**
 
 *Evidence:* the three refusals a cross-package `Handler` bound met against
 `examples/http/` — a parse error at the path, `NK1126` after `use http`, and
 the `NK1129` that ADR-100 D2 has since removed.
 
-*What it needs, in the record's order (§5):* the path in the bound's grammar;
-the `trait` table and method entries; the `impl` table and the union in the
-bound check; the resolution at a call through a bound.
+*What it needs, in the record's order (§5), and where each stands* — measured
+at 0.0.105, which is why *nothing of it is built* no longer stands here:
+
+1. **The path in the bound's grammar** — open. `fn tell[T: greet::Speaks](…)`
+   is a parse error at the `:`, `expected one of: +, ,`.
+2. **The `trait` table and its method entries** — **built**
+   ([ADR-078](specification/adr/adr-078.md)). `Ledger::traits` names every
+   declared trait and its methods, the signatures live in `functions` under
+   `Summarize::summary`, and the keys are module-qualified when a program of
+   several files absorbs them. `traits.rs` checks an `impl` against the trait
+   it names.
+3. **The `impl` table and the union in the bound check** — open, and this is
+   the one with a program behind it: a bound is *declared and not enforced*.
+   `fn tell[T: Speaks](x: T)` called with a `Rock` that implements nothing is
+   accepted here and refused below with *the trait bound `Rock: Speaks` is not
+   satisfied* — [Part III C.1](specification/30-nikaia-tooling.md)'s class.
+4. **The resolution at a call through a bound** — partly. `x.say()` on a
+   `[T: Speaks]` resolves through the **trait's** entry, which is the right
+   answer for its signature; the implementing type's own entry is what (3)
+   would make reachable.
 
 ### 2.19. Text is one type, and `&str` is the assertion
 
