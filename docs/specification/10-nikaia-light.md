@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.78 (Draft)
+**Version:** 0.0.79 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -90,8 +90,11 @@ Some names need no `use`. They are these, and there are no others
 
 * the containers a program cannot do without: **`Vec`**, **`String`**,
   **`Bytes`**;
-* the printing functions: **`println`**, **`print`**, **`eprintln`**;
+* the printing functions: **`println`**, **`print`**, **`eprintln`**,
+  **`eprint`**;
 * **`assert`** and **`panic`**;
+* the doors over several locks: **`access_all`** and **`update_all`**
+  (Part II, 12.3);
 * the numeric conversions 2.2 already offers.
 
 Everything else in the standard library is reached the way a package is
@@ -109,6 +112,23 @@ this a rule rather than a tidy-up: a map is common enough to argue for, and
 `use std::collections` is one line, and a list that grows by *common enough*
 has no floor. So `collections::HashMap` where it is used, which is 9.1's shape
 one library over.
+
+**Diagnosis and safety are the language's, not a module's**
+([ADR-162](adr/adr-162.md)). `eprint` is here beside `eprintln` because it is
+the same thing without the line break, and both are *diagnosis* — what a
+program says when something has gone wrong, like `panic` and `assert` beside
+them. What that **does** is not one thing: on a hosted target it is a file
+descriptor, on WebAssembly a call into the host, on a machine with no operating
+system a serial line or nothing at all. A module cannot decide that, because a
+module does not know the target; the compiler does. Putting a `use std::io` in
+front of it would say it is a library function like any other.
+
+`access_all` and `update_all` are here for the second half of the same
+sentence. They are Part II 12.3's doors over **several** locks, and what they
+buy is that a deadlock cycle cannot form — every acquisition takes the locks in
+one order however the program wrote them. That is a property of the language
+rather than a convenience, and they are free functions rather than methods only
+because a method has one receiver and these have several.
 
 **A name joins the list by a record and never by being needed once** (D4).
 Additive is the easy direction and it is the one that ends with everything in

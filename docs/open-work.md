@@ -1169,30 +1169,34 @@ arbitrary value.
 step 1. Neither is small, and the harness delivers nothing a reader of a program
 would notice — which is worth knowing before it is started rather than after.
 
-### 2.41. Two names the prelude promises and `std` does not have
+### 2.41. One name the prelude promises and `std` does not have
 
 [ADR-154](specification/adr/adr-154.md). The rule is built for a function and
-for a type; what is left is D1's own list naming things that do not exist.
+for a type; what is left is D1's own list naming **one** thing that does not
+exist.
 
-**`assert`** and **`panic`** are on the list on Part I 1.3 and are not in `std`.
-Neither is a piece of work on its own: both belong with the **testing chapter**
-(Part III 14), which is not built either — there is no `nikaia test`, `assert c`
-parses as two statements and is refused with `NK1117`, and `assert(c)` is a call
-to a function of that name. Whatever `assert` is, it is decided there rather
-than here.
+**`assert`** is on the list on Part I 1.3 and is not in `std`. It is not a piece
+of work on its own: it belongs with the **testing chapter** (Part III 14), which
+is not built either — there is no `nikaia test`, `assert c` parses as two
+statements and is refused with `NK1117`, and `assert(c)` is a call to a function
+of that name. Whatever `assert` is, it is decided there rather than here.
 
-*The third name is answered.* **`Bytes`** is the language's and it exists
-([ADR-156](specification/adr/adr-156.md) D1): one shared buffer, written bare,
-and what `fs::read` hands back. The **tether** it is the container for is still
-missing, and the entry below carries it.
-
-*And one the list does not promise and `std` has.* `eprint` is keyed bare, so it
-needs no `use`; D1's text writes `eprintln` and not `eprint`. It is
-[`open-decisions.md`](open-decisions.md)'s own entry now.
+*The other three are answered.* **`Bytes`** is the language's and it exists
+([ADR-156](specification/adr/adr-156.md) D1). **`panic`** exists
+([ADR-161](specification/adr/adr-161.md) D3), ends the program with the
+program's own words at the Nikaia line, and was built because
+[ADR-114](specification/adr/adr-114.md) D1 writes it as the way a program says
+it knows a key is present. And **`eprint`** is on the list
+([ADR-162](specification/adr/adr-162.md) D1) rather than being a question:
+diagnosis is the language's, and what it *does* is a thing only the compiler
+knows, because only the compiler knows the target.
 
 *A name on the list that does not exist* is the one direction a prelude can be
 wrong in without anybody noticing — nothing refuses it, because nothing reaches
-it. That is why both are written down rather than left to be found.
+it. **The other direction is now watched too**
+([ADR-162](specification/adr/adr-162.md) D3): a test reads the list off the page
+and holds it against what `std` keys bare, which is what found `access_all` and
+`update_all` sitting there unlisted.
 
 *What stays bare on purpose:* `Shared`, `SharedMut` and `Locked` are the
 language's ([ADR-064](specification/adr/adr-064.md)) rather than a module's, and

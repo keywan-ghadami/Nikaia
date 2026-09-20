@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.79] — 2026-09-20
+
+Diagnosis and safety are the language's: `eprint`, `access_all` and
+`update_all` join Part I 1.3's list
+([ADR-162](docs/specification/adr/adr-162.md)) — and the list gains the test
+that would have said so.
+
+### Fixed
+
+- **Three names were reachable with no `use` and named nowhere on the page.** [ADR-154](docs/specification/adr/adr-154.md) §5 enforced the prelude's list in the direction a **program** writes: a `std` name that lives in a module is refused without its prefix. The other direction was unwatched, and a name the compiler keys **bare** that the page does not list is one **nobody** ever meets, because nothing refuses it.
+- **And the specification disagreed with itself.** Part III 17.1 writes *`eprintln` / `eprint` are the same two on standard error. They are in the prelude rather than in a module* — against a Part I list that wrote three of the four. The compiler followed Part III.
+
+### Why each is on the list
+
+- **`eprint` is diagnosis** (D1), which is what `panic` and `assert` beside it on that list are for. And **what it does is not one thing**: on a hosted target a file descriptor, on WebAssembly a call into the host, on a machine with no operating system a serial line or nothing at all. A module cannot decide that, because a module does not know the target — the compiler does. Writing `use std::io` in front of it would say it is a library function like any other, which is the one thing it is not. This is [ADR-161](docs/specification/adr/adr-161.md) D3's argument one name over.
+- **`access_all` and `update_all` are safety** (D2). They are Part II 12.3's doors over **several** locks, and what they buy is that a deadlock cycle cannot form: every acquisition takes the locks in one order however the program wrote them ([ADR-039](docs/specification/adr/adr-039.md) D2). They are free functions rather than methods only because a method has one receiver and these have several — and behind a `use std::lock` they would read as an alternative to nesting `access` calls, which is exactly the reading that makes the deadlock possible.
+
+### Added
+
+- **The test the list never had** (D3): every function `std`'s ledger keys bare is named on Part I 1.3's list, read **off the page** rather than copied into the test. Taking `eprint` back out of the list makes it say *reachable with no `use` and named nowhere*.
+- The reverse direction is deliberately not asserted while `assert` is on the list and missing. That asymmetry is the right way round: a listed name that is absent is one a **program** meets, and an unlisted name that is reachable is one **nobody** meets — so the second is the one that needs a test rather than a program.
+
+### What this leaves
+
+- **`assert`** is the one name on the list that does not exist, and it belongs with the testing chapter (Part III 14). `docs/open-work.md` §2.41 is down from three names to one.
+- **`docs/open-decisions.md` loses its `eprint` entry**, and has one question left.
+
 ## [0.0.78] — 2026-09-20
 
 Reading a map through the brackets is a `T?`

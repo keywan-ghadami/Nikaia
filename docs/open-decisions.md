@@ -14,37 +14,6 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-### `eprint`: on the prelude's list, or out of the compiler?
-
-**What is blocked.** `eprint` is a name this compiler keys **bare**, so it needs
-no `use` today, and [ADR-154](specification/adr/adr-154.md) D1's list does not
-have it: the list writes `println`, `print` and `eprintln`. It joined by being
-needed once, which is the direction D4 of that record was written against — *a
-name joins the list by a record and never by being needed once.*
-
-**It rode with the `Bytes` entry** this file used to carry, and
-[ADR-156](specification/adr/adr-156.md) answered that one without answering
-this: the two are one question only in that enforcing a list is what made both
-visible.
-
-**The options.**
-
-* **A — the list gains it in a sentence.** One more name that is very hard to
-  take back, and a list whose fourth printing function is there because a
-  program wanted it.
-* **B — the entry leaves the compiler**, and `eprint` is written
-  `io::eprint` behind a `use std::io` like everything else outside the list.
-
-**What this page recommends: A**, narrowly. `eprintln` is on the list and
-`eprint` is the same function without the newline; a list that has one and
-refuses the other is a rule a reader cannot state. If that is not reason enough
-to write a record, B is the honest alternative and costs one corpus edit.
-
-**What either direction costs if it is wrong.** A wrong: one name in a prelude,
-permanently. B wrong: a program writes `use std::io` to print a line without a
-newline while `eprintln` needs nothing, which is exactly the inconsistency A
-removes.
-
 ### A postfix unwrap on a `T?`: does the language have one?
 
 **What is blocked.** [ADR-018](specification/adr/adr-018.md) D3 writes
