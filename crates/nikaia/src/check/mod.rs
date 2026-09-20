@@ -2617,6 +2617,73 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK2201`: I/O while holding locked data**
+    /// ([ADR-067](../../docs/specification/adr/adr-067.md) D1,
+    /// [ADR-169](../../docs/specification/adr/adr-169.md) D2).
+    ///
+    /// ADR-067 D1 split *no I/O while holding locked data* in two — what
+    /// **pauses** is `NK2202`'s and what **takes a lock** is `NK2203`'s — and
+    /// left the third case as a question: *is there I/O that does neither?*
+    ///
+    /// There is exactly one, and it is not a call. `fs::Mapped` is a file held
+    /// as memory, so `mapped[i]` is a **page fault**: a disk read with nothing
+    /// in the source to hang a `touches` on, which neither suspends nor takes a
+    /// lock. Inside an open door that is a disk read with the lock held, and
+    /// before this nothing said a word.
+    ///
+    /// **Read off the type's own column, never a list of names**
+    /// ([ADR-169](../../docs/specification/adr/adr-169.md) D1): a type whose
+    /// `touches` names a file says so in the ledger, and a second such type
+    /// needs a line there and nothing here.
+    ///
+    /// **Silence is not a claim.** A type with no `touches` recorded is one
+    /// nobody answered for, and refusing on that would refuse correct programs
+    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+    fn io_inside_a_door(&mut self, on: &Ty, what: &str, span: &Span) {
+        if !self.inside_a_door {
+            return;
+        }
+        let Ty::Named { name, .. } = on else {
+            return;
+        };
+        // **By the last segment**, which is what the index site above does and
+        // for the same reason: a `std` type carries its module in the ledger's
+        // key since [ADR-154](../../docs/specification/adr/adr-154.md) D3, while
+        // a signature writes `-> Mapped` — so `fs::Mapped` and `Mapped` are the
+        // one type reached from two sides.
+        let base = crate::contracts::ty::base(name);
+        let touched = self
+            .library
+            .types
+            .iter()
+            .filter(|(key, _)| crate::contracts::ty::base(key) == base)
+            .any(|(_, contract)| contract.touches.iter().any(|t| t.starts_with("file")));
+        if !touched {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2201",
+            message: format!("{what} reads a file, and this runs with a lock held"),
+            notes: vec![
+                format!(
+                    "`{name}` is a file held as memory, so reading it is a page fault - \
+                     a disk read, which is what a door's block may not wait for \
+                     (Part II, 12.2)"
+                ),
+                "it is neither a pause nor a second lock, which is why `NK2202` and \
+                 `NK2203` say nothing about it (ADR-067 D1)"
+                    .to_string(),
+            ],
+            help: Some(
+                "read what you need before the door and hand the value in, so the block \
+                 works on memory that is already there"
+                    .to_string(),
+            ),
+        });
+    }
+
     /// **`NK1141`: an `update` block hands a value back**
     /// ([ADR-110](../../docs/specification/adr/adr-110.md) D1).
     ///
@@ -4049,6 +4116,10 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+                // **And a method on a mapping reads the file**
+                // ([ADR-169](../../docs/specification/adr/adr-169.md) D2):
+                // `mapped.lines()` walks pages that are not there yet.
+                self.io_inside_a_door(&on, &format!("`{written}`"), span);
                 // **`update`'s block is a write door's**
                 // ([ADR-110](../../docs/specification/adr/adr-110.md) D1), and
                 // that is where a parameter without `mut` is refused. Set
@@ -4579,6 +4650,9 @@ impl<'a> Checker<'a> {
             Expr::Index { base, index } => {
                 let on = self.expr(base, span);
                 self.expr(index, span);
+                // **An index of a mapping is a page fault**
+                // ([ADR-169](../../docs/specification/adr/adr-169.md) D2).
+                self.io_inside_a_door(&on, "this index", span);
                 let Ty::Named { name, args, .. } = &on else {
                     return Ty::Unknown;
                 };

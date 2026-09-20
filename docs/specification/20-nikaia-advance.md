@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.87 (Draft)
+**Version:** 0.0.88 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -777,27 +777,42 @@ counter.update fn(mut n) { n += 1 }
 // counter.access fn(n) { println(f"{n}") }
 ```
 
+**`NK2201` is the third case, and it is the one that is neither of the other
+two** ([ADR-169](adr/adr-169.md)). `fs::write` inside a door is `NK2202`'s,
+because it pauses; a `println` is `NK2203`'s, because it takes a lock. What is
+left is I/O that does **neither**, and there is exactly one thing in `std` that
+is: reading a `fs::Mapped`. A mapping is a file held as memory, so touching a
+page that is not there yet is a disk read with no call in the source at all —
+and inside a door it is a disk read with the lock held.
+
 ```text
-error[NK2201]: cannot wait for I/O while holding locked data
-  --> main.nika:7
-   |
- 7 | counter.access fn(n) { fs::write("log", "{n}") }
-   |                        ^^^^^^^^^^^^^^^^^^^^^^ this writes to a file,
-   |                                               which makes the program pause
-   |
-  note: while you hold locked data, every other task that needs it must wait.
-        Pausing here could freeze them for a long time (or forever).
-  help: copy the value out first, then do the I/O without holding the lock:
-        let snapshot = counter.get()
-        fs::write("log", "{snapshot}")
+error[NK2201]: `len` reads a file, and this runs with a lock held
+  --> main.nika:7:9
+   7 |         n = n + page.len()
+               ^
+     = `Mapped` is a file held as memory, so reading it is a page fault - a disk
+       read, which is what a door's block may not wait for (Part II, 12.2)
+     = it is neither a pause nor a second lock, which is why `NK2202` and
+       `NK2203` say nothing about it (ADR-067 D1)
+     help: read what you need before the door and hand the value in, so the
+           block works on memory that is already there
 ```
 
-> **Implementation status:** Partially implemented. `SharedMut[T]` and
-> `Locked[T]` are types the compiler knows, both implementations are in `std`,
-> all four doors exist and `std`'s ledger describes them
-> ([ADR-057](adr/adr-057.md) §5, [ADR-059](adr/adr-059.md) §5,
-> [ADR-064](adr/adr-064.md) §5). Nothing raises `NK2201`: the refusal needs the
-> lock-touching property of 12.3, which no function carries yet.
+The claim is the **type's own**: `fs::Mapped` records `touches = ["file read"]`
+in the ledger (13.5), so a second such type is a line there and nothing in the
+compiler. A type that records nothing is claimed nothing about, which is the
+one place this compiler does not read silence fail-closed — what is built on it
+is a refusal, and refusing on doubt refuses correct programs
+([Part III C.4](30-nikaia-tooling.md)).
+
+> **Implementation status:** Implemented. `SharedMut[T]` and `Locked[T]` are
+> types the compiler knows, both implementations are in `std`, all four doors
+> exist and `std`'s ledger describes them ([ADR-057](adr/adr-057.md) §5,
+> [ADR-059](adr/adr-059.md) §5, [ADR-064](adr/adr-064.md) §5). All three of what
+> 12.2 forbids now have a code: `NK2202` for what pauses, `NK2203` for what
+> takes a lock — over the `locks` column, so a lock reached through a chain of
+> calls is refused too — and `NK2201` for the page fault, at both shapes of read
+> ([ADR-169](adr/adr-169.md) D2).
 
 The rule turns the advice not to sleep while holding a lock into a guarantee. Re-entering the *same* lock through a chain of calls is refused by 12.3 when the program is compiled, at both values of the option. The runtime check described above is **self-control of that refusal rather than error handling**. No input can make it fire; if it fires, the compiler has a hole. It is therefore a build option a program may decline (Part I 1.2), and poisoning on several threads is left as it is ([ADR-039](adr/adr-039.md) D2, D8).
 

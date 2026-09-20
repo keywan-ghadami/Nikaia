@@ -1204,6 +1204,11 @@ doc = "The arguments the program was started with.\n\nIt may cross to another th
 
 [type."fs::Mapped"]
 pub = true
+# **Reading it is a page fault** (ADR-169 D1): the pages arrive as they are
+# touched, so `mapped[i]` is a disk read with no call in the source to hang a
+# `touches` on. It neither suspends nor takes a lock, which is why neither
+# `NK2202` nor `NK2203` has anything to say about it and `NK2201` does.
+touches = ["file read"]
 doc = "A file held as memory: the pages arrive as they are touched rather than being\nread up front, which is what makes a file larger than memory workable.\n\nIt reads as text through the ordinary `&str` surface."
 
 # A step of this one can **fail**, and that is a fact a caller cannot get from

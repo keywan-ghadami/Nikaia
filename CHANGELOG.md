@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.88] — 2026-09-20
+
+A type says what **reading it** touches, and I/O under a lock is refused
+([ADR-169](docs/specification/adr/adr-169.md)) — `NK2201`, the third of the
+three things Part II 12.2 forbids, and the only one that had no code.
+
+### Added
+
+- **`NK2201`, and the question it waited on is answered.** [ADR-067](docs/specification/adr/adr-067.md) D1 split *no I/O while holding locked data* in two — what **pauses** is `NK2202`'s, what **takes a lock** is `NK2203`'s — and left *is there I/O that does neither?* as a question to answer before writing a code. Measured over `std`'s ledger: of the nine entries whose touch set names I/O, four are the printing functions, four are `fs`'s reads and its write, and one is neither. Reading a `fs::Mapped` is a **page fault** — a disk read with no call in the source at all, which neither suspends nor takes a lock — and inside an open door it is a disk read with the lock held.
+- **A `touches` column on the type**, in [ADR-033](docs/specification/adr/adr-033.md)'s own vocabulary. On the type rather than on a function because `mapped[i]` calls nothing a program wrote, which is the same shape `iterates = "throws"` already has on `io::Lines` ([ADR-025](docs/specification/adr/adr-025.md) D6). A second such type is a line in a ledger and nothing in the compiler.
+- Both read shapes are asked — a method on it and an index of it — and the message names the page fault, says **why the other two codes are silent**, and hands over the way out: read what the block needs before the door. It gets its own line in the tally, beside the two `NK21xx` rules, for their stated reason: the tally has to say what it counted.
+
+### Fixed
+
+- **Part II 12.2 illustrated `NK2201` with a case that is not its own.** The example was `fs::write` inside a door — which *pauses*, so [ADR-067](docs/specification/adr/adr-067.md) D1 assigns it to `NK2202`, as the comment two lines above the block already said. The page shows the page fault now, and its status note says all three are built rather than that nothing raises this one.
+
+### The one place silence is not fail-closed
+
+- **A type that records no `touches` is claimed nothing about.** Everywhere else this compiler reads the absence of a claim fail-closed ([ADR-010](docs/specification/adr/adr-010.md) D1); here it may not, because what is built on the column is a **refusal**, and refusing on doubt refuses correct programs ([Part III C.4](docs/specification/30-nikaia-tooling.md)). The polarity follows what is at stake, which is [ADR-027](docs/specification/adr/adr-027.md) D2's own arrangement one question over.
+
+### Free today
+
+- No program in `examples/`, in `tests/` or in `benches/` opens a door at all, so the refusal costs nothing now — which is `open-work.md` §2's own opening rule, and the reason to take it before a program exists that a mapping inside a lock is correct for.
+
 ## [0.0.87] — 2026-09-20
 
 Two catalogued-and-unemitted codes measured rather than left as questions

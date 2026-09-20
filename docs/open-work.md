@@ -258,8 +258,9 @@ What is left:
   calls — *a foreign crate is described before it is called*, below — rather
   than a change here. That number is what any refusal reading the column has to
   be read against, which is why it is kept.
-* **`NK2201` and `NK2503`**, catalogued and not emitted — and both questions
-  are now **measured** rather than open.
+* **`NK2503`**, catalogued and not emitted — and its question is now
+  **measured** rather than open. (`NK2201` was the other one and is built,
+  below.)
 
   *`NK2503`'s refusal is built; its number is not.*
   [ADR-039](specification/adr/adr-039.md) D6 says the check **is** the crossing
@@ -284,31 +285,13 @@ What is left:
   *lock* from *count* in the walk's verdict, since `Shared` answers `MayNot`
   into foreign code as well and is not a lock.
 
-  *`NK2201` has exactly one thing to be about, and it is worth having.* The
-  catalogue calls it *no I/O while holding locked data*, and
-  [ADR-067](specification/adr/adr-067.md) D1 split that sentence in two: what
-  **pauses** is `NK2202`'s and what **takes a lock** is `NK2203`'s. That record
-  left *whether any third thing exists* as a question to answer before writing
-  a code, and the answer is **yes, one**. Of the nine `std` entries whose touch
-  set names I/O, four are the printing functions (`sync`, `locks = true` —
-  `NK2203`'s), four are `fs`'s reads and its write (not `sync` — `NK2202`'s),
-  and one is neither:
-
-  | entry | `sync` | `locks` | which code |
-  | :--- | :--- | :--- | :--- |
-  | `print`, `println`, `eprint`, `eprintln` | yes | yes | `NK2203` |
-  | `fs::map`, `fs::read`, `fs::read_to_string`, `fs::write` | — | — | `NK2202` |
-  | **`fs::Mapped::deref`** | **yes** | **—** | **neither** |
-
-  Reading a mapping is a **page fault**, which is a disk read that neither
-  suspends nor takes a lock — so `mapped[i]` inside an open door is I/O while
-  holding locked data, and nothing says a word. That is what a third code would
-  be for, and it is now a piece of work rather than a question.
-
-  *It is free today and will not stay free.* No program in `examples/`, in
-  `tests/` or in `benches/` opens a door at all, so a refusal costs nothing now
-  — which is this section's own opening rule about refusals, and the reason to
-  take it before a program exists that a mapping inside a lock is correct for.
+  *`NK2201` is built* ([ADR-169](specification/adr/adr-169.md)). The question
+  [ADR-067](specification/adr/adr-067.md) D1 left — *is there I/O that neither
+  pauses nor takes a lock?* — is answered with exactly one thing, reading a
+  `fs::Mapped`, and the refusal is in. A type says what reading it touches, so
+  a second such type is a line in a ledger; Part II 12.2's example, which
+  illustrated `NK2201` with an `fs::write` that D1 assigns to `NK2202`, says
+  the page fault instead.
 
 ### 2.4. Part II 12.8's supervision syntax
 

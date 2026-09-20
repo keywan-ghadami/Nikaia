@@ -856,7 +856,19 @@ pub fn check(
     // tally that has to say what it counted must not call one of them *a place
     // that can fail without saying so*.
     let pausing = count("NK2202");
-    let rules = findings.len() - types - crossings - aliases - tasks - walked - pausing;
+    // **A file read with a lock held is not a place that can fail either**
+    // ([ADR-169](../../docs/specification/adr/adr-169.md) D2), and lands on the
+    // same reasoning as the two above: the tally has to say what it counted,
+    // and the way out here is moving the read rather than declaring anything.
+    let under_a_lock = count("NK2201");
+    if under_a_lock > 0 {
+        refused.push(format!(
+            "{under_a_lock} read{} of a file with a lock held",
+            plural(under_a_lock)
+        ));
+    }
+    let rules =
+        findings.len() - types - crossings - aliases - tasks - walked - pausing - under_a_lock;
     if rules > 0 {
         refused.push(format!(
             "{rules} place{} that can fail without saying so",

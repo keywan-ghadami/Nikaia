@@ -732,6 +732,25 @@ pub struct TypeContract {
     /// here rather than inferred because the types that have it are `std`'s and
     /// their bodies are Rust - which is the whole reason this file exists.
     pub iterates_fallibly: bool,
+    /// What **reading a value of this type touches**
+    /// ([ADR-169](../../../../docs/specification/adr/adr-169.md) D1), in
+    /// [ADR-033](../../../../docs/specification/adr/adr-033.md)'s own
+    /// vocabulary of resource kinds.
+    ///
+    /// A column on the **type** rather than on a function, for the same reason
+    /// `iterates_fallibly` is one: the operation it describes is not a call a
+    /// program writes. `fs::Mapped` is a file held as memory, so `mapped[i]` is
+    /// a **page fault** — a disk read with no call in the source to hang a
+    /// `touches` on, and one that neither suspends nor takes a lock, so neither
+    /// `NK2202` nor `NK2203` has anything to say about it.
+    ///
+    /// Written by hand and never inferred, like `crosses`: it answers for a
+    /// type whose body is Rust, which is the whole reason this file exists.
+    /// Empty is *nothing recorded*, which for this question is also *nothing
+    /// claimed* — the refusal it feeds fires on what is written, never on a
+    /// silence (ADR-010 D1 cuts the other way here, because refusing on doubt
+    /// would refuse correct programs, [Part III C.4](../../../30-nikaia-tooling.md)).
+    pub touches: Vec<String>,
     /// The fields that hold a view, directly or through another type that
     /// does. A struct with none of these is free of the input; one with any is
     /// tied to it for as long as it lives (Part II, 10.6).
@@ -1223,6 +1242,11 @@ impl Ledger {
                                 // yet, let alone fallibly: the types that do are
                                 // `std`'s, and `std` writes them down (ADR-025 D6).
                                 iterates_fallibly: false,
+                                // Nor does a declared `struct` read anything when
+                                // it is read: a field access is memory. The types
+                                // that are not are `std`'s, whose bodies are Rust
+                                // ([ADR-169](../../../../docs/specification/adr/adr-169.md) D1).
+                                touches: Vec::new(),
                                 tethered,
                             },
                         );
@@ -1726,6 +1750,17 @@ impl Ledger {
             if contract.iterates_fallibly {
                 out.push_str("iterates = \"throws\"\n");
             }
+            if !contract.touches.is_empty() {
+                out.push_str(&format!(
+                    "touches = [{}]\n",
+                    contract
+                        .touches
+                        .iter()
+                        .map(|t| format!("\"{t}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             if !contract.tethered.is_empty() {
                 out.push_str(&format!(
                     "tethered = [{}]\n",
@@ -1896,6 +1931,7 @@ impl Ledger {
                             }
                         }
                         "tethered" => entry.tethered = string_list(value, at())?,
+                        "touches" => entry.touches = string_list(value, at())?,
                         "doc" => entry.doc = Some(unquote(value, at())?),
                         "iterates" => {
                             let value = unquote(value, at())?;
