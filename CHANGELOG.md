@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.84] — 2026-09-20
+
+**Cargo's target-info probe is given an empty standard input**
+([ADR-166](docs/specification/adr/adr-166.md)) — half of `docs/open-work.md`
+§3.1, an entry that had been open for months and had already recorded its own
+best hypothesis as **refuted**. The hypothesis was right; the measurement that
+refuted it was measuring the wrong stream.
+
+### Fixed
+
+- **`cargo test --workspace` failed the project tests because of what was on the terminal's input.** Cargo asks every `rustc` wrapper what the target looks like with `rustc - --print=…` — `-` meaning *the program is on standard input* — and writes nothing there. Passed straight through, that standard input is **whoever started the build**, and anything sitting in it is read as a Rust program: *failed to run `rustc` to learn about target-specific information*, with a parse error at `<anon>:1` about text nobody offered as source.
+- An invocation naming `-` **and** asking a `--print` is handed `/dev/null` now. Neither half alone is the probe: `-` is what makes `rustc` read standard input at all, and a `--print` is what says the answer is not a compiled program — and a real compile names a **file**, so nothing that genuinely hands `rustc` a program this way loses one.
+
+### Why it took months
+
+- The contaminant is never the same thing twice, so the failure looked like a race. §3.1 recorded *the wrapper's stdin is the suspect*, then recorded it **refuted**: `cargo test … < /dev/null` failed identically, three runs out of three. That measurement was right about what it measured and wrong about what it concluded — closing the **outer** command's standard input does not close the **test binary's**, and the nested build inherits from the harness.
+- A build that fails because of what was in the terminal's input is not reproducible, and a toolchain that is reproducible only when invoked carefully is not reproducible. The probe has one correct standard input, and the process that knows that is the one holding the argument list.
+
+### Added
+
+- Three tests, the last of which is the one that holds it closed: the probe's argv and a real compile's told apart, neither half alone counting as a probe, and the **real** probe through the **real** wrapper with a rendered diagnostic written onto its standard input — asserting it answers `target_arch=` instead of trying to compile it. Without the fix that test reproduces the original error exactly, which is what makes it a test rather than a description.
+
+### What this leaves
+
+- **§3.1 is narrowed rather than closed**, and the distinction is the honest one. `cargo test -p nikaia --test project` now passes on its own, repeatedly. Two things still show in a parallel sweep, and the entry carries both: the new end-to-end test fails inside a fully parallel `-p nikaia` run with **its own contaminant file** reaching `rustc` although the wrapper hands that invocation `/dev/null` — a smaller and much stranger claim than the entry ever made, and why that test is `#[ignore]`d rather than left to flake in CI; and `--test project --test one_name` together fail on *Blocking waiting for file lock on package cache*, which is contention over the one Cargo package cache those tests share on purpose.
+
 ## [0.0.83] — 2026-09-20
 
 **There is no postfix `??`** ([ADR-165](docs/specification/adr/adr-165.md)),

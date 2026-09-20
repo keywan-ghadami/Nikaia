@@ -527,12 +527,45 @@ impl Invocation {
     }
 
     /// Runs the real `rustc`, and returns its exit code.
+    ///
+    /// **A `--print` probe is given an empty standard input**
+    /// ([ADR-166](../../../docs/specification/adr/adr-166.md) D1). Cargo asks
+    /// every wrapper what the target looks like by running
+    /// `rustc - --print=… ` — `-` meaning *the program is on standard input* —
+    /// and it writes nothing there, because it wants the `--print` answers and
+    /// not a compile. Inherited, that standard input is **whoever started the
+    /// build**, and anything sitting in it is read as a Rust program: the build
+    /// then fails with *failed to run `rustc` to learn about target-specific
+    /// information* and a parse error about text nobody offered as source.
+    ///
+    /// So the probe is handed `/dev/null` and every other invocation keeps the
+    /// standard input it had. A real compile names a **file**, so nothing that
+    /// reads a program this way loses one.
     pub fn run(&self) -> Result<i32> {
-        let status = Command::new(&self.rustc)
-            .args(&self.args)
+        let mut command = Command::new(&self.rustc);
+        command.args(&self.args);
+        if self.is_a_probe() {
+            command.stdin(std::process::Stdio::null());
+        }
+        let status = command
             .status()
             .with_context(|| format!("running {}", self.rustc.to_string_lossy()))?;
         Ok(status.code().unwrap_or(1))
+    }
+
+    /// Whether this invocation is Cargo asking what the target looks like
+    /// rather than asking for a compile
+    /// ([ADR-166](../../../docs/specification/adr/adr-166.md) D1).
+    ///
+    /// Both halves are required: `-` is what makes `rustc` read standard input,
+    /// and a `--print` is what makes the answer something other than a compiled
+    /// program. Neither alone is the probe.
+    fn is_a_probe(&self) -> bool {
+        self.args.iter().any(|arg| arg == "-")
+            && self.args.iter().any(|arg| {
+                arg.to_str()
+                    .is_some_and(|arg| arg == "--print" || arg.starts_with("--print="))
+            })
     }
 }
 
@@ -652,6 +685,73 @@ fn escape_make(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Cargo's target-info probe, and a real compile, told apart**
+    /// ([ADR-166](../../../docs/specification/adr/adr-166.md) D1).
+    ///
+    /// The argv is the one that failed builds for months, copied out of the
+    /// error it produced. Both halves have to be present: `-` is what makes
+    /// `rustc` read standard input at all, and a `--print` is what says the
+    /// answer is not a compiled program.
+    #[test]
+    fn a_target_info_probe_is_told_from_a_compile() {
+        let probe: Vec<OsString> = [
+            "/usr/bin/rustc",
+            "-",
+            "--crate-name",
+            "___",
+            "--print=file-names",
+            "--crate-type",
+            "bin",
+            "--print=sysroot",
+            "--print=cfg",
+            "-Wwarnings",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        let probe = Invocation::parse(&probe, "nika").expect("a rustc is named");
+        assert!(probe.is_a_probe());
+
+        let compile: Vec<OsString> = [
+            "/usr/bin/rustc",
+            "--crate-name",
+            "hyper_core",
+            "src/main.nika",
+            "--crate-type",
+            "bin",
+            "--out-dir",
+            "/tmp/out",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        let compile = Invocation::parse(&compile, "nika").expect("a rustc is named");
+        assert!(!compile.is_a_probe());
+    }
+
+    /// **Neither half alone is the probe.** A compile that happens to ask for
+    /// one `--print` still names a file, and a `-` with no `--print` is
+    /// somebody genuinely handing `rustc` a program on standard input — which
+    /// this must not take away.
+    #[test]
+    fn one_half_is_not_a_probe() {
+        let printing: Vec<OsString> = ["/usr/bin/rustc", "src/main.nika", "--print=cfg"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        assert!(!Invocation::parse(&printing, "nika")
+            .expect("a rustc is named")
+            .is_a_probe());
+
+        let from_stdin: Vec<OsString> = ["/usr/bin/rustc", "-", "--crate-type", "bin"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        assert!(!Invocation::parse(&from_stdin, "nika")
+            .expect("a rustc is named")
+            .is_a_probe());
+    }
 
     fn project() -> CargoProject {
         let mut dependencies = BTreeMap::new();

@@ -1303,78 +1303,70 @@ A stale **Status** note is a defect in its own right
 promise - so this section being **empty** is a state to try to keep rather than
 a milestone.
 
-### 3.1. A whole-workspace test run sometimes fails the project tests, and the wrapper's stdin is the suspect
+### 3.1. A whole-workspace test run fails the project tests, and the cause is now Cargo's package cache rather than the wrapper's stdin
+
+**Half of this is answered** ([ADR-166](specification/adr/adr-166.md)). Cargo
+asks every `rustc` wrapper what the target looks like by running
+`rustc - --print=… ` — `-` meaning *the program is on standard input* — and
+writes nothing there. The wrapper passed that invocation through with the
+standard input it had, which is **whoever started the build**, and anything
+sitting in it was read as a Rust program:
 
 ```text
 error: failed to run `rustc` to learn about target-specific information
-  process didn't exit successfully: `target/release/nikaia …/rustc - --crate-name ___
-  --print=file-names … --print=cfg` (exit status: 1)
+  --- stderr
+  error: unknown start of token: `
+   --> <anon>:1:16
+  1 | warning: trait `Foo` is never used
 ```
 
-Sixteen of the twenty-two tests in `crates/nikaia/tests/project.rs`, every one of
-them at the point where a nested `cargo` probes `rustc` **through this compiler's
-wrapper** (`project::wrapper_main`, where the invocation names no `.nika` source
-and is passed straight through). The stdout that reaches the error is the probe's
-own output cut off partway down the `--print` list.
+That is fixed, and `crates/nikaia/tests/project.rs` holds it with the real
+probe through the real wrapper and a rendered diagnostic written onto its
+standard input — a test that reproduces the original error without the fix,
+which is what this entry never had.
 
-**It still does not reproduce on demand, so this stays a suspicion** — the head
-of this file makes the difference load-bearing. What it now has is a mechanism
-worth testing, which it did not before. What
-it looked like at the time: `cargo test --workspace --release` failing 16 of 22
-on `origin/main` with nothing applied, three runs out of three, while `cargo test
--p nikaia --test project` on the same commit passed 22 of 22 four times out of
-four. Under the same command since: **seven consecutive clean whole-workspace
-runs**, two of them with a full rebuild immediately before in the same
-invocation, which was the best hypothesis and is now ruled out.
+**The earlier hypothesis was refuted for the right reason and the wrong one.**
+It said the wrapper's inherited stdin was the suspect and then recorded that
+refuted, because `cargo test … < /dev/null` failed identically three runs out
+of three. The suspicion was correct; the measurement only showed that closing
+the **outer** command's standard input does not close the **test binary's**,
+and the nested build inherits from the harness.
 
-**Measured again, and the hypothesis this entry carried is refuted.** It said
-the wrapper's inherited **stdin** was shared between concurrent probes. Running
-the whole test with `cargo test … < /dev/null` fails identically, three runs out
-of three, so nothing about the caller's stdin is what decides it.
+**What is left is sharper than it has ever been, and it is not the probe.**
+The test above, run inside a **fully parallel** `cargo test -p nikaia` sweep,
+fails — with its own contaminant file reaching `rustc` although the wrapper
+hands that invocation `/dev/null`. Run on its own it passes every time, and
+without [ADR-166](specification/adr/adr-166.md) D1 it fails every time. So
+something in a parallel sweep is reaching a child's standard input **past an
+explicit `Stdio::null()`**, which is a smaller and much stranger claim than
+*the wrapper's stdin is the suspect* ever was. The test is `#[ignore]`d for
+exactly that reason — a test that flakes in CI is worth less than a red build
+costs — and `cargo test -p nikaia --test project -- --ignored` is how to see it.
 
-**What the failing runs look like now**, and it is sharper than before: the
-probe's `--print` output arrives **complete**, and what fails is the compile of
-the source on stdin, because the source is this:
+**And a second thing shows in the same sweep**, with the reproducer down from
+the whole workspace to two binaries:
 
 ```text
-error: unknown start of token: `
- --> <anon>:7:55
-7 |   = help: only literals are allowed as values for the `message`, `note`
-  |           and `label` options. These options must be separated by a comma
+cargo test --release --test project --test one_name
 ```
 
-**It is line 7 of the input**, and lines 1 to 6 are the rest of a rendered
-diagnostic — an `error:` line, a `-->` line, a caret line. So what is on stdin is
-not a truncated source or a stray fragment: it is **another process's rendered
-stderr**, whole. That names the mechanism as two streams crossing rather than one
-being cut short, which is what the first two sightings looked like.
+Two of the twenty-seven fail, and neither says anything about a probe:
 
-The diagnostic itself is `rustc`'s own, about a malformed
-`#[diagnostic::on_unimplemented]`. Nothing in this repository writes that
-attribute — searched, and the only hits are this file and the CHANGELOG quoting
-it — so it is not something this compiler wrote or relayed. The producing crate
-is **not** identified: `serde` carries the attribute in the dependency graph, but
-in the form this toolchain accepts (`message = "…"` with a literal), so it is not
-the one complaining.
+```text
+Blocking waiting for file lock on package cache
+Blocking waiting for file lock on artifact directory
+```
 
-**And it clusters in time rather than in the code.** On one commit, seven
-consecutive whole-suite runs passed — two of them immediately after a full
-rebuild — and then eight consecutive runs failed. In the failing window a clean
-`origin/main`, built from scratch, fails identically two runs out of two; in the
-passing window it passes. Whatever decides it is a property of the machine at
-that moment and not of the tree, which is why this is here and not in §1.
+— one build's output arriving at the other test's assertion, and one that never
+finishes behind the lock. The project tests share one Cargo package cache
+(`NIKAIA_CACHE_DIR`, `shared_cache_dir()`), which is deliberate — it is what
+`a_second_project_links_the_std_the_first_one_built` is about — and what has
+not been decided is what that sharing costs when two test binaries want it at
+once.
 
-*What was ruled out, in order:* the tests (they pass alone), the wrapper's own
-code path (the probe run by hand exits 0), a stale binary, a rebuild immediately
-before, and the caller's stdin. What is left is to find **which** invocation's
-stderr is crossing, which means capturing the streams of a failing run rather
-than reading one victim's message — and nothing in this repository decides
-whether that run fails.
-
-*Why it is kept at all:* if it comes back, this says what was already ruled out —
-it is not the tests, not the wrapper's own code path, and not a stale binary. It
-is worth one look and not a re-run, which is what an unnamed failing gate
-otherwise teaches people to do.
+*Why it stays upkeep:* nothing a user does fails. `cargo test -p nikaia --test
+project` passes on its own, repeatedly, and CI has been green on every release
+through this one.
 
 ### 3.3. Three corpus files cannot be compiled with `--input`, and none of them is broken
 

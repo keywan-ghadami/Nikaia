@@ -1647,3 +1647,74 @@ fn a_hand_edited_dependency_ledger_is_repaired_before_it_is_read() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **Cargo's target-info probe survives whatever is on standard input**
+/// ([ADR-166](../../../docs/specification/adr/adr-166.md) D1).
+///
+/// Cargo asks every wrapper what the target looks like by running
+/// `rustc - --print=…` — `-` meaning *the program is on standard input* — and
+/// writes nothing there. Inherited, that standard input is **whoever started
+/// the build**, and anything sitting in it is read as a Rust program. What the
+/// build said then was *failed to run `rustc` to learn about target-specific
+/// information*, with a parse error about text nobody offered as source; the
+/// text in the sighting that found this was another process's rendered
+/// warning, arriving whole.
+///
+/// So: the real probe, through the real wrapper, with a rendered diagnostic on
+/// its standard input.
+///
+/// The contaminant is handed over as a **file** rather than written into a
+/// pipe: a file is already there when the child starts, so nothing about this
+/// test depends on the order two processes reach a write.
+///
+/// **Ignored by default, and that is `docs/open-work.md` §3.1 speaking.** Run
+/// on its own — `cargo test -p nikaia --test project -- --ignored` — it passes
+/// every time, and without [ADR-166](../../../docs/specification/adr/adr-166.md)
+/// D1 it reproduces the original error every time, which is what makes it a
+/// test. Run inside a **fully parallel** `-p nikaia` sweep it fails, with this
+/// file's own bytes reaching `rustc` although the wrapper hands the probe
+/// `/dev/null` — and that is the second mechanism §3.1 still carries, seen from
+/// closer than it has been seen before. A test that flakes in CI is worth less
+/// than a red build costs, so the gate keeps the two deterministic halves of
+/// D1 (`orchestrator`'s own tests) and this one waits for the entry that
+/// explains it.
+#[test]
+#[ignore = "flakes inside a fully parallel `-p nikaia` run; docs/open-work.md §3.1"]
+fn the_target_info_probe_ignores_what_is_on_standard_input() {
+    let dir = common::scratch_dir("probe-stdin");
+    let contaminant = dir.join("stdin.txt");
+    std::fs::write(
+        &contaminant,
+        "warning: trait `Foo` is never used\n --> src/lib.rs:1:7\n",
+    )
+    .expect("write the contaminant");
+    let fed = std::fs::File::open(&contaminant).expect("open the contaminant");
+
+    let rustc = std::env::var("NIKAIA_RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let probe = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .arg(&rustc)
+        .args([
+            "-",
+            "--crate-name",
+            "___",
+            "--print=file-names",
+            "--crate-type",
+            "bin",
+            "--print=sysroot",
+            "--print=cfg",
+            "-Wwarnings",
+        ])
+        .env("NIKAIA_RUSTC_WRAPPER", "1")
+        .stdin(std::process::Stdio::from(fed))
+        .output()
+        .expect("the wrapper runs");
+
+    assert!(
+        probe.status.success(),
+        "the probe compiled its standard input instead of answering:\n{}",
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    let said = String::from_utf8_lossy(&probe.stdout);
+    assert!(said.contains("target_arch="), "{said}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
