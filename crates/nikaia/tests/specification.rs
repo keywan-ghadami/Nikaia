@@ -282,13 +282,30 @@ fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
             true => "compiles".to_string(),
             false => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
-                let line = stderr
+                // **Every code, sorted, and not the first one.** The code only,
+                // never the message: a `rustc` upgrade rewords its diagnostics
+                // and that must not be a failing test here. The same argument
+                // covers the **order** — a block with two independent errors
+                // has no reason to report them in the same order under two
+                // toolchains, and recording the first made this baseline
+                // toolchain-dependent for exactly one block
+                // (`10-nikaia-light.md #68`, `E0425` here and `E0433` on CI).
+                // A sorted set says the same thing and says it the same way
+                // everywhere.
+                // `error[E0425]` and not `error: aborting due to 3 previous
+                // errors`: the second is a count of the first and says nothing
+                // a diff could be read from.
+                let mut codes: Vec<String> = stderr
                     .lines()
-                    .find(|l| l.starts_with("error"))
-                    .unwrap_or("error (no line)");
-                // The code only, never the message: a `rustc` upgrade rewords
-                // its diagnostics and that must not be a failing test here.
-                line.split(':').next().unwrap_or(line).to_string()
+                    .filter(|l| l.starts_with("error["))
+                    .map(|l| l.split(':').next().unwrap_or(l).to_string())
+                    .collect();
+                codes.sort();
+                codes.dedup();
+                match codes.is_empty() {
+                    true => "error (no line)".to_string(),
+                    false => codes.join(" "),
+                }
             }
         };
         report.push_str(&format!("{} #{ordinal} {verdict}\n", v.block.file));

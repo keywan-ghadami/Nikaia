@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.72] — 2026-09-20
+
+A baseline that recorded **which error `rustc` reports first**, and therefore
+disagreed with itself between two toolchains.
+
+### Fixed
+
+- **`tests/specification/COMPILES.txt` records every code a block earns, sorted**, and not the first line `rustc` happened to print. `what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones` has been failing on CI since it was written, on one block — Part I's `#68` — where the local toolchain prints `E0433` first and CI's prints `E0425`. The block earns `E0308`, `E0425` and `E0433`, so both readings were true and neither was the fact.
+- **And the `error: aborting due to 3 previous errors` line is not a code.** It is a count of the lines above it and says nothing a diff could be read from.
+
+### Why it is the test and not the block
+
+- **The test's own comment already had the argument** and stopped one step short: *the code only, never the message: a `rustc` upgrade rewords its diagnostics and that must not be a failing test here.* Which of two independent errors is printed first is a property of the compiler that printed them, exactly like the wording is.
+- **What the baseline is for is unchanged**: a block that stops compiling is a line in a diff, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class of defect. A sorted set says that at least as loudly — six blocks now name more than one code, which the first-line reading had been hiding.
+- **Six lines changed and no verdict did.** Nothing that compiled stopped compiling; the entries that grew grew because they always had more to say.
+
 ## [0.0.71] — 2026-09-20
 
 `Bytes` is the language's, and the tether it needs is **refused** where a
