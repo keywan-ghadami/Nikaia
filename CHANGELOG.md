@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.93] — 2026-09-20
+
+**A description's entries reach the analyses**
+([ADR-104](docs/specification/adr/adr-104.md) D1) — the first sentence of the
+record, and the thing the file it asks for exists to do.
+
+### Fixed
+
+- **`contracts/<crate>.contracts` was read to see whether it *parsed*, and the parsed ledger was dropped.** Its only effect was silencing `NK2504`, the refusal that had asked for it — while that refusal's own message promised the reader four answers in return for writing it: *what may cross a thread, what the call may reach, whether it pauses, whether it can fail*. It answered none of them, for two records.
+- **Measured on a three-line project**, because reading the code would only have shown a ledger being parsed: a description saying `(a: i64, b: i64) -> i64` left `fremd::zwei(1)` unremarked, and removing the file turned `NK2504` back on. That is the whole of what the file did.
+- **Three of the four are in now.** The signature types the call and what it hands back, `throws` makes it a place that can fail, and `sync` makes it one a `sync` function may not make. The fourth is `crosses`, and it is not a gap here: a **described** call is not asked the crossing question at all, which is [ADR-038](docs/specification/adr/adr-038.md) D7's own wording and an open question on `docs/open-decisions.md`.
+- **A described crate is a package, not one of `std`'s modules.** The set of words that may stand in front of a `::` is derived from the library ledger's own key prefixes, so merging a description into it made `hyper_shim` look like `std`'s — and the first thing a program calling one was told was to write `use std::hyper_shim`. A crate is reached because the manifest declared it, not because a file imported it. Asserted, because it is the one thing the merge could break that turns a correct program into a refusal ([Part III C.4](docs/specification/30-nikaia-tooling.md)).
+- **`NK2504` is not a crossing**, and the tally called it one: *a value that may not cross a thread* is a sentence about no part of *a Rust crate nothing describes*. The same rule every other split in that tally has — it must say what it counted.
+
+### Measured
+
+- The corpus is unmoved, and so are the three `examples/foreign-runtime/` projects: each hands its value to a call the description **names**, so the crossing question is not asked of them and nothing there changes. That is the open question above, seen from the programs it is about.
+
+### Stated rather than left as a gap
+
+- **`std` wins a name collision, silently.** A description's names carry the crate word in front of them and `std`'s carry a module's, so a manifest declaring a crate whose word is one of `std`'s modules would have two answers for one name. No manifest in this repository reaches it; the day one does, that is a refusal to write and not a silence to keep. `docs/open-work.md` carries it as a suspicion, which is what an item with no reproduction is.
+
 ## [0.0.92] — 2026-09-20
 
 **A call that can reach a lock is refused under its own code** — `NK2503`, which

@@ -677,21 +677,42 @@ crate's `pub` signatures, which is what D5 says to expect. A fixture of the
 refusal lives in `crates/nikaia/tests/described.rs` instead, where it needs no
 network.
 
+*And the entries reach the analyses now*, which was D1's **first sentence** and
+not an addition to it: *every analysis reaches to the boundary and reads an
+entry there*. For two records the file was read to see whether it **parsed**,
+the ledger was dropped, and its only effect was silencing the refusal that had
+asked for it — while `NK2504`'s own message promised a reader four answers in
+return for writing it. Measured on a three-line project: a description saying
+`(a: i64, b: i64) -> i64` left a one-argument call unremarked. Three of the four
+are in (the signature, `throws`, `sync`); the fourth is `crosses` and is not a
+gap here — see the paragraph below.
+
 *What it needs, in the record's order (§5):* the draft from the sources; the
 file's header and the hash rule — the description records the crate source's
 SHA-256 today and **nothing compares it**; the rustdoc-JSON reader behind a
 toolchain check.
 
-*And something else waits on **one line** of it.* The entry above about the
-crossing refusals being built and unreachable is unreachable **because** no
-type answers `MayNot` into our own code, and a described foreign type is the
-first thing that could. The description ships **no** `crosses` on
+*And one line of the merge is decided in the cheapest direction rather than
+decided.* A description's names carry the crate word in front of them and
+`std`'s carry a module's, so a manifest declaring a crate whose word is one of
+`std`'s modules would have two answers for one name. `std` wins today, silently,
+which is a silence and not an answer — no manifest in this repository reaches
+it, and the day one does it is a refusal to write. A **suspicion** rather than a
+defect: nothing reproduces it.
+
+*And something else waits on **one line** of the describer.* The entry above
+about the crossing refusals being unreachable into **our own code** is
+unreachable because no type answers `MayNot` there, and a described foreign type
+is the first thing that could. The description ships **no** `crosses` on
 `hyper_shim::LocalHandle`, and that is the honest answer rather than a gap: the
 type is not `Send` because of its **fields**, and a reader of signatures does
 not have them — D3's table says `Send` *on a type* means it may cross, and the
 absence of the word is not the claim that it may not. So the crossing stays
-`Undecided`, and the day the describer reads fields is the day `NK2501` and
-`NK2502` have something to say.
+`Undecided`. The column is **read** now wherever it is written, so the day the
+describer reads fields is the day `NK2501` has something to say; `NK2502` and
+`NK2503` also need the call itself to be one nothing describes, which is
+[`open-decisions.md`](open-decisions.md)'s question about a described foreign
+function and a thread.
 
 ### 2.17. `par_iter` has no entry to demand `sync` of
 

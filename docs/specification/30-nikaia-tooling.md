@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.92 (Draft)
+**Version:** 0.0.93 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -694,7 +694,7 @@ hash hold, and reviewed like code: what a signature cannot say (`touches`,
 and a signature that lies is the reviewer's to correct. Every analysis then
 reads an entry at the boundary, never an absence.
 
-> **Implementation status:** Partially implemented. A call into a crate the manifest declares with `type = "rust"` that no `contracts/<crate>.contracts` describes is refused with `NK2504`, once per crate and with the command in the message; a written type from such a crate counts as a call, and a name the build did not declare is left alone (C.4). `nikaia describe` (D2, D4) and the hash rule (D5) are not implemented, so a description is written by hand today, and `examples/foreign-runtime/` ships one ([ADR-104](adr/adr-104.md) §5).
+> **Implementation status:** Partially implemented. A call into a crate the manifest declares with `type = "rust"` that no `contracts/<crate>.contracts` describes is refused with `NK2504`, once per crate and with the command in the message; a written type from such a crate counts as a call, and a name the build did not declare is left alone (C.4). **And the description's entries are read**, which is D1's own first sentence: the signature types the call and what it hands back, `throws` makes it a place that can fail, and `sync` makes it one a `sync` function may not make. A described crate is a **package** by the spelling rule and not one of `std`'s modules, so nothing about it is imported. `nikaia describe` (D2, D4) and the hash rule (D5) are not implemented, so a description is written by hand today, and `examples/foreign-runtime/` ships one ([ADR-104](adr/adr-104.md) §5).
 
 **Thread Safety (Send/Sync)**
 Whether a value may cross into foreign code is decided from the Nikaia type of

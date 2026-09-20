@@ -664,6 +664,17 @@ pub const CONTRACTS: &str = "contracts";
 /// the manifest declares and no ledger describes is the one D1 refuses. Both
 /// empty is a loose file with no project around it, where nothing was declared
 /// and therefore nothing is undescribed.
+///
+/// **And the entries themselves**, which is D1's first sentence rather than an
+/// addition to it: *every analysis reaches to the boundary and reads an entry
+/// there*. `NK2504`'s own message promises a reader that four questions — what
+/// may cross a thread, what the call may reach, whether it pauses, whether it
+/// can fail — are answered by the file they are told to write. For two records
+/// the file answered none of them: it was parsed to see whether it parsed, the
+/// answer was thrown away, and its only effect was silencing the refusal that
+/// asked for it. Measured on a three-line project, where a description saying
+/// `() -> i64` left the call's result untyped and `n.no_such_method()` went
+/// through.
 #[derive(Debug, Default, Clone)]
 pub struct Foreign {
     /// `[dependencies]` with `type = "rust"`, under the name a program writes
@@ -672,6 +683,14 @@ pub struct Foreign {
     /// The crates a `contracts/<crate>.contracts` was found for, beside the
     /// project's own ledger (D5).
     pub described: BTreeSet<String>,
+    /// Every described crate's entries, in one ledger under the qualified names
+    /// a program writes (`hyper_shim::serve_once`).
+    ///
+    /// **One ledger and not one per crate**, because a name is resolved in one
+    /// place (ADR-011 D2) and the crate a name belongs to is the prefix on it.
+    /// Two descriptions cannot disagree about a name without disagreeing about
+    /// whose it is.
+    pub descriptions: Ledger,
 }
 
 impl Foreign {
@@ -684,30 +703,81 @@ impl Foreign {
         let declared = crate::manifest::Manifest::read(&root.join("nikaia.toml"))
             .map(|manifest| manifest.foreign_crates())
             .unwrap_or_default();
-        let described = declared
-            .iter()
-            .filter(|name| described_at(root, name))
-            .cloned()
-            .collect();
+        let mut described = BTreeSet::new();
+        let mut descriptions = Ledger::empty();
+        for name in &declared {
+            let Some(ledger) = description_at(root, name) else {
+                continue;
+            };
+            described.insert(name.clone());
+            // `None`: a description's names are already qualified with the crate
+            // word a program writes (`hyper_shim::serve_once`), so there is
+            // nothing to put in front of them.
+            descriptions.absorb(None, ledger);
+        }
         Foreign {
             declared,
             described,
+            descriptions,
         }
+    }
+
+    /// **`std`'s ledger and every described crate's, in one**
+    /// ([ADR-104](../../docs/specification/adr/adr-104.md) D1). A described
+    /// boundary is a library boundary: the analyses ask a ledger what a callee
+    /// takes, hands back, pauses on and keeps, and where the callee is foreign
+    /// the answer comes from the file the reader was told to write.
+    ///
+    /// **`std` wins a collision**, and the reason it can be decided in one line
+    /// is that there is nothing to decide yet: a description's names carry the
+    /// crate word in front of them, `std`'s carry a module's, and no manifest in
+    /// this repository declares a crate whose word is one of `std`'s modules.
+    /// The day one does, that is a refusal to write and not a silence to keep —
+    /// `docs/open-work.md` carries it.
+    pub fn library(&self) -> Result<Ledger> {
+        let mut library = Ledger::parse(STD).context("std's shipped ledger")?;
+        for (name, contract) in &self.descriptions.functions {
+            library
+                .functions
+                .entry(name.clone())
+                .or_insert_with(|| contract.clone());
+        }
+        for (name, contract) in &self.descriptions.types {
+            library
+                .types
+                .entry(name.clone())
+                .or_insert_with(|| contract.clone());
+        }
+        Ok(library)
+    }
+
+    /// The words a program may write in front of a `::` **because the manifest
+    /// declared them**, added to the ones its own packages give it.
+    ///
+    /// Without this the merge above would make `hyper_shim` a **`std` module**,
+    /// since that set is derived from the library ledger's own key prefixes —
+    /// and the first thing a program calling one would be told is to write
+    /// `use std::hyper_shim`, which is not a sentence about anything. A crate is
+    /// reached because the manifest declares it (D1), not because a file
+    /// imported it.
+    pub fn packages(&self, modules: &BTreeSet<String>) -> BTreeSet<String> {
+        let mut out = modules.clone();
+        out.extend(self.described.iter().cloned());
+        out
     }
 }
 
-/// Whether `contracts/<crate>.contracts` is there **and parses as a ledger**.
+/// `contracts/<crate>.contracts`, where it is there **and parses as a ledger**.
 ///
 /// Parsing is the test rather than existence, for
 /// [ADR-100](../../docs/specification/adr/adr-100.md) D3's reason one file over:
 /// a file that does not parse is not an answer, and treating it as one would
 /// let a boundary be described by something nobody can read.
-fn described_at(root: &Path, name: &str) -> bool {
+fn description_at(root: &Path, name: &str) -> Option<Ledger> {
     let path = root.join("contracts").join(format!("{name}.contracts"));
     std::fs::read_to_string(path)
         .ok()
         .and_then(|text| Ledger::parse(&text).ok())
-        .is_some()
 }
 
 /// `user_parallelism` reaches this and reaches **nothing inside the analyses**.
@@ -729,9 +799,13 @@ pub fn check(
     source: &str,
     user_parallelism: &str,
 ) -> Result<()> {
-    let library = Ledger::parse(STD).context("std's shipped ledger")?;
+    let library = foreign.library()?;
 
-    let mut all = check::check_program(parsed, own, &library, modules).findings;
+    // A described crate is a package by the spelling rule, which is what
+    // `modules` is: a set of words that appear in front of a `::` and are not
+    // `std`'s ([`Foreign::packages`]).
+    let modules = foreign.packages(modules);
+    let mut all = check::check_program(parsed, own, &library, &modules).findings;
     // A separate walk, for the reason the three inside `check_program` are
     // separate: it asks about the **boundary** of the build rather than about a
     // type, and it needs the manifest rather than a ledger.
@@ -801,7 +875,19 @@ pub fn check(
             plural(reaching)
         ));
     }
-    let crossings = count("NK25") - reaching;
+    // **And `NK2504` is not a crossing at all**, which the tally said it was:
+    // it is a crate nobody described, and *a value that may not cross a thread*
+    // is a sentence about no part of it. Same rule as the split above — the
+    // tally has to say what it counted — measured on a project whose only
+    // refusal was an undescribed crate.
+    let undescribed = count("NK2504");
+    if undescribed > 0 {
+        refused.push(format!(
+            "{undescribed} Rust crate{} nothing describes",
+            plural(undescribed)
+        ));
+    }
+    let crossings = count("NK25") - reaching - undescribed;
     if crossings > 0 {
         refused.push(format!(
             "{crossings} value{} that may not cross a thread",
@@ -884,6 +970,7 @@ pub fn check(
         - types
         - crossings
         - reaching
+        - undescribed
         - aliases
         - tasks
         - walked
