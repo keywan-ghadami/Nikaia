@@ -7,10 +7,14 @@
 # of: whether it may pause (`sync`), whether it may fail and with what
 # (`throws`), and what its result may point into (`returns`).
 #
-# `throws = ["?"]` on every entry here is not a placeholder but the honest
-# answer: these functions fail with Rust's errors, which have no Nikaia type to
-# name (ADR-023 D1, and ADR-024 D1's `?` - the absence of a claim). A caller
-# reads it as "it fails", which is what the boolean before it said.
+# **Every entry here names what it throws** (ADR-158 D1). That was not always
+# so: every one of them wrote `throws = ["?"]` - *something this compiler
+# cannot name*, ADR-024 D1's absence of a claim - because these functions fail
+# with Rust's errors and no Nikaia type stood for one. Nine entries throw, and
+# the measurement was that seven of them fail with **one** type; it is
+# `io::IoError` now, and `Overtaken` answers the other two. A caller that only
+# passes a failure on reads the column as "it fails", which is what the boolean
+# before it said; one that takes it apart has a name to match on.
 #
 # **Two origins, and the difference is not hidden.** The entries for modules
 # written in Nikaia are *inferred* by the Stage 0 compiler from their source,
@@ -173,7 +177,7 @@ doc = "Write text to standard error, and end the line."
 [fn."fs::map"]
 pub = true
 touches = ["file(path) read"]
-throws = ["?"]
+throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?) -> Mapped"
 doc = "A file as memory, without reading it into any of its own.\n\nWhat comes back reads as text and the pages arrive as they are touched, which\nis what makes a file larger than memory workable. It fails where the file\ncannot be opened."
@@ -193,7 +197,7 @@ doc = "The mapped file, as text.\n\nIt is a **view** of the mapping and not a co
 [fn."fs::read"]
 pub = true
 touches = ["file(path) read"]
-throws = ["?"]
+throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?) -> Bytes"
 doc = "The whole of a file, as bytes.\n\nIt hands back one shared buffer and not a copy, so passing the file on costs a\nreference count. It fails where the file cannot be read. The bytes came from\nthe program's own machine, so what it hands back is **trusted**."
@@ -201,7 +205,7 @@ doc = "The whole of a file, as bytes.\n\nIt hands back one shared buffer and not
 [fn."fs::read_to_string"]
 pub = true
 touches = ["file(path) read"]
-throws = ["?"]
+throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?) -> String"
 doc = "The whole of a file, as text.\n\nIt fails where the file cannot be read or is not UTF-8. The bytes came from\nthe program's own machine, so what it hands back is **trusted**: a map keyed\non it is hashed with the fast function."
@@ -209,7 +213,7 @@ doc = "The whole of a file, as text.\n\nIt fails where the file cannot be read o
 [fn."fs::write"]
 pub = true
 touches = ["file(path) write"]
-throws = ["?"]
+throws = ["io::IoError"]
 signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
 doc = "Write data to a file.\n\n`create` makes the file where there is none and `append` adds to the end\nrather than replacing what is there. It fails where the path cannot be\nwritten."
 
@@ -239,7 +243,7 @@ doc = "The same text, with the five characters HTML reads as markup written as\n
 
 [fn."io::read"]
 pub = true
-throws = ["?"]
+throws = ["io::IoError"]
 provenance = "trusted"
 signature = "() -> Vec[u8]"
 doc = "The whole of standard input, as bytes.\n\nIt may pause rather than holding the thread it is called on, and it fails\nwhere the input cannot be read."
@@ -262,7 +266,7 @@ doc = "Standard input, one line at a time.\n\nThe lines are produced as they are
 
 [fn."io::read_to_string"]
 pub = true
-throws = ["?"]
+throws = ["io::IoError"]
 provenance = "trusted"
 signature = "() -> String"
 doc = "The whole of standard input, as text.\n\nIt pauses rather than holding the thread it is called on. It fails where the\ninput is not UTF-8."
@@ -1187,7 +1191,9 @@ doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\
 pub = true
 sync = true
 touches = []
-throws = ["?"]
+# The doc below already said it: *the same failure `fs::read_to_string` has*.
+# Since ADR-158 D1 that failure has a name, so this says it in the column too.
+throws = ["io::IoError"]
 signature = "(foreign::CStr) -> String"
 doc = "A copy of the text, owned by whoever asked for it.\n\nIt fails in **one** way: the bytes may not be UTF-8, which text in this\nlanguage is - the same failure `fs::read_to_string` has. *There is no text*\nis a value rather than a failure, because a declaration says `-> CStr?` where\nthe library may find nothing. The `unsafe` walk to the zero byte is here so\nthat no program has to write one."
 
@@ -1203,6 +1209,11 @@ doc = "A file held as memory: the pages arrive as they are touched rather than b
 # A step of this one can **fail**, and that is a fact a caller cannot get from
 # anywhere else: a `for` over it is a place the enclosing function can fail
 # from, and the compiler makes that function say `throws` (ADR-025 D1, `NK2701`).
+[type."io::IoError"]
+pub = true
+crosses = true
+doc = "What a `std` call fails with.\n\nPart I 7.1's error type, for the library: `NotFound(what)` where the thing is\nnot there, `PermissionDenied(what)` where this program may not have it,\n`NotText(what)` where the bytes are not UTF-8, and `Other(what)` for\neverything else the operating system said. A `catch` that only passes the\nfailure on names nothing; one that takes it apart writes `use std::io` and\n`io::IoError::NotFound(p)`."
+
 [type."io::Lines"]
 pub = true
 iterates = "throws"

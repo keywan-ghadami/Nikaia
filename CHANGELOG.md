@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.75] — 2026-09-20
+
+`std` names what it throws, and the measurement is why the record is small
+([ADR-158](docs/specification/adr/adr-158.md)).
+
+### What was measured
+
+- **Of 120 `fn` entries in `std`'s ledger, nine throw.** Two already named their failure — `Overtaken`, on the lock's two `set(…; after:)` doors — and work. Of the seven left, six fail with `std::io::Error` and the seventh with a boxed `&str` whose own doc calls it *the same failure `fs::read_to_string` has*. So it is **one** type, not a surface to design.
+- **And the specification had already named it.** [ADR-023](docs/specification/adr/adr-023.md) D6's worked output writes `IoError::NotFound`, Part III 13.5's example row writes `throws = ["ConfigError", "IoError"]`, and Part III A.1 calls *a missing file* the example of a recoverable error.
+
+### Added
+
+- **`io::IoError`** (D1, D3): `NotFound`, `PermissionDenied`, `NotText`, `Other`, each carrying what the failure was about. Four, and short on purpose — [ADR-023](docs/specification/adr/adr-023.md) D4 makes a type's variants **closed**, so each is a lasting commitment: two are the specification's own, one is the failure a program acts on differently rather than reports, and `Other` is D4's **named residue**. Everything `std::io::ErrorKind` distinguishes and this does not is `Other`, which is the direction to be wrong in.
+- **The payload is the path, attached where it was known** (D4). An operating system's error does not carry it, and *not found* without the thing that was not found is the round trip to the user [ADR-023](docs/specification/adr/adr-023.md) D3 names.
+
+### Changed
+
+- **No entry in `std` writes `throws = ["?"]` any more** — the absence of a claim ([ADR-024](docs/specification/adr/adr-024.md) D1) standing in for one. A test holds it, because the easiest way to lose this is one new entry written the old way.
+- **It lives in `io` and is written out** (D2): `use std::io` and `io::IoError::NotFound(p)`, which is [ADR-154](docs/specification/adr/adr-154.md) D3 applied straight. The cost is named and accepted — a program that only **passes** the failure on writes nothing, one that takes it apart writes the second `use`. That is the same trade [ADR-156](docs/specification/adr/adr-156.md) decided the other way for `Bytes`, and the difference is which half of the program meets the name: a result is written down by anyone who holds it, a failure only by someone who takes it apart.
+- **`task::as_text` takes the path**, because its whole reason to exist is finishing a pair's half *exactly as `read_to_string` would have* — and since D4 that includes saying which file.
+
+### What did not change
+
+- **No lowering.** [ADR-157](docs/specification/adr/adr-157.md) D1 names a channel only after a type **this unit declares**, and a program does not declare `io::IoError`, so every such function keeps the box exactly as before. The claim moves first and the representation follows, which is the order [ADR-008](docs/specification/adr/adr-008.md)'s analysis was built in for the same reason.
+
+### What stops waiting
+
+- **Three records had been waiting on one missing name.** [ADR-157](docs/specification/adr/adr-157.md)'s channel can now be extended to a type a **ledger** describes; [ADR-101](docs/specification/adr/adr-101.md)'s *an error that newly reaches a `catch` is named once* has a set to diff; `NK2401` has something to check. None is built here, and `docs/open-work.md` §2.13 now states the gap as a measurement: every failing function in the corpus carries a **named** set and still travels in the box.
+
 ## [0.0.74] — 2026-09-20
 
 The compile baseline records **whether** a block compiles, and no longer what

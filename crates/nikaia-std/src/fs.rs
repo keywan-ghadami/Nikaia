@@ -59,9 +59,14 @@ impl AsRef<str> for Mapped {
 /// poll ([ADR-055](../../../docs/specification/adr/adr-055.md) D1). A page
 /// fault later is not a suspension point this language can see, and pretending
 /// otherwise would be a promise nothing keeps.
-pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
-    let file = std::fs::File::open(path)?;
-    if file.metadata()?.len() == 0 {
+pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, crate::io::IoError> {
+    // **The path, held**: an operating system's error does not carry what was
+    // asked for, and `NotFound` without it is the round trip to the user
+    // [ADR-023](../../../docs/specification/adr/adr-023.md) D3 names.
+    let path = path.as_ref();
+    let named = |e| crate::io::IoError::of(e, &path.display().to_string());
+    let file = std::fs::File::open(path).map_err(named)?;
+    if file.metadata().map_err(named)?.len() == 0 {
         return Ok(Mapped {
             map: Backing::Empty,
         });
@@ -72,13 +77,13 @@ pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
     // file underneath the mapping while it lives, which is the documented
     // caveat of every memory map and is accepted here as it is everywhere a
     // file is mapped.
-    let pages = unsafe { memmap2::Mmap::map(&file)? };
+    let pages = unsafe { memmap2::Mmap::map(&file).map_err(named)? };
 
     if let Err(at) = validate(&pages) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("not UTF-8 at byte {at}"),
-        ));
+        return Err(crate::io::IoError::NotText(format!(
+            "{} (at byte {at})",
+            path.display()
+        )));
     }
 
     Ok(Mapped {
@@ -107,8 +112,13 @@ pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
 /// The read is `rt::io`'s rather than [`read`]'s, and deliberately: `read`
 /// hands back a shared buffer and this wants the bytes themselves, so going
 /// through it would buy a handle only to copy out of it.
-pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
-    text(crate::rt::io::reading(path.as_ref()).await?)
+pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, crate::io::IoError> {
+    let path = path.as_ref();
+    let what = path.display().to_string();
+    let bytes = crate::rt::io::reading(path)
+        .await
+        .map_err(|e| crate::io::IoError::of(e, &what))?;
+    text(bytes, &what)
 }
 
 /// Bytes as text, or the failure `read_to_string` reports for bytes that are
@@ -119,14 +129,13 @@ pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::E
 /// ([`crate::task::as_text`]) - is finished by exactly the same check rather
 /// than by a second copy of it. One place, for the reason ADR-033 §8.4 gives
 /// about the vehicle: the next change belongs in `std`.
-pub(crate) fn text(bytes: Vec<u8>) -> Result<String, std::io::Error> {
+pub(crate) fn text(bytes: Vec<u8>, what: &str) -> Result<String, crate::io::IoError> {
     // The same check `map` makes, and the same reason: a parser handed bytes
     // that are not text would find that out one view at a time.
     if let Err(at) = validate(&bytes) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("not UTF-8 at byte {at}"),
-        ));
+        return Err(crate::io::IoError::NotText(format!(
+            "{what} (at byte {at})"
+        )));
     }
     // SAFETY: `validate` checked the whole of `bytes` as UTF-8 just above, and
     // nothing has touched them since.
@@ -175,10 +184,12 @@ pub fn read_both(
 /// said and [ADR-156](../../../docs/specification/adr/adr-156.md) D3 makes
 /// true: one shared buffer, so handing the file on costs a count rather than a
 /// copy of it.
-pub async fn read(path: impl AsRef<Path>) -> Result<crate::bytes::Bytes, std::io::Error> {
-    crate::rt::io::reading(path.as_ref())
+pub async fn read(path: impl AsRef<Path>) -> Result<crate::bytes::Bytes, crate::io::IoError> {
+    let path = path.as_ref();
+    crate::rt::io::reading(path)
         .await
         .map(crate::bytes::Bytes::from)
+        .map_err(|e| crate::io::IoError::of(e, &path.display().to_string()))
 }
 
 /// A whole file, written.
@@ -219,14 +230,16 @@ pub async fn write(
     data: impl AsRef<[u8]>,
     append: bool,
     create: bool,
-) -> Result<(), std::io::Error> {
+) -> Result<(), crate::io::IoError> {
     // Through the runtime, like the reads (ADR-038 D3). The bytes travel as a
     // borrowed slice and the runtime owns the copy only where the *kernel*
     // needs one to outlive the submission - which is the completion path, and
     // is `rt::uring`'s soundness rule rather than a convenience.
-    crate::rt::io::writing(path.as_ref(), data.as_ref(), append, create)
+    let path = path.as_ref();
+    crate::rt::io::writing(path, data.as_ref(), append, create)
         .await
         .map(|_| ())
+        .map_err(|e| crate::io::IoError::of(e, &path.display().to_string()))
 }
 
 /// Below this, the pool costs more than the check does.
@@ -307,7 +320,10 @@ mod tests {
         // testing something no program does.
         let (mine, theirs) = crate::rt::exec::block_on(async {
             (
-                crate::task::as_text(crate::rt::io::reading(&text).await),
+                crate::task::as_text(
+                    crate::rt::io::reading(&text).await,
+                    &text.display().to_string(),
+                ),
                 super::read_to_string(&text).await,
             )
         });
@@ -319,13 +335,20 @@ mod tests {
         std::fs::write(&bytes, [b'a', 0xff]).expect("write");
         let (one, other) = crate::rt::exec::block_on(async {
             (
-                crate::task::as_text(crate::rt::io::reading(&bytes).await),
+                crate::task::as_text(
+                    crate::rt::io::reading(&bytes).await,
+                    &bytes.display().to_string(),
+                ),
                 super::read_to_string(&bytes).await,
             )
         });
         let one = one.expect_err("not text");
         let other = other.expect_err("not text");
-        assert_eq!(one.kind(), other.kind());
+        // **The values and not a `kind()` beside them**: since
+        // [ADR-158](../../../docs/specification/adr/adr-158.md) D1 the variant
+        // *is* the kind and it carries what it was about, so comparing the two
+        // errors says what this used to need two assertions to say.
+        assert_eq!(one, other);
         assert_eq!(one.to_string(), other.to_string());
         assert!(one.to_string().contains("byte 1"), "{one}");
 

@@ -77,7 +77,7 @@ impl CStr {
     /// **The `unsafe` is here and nowhere else**, which is the whole of D4: the
     /// walk to the zero byte is the one thing a program must not have to write,
     /// and it is written once.
-    pub fn to_string(self) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn to_string(self) -> Result<String, crate::io::IoError> {
         // SAFETY: the address is not null by construction (D2's hull), and D4's
         // contract with the caller is that what a C function handed back is a C
         // string - an address with a zero byte after it. Nothing else in this
@@ -85,7 +85,12 @@ impl CStr {
         let bytes = unsafe { core::ffi::CStr::from_ptr(self.0.as_ptr()) };
         match bytes.to_str() {
             Ok(text) => Ok(text.to_string()),
-            Err(_) => Err("this C string is not UTF-8, and text in this language is".into()),
+            // **The same failure `fs::read_to_string` has**, which this doc has
+            // always said and which now has the name to say it with
+            // ([ADR-158](../../../docs/specification/adr/adr-158.md) D1).
+            Err(_) => Err(crate::io::IoError::NotText(
+                "a C string this program was handed".to_string(),
+            )),
         }
     }
 }

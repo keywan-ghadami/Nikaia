@@ -525,14 +525,28 @@ fn mutual_recursion_settles() {
 /// the direction ADR-010 D1 calls a vulnerability generator.
 #[test]
 fn what_cannot_be_named_is_a_question_mark() {
-    let ledger = ledger_for(
+    // **`std` is no longer the example.** It was: every entry wrote `["?"]`,
+    // and this test read `io::read_to_string` to see one. Since
+    // [ADR-158](../../../docs/specification/adr/adr-158.md) D1 `std` names what
+    // it throws, so the rule needs a call that genuinely cannot be named — one
+    // **no ledger describes**, which is what `"?"` has always meant.
+    let named = ledger_for(
         r#"use std::io
 
 fn reads() -> String throws { return io::read_to_string() }"#,
     );
     assert!(
-        ledger.contains(r#"throws = ["?"]"#),
-        "`std`'s failures have no Nikaia name yet:\n{ledger}"
+        named.contains(r#"throws = ["io::IoError"]"#),
+        "`std` names what it throws:\n{named}"
+    );
+
+    let unnamed = ledger_for(&format!(
+        "fn reads(s: String) -> String throws {{ return {} }}\n",
+        common::undescribed_value("s")
+    ));
+    assert!(
+        unnamed.contains(r#"throws = ["?"]"#),
+        "a call no ledger describes can fail with something nobody wrote down:\n{unnamed}"
     );
 }
 
@@ -616,15 +630,20 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
     let error = format!("{:#}", refused.expect_err("the build must refuse this"));
     assert!(error.contains("can fail without saying so"), "{error}");
 
-    // Declared, the entry says what is true - and says it with `"?"`, because
-    // `std`'s failures have no Nikaia name (ADR-024 D1).
+    // Declared, the entry says what is true - and since
+    // [ADR-158](../../../docs/specification/adr/adr-158.md) D1 it says it with
+    // a **name**: the set that reaches `ruft` is `fs::read_to_string`'s, and
+    // `std` writes that down now. It used to be `["?"]`, which is
+    // [ADR-024](../../../docs/specification/adr/adr-024.md) D1's absence of a
+    // claim, and the entry said no more than the boolean before it.
     let declared = ledger_for(
         "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
          fn ruft() -> String throws { return liest() }\n\
          fn main() { }",
     );
     assert!(
-        declared.contains("[fn.\"ruft\"]\nthrows = [\"?\"]\nsignature = \"() -> String\"\n"),
+        declared
+            .contains("[fn.\"ruft\"]\nthrows = [\"io::IoError\"]\nsignature = \"() -> String\"\n"),
         "{declared}"
     );
 }

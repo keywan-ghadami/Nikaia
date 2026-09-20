@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.74 (Draft)
+**Version:** 0.0.75 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -2294,8 +2294,11 @@ let config = load() catch {
 > runs. Where the set has two members, or a member this compiler cannot name,
 > the channel is one opaque error and a `match` over its variants is not
 > lowerable: `catch { 8080 }` and `f"{error}"` are what such a handler has.
-> Every function in `examples/` reaching `std` is in that second case, because
-> `std`'s ledger names no error types yet. `docs/open-work.md` carries both.
+> Every function in `examples/` reaching `std` is in that second case — not
+> because `std` says nothing any more ([ADR-158](adr/adr-158.md) D1 gave it
+> `io::IoError`), but because a channel is named after a type the **unit
+> itself** declares, and a set with two members has no channel at all.
+> `docs/open-work.md` carries both.
 
 **Two sets differ.** The **variants of an error type** are closed: a `match`
 over them is exhaustive, and adding one is a breaking change. The **set of

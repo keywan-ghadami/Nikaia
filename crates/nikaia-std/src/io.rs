@@ -35,6 +35,100 @@
 
 use std::io::BufRead;
 
+/// What a `std` call fails with ([ADR-158](../../../docs/specification/adr/adr-158.md) D1).
+///
+/// Part I 7.1's error type, for the library: an `enum` with payload, `impl
+/// Error`, and variants a `catch` can tell apart. Until this existed every
+/// `std` entry wrote `throws = ["?"]` — *something this compiler cannot name* —
+/// which is the absence of an answer standing in for one, and it made
+/// [ADR-023](../../../docs/specification/adr/adr-023.md) D1's set unusable for
+/// every program that reads a file.
+///
+/// **It lives in `io` and is written out.** `use std::io` and
+/// `io::IoError::NotFound(…)` is what a program that matches on it writes, which
+/// is [ADR-154](../../../docs/specification/adr/adr-154.md) D3's rule applied
+/// straight: what needs no prefix is Part I 1.3's list, and this is not on it.
+/// `fs::read` throwing an `io` type is the cost, accepted: a program that only
+/// *propagates* the failure names nothing, and one that takes it apart writes
+/// the second `use`.
+///
+/// **Why these four.** D4 of [ADR-023](../../../docs/specification/adr/adr-023.md)
+/// makes the variants of one error type **closed**, so each is a lasting
+/// commitment and the list is short on purpose:
+///
+/// * `NotFound` is the specification's own — Appendix A.1 calls *a missing
+///   file* the example of a recoverable error, and D6's worked output writes
+///   `IoError::NotFound`;
+/// * `PermissionDenied` is the other environmental failure a program acts on
+///   **differently** rather than reports;
+/// * `NotText` is `std`'s own rather than the operating system's: three places
+///   here check UTF-8 and report `InvalidData`, and Part III 17.1 specifies the
+///   check;
+/// * `Other` is D4's **named residue** — *exhaustiveness degrades to "and
+///   anything else"* — carrying what the operating system said.
+///
+/// **The payload is owned text and not a view.**
+/// [ADR-023](../../../docs/specification/adr/adr-023.md) D10 says a path that
+/// came from a buffer should travel as a view; that is the tether
+/// ([ADR-008](../../../docs/specification/adr/adr-008.md)), which is not built,
+/// and a lifetime on this type would reach every `std` signature. One
+/// allocation on a path that is already failing is the honest price until then.
+/// What an [`IoError`] from this module was about: a stream has no path, and
+/// the name is what a message can say instead.
+const STDIN: &str = "standard input";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IoError {
+    /// It is not there. The payload is what was looked for.
+    NotFound(String),
+    /// It is there and this program may not have it.
+    PermissionDenied(String),
+    /// The bytes are not text, and text in this language is UTF-8.
+    NotText(String),
+    /// Everything else, as the operating system said it.
+    Other(String),
+}
+
+impl IoError {
+    /// One of the language below's failures, told apart and given what it was
+    /// about.
+    ///
+    /// `what` is the path, or the name of the stream: an operating system's
+    /// error does not carry it, and *not found* without the thing that was not
+    /// found is the message D3 calls a round trip to the user.
+    pub fn of(error: std::io::Error, what: &str) -> IoError {
+        match error.kind() {
+            std::io::ErrorKind::NotFound => IoError::NotFound(what.to_string()),
+            std::io::ErrorKind::PermissionDenied => IoError::PermissionDenied(what.to_string()),
+            std::io::ErrorKind::InvalidData => IoError::NotText(what.to_string()),
+            _ => IoError::Other(format!("{what}: {error}")),
+        }
+    }
+
+    /// What was looked for, where the variant names one.
+    pub fn what(&self) -> &str {
+        match self {
+            IoError::NotFound(what)
+            | IoError::PermissionDenied(what)
+            | IoError::NotText(what)
+            | IoError::Other(what) => what,
+        }
+    }
+}
+
+impl std::fmt::Display for IoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IoError::NotFound(what) => write!(f, "no such file or directory: {what}"),
+            IoError::PermissionDenied(what) => write!(f, "permission denied: {what}"),
+            IoError::NotText(what) => write!(f, "not valid UTF-8: {what}"),
+            IoError::Other(what) => f.write_str(what),
+        }
+    }
+}
+
+impl std::error::Error for IoError {}
+
 /// All of standard input, as text.
 ///
 /// UTF-8 validated, for the reason `fs::read_to_string` validates: a parser
@@ -43,24 +137,24 @@ use std::io::BufRead;
 ///
 /// Reading it a second time yields what the operating system says, which is
 /// nothing.
-pub async fn read_to_string() -> Result<String, std::io::Error> {
-    let bytes = crate::rt::io::stdin_whole().await?;
-    // The same failure `std`'s own `read_to_string` reports, in the same kind:
-    // a stream that is not text is `InvalidData` and not a lossy string.
-    String::from_utf8(bytes).map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "standard input did not contain valid UTF-8",
-        )
-    })
+pub async fn read_to_string() -> Result<String, IoError> {
+    let bytes = crate::rt::io::stdin_whole()
+        .await
+        .map_err(|e| IoError::of(e, STDIN))?;
+    // The same failure `std`'s own `read_to_string` reports, under the name
+    // this library gives it: a stream that is not text is `NotText` and not a
+    // lossy string.
+    String::from_utf8(bytes).map_err(|_| IoError::NotText(STDIN.to_string()))
 }
 
 /// All of standard input, as bytes.
 ///
 /// The half for input that is not text - and the one that says what
 /// `read_to_string` is doing, since the only difference is the check.
-pub async fn read() -> Result<Vec<u8>, std::io::Error> {
-    crate::rt::io::stdin_whole().await
+pub async fn read() -> Result<Vec<u8>, IoError> {
+    crate::rt::io::stdin_whole()
+        .await
+        .map_err(|e| IoError::of(e, STDIN))
 }
 
 /// Standard input, one line at a time.

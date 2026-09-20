@@ -567,10 +567,11 @@ no set to diff.
 matching on `error`; a new failure in any callee reaches all of them in
 silence today.
 
-*What it needs:* `std` naming its error types, so that there is a set to diff at
-all; then the set written and diffed; then the note and the `--locked` failure,
-which are the `NK2401` machinery over one more column. The entry below carries
-the first, and is the thing this entry waits on.
+*What it needs:* the set written and diffed across builds, then the note and the
+`--locked` failure, which are the `NK2401` machinery over one more column.
+`std` naming its error types was the thing this waited on and it is done
+([ADR-158](specification/adr/adr-158.md)), so a set that gains a member is now
+a change a diff could see.
 
 ### 2.13. A set with two error types in it has no channel, and `std` names none
 
@@ -587,12 +588,22 @@ the conversions propagation needs, and the ledger writing the members. Until it
 exists, such a function keeps the opaque channel and a `match` over variants is
 not lowerable there.
 
-*And what stands in front of it.* **`std` names no error types.** Every entry in
-`std.contracts` writes `throws = ["?"]`, so every function that reads a file has
-a set nothing can be named after — which is every failing function in
-`examples/` and `benches/`. Naming them is a decision about a published surface
-(what `std`'s error types are, and where they live) rather than a piece of work,
-so it belongs in [`open-decisions.md`](open-decisions.md) when it is asked.
+*And what used to stand in front of it is gone.* **`std` names what it throws**
+([ADR-158](specification/adr/adr-158.md) D1): `io::IoError` for the seven
+entries that read, write or check text, `Overtaken` for the lock's two. So a
+function that reads a file has `throws = ["io::IoError"]` where it had `["?"]`,
+and one that also throws its own has **both** — which is a set of two, and
+therefore exactly the case the generated sum above is for. The floor moved up
+rather than away.
+
+*A second piece is left beside it, and it is smaller.*
+[ADR-157](specification/adr/adr-157.md) D1 names a channel only after a type
+**this unit declares**, so a set of one that names a **library's** type still
+gets the box. Opening that up needs two things: the emitter writing
+`nikaia_std::io::IoError`, and an answer to what site a `std` failure carries
+([ADR-023](specification/adr/adr-023.md) D6) when the `throw` is not in the
+program. `docs/open-decisions.md` gets the second if it turns out to be a
+question rather than a derivation.
 
 *What waits on both:* the note over `catch` sites and the `--locked` failure
 (*an error that newly reaches a `catch` is named once*,
@@ -600,8 +611,9 @@ so it belongs in [`open-decisions.md`](open-decisions.md) when it is asked.
 `catch` that stops covering its arrivals, and `match error { … }` over a variant
 from a callee in another package.
 
-*Evidence:* `throws = ["?"]` in every `std` entry, and 18 of them in the corpus'
-own ledgers — one named error set between them.
+*Evidence:* every failing function in `examples/` and `benches/` now carries a
+**named** set and still travels in the box, which is the gap stated as a
+measurement.
 
 ### 2.14. A parameter may be a function, and a kept one has no lowering
 

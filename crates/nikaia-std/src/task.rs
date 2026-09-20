@@ -347,6 +347,18 @@ racing!(
 /// reporting exactly the failure the sequential program would have reported. It
 /// is `std`'s own function and not a line written twice into every program that
 /// reads two files at once.
-pub fn as_text(bytes: Result<Vec<u8>, std::io::Error>) -> Result<String, std::io::Error> {
-    crate::fs::text(bytes?)
+///
+/// **`what` is the path**, because since
+/// [ADR-158](../../../docs/specification/adr/adr-158.md) D1 the failure names
+/// what it was about, and the pair's own read does not carry it. Without it
+/// the claim above stops being true: `read_to_string` would say which file and
+/// this would not.
+pub fn as_text(
+    bytes: Result<Vec<u8>, std::io::Error>,
+    what: &str,
+) -> Result<String, crate::io::IoError> {
+    match bytes {
+        Ok(bytes) => crate::fs::text(bytes, what),
+        Err(error) => Err(crate::io::IoError::of(error, what)),
+    }
 }
