@@ -77,6 +77,13 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Measured*: 230 tests pass with **no ledger drift** - nothing in the corpus was depending on it, so the gap closes without moving any recorded claim.
     *   *Open*: holes still are not in the AST. Parsing them there is the honest fix and touches `Expr::LitStr`, the emitter's measured string fast paths, the golden fixtures and the error corpus - deferrable without any of ADR-032's decisions changing meaning.
 
+*   [x] **A failure has a type, and the channel carries it** ([ADR-157](specification/adr/adr-157.md)–[ADR-160](specification/adr/adr-160.md), over [ADR-023](specification/adr/adr-023.md) D1): `throws` has been a *set of error types* since ADR-023, and every one of them lowered to the same opaque box — so D4's closed variants were unreachable through the channel and Part I 7.1's own worked program did not compile. All four shapes a set can have are built now: the program's own type in an envelope carrying its site, `std`'s one named error, a library's travelling bare, and a generated sum for a set of two. A `catch` matches variants rather than text.
+    *   *Open*: one `"?"` is left in the whole tree — a grammar's entry rule, whose failure is a rendered string and has no type — and an error's **secondary** list ([ADR-115](specification/adr/adr-115.md)), which is what an `overlap` keeps when more than one branch fails.
+
+*   [x] **A key may be absent, so a map read is a `T?`** ([ADR-114](specification/adr/adr-114.md), built by [ADR-161](specification/adr/adr-161.md)): `m[k]` on a map answers a `T?` and "there is nothing there" is an answer rather than the end of the program; a sequence keeps its `T` and its abort. `??` is where a view and a value meet, and `panic(message)` — on the prelude's list from the beginning and lowering to a call nothing declared — is the written way out for a key the program knows is there.
+
+*   [x] **What needs no `use` is a list, and the list is enforced both ways** ([ADR-154](specification/adr/adr-154.md), [ADR-162](specification/adr/adr-162.md)): a program writing a module's name bare is refused, and a name the compiler keys bare that Part I 1.3 does not name is refused too — the direction nobody ever meets, because nothing used to refuse it. `Bytes` is the **language's** rather than `std`'s for the same reason ([ADR-156](specification/adr/adr-156.md)): a type whose representation the compiler picks is not one a module owns.
+
 ### Phase 2: Compiler Robustness (Middle-end)
 
 *   [ ] **Error Reporting**: Replace generic `anyhow` errors with specific, span-aware error messages using `miette` or `codespan`.
@@ -113,7 +120,7 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Where it shows in the compiler*: the emitter reads the **type checker's** answers for the first time - it asks which `for` iterates a fallible stream, so naming the stream in a `let` first is the same as calling it in the loop head. The ledger carries the fact (`iterates = "throws"` on a type contract), because the type is `std`'s and its body is Rust.
 *   [x] **Type Checking (Frontend)**: done, and it runs before a line of Rust is emitted ([ADR-024](specification/adr/adr-024.md)). Eight `NK1xxx` codes - call arity, argument types, `let`, `return` and a body's tail, assignment, struct-literal fields, a field that is not there, a condition that is not a `bool` - each with the source line, a caret and a concrete way out.
     *   *The design*: `?` is part of the type language and means **the absence of a claim**. An error is reported only where **both** sides are written down and disagree, so the checker never rejects a program that is correct - which matters because half of `std` is still Rust and a program calls `push_str`, `entry` and `chars` freely. Its database is the ledger (13.5), so a call into `std` is checked against the contracts `std` ships, and a call into a package is checked against that package's - its files are read for their surface even though the crate carrying them is generated beside this one.
-    *   *What it does not catch*: a method on a receiver whose type is not written down, a collection's element type, what a `?` or a `??` unwraps, what a `match` arm binds. Each becomes checkable when a signature is written, without the checker changing - which is why it was built on the ledger rather than beside it.
+    *   *What it does not catch*: a method on a receiver whose type is not written down, a collection's element type, what a `match` arm binds. (`??` has left this list: a map read is a `T?` and `a ?? b` over one is a `T`, [ADR-161](specification/adr/adr-161.md).) Each becomes checkable when a signature is written, without the checker changing - which is why it was built on the ledger rather than beside it.
     *   *Guard*: every `.nika` in the repository must produce no findings, and a deliberately-wrong program per code proves a clean corpus is not the checker being asleep.
 *   [ ] **Macro Expansion (JIT)**: Implement the "Phase 2" JIT interpreter mentioned in ADR-003 to handle macros and compile-time execution.
     *   *Status*: Placeholder exists, needs implementation.
@@ -135,16 +142,24 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
     *   *Done, and it was not what the survey said*: **the compiler parses 20 % faster.** One callgrind profile, taken before writing any code, put `parse_WS_inner` at **32.5 %** of the parse and the class scan inside it at **24.1 %**, against under 3 % for the literal-alternation dispatch the survey called "the actual prize". A syntactic rule's leading whitespace skip was emitted inside each alternative, so a sixteen-way rule ran sixteen skips at one position to consume one blank. Hoisting it ([winnow-grammar#14](https://github.com/keywan-ghadami/winnow-grammar/pull/14)) is **1,025.5 M -> 822.2 M instructions, −19.8 %**, branches −19.8 %, mispredicts −9.5 %, cache flat, error corpus byte-identical.
     *   *Left*: what remains of the literal-alternation item is a ≤3 % ceiling in a dependency, which is not where the next measurement should go. Route hashing still has no target - there is no HTTP server.
 *   [ ] **Compile-Time I/O**: the producer the cache's asset dimension is waiting for. Not a straightforward feature - a grammar's `action` blocks are arbitrary Nikaia, so evaluating one at build time means running user code at build time. The design space is staked out in [ADR-026](specification/adr/adr-026.md) (**Open**): two things decided (I/O belongs to the compiler, not the sandbox; paths stay in the project root and `..` is refused rather than resolved), six questions listed, and the one that blocks the others named - what a program is allowed to do in `const`.
+The five big pieces below are in **the owner's order**, which is the one
+recorded under *What is next*: the database first, the C library second, the
+query DSL third, the bare-metal target fourth, and the HTTP server last. Four
+pieces that each carry a demo of their own, and the largest one when they stand.
+
+*   [ ] **A database is reachable — `std::db`** ([ADR-143](specification/adr/adr-143.md)): the **protocol** only — traits, a statement, a row's values — with each dialect a package beside it, because the compiler knows no SQL. First of the five, since it is the piece every later demo stores something in.
+*   [ ] **A library for other languages** ([ADR-125](specification/adr/adr-125.md), [`open-work.md`](open-work.md) §2.32): `artifact = "c-library"` makes a package an entry point for C and everything that speaks it — the header generated off the ledger, the caller owning the memory, every call answering with a status. The direction [ADR-124](specification/adr/adr-124.md) and [ADR-147](specification/adr/adr-147.md) do **not** face: those let a program *call* C, and both are built.
+*   [ ] **The query DSL checks the SQL while the program is built** ([ADR-143](specification/adr/adr-143.md), [`open-work.md`](open-work.md) §2.40): a dialect is a grammar in the driver package, a misspelled column is refused at the query, and the row type is derived from the columns the grammar declares. Not a query language and not an ORM. Its first step ends at the same blockage compile-time I/O does — running a grammar while the program is built.
+*   [ ] **A target without an operating system** ([ADR-119](specification/adr/adr-119.md)). Bare metal is a target, not a second language: `user_parallelism` pinned to `no`, `no_std` emission, the target's executor with interrupts as wakers, an interrupt handler checked as a `fn() sync` that touches no lock, an allocation profile, locks as critical sections. Scheduled **after the C library** and before the HTTP server, which comes last of the five; the record states what the compiler promises about time and what it leaves to analysis, and claims no certification.
 *   [ ] **The runtime's second half, and the HTTP server** ([ADR-038](specification/adr/adr-038.md) §4.5). D3, D4 and D5 are built - the runtime is running before the program's first statement, files complete on `io_uring`, sockets signal readiness, and `nikaia-runtime.toml` is what an operator tunes. **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are untouched**, and the order is that record's: a socket layer that keeps registrations rather than answering one readiness question at a time, then a minimal HTTP/1.1 server on it, then the parsing moved into Nikaia, then `rustls`, then HTTP/2. The first step is the blocker - `worker::poll_one` builds a poller per wait - and route hashing above is the same blockage seen from the optimiser's end.
     *   *What waits inside it*: [ADR-018](specification/adr/adr-018.md) entire, and [ADR-058](specification/adr/adr-058.md)'s response bodies ([#45](https://github.com/keywan-ghadami/Nikaia/pull/45)) - a `Bytes` or a mapping as a body, `http::File` for a file the program never read, the mechanism choice `std` makes between them, and the kept mappings that measured fastest. `examples/fortunes.nika` is the program on the other side of it.
     *   *One piece was answered without the server*: a name the request chose reaching the filesystem is [ADR-108](specification/adr/adr-108.md) - the root is an argument of the call, `http::File(path, root)` exactly as `fs::map(path, root)`, and no provenance travels a path. The `fs` half is [`open-work.md`](open-work.md) §2's entry on it, and `http::File` inherits it the day it exists.
     *   *Measured before it is built*: `benches/sendfile/` and [`zero-copy-send.md`](zero-copy-send.md) price the five ways a file can reach a socket, in both of the two programs there turn out to be - one whose page is known at startup and one whose file the request names. `mmap` per request is **2.5× worse than plainly reading** at 4 KiB, which is the trap an implementation of `http::File` would otherwise walk into.
-*   [ ] **A target without an operating system** ([ADR-119](specification/adr/adr-119.md)). Bare metal is a target, not a second language: `user_parallelism` pinned to `no`, `no_std` emission, the target's executor with interrupts as wakers, an interrupt handler checked as a `fn() sync` that touches no lock, an allocation profile, locks as critical sections. Scheduled **after the C library** and before the HTTP server, which comes last of the five; the record states what the compiler promises about time and what it leaves to analysis, and claims no certification.
 *   [ ] **LSP Server**: Create a Language Server Protocol (LSP) implementation.
     *   *Benefit*: IDE support (syntax highlighting, go-to-definition) in editors like VS Code.
     *   *Reuse*: Reuse the parser and AST for this.
-*   [ ] **Standard Library**: Define the Nikaia standard library (wrapper around Rust std or custom).
-    *   *Task*: Create `std.nika` files that are implicitly imported.
+*   [ ] **Standard Library**: the **shape** is settled and the *surface* is what is left. `std` is half Rust and half Nikaia ([ADR-014](specification/adr/adr-014.md)), what needs no `use` is Part I 1.3's list and is enforced in both directions ([ADR-162](specification/adr/adr-162.md)), everything else lives in a module and is written out ([ADR-154](specification/adr/adr-154.md)), and every entry says what it throws ([ADR-158](specification/adr/adr-158.md)).
+    *   *Task*: grow the share actually written in `.nika`, which moves with what the compiler can lower — one function today.
 
 ### Phase 4: Backend Optimization
 
@@ -166,8 +181,8 @@ it as steps of that. Five records were checked and could not run until it was
 done — and a check with no program to be tested against is the state that rots
 fastest, because nothing fails when it drifts.
 
-**Four of that record's five steps are built at `user_parallelism = no`, which is
-the default and at `yes`**: the executor — one thread at `no`, a pool of futures
+**All five of that record's steps are built at `user_parallelism = no`, which is
+the default, and at `yes`**: the executor — one thread at `no`, a pool of futures
 at `yes` — `async fn` with `.await` written off the ledger's `sync` column,
 `std`'s own pausing entries so a file operation suspends rather than blocking its
 thread, `spawn` itself with `TaskHandle`, `.join()` and `NK2101`, and
@@ -176,6 +191,15 @@ the list waits on a thread: what is left of it is D6's `Send` as a refusal of
 **ours** rather than the backend's.
 [`open-work.md`](open-work.md) is where that order lives, and it is the file to
 read rather than this paragraph.
+
+What closed after it was the **failure channel** ([157](specification/adr/adr-157.md)–[160](specification/adr/adr-160.md)):
+`throws` had been a set of error types since [ADR-023](specification/adr/adr-023.md)
+and every one of them lowered to the same opaque box, so a `catch` could not
+match the variants the specification calls closed. All four shapes of that set
+are built, and exactly one `"?"` is left in the tree. The map read
+([161](specification/adr/adr-161.md)) and the prelude's list seen from the
+compiler's side ([162](specification/adr/adr-162.md)) came out of the same run.
+They are Phase 1 boxes above, and what they leave open is in the other list.
 
 **The unchecked boxes are not in a random order either**, and the order among
 the big ones is the owner's: **`std::db`** first; the **C library**
@@ -187,11 +211,12 @@ reuses the C library's allocator and baked settings; and the **HTTP server**
 **last**. Read as a plan it says: four pieces that each carry a demo of their
 own, and the largest one when they stand.
 
-This is *scope*, not work: none of the five has an entry in
-[`open-work.md`](open-work.md) §2 telling somebody what to build, and the order
-above is what to turn into one next rather than what to do this week. It names
-no customer and no partner, because naming one is theirs to agree to and a
-roadmap is not the place to ask.
+**Four of the five have since become work**: the C library is
+[`open-work.md`](open-work.md) §2.32, the driver and its DSL are §2.40, the
+bare-metal target is §2.28 and the HTTP server is §2.6 — each with a record
+behind it saying what happens. So the order above now decides which of them to
+**take**, not which to write down. It still names no customer and no partner,
+because naming one is theirs to agree to and a roadmap is not the place to ask.
 
 **The unchecked boxes above are not that list**, and the difference is worth
 keeping: a box is a piece of *scope* — generics, an LSP, compile-time I/O — that

@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.80] — 2026-09-20
+
+The roadmap is brought level with what is built, and its tail is put in the
+order its own last section already states.
+
+### Changed
+
+- **Phase 1 gains the three packages the last nine releases closed**, each one box rather than a section: the **failure channel** ([157](docs/specification/adr/adr-157.md)–[160](docs/specification/adr/adr-160.md)) — `throws` had been a set of error types since [ADR-023](docs/specification/adr/adr-023.md) and every one of them lowered to the same opaque box, and all four shapes that set can have are built now; the **map read** as a `T?` ([161](docs/specification/adr/adr-161.md)); and the **prelude's list enforced in both directions** ([154](docs/specification/adr/adr-154.md), [162](docs/specification/adr/adr-162.md)) with `Bytes` the language's ([156](docs/specification/adr/adr-156.md)).
+- **Phase 3's tail is reordered into the owner's order**, which *What is next* has stated for some time while the list under it did not follow: the database, the C library, the query DSL, the bare-metal target, the HTTP server. Three of those five had **no box at all** — `std::db`, the C library and the query DSL — and the bare-metal target sat after the HTTP server rather than before it.
+
+### Fixed
+
+- **Two claims in *What is next* had gone stale.** It said four of [ADR-055](docs/specification/adr/adr-055.md)'s five steps were built while Phase 0 above it said five; and it said *none of the five has an entry in `open-work.md` §2 telling somebody what to build*, when four of them now do (§2.32, §2.40, §2.28, §2.6). What the order decides is therefore which of them to **take**, not which to write down.
+- The type checker's *what it does not catch* list still named `??`. A map read is a `T?` and `a ?? b` over one is a `T`, so it has left that list.
+- The **Standard Library** box still read *define the standard library* and *create `std.nika` files that are implicitly imported*, both of which have been answered by record. The shape is settled; what is left is surface, and the box says so.
+
+### Not changed
+
+- No source, no test and no specification page. This is the long view catching up with the other two lists, and [`docs/open-work.md`](docs/open-work.md) remains the one that says what to do next.
+
 ## [0.0.79] — 2026-09-20
 
 Diagnosis and safety are the language's: `eprint`, `access_all` and
