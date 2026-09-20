@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.109] — 2026-09-20
+
+**Every refusal this compiler makes about a line of a `.nika` program names that
+line** — [ADR-171](docs/specification/adr/adr-171.md)'s remaining eighteen
+sites, which that record's §4 left open as *a different walk*.
+
+### Changed
+
+- **It was not a different walk.** The emitter's item arm is **handed** the item's span already, for the source map's sake, so its three refusals — an unknown `extern` ABI, a `comptime` with nothing to write, and the catch-all — only had to use it. Measured: `extern "stdcall" { … }` now says so on line 1 with a caret under it.
+- **A grammar entry that names no rule**, and one that names a rule which is not `pub` ([ADR-082](docs/specification/adr/adr-082.md) D2's shape). Both callers hold a `Flow`, which is D1's own handover.
+- **The `dsl` family**: a target that is no grammar this compiler has, and the two *takes no context* refusals. With them, the **five refusals inside `template.rs`** — which work on text and never saw a file, so one `at_the_statement` covers all of them at the one caller that knows where it is.
+- **And `Self::dsl` in a result position** gets the body's first statement, which is the nearest place that walk has and is the same function the reader is looking at.
+
+### Not changed, on purpose
+
+- **The four build switches still have no line.** A `--target` or a `user-parallelism` nobody can spell is about a manifest key and a whole build, and a line number for one would be an invention — `tests/refusal_lines.rs` asserts the absence, which is the half a conversion like this can quietly get wrong.
+- **`project.rs` and `manifest.rs` are the same case one level out**: each names the `nikaia.toml` or the directory it is about, which is the place it has.
+
+### Changed (the page)
+
+- **The roadmap's error-reporting box is `[x]`**, and its *nine of thirty-three* was stale in the other direction too — ADR-171 converted fifteen. What stays open is expression-level spans, which is a **refinement of a decision** rather than a shortfall: reporting on the enclosing statement is [ADR-024](docs/specification/adr/adr-024.md) D7's own answer, and both walks get narrower the day expressions carry spans without either changing. The language reads 23.5 of 26, 27.5 of 40 overall.
+
 ## [0.0.108] — 2026-09-20
 
 **A build-time value may be an array** ([ADR-175](docs/specification/adr/adr-175.md)) —

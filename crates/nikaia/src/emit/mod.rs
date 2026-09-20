@@ -2476,7 +2476,8 @@ impl<'p> Emitter<'p> {
             Item::Comptime { name, public, .. } => {
                 let bound = self.name(*name);
                 let Some((below, written)) = self.comptime_values.get(&span.start).cloned() else {
-                    return Err(refused!(
+                    return Err(refused_at!(
+                        span.start,
                         "`{bound}` has nothing to write, which `NK1127` reports - \
                          so this item should not have reached the emitter"
                     ));
@@ -2504,7 +2505,8 @@ impl<'p> Emitter<'p> {
                 opaque,
             } => {
                 if abi != "C" {
-                    return Err(refused!(
+                    return Err(refused_at!(
+                        span.start,
                         "`extern \"{abi}\"` names an ABI this compiler does not write. \
                          The one it writes is `extern \"C\"` (Part III 15.1)"
                     ));
@@ -2528,7 +2530,7 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
-            other => Err(refused!("cannot emit item yet: {other:?}")),
+            other => Err(refused_at!(span.start, "cannot emit item yet: {other:?}")),
         }
     }
 
@@ -3085,10 +3087,23 @@ impl<'p> Emitter<'p> {
             // names them the only way D5 gives it to name them.
             Some(ty) if self.text(ty.name) == SELF_DSL => {
                 if dsl.is_none() {
-                    return Err(refused!(
-                        "`Self::dsl` names the parameters of a `...args: Self::dsl`, \
-                         and this function declares none"
-                    ));
+                    // **The body's first statement**, which is the nearest
+                    // place this walk has: a declaration has no span of its
+                    // own here, and a refusal on the first line of the body is
+                    // the same function the reader is looking at. The checker
+                    // reaches for the same statement when it needs to name a
+                    // function rather than a line inside one.
+                    return Err(match body.stmts.first() {
+                        Some(first) => refused_at!(
+                            first.span.start,
+                            "`Self::dsl` names the parameters of a \
+                             `...args: Self::dsl`, and this function declares none"
+                        ),
+                        None => refused!(
+                            "`Self::dsl` names the parameters of a \
+                             `...args: Self::dsl`, and this function declares none"
+                        ),
+                    });
                 }
                 DSL_PARAMETER.to_string()
             }
@@ -3648,7 +3663,8 @@ impl<'p> Emitter<'p> {
         // needs to know nothing about the foreign syntax (ADR-011 D2).
         if crate::dsl::is_deferred(name, content) {
             if let Some(context) = context {
-                return Err(refused!(
+                return Err(refused_at!(
+                    flow.statement,
                     "`dsl {name} {{ … }}` with deferred parameters takes no context, \
                      and `{}` was given one",
                     self.text(*context)
@@ -3659,7 +3675,8 @@ impl<'p> Emitter<'p> {
         }
 
         if name != "html" {
-            return Err(refused!(
+            return Err(refused_at!(
+                flow.statement,
                 "`dsl {name} {{ … }}` has no hole, so nothing here says what it \
                  means. A statement with `:name` holes is a deferred-parameter DSL \
                  and lowers (ADR-007 D5); one without them is the target grammar's \
@@ -3668,7 +3685,8 @@ impl<'p> Emitter<'p> {
             ));
         }
         if let Some(context) = context {
-            return Err(refused!(
+            return Err(refused_at!(
+                flow.statement,
                 "`dsl html` takes no context, and `{}` was given one",
                 self.text(*context)
             ));
@@ -3679,7 +3697,10 @@ impl<'p> Emitter<'p> {
         // in a file, and a block form that kept them would make every value it
         // produces carry the indentation of the function it was written in.
         // Whitespace *inside* the body is kept exactly.
-        let segments = template::split(content.trim())?;
+        // **The template's own refusals get the statement's place too.**
+        // `template.rs` works on text and never saw a file, which is exactly
+        // what `at_the_statement` is for — five refusals, one handover.
+        let segments = at_the_statement(flow, template::split(content.trim()))?;
 
         // ADR-017 D3. Every hole that escaping cannot make safe, at once: a
         // template with three of them should say so three times rather than
@@ -8051,7 +8072,7 @@ impl<'p> Emitter<'p> {
         let def = self
             .grammars
             .get(&grammar)
-            .ok_or_else(|| refused!("no grammar named `{name}` in this file"))?;
+            .ok_or_else(|| refused_at!(flow.statement, "no grammar named `{name}` in this file"))?;
 
         // **The rule is named at the call** ([ADR-082](../../docs/specification/adr/adr-082.md)
         // D1, D2). It used to be picked here — the first `pub` rule, a
@@ -8068,12 +8089,16 @@ impl<'p> Emitter<'p> {
                     // **A rule that is not `pub` is not an entry** (D2), and
                     // saying *there is no such rule* about one written three
                     // lines up is the message a reader cannot act on.
-                    true => refused!(
+                    true => refused_at!(
+                        flow.statement,
                         "`{rule}` is a rule of grammar `{name}` and is not `pub`, \
                          so it is not an entry (ADR-082 D2) - write `pub rule {rule}` \
                          to make it one"
                     ),
-                    false => refused!("grammar `{name}` has no `pub` rule called `{rule}`"),
+                    false => refused_at!(
+                        flow.statement,
+                        "grammar `{name}` has no `pub` rule called `{rule}`"
+                    ),
                 }
             })?;
         let rule_name = self.text(rule.name);

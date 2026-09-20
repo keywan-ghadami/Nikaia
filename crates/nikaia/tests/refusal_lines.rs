@@ -155,3 +155,77 @@ fn a_refusal_about_no_statement_has_no_line() {
         "no place is invented for it:\n{said}"
     );
 }
+
+/// **An item's refusal, which [ADR-171](../../../docs/specification/adr/adr-171.md)
+/// §4 left open as *a different walk*** — and which turned out not to be one:
+/// the emitter's item arm is handed the item's span already, for the source
+/// map's sake.
+#[test]
+fn an_items_refusal_names_the_item() {
+    let said = nikaia(
+        "extern \"stdcall\" {\n\
+         \x20   fn getpid() -> i64 sync\n\
+         }\n\
+         \n\
+         fn main() { println(f\"{unsafe { getpid() }}\") }\n",
+        "unknown-abi",
+    );
+    assert!(
+        said.contains("names an ABI this compiler does not write"),
+        "{said}"
+    );
+    assert!(
+        said.contains(":1:"),
+        "the line the `extern` stands on:\n{said}"
+    );
+    assert!(said.contains('^'), "{said}");
+}
+
+/// **A grammar entry that names no rule.** `Tiny::two(…)` is the shape
+/// [ADR-082](../../../docs/specification/adr/adr-082.md) D2 introduced, and its
+/// two refusals — no such rule, and a rule that is not `pub` — were text.
+#[test]
+fn a_grammar_entry_that_is_not_there_names_its_line() {
+    let source = "grammar Tiny {\n\
+                  \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
+                  \x20   pub rule one -> i64 = n:NUM -> { n }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let n = Tiny::{RULE}(\"7\")\n\
+                  \x20   println(f\"{n}\")\n\
+                  }\n";
+    let missing = nikaia(&source.replace("{RULE}", "two"), "no-such-rule");
+    assert!(said_about(&missing, "has no `pub` rule called `two`", 7));
+
+    let private = nikaia(&source.replace("{RULE}", "NUM"), "rule-not-pub");
+    assert!(said_about(
+        &private,
+        "is not `pub`, so it is not an entry",
+        7
+    ));
+}
+
+/// **A `dsl` whose target is no grammar this compiler has**, which is the
+/// template's own family — and with it the five refusals inside `template.rs`,
+/// which work on text and never saw a file. One handover covers all of them.
+#[test]
+fn a_template_refusal_names_its_statement() {
+    let said = nikaia(
+        "fn main() {\n\
+         \x20   let page = dsl markdown {\n\
+         \x20       # Title\n\
+         \x20   } eod\n\
+         \x20   println(page)\n\
+         }\n",
+        "no-such-dsl",
+    );
+    assert!(said_about(&said, "is not a grammar this compiler has", 2));
+}
+
+fn said_about(said: &str, message: &str, line: usize) -> bool {
+    assert!(said.contains(message), "{said}");
+    assert!(said.contains(&format!(":{line}:")), "line {line}:\n{said}");
+    assert!(said.contains('^'), "a caret:\n{said}");
+    true
+}
