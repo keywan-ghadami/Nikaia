@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.84 (Draft)
+**Version:** 0.0.85 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -95,11 +95,19 @@ Some names need no `use`. They are these, and there are no others
 * **`assert`** and **`panic`**;
 * the doors over several locks: **`access_all`** and **`update_all`**
   (Part II, 12.3);
+* the shared types: **`Shared`**, **`SharedMut`** and **`Locked`** (6.2);
 * the numeric conversions 2.2 already offers.
 
 Everything else in the standard library is reached the way a package is
 reached: `use std::fs` at the top of the file, and `fs::read_to_string(path)`
 where it is used (9.1, [ADR-140](adr/adr-140.md) D5).
+
+**The shared types are here for `Bytes`' reason** ([ADR-167](adr/adr-167.md)
+D1): which shape a `SharedMut[T]` gets is decided **per value** by the compiler
+([ADR-064](adr/adr-064.md) D1), and a type whose representation the compiler
+picks is not one a module owns ([ADR-156](adr/adr-156.md)). A program writes
+`SharedMut(0)` with no import, which is what 6.2 and Part II 12.2 have always
+shown it doing; what was missing was this line.
 
 **The rule the list is built from** is that nothing in it does I/O but
 printing, and nothing in it pauses (D2). Reading a file is a thing a program

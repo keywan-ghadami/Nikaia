@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.85] — 2026-09-20
+
+The shared types are the language's, and a prelude name written with a module
+is refused ([ADR-167](docs/specification/adr/adr-167.md)) — Part I 1.3's list
+seen from the two sides [ADR-162](docs/specification/adr/adr-162.md) did not
+reach.
+
+### Fixed
+
+- **Three types were reachable with no `use` and named nowhere on the list.** [ADR-162](docs/specification/adr/adr-162.md) D3's test compares the page against what `std` keys **bare**, and it watches **functions**: a type is keyed under its own name — `SharedMut::access` — so `Shared`, `SharedMut` and `Locked` walked straight past it. Part I 6.2 and Part II 12.2 write `let counter = SharedMut(0)` and always have, against a list that ends *and there are no others*.
+- **They are the language's**, for [ADR-156](docs/specification/adr/adr-156.md)'s reason one type over: which shape a shared value gets is decided **per value** by the compiler ([ADR-064](docs/specification/adr/adr-064.md) D1), and a type whose representation the compiler picks is not one a module owns.
+- **`NK1163`: a name that needs no `use`, written with a `std` module in front of it.** `io::println("x")` is the consistent guess — every *other* `std` name wants its module — and what it got was `rustc` saying *cannot find function `println` in module `io`* about a file nobody wrote. Both halves are required or it would be a guess: the module genuinely has no such name **and** the bare one is a name `std` keys, which is what separates it from a module nothing describes yet ([ADR-140](docs/specification/adr/adr-140.md) D5).
+
+### How it was found
+
+- **By asking what happens to the *correct* spelling**, rather than what the list says. `lock::SharedMut(0)` — the shape every other `std` type wants — types as **nothing**, so Part II 12.3's nesting refusal (`NK2203`, which [ADR-039](docs/specification/adr/adr-039.md) D2 calls *always*) silently does not run, and the program reaches `rustc`. The same probe on `io::println` gave the second finding.
+- The list's test now asks the **compiler** rather than the ledger (`check::HULLS`, the list `is_hull` reads), which is the right side: what makes these three names a program writes with no import is that the checker knows them by name.
+
+### Also
+
+- **A claim in [ADR-166](docs/specification/adr/adr-166.md) was too strong, and `docs/open-work.md` §3.1 is corrected.** It said something in a parallel sweep reaches a child's standard input *past an explicit `Stdio::null()`*. Traced since — the wrapper's trace now says which invocation is Cargo's target-info probe — and in a clean sweep both probes are recognised and the whole workspace passes, 124 binaries, twice over. What the failing sweeps have in common is that they are the **first run after a rebuild**.
+
+### What this leaves
+
+- **`lock::SharedMut(0)` is still refused by nothing**, and that is [ADR-140](docs/specification/adr/adr-140.md) D5's deliberate silence: `lock` is not a module `std` has, and `use std::lock` is accepted along with every other unknown module, because refusing on a surface that does not exist yet is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s correct program refused. `NK1163` reaches a prefix that **is** a module; a prefix that is not stays where that record left it.
+
 ## [0.0.84] — 2026-09-20
 
 **Cargo's target-info probe is given an empty standard input**

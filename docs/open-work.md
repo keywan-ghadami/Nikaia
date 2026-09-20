@@ -1332,18 +1332,20 @@ of three. The suspicion was correct; the measurement only showed that closing
 the **outer** command's standard input does not close the **test binary's**,
 and the nested build inherits from the harness.
 
-**What is left is sharper than it has ever been, and it is not the probe.**
-The test above, run inside a **fully parallel** `cargo test -p nikaia` sweep,
-fails — with its own contaminant file reaching `rustc` although the wrapper
-hands that invocation `/dev/null`. Run on its own it passes every time, and
-without [ADR-166](specification/adr/adr-166.md) D1 it fails every time. So
-something in a parallel sweep is reaching a child's standard input **past an
-explicit `Stdio::null()`**, which is a smaller and much stranger claim than
-*the wrapper's stdin is the suspect* ever was. The test is `#[ignore]`d for
-exactly that reason — a test that flakes in CI is worth less than a red build
-costs — and `cargo test -p nikaia --test project -- --ignored` is how to see it.
+**What is left is not the probe, and the claim this entry made in
+[ADR-166](specification/adr/adr-166.md) was too strong.** That record said
+something in a parallel sweep reaches a child's standard input *past an
+explicit `Stdio::null()`*. Traced since — the wrapper's own trace says which
+invocation is the probe (`NIKAIA_WRAPPER_TRACE`) — and in a **clean** sweep
+both probes are recognised and the whole workspace passes, 124 binaries and no
+failures, twice over. What the failing sweeps have in common is that they are
+the **first run after a rebuild**; the next one passes with nothing changed.
+So the binary the first run spawns is the suspect rather than the stream, and
+the end-to-end test is `#[ignore]`d for that reason — a test that flakes in CI
+is worth less than a red build costs. `cargo test -p nikaia --test project --
+--ignored` is how to see it, and it passes every time on its own.
 
-**And a second thing shows in the same sweep**, with the reproducer down from
+**And a second thing shows in a parallel sweep**, with the reproducer down from
 the whole workspace to two binaries:
 
 ```text

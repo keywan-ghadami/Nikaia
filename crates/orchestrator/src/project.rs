@@ -560,7 +560,7 @@ impl Invocation {
     /// Both halves are required: `-` is what makes `rustc` read standard input,
     /// and a `--print` is what makes the answer something other than a compiled
     /// program. Neither alone is the probe.
-    fn is_a_probe(&self) -> bool {
+    pub fn is_a_probe(&self) -> bool {
         self.args.iter().any(|arg| arg == "-")
             && self.args.iter().any(|arg| {
                 arg.to_str()

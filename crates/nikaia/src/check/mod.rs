@@ -4837,6 +4837,55 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK1163`: a name that needs no `use`, written with a module in front
+    /// of it** ([ADR-167](../../docs/specification/adr/adr-167.md) D2).
+    ///
+    /// [ADR-154](../../docs/specification/adr/adr-154.md) §5 enforced the list
+    /// in one direction — a name that lives in a module, written without it —
+    /// and `NK1117` above is that half. This is the same rule read the other
+    /// way: `io::println("x")` is a spelling a reader reaches for because every
+    /// *other* `std` name wants its module, and what it got was `rustc` saying
+    /// *cannot find function `println` in module `io`* about a file nobody
+    /// wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **It cannot refuse a correct program**, which is the test
+    /// [C.4](../../docs/specification/30-nikaia-tooling.md) sets: the program
+    /// this refuses does not compile today under any reading, because the
+    /// module genuinely has no such name. That is what separates it from
+    /// `use std::db::postgres` — a module nothing describes **yet**, which
+    /// [ADR-140](../../docs/specification/adr/adr-140.md) D5 leaves alone for
+    /// exactly this reason.
+    fn a_prelude_name_with_a_module_in_front(&mut self, name: &str, span: &Span) {
+        let Some((module, last)) = name.split_once("::") else {
+            return;
+        };
+        // A module of **this program** wins, as it does for `NK1117`.
+        if !self.std_modules.contains(module) || self.modules.contains(module) {
+            return;
+        }
+        // The module genuinely has no such name, and the **bare** one is a name
+        // `std` keys. Both halves, or this is a guess.
+        if self.library.functions.contains_key(name) || !self.library.functions.contains_key(last) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1163",
+            message: format!("`{module}` has no `{last}`, and `{last}` needs no module"),
+            notes: vec![
+                format!(
+                    "`{last}` is on the list of names that need no `use` (Part I, 1.3), so it is \
+                     written on its own wherever it is needed"
+                ),
+                "every other `std` name is reached through its module, which is what makes \
+                 this worth saying rather than guessing at (ADR-154 D1)"
+                    .to_string(),
+            ],
+            help: Some(format!("write `{last}(…)` without the `{module}::`")),
+        });
+    }
+
     /// **`a`, `b` and `c` were a lambda's arguments, and are not** (`NK1117`).
     ///
     /// [ADR-049](../../../../docs/specification/adr/adr-049.md) D1 withdrew the
@@ -5344,6 +5393,7 @@ impl<'a> Checker<'a> {
         // without it, and a module used without being introduced.
         self.a_std_name_without_its_module(&name, span);
         self.a_module_used_before_it_is_introduced(&name, span);
+        self.a_prelude_name_with_a_module_in_front(&name, span);
 
         // **A grammar is entered by an ordinary call**
         // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
@@ -9299,8 +9349,22 @@ const SHARED_MUT: &str = "SharedMut";
 /// **when a value is cleaned up**, which Part I 6.2 says a program can see, so the
 /// word stands where it happens.
 fn is_hull(name: &str) -> bool {
-    matches!(name, SHARED | SHARED_MUT | LOCKED)
+    HULLS.contains(&name)
 }
+
+/// The same three, as a list something outside this module can read
+/// ([ADR-167](../../docs/specification/adr/adr-167.md) D1).
+///
+/// **They are reached with no `use`, so they are on Part I 1.3's list**, and a
+/// list that says *there are no others* needs the compiler's own answer to
+/// compare against. [ADR-162](../../docs/specification/adr/adr-162.md) D3 built
+/// that comparison for every **function** `std` keys bare and a type escaped it,
+/// because a type is keyed under its own name rather than under nothing.
+///
+/// This is the answer from the compiler's side rather than the ledger's, and it
+/// is the right side: what makes these three names a program writes with no
+/// import is that this file knows them by name.
+pub const HULLS: [&str; 3] = [SHARED, SHARED_MUT, LOCKED];
 
 /// The two doors that take **several** locks at once
 /// ([ADR-065](../../../docs/specification/adr/adr-065.md)).

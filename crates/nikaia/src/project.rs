@@ -1812,6 +1812,15 @@ fn trace(invocation: &Invocation, verdict: &str) {
         return;
     };
     let crate_name = invocation.crate_name.as_deref().unwrap_or("-");
+    // **And whether this one is Cargo's target-info probe**
+    // ([ADR-166](../../docs/specification/adr/adr-166.md) D1), because that is
+    // the invocation whose standard input decides whether a build starts at all
+    // — and a trace that cannot say so cannot answer the question the trace
+    // exists for.
+    let verdict = match invocation.is_a_probe() {
+        true => &format!("{verdict} (target-info probe)"),
+        false => verdict,
+    };
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
