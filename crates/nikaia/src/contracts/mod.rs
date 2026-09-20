@@ -805,6 +805,19 @@ pub struct Ledger {
     /// `pub` *and* reached across a package, and that is a question about
     /// modules rather than about traits.
     pub traits: BTreeMap<String, BTreeSet<String>>,
+    /// **Who answers for what**: a trait's name to the types that `impl` it
+    /// ([ADR-174](../../../docs/specification/adr/adr-174.md) D1).
+    ///
+    /// The other half of a bound, and the reason it is here rather than in the
+    /// checker: `impl Speaks for Dog` may stand in a **different file** from
+    /// the `fn tell[T: Speaks]` that needs the answer, and one file's walk sees
+    /// one file. A program's ledger is absorbed from its units', so the union
+    /// over the files is a thing this map already knows how to be.
+    ///
+    /// Not written to the ledger file, for `traits`' reason above and in the
+    /// same breath: nothing outside the unit can name one of these traits, so
+    /// nothing outside it can ask this question either.
+    pub implementations: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Ledger {
@@ -1045,6 +1058,25 @@ impl Ledger {
         // Measured the hard way: without it a one-file program's bound resolved
         // twice and failed the third time, because the program's ledger is
         // absorbed from the unit's and this map was the one thing left behind.
+        for (trait_name, types) in other.implementations {
+            // **Both spellings**, because the question is asked from both
+            // sides: inside the package the type is `Dog`, and to a consumer it
+            // is `pets::Dog`. A bound cannot name a path at all today
+            // ([`open-work.md`](../../../docs/open-work.md) §2.18), so the
+            // qualified half is what the next step will need rather than what
+            // this one uses — and an extra spelling can only make the check
+            // fail *open*, which is the side [Part III
+            // C.4](../../../docs/specification/30-nikaia-tooling.md) puts the
+            // benefit of the doubt on.
+            let mut widened: BTreeSet<String> = types.clone();
+            if let Some(module) = module {
+                widened.extend(types.iter().map(|ty| format!("{module}::{ty}")));
+            }
+            self.implementations
+                .entry(trait_name)
+                .or_default()
+                .extend(widened);
+        }
         for (name, methods) in other.traits {
             let key = match module {
                 Some(module) => format!("{module}::{name}"),
@@ -1131,6 +1163,20 @@ impl Ledger {
                             .into_iter()
                             .collect();
                         let target = parsed.text(target.name).to_string();
+                        // ADR-174 D1: `impl Speaks for Dog` is the claim that a
+                        // `Dog` may stand where a `Speaks` is asked for, and it
+                        // is the only place that claim is made.
+                        if let Item::Impl {
+                            trait_name: Some(trait_name),
+                            ..
+                        } = &item.node
+                        {
+                            ledger
+                                .implementations
+                                .entry(parsed.text(*trait_name).to_string())
+                                .or_default()
+                                .insert(target.clone());
+                        }
                         for method in methods {
                             let (name, contract) = ledger.function(
                                 parsed,

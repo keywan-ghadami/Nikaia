@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.106] — 2026-09-20
+
+**A bound is enforced where it is used** — [ADR-174](docs/specification/adr/adr-174.md),
+the second half of what a bound is for, and the one nobody was asking.
+
+### Added
+
+- **`Ledger::implementations`**: a trait's name to the types whose `impl` names it, written where the `impl` stands and merged when a program's ledger absorbs its units'. The ledger already said *`Speaks` is a trait*, which is what `NK1126` needs; it did not say *`Dog` answers for `Speaks`*, which is what a **call** needs, and that claim is made in exactly one place. Not written to the ledger file, for `traits`' reason: nothing outside the unit can name one of these traits, so nothing outside it can ask.
+- **`NK1164`: the type a call picked does not answer for the bound.** `fn tell[T: Speaks](x: T)` called with a `Rock` that implements nothing was accepted by every stage of this compiler, and the language below answered *the trait bound `Rock: Speaks` is not satisfied* about a file nobody wrote — [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class. Asked at the free-call and the method-call site, from the binding both already build for the *other* question a type parameter raises ([ADR-074](docs/specification/adr/adr-074.md) D2).
+- **Two sentences, because there are two readers.** A concrete type is told to write the `impl`. A **parameter of the caller's own** cannot be — `V` is a name a further caller fills in, and `impl Speaks for V` is not a line anybody can write — so it is told to widen its own bound: *add it to the bound: `[V: … + Speaks]`*. [C.2](docs/specification/30-nikaia-tooling.md) owes every diagnostic a way out, and a way out that cannot be taken is not one.
+- **Fail-open in three places**, which is C.4 and is half the design: a trait this unit does not declare (`impl Error for ConfigError` names one the compiler reads, and `traits::check` draws the same line), an argument this compiler could not type, and a parameter that carries the bound.
+
+### Found
+
+- **The first shape of this check refused a correct program.** The table was the checker's own walk, and one file's walk sees one file: a two-file project whose `impl Speaks for Dog` stands beside the `fn tell[T: Speaks]` rather than in it was refused — and it **builds and runs**, measured, printing `woof`. That is what moved the table into the ledger, where a program's own is absorbed from its units'. C.4's correct program refused is the failure a refusal is most expensive in, and it was found by asking what the change does to the shape the corpus does not have.
+
+### Changed
+
+- **The roadmap's generics box is `[x]`**: a type parameter is written rather than erased, a bound puts its methods in reach of the body *and* decides what a caller may hand in, and the refusals are Nikaia's by name. 22 of 26 in the language, 26 of 40 overall.
+- **`open-work.md` §2.18 has one step left of four.** Steps 2 and 3 are built; step 4 is reachable and nothing needs it. Step 1 — a bound that names a path — waits on a trait being reachable across a **package**, which ADR-078 §4 calls a question about modules and which nobody has decided. Until it is, a bound names a trait the unit declares, and that is what makes step 3 complete for every bound the language can write.
+
 ## [0.0.105] — 2026-09-20
 
 **A field of a generic `impl` reaches the body as a type**, which is the half of

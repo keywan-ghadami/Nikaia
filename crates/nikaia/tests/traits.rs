@@ -684,3 +684,260 @@ fn the_rust_floor_is_one_constant_and_this_toolchain_clears_it() {
     // And one this cannot read says nothing.
     assert!(orchestrator::project::toolchain_is_new_enough("stable").is_ok());
 }
+
+/// **`NK1164`: the bound was declared and not enforced**
+/// ([ADR-174](../../../docs/specification/adr/adr-174.md) D2).
+///
+/// `[T: Speaks]` put `say` in reach of the body from the day ADR-078 landed —
+/// that half is `NK1126` and is tested above. The other half, *may this type
+/// stand here*, was asked by nobody: the call was accepted and `rustc` answered
+/// *the trait bound `Rock: Speaks` is not satisfied* about a file nobody wrote.
+#[test]
+fn a_type_that_implements_nothing_does_not_meet_a_bound() {
+    let found = findings(
+        r#"
+trait Speaks {
+    fn say(&self) -> String sync
+}
+
+struct Dog { name: String }
+
+impl Speaks for Dog {
+    fn say(&self) -> String sync {
+        return "woof".to_owned()
+    }
+}
+
+struct Rock { weight: i64 }
+
+fn tell[T: Speaks](x: T) -> String sync {
+    return x.say()
+}
+
+fn main() {
+    let r = Rock { weight: 3 }
+    println(tell(r))
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1164")
+        .unwrap_or_else(|| panic!("NK1164: {found:#?}"));
+    assert!(
+        refusal.message.contains("`Speaks`") && refusal.message.contains("`Rock`"),
+        "it names the bound and the type that does not meet it: {}",
+        refusal.message
+    );
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("impl Speaks for Rock")),
+        "the way out is the line that would make it true: {:?}",
+        refusal.help
+    );
+}
+
+/// And the type that **does** implement it is not refused — which is the half
+/// that matters, because a check that reads an `impl` table could as easily
+/// refuse every call through a bound. Run rather than accepted: a bound that
+/// type-checks here and not below would be worth nothing.
+#[test]
+fn the_type_that_implements_it_passes_and_runs() {
+    let printed = ran(
+        "a call through a bound",
+        r#"
+trait Speaks {
+    fn say(&self) -> String sync
+}
+
+struct Dog { name: String }
+
+impl Speaks for Dog {
+    fn say(&self) -> String sync {
+        return "woof".to_owned()
+    }
+}
+
+fn tell[T: Speaks](x: T) -> String sync {
+    return x.say()
+}
+
+fn main() {
+    let d = Dog { name: "rex".to_owned() }
+    println(tell(d))
+}
+"#,
+    );
+    assert_eq!(printed.trim(), "woof");
+}
+
+/// `[T: A + B]`: **each** bound is a question of its own, and the one the type
+/// misses is the one named.
+#[test]
+fn every_bound_in_a_list_is_asked() {
+    let found = findings(
+        r#"
+trait Speaks {
+    fn say(&self) -> String sync
+}
+
+trait Weighs {
+    fn weight(&self) -> i64 sync
+}
+
+struct Dog { name: String }
+
+impl Speaks for Dog {
+    fn say(&self) -> String sync {
+        return "woof".to_owned()
+    }
+}
+
+fn both[T: Speaks + Weighs](x: T) -> String sync {
+    return x.say()
+}
+
+fn main() {
+    let d = Dog { name: "rex".to_owned() }
+    println(both(d))
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1164")
+        .unwrap_or_else(|| panic!("NK1164 for the bound it misses: {found:#?}"));
+    assert!(
+        refusal.message.contains("`Weighs`") && !refusal.message.contains("`Speaks`"),
+        "the one it misses and not the one it has: {}",
+        refusal.message
+    );
+}
+
+/// **A parameter of the caller's own is a different sentence** (D2). `V` is a
+/// name a *further* caller fills in, so `impl Speaks for V` is not a line
+/// anybody can write and the way out is the caller's own bound list — which is
+/// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)'s *a way
+/// out*, and a way out that cannot be taken is not one.
+#[test]
+fn a_parameter_is_told_to_widen_its_own_bound() {
+    let found = findings(
+        r#"
+trait Speaks {
+    fn say(&self) -> String sync
+}
+
+trait Weighs {
+    fn weight(&self) -> i64 sync
+}
+
+struct Dog { name: String }
+
+impl Speaks for Dog {
+    fn say(&self) -> String sync {
+        return "woof".to_owned()
+    }
+}
+
+impl Weighs for Dog {
+    fn weight(&self) -> i64 sync {
+        return 12
+    }
+}
+
+fn tell[T: Speaks](x: T) -> String sync {
+    return x.say()
+}
+
+fn passes_on[V: Weighs](z: V) -> String sync {
+    return tell(z)
+}
+
+fn main() {
+    let d = Dog { name: "rex".to_owned() }
+    println(passes_on(d))
+}
+"#,
+    );
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1164")
+        .unwrap_or_else(|| panic!("NK1164: {found:#?}"));
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("[V: … + Speaks]")),
+        "the way out is the bound list and not an `impl`: {:?}",
+        refusal.help
+    );
+}
+
+/// The same parameter, **carrying the bound it is asked for**, is not refused.
+/// Without this the check would make a generic function uncallable from another
+/// generic function, which is most of what a bound is for.
+#[test]
+fn a_parameter_that_carries_the_bound_passes_it_on() {
+    let found = findings(
+        r#"
+trait Speaks {
+    fn say(&self) -> String sync
+}
+
+struct Dog { name: String }
+
+impl Speaks for Dog {
+    fn say(&self) -> String sync {
+        return "woof".to_owned()
+    }
+}
+
+fn tell[T: Speaks](x: T) -> String sync {
+    return x.say()
+}
+
+fn passes_on[U: Speaks](y: U) -> String sync {
+    return tell(y)
+}
+
+fn main() {
+    let d = Dog { name: "rex".to_owned() }
+    println(passes_on(d))
+}
+"#,
+    );
+    assert!(
+        found.is_empty(),
+        "a parameter with the bound is a type that meets it: {found:#?}"
+    );
+}
+
+/// **A trait this unit does not declare says nothing** — `traits::check` draws
+/// the same line one rule over, and for the same reason: `impl Error for E`
+/// names a trait the compiler reads rather than one a `.nika` file wrote
+/// ([ADR-023](../../../docs/specification/adr/adr-023.md) D3), and a refusal
+/// resting on a table that could not contain the answer is C.4's correct
+/// program refused.
+#[test]
+fn a_bound_on_a_trait_nothing_here_declares_is_not_refused() {
+    let found = findings(
+        r#"
+struct Rock { weight: i64 }
+
+fn tell[T: Error](x: T) -> i64 sync {
+    return 1
+}
+
+fn main() {
+    let r = Rock { weight: 3 }
+    println(f"{tell(r)}")
+}
+"#,
+    );
+    assert!(
+        !found.iter().any(|f| f.code == "NK1164"),
+        "nothing here can answer about `Error`: {found:#?}"
+    );
+}

@@ -589,6 +589,7 @@ pub fn check_against(
         borrowing_self: false,
         enclosing: BTreeMap::new(),
         subject_arguments: Vec::new(),
+        declared_bounds: BTreeMap::new(),
         throwing: false,
         caught: false,
         guarded: None,
@@ -1159,6 +1160,16 @@ struct Checker<'a> {
     /// Empty outside an `impl`, and empty for one whose target takes no
     /// arguments - which is the same as what it was before.
     subject_arguments: Vec<Ty>,
+    /// The bounds each function's parameters were declared with, by the key a
+    /// call resolves to - `tell` for a free function, `Dog::tell` for a method.
+    ///
+    /// Not read off the ledger, which has no column for a bound: its signature
+    /// writes `(x: $T) -> String` and the `: Speaks` is nowhere in it. That is
+    /// exactly the reach a bound has today — one cannot name a path
+    /// ([`open-work.md`](../../docs/open-work.md) §2.18), so a trait a bound
+    /// names is a trait this unit declares, and a unit that declares the trait
+    /// also has the `fn` in its own AST.
+    declared_bounds: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     /// Whether it declared `throws` - which is what says a failure may leave
     /// it, whether the failing call was written or implicit (ADR-025 D1).
     throwing: bool,
@@ -1587,6 +1598,56 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
+        for item in &self.parsed.program.items {
+            match &item.node {
+                Item::Fn { .. } => self.bounds_declared_by(&item.node, None),
+                Item::Impl {
+                    target, methods, ..
+                } => {
+                    let target = self.parsed.text(target.name).to_string();
+                    for method in methods {
+                        self.bounds_declared_by(&method.node, Some(&target));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// One function's bounds, under the key a call to it resolves to.
+    ///
+    /// The key is built the way `function` builds its own, the anonymous
+    /// constructor included - two spellings of one name would make this table
+    /// silently miss whichever the call site used.
+    fn bounds_declared_by(&mut self, item: &Item, target: Option<&str>) {
+        let Item::Fn { name, generics, .. } = item else {
+            return;
+        };
+        let bounds: BTreeMap<String, Vec<String>> = generics
+            .iter()
+            .filter(|g| !g.bounds.is_empty())
+            .map(|g| {
+                (
+                    self.parsed.text(g.name).to_string(),
+                    g.bounds
+                        .iter()
+                        .map(|b| self.parsed.text(*b).to_string())
+                        .collect(),
+                )
+            })
+            .collect();
+        if bounds.is_empty() {
+            return;
+        }
+        let own = match name {
+            Some(name) => self.parsed.text(*name).to_string(),
+            None => "new".to_string(),
+        };
+        let key = match target {
+            Some(target) => format!("{target}::{own}"),
+            None => own,
+        };
+        self.declared_bounds.insert(key, bounds);
     }
 
     fn program(&mut self) {
@@ -3213,8 +3274,125 @@ impl<'a> Checker<'a> {
         for (name, ty) in from_arguments(contract, &found) {
             bound.entry(name).or_insert(ty);
         }
+        // A method's own parameters carry bounds exactly as a free function's
+        // do, and one written call is one rule (ADR-066).
+        self.a_bound_the_argument_does_not_meet(&key, &bound, span);
         let result = ty::substitute(&result, &bound);
         self.stamped_through(contract, &found, result)
+    }
+
+    /// **`NK1164`: the type a call picked does not answer for the bound**
+    /// ([ADR-174](../../docs/specification/adr/adr-174.md) D2).
+    ///
+    /// ```nika
+    /// fn tell[T: Speaks](x: T) -> String {
+    ///     return x.say()
+    /// }
+    ///
+    /// tell(rock)     // error[NK1164]
+    /// ```
+    ///
+    /// A bound was **declared and not enforced**: `[T: Speaks]` put `say` in
+    /// reach of the body — which is `NK1126`, and is built — while nothing
+    /// asked the other question a bound exists to ask, *may this type stand
+    /// here*. So the call was accepted and the language below answered *the
+    /// trait bound `Rock: Speaks` is not satisfied* about a file nobody wrote,
+    /// which is [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s
+    /// class exactly.
+    ///
+    /// **Fail-open in three places**, because C.4 is the other half of the same
+    /// page and a correct program refused is worse than a wrong one passed on:
+    /// a trait this unit does not declare is one nothing here can answer about
+    /// (`traits::check` draws the same line); an argument this compiler could
+    /// not type binds nothing; and a **parameter** in the caller's own scope
+    /// answers for whatever its own bounds say, because there the caller is the
+    /// one who did not pick the type either.
+    fn a_bound_the_argument_does_not_meet(
+        &mut self,
+        key: &str,
+        bound: &BTreeMap<String, Ty>,
+        span: &Span,
+    ) {
+        let Some(wanted) = self.declared_bounds.get(key).cloned() else {
+            return;
+        };
+        for (parameter, traits) in wanted {
+            let Some(Ty::Named { name: actual, .. }) = bound.get(&parameter) else {
+                continue;
+            };
+            let actual = actual.clone();
+            // **A parameter of the caller's own is a different sentence.**
+            // `impl Speaks for V` is not something anybody can write - `V` is
+            // a name a *further* caller fills in - so the way out is the
+            // caller's own bound list and nowhere else (Part III, C.2).
+            let of_the_caller = self.type_parameters.contains_key(&actual);
+            for trait_name in traits {
+                if self.answers_for(&actual, &trait_name) {
+                    continue;
+                }
+                let (message, note, way_out) = match of_the_caller {
+                    true => (
+                        format!(
+                            "`{key}` asks for a `{trait_name}` here, and `{actual}` is not \
+                             declared to be one"
+                        ),
+                        format!(
+                            "`{actual}` stands for a type *this* function's caller picks, so \
+                             what it can be asked to do is what its own bounds say - and \
+                             `{trait_name}` is not among them (Part I, 4.7)"
+                        ),
+                        format!("add it to the bound: `[{actual}: … + {trait_name}]`"),
+                    ),
+                    false => (
+                        format!(
+                            "`{key}` asks for a `{trait_name}` here, and `{actual}` is not one"
+                        ),
+                        format!(
+                            "`{key}`'s `{parameter}` is declared `[{parameter}: \
+                             {trait_name}]`, so the type a caller picks has to answer for \
+                             `{trait_name}`'s methods - and nothing in this program says \
+                             `{actual}` does (Part I, 4.7)"
+                        ),
+                        format!(
+                            "write `impl {trait_name} for {actual} {{ … }}`, or pass a type \
+                             that already has one"
+                        ),
+                    ),
+                };
+                self.checked.findings.push(Finding {
+                    severity: Severity::Error,
+                    span: span.clone(),
+                    code: "NK1164",
+                    message,
+                    notes: vec![note],
+                    help: Some(way_out),
+                });
+            }
+        }
+    }
+
+    /// Whether `ty` may stand where `trait_name` is asked for.
+    ///
+    /// **`true` where nothing says otherwise** — see the three fail-open cases
+    /// on `NK1164` above.
+    fn answers_for(&self, ty: &str, trait_name: &str) -> bool {
+        if !self.own.traits.contains_key(trait_name) {
+            return true;
+        }
+        if let Some(bounds) = self.type_parameters.get(ty) {
+            return bounds.iter().any(|declared| declared == trait_name);
+        }
+        // **The program's ledger and not this file's walk** (ADR-174 D1).
+        // `impl Speaks for Dog` may stand in a different file from the
+        // `fn tell[T: Speaks]` that asks, and one file's walk sees one file —
+        // measured on a two-file project, where the refusal was a **correct**
+        // program refused, which [Part III
+        // C.4](../../docs/specification/30-nikaia-tooling.md) says may not
+        // happen.
+        self.own
+            .implementations
+            .get(trait_name)
+            .is_some_and(|types| types.contains(ty))
     }
 
     /// Part I 2.2: **`as` names a type this language offers**
@@ -5763,6 +5941,9 @@ impl<'a> Checker<'a> {
         // parameters are typed from the signature (ADR-029), so the signature
         // has to reach them unsubstituted.
         let bound = from_arguments(contract, &found);
+        // …and what the arguments tell a **bound** (ADR-174 D2), which is the
+        // same binding read for the other question a type parameter raises.
+        self.a_bound_the_argument_does_not_meet(&key, &bound, span);
         let result = constructed.unwrap_or_else(|| ty::substitute(&result, &bound));
         self.stamped_through(contract, &found, result)
     }
