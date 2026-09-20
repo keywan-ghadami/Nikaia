@@ -3044,7 +3044,11 @@ impl<'a> Checker<'a> {
         // around it declares `throws` - where it does not, `NK2605`
         // below refuses the program and nothing is emitted at all.
         self.method_options(method, contract, span);
-        self.method_propagates(method, !contract.throws.is_empty(), span);
+        self.method_propagates(
+            method,
+            !contract.throws.is_empty() || self.walks_a_failing_sequence(&on, contract),
+            span,
+        );
         // ADR-055 D2, the method half. Either ledger since §6 step 3
         // made `std`'s own pausing entries `async fn`: before it, a
         // `std` entry blocked its thread and awaiting one would have
@@ -3062,19 +3066,38 @@ impl<'a> Checker<'a> {
             !contract.sync.is_sync() || walks_a_pausing_step,
             span,
         );
-        // …and **only the `for` has a form**. Every other walk of one is
-        // `Iterator`'s below, which has no suspension point in it: a `map`
-        // hands back a sequence whose steps would pause, which is the trait D3
-        // defers, and `count` and `collect` would each need the *failing* half
-        // of the same walk built with them (ADR-025 D1, one construct over).
+        // …and a **lazy** walk of one has no form. What `map` and `filter` hand
+        // back is another sequence, whose steps would pause, and a sequence
+        // like that is the trait D3 defers until a second producer needs one.
+        // The eager walks — `collect`, `count`, `nth`, `join` — are a loop
+        // around the step and `std` writes them.
         //
         // Recorded rather than refused here, because *this compiler cannot
         // build that yet* is a refusal from the lowering and not a rule of the
         // language ([ADR-171](../../docs/specification/adr/adr-171.md) §4).
-        if walks_a_pausing_step {
+        let hands_back_a_sequence = matches!(
+            contract.signature.as_ref().and_then(|s| s.result.as_ref()),
+            Some(Ty::Seq { .. })
+        );
+        if walks_a_pausing_step && hands_back_a_sequence {
             self.checked
                 .pausing_walks
                 .insert((span.start, self.parsed.text(method).to_string()));
+        }
+        // **A walk of a sequence whose step can fail, can fail**
+        // ([ADR-025](../../docs/specification/adr/adr-025.md) D1, one construct
+        // over from the `for` it was written about). The entry's own `throws`
+        // is about the walk; what fails is the **step** it asks for, so the
+        // receiver's word decides it at the site.
+        //
+        // **The eager walks and not the lazy ones**, for the reason above read
+        // the other way: a `map` has produced nothing, so nothing of it has
+        // failed yet, and the failure belongs to whatever walks the result.
+        let walks_a_failing_step = matches!(&on, Ty::Seq { throws: true, .. })
+            && walks_by_value(contract)
+            && !hands_back_a_sequence;
+        if walks_a_failing_step {
+            self.a_walk_of_a_failing_sequence(method, span);
         }
         self.a_pausing_method_in_a_sync_body(&key, contract, span);
         self.a_call_that_may_pause(contract);
@@ -6595,6 +6618,53 @@ impl<'a> Checker<'a> {
         } else {
             self.settled_methods.insert(key);
         }
+    }
+
+    /// Whether this method call is an **eager** walk of a sequence whose step
+    /// can fail ([ADR-025](../../docs/specification/adr/adr-025.md) D1).
+    ///
+    /// Asked twice — once for the `?` the emitter writes and once for the
+    /// refusal — so it is one sentence rather than two that have to agree.
+    fn walks_a_failing_sequence(&self, on: &Ty, contract: &FnContract) -> bool {
+        matches!(on, Ty::Seq { throws: true, .. })
+            && walks_by_value(contract)
+            && !matches!(
+                contract.signature.as_ref().and_then(|s| s.result.as_ref()),
+                Some(Ty::Seq { .. })
+            )
+    }
+
+    /// `NK2701` for a **walk** rather than for a loop
+    /// ([ADR-025](../../docs/specification/adr/adr-025.md) D1).
+    ///
+    /// The same rule and the same code as a `for` over the same sequence: a
+    /// step that can fail fails the function around it, and nothing marks the
+    /// call. The message says *a step of what it walks* rather than *a turn of
+    /// this loop*, because that is what a reader is looking at.
+    ///
+    /// **It is the half whose absence was a wrong answer.** `io::lines().count()`
+    /// used to compile and count the failures as lines, because the entry said
+    /// `-> i64` and nothing asked what a step of the receiver does.
+    fn a_walk_of_a_failing_sequence(&mut self, method: Ident, span: &Span) {
+        if self.throwing || self.caught || self.inside_an_action.is_some() {
+            return;
+        }
+        let Some(function) = self.current.clone() else {
+            return;
+        };
+        let name = self.parsed.text(method).to_string();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2701",
+            message: format!("this function can fail because a step of what `{name}` walks can fail"),
+            notes: vec![format!(
+                "`{name}` asks the sequence for every element, and a step of this one reads as                  it goes - so the failure leaves this function exactly as a `for` over the same                  sequence would (ADR-025 D1)"
+            )],
+            help: Some(format!(
+                "declare the error: add `throws` to `{function}` - or handle it at the call,                  `… catch {{ … }}` (Part I, 7.1)"
+            )),
+        });
     }
 
     /// A loop over something whose step **pauses**

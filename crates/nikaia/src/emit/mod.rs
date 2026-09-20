@@ -7532,7 +7532,14 @@ impl<'p> Emitter<'p> {
         out.push(&format!(".{written}"));
         // Nikaia's `collect` builds a List; Rust's needs to be told
         // what to build, and with no types here that is `Vec<_>`.
-        if self.text(method) == "collect" && args.is_empty() {
+        //
+        // **Except over a sequence whose step pauses**
+        // ([ADR-172](../../docs/specification/adr/adr-172.md) D5), where the
+        // walk is `std`'s own `async fn` and has nothing to be told: an
+        // `Iterator::collect` never pauses, so the site pausing is exactly the
+        // difference. Guessed from the method's name alone this would have
+        // been a turbofish on a method that takes no type at all.
+        if self.text(method) == "collect" && args.is_empty() && !self.method_pauses(flow, method) {
             out.push("::<Vec<_>>");
         }
         out.push("(");

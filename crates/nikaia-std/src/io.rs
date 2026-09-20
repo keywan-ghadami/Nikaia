@@ -287,6 +287,75 @@ impl Lines {
         }
     }
 
+    /// Everything the sequence produces, as a list — `Seq::collect` over a
+    /// sequence whose step pauses
+    /// ([ADR-172](../../../docs/specification/adr/adr-172.md) D5).
+    ///
+    /// **The eager walks and not the lazy ones.** What `collect`, `count`,
+    /// `nth` and `join` hand back is a value, so each is a loop around
+    /// [`Lines::next`] and nothing more. `map` and `filter` hand back another
+    /// sequence, whose steps would pause — that is the trait D3 defers, and the
+    /// compiler refuses those by name and line rather than letting `rustc`
+    /// speak about this file.
+    ///
+    /// **The first failure ends the walk.** A `collect` that swallowed one
+    /// would turn a truncated stream into a shorter list, which is the bug
+    /// class Part I 6.4 refuses by name — and is what this entry did until
+    /// D5, when `Lines` was an `Iterator` over `Result` and the ledger said
+    /// the result was a list of strings.
+    pub async fn collect(mut self) -> Result<Vec<String>, IoError> {
+        let mut out = Vec::new();
+        while let Some(line) = self.next().await {
+            out.push(line?);
+        }
+        Ok(out)
+    }
+
+    /// How many lines the sequence produces — `Seq::count`.
+    ///
+    /// It walks the whole of it to answer, which is what separates this from a
+    /// list's `len()`, and it holds one line at a time while it does.
+    pub async fn count(mut self) -> Result<i64, IoError> {
+        let mut n = 0_i64;
+        while let Some(line) = self.next().await {
+            line?;
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    /// The line at a position, or nothing where the stream is shorter than that
+    /// — `Seq::nth`. It walks up to that position to answer.
+    pub async fn nth(mut self, at: i64) -> Result<Option<String>, IoError> {
+        if at < 0 {
+            return Ok(None);
+        }
+        let mut seen = 0_i64;
+        while let Some(line) = self.next().await {
+            let line = line?;
+            if seen == at {
+                return Ok(Some(line));
+            }
+            seen += 1;
+        }
+        Ok(None)
+    }
+
+    /// Every line written one after another with this text between them —
+    /// `Seq::join`.
+    pub async fn join(mut self, separator: &str) -> Result<String, IoError> {
+        let mut out = String::new();
+        let mut first = true;
+        while let Some(line) = self.next().await {
+            if !first {
+                out.push_str(separator);
+            }
+            out.push_str(&line?);
+            first = false;
+        }
+        Ok(out)
+    }
+
     /// One line out of what is already held, where there is one.
     ///
     /// A whole line is one with its newline in hand; at the end of the stream

@@ -195,41 +195,29 @@ Nikaia or described as taking a future — `|| async move { … }`, which is sta
 Rust and is how a handler is taken in practice. Not a new mechanism: a claim to
 record.
 
-### 2.2. A pausing sequence has one walk and six that block
+### 2.2. A lazy walk of a pausing sequence has no shape
 
-**[ADR-172](specification/adr/adr-172.md) closed what was left of this entry and
-renamed it again.** The question — *may a `for` iterate something whose step
-pauses?* — is answered **yes**: a `Seq` says `pauses` after it, the emitter
-writes `while let Some(x) = s.next().await`, and `io::lines` reads a chunk at a
-time on an I/O worker. A `for` over standard input gives its thread up, which is
-what this entry was about from the first time it was written.
+**[ADR-172](specification/adr/adr-172.md) closed all but one corner of this
+entry.** A `for` over `io::lines()` gives its thread up (D1), and the **eager**
+walks of the same sequence — `collect`, `count`, `nth`, `join` — pause and
+propagate with it (D5): each is a loop around the step, and both of the
+receiver's words reach them.
 
-**What is left is every other walk of the same sequence.** `Seq[T]`'s consumers —
-`collect`, `count`, `nth`, `join`, `map`, `filter` — are `Iterator`'s below and
-have no pausing form, so D5 refuses them with the loop as the way out. That is
-D3's *where the cost really lands*, and it is work rather than a question: the
-record says whose trait it will be when a second producer needs one.
+**What is left is the two lazy ones.** `map` and `filter` hand back another
+*sequence*, whose steps would pause, and a sequence like that is the trait D3
+defers until a second producer needs one. They are refused from the lowering
+meanwhile, with the loop as the way out and the line under it.
 
-*Evidence: a refusal, which is the good kind.* `io::lines().count()` says what
-is missing and what to write instead, in this compiler's words and on the
+*Evidence: a refusal, which is the good kind.* `io::lines().map fn { … }` says
+what is missing and what to write instead, in this compiler's words and on the
 `.nika` line.
 
-***It needs two halves and not one***, which is why it is not the afternoon it
-looks like. `count` over a pausing sequence is a loop around the step — but the
-step can **fail** as well as pause, and a walk of a sequence whose step throws
-has to make the function around it `throws`, which is
-[ADR-025](specification/adr/adr-025.md) D1's rule one construct over and is
-written down nowhere. Half of that pair is what let `io::lines().count()`
-*compile* before [ADR-172](specification/adr/adr-172.md) and silently count the
-failures as lines — the ledger said `-> i64`, `Lines` was an `Iterator` over
-`Result[String, …]`, and the number was wrong with nothing anywhere saying so.
-So the two go together or neither goes.
-
-*And the trait waits on a second producer rather than on a decision.* Of the six
-things that make a `Seq`, exactly one can pause, so what the lowering needs is an
-inherent `async fn next` on one type and not a trait over many
-([ADR-172](specification/adr/adr-172.md) D3). The day a second one pauses, the
-trait is `std`'s own and the record says why.
+*What it needs:* the trait, and a type to put behind `map` that holds a lambda
+and a pausing source. [ADR-172](specification/adr/adr-172.md) D3 says whose it
+will be and why it is not `futures_core::Stream`; what it does not say is what
+it looks like, and that is written the day a program asks for it — D4's *it
+waits for a program*, which is [ADR-105](specification/adr/adr-105.md)'s rule
+for the same file.
 
 ### 2.3. The lock is built and every rule around it is not
 

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.96] — 2026-09-20
+
+**The eager walks of a pausing sequence, both halves of them**
+([ADR-172](docs/specification/adr/adr-172.md) D5) — which 0.0.95 named as the
+next step and said needed two things rather than one.
+
+### Added
+
+- **`collect`, `count`, `nth` and `join` over `io::lines()`.** Each hands back a *value*, so each is a loop around the step: `Lines` has them as inherent `async fn`s, and the site awaits. The split is the rule rather than a list of names — what a walk hands back is what says whether it is eager.
+- **The failing half is `NK2701`**, the same code and the same rule a `for` over the same sequence gets. [ADR-025](docs/specification/adr/adr-025.md) D1 already said a step that can fail fails the enclosing function and that nothing marks the call; a `count` is a written call, so the rule covered it and only the compiler did not. The message says *a step of what `count` walks* rather than *a turn of this loop*, because that is what a reader is looking at.
+- **The test runs the program**: three lines in, three out. A test that only compiled the lowering would have been green for 0.0.95's miscount too, and this package is about a number.
+- One thing the emitter stopped guessing: `collect` is `.collect::<Vec<_>>()` below, because Rust's needs to be told what to build and this emitter has no types. `Lines::collect` takes no type at all, so the turbofish is skipped where the **site pauses** — an `Iterator::collect` never does, which makes that the difference rather than the method's name.
+
+### Left open
+
+- The **lazy** consumers. `map` and `filter` over a pausing sequence hand back one whose steps pause, which is [ADR-172](docs/specification/adr/adr-172.md) D3's trait, deferred until a second producer needs one. They are refused from the lowering meanwhile, with the loop as the way out. `docs/open-work.md` §2.2 carries it, renamed again.
+
 ## [0.0.95] — 2026-09-20
 
 **`io::lines().count()` counted the failures as lines**, and every walk of a
