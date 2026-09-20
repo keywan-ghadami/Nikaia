@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.72 (Draft)
+**Version:** 0.0.73 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -328,7 +328,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | :--- | :--- | :--- |
 | `pub` | fn, type | reachable from outside the unit that declares it |
 | `sync` | fn | Part II 12.1: pure computation, cannot pause, cannot do I/O. `true` where the source asserted it, `"inferred"` where the body implies it ([ADR-027](adr/adr-027.md)), `"from(f)"` where the lambda it is given decides ([ADR-029](adr/adr-029.md)) |
-| `throws` | fn | Part I 7.1: it may fail, and **with what**: `throws = ["ConfigError", "IoError"]`, the set inferred over the call graph ([ADR-023](adr/adr-023.md) D1). Stage 0 writes `true`, because it cannot lower an error type and so has no names to list |
+| `throws` | fn | Part I 7.1: it may fail, and **with what**: `throws = ["ConfigError", "IoError"]`, the set inferred over the call graph ([ADR-023](adr/adr-023.md) D1). The set names error **types** and never one of their variants, on either side of D4's two axes ([ADR-157](adr/adr-157.md) D4). A member written `"?"` is *something this compiler cannot name* — an unresolved call, or a `std` entry, whose own ledger writes `["?"]` throughout. Where the set has exactly one member and the member is a type the unit declares, the **failure channel is that type** and a `catch` matches on its variants ([ADR-157](adr/adr-157.md) D1); anything else travels in one opaque error |
 | `returns` | fn | what the result may point into: `borrows(a \| b)` |
 | `signature` | fn | its parameters, its **options** and its result, as the source writes them: `"(path: ?, data: ?; append: bool = false, create: bool = true)"`. An option carries its default, because a call that leaves one out still passes a value and only the declaration knows which (Part I, 5.1). A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as a **variable**, `$T`, so a caller binds it from what it passes and reads the result off the same signature ([ADR-074](adr/adr-074.md) D2): `hand` records `"(x: $T) -> $T"`, and a call that passes an `i64` gets one back. `Self` is `?`, because no call site binds it. Shared mutable state is written `SharedMut[T]`, the one name the language has for it ([ADR-039](adr/adr-039.md) D9) |
 | `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |

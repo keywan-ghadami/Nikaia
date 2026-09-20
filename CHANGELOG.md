@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.73] — 2026-09-20
+
+The failure channel is **the error type**, where the ledger names one
+([ADR-157](docs/specification/adr/adr-157.md)) — and Part I 7.1's own `catch`
+example becomes a program that runs.
+
+### Fixed
+
+- **A `match error { ConfigError::NotFound(p) => … }` compiles.** [ADR-023](docs/specification/adr/adr-023.md) D1's set has been in the ledger for a long time and [ADR-013](docs/specification/adr/adr-013.md) D3 lowered every `throws` to one boxed error, so D4's first row — *the variants within one error type are closed, and a `match` over them is exhaustive* — was unreachable through the channel. What that cost was the specification's **own** program: `rustc` said *expected `Box<dyn Error>`, found `ConfigError`* about a file the author never wrote, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class — and the page's Status note said **Implemented**.
+- **An error may carry a view of the caller's buffer.** A box is `Box<dyn Error + 'static>`, so `throw ConfigError::NotFound(path)` — Part I 7.1's own line, and what [ADR-023](docs/specification/adr/adr-023.md) D10 says should happen — was *borrowed data escapes outside of function* (`E0521`), again about the generated file.
+- **The `throws` set names a type and never a variant** (D4). A variant with **named** fields is written as a struct literal, and the derivation recorded `ConfigError::BadSyntax` for it where the tuple form one line up recorded `ConfigError`. One error type, two entries — and a set of two is a set nothing can be named after, so the defect hid the other two.
+
+### Added
+
+- **`nikaia_std::error::Thrown[E]`**, the envelope a named channel carries: the author's value plus the site [ADR-023](docs/specification/adr/adr-023.md) D6 says an error knows. A type of its own rather than a generic `Raised`, because `Box<dyn Error>` does not implement `Error` and one type cannot be bounded to cover both without the impls overlapping.
+- **The channel decision, in the emitter** (D1): `Result<T, Thrown[E]>` where the set has exactly one member and the member is a type this unit declares; the box everywhere else. The error type carries a lifetime exactly when it carries a view, spelled by the position — [ADR-008](docs/specification/adr/adr-008.md) D9's derivation, one position over.
+- **The envelope is opened once, at the handler's binding** (D2), so `match error` is the plain match the source wrote, `f"{error}"` is the author's message, and `error.full()` is assembled from the two halves. A handler that never reads the error binds `_error` ([ADR-090](docs/specification/adr/adr-090.md)) and there is nothing to open.
+- **`throw error` passes the error on with the site it was raised at** (D3), not the one it was caught at.
+
+### What keeps the box, and why each does
+
+- **A `"?"` in the set** is *something this compiler cannot name*, so there is no name to write. **A set with two members** needs the generated sum [ADR-023](docs/specification/adr/adr-023.md) D1 implies, which is not built — a channel named after one of two error types would be a lie. **A type another package declares** is not this unit's to name in a signature. **A method that implements a trait** answers with the channel the trait declares.
+- **Which is every failing function in the corpus**, because `std`'s ledger writes `throws = ["?"]` throughout. That is also what makes the change safe: the tree does not go through the new path at all, and the programs that do are the specification's. `docs/open-work.md` §2.13 now carries the two halves that are left — the generated sum, and `std` naming its errors.
+
+### Held to by running it
+
+- Eleven tests in `crates/nikaia/tests/error_types.rs`, **seven of which compile and run the program**: a lowering that looks right and does not compile is exactly the defect this closes, so reading the Rust would not have caught it.
+
 ## [0.0.72] — 2026-09-20
 
 A baseline that recorded **which error `rustc` reports first**, and therefore

@@ -264,7 +264,24 @@ fn error_type(parsed: &Parsed, thrown: &Expr) -> Option<String> {
     match thrown {
         Expr::Path(segments) => segments.first().map(|s| parsed.text(*s).to_string()),
         Expr::Call { func, .. } => error_type(parsed, func),
-        Expr::StructLit { name, .. } => Some(parsed.text(*name).to_string()),
+        // **The type and not the variant.**
+        // [ADR-023](../../../../docs/specification/adr/adr-023.md) D1 records a
+        // set of error **types**, and D4 puts the variants on the other axis:
+        // the set of types arriving at a `catch` is open, the variants within
+        // one type are closed. A variant with **named** fields is written as a
+        // struct literal — `ConfigError::BadSyntax { line, expected }` — and its
+        // name carries the path, so the column read `ConfigError::BadSyntax`
+        // where the tuple form one line up read `ConfigError`. One error type,
+        // two entries, and a set of two is a set nothing can be named after
+        // ([ADR-157](../../../../docs/specification/adr/adr-157.md) D1).
+        Expr::StructLit { name, .. } => Some(
+            parsed
+                .text(*name)
+                .split("::")
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+        ),
         _ => None,
     }
 }

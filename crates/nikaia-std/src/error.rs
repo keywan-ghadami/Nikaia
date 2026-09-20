@@ -110,6 +110,99 @@ where
     })
 }
 
+/// The same envelope, over an error type the compiler could **name**
+/// ([ADR-157](../../../docs/specification/adr/adr-157.md) D1).
+///
+/// Where a function's inferred error set is one type this program declares, the
+/// failure channel is that type rather than a box, and this is what travels in
+/// it: the author's value, plus the site [ADR-023](../../../docs/specification/adr/adr-023.md)
+/// D6 says an error knows.
+///
+/// **A type of its own rather than a generic [`Raised`]**, and the reason is
+/// the language below: `Box<dyn Error>` does not implement `Error`, so one type
+/// cannot be bounded to cover both the box and a named error without the two
+/// impls overlapping. Two envelopes, each honest about what it holds, is the
+/// shape that compiles — and the box keeps its own `full()` with the cause
+/// chain, which the named case does not need because an author's `enum` has no
+/// cause below it.
+pub struct Thrown<E> {
+    inner: E,
+    origin: &'static str,
+    trace: Option<Backtrace>,
+}
+
+impl<E> Thrown<E> {
+    /// The error the program actually threw, taken out of the envelope.
+    ///
+    /// What a `catch` binds: `match error { ConfigError::NotFound(p) => … }` is
+    /// about the author's `enum` and not about what the language wrapped it in
+    /// (D2). By value, because a `catch` owns what it was handed.
+    pub fn thrown(self) -> E {
+        self.inner
+    }
+
+    /// Where the `throw` was, as the compiler wrote it.
+    pub fn origin(&self) -> &'static str {
+        self.origin
+    }
+}
+
+impl<E: fmt::Display> Thrown<E> {
+    /// Everything, for an operator — [`Raised::full`]'s answer for a named
+    /// error.
+    pub fn full(&self) -> String {
+        let mut out = format!("{}\n  raised at {}", self.inner, self.origin);
+        match &self.trace {
+            Some(t) if t.status() == BacktraceStatus::Captured => {
+                out.push_str(&format!("\n{t}"));
+            }
+            _ => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
+        }
+        out
+    }
+}
+
+impl<E: fmt::Display> fmt::Display for Thrown<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl<E: fmt::Display> fmt::Debug for Thrown<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} (raised at {})", self.inner, self.origin)
+    }
+}
+
+impl<E: Error> Error for Thrown<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.inner.source()
+    }
+}
+
+/// What `throw` lowers to where the channel is **the error type** (D1).
+///
+/// No `Box` and no `'static`, which is the half a typed channel buys: an error
+/// carrying a view of the caller's buffer — `ConfigError::NotFound(path)`,
+/// Part I 7.1's own example — has a lifetime, and boxing it into a
+/// `Box<dyn Error>` asks it to outlive the program (`E0521`).
+pub fn throwing<E>(error: E, origin: &'static str) -> Thrown<E> {
+    Thrown {
+        inner: error,
+        origin,
+        trace: tracing().then(Backtrace::force_capture),
+    }
+}
+
+/// The long form of an error a named channel handed a handler, which has the
+/// site in a local beside it rather than inside it (D2).
+///
+/// `error.full()` is what Part I 7.1 writes and it is an ordinary call there;
+/// here the envelope is already open, so the two halves arrive separately.
+pub fn full_of<E: fmt::Display>(error: &E, origin: &'static str) -> String {
+    format!("{error}\n  raised at {origin}")
+}
+
 /// `error.full()` on whatever a `catch` bound.
 ///
 /// A `catch` binds the failure channel's type, which is a box. An error that

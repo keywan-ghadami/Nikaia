@@ -567,38 +567,41 @@ no set to diff.
 matching on `error`; a new failure in any callee reaches all of them in
 silence today.
 
-*What it needs:* error types lowered as enums, which [ADR-023](specification/adr/adr-023.md)
-D1's set already waits on; then the set written and diffed; then the note and
-the `--locked` failure, which are the `NK2401` machinery over one more column.
-The first of those is the entry below — *an error type is lowered as the `enum`
-it is* — and is the thing this entry waits on.
+*What it needs:* `std` naming its error types, so that there is a set to diff at
+all; then the set written and diffed; then the note and the `--locked` failure,
+which are the `NK2401` machinery over one more column. The entry below carries
+the first, and is the thing this entry waits on.
 
-### 2.13. An error type is lowered as the `enum` it is
+### 2.13. A set with two error types in it has no channel, and `std` names none
 
 [ADR-023](specification/adr/adr-023.md) D1 records `throws` as a **set** of
-error types; [ADR-013](specification/adr/adr-013.md) D3 lowers every `throws`
-to one boxed error, so the set has no members to name — `std.contracts` writes
-`throws = ["?"]` on every entry, and Stage 0 writes `true` for a program's own.
-Part I 7.1's `enum ConfigError` with `impl Error for ConfigError` parses and
-lowers as a type; what does not exist is the lowering that makes it *the*
-error a function fails with, so that a `throw ConfigError::NotFound(path)`
-reaches a `catch` as that variant and the ledger can write the name down.
+error types, and [ADR-157](specification/adr/adr-157.md) D1 built the half of
+the lowering a set with **one** member needs: the channel is that type, a
+`catch` matches on its variants, and Part I 7.1's own example is a program that
+runs. Two halves are left, and the second is what keeps the first out of reach
+of every program in the tree.
 
-*What waits on it:* the `throws` set (ADR-023 D1), the note over `catch` sites
-and the `--locked` failure (*an error that newly reaches a `catch` is named
-once*, [ADR-101](specification/adr/adr-101.md)),
-the reserved `NK2401` case for a `catch` that stops covering its arrivals, and
-`match error { … }` over a variant from a callee in another package.
+*What is left.* **The generated sum**, for a set with two or more members: one
+`enum` per function over what its body throws and what its callees throw, with
+the conversions propagation needs, and the ledger writing the members. Until it
+exists, such a function keeps the opaque channel and a `match` over variants is
+not lowerable there.
 
-*What it needs:* a function's error type as the sum of what its body throws
-and what its callees throw — one generated `enum` per function where the set
-has more than one member, with the conversions the propagation needs — and the
-ledger writing the members. The whole-program inference is ADR-023 D1's; what
-is unbuilt is the emitter's half.
+*And what stands in front of it.* **`std` names no error types.** Every entry in
+`std.contracts` writes `throws = ["?"]`, so every function that reads a file has
+a set nothing can be named after — which is every failing function in
+`examples/` and `benches/`. Naming them is a decision about a published surface
+(what `std`'s error types are, and where they live) rather than a piece of work,
+so it belongs in [`open-decisions.md`](open-decisions.md) when it is asked.
 
-*Evidence: none yet beyond the `["?"]` in every entry.* No program in the tree
-matches on an error variant that crossed a function boundary, because none
-can.
+*What waits on both:* the note over `catch` sites and the `--locked` failure
+(*an error that newly reaches a `catch` is named once*,
+[ADR-101](specification/adr/adr-101.md)), the reserved `NK2401` case for a
+`catch` that stops covering its arrivals, and `match error { … }` over a variant
+from a callee in another package.
+
+*Evidence:* `throws = ["?"]` in every `std` entry, and 18 of them in the corpus'
+own ledgers — one named error set between them.
 
 ### 2.14. A parameter may be a function, and a kept one has no lowering
 

@@ -512,6 +512,16 @@ const REACHED: &str = "__nikaia_it";
 /// ([ADR-090](../../docs/specification/adr/adr-090.md)).
 const CAUGHT: &str = "error";
 
+/// Where the local holding a caught error's **site** is kept
+/// ([ADR-157](../../docs/specification/adr/adr-157.md) D2).
+///
+/// A named channel's envelope is opened at the handler's binding, so the error
+/// the source names is the author's own value — and `throw error` needs the
+/// site back to pass the error on with the place it was **raised** rather than
+/// the place it was caught ([ADR-023](../../docs/specification/adr/adr-023.md)
+/// D6). Spelled so that no Nikaia name collides with it.
+const SITE: &str = "__nikaia_site";
+
 impl Out {
     fn push(&mut self, text: &str) {
         self.buf.push_str(text);
@@ -1092,6 +1102,14 @@ struct Emitter<'p> {
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
     library: crate::contracts::Ledger,
+    /// The types **this unit declares and gives an `impl Error`**
+    /// ([ADR-157](../../docs/specification/adr/adr-157.md) D1).
+    ///
+    /// What is thrown implements `Error` and the `impl` line says so (Part I
+    /// 7.1, `NK1161`), so this is the set a failure channel may be named after:
+    /// a name here resolves in the generated file, and one another package
+    /// declares does not.
+    declared_errors: std::collections::BTreeSet<String>,
     /// ADR-033: whether two statements that meet on nothing may overlap.
     /// What the program's `impl` blocks declare, which is what makes the fold
     /// adapter of D2 a lookup rather than a guess.
@@ -1372,6 +1390,16 @@ struct Flow<'a> {
     /// `catch` was written in, because a failure raised *there* leaves the
     /// function like any other.
     caught: bool,
+    /// What is being emitted is a `catch`'s **handler**, and the error it was
+    /// handed came through a **named** channel
+    /// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+    ///
+    /// One statement in a handler reads it: `throw error`, which passes the
+    /// error on with the site it was raised at rather than wrapping it again.
+    /// It does **not** reach inward past a function boundary, for the reason
+    /// the binding does not either: a lambda inside a handler has its own
+    /// `error` or none.
+    caught_named: bool,
     /// The byte the statement being emitted starts at.
     ///
     /// It is here because the checker's answer about method calls is keyed by
@@ -1497,6 +1525,7 @@ impl Flow<'_> {
         throws: false,
         origin: "",
         caught: false,
+        caught_named: false,
         statement: usize::MAX,
         function: "",
         in_lambda: false,
@@ -1518,6 +1547,20 @@ impl Flow<'_> {
     fn guarded(self) -> Self {
         Flow {
             caught: true,
+            ..self
+        }
+    }
+
+    /// The surroundings a `catch`'s **handler** is emitted in
+    /// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+    ///
+    /// The handler runs outside the guard — a failure raised *there* leaves
+    /// the function like any other — so this is the flow the `catch` was
+    /// written in, plus what the handler alone knows: whether the error it was
+    /// handed came through a named channel.
+    fn handling(self, named: bool) -> Self {
+        Flow {
+            caught_named: named,
             ..self
         }
     }
@@ -1653,6 +1696,7 @@ impl<'p> Emitter<'p> {
             build,
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
+            declared_errors: declared_errors(parsed),
             carries_input: crate::views::carried(parsed),
             grammars,
             structs,
@@ -1854,10 +1898,20 @@ impl<'p> Emitter<'p> {
             UserParallelism::No => "Sequential",
             UserParallelism::Yes => "Concurrent",
         };
+        // **The runtime's `main` declares the program's own channel**
+        // ([ADR-157](../../docs/specification/adr/adr-157.md) D1): it hands
+        // `__nikaia_main`'s outcome straight back, so the two have to agree.
+        // `Result<(), E>` is a `Termination` for any `E: Debug`, which every
+        // envelope is.
+        //
+        // `main` has no parameters, so there is nothing to borrow from and an
+        // error carrying a view can only be `'static` — D9's derivation, one
+        // position over.
+        let channel = self.error_channel(MAIN, Lifetimes::ELIDED, false);
         let ret = if throws {
-            " -> Result<(), Box<dyn std::error::Error>>"
+            format!(" -> Result<(), {channel}>")
         } else {
-            ""
+            String::new()
         };
 
         for line in [
@@ -2832,8 +2886,21 @@ impl<'p> Emitter<'p> {
             }
             None => "()".to_string(),
         };
+        // **The failure channel** ([ADR-157](../../docs/specification/adr/adr-157.md)
+        // D1): the error type where the ledger names exactly one, the box
+        // otherwise. A method that implements a **trait** keeps the box, and
+        // has to: the trait's own declaration writes the channel, and an `impl`
+        // answering with another type would not satisfy it.
+        let channel = match owner.and_then(|o| o.declared_by) {
+            Some(_) => "Box<dyn std::error::Error>".to_string(),
+            None => self.error_channel(
+                &key,
+                lifetimes,
+                receiver.is_some() || args.iter().any(|a| self.carries_a_view(&a.ty)),
+            ),
+        };
         let ret = if *throws {
-            format!(" -> Result<{returned}, Box<dyn std::error::Error>>")
+            format!(" -> Result<{returned}, {channel}>")
         } else if ret_type.is_some() {
             format!(" -> {returned}")
         } else {
@@ -2931,6 +2998,10 @@ impl<'p> Emitter<'p> {
             throws,
             origin: key.rsplit("::").next().unwrap_or(key),
             caught: false,
+            // A function body is not a handler, whatever the call to it sits
+            // inside: the boundary `in_lambda` does not cross, this does not
+            // cross either.
+            caught_named: false,
             statement: usize::MAX,
             function: key,
             // A function body was not written inside whatever lambda the call
@@ -4427,7 +4498,24 @@ impl<'p> Emitter<'p> {
                 method,
                 args,
                 config,
-            } => self.method_call(out, Some(receiver), *method, args, config, depth, flow)?,
+            } => {
+                // **`error.full()` in a handler a named channel reached**
+                // ([ADR-157](../../docs/specification/adr/adr-157.md) D2). Part
+                // I 7.1 writes it as an ordinary call, and it is one — but the
+                // envelope was opened at the binding, so the two halves of the
+                // long form are `error` and the site beside it rather than one
+                // value with a method on it.
+                let long_form = flow.caught_named
+                    && self.text(*method) == "full"
+                    && args.is_empty()
+                    && matches!(receiver.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT);
+                match long_form {
+                    true => out.push(&format!("nikaia_std::error::full_of(&{CAUGHT}, {SITE})")),
+                    false => {
+                        self.method_call(out, Some(receiver), *method, args, config, depth, flow)?
+                    }
+                }
+            }
             // Part I 3.5 onto a **method**
             // ([ADR-066](../../../docs/specification/adr/adr-066.md)): the call
             // happens only where there is something to call it on.
@@ -4855,8 +4943,25 @@ impl<'p> Emitter<'p> {
                         true => CAUGHT,
                         false => "_error",
                     };
+                // **What the handler was handed**
+                // ([ADR-157](../../docs/specification/adr/adr-157.md) D2). A
+                // named channel hands it an **envelope** — the author's error
+                // plus the site it was raised at — and what Part I 7.1 gives
+                // the handler is the error: `match error { ConfigError::… }`
+                // names variants, and `{error}` is the message the author
+                // wrote. So the envelope is opened **once, at the binding**,
+                // and the site is kept in a local beside it for the one
+                // statement that needs it back (`throw error`, D3).
+                let named = bound == CAUGHT && self.caught_channel_is_named(expr);
+                let flow = flow.handling(named);
+                let opened = match named {
+                    false => String::new(),
+                    true => format!(
+                        "{{ let {SITE} = {CAUGHT}.origin(); let {CAUGHT} = {CAUGHT}.thrown(); "
+                    ),
+                };
                 out.push(&format!(
-                    " {{\n{pad}Ok(value) => value,\n{pad}Err({bound}) => "
+                    " {{\n{pad}Ok(value) => value,\n{pad}Err({bound}) => {opened}"
                 ));
                 // Kap 7.1 and ADR-034: the handler's last statement is the
                 // value of the `catch`, so a `return` in it is the *function's*
@@ -4865,6 +4970,9 @@ impl<'p> Emitter<'p> {
                 // guarded read, so dropping it here made the ordering analysis
                 // reason about a control flow the emitted program did not have.
                 self.block(out, handler, depth + 1, flow, Tail::Value)?;
+                if named {
+                    out.push(" }");
+                }
                 out.push(&format!(",\n{close}}}"));
             }
             Expr::Try(inner) => {
@@ -4917,7 +5025,28 @@ impl<'p> Emitter<'p> {
                 out.push(word);
             }
             Expr::Throw(inner) => {
-                out.push("return Err(nikaia_std::error::raise(");
+                // **`throw error` inside a handler passes the error on**
+                // ([ADR-157](../../docs/specification/adr/adr-157.md) D3), with
+                // the site it was **raised** at and not the one it was caught
+                // at, which is what
+                // [ADR-023](../../docs/specification/adr/adr-023.md) D6 asks
+                // for. The handler's binding opened the envelope; this is where
+                // it is closed again.
+                let passing_on = flow.caught_named
+                    && matches!(inner.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT);
+                if passing_on {
+                    out.push(&format!(
+                        "return Err(nikaia_std::error::throwing({CAUGHT}, {SITE}))"
+                    ));
+                    return Ok(());
+                }
+                // A named channel takes the value itself; the box takes it
+                // boxed, which is what `raise` does and what needs `'static`.
+                let raise = match self.named_error(flow.function) {
+                    Some(_) => "nikaia_std::error::throwing(",
+                    None => "nikaia_std::error::raise(",
+                };
+                out.push(&format!("return Err({raise}"));
                 self.expr(out, inner, depth, flow)?;
                 out.push(&format!(", {:?}))", flow.origin));
             }
@@ -5774,6 +5903,87 @@ impl<'p> Emitter<'p> {
     /// the `&`, so it is this question it wants answered.
     fn carries_a_view(&self, ty: &Type) -> bool {
         ty.is_view || self.borrows(ty.name) || ty.generics.iter().any(|g| self.carries_a_view(g))
+    }
+
+    /// The **one error type** a function's failures can be, where the ledger
+    /// names exactly one ([ADR-157](../../docs/specification/adr/adr-157.md)
+    /// D1).
+    ///
+    /// `throws` in the source says *that* a function fails; the ledger's set
+    /// says *with what*, derived over the call graph
+    /// ([ADR-023](../../docs/specification/adr/adr-023.md) D1). Where that set
+    /// has exactly one member and the member is a type **this unit declares**,
+    /// the failure channel is that type, and a `catch` can match on its
+    /// variants — which is Part I 7.1's own example and what a box makes
+    /// impossible.
+    ///
+    /// `None` is the box, and it is the answer for everything else: a `"?"` in
+    /// the set is *something this compiler cannot name*, a set with two members
+    /// needs the generated sum that is not built, and a type another package
+    /// declares is not this unit's to name in a signature.
+    fn named_error(&self, key: &str) -> Option<&str> {
+        let throws = &self.own_contracts.functions.get(key)?.throws;
+        let [one] = throws.as_slice() else {
+            return None;
+        };
+        if one == crate::contracts::UNNAMED_ERROR {
+            return None;
+        }
+        self.declared_errors.contains(one).then_some(one.as_str())
+    }
+
+    /// The type a function's failures travel in.
+    ///
+    /// `borrows` is the same question the result position asks
+    /// ([ADR-008](../../docs/specification/adr/adr-008.md) D9): an error that
+    /// carries a view — `ConfigError::NotFound(path)`, Part I 7.1's own — is a
+    /// type with a lifetime, and a function with nothing to borrow from can
+    /// only write `'static` for it.
+    fn error_channel(&self, key: &str, lifetimes: Lifetimes, borrows: bool) -> String {
+        match self.named_error(key) {
+            None => "Box<dyn std::error::Error>".to_string(),
+            Some(name) => {
+                let params = match self.borrows_named(name) {
+                    false => String::new(),
+                    true => match lifetimes == Lifetimes::ELIDED && !borrows {
+                        true => format!("<{}>", Lifetimes::STATIC.params),
+                        false => format!("<{}>", lifetimes.params),
+                    },
+                };
+                format!("nikaia_std::error::Thrown<{name}{params}>")
+            }
+        }
+    }
+
+    /// [`Emitter::borrows`] for a type named as text rather than as a `Symbol`.
+    ///
+    /// The ledger's `throws` column carries names, and a name interned by
+    /// another parse is not this one's `Symbol`.
+    fn borrows_named(&self, name: &str) -> bool {
+        self.tethered.contains(name) || self.borrowing.iter().any(|sym| self.text(*sym) == name)
+    }
+
+    /// Whether what a `catch` guards fails through a **named** channel.
+    ///
+    /// Only the outermost call, and only a call by name: a `catch` guards one
+    /// call in every program in the tree, and a guess about a shape nobody
+    /// writes would be a guess in the lowering. A `false` where the answer was
+    /// yes is today's lowering, unchanged.
+    fn caught_channel_is_named(&self, expr: &Expr) -> bool {
+        let name = match expr {
+            Expr::Call { func, .. } => match func.as_ref() {
+                Expr::Variable(name) => self.text(*name).to_string(),
+                Expr::Path(segments) => segments
+                    .iter()
+                    .map(|s| self.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                _ => return false,
+            },
+            Expr::Try(inner) => return self.caught_channel_is_named(inner),
+            _ => return false,
+        };
+        self.named_error(&self.parsed.unaliased(&name)).is_some()
     }
 
     /// Whether a function of **this program** can pause, and is therefore an
@@ -7090,6 +7300,29 @@ fn is_a_place(expr: &Expr) -> bool {
 /// exactly the structs [`borrowing_structs`] finds in the file that declares
 /// them (`Ledger::infer_checked` computes it from that set), so this carries the
 /// same fact across a file boundary rather than recomputing a different one.
+/// The types this unit declares an `impl Error for …` for.
+///
+/// The trait's name and nothing more: `Error` is the one trait this compiler
+/// reads by name (`NK1130`'s note says so), and Part I 7.1 makes the `impl`
+/// line the marker — *what is thrown implements `Error`, and the `impl` line
+/// says so*.
+fn declared_errors(parsed: &Parsed) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for item in &parsed.program.items {
+        if let Item::Impl {
+            trait_name: Some(trait_name),
+            target,
+            ..
+        } = &item.node
+        {
+            if parsed.text(*trait_name) == "Error" {
+                out.insert(parsed.text(target.name).to_string());
+            }
+        }
+    }
+    out
+}
+
 fn tethered_types(contracts: &crate::contracts::Ledger) -> std::collections::BTreeSet<String> {
     contracts
         .types

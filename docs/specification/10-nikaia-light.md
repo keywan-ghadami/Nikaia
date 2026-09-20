@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.72 (Draft)
+**Version:** 0.0.73 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -2285,9 +2285,17 @@ let config = load() catch {
 }
 ```
 
-> **Implementation status:** Implemented. The patterns of 3.4 are built, `..`
+> **Implementation status:** Implemented, where the compiler can **name** what
+> arrives ([ADR-157](adr/adr-157.md) D1). The patterns of 3.4 are built, `..`
 > in a named pattern among them ([ADR-137](adr/adr-137.md) §5), and a bare
-> `throw` is an arm's body ([ADR-138](adr/adr-138.md) §5).
+> `throw` is an arm's body ([ADR-138](adr/adr-138.md) §5) — and since
+> [ADR-157](adr/adr-157.md) the failure channel is the **error type** where the
+> inferred set has exactly one member, so the block above is a program that
+> runs. Where the set has two members, or a member this compiler cannot name,
+> the channel is one opaque error and a `match` over its variants is not
+> lowerable: `catch { 8080 }` and `f"{error}"` are what such a handler has.
+> Every function in `examples/` reaching `std` is in that second case, because
+> `std`'s ledger names no error types yet. `docs/open-work.md` carries both.
 
 **Two sets differ.** The **variants of an error type** are closed: a `match`
 over them is exhaustive, and adding one is a breaking change. The **set of

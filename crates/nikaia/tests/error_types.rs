@@ -1,0 +1,336 @@
+//! The failure channel is **the error type**, where the ledger names one
+//! ([ADR-157](../../../docs/specification/adr/adr-157.md)).
+//!
+//! [ADR-023](../../../docs/specification/adr/adr-023.md) D1 records `throws` as
+//! a **set of error types** and the ledger has derived it for a long time; D3
+//! makes an error type an `enum` and D4 makes its variants closed, so a `catch`
+//! matches on them. What stood between the two was the **channel**: every
+//! `throws` lowered to `Result<T, Box<dyn Error>>`, and a `match error {
+//! ConfigError::NotFound(p) => … }` over a box is not a program the language
+//! below accepts.
+//!
+//! So Part I 7.1's own `catch` example — the one its Status note called
+//! *implemented* — lowered to Rust that does not compile, with `rustc` naming a
+//! type in a file the author never wrote. That is
+//! [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class of
+//! defect, and it is what these tests hold closed.
+
+mod common;
+
+use nikaia::contracts::{Ledger, STD};
+use nikaia::emit::{emit_program, Build};
+use nikaia::parser::parse_to_ast;
+
+fn findings(source: &str) -> Vec<nikaia::check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
+        .findings
+}
+
+fn lowered(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit_program(&parsed, Build::default())
+        .expect("the source lowers")
+        .rust
+}
+
+fn throws_of(source: &str, of: &str) -> Vec<String> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    Ledger::infer(&parsed).functions[of].throws.clone()
+}
+
+/// Lower it, compile it, run it, and hand back what it printed — which is the
+/// only way to hold C.1 closed: a lowering that *looks* right and does not
+/// compile is exactly the defect.
+fn output(purpose: &str, source: &str) -> String {
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    let dir = common::scratch_dir(purpose);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    assert!(
+        ran.status.success(),
+        "the program runs:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    String::from_utf8_lossy(&ran.stdout).trim().to_string()
+}
+
+/// Part I 7.1's error type, with both variant shapes it writes.
+const CONFIG_ERROR: &str = "enum ConfigError {\n\
+                            \x20   NotFound(&str),\n\
+                            \x20   BadSyntax { line: i64, expected: &str },\n\
+                            }\n\
+                            \n\
+                            impl Error for ConfigError {\n\
+                            \x20   fn message(&self) -> String {\n\
+                            \x20       match self {\n\
+                            \x20           ConfigError::NotFound(p) => f\"no config at {p}\"\n\
+                            \x20           ConfigError::BadSyntax { line, expected } => f\"line {line}: expected {expected}\"\n\
+                            \x20       }\n\
+                            \x20   }\n\
+                            }\n\n";
+
+// ---------------------------------------------------------------------------
+// D1: the channel
+// ---------------------------------------------------------------------------
+
+/// **The channel is the error type** (D1), so the signature names it and a
+/// handler can see what it caught.
+#[test]
+fn a_function_with_one_error_type_declares_it() {
+    let rust = lowered(&format!(
+        "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+         \x20   throw ConfigError::NotFound(\"etc\")\n\
+         }}\n\
+         fn main() {{ }}\n"
+    ));
+    assert!(
+        rust.contains("nikaia_std::error::Thrown<ConfigError"),
+        "{rust}"
+    );
+    assert!(!rust.contains("fn load() -> Result<i64, Box<dyn"), "{rust}");
+}
+
+/// **A set with `"?"` in it keeps the box**, which is what `"?"` means: the
+/// compiler cannot name what this fails with, so nothing can be named after it.
+#[test]
+fn a_function_that_reaches_std_keeps_the_box() {
+    let rust = lowered(
+        "use std::fs\n\
+         fn load(path: &str) -> String throws {\n\
+         \x20   return fs::read_to_string(&path)\n\
+         }\n\
+         fn main() { }\n",
+    );
+    assert!(rust.contains("Box<dyn std::error::Error>"), "{rust}");
+}
+
+/// **And a set with two members keeps it too.** The generated sum
+/// [ADR-023](../../../docs/specification/adr/adr-023.md) D1 implies is not
+/// built, and a channel named after one of two error types would be a lie.
+#[test]
+fn two_error_types_keep_the_box() {
+    let source = format!(
+        "{CONFIG_ERROR}enum NetError {{ Down }}\n\
+         impl Error for NetError {{\n\
+         \x20   fn message(&self) -> String {{ return \"down\" }}\n\
+         }}\n\
+         fn load(down: bool) -> i64 throws {{\n\
+         \x20   if down {{ throw NetError::Down }}\n\
+         \x20   throw ConfigError::NotFound(\"etc\")\n\
+         }}\n\
+         fn main() {{ }}\n"
+    );
+    assert_eq!(throws_of(&source, "load"), vec!["ConfigError", "NetError"]);
+    assert!(
+        lowered(&source).contains("fn load(down: bool) -> Result<i64, Box<dyn"),
+        "{}",
+        lowered(&source)
+    );
+}
+
+/// **The set names the error *type*, never one of its variants**
+/// ([ADR-023](../../../docs/specification/adr/adr-023.md) D1, D4). A variant
+/// with named fields is written as a struct literal, and the column used to
+/// record `ConfigError::BadSyntax` for it — one error type, two entries, and a
+/// set of two is a set nothing can be named after.
+#[test]
+fn a_named_field_variant_is_its_type_in_the_set() {
+    let source = format!(
+        "{CONFIG_ERROR}fn load(bad: bool) -> i64 throws {{\n\
+         \x20   if bad {{ throw ConfigError::BadSyntax {{ line: 3, expected: \"a number\" }} }}\n\
+         \x20   throw ConfigError::NotFound(\"etc\")\n\
+         }}\n\
+         fn main() {{ }}\n"
+    );
+    assert_eq!(throws_of(&source, "load"), vec!["ConfigError"]);
+}
+
+/// **An error that carries a view is a type with a lifetime**, and a typed
+/// channel is what lets it have one: `Box<dyn Error>` is `'static`, so
+/// `ConfigError::NotFound(path)` — Part I 7.1's own line — used to be
+/// *borrowed data escapes outside of function* (`E0521`) about a generated
+/// file.
+#[test]
+fn an_error_that_borrows_the_caller_s_buffer_compiles() {
+    let printed = output(
+        "error-borrowing",
+        &format!(
+            "{CONFIG_ERROR}fn load(path: &str) -> i64 throws {{\n\
+             \x20   throw ConfigError::NotFound(path)\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let port = load(\"etc\") catch {{ 8080 }}\n\
+             \x20   println(f\"{{port}}\")\n\
+             }}\n"
+        ),
+    );
+    assert_eq!(printed, "8080");
+}
+
+// ---------------------------------------------------------------------------
+// D2: what a handler was handed
+// ---------------------------------------------------------------------------
+
+/// **Part I 7.1's own `catch`, as a program that runs.** This is the defect the
+/// record closes: the page writes this and called it implemented, and it did
+/// not compile.
+#[test]
+fn the_pages_own_catch_runs() {
+    let printed = output(
+        "error-catch-page",
+        &format!(
+            "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+             \x20   throw ConfigError::BadSyntax {{ line: 7, expected: \"a number\" }}\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let port = load() catch {{\n\
+             \x20       match error {{\n\
+             \x20           ConfigError::NotFound(p) => 1\n\
+             \x20           ConfigError::BadSyntax {{ line, .. }} => line\n\
+             \x20           else => 8080\n\
+             \x20       }}\n\
+             \x20   }}\n\
+             \x20   println(f\"{{port}}\")\n\
+             }}\n"
+        ),
+    );
+    assert_eq!(printed, "7");
+}
+
+/// **`{error}` is still the message the author wrote** (Part I 7.1), because
+/// opening the envelope hands the handler the author's own value.
+#[test]
+fn the_short_form_is_the_authors_message() {
+    let printed = output(
+        "error-short-form",
+        &format!(
+            "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+             \x20   throw ConfigError::NotFound(\"etc\")\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let port = load() catch {{\n\
+             \x20       println(f\"{{error}}\")\n\
+             \x20       8080\n\
+             \x20   }}\n\
+             \x20   println(f\"{{port}}\")\n\
+             }}\n"
+        ),
+    );
+    assert_eq!(printed, "no config at etc\n8080");
+}
+
+/// **And `error.full()` still names the site**
+/// ([ADR-023](../../../docs/specification/adr/adr-023.md) D6). The envelope was
+/// opened at the binding, so the long form is assembled from the two halves
+/// rather than from one value — which is the lowering's business and not the
+/// page's.
+#[test]
+fn the_long_form_names_the_site() {
+    let printed = output(
+        "error-long-form",
+        &format!(
+            "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+             \x20   throw ConfigError::NotFound(\"etc\")\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let port = load() catch {{\n\
+             \x20       println(f\"{{error.full()}}\")\n\
+             \x20       8080\n\
+             \x20   }}\n\
+             \x20   println(f\"{{port}}\")\n\
+             }}\n"
+        ),
+    );
+    assert!(printed.contains("no config at etc"), "{printed}");
+    assert!(printed.contains("raised at load"), "{printed}");
+}
+
+// ---------------------------------------------------------------------------
+// D3: passing it on
+// ---------------------------------------------------------------------------
+
+/// **`throw error` passes the error on** (D3), and it keeps the site it was
+/// raised at rather than taking the handler's — which is what
+/// [ADR-023](../../../docs/specification/adr/adr-023.md) D6 asks for.
+#[test]
+fn a_handler_may_pass_the_error_on() {
+    let printed = output(
+        "error-passed-on",
+        &format!(
+            "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+             \x20   throw ConfigError::NotFound(\"etc\")\n\
+             }}\n\
+             fn again() -> i64 throws {{\n\
+             \x20   return load() catch {{\n\
+             \x20       match error {{\n\
+             \x20           ConfigError::BadSyntax {{ .. }} => 1\n\
+             \x20           else => throw error\n\
+             \x20       }}\n\
+             \x20   }}\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let port = again() catch {{ println(f\"{{error.full()}}\") 8080 }}\n\
+             \x20   println(f\"{{port}}\")\n\
+             }}\n"
+        ),
+    );
+    assert!(printed.contains("raised at load"), "{printed}");
+    assert!(printed.ends_with("8080"), "{printed}");
+}
+
+/// **A failure propagates without being written**
+/// ([ADR-023](../../../docs/specification/adr/adr-023.md) D8), and a typed
+/// channel carries it the same way a box did: the caller's set is the callee's,
+/// so the two agree by construction.
+#[test]
+fn a_failure_propagates_through_a_typed_channel() {
+    let printed = output(
+        "error-propagates",
+        &format!(
+            "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+             \x20   throw ConfigError::NotFound(\"etc\")\n\
+             }}\n\
+             fn outer() -> i64 throws {{\n\
+             \x20   return load()\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let port = outer() catch {{ 8080 }}\n\
+             \x20   println(f\"{{port}}\")\n\
+             }}\n"
+        ),
+    );
+    assert_eq!(printed, "8080");
+}
+
+/// **A handler that never reads the error is untouched**
+/// ([ADR-090](../../../docs/specification/adr/adr-090.md)): the binding is
+/// `_error` and there is no envelope to open.
+#[test]
+fn a_handler_that_ignores_the_error_is_untouched() {
+    let rust = lowered(&format!(
+        "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+         \x20   throw ConfigError::NotFound(\"etc\")\n\
+         }}\n\
+         fn main() {{\n\
+         \x20   let port = load() catch {{ 8080 }}\n\
+         \x20   println(f\"{{port}}\")\n\
+         }}\n"
+    ));
+    assert!(rust.contains("Err(_error)"), "{rust}");
+    assert!(!rust.contains("__nikaia_site"), "{rust}");
+}
