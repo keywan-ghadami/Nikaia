@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.96 (Draft)
+**Version:** 0.0.97 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -34,7 +34,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 * `nikaia test`: runs unit tests and fuzzers.
 * `nikaia bench`: runs performance benchmarks.
 * `nikaia fmt`: formats the source.
-* `nikaia describe <crate>`: writes the draft ledger for a Rust crate the program calls (15.2, [ADR-104](adr/adr-104.md)).
+* `nikaia describe <crate>`: writes the draft ledger for a Rust crate the program calls, from the crate's own `pub` signatures (15.2, [ADR-104](adr/adr-104.md) D2). `--project` names the directory; the default walks up from the working directory to the nearest `nikaia.toml`, because a crate is described for a **project** and the project is what declares it.
 * `nikaia bind <language>`: writes a binding for a library build from the ledger: `python` over `ctypes`, `js` for a WebAssembly build (15.1, [ADR-131](adr/adr-131.md)).
 
 **Backends.** `nikaia build`, `nikaia run` and a single-file `nikaia --input <file>.nika` that names no `--backend` compile through the `rust` backend, the Stage 0 transpiler. It is the default, the only code generator, and part of every installation ([ADR-004](adr/adr-004.md) D1). `--backend interpreter` runs a program instead of producing one. `cranelift` and `llvm` are named by [ADR-002](adr/adr-002.md) and not implemented; a build that names one is refused ([ADR-021](adr/adr-021.md) D9).
@@ -694,7 +694,7 @@ hash hold, and reviewed like code: what a signature cannot say (`touches`,
 and a signature that lies is the reviewer's to correct. Every analysis then
 reads an entry at the boundary, never an absence.
 
-> **Implementation status:** Partially implemented. A call into a crate the manifest declares with `type = "rust"` that no `contracts/<crate>.contracts` describes is refused with `NK2504`, once per crate and with the command in the message; a written type from such a crate counts as a call, and a name the build did not declare is left alone (C.4). **And the description's entries are read**, which is D1's own first sentence: the signature types the call and what it hands back, `throws` makes it a place that can fail, and `sync` makes it one a `sync` function may not make. A described crate is a **package** by the spelling rule and not one of `std`'s modules, so nothing about it is imported. `nikaia describe` (D2, D4) and the hash rule (D5) are not implemented, so a description is written by hand today, and `examples/foreign-runtime/` ships one ([ADR-104](adr/adr-104.md) §5).
+> **Implementation status:** Partially implemented. A call into a crate the manifest declares with `type = "rust"` that no `contracts/<crate>.contracts` describes is refused with `NK2504`, once per crate and with the command in the message; a written type from such a crate counts as a call, and a name the build did not declare is left alone (C.4). **And the description's entries are read**, which is D1's own first sentence: the signature types the call and what it hands back, `throws` makes it a place that can fail, and `sync` makes it one a `sync` function may not make. A described crate is a **package** by the spelling rule and not one of `std`'s modules, so nothing about it is imported. **`nikaia describe <crate>` writes the draft** for a `path` dependency (D2, D3): it reads every `.rs` under the crate's `src/`, takes the `pub fn` and `pub struct` items out of the text, translates them by the table above, and writes the file under a header that says it is to be reviewed. It is a **signature scraper** and not a Rust parser — an item a macro generates is not found, a `pub` item inside a `mod` is read as the crate's own, and a type it cannot account for is `?` — and it names what it could not answer rather than leaving a draft that looks complete. A **version** dependency is refused with its reason: those sources are in Cargo's registry cache, which [ADR-002](adr/adr-002.md) D1 hands to Cargo and never resolves here. The rustdoc-JSON reader (D4) and the hash rule (D5) are not implemented; the draft records the source hash and nothing compares it.
 
 **Thread Safety (Send/Sync)**
 Whether a value may cross into foreign code is decided from the Nikaia type of

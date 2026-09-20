@@ -648,7 +648,8 @@ describes is refused with the command in the message; `nikaia describe
 calls, from rustdoc-JSON where the toolchain has it and from the crate's
 sources where it does not, translated by Part III 15.2's table with
 `touches` and `locks` fail-closed; the file is committed, hashed against the
-crate's version, and reviewed. **Step 1 is built, and step 5 by hand.**
+crate's version, and reviewed. **Steps 1 and 2 are built, and step 5 by
+hand.**
 
 *The refusal is `NK2504`*, once per crate and with the command in the
 message — and only where the **manifest** declared the crate with
@@ -665,6 +666,22 @@ crate's `pub` signatures, which is what D5 says to expect. A fixture of the
 refusal lives in `crates/nikaia/tests/described.rs` instead, where it needs no
 network.
 
+*Step 2 is built too, for a `path` dependency.* `nikaia describe <crate>` reads
+the crate's `pub` signatures out of its sources, translates them by D3's table
+and writes the draft under a header that says it is to be **reviewed**. It is a
+**signature scraper** and not a Rust parser — an item a macro generates is not
+in the text, a `pub` item inside a `mod` is read as the crate's own, and a type
+it cannot account for is `?`. The command names what it could not answer rather
+than leaving a draft that looks complete. A version dependency is refused with
+its reason: those sources are in Cargo's registry cache, and guessing at that
+cache's shape would be resolving a version, which
+[ADR-002](specification/adr/adr-002.md) D1 hands to Cargo.
+
+*The measurement is the experiment's own file.* The draft for each of the three
+projects is asserted against the reviewed file, entry for entry and hash for
+hash. Two of the reviewed lines are not in the draft and both are D5:
+`crosses = false`, which is read from a **field**, and the comments.
+
 *And the entries reach the analyses now*, which was D1's **first sentence** and
 not an addition to it: *every analysis reaches to the boundary and reads an
 entry there*. For two records the file was read to see whether it **parsed**,
@@ -675,10 +692,11 @@ return for writing it. Measured on a three-line project: a description saying
 are in (the signature, `throws`, `sync`); the fourth is `crosses` and is not a
 gap here — see the paragraph below.
 
-*What it needs, in the record's order (§5):* the draft from the sources; the
-file's header and the hash rule — the description records the crate source's
-SHA-256 today and **nothing compares it**; the rustdoc-JSON reader behind a
-toolchain check.
+*What it needs, in the record's order (§5):* the file's header and the hash
+rule — the description records the crate source's SHA-256 today and **nothing
+compares it**, which is now the *next* step rather than the one after; the
+rustdoc-JSON reader behind a toolchain check; and a way to read a version
+dependency's sources, which the record leaves to the reviewer.
 
 *And one line of the merge is decided in the cheapest direction rather than
 decided.* A description's names carry the crate word in front of them and

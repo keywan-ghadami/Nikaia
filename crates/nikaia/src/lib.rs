@@ -7,6 +7,7 @@ pub mod ast;
 pub mod build_time;
 pub mod check;
 pub mod contracts;
+pub mod describe;
 pub mod diagnostics;
 pub mod dsl;
 pub mod emit;

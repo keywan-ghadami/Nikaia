@@ -177,6 +177,25 @@ pub enum Command {
         #[arg(long)]
         sysroot: Option<PathBuf>,
     },
+    /// Write a draft ledger for a Rust crate's boundary
+    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D2).
+    ///
+    /// The command `NK2504` names. It reads the crate's `pub` signatures,
+    /// translates them by Part III 15.2's table, and writes
+    /// `contracts/<crate>.contracts` — which is then **committed and reviewed
+    /// like code**: what a signature cannot say is written fail-closed, and a
+    /// `?` in the draft is a person's to fill (D5).
+    Describe {
+        /// The crate, under the name a program writes: `hyper-shim` in the
+        /// manifest is `hyper_shim` here, because that is the crate name Cargo
+        /// makes of the key.
+        #[arg(value_name = "CRATE")]
+        crate_name: String,
+        /// The project directory. Defaults to the working directory, and the
+        /// search walks up from there to the nearest `nikaia.toml`.
+        #[arg(long)]
+        project: Option<PathBuf>,
+    },
 }
 
 /// What this build can be asked for, for a refusal to name (ADR-021 D9).
@@ -306,12 +325,79 @@ fn lower_std(sysroot: Option<PathBuf>) -> Result<i32> {
     Ok(0)
 }
 
+/// `nikaia describe <crate>` ([ADR-104](../../../docs/specification/adr/adr-104.md) D2).
+///
+/// **What it prints is what a reviewer does next**, which is the whole reason
+/// the command exists rather than the file appearing during a build: the draft
+/// is read before it is believed, and a line that only said *written* would
+/// leave the reader to find out what is in it.
+fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
+    let start = match project {
+        Some(directory) => directory,
+        None => std::env::current_dir().context("finding the working directory")?,
+    };
+    // The same walk `--input` makes, from a directory rather than from a file:
+    // a crate is described for a **project**, because the project is what
+    // declares it (ADR-104 D1).
+    let start = start.canonicalize().unwrap_or(start);
+    let root = start
+        .ancestors()
+        .find(|dir| dir.join("nikaia.toml").is_file())
+        .map(std::path::Path::to_path_buf)
+        .with_context(|| {
+            format!(
+                "no `nikaia.toml` at or above {} - a crate is described for a project, \
+                 because the project is what declares it (ADR-104 D1)",
+                start.display()
+            )
+        })?;
+    let written = nikaia::describe::describe(&root, crate_name)?;
+    println!(
+        "Wrote {} for {crate_name} {}: {} function{}, {} type{}",
+        written.path.display(),
+        written.version,
+        written.functions,
+        match written.functions {
+            1 => "",
+            _ => "s",
+        },
+        written.types,
+        match written.types {
+            1 => "",
+            _ => "s",
+        },
+    );
+    if !written.unanswered.is_empty() {
+        println!(
+            "\n{} name{} the program writes that no `pub` signature answered - each is a \n\
+             `?` for a reviewer to fill, or a name a macro wrote (ADR-104 D4, D5):",
+            written.unanswered.len(),
+            match written.unanswered.len() {
+                1 => "",
+                _ => "s",
+            }
+        );
+        for name in &written.unanswered {
+            println!("    {name}");
+        }
+    }
+    println!(
+        "\nRead it before you believe it: what a signature cannot say is written \n\
+         fail-closed, and what it says wrongly is caught here or by nobody (ADR-104 D5)."
+    );
+    Ok(0)
+}
+
 /// `nikaia build` and `nikaia run` (Part III 13.2).
 fn project_command(args: &Cli, command: &Command) -> Result<i32> {
     let (subcommand, directory, program_args) = match command {
         Command::Build { project } => ("build", project.clone(), Vec::new()),
         Command::Run { project, args } => ("run", project.clone(), args.clone()),
         Command::LowerStd { sysroot } => return lower_std(sysroot.clone()),
+        Command::Describe {
+            crate_name,
+            project,
+        } => return describe(crate_name, project.clone()),
     };
 
     let start = match directory {

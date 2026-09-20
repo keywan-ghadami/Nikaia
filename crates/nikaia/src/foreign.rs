@@ -36,6 +36,30 @@ use crate::ast::{Block, Expr, Item, Span, Stmt, Type};
 use crate::check::{Finding, Severity};
 use crate::parser::Parsed;
 
+/// The crate word in front of a qualified name: `hyper_shim` of
+/// `hyper_shim::serve_once`, and the whole of a name with no `::` in it.
+pub fn head_of(name: &str) -> &str {
+    name.split("::").next().unwrap_or(name)
+}
+
+/// **Every qualified name this unit writes**, with the span of the statement
+/// or item it was written in.
+///
+/// The walk [`check`] runs, handed out rather than copied
+/// ([ADR-104](../../docs/specification/adr/adr-104.md) D2): what the refusal
+/// asks about is which crates a program reaches into, and what `nikaia
+/// describe` asks is which *names* of one it reaches — the same walk, read one
+/// segment further.
+pub fn qualified_names(parsed: &Parsed) -> BTreeMap<String, Span> {
+    let mut out: BTreeMap<String, Span> = BTreeMap::new();
+    for item in &parsed.program.items {
+        item_names(parsed, &item.node, &item.span, &mut |name: &str, span| {
+            out.entry(name.to_string()).or_insert_with(|| span.clone());
+        });
+    }
+    out
+}
+
 /// Every call and every written type that reaches into a crate nothing
 /// describes.
 ///
@@ -57,7 +81,8 @@ pub fn check(
             parsed,
             &item.node,
             &item.span,
-            &mut |crate_name: &str, span: &Span| {
+            &mut |name: &str, span: &Span| {
+                let crate_name = head_of(name);
                 if declared.contains(crate_name) && !described.contains(crate_name) {
                     first
                         .entry(crate_name.to_string())
@@ -136,9 +161,20 @@ fn block_names(parsed: &Parsed, block: &Block, found: &mut impl FnMut(&str, &Spa
                     // `unaliased`, because a file may write its own word for a
                     // package (ADR-046 D3) - and the manifest key is the only
                     // name the declaration has.
+                    // **The whole name and not its head**, because two
+                    // readers want it: the refusal takes the word in front
+                    // (`head_of`) and the describer takes the name after it.
                     let head = parsed.unaliased(parsed.text(*head));
-                    let head = head.split("::").next().unwrap_or(&head).to_string();
-                    found(&head, &stmt.span);
+                    let rest: Vec<String> = segments
+                        .iter()
+                        .skip(1)
+                        .map(|s| parsed.text(*s).to_string())
+                        .collect();
+                    let name = match rest.is_empty() {
+                        true => head.to_string(),
+                        false => format!("{head}::{}", rest.join("::")),
+                    };
+                    found(&name, &stmt.span);
                 }
             }
         });
@@ -153,8 +189,8 @@ fn block_names(parsed: &Parsed, block: &Block, found: &mut impl FnMut(&str, &Spa
 /// crossing rules are about.
 fn ty_names(parsed: &Parsed, ty: &Type, span: &Span, found: &mut impl FnMut(&str, &Span)) {
     let name = parsed.unaliased(parsed.text(ty.name));
-    if let Some((head, _)) = name.split_once("::") {
-        found(head, span);
+    if name.contains("::") {
+        found(&name, span);
     }
     for argument in &ty.generics {
         ty_names(parsed, argument, span, found);

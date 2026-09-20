@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.97] — 2026-09-20
+
+**`nikaia describe <crate>` writes the draft**
+([ADR-104](docs/specification/adr/adr-104.md) D2, D3) — the command `NK2504`
+has been naming since the refusal was built, and §5's step 2.
+
+### Added
+
+- **The command.** It finds the crate's declaration in the manifest, reads every `.rs` under its `src/`, takes the `pub fn` and `pub struct` items out of the text, translates them by [Part III 15.2](docs/specification/30-nikaia-tooling.md)'s table, and writes `contracts/<crate>.contracts`. An entry exists because a **program asked for it** ([ADR-028](docs/specification/adr/adr-028.md) D5), so the draft is proportional to use rather than to the crate.
+- **A header that says the file is to be reviewed.** `Ledger::render`'s own says *do not edit by hand - it is regenerated on every build*, which is exactly wrong here: a description is written once, reviewed like code, and hand-edited where a signature could not say what a field does. A file that told its reader not to make that edit would be telling them not to do the thing D5 asks of them.
+- **A signature scraper and not a Rust parser**, said in the module and in the record rather than discovered: an item a macro generates is not in the text; a `pub` item inside a `mod` is read as the crate's own, because the module path a caller writes is a thing only a real parser knows; and a type it cannot account for is `?`, which is the absence of a claim and never a guess. The command **names** what it could not answer, because a draft that silently left it out would look complete.
+- **A `path` dependency only, with the reason.** A version dependency's sources are in Cargo's registry cache, under a layout [ADR-002](docs/specification/adr/adr-002.md) D1 hands to Cargo and never resolves here — a describer that guessed at that cache's shape would be resolving a version. The message says so and names D5's hand-written file as what to do instead.
+- The walk `NK2504` runs is handed out rather than copied: the refusal takes the crate word in front of a qualified name and the describer takes the name after it — one walk, read one segment further.
+
+### Measured
+
+- **The draft is the file a reviewer already wrote.** §5 called `examples/foreign-runtime/*/contracts/hyper_shim.contracts` *the file `nikaia describe` will write, produced the way a reviewer would check it*. The test runs the command against the crate in the tree and asserts the draft against that file — entry for entry and hash for hash, for all three projects, with no network. Two of the reviewed lines are not in the draft and both are D5: `crosses = false` on `LocalHandle`, which is read from a **field** no signature names, and the comments.
+- Each project gets a different draft, which is D2 working as written: `serve` calls two functions, `crossing` two others, `smuggled` two more. The hand-written file has all four because one reviewer wrote it for all three.
+
+### Left open
+
+- The **hash rule** (D5), which is now the next step rather than the one after: the draft records the crate source's SHA-256 and nothing compares it. Then the rustdoc-JSON reader behind a toolchain check (D4), and a way to read a version dependency's sources.
+
 ## [0.0.96] — 2026-09-20
 
 **The eager walks of a pausing sequence, both halves of them**

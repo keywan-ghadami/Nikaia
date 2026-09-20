@@ -1593,6 +1593,51 @@ impl Ledger {
         out.push_str("#\n");
         out.push_str("# A `\"?\"` among the errors is the absence of a claim: it fails, with\n");
         out.push_str("# something this compiler cannot name.\n");
+        self.render_from(&mut out);
+        out
+    }
+
+    /// The same file under a **description's** header
+    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5).
+    ///
+    /// **A different header and the same body**, which is the whole of the
+    /// difference: `render`'s says *do not edit by hand - it is regenerated on
+    /// every build*, and that is exactly wrong here. A description is written
+    /// once, **reviewed like code**, and hand-edited where a signature could
+    /// not say what a field does — D5 expects the edit rather than tolerating
+    /// it, and a file that told its reader not to make one would be telling
+    /// them not to do the thing the record asks of them.
+    pub fn render_description(&self, crate_name: &str, version: &str) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "# The boundary of `{crate_name}`, described before it is called\n"
+        ));
+        out.push_str("# ([ADR-104](../../docs/specification/adr/adr-104.md) D2).\n");
+        out.push_str("#\n");
+        out.push_str(&format!(
+            "# Written by `nikaia describe {crate_name}` from the crate's `pub` signatures,\n"
+        ));
+        out.push_str(
+            "# translated by Part III 15.2's table. **Committed and reviewed like code**,\n",
+        );
+        out.push_str("# and a hand edit is expected: what a signature cannot say is written\n");
+        out.push_str("# fail-closed, and what it says wrongly is caught by the reviewer or by\n");
+        out.push_str("# nobody (D5).\n");
+        out.push_str("#\n");
+        out.push_str(
+            "# What the signatures do not say: no `touches` on any entry, which reads as\n",
+        );
+        out.push_str("# *touches everything*; no `locks`, which is that column's third answer.\n");
+        out.push_str("# Neither is something a Rust signature can tell anybody, and reading\n");
+        out.push_str("# silence as nothing at all is the polarity ADR-010 D1 forbids.\n");
+        out.push_str("#\n");
+        out.push_str(&format!("# crate: {crate_name} {version}\n"));
+        self.render_from(&mut out);
+        out
+    }
+
+    /// The header line and everything after it, shared by both renderings.
+    fn render_from(&self, out: &mut String) {
         out.push_str(&format!("version = {}\n", self.version));
         out.push_str(&format!("toolchain = \"{}\"\n", self.toolchain));
         out.push_str(&format!("inference = \"{}\"\n", self.inference));
@@ -1776,8 +1821,6 @@ impl Ledger {
                 out.push_str(&format!("doc = \"{}\"\n", escape(doc)));
             }
         }
-
-        out
     }
 
     /// Read a ledger back - a library's, or this project's own.
