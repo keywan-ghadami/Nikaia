@@ -38,7 +38,7 @@ pub struct Entry<'a> {
     pub count: i64,
 }
 
-pub fn read(data: &str) -> Result<Vec<Entry<'_>>, Box<dyn std::error::Error>> {
+pub fn read(data: &str) -> Result<Vec<Entry<'_>>, ParseError> {
     Ok({
         use winnow::Parser;
         let _source = &*data;
@@ -48,7 +48,7 @@ pub fn read(data: &str) -> Result<Vec<Entry<'_>>, Box<dyn std::error::Error>> {
         };
         Stock::parse_file()
             .parse_next(&mut stream)
-            .map_err(|error| error.render(_source))
+            .map_err(|error| ParseError::of(error.render(_source)))
     }?)
 }
 

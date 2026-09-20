@@ -17,14 +17,14 @@ inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 [fn."Stock::file"]
 pub = true
 sync = true
-throws = ["?"]
+throws = ["ParseError"]
 touches = []
 signature = "(input: ?) -> Vec[Entry]"
 
 [fn."read"]
 pub = true
 sync = "inferred"
-throws = ["?"]
+throws = ["ParseError"]
 touches = []
 views = ["data: borrowed", "<result>: borrowed"]
 signature = "(data: &str) -> Vec[Entry]"

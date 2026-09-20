@@ -459,6 +459,12 @@ impl Full for crate::lock::Overtaken {
     }
 }
 
+impl Full for crate::grammar::ParseError {
+    fn full(&self) -> String {
+        format!("{self}\n{BELOW}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

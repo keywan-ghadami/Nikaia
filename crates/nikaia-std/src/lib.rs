@@ -27,6 +27,7 @@ pub mod count;
 pub mod error;
 pub mod foreign;
 pub mod fs;
+pub mod grammar;
 pub mod hash;
 pub mod html;
 pub mod index;
@@ -75,6 +76,12 @@ pub mod prelude {
     // decides what the prelude is, this is how a name reaches a program.
     pub use crate::foreign::CStr;
     pub use crate::fs;
+    // **What a parse fails with**
+    // ([ADR-173](../../../docs/specification/adr/adr-173.md) D1): written bare,
+    // like `Overtaken`, because a program never writes a path to it — it
+    // arrives in a `catch`, and the generated file has to find it there
+    // without a `use` the program did not write.
+    pub use crate::grammar::ParseError;
     pub use crate::hash::{TrustedMap, TrustedSet};
     pub use crate::html;
     pub use crate::io;

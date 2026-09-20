@@ -8096,7 +8096,7 @@ impl<'p> Emitter<'p> {
                 ";\n\
                  {pad}{name}::parse_{rule_name}_pieces(_source, \
                  &ParseContext::<()>::default(), {})\n\
-                 {pad}    .map_err(|error| error.render(_source))\n\
+                 {pad}    .map_err(|error| ParseError::of(error.render(_source)))\n\
                  {close}}}{question}",
                 self.build.parallelism()
             ));
@@ -8117,7 +8117,7 @@ impl<'p> Emitter<'p> {
              {pad}}};\n\
              {pad}{name}::parse_{rule_name}()\n\
              {pad}    .parse_next(&mut stream)\n\
-             {pad}    .map_err(|error| error.render(_source))\n\
+             {pad}    .map_err(|error| ParseError::of(error.render(_source)))\n\
              {close}}}{question}"
         ));
         Ok(())

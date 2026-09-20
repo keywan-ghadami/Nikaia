@@ -13,6 +13,14 @@ things to be wrong about:
   made false. `docs/README.md` §1 makes a stale **Status** note a defect in its
   own right, because a reader cannot tell a plan from a promise.
 
+**A closed entry leaves its number behind.** Deleting the entry is right — what
+it was and what closed it is in the CHANGELOG — and **renumbering the rest is
+not**: this file is cited by number from records and from
+[`open-decisions.md`](open-decisions.md), and a shift of two turns every one of
+those into a sentence pointing at somebody else's entry. That is the failure
+the paragraph below is about, met from the other side. So a gap in the numbers
+is a closed entry, and it is cheaper to read than a citation that lies.
+
 **A closed entry is deleted, not kept.** What it was and what closed it is in
 the CHANGELOG, which is the record; this file is the list of what is still
 open, and an entry that has been answered only makes it longer to read. The same
@@ -115,6 +123,45 @@ rather than guessed at, and it waits on the same mechanism
 
 *Every example still runs*, at both settings, which is what said this cost
 information rather than correctness.
+
+### 1.2. A grammar entry in tail position over a local that owns its input
+
+**Found by [ADR-173](specification/adr/adr-173.md)'s own test**, which is the
+only reason it is visible: nothing in the corpus writes this shape, and the
+record that named a parse failure is what put a program in it.
+
+*Reproduction:*
+
+```nika
+fn both(path: &str) -> i64 throws {
+    let data = fs::read_to_string(path)
+    return Tiny::number(data)
+}
+```
+
+`rustc` refuses the **generated file** with `E0597: `data` does not live long
+enough`, which is what [Part III C.1](specification/30-nikaia-tooling.md) says
+may not happen. The lowering writes `Ok({ … }?)` for the tail, and the block's
+temporaries — the parse stream, which holds `&data` — outlive the local that
+owns the text.
+
+*It is the tail and not the grammar.* The same call bound to a name first
+compiles and runs:
+
+```nika
+let n = Tiny::number(data)
+return n
+```
+
+…and so does the tail form where `data` is a **parameter**, because then no
+local owns the buffer. `examples/report.nika` writes the first shape, which is
+why the corpus is green.
+
+*What it needs:* the tail wrapper binding the block's value before the `?` —
+`let v = { … }?; Ok(v)` — so the block is a statement and its temporaries drop
+at the `;`, ahead of the local. `ARM_VALUE`'s trick one construct over
+([ADR-164](specification/adr/adr-164.md) D1) is the same idea for the same kind
+of reason.
 
 ## 2. Decided and unbuilt
 
@@ -568,45 +615,6 @@ crate is described before it is called*, where there is nothing to derive it
 *from* ([ADR-104](specification/adr/adr-104.md)). Either makes D6 writable and
 testable in the same change, and the test above is what says the day has come.
 
-### 2.13. A grammar's entry rule throws `"?"`, and that is the last one
-
-[ADR-023](specification/adr/adr-023.md) D1 records `throws` as a **set** of
-error types, and four records have now made every shape of set into a channel:
-one member the unit declares ([ADR-157](specification/adr/adr-157.md)), `std`'s
-own names ([ADR-158](specification/adr/adr-158.md)), one member a **ledger**
-describes ([ADR-159](specification/adr/adr-159.md)), and two or more as a
-generated sum ([ADR-160](specification/adr/adr-160.md)). What travels in the
-opaque channel is a set with a `"?"` in it — *something this compiler cannot
-name* — and in this tree there is exactly **one** source of those left.
-
-*It is the grammar.* A public rule's ledger entry is written with
-`throws = ["?"]`, because what a parse fails with is a **rendered string**:
-`Config::parse_file().parse_next(&mut stream).map_err(|e| e.render(source))`.
-There is no type, so there is nothing to name.
-
-*What it costs, measured.* Seven of the corpus' eight `main`s carry
-`throws = ["?", "io::IoError"]`, and the `"?"` in every one of them is a grammar
-entry. Name it and those seven become a set of two named members — which is the
-sum, already built — so a program could tell *the file was not there* from *the
-file was not the shape the grammar says*.
-
-*What it needs.* The same shape [ADR-158](specification/adr/adr-158.md) had: a
-type for the failure, somewhere a program can name it, and then the rule entry
-writing it instead of `"?"`. The decision in it is the same one — what it is
-called and what a program can read off it — and it is smaller, because a parse
-fails in one way. ***The question is asked***:
-[`open-decisions.md`](open-decisions.md) carries it, with what the backend's
-error already offers (`offset`, `expected`, `message`, `found`, a rule stack,
-and a `render` that makes the text a program prints today) and with
-`Overtaken`'s precedent for a `std` error type that needs no module in front.
-Nothing here moves until it is answered.
-
-*What waits on the last `"?"` going:* the note over `catch` sites and the
-`--locked` failure (*an error that newly reaches a `catch` is named once*,
-[ADR-101](specification/adr/adr-101.md)), the reserved `NK2401` case for a
-`catch` that stops covering its arrivals, and `match error { … }` over a variant
-from a callee in another package.
-
 ### 2.14. A parameter may be a function, and a kept one has no lowering
 
 [ADR-102](specification/adr/adr-102.md) D5, and the only part of that record
@@ -1023,23 +1031,14 @@ writable now, and what it waits on is `examples/http/` declaring `route` — whi
 is ADR-102's consequence and needs the package rewritten rather than the
 compiler changed.
 
-### 2.31. `nikaia describe` does not write `crosses`
+### 2.31. A described foreign call is not asked whether it threads
 
-[ADR-123](specification/adr/adr-123.md). **Built, except the command.** The
-column has three values, the ledger writes and reads both claims and stays
-silent for the third, a third spelling is refused rather than guessed at, the
-crossing verdict answers *may not* off `crosses = false`, and
-`examples/foreign-runtime/`'s three descriptions say it for the handle over an
-`Rc<String>`. `NK2501` and `NK2502` have their first end-to-end tests — the
-first either code has ever had, because no type the records named could answer
-*may not* until now.
-
-**What is left is D2's *who* rather than its *what*:** `nikaia describe` writing
-the column from a foreign type's fields, which is *a foreign crate is described
-before it is called*'s step 2 and waits with it. Meanwhile the line is hand-written like the rest of the description, and the
-file says which part of the crate was read for it —
-`inference = "described-from-signatures+fields"`, because `crosses = false` is
-the one claim there that no signature could give.
+[ADR-123](specification/adr/adr-123.md) is **built**, command and all: the
+column has three values, `nikaia describe` writes it from a foreign type's
+fields since [ADR-104](specification/adr/adr-104.md)'s step 2 landed, and
+`NK2501` refuses a `spawn` over a described `crosses = false` type from a
+program end to end. What is left of this entry is the hole that claim exposed
+rather than made.
 
 *And one hole the claim exposed rather than made, which is not this record's.*
 `NK2502` asks its question of a call **nothing** describes, which is ADR-038 D7's

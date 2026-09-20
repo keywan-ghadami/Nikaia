@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.103] — 2026-09-20
+
+**What a parse fails with has a name** — `ParseError`
+([ADR-173](docs/specification/adr/adr-173.md)), the owner's answer to the
+question 0.0.102 asked. And naming it made a **miscompilation** visible.
+
+### Added
+
+- **`ParseError`.** A `pub` rule's ledger entry wrote `throws = ["?"]` because a parse fails with a **rendered string** and a string is not a type — the last `"?"` written anywhere in this tree. The type is `nikaia-std`'s, in the prelude, keyed in `std.contracts` **with no module in front**, which is `Overtaken`'s shape: a program never writes a path to it, because it arrives in a `catch`.
+- **It carries the message and nothing else** (D2). What the backend renders is a whole diagnostic — the headline, the line with a caret, what else was possible — and it is what a program already printed, unchanged. Fields a program could *read* are a second question and nobody has asked it; the smaller answer is the one that can be taken back.
+- **What it buys is the channel.** `examples/inventory`'s `Stock::file` and `read` go from `["?"]` to `["ParseError"]`, and a function that opens a file *and* parses it is a **sum of two named members** ([ADR-160](docs/specification/adr/adr-160.md) D1) instead of the boxed one — so a program can tell *the file was not there* from *the file was not the shape the grammar says*.
+
+### Fixed
+
+- **What a parse threw reached no caller at all.** The `throws` fixpoint builds its graph from `Item::Fn`, and a grammar's entry rule is not one — its contract is written straight into the ledger ([ADR-082](docs/specification/adr/adr-082.md) D1) — so the lookup found nothing and the caller's set came out empty. A callee with no node in the graph is read from the ledger now.
+- **That was a miscompilation and not a missing note.** It was invisible while the entry threw `"?"`: a set of one `"?"` is the boxed channel and a box takes a `String`. The moment the caller's set had a *named* member from elsewhere, the channel was inferred without the parse's member in it — `Result<i64, io::IoError>` for a body whose `?` yields a `String`, and `io::IoError` has no `From<String>` — so `rustc` refused the **generated file**, which is the one thing [C.1](docs/specification/30-nikaia-tooling.md) says may not happen. No program in the corpus had that shape, which is why nothing was red. The test that holds it runs `rustc`, because a ledger assertion would have passed before the fix too.
+- **A stale example and a stale status note in Part I.** The `NK2605` example said `liest` carries `throws = ["?"]` for a body whose one call is `fs::read_to_string`; it carries `["io::IoError"]`, measured by running it. And 7.1's note on the `catch` diff still said *not implemented … until error types are lowered*, which 0.0.100 ended.
+
+### Found
+
+- **A grammar entry in tail position over a local that owns its input** does not compile — `rustc` refuses the generated file with `E0597`, because the tail wrapper writes `Ok({ … }?)` and the block's temporaries outlive the local. Found by this record's own test; the same call bound to a name first compiles and runs, and `examples/report.nika` writes that shape, which is why the corpus is green. `docs/open-work.md` §1 carries it with its reproduction.
+
+### Changed
+
+- **A closed entry leaves its number behind.** `open-work.md` is cited by number from records and from `open-decisions.md`, and renumbering after a deletion turns each of those into a sentence pointing at somebody else's entry — which is the failure that file already warns about, met from the other side. A gap in the numbers is cheaper to read than a citation that lies. Two such citations were fixed while closing this one.
+
 ## [0.0.102] — 2026-09-20
 
 **The last `["?"]` is asked about, and a miscount of mine is corrected** — the

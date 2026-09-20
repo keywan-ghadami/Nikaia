@@ -1227,6 +1227,24 @@ pub = true
 crosses = true
 doc = "What a `std` call fails with.\n\nPart I 7.1's error type, for the library: `NotFound(what)` where the thing is\nnot there, `PermissionDenied(what)` where this program may not have it,\n`NotText(what)` where the bytes are not UTF-8, and `Other(what)` for\neverything else the operating system said. A `catch` that only passes the\nfailure on names nothing; one that takes it apart writes `use std::io` and\n`io::IoError::NotFound(p)`."
 
+# **What a parse fails with** ([ADR-173](../../docs/specification/adr/adr-173.md)
+# D1), and the end of the last `"?"` in this tree. A `dsl` entry rule's ledger
+# entry wrote `throws = ["?"]` because a parse fails with a rendered string and
+# a string is not a type; seven of the corpus' eight `main`s carried that into
+# their own set, and each of them has a **sum of two named members** now.
+#
+# No module in front, which is `Overtaken`'s shape: a program never writes a
+# path to it, because it arrives in a `catch`.
+#
+# It carries the message and nothing else (D2). What the backend renders is a
+# whole diagnostic - the headline, the line with a caret, what else was possible
+# - and it is what a program already printed. Fields a program could *read* are
+# a second question and nobody has asked it.
+[type."ParseError"]
+pub = true
+crosses = true
+doc = "What a parse fails with.\n\nA `dsl` entry rule hands this back where its input is not the shape the\ngrammar says. It prints the whole diagnostic the backend produced: the\nheadline, the line with a caret under what was found, and what else was\npossible there. A `catch` that only passes it on names nothing; one that tells\nit apart from an `io::IoError` writes `match error { … }`."
+
 [type."io::Lines"]
 pub = true
 iterates = "throws"

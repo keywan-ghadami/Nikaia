@@ -112,10 +112,34 @@ pub fn infer(
         for (name, contrib) in &graph {
             let mut grown = sets[name].clone();
             for callee in &contrib.calls {
-                if let Some(theirs) = sets.get(callee) {
-                    for error in theirs {
-                        grown.insert(error.clone());
-                    }
+                // **A callee the graph does not hold still has a set**
+                // ([ADR-173](../../../docs/specification/adr/adr-173.md) D3).
+                // The graph is built from `Item::Fn`, and a **grammar's entry
+                // rule** is not one: its contract is written straight into the
+                // ledger ([ADR-082](../../../docs/specification/adr/adr-082.md)
+                // D1), so the lookup found nothing and what a parse throws
+                // reached no caller at all.
+                //
+                // *That was a miscompilation and not a missing note.* The
+                // caller's channel was inferred without the parse's member in
+                // it — `Result<i64, io::IoError>` for a body whose `?` yields a
+                // parse failure — and `rustc` refused the generated file, which
+                // is the one thing [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)
+                // says may not happen. It was invisible while the entry threw
+                // `"?"`, because a set of one `"?"` is the boxed channel and a
+                // box takes anything.
+                let theirs = sets
+                    .get(callee)
+                    .cloned()
+                    .or_else(|| {
+                        ledger
+                            .functions
+                            .get(callee)
+                            .map(|c| c.throws.iter().cloned().collect())
+                    })
+                    .unwrap_or_default();
+                for error in theirs {
+                    grown.insert(error);
                 }
             }
             if grown != sets[name] {

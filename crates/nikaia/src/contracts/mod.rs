@@ -1260,10 +1260,13 @@ impl Ledger {
                     // D9), and a `catch` beside the entry would meet `NK1134`
                     // without it.
                     //
-                    // `["?"]` and not a name, for `std`'s reason: a parse failure
-                    // is the backend's error rendered, and it has no Nikaia type to
-                    // name ([ADR-024](../../../docs/specification/adr/adr-024.md)
-                    // D1's absence of a claim).
+                    // **`["ParseError"]` since
+                    // [ADR-173](../../../docs/specification/adr/adr-173.md) D1.**
+                    // It used to be `["?"]` — *something this compiler cannot
+                    // name* — because a parse fails with a **rendered string**
+                    // and a string is not a type. It was the last `"?"` in the
+                    // tree, and seven of the corpus' eight `main`s carried it
+                    // into their own set; a type is all it ever needed.
                     Item::Grammar(def) => {
                         let grammar = parsed.text(def.name).to_string();
                         for rule in def.rules.iter().filter(|r| r.is_public) {
@@ -1272,7 +1275,7 @@ impl Ledger {
                                 key,
                                 FnContract {
                                     public: true,
-                                    throws: vec![UNNAMED_ERROR.to_string()],
+                                    throws: vec![PARSE_ERROR.to_string()],
                                     // **An action may not pause**
                                     // ([ADR-142](../../../docs/specification/adr/adr-142.md)
                                     // D1), so every entry is `sync` — asserted
@@ -2326,6 +2329,13 @@ fn provenance_of(value: &str, at: usize) -> Result<Provenance> {
 /// The name an error gets when the compiler cannot name it - ADR-024 D1's `?`,
 /// which is the absence of a claim rather than a type.
 pub const UNNAMED_ERROR: &str = "?";
+
+/// What a parse fails with
+/// ([ADR-173](../../../docs/specification/adr/adr-173.md) D1).
+///
+/// A `std` type with no module in front, which is `Overtaken`'s shape: a
+/// program never writes a path to it, because it arrives in a `catch`.
+pub const PARSE_ERROR: &str = "ParseError";
 
 /// The `throws` list exactly as the ledger writes it.
 ///

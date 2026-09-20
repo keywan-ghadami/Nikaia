@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.102 (Draft)
+**Version:** 0.0.103 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -2282,7 +2282,7 @@ error[NK2605]: this function can fail because `liest` can fail
   --> app.nika:2:23
    2 | fn ruft() -> String { return liest() }
                              ^
-     = `liest` carries `throws = ["?"]` in the contracts this program is built against (Part III, 13.5)
+     = `liest` carries `throws = ["io::IoError"]` in the contracts this program is built against (Part III, 13.5)
      = nothing marks a failing call, so a failure leaves at a call exactly as it leaves at a block's closing brace or a loop's step (ADR-023 D8, ADR-025 D1)
      help: declare the error: add `throws` to `ruft` - or handle it at the call, `… catch { … }` (Part I, 7.1)
 ```
@@ -2363,14 +2363,12 @@ over them is exhaustive, and adding one is a breaking change. The **set of
 error types** arriving at a `catch` is open, and it grows when a callee gains a
 failure. When it grows, **every `catch` over that callee is named once in the
 build output**, with the new error, the handler it now reaches, and the fact
-that the handler takes it as it takes everything (`NK2401`). Under `--locked`
+that the handler takes it as it takes everything (`NK2402`). Under `--locked`
 the build fails until the ledger is regenerated and committed. The commit is the
 acknowledgement; nothing is written at the handler, and a handler that matches
 on `error` is told the same as one that does not ([ADR-101](adr/adr-101.md)).
 
-> **Implementation status:** Not implemented. `std.contracts` writes
-> `throws = ["?"]` on every entry, so there is no set to diff until error types
-> are lowered ([ADR-101](adr/adr-101.md) §5).
+> **Implementation status:** Implemented. `NK2402` is the note, given at the **call** inside the handler rather than at the `catch`, and once: the build compares the committed ledger against the one it inferred, and committing the diff is what acknowledges it ([ADR-101](adr/adr-101.md) D1, D2). `--locked` failed on a grown set before this was written, because it compares the ledger byte for byte.
 
 **Every error carries its site and its chain.** The **site** is where the error
 was raised. The chain holds every error that joined on the way: a cleanup that

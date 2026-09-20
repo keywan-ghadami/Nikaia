@@ -266,7 +266,7 @@ fn a_sequential_entry_rule_gets_no_piece_driver() {
                 };
                 Digits::parse_pair()
                     .parse_next(&mut stream)
-                    .map_err(|error| error.render(_source))
+                    .map_err(|error| ParseError::of(error.render(_source)))
             }?"#
         )),
         "the emitted driver and the one `digits::sequential_driver` compiles \
@@ -297,15 +297,21 @@ fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
     );
 }
 
-/// A `ParseError` knows an offset and not the text it came from, so only the
-/// driver can turn one into a line and a column - and it is the only place
+/// The backend's error knows an offset and not the text it came from, so only
+/// the driver can turn one into a line and a column - and it is the only place
 /// that has both. Without this a program that rejects a file says *what* was
 /// expected and never *where* (ADR-009 D3, `docs/error-corpus.md`).
+///
+/// **And what comes out of it has a name**
+/// ([ADR-173](../../../docs/specification/adr/adr-173.md) D1): the rendered
+/// text goes into a `ParseError`, which is the type the rule's ledger entry
+/// says it throws. The text is unchanged, so a program that prints the error
+/// prints what it printed before.
 #[test]
 fn a_rejected_parse_is_rendered_against_the_input_it_parsed() {
     let emitted = emit(WITH_DSL, Build::default());
     assert!(
-        emitted.contains(".map_err(|error| error.render(_source))"),
+        emitted.contains(".map_err(|error| ParseError::of(error.render(_source)))"),
         "{emitted}"
     );
 }
