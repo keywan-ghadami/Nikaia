@@ -256,6 +256,19 @@ reaches it, because the server it binds to does not exist yet — the
 `fortunes.nika` entry below. So nothing in the repository meets the refusal
 today, and the first program that does will be the one that binds a handler.
 
+*And no `std` entry it could meet is one where a pausing lambda would be a
+**correct** program*, counted at 0.0.107 — which is what says the refusal is
+narrow rather than merely unmet. `std` takes a lambda in ten places.
+`list::ListExt::map`, `Seq::map`, `Seq::filter`, `Vec::sort_by_key`,
+`Entry::and_modify` and `Entry::or_insert_with` lower to Rust's own
+synchronous closures, where a suspension point is not a shape that exists. The
+other four — `Locked::access`, `Locked::update`, `SharedMut::access`,
+`SharedMut::update` — run their lambda **while a lock is held**, where pausing
+is refused on its own merits (Part II 12.3). So what is left here is an entry
+that does not exist, and the lowering that would serve it is built and waiting:
+[ADR-122](specification/adr/adr-122.md) D1's `|p| Box::pin(async move { … })`,
+measured on a parameter declared `fn(&str) -> String throws` in this language.
+
 *What it needs:* a `std` entry whose lambda may genuinely pause, written in
 Nikaia or described as taking a future — `|| async move { … }`, which is stable
 Rust and is how a handler is taken in practice. Not a new mechanism: a claim to

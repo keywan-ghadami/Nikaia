@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.107] — 2026-09-20
+
+**Two roadmap boxes were describing a compiler from several records ago.** No
+code changed here; what changed is that the page says what the tree does, and
+each claim was re-measured rather than remembered.
+
+### Changed
+
+- **The suspension box is `[x]`, and all four things it listed as open are built.** D6's `Send` as a refusal of ours — `held_across_a_pause` answers what a task *binds and then holds at a suspension point*, which the capture check never asked; it refuses nothing today and **that is the answer**, because no type is `MayNot` at `Destination::Ours` and a lock is `MayNot` only at a foreign one, where [ADR-061](docs/specification/adr/adr-061.md) D1's `NK2503` does refuse by name. Standard input suspends (0.0.94). A recursive pausing *method* is boxed. And a pausing lambda is lowered where the parameter is declared in this language ([ADR-122](docs/specification/adr/adr-122.md) D1, measured: `|p| Box::pin(async move { … })`).
+- **And the pausing-lambda refusal is narrow rather than merely unmet**, which is the part a status line cannot assert without counting: `std` takes a lambda in **ten** places, and in none of them would a pausing lambda be a correct program. Six lower to Rust's own synchronous closures (`map`, `filter`, `sort_by_key`, `and_modify`, `or_insert_with`, `ListExt::map`); the other four run their lambda while a **lock** is held, where pausing is refused on its own merits. The first program to meet the limit is the one that binds a route handler, which is the HTTP server's box and not the language's.
+- **`Macro Expansion (JIT)` is renamed to `The build-time evaluator` and is `[~]`.** Both halves of *placeholder exists, needs implementation* had stopped being true: [ADR-117](docs/specification/adr/adr-117.md) took `macro` and `quote` off the reserved list, so there is no macro feature to implement; and `build_time.rs` evaluates a `comptime` that **calls a function of this program** with `if`, `let`, `for`, `while`, `break`, `continue`, assignment and `return` in its body. Measured: a ten-step loop reaches the generated file as `const LIMIT: i64 = 55;`.
+- **What makes that one a half is written in it**: no `push` and no aggregate value, so [ADR-079](docs/specification/adr/adr-079.md) §3's table can be computed and has nowhere to arrive. The *types* stopped being the obstacle two records ago — [ADR-152](docs/specification/adr/adr-152.md)'s `Array[T, N]` is exactly what a `const` can hold.
+- The language reads **23 of 26**, 27 of 40 overall. Both moves are corrections, not progress, and the entry says so.
+
 ## [0.0.106] — 2026-09-20
 
 **A bound is enforced where it is used** — [ADR-174](docs/specification/adr/adr-174.md),
