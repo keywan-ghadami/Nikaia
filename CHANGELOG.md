@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.110] — 2026-09-20
+
+**Two of the three points the language is short of are not work, and the page
+said they were.** No code changed; what changed is that the roadmap stops
+sending a reader to a design space that has been decided and to a direction the
+project examined and did not take.
+
+### Changed
+
+- **Compile-time I/O is work, not a design space.** The box said *the design space is staked out in [ADR-026](docs/specification/adr/adr-026.md) (**Open**) … and the one that blocks the others named — what a program is allowed to do in `const`*. That question is **answered**: [ADR-075](docs/specification/adr/adr-075.md) answers Q4 and with it Q1, Q2 and Q3, because a build-time body may call what is `sync` and touches at most the build's own parameters — two ledger columns the compiler already derives, so the sandbox the record asked somebody to invent is not needed. [ADR-072](docs/specification/adr/adr-072.md) answers Q5 and the filesystem half of Q6. ADR-026 stays Open for **one** thing: what bounds a build-time body's memory.
+- **And the reason the box gave was the wrong one.** *A grammar's `action` blocks are arbitrary Nikaia, so evaluating one at build time means running user code at build time* — [`open-work.md`](docs/open-work.md) §2.9 says a grammar must **not** be interpreted here at all: `winnow-grammar` is a code generator with no interpreter in it, so interpreting would be a second implementation of the same semantics and Part II 10.2's *one grammar means the same thing at both stages* would become a hope. What to do instead is compile the **generated** parser during the build and run it, which needs no new security model.
+- **What is actually missing at the front is one grammar rule.** `comptime PORT: i64 = Cfg::value(from "port.txt")` is a parse error at the `from`. [ADR-072](docs/specification/adr/adr-072.md)'s *built: no* gives its reason as *`const` has no syntax*, and `comptime` has had syntax since [ADR-097](docs/specification/adr/adr-097.md) — so that record's own order is satisfied on both counts and the work is startable.
+
+### Asked
+
+- **Is tier-1 staging withdrawn?** In [`open-decisions.md`](docs/open-decisions.md), with what the survey behind it measured: all three candidates anybody wrote down are closed — two built and both `std` optimisations rather than the thesis, the third profiled at under 3 % against the 56 % that produced a merged **−19.8 %** — and that file ends on a rule, *a staging decision enters the compiler only together with a measured crossover*. So the box is not unbuilt work; it is a direction examined and not taken, and whether that is a **withdrawal** is not this page's to decide. The recommendation is A, withdraw it with a record, with C — re-write the box and keep the door — as the cheap half if the answer is *not yet* rather than *no*.
+
 ## [0.0.109] — 2026-09-20
 
 **Every refusal this compiler makes about a line of a `.nika` program names that

@@ -553,9 +553,22 @@ emits Rust and already drives Cargo, so the machinery is not new.
 do. Running a generated parser is covered by the same rule as any other
 build-time call.
 
+*And what stood in front of it is gone, measured at 0.0.109.*
+[ADR-072](specification/adr/adr-072.md) says *built: no* and gives the reason as
+*`const` has no syntax, so there is nothing to check yet*; `comptime` has had
+syntax at item level and inside a body since
+[ADR-097](specification/adr/adr-097.md), and that record's own *order this
+implies* — `const` first, then this check, and
+[ADR-026](specification/adr/adr-026.md) Q4's evaluation rules alongside — is
+satisfied on both counts, Q4 being [ADR-075](specification/adr/adr-075.md). So
+[ADR-026](specification/adr/adr-026.md) is down to one open thing, what bounds a
+build-time body's **memory**, and this is work rather than a design space. What
+is missing at the front is one rule: `comptime PORT: i64 = Cfg::value(from "port.txt")`
+is a parse error at the `from`.
+
 *What it unblocks:* `comptime CONFIG = Config.value(from "config.toml")` — the
 case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
-[ADR-072](specification/adr/adr-072.md) built the permission for — **and the
+[ADR-072](specification/adr/adr-072.md) decided the permission for — **and the
 database driver**, below, whose whole first step is a grammar declaring what
 columns a query returns. That entry says what the narrow half costs, which is
 less than this one's general case: a flat list of declarations rather than an
