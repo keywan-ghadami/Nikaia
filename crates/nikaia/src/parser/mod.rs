@@ -188,7 +188,47 @@ fn number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i64, ParseError>
 where
     S: Clone + std::fmt::Debug,
 {
+    number_at(i, false)
+}
+
+/// **A number with its `-` in front of it**, where the sign is written directly
+/// against the digits.
+///
+/// One number in the range has no other spelling: `-9223372036854775808` is
+/// `i64::MIN`, and as a **negation of a positive literal** its digits are
+/// `9223372036854775808`, which no `i64` holds — so the parser refused a number
+/// that is in the type. Every other number in the range was writable, which is
+/// what made this a completeness item rather than a blocker.
+///
+/// **Only where it sits directly in front of one**, which is the whole of the
+/// rule: the `-` and the first digit are adjacent bytes here, because the
+/// generator has already skipped the trivia in front of this rule and skips none
+/// inside it. `- 5` and `-x` are the unary operator they always were, and
+/// `a - 5` never reaches this at all — a binary operator is matched by the rule
+/// that wrote it, not by the operand's.
+fn negative_number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i64, ParseError>
+where
+    S: Clone + std::fmt::Debug,
+{
+    number_at(i, true)
+}
+
+/// The two above, which differ in one byte at the front.
+fn number_at<'a, S>(i: &mut ParseInput<'a, S>, signed: bool) -> Result<i64, ParseError>
+where
+    S: Clone + std::fmt::Debug,
+{
     let bytes = winnow::stream::AsBStr::as_bstr(i);
+    // **The sign is part of the literal or this rule does not apply**, and the
+    // second digit-check is what keeps `-x` and `- 5` out: a `-` with no digit
+    // against it is the unary operator.
+    let bytes = match signed {
+        true => match bytes {
+            [b'-', rest @ ..] if rest.first().is_some_and(|c| c.is_ascii_digit()) => rest,
+            _ => return Err(ParseError::from_stream(i).add_expected("digits")),
+        },
+        false => bytes,
+    };
     // **Lower-case, and only at the front** (D1). `0X` and `0B` are not second
     // spellings: one form per thing is the rule this language keeps.
     let (radix, prefix) = match bytes {
@@ -251,6 +291,21 @@ where
             });
         }
     }
+    // **A float keeps the sign it always had.** `-1.16e+00` and `-1..5` both
+    // begin with digits and are not integers, and the rules that read them are
+    // tried after this one — so a signed match here would take the `-1` and
+    // leave the rest stranded, which is what `examples/n-body.nika` said the
+    // first time this ran. Refusing hands the `-` back to the unary operator
+    // and the number to whichever rule it belongs to.
+    if signed && radix == 10 && matches!(bytes.get(at), Some(b'.' | b'e' | b'E')) {
+        return Err(ParseError::from_stream(i).add_expected("digits"));
+    }
+    // **The sign goes into the text the radix parser reads**, rather than being
+    // applied afterwards: `-9223372036854775808` parses and `-(9223372036854775808)`
+    // does not, which is the one number this rule exists for.
+    if signed {
+        value.insert(0, '-');
+    }
     let number = match wrong {
         Some(_) => 0,
         None => match i64::from_str_radix(&value, radix) {
@@ -269,7 +324,7 @@ where
     // a refusal built at the start of the literal loses to the float rule's
     // failure further along — which is a true sentence about this parser and no
     // help at all to a reader.
-    let _ = winnow::stream::Stream::next_slice(i, at);
+    let _ = winnow::stream::Stream::next_slice(i, at + usize::from(signed));
     match wrong {
         Some(message) => Err(ParseError::from_stream(i)
             .with_message(message)
@@ -812,6 +867,7 @@ grammar! {
         // [ADR-136](../../../../docs/specification/adr/adr-136.md) D1).
         extern rule same_line -> ();
         extern rule number_lit -> i64;
+        extern rule negative_number_lit -> i64;
         extern rule doc_here -> Option<String>;
 
         // --- Entry Point ---
@@ -2339,7 +2395,14 @@ grammar! {
         // chain bottoms out here at the position the operand should have
         // started.
         rule unary_expr -> Expr # "expression" =
-            op:unary_op e:unary_expr -> {
+            // **A `-` written against the digits is part of the number**, and
+            // it is first because the alternative below would otherwise take
+            // it: `-9223372036854775808` is `i64::MIN`, and as a negation of a
+            // positive literal its digits do not fit the type it belongs to.
+            // Every other number in the range parsed either way, which is why
+            // this was one number missing rather than a hole.
+            n:negative_number_lit -> { Expr::LitInt(n) }
+          | op:unary_op e:unary_expr -> {
                 Expr::Unary { op, expr: Box::new(e) }
             }
           | e:postfix_expr -> { e }

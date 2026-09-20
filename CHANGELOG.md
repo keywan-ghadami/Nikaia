@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.66] — 2026-09-20
+
+The most negative `i64` has a spelling
+([ADR-136](docs/specification/adr/adr-136.md)) — the completeness item
+`docs/open-work.md` §1.2 carried, closed the smaller of the two ways it named.
+
+### Fixed
+
+- **`-9223372036854775808` is a program now.** It is `i64::MIN` and belongs to the type; as a **negation of a positive literal** its digits are `9223372036854775808`, which no `i64` holds, so the parser refused a number that is in the language. A `-` written **directly against the digits** is part of the literal, and the sign goes into the text the radix parser reads rather than being applied to what came out — so `-0xFF` is `-255` for the same reason `0xFF` is `255`.
+- **What it did not change, which is the whole of the rule.** `- 5` and `-x` are the unary operator they always were; a binary `-` is matched by the rule that wrote it rather than by its operand's, so `a - 5` and `a -5` are unchanged; and a `.` or an exponent after the digits hands the `-` back, so `-1.16e+00` is a float and `-2..<2` is a range.
+- **The digits alone are still refused**, which is the other half: what the sign buys is one number, not a wider type.
+
+### Found by building it
+
+- **`examples/n-body.nika` is what caught the float.** The first version of the rule took the `-1` out of `-1.16032004402742839e+00` and left the rest stranded — a misparse of exactly the class [ADR-136](docs/specification/adr/adr-136.md) was written to remove, one form along. Six tests hold the boundary now.
+
+### Changed
+
+- **`docs/open-work.md` §1 is down to one entry**, and [ADR-136](docs/specification/adr/adr-136.md) §5 records what it was and why the rule is as narrow as it is.
+
 ## [0.0.65] — 2026-09-20
 
 `Bytes` is a question, and it goes where questions go

@@ -155,3 +155,72 @@ fn a_tuple_part_is_untouched() {
     let rust = lowered("    let pair = (\"*\", 3)\n    println(f\"{pair.0}\")");
     assert!(rust.contains("pair.0"), "{rust}");
 }
+
+/// **The most negative `i64` has a spelling** — the completeness item
+/// `docs/open-work.md` §1.2 carried.
+///
+/// `-9223372036854775808` is `i64::MIN` and is in the type. As a **negation of
+/// a positive literal** its digits are `9223372036854775808`, which no `i64`
+/// holds, so the parser refused a number that belongs to the language. Every
+/// other number in the range was writable either way, which is what made this
+/// one number missing rather than a hole.
+#[test]
+fn the_most_negative_i64_parses() {
+    let rust = lowered("    let n: i64 = -9223372036854775808\n    println(f\"{n}\")");
+    assert!(rust.contains("-9223372036854775808i64"), "{rust}");
+}
+
+/// **And the digits alone are still refused**, which is the other half: what the
+/// sign buys is one number, not a wider type.
+#[test]
+fn the_same_digits_without_the_sign_are_still_refused() {
+    assert!(refused("    let n = 9223372036854775808").contains("does not fit the widest integer"));
+}
+
+/// **Only where the `-` sits directly in front of the digits.** `- 5` and `-x`
+/// are the unary operator they always were, and a binary `-` is matched by the
+/// rule that wrote it rather than by its operand's.
+#[test]
+fn a_minus_that_is_not_against_the_digits_is_the_operator() {
+    let rust = lowered(
+        "    let a = 10\n\
+         \x20   let b = a - 5\n\
+         \x20   let c = a -5\n\
+         \x20   let d = - a\n\
+         \x20   println(f\"{b} {c} {d}\")",
+    );
+    assert!(rust.contains("let b = a - 5;"), "{rust}");
+    assert!(rust.contains("let c = a - 5;"), "{rust}");
+    assert!(rust.contains("let d = -a;"), "{rust}");
+}
+
+/// **A float keeps the sign it always had**, and that is what
+/// `examples/n-body.nika` said the first time this rule ran: `-1.16e+00` begins
+/// with digits and is not an integer, so a signed match would take the `-1` and
+/// leave the rest stranded.
+#[test]
+fn a_negative_float_is_still_a_float() {
+    let rust = lowered(
+        "    let y = -1.16032004402742839e+00\n\
+         \x20   let z = -0.5\n\
+         \x20   println(f\"{y} {z}\")",
+    );
+    assert!(rust.contains("-1.16032004402742839e+00"), "{rust}");
+    assert!(rust.contains("-0.5"), "{rust}");
+}
+
+/// **A range keeps its own reading too**, for the same reason: the `.` after
+/// the digits says this is not an integer literal on its own.
+#[test]
+fn a_range_that_starts_below_zero_still_parses() {
+    let rust = lowered("    for i in -2..<2 { println(f\"{i}\") }");
+    assert!(rust.contains("-2..2"), "{rust}");
+}
+
+/// **The sign rides through a radix too**, because it goes into the text the
+/// radix parser reads rather than being applied to what came out.
+#[test]
+fn a_negative_number_may_be_written_in_any_radix() {
+    let rust = lowered("    let n = -0xFF\n    println(f\"{n}\")");
+    assert!(rust.contains("let n = -255;"), "{rust}");
+}

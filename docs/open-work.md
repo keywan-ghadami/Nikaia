@@ -60,7 +60,7 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Two entries are open.**
+**One entry is open.**
 
 ### 1.1. A grammar's entry claims nothing, and every caller inherits that
 
@@ -94,23 +94,6 @@ entry the way a function's are.
 *Every example still runs*, at both settings, which is what said this cost
 information rather than correctness — and `sync` has since been paid back in
 full.
-
-### 1.2. The most negative `i64` has no spelling
-
-*Found by building* [ADR-136](specification/adr/adr-136.md), and small enough
-that it is here rather than in §2: `-9223372036854775808` is refused, because
-`-` is a **unary operator** over a positive literal and `9223372036854775808`
-does not fit an `i64`. Every other number in the range is writable.
-
-*What it replaced is worse and that is why it shipped*: the parser read the
-digits with `parse().unwrap()`, so the same program took this compiler down.
-A refusal that names the range is the honest state; a gap in it is still a gap.
-
-*What it needs:* the literal carried as the `i128` the fold already uses, or a
-negation folded in the parser where it sits directly in front of one — and the
-second is the smaller change, since `Expr::LitInt` is an `i64` everywhere else
-and widening it touches every reader. Nothing in the tree writes the number, so
-this is a completeness item rather than a blocker.
 
 ## 2. Decided and unbuilt
 
