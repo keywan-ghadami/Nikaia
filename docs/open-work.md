@@ -33,6 +33,11 @@ need the owner rather than work are in
 This file is a notes page: nothing here is normative, and nothing may depend on
 it to know what a program means.
 
+**The moment Items get blocked by Questions**
+Questions that
+need the owner rather than other work hate to be listed in
+[`open-decisions.md`](open-decisions.md).
+
 ---
 
 ## 1. Defects
