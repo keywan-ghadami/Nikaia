@@ -256,6 +256,13 @@ const BUILT_IN: &[&str] = &[
     // D1), which is a name here for the same reason `Vec` is: nothing declares
     // it in a `.nika` file and the emitter writes it (`[T; N]`).
     "Array",
+    // **`Bytes`** ([ADR-156](../../../docs/specification/adr/adr-156.md) D1),
+    // which is the language's and not `std`'s: it is written bare, like `Vec`
+    // and `String`, because a type whose representation the compiler picks is
+    // not a type a module owns. Part I 1.3 has listed it since
+    // [ADR-154](../../../docs/specification/adr/adr-154.md) D1; this is the
+    // line that makes the list true.
+    "Bytes",
 ];
 
 /// The type parameters an item brings into scope for its own body.

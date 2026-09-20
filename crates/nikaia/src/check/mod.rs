@@ -590,6 +590,16 @@ pub fn check_program(
     // separate walk, and for the same reason: it asks where a *value* goes
     // rather than what a type is, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::views::check(parsed));
+    // A view handed back that points into a buffer the body owns (`NK2303`).
+    // The tether's own refusal
+    // ([ADR-156](../../docs/specification/adr/adr-156.md) D4), and a walk of
+    // its own for the same reason `views` is: it asks where a *value* points
+    // rather than what a type is. It reads both ledgers, because which calls
+    // make a buffer is what they say.
+    checker
+        .checked
+        .findings
+        .extend(crate::contracts::tether::check(parsed, own, library));
     // Kap 4.7: what an `impl` owes the `trait` it names. Separate for a reason
     // of its own - it reads the ledger's **finished** `sync` column, and the
     // type walk runs before `sync::infer` fills that in

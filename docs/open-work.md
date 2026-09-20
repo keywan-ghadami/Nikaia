@@ -1190,20 +1190,18 @@ parses as two statements and is refused with `NK1117`, and `assert(c)` is a call
 to a function of that name. Whatever `assert` is, it is decided there rather
 than here.
 
-*The third name went to [`open-decisions.md`](open-decisions.md).* **`Bytes`**
-is on the list too, and it is not a missing name: it is the container Part I
-6.6's **tether** needs, and the tether is that section's unbuilt half. Where it
-lives — `std`'s or the language's — is what
-[ADR-154](specification/adr/adr-154.md) §4 left open, and a question with a
-recommendation belongs on that page rather than this one.
+*The third name is answered.* **`Bytes`** is the language's and it exists
+([ADR-156](specification/adr/adr-156.md) D1): one shared buffer, written bare,
+and what `fs::read` hands back. The **tether** it is the container for is still
+missing, and the entry below carries it.
 
 *And one the list does not promise and `std` has.* `eprint` is keyed bare, so it
-needs no `use`; D1's text writes `eprintln` and not `eprint`. It rides with the
-`Bytes` entry, because both are the same sentence being revisited.
+needs no `use`; D1's text writes `eprintln` and not `eprint`. It is
+[`open-decisions.md`](open-decisions.md)'s own entry now.
 
 *A name on the list that does not exist* is the one direction a prelude can be
 wrong in without anybody noticing — nothing refuses it, because nothing reaches
-it. That is why all three are written down rather than left to be found.
+it. That is why both are written down rather than left to be found.
 
 *What stays bare on purpose:* `Shared`, `SharedMut` and `Locked` are the
 language's ([ADR-064](specification/adr/adr-064.md)) rather than a module's, and
@@ -1222,15 +1220,21 @@ Tethered and Owned; **two of them are built and the middle one is not.**
 they run. **Owned** is `.to_owned()`, written by the program and never by the
 compiler (D5). **D9** is built, and now for a result that *carries* a view as
 well as one that *is* one. What stands where Tethered would is a **refusal**:
-`NK2302` for a naked view parameter that is stored, and `rustc` on the Nikaia
-line for a view of a local that escapes — which is D5's residual hard error
-doing the job of the state that is missing.
+`NK2302` for a naked view parameter that is stored, and `NK2303` for a view of
+a buffer the body owns handed back through the result
+([ADR-156](specification/adr/adr-156.md) D4) — which is D5's residual hard error
+doing the job of the state that is missing. The second used to be `rustc` on the
+Nikaia line, which is the one thing Part III C.1 says may not happen.
 
 *What Tethered needs, measured rather than estimated.*
 
-1. **A buffer to tether to.** `Bytes` — refcounted, offset and length. Small in
-   Rust; the question is where it lives, and that is
-   [`open-decisions.md`](open-decisions.md)'s.
+1. ~~**A buffer to tether to.**~~ **Built.** `Bytes` is the language's
+   ([ADR-156](specification/adr/adr-156.md) D1, D2): a reference-counted,
+   immutable run of bytes, and `fs::read` hands one back. What it does **not**
+   carry yet is the offset and length a tethered *slice* is — a `Bytes` is the
+   buffer, and the position beside it is item 3's layout. `Mapped` does not
+   deref to it either (D6), which Part III 17.2 promises and the tether is what
+   makes true.
 2. ~~**The escape analysis** (D2).~~ **Built**, and built *alone*: every view in
    a signature carries its state in the ledger under `views`, `--tethers` prints
    it, and **nothing reads it**. What it found is that the whole corpus is the

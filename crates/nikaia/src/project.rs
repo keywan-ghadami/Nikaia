@@ -773,11 +773,23 @@ pub fn check(
     // `NK23xx` is aliasing: who else points at the thing this one is about.
     // Counted on its own because the way out is a different one - a shape to
     // change rather than a declaration to add.
-    let aliases = count("NK23");
+    let aliases = count("NK2302");
     if aliases > 0 {
         refused.push(format!(
             "{aliases} view{} kept past the call that was given it",
             plural(aliases)
+        ));
+    }
+    // **The tether's own line** ([ADR-156](../../docs/specification/adr/adr-156.md)
+    // D4). Counted apart from `NK2302` although both are `NK23xx`, because the
+    // tally has to say what it counted and these are two different shapes: one
+    // is a view given to a call and kept, the other a view of a buffer the body
+    // made and handed back.
+    let tethered = count("NK2303");
+    if tethered > 0 {
+        refused.push(format!(
+            "{tethered} view{} of a buffer this body owns",
+            plural(tethered)
         ));
     }
     // `NK21xx` is running things at once, and its two rules want two lines: what

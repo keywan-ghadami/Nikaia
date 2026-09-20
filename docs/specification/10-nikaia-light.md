@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.70 (Draft)
+**Version:** 0.0.71 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -124,12 +124,13 @@ rather than a file of the compiler's.
 > **function** and for a **type**: a name that lives in a `std` module is
 > refused without its prefix — `NK1117` for a function, `NK1135` for a type —
 > and a prefix is refused without its `use`, each with the line to add.
-> **`Bytes`, `assert` and `panic` are named by the list and do not exist.**
-> `Bytes` is the container Part I 6.6's tether needs and **where it lives is an
-> open question** ([ADR-154](adr/adr-154.md) §4), which
-> `docs/open-decisions.md` carries; `assert` and `panic` belong with the testing
-> chapter (Part III 14), which is not built either. `docs/open-work.md` carries
-> the second pair.
+> **`Bytes` exists and is the language's** ([ADR-156](adr/adr-156.md) D1): one
+> shared buffer, written bare, and what `fs::read` hands back (D3). The
+> **tether** it is the container for is still not built, so a view of a buffer
+> a body owns is refused rather than compiled (`NK2303`, D4).
+> **`assert` and `panic` are named by the list and do not exist**: they belong
+> with the testing chapter (Part III 14), which is not built either, and
+> `docs/open-work.md` carries them.
 
 ---
 
@@ -2034,7 +2035,9 @@ changes rather than the body.
 > of the three is emitted. Every view in `examples/` and `benches/` solves to
 > **Borrowed** ([ADR-008](adr/adr-008.md) §3's worked check, measured). Where a value would tether, the
 > program is **refused** instead, which is the residual hard error
-> [ADR-008](adr/adr-008.md) D5 names rather than the state beside it;
+> [ADR-008](adr/adr-008.md) D5 names rather than the state beside it — on the
+> Nikaia line since [ADR-156](adr/adr-156.md) D4, where a function hands back a
+> view of a buffer its own body made (`NK2303`, Part III C.3);
 > `@borrowed` is parsed and forbids nothing, because there is no transition yet
 > to forbid. `docs/open-work.md` carries what the missing state would take.
 >

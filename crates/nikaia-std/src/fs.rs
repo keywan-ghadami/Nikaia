@@ -103,8 +103,12 @@ pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, std::io::Error> {
 /// it is why the next change of mechanism is a `std` change rather than a
 /// compiler change (ADR-033 §8.4 gave the same reason for the overlap
 /// vehicle).
+///
+/// The read is `rt::io`'s rather than [`read`]'s, and deliberately: `read`
+/// hands back a shared buffer and this wants the bytes themselves, so going
+/// through it would buy a handle only to copy out of it.
 pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, std::io::Error> {
-    text(read(path).await?)
+    text(crate::rt::io::reading(path.as_ref()).await?)
 }
 
 /// Bytes as text, or the failure `read_to_string` reports for bytes that are
@@ -166,8 +170,15 @@ pub fn read_both(
 /// that is not text is not a failure here, because nothing downstream is going
 /// to cut a `&str` out of it. Reach for this where the bytes are the point -
 /// an image, a checksum, a format with a length prefix.
-pub async fn read(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
-    crate::rt::io::reading(path.as_ref()).await
+///
+/// **`Bytes` and not a `Vec[u8]`**, which is what Part III 17.2 has always
+/// said and [ADR-156](../../../docs/specification/adr/adr-156.md) D3 makes
+/// true: one shared buffer, so handing the file on costs a count rather than a
+/// copy of it.
+pub async fn read(path: impl AsRef<Path>) -> Result<crate::bytes::Bytes, std::io::Error> {
+    crate::rt::io::reading(path.as_ref())
+        .await
+        .map(crate::bytes::Bytes::from)
 }
 
 /// A whole file, written.
@@ -296,7 +307,7 @@ mod tests {
         // testing something no program does.
         let (mine, theirs) = crate::rt::exec::block_on(async {
             (
-                crate::task::as_text(super::read(&text).await),
+                crate::task::as_text(crate::rt::io::reading(&text).await),
                 super::read_to_string(&text).await,
             )
         });
@@ -308,7 +319,7 @@ mod tests {
         std::fs::write(&bytes, [b'a', 0xff]).expect("write");
         let (one, other) = crate::rt::exec::block_on(async {
             (
-                crate::task::as_text(super::read(&bytes).await),
+                crate::task::as_text(crate::rt::io::reading(&bytes).await),
                 super::read_to_string(&bytes).await,
             )
         });
@@ -356,7 +367,7 @@ mod tests {
                 .await
                 .expect("write bytes");
             assert_eq!(
-                super::read(&path).await.expect("read bytes"),
+                super::read(&path).await.expect("read bytes").as_slice(),
                 [0xFF, 0x00, 0xFE]
             );
             assert!(

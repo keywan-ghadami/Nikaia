@@ -473,7 +473,7 @@ fn rank(into: &Destination) -> u8 {
 }
 
 /// A type as the source writes it, for a message to quote back.
-fn write_type(parsed: &Parsed, ty: &Type) -> String {
+pub(crate) fn write_type(parsed: &Parsed, ty: &Type) -> String {
     let mut out = String::new();
     if ty.is_view {
         out.push('&');

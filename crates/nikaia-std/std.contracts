@@ -195,8 +195,8 @@ pub = true
 touches = ["file(path) read"]
 throws = ["?"]
 provenance = "trusted"
-signature = "(path: ?) -> Vec[u8]"
-doc = "The whole of a file, as bytes.\n\nIt fails where the file cannot be read. The bytes came from the program's own\nmachine, so what it hands back is **trusted**."
+signature = "(path: ?) -> Bytes"
+doc = "The whole of a file, as bytes.\n\nIt hands back one shared buffer and not a copy, so passing the file on costs a\nreference count. It fails where the file cannot be read. The bytes came from\nthe program's own machine, so what it hands back is **trusted**."
 
 [fn."fs::read_to_string"]
 pub = true

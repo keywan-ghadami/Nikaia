@@ -4,6 +4,36 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.71] — 2026-09-20
+
+`Bytes` is the language's, and the tether it needs is **refused** where a
+program would reach for it ([ADR-156](docs/specification/adr/adr-156.md)).
+
+### Added
+
+- **`Bytes` exists** (D1, D2). A name this compiler knows, written bare like `Vec` and `String`, lowered to one reference-counted, immutable run of bytes: handing a file on costs a count, never a copy. It reads as a run of bytes everywhere a `&[u8]` is taken, so nothing written against the language below has to know what it is.
+- **`fs::read` hands one back** (D3), which Part III 17.1 and 17.2 have said all along and the ledger did not: it keyed `Vec[u8]`.
+- **`NK2303`: a view of a buffer this body owns** (D4). Where a function hands back a view that points into a buffer its own body made, the program is refused on the **Nikaia line**, with the buffer named and the two ways out — take the buffer as a parameter, or `.to_owned()`, which the compiler never inserts ([ADR-008](docs/specification/adr/adr-008.md) D5).
+
+### Why the refusal is the answer and not a stub
+
+- **`Bytes` was never a missing name.** Part III 17.2 says what it is: *`read` returns `Bytes`, not a `Vec[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it.* The first half of that sentence is a type; the second is Part I 6.6's **tether**, which is [ADR-008](docs/specification/adr/adr-008.md)'s unbuilt state. Building the first and refusing where the second is needed is what makes both halves true at once.
+- **A name on a prelude's list that does not exist** is the one direction a prelude can be wrong in without anybody noticing, because nothing reaches it. `Bytes` had been on Part I 1.3's list since [ADR-154](docs/specification/adr/adr-154.md) D1 and existed nowhere — not in `std`, not in the compiler, not in any `.nika` file.
+- **The language's and not `std`'s**, which is what enforcing the list forced a choice about: what needs no `use` is what `std` keys **bare**, so `std`'s would have meant `bytes::Bytes` behind an import. A type whose representation the **compiler** picks — which is what Part I 6.6's three states are — is not a type a module owns.
+- **`rustc` used to speak about the generated file** for this shape. A function handing back a view of a local buffer lowered to Rust that does not compile, and the diagnostic named a type in a file the author never wrote, which is exactly what Part III C.1 forbids.
+
+### Which way it may be wrong
+
+- **The refusal stands on a named buffer and never on a doubt** (D5). The *column* errs towards Tethered, which is [ADR-008](docs/specification/adr/adr-008.md) D7's own polarity — a state it cannot decide is the wider one, and being wrong costs a representation wider than it had to be. A **refusal** may not err that way: refusing a correct program is the worse of the two mistakes (Part III C.4). So `NK2303` fires only where the walk can name the buffer's type *and* the returned expression is derived from the local holding it; a call no ledger describes raises nothing.
+- **And it parts company with the column deliberately.** The `views` column answers Borrowed the moment a parameter carries a view, because a signature is what it reads. The refusal reads the **body**: a function taking a `&str` and handing back a view of a `String` it made tethers all the same, and that is the case the column's polarity would miss.
+- **Nothing in the tree is refused by it.** `the_corpus_needs_no_tether` holds that over every `.nika` file in the repository, which is [ADR-008](docs/specification/adr/adr-008.md) §3's free case held to rather than asserted.
+
+### Left open
+
+- **The tether itself.** D4 is a refusal, not the state: a reference-counted buffer with a position, one handle per container, and the lowering that reads the `views` column. `docs/open-work.md` carries it, and its first item — *a buffer to tether to* — is now struck.
+- **`Mapped` does not deref to `Bytes`** (D6). Part III 17.2 promises it; `fs::map` hands back a mapping whose deref is `&str`, which is what `examples/1brc.nika` parses. It is the tether's own work.
+- **`eprint`** rode with the `Bytes` entry in [`docs/open-decisions.md`](docs/open-decisions.md) and is now an entry of its own: it is keyed bare and not on D1's list, which joined by being needed once — the direction D4 of that record was written against.
+
 ## [0.0.70] — 2026-09-20
 
 The tether's **analysis**, built alone

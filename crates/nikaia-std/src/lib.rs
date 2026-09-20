@@ -19,6 +19,7 @@
 //! from what the compiler produces.
 
 pub mod abort;
+pub mod bytes;
 pub mod channel;
 pub mod cli;
 pub mod concat;
@@ -54,6 +55,11 @@ pub mod text {
 pub mod prelude {
     pub use crate::channel;
     pub use crate::channel::{Receiver, Sender};
+    // **The one shared buffer**
+    // ([ADR-156](../../../docs/specification/adr/adr-156.md) D1): `Bytes` is a
+    // language type, written bare, so the generated Rust has to find it
+    // without a `use` the program did not write.
+    pub use crate::bytes::Bytes;
     pub use crate::cli;
     pub use crate::collections;
     pub use crate::error::Full;
