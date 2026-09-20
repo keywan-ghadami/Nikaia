@@ -143,6 +143,78 @@ fn every_other_loop_keeps_its_shape() {
     }
 }
 
+/// **Every other walk of a pausing sequence is refused, by name and line.**
+///
+/// The `for` is the one walk that gives its thread up; `count`, `collect`,
+/// `map` and the rest are `Iterator`'s below, which has no suspension point in
+/// it. So this compiler says so — rather than emitting a `.count()` the
+/// generated file's receiver does not have and letting `rustc` speak about a
+/// file nobody wrote ([Part III
+/// C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **And what it replaces was worse than a refusal.** `io::lines().count()`
+/// compiled before [ADR-172](../../../docs/specification/adr/adr-172.md),
+/// because `Lines` was an `Iterator` over `Result<String, …>` — so it counted
+/// the *failures* as lines. The ledger said `-> i64` and the program got one,
+/// and nothing anywhere said the number could be wrong. That is the bug class
+/// Part I 6.4 refuses by name, and it was in `std`.
+#[test]
+fn every_other_walk_of_a_pausing_sequence_is_refused() {
+    for method in ["count()", "collect()", "join(\", \")", "nth(2)"] {
+        let source = format!(
+            "use std::io\n\nfn main() {{\n\
+             \x20   let n = io::lines().{method}\n\
+             }}"
+        );
+        let parsed = parse_to_ast(&source).expect("the source parses");
+        let refused = emit::emit_program(&parsed, emit::Build::default())
+            .expect_err("a walk with no form is refused");
+        let said = format!("{refused:#}");
+        assert!(
+            said.contains("walks a sequence whose step pauses"),
+            "{said}"
+        );
+        assert!(said.contains("for line in io::lines()"), "{said}");
+    }
+}
+
+/// And the same for the **lazy** ones, whose result would itself be a sequence
+/// with pausing steps — the trait D3 defers until a second producer needs one.
+#[test]
+fn a_lazy_walk_of_a_pausing_sequence_is_refused_too() {
+    let parsed = parse_to_ast(
+        "use std::io\n\nfn main() {\n\
+         \x20   let ls = io::lines().map fn { a }\n\
+         }",
+    )
+    .expect("the source parses");
+    let refused = emit::emit_program(&parsed, emit::Build::default())
+        .expect_err("a walk with no form is refused");
+    assert!(
+        format!("{refused:#}").contains("`map` walks a sequence whose step pauses"),
+        "{refused:#}"
+    );
+}
+
+/// **A walk of a sequence that does not pause is untouched**, which is the half
+/// that matters most: `keys()`, `chars()` and `drain()` are every other
+/// sequence in `std`, and a refusal that reached them would be this rule
+/// refusing correct programs (C.4).
+#[test]
+fn a_walk_of_an_ordinary_sequence_is_not_refused() {
+    for source in [
+        "fn main(m: HashMap[String, i64]) { let ks = m.keys().collect() }",
+        "fn main(s: String) { let n = s.chars().count() }",
+        "fn main(xs: Vec[i64]) { let j = xs.drain().join(\", \") }",
+    ] {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        assert!(
+            emit::emit_program(&parsed, emit::Build::default()).is_ok(),
+            "{source}"
+        );
+    }
+}
+
 /// A `break` and a `continue` mean in the awaiting loop what they mean in the
 /// plain one, because the language below spells both the same way in a
 /// `while let` — asserted rather than assumed, since the construct changed

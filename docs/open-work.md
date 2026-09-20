@@ -206,14 +206,24 @@ what this entry was about from the first time it was written.
 
 **What is left is every other walk of the same sequence.** `Seq[T]`'s consumers —
 `collect`, `count`, `nth`, `join`, `map`, `filter` — are `Iterator`'s below and
-have no pausing form, so `io::lines().count()` still holds a thread where
-`for line in io::lines()` no longer does. That is D3's *where the cost really
-lands*, and it is work rather than a question: the record says whose trait it
-will be when a second producer needs one.
+have no pausing form, so D5 refuses them with the loop as the way out. That is
+D3's *where the cost really lands*, and it is work rather than a question: the
+record says whose trait it will be when a second producer needs one.
 
-*Evidence: none, and the same kind of none as before.* A caller sees a consumer
-that returns. What is missing is that the thread is **held** for its duration,
-which nothing can observe until something else wants the thread.
+*Evidence: a refusal, which is the good kind.* `io::lines().count()` says what
+is missing and what to write instead, in this compiler's words and on the
+`.nika` line.
+
+***It needs two halves and not one***, which is why it is not the afternoon it
+looks like. `count` over a pausing sequence is a loop around the step — but the
+step can **fail** as well as pause, and a walk of a sequence whose step throws
+has to make the function around it `throws`, which is
+[ADR-025](specification/adr/adr-025.md) D1's rule one construct over and is
+written down nowhere. Half of that pair is what let `io::lines().count()`
+*compile* before [ADR-172](specification/adr/adr-172.md) and silently count the
+failures as lines — the ledger said `-> i64`, `Lines` was an `Iterator` over
+`Result[String, …]`, and the number was wrong with nothing anywhere saying so.
+So the two go together or neither goes.
 
 *And the trait waits on a second producer rather than on a decision.* Of the six
 things that make a `Seq`, exactly one can pause, so what the lowering needs is an

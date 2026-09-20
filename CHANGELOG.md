@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.95] — 2026-09-20
+
+**`io::lines().count()` counted the failures as lines**, and every walk of a
+pausing sequence but the `for` is refused now
+([ADR-172](docs/specification/adr/adr-172.md) D5).
+
+### Fixed
+
+- **The miscount had been there since the entry existed.** `Lines` was an `Iterator` over `Result[String, …]`, so `count()` counted the results — failures and lines alike — and the ledger said `-> i64`, so a program got a number with nothing anywhere saying it could be wrong. That is [Part I 6.4](docs/specification/10-nikaia-light.md)'s bug class, in `std`. `collect()` was the same shape: a list of results, typed as a list of strings.
+- **Found by asking what 0.0.94 does to the *other* walks**, not by a test. Making a `for` over `io::lines()` await its step took `Lines`' `Iterator` away, and the question *what happens to `count()` now* is the one that turned up what `count()` had always been doing.
+- **The `for` is the only walk of one this compiler writes**, and every other is refused from the lowering, with the loop as the way out and the line under it. A refusal and **no number**, which is [ADR-171](docs/specification/adr/adr-171.md) §4's rule: a number is a promise the rule stays, and this is *this compiler cannot build that yet* rather than *the language forbids it*.
+- A walk of an **ordinary** sequence — `keys()`, `chars()`, `drain()` — is untouched, asserted rather than hoped for: a refusal that reached those would be this rule refusing correct programs ([C.4](docs/specification/30-nikaia-tooling.md)).
+
+### Corrected
+
+- 0.0.94's *left open* said `io::lines().count()` **still holds a thread where the `for` no longer does**. It does not hold a thread; it did not compile after that package and gave a wrong answer before it. The entry as published stays and this says what is true.
+
+### Left open
+
+- The **consumers**, and they need **two** halves rather than one: `count` over a pausing sequence is a loop around the step, but the step can *fail* as well as pause, and a walk of a failing sequence has to make the function around it `throws` — [ADR-025](docs/specification/adr/adr-025.md) D1's rule one construct over, written down nowhere. Half of that pair is exactly what the miscount above was. `docs/open-work.md` §2.2 carries it.
+
 ## [0.0.94] — 2026-09-20
 
 **A `for` may iterate something whose step pauses**

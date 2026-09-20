@@ -996,6 +996,10 @@ struct Emitter<'p> {
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D1), by the byte the
     /// statement starts at. Handed over exactly as `fallible_loops` is.
     pausing_loops: std::collections::BTreeSet<usize>,
+    /// The walks of a pausing sequence that have no form
+    /// ([ADR-172](../../docs/specification/adr/adr-172.md) D5), by the byte the
+    /// statement starts at and the method's name.
+    pausing_walks: std::collections::BTreeSet<(usize, String)>,
     /// The `let`s whose place-initialiser has to be lent
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4), by the byte the
     /// statement starts at. Answered by the checker for the reason every set
@@ -1944,6 +1948,7 @@ impl<'p> Emitter<'p> {
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             fallible_loops: propagation.loops,
             pausing_loops: propagation.pausing_loops,
+            pausing_walks: propagation.pausing_walks,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
             witnessed_sets: propagation.witnessed_sets,
@@ -7580,6 +7585,25 @@ impl<'p> Emitter<'p> {
             out.push(")");
         }
 
+        // **A walk of a pausing sequence other than a `for`**
+        // ([ADR-172](../../docs/specification/adr/adr-172.md) D5). The `for` is
+        // the one walk that gives its thread up; every other is `Iterator`'s
+        // below, which has no suspension point in it. Refused here with a line,
+        // rather than left to `rustc` about a method the generated file's
+        // receiver does not have (Part III, C.1).
+        if self
+            .pausing_walks
+            .contains(&(flow.statement, self.text(method).to_string()))
+        {
+            let name = self.text(method);
+            return Err(refused_at!(
+                flow.statement,
+                "`{name}` walks a sequence whose step pauses, and a `for` is the only walk of \
+                 one this compiler can write yet (ADR-172 D5). Write the loop - \
+                 `for line in io::lines() {{ … }}` - and do inside it what this was going to \
+                 do afterwards"
+            ));
+        }
         if self.method_pauses(flow, method) {
             if flow.in_lambda {
                 return Err(pausing_in_a_lambda(flow.statement, self.text(method)));

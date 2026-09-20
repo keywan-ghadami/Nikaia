@@ -176,6 +176,23 @@ pub struct Checked {
     /// followed by `for line in stream` has to be the same as the one-line
     /// form, which matching on a name would not give (ADR-025 D7).
     pub fallible_loops: BTreeSet<usize>,
+    /// The method calls that walk a sequence whose step **pauses**, which have
+    /// no form to be written as ([ADR-172](../../docs/specification/adr/adr-172.md)
+    /// D5), by the byte the statement starts at and the method's name.
+    ///
+    /// `io::lines().count()`, `.collect()`, `.map fn …`: the `for` is the one
+    /// walk that gives its thread up, and every other is `Iterator`'s below,
+    /// which has no suspension point in it. The emitter refuses them by name
+    /// and line rather than letting `rustc` speak about a method the generated
+    /// file's receiver does not have
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **And what it replaces was worse than a refusal.** `io::lines().count()`
+    /// compiled before this, because `Lines` was an `Iterator` over
+    /// `Result<String, …>` — so it counted the *failures* as lines, which is
+    /// the bug Part I 6.4 refuses by name. The ledger said `-> i64` and the
+    /// program got one; nothing anywhere said the number could be wrong.
+    pub pausing_walks: BTreeSet<(usize, String)>,
     /// The `for`s whose step **pauses**, by the byte the statement starts at
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D1).
     ///
@@ -855,6 +872,8 @@ pub struct Propagation {
     pub loops: BTreeSet<usize>,
     /// [`Checked::pausing_loops`].
     pub pausing_loops: BTreeSet<usize>,
+    /// [`Checked::pausing_walks`].
+    pub pausing_walks: BTreeSet<(usize, String)>,
     /// [`Checked::fallible_methods`].
     pub methods: BTreeSet<(usize, String)>,
     /// [`Checked::pausing_methods`].
@@ -915,6 +934,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
     Propagation {
         loops: checked.fallible_loops,
         pausing_loops: checked.pausing_loops,
+        pausing_walks: checked.pausing_walks,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
         witnessed_sets: checked.witnessed_sets,
@@ -3029,7 +3049,33 @@ impl<'a> Checker<'a> {
         // made `std`'s own pausing entries `async fn`: before it, a
         // `std` entry blocked its thread and awaiting one would have
         // been awaiting a value rather than a future.
-        self.method_pauses(method, !contract.sync.is_sync(), span);
+        // **A walk of a sequence whose step pauses, pauses**
+        // ([ADR-172](../../docs/specification/adr/adr-172.md) D5). The entry's
+        // own `sync` is about the walk — `count` adds one per element and does
+        // nothing else — and what suspends is the **step** it asks for. So the
+        // receiver's word decides it at the site, which is the same word the
+        // `for` one construct over reads.
+        let walks_a_pausing_step =
+            matches!(&on, Ty::Seq { pauses: true, .. }) && walks_by_value(contract);
+        self.method_pauses(
+            method,
+            !contract.sync.is_sync() || walks_a_pausing_step,
+            span,
+        );
+        // …and **only the `for` has a form**. Every other walk of one is
+        // `Iterator`'s below, which has no suspension point in it: a `map`
+        // hands back a sequence whose steps would pause, which is the trait D3
+        // defers, and `count` and `collect` would each need the *failing* half
+        // of the same walk built with them (ADR-025 D1, one construct over).
+        //
+        // Recorded rather than refused here, because *this compiler cannot
+        // build that yet* is a refusal from the lowering and not a rule of the
+        // language ([ADR-171](../../docs/specification/adr/adr-171.md) §4).
+        if walks_a_pausing_step {
+            self.checked
+                .pausing_walks
+                .insert((span.start, self.parsed.text(method).to_string()));
+        }
         self.a_pausing_method_in_a_sync_body(&key, contract, span);
         self.a_call_that_may_pause(contract);
         self.a_pausing_call_in_an_action(self.parsed.text(method), contract, span);
