@@ -33,10 +33,12 @@ need the owner rather than work are in
 This file is a notes page: nothing here is normative, and nothing may depend on
 it to know what a program means.
 
-**The moment Items get blocked by Questions**
-Questions that
-need the owner rather than other work hate to be listed in
-[`open-decisions.md`](open-decisions.md).
+**The moment an item is blocked by a question**, the question goes where
+questions go: one that needs the **owner** rather than other work has to be
+listed in [`open-decisions.md`](open-decisions.md), in the shape that page asks
+for — what is blocked, the options, a recommendation, and what either direction
+costs if it is wrong. What stays here is what a record already decided and the
+compiler does not do yet.
 
 ---
 
@@ -1166,21 +1168,32 @@ arbitrary value.
 step 1. Neither is small, and the harness delivers nothing a reader of a program
 would notice — which is worth knowing before it is started rather than after.
 
-### 2.41. Three names the prelude promises and `std` does not have
+### 2.41. Two names the prelude promises and `std` does not have
 
 [ADR-154](specification/adr/adr-154.md). The rule is built for a function and
-for a type; what is left is D1's own list naming three things that do not exist.
+for a type; what is left is D1's own list naming things that do not exist.
 
-**`Bytes`**, **`assert`** and **`panic`** are on the list on Part I 1.3 and are
-not in `std`. Each is its own piece of work, and `Bytes` carries a question the
-record left open on purpose (§4): whether it is `std`'s or the language's. A
-name on the list that does not exist is the one direction a prelude can be wrong
-in without anybody noticing — nothing refuses it, because nothing reaches it.
+**`assert`** and **`panic`** are on the list on Part I 1.3 and are not in `std`.
+Neither is a piece of work on its own: both belong with the **testing chapter**
+(Part III 14), which is not built either — there is no `nikaia test`, `assert c`
+parses as two statements and is refused with `NK1117`, and `assert(c)` is a call
+to a function of that name. Whatever `assert` is, it is decided there rather
+than here.
+
+*The third name went to [`open-decisions.md`](open-decisions.md).* **`Bytes`**
+is on the list too, and it is not a missing name: it is the container Part I
+6.6's **tether** needs, and the tether is that section's unbuilt half. Where it
+lives — `std`'s or the language's — is what
+[ADR-154](specification/adr/adr-154.md) §4 left open, and a question with a
+recommendation belongs on that page rather than this one.
 
 *And one the list does not promise and `std` has.* `eprint` is keyed bare, so it
-needs no `use`; D1's text writes `eprintln` and not `eprint`. Whether it belongs
-is a sentence for whoever revisits the list — D4 says a name joins by a record,
-and this one joined by being needed.
+needs no `use`; D1's text writes `eprintln` and not `eprint`. It rides with the
+`Bytes` entry, because both are the same sentence being revisited.
+
+*A name on the list that does not exist* is the one direction a prelude can be
+wrong in without anybody noticing — nothing refuses it, because nothing reaches
+it. That is why all three are written down rather than left to be found.
 
 *What stays bare on purpose:* `Shared`, `SharedMut` and `Locked` are the
 language's ([ADR-064](specification/adr/adr-064.md)) rather than a module's, and

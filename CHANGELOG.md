@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.65] — 2026-09-20
+
+`Bytes` is a question, and it goes where questions go
+([`docs/open-decisions.md`](docs/open-decisions.md)) — with the measurement in
+front of it, which turned out to be larger than the name.
+
+### Found
+
+- **`Bytes` is not a missing name; it is the surface of an unbuilt mechanism.** Part III 17.2 already says what it is: *`read` returns `Bytes`, not a `Vec[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it*, and `Mapped` derefs to it. So `Bytes` is the container Part I 6.6's **tether** needs — and the tether is that section's unbuilt half: the three states a view can be in are [ADR-008](docs/specification/adr/adr-008.md)'s, and what exists is the refusals rather than the reference-counted buffer.
+- **Enforcing the prelude turned [ADR-154](docs/specification/adr/adr-154.md) §4's door into a question.** What needs no `use` is now exactly what `std`'s ledger keys **bare**, so *`std`'s or the language's* are no longer interchangeable: one of the two answers puts `Bytes` behind a `use`, which is the opposite of being on D1's list.
+- **Two pages said things that are not true**, which is what a door standing open costs. Part III 17.2 said `fs::read` hands back `Bytes` where the compiler hands back a `Vec[u8]`, and a **Status** note said *`fs::map` and `Bytes` exist*.
+
+### Changed
+
+- **`docs/open-decisions.md` is not empty any more.** The entry is in the shape that page asks for: what is blocked, three options, a recommendation — *not yet, and the language's when the tether is built* — and what each direction costs if it is wrong. `eprint` rides with it, because it is the same sentence being revisited.
+- **The two stale claims are corrected**, each with the reason and a pointer: a stale **Status** note is a defect in its own right ([`docs/README.md`](docs/README.md) §1) whatever the answer turns out to be.
+- **`docs/open-work.md`** keeps `assert` and `panic`, and says what they actually wait on: the **testing chapter** (Part III 14), which is not built either. Neither is a piece of work on its own.
+
+### Left open
+
+- The entry itself, which is the point of filing it. Nothing in the tree can use `Bytes`, so nothing is blocked by the answer today — what the question protects against is the second spelling arriving later, which is the problem [ADR-140](docs/specification/adr/adr-140.md) spent a whole record removing.
+
 ## [0.0.64] — 2026-09-19
 
 The prelude's **type** half

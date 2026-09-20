@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.64 (Draft)
-**Date:** 2026-09-19
+**Version:** 0.0.65 (Draft)
+**Date:** 2026-09-20
 
 ---
 
@@ -1007,7 +1007,7 @@ modification time moves, and sized by the operator rather than the program
 ([ADR-058](adr/adr-058.md) D8). A page that must be held for certain is mapped by the program
 itself, outside the handler, as in the first example above.
 
-> **Implementation status:** Not implemented. `http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes` row nor `http::File` exists, and `fs::Root` is not built ([ADR-108](adr/adr-108.md) §5). `fs::map` and `Bytes` exist.
+> **Implementation status:** Not implemented. `http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes` row nor `http::File` exists, and `fs::Root` is not built ([ADR-108](adr/adr-108.md) §5). `fs::map` exists; **`Bytes` does not** — it is the tether's container and the tether is Part I 6.6's unbuilt half, so `fs::read` hands back a `Vec[u8]` today. `docs/open-decisions.md` carries the question of where it lives.
 
 The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
 and `query(name)` yield `&str`, so a parameter used inside the request's scope costs nothing and
@@ -1117,6 +1117,8 @@ flight is a program writing `overlap { … }` (Part I 8.1.2) or a `spawn`, never
 > **Implementation status:** Partially implemented. `read`, `read_to_string`, `write` with both of its options, and `map` are implemented, each without its `root` parameter ([ADR-108](adr/adr-108.md) §5); `open`, `File` and the directory functions are not implemented. The reactor and the state machine are implemented ([ADR-038](adr/adr-038.md) D3, [ADR-055](adr/adr-055.md) §6).
 
 `read` returns **`Bytes`**, not a `Vec[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Part I 6.6). A parser can therefore hand back thousands of names that all point into a single allocation.
+
+> **Implementation status:** Not implemented. `Bytes` does not exist and `fs::read` hands back a `Vec[u8]`. It is the container Part I 6.6's **tether** needs, and the tether is that section's unbuilt half — the three states a view can be in are [ADR-008](adr/adr-008.md)'s, and what is built is the refusals rather than the reference-counted buffer. Whether `Bytes` is `std`'s or the language's is open ([ADR-154](adr/adr-154.md) §4); `docs/open-decisions.md` carries it.
 
 **Reading a large file: `map`, and the grammar**
 

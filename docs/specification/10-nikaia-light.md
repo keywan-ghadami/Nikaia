@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.64 (Draft)
-**Date:** 2026-09-19
+**Version:** 0.0.65 (Draft)
+**Date:** 2026-09-20
 
 ---
 
@@ -124,9 +124,12 @@ rather than a file of the compiler's.
 > **function** and for a **type**: a name that lives in a `std` module is
 > refused without its prefix — `NK1117` for a function, `NK1135` for a type —
 > and a prefix is refused without its `use`, each with the line to add.
-> **`Bytes`, `assert` and `panic` are named by the list and do not exist**, and
-> each is its own piece of work ([ADR-154](adr/adr-154.md) §5).
-> `docs/open-work.md` carries them.
+> **`Bytes`, `assert` and `panic` are named by the list and do not exist.**
+> `Bytes` is the container Part I 6.6's tether needs and **where it lives is an
+> open question** ([ADR-154](adr/adr-154.md) §4), which
+> `docs/open-decisions.md` carries; `assert` and `panic` belong with the testing
+> chapter (Part III 14), which is not built either. `docs/open-work.md` carries
+> the second pair.
 
 ---
 
