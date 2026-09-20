@@ -656,7 +656,23 @@ impl Program {
                 // The entry is the only file ADR-038 D4's generated `fn main`
                 // may be written from.
                 at == 0,
-            )?;
+            )
+            // **A refusal from the lowering gets its line here**
+            // ([ADR-171](../../../docs/specification/adr/adr-171.md) D2), which
+            // is the one place that has both the byte and the file: the
+            // lowering knows the statement and not the path, and whoever
+            // catches the error at the top knows neither.
+            .map_err(|error| match crate::diagnostics::refusal_at(&error) {
+                Some((byte, message)) => {
+                    crate::diagnostics::refuse(crate::diagnostics::render_refusal(
+                        &message,
+                        byte,
+                        &unit.path.display().to_string(),
+                        &unit.source,
+                    ))
+                }
+                None => error,
+            })?;
 
             map.extend(body.map.placed(rust.len(), at));
             rust.push_str(&body.rust);

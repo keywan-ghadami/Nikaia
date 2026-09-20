@@ -33,7 +33,7 @@ use crate::ast::{
     Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
 use crate::parser::{parse_expression, Parsed};
-use crate::refused;
+use crate::{refused, refused_at};
 
 /// One branch of an `overlap { … }`, where the schedule and the written order
 /// differ and the results have to be put back (ADR-050 D2, D6).
@@ -4352,7 +4352,8 @@ impl<'p> Emitter<'p> {
             Stmt::Comptime { name, .. } => {
                 let bound = self.text(*name);
                 let Some((below, written)) = self.comptime_values.get(&span.start).cloned() else {
-                    return Err(refused!(
+                    return Err(refused_at!(
+                        span.start,
                         "`{bound}` has nothing to write, which `NK1127` reports - \
                          so this statement should not have reached the emitter"
                     ));
@@ -4556,7 +4557,8 @@ impl<'p> Emitter<'p> {
                     _ => "continue",
                 };
                 if !flow.in_loop {
-                    return Err(refused!(
+                    return Err(refused_at!(
+                        flow.statement,
                         "`{word}` has no loop to act on here, and the language below \
                          would refuse the file this writes (Part I, 3.3)"
                     ));
@@ -5342,7 +5344,8 @@ impl<'p> Emitter<'p> {
                 // without the checker's answer still writes no file `rustc`
                 // would refuse.
                 if !flow.in_loop {
-                    return Err(refused!(
+                    return Err(refused_at!(
+                        flow.statement,
                         "`{word}` has no loop to act on here, and the language below \
                          would refuse the file this writes (Part I, 3.3)"
                     ));
@@ -5446,7 +5449,10 @@ impl<'p> Emitter<'p> {
             // refuses that rather than dropping it silently.
             Expr::Spawn { body, .. } => {
                 let Expr::Closure { body, .. } = body.as_ref() else {
-                    return Err(refused!("`spawn` takes a lambda: write `spawn fn {{ … }}`"));
+                    return Err(refused_at!(
+                        flow.statement,
+                        "`spawn` takes a lambda: write `spawn fn {{ … }}`"
+                    ));
                 };
                 // **And which of the two starters**, which is the one place
                 // `user_parallelism` reaches a `spawn` (ADR-037 D2). At `yes` a
@@ -5543,7 +5549,7 @@ impl<'p> Emitter<'p> {
         }
         let pausing = self.pausing_key(func);
         if let Some(key) = pausing.as_deref().filter(|_| flow.in_lambda) {
-            return Err(pausing_in_a_lambda(key));
+            return Err(pausing_in_a_lambda(flow.statement, key));
         }
         // **A call to a code parameter whose type may pause**
         // ([ADR-122](../../docs/specification/adr/adr-122.md) D1). It hands back
@@ -5980,13 +5986,15 @@ impl<'p> Emitter<'p> {
     /// visible in the emitted Rust as the permutation it is.
     fn overlap(&self, out: &mut Out, block: &Block, depth: usize, flow: Flow<'_>) -> Result<()> {
         if block.stmts.len() < 2 {
-            return Err(refused!(
+            return Err(refused_at!(
+                flow.statement,
                 "an `overlap` block needs at least two branches; one statement has \
                  nothing to overlap with (Part I, 8.1.2)"
             ));
         }
         if block.stmts.len() > MOST_BRANCHES {
-            return Err(refused!(
+            return Err(refused_at!(
+                flow.statement,
                 "an `overlap` block of {} branches is more than this compiler builds \
                  ({MOST_BRANCHES}); `std` has one vehicle per arity (ADR-050 D2)",
                 block.stmts.len()
@@ -6101,7 +6109,8 @@ impl<'p> Emitter<'p> {
                     }
                 }
                 _ => {
-                    return Err(refused!(
+                    return Err(refused_at!(
+                        flow.statement,
                         "a branch of an `overlap` is an expression (Part I, 8.1.2)"
                     ))
                 }
@@ -6183,13 +6192,15 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
     ) -> Result<()> {
         if arms.len() < 2 {
-            return Err(refused!(
+            return Err(refused_at!(
+                flow.statement,
                 "a `select` needs at least two arms; one arm has nothing to race \
                  against (Part II, 12.4)"
             ));
         }
         if arms.len() > MOST_BRANCHES {
-            return Err(refused!(
+            return Err(refused_at!(
+                flow.statement,
                 "a `select` of {} arms is more than this compiler builds \
                  ({MOST_BRANCHES}); `std` has one vehicle per arity (ADR-148 D1)",
                 arms.len()
@@ -7496,7 +7507,7 @@ impl<'p> Emitter<'p> {
 
         if self.method_pauses(flow, method) {
             if flow.in_lambda {
-                return Err(pausing_in_a_lambda(self.text(method)));
+                return Err(pausing_in_a_lambda(flow.statement, self.text(method)));
             }
             out.push(".await");
         }
@@ -8251,8 +8262,9 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 /// meets this. What closes it is §6 step 3 and step 4, where `std`'s own
 /// signatures say which parameters take something that may pause, and a lambda
 /// handed to one of those can be written as a closure that returns a future.
-fn pausing_in_a_lambda(callee: &str) -> anyhow::Error {
-    refused!(
+fn pausing_in_a_lambda(at: usize, callee: &str) -> anyhow::Error {
+    refused_at!(
+        at,
         "this lambda calls `{callee}`, which can pause - and a lambda that pauses is \
          not something this compiler can build yet (ADR-055 §6). Call `{callee}` \
          outside the lambda and hand it the value, or give it a `sync` body"

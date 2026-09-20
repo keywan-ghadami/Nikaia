@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.90] — 2026-09-20
+
+**A refusal from the lowering names its line**
+([ADR-171](docs/specification/adr/adr-171.md)) — half of the roadmap's Phase 2
+*the compiler's own `anyhow` errors, which are still text without a position*.
+
+### Fixed
+
+- **A refusal the lowering makes said what was wrong and never where.** [Part III C.2](docs/specification/30-nikaia-tooling.md) asks every diagnostic for a headline, the line with a caret under it, the reason and a concrete way out; every `NK…` code gives all four, and these gave the first and the last. There are **33** of them in the emitter, and a reader with a file of any size was left searching.
+- **The byte was there the whole time.** `Flow::statement` carries the byte the statement being emitted starts at, threaded for the type checker's answers ([ADR-028](docs/specification/adr/adr-028.md)) — and it is the same number a caret wants.
+
+### Added
+
+- `Refused` carries it, `refused_at!` is `refused!` with the byte in front, and the line is rendered **at the unit** — the one place with both the byte and the path. The lowering knows the statement and not the file; whoever catches the error at the top knows neither, because a refusal travels as an `anyhow::Error` through a build that has moved on.
+- **The same shape as the checker's**, deliberately: a rule enforced in the lowering and one enforced in the checker should not look different to a reader, who has no reason to know which half of this compiler refused them. A test asserts that of one refusal from each half.
+
+### Scope, stated rather than left as a gap
+
+- **Nine of the thirty-three.** Those inside the expression and statement walks have a flow in hand and are converted — among them the pausing lambda (`docs/open-work.md` §2.1's own refusal, which is what sent this looking), the block-size refusals for `overlap` and `select`, the two jump refusals, and the `spawn` handed something other than a lambda. The rest are about an item, a literal or a whole unit, whose byte is a different walk.
+- **No `NK…` number in front of them.** A number is a promise the rule stays, and several of these are *this compiler cannot build that yet* rather than *the language forbids it*. Telling those two apart is the work a catalogue entry would rest on.
+
 ## [0.0.89] — 2026-09-20
 
 **An `overlap` keeps every failure** ([ADR-115](docs/specification/adr/adr-115.md)

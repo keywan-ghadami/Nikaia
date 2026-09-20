@@ -50,11 +50,26 @@ use crate::emit::SourceMap;
 /// compiler that cannot read a file or cannot run `rustc` has a failure of its
 /// own, and the frames are then the most useful thing on the screen.
 #[derive(Debug)]
-pub struct Refused(pub String);
+pub struct Refused {
+    pub message: String,
+    /// The byte the statement this is about starts at, where the refusal knew
+    /// one ([ADR-171](../../../docs/specification/adr/adr-171.md) D1).
+    ///
+    /// **A refusal from the lowering had no position at all**, so a reader was
+    /// told what was wrong and never where — which
+    /// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md) asks of
+    /// every diagnostic and which every `NK…` code already does. The lowering
+    /// has the byte: `Flow::statement` carries it for the type checker's sake,
+    /// and it is the same number.
+    ///
+    /// `None` where the refusal is about no statement in particular — a
+    /// manifest key, a switch, a whole file.
+    pub at: Option<usize>,
+}
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.write_str(&self.0)
+        out.write_str(&self.message)
     }
 }
 
@@ -93,10 +108,64 @@ macro_rules! refuse {
     };
 }
 
+/// [`refused!`], about a **statement the program wrote**
+/// ([ADR-171](../../../docs/specification/adr/adr-171.md) D1).
+///
+/// The first argument is the byte it starts at, which the lowering has in
+/// `Flow::statement` wherever it is emitting one.
+#[macro_export]
+macro_rules! refused_at {
+    ($at:expr, $($arg:tt)*) => {
+        $crate::diagnostics::refuse_at($at, format!($($arg)*))
+    };
+}
+
 /// Make a refusal, as an `anyhow::Error` so it travels the paths every other
 /// error already travels.
 pub fn refuse(message: impl Into<String>) -> anyhow::Error {
-    anyhow::Error::new(Refused(message.into()))
+    anyhow::Error::new(Refused {
+        message: message.into(),
+        at: None,
+    })
+}
+
+/// The same, about a **statement** the program wrote
+/// ([ADR-171](../../../docs/specification/adr/adr-171.md) D1).
+///
+/// The byte is rendered into a line and a caret by whoever holds the source,
+/// which is the unit being lowered — the same arrangement `render_finding` has,
+/// because a refusal the lowering makes and one the checker makes should not
+/// look different to a reader.
+pub fn refuse_at(at: usize, message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(Refused {
+        message: message.into(),
+        at: Some(at),
+    })
+}
+
+/// A refusal's position, where it has one and the error is a refusal at all.
+pub fn refusal_at(error: &anyhow::Error) -> Option<(usize, String)> {
+    error
+        .chain()
+        .find_map(|link| link.downcast_ref::<Refused>())
+        .and_then(|refused| refused.at.map(|at| (at, refused.message.clone())))
+}
+
+/// **A refusal from the lowering, on the line it is about**
+/// ([ADR-171](../../../docs/specification/adr/adr-171.md) D2).
+///
+/// The same shape `NK2202` and every relayed `rustc` message use, because a
+/// rule this compiler enforces in the lowering should not look different from
+/// one it enforces in the checker. There is no code in front of it: these are
+/// refusals the catalogue does not name, and inventing numbers for them is
+/// [ADR-171](../../../docs/specification/adr/adr-171.md) §4's own open question.
+pub fn render_refusal(message: &str, at: usize, path: &str, source: &str) -> String {
+    let (line, column) = winnow_grammar::span::line_column(source, at);
+    let mut out = format!("error: {message}\n");
+    out.push_str(&format!("  --> {path}:{line}:{column}\n"));
+    out.push_str(&winnow_grammar::span::caret(source, at, 1));
+    out.push('\n');
+    out
 }
 
 /// Whether a backend diagnostic is about something somebody wrote.
