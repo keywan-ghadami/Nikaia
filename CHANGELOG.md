@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.82] — 2026-09-20
+
+A joining block has **one** outcome, and a handler on it binds what the
+branches threw ([ADR-164](docs/specification/adr/adr-164.md)) — which is
+[ADR-115](docs/specification/adr/adr-115.md)'s first step, and where its
+`secondary` list will live.
+
+### Fixed
+
+- **`overlap { … } catch { … }` did not lower**, and it is [ADR-115](docs/specification/adr/adr-115.md) D4's **own written example**. A `?` per branch leaves the *function*, so a `catch` on the block got a `match` over the vehicle's **tuple** as though it were a `Result`. The branches become one outcome in `std` now — `nikaia_std::task::combine<n>`, taking them in written order and answering the first `Err`, which is [ADR-050](docs/specification/adr/adr-050.md) D5 written as the language below's own control flow. Where the failure does leave the function, the `?` is **one**, on the block. [ADR-163](docs/specification/adr/adr-163.md) D3 named this rather than fixing it, and said why: one function that sees every outcome is where ADR-115's list goes, and writing the combination twice would be writing the same loop twice.
+- **A handler on the block bound the wrong thing.** The enclosing function usually is not `throws` at all in this shape, so its channel is the box — and `match error { LoadError::Missing(w) => … }`, Part I 7.1's whole point, does not compile over one. A joining block has an error set of its own now: the **union of its branches'**, run through the same channel derivation a function's key gets.
+- **Two warnings about generated files, neither of which needs a joining block to reach.** `catch { println(f"{error}") }` over a named channel was `unused_braces` — the envelope was opened as a block wrapped *around* the handler, and is its first statement now. `fn f() -> String throws { throw E() }` was *unreachable call* — the tail of a `throws` body is wrapped in `Ok(`, and a `throw` writes its own `Err(…)` and leaves. A tail `return` is the other way round and stays wrapped: it is rewritten to its bare value there, and the `Ok(` is what makes that value the function's outcome.
+
+### Also
+
+- A `select`'s arms are the same rule in that construct's shape: where the handler is on the block, the winning arm takes its own failure apart and its value becomes the `Ok` half, because a `?` there would leave the function too.
+- The channel derivation is factored to take a **set** rather than a ledger key, so a block whose branches throw two different types reaches [ADR-160](docs/specification/adr/adr-160.md)'s generated sum with nothing added.
+
+### What this leaves
+
+- **The `secondary` list itself is not built.** `combine<n>` drops every failure but the first, exactly as the `?`s did — the tests say so on purpose.
+- **And it is blocked on a question the owner has**, now in [`docs/open-decisions.md`](docs/open-decisions.md): ADR-115 D1 says *every* error carries the list, and two of the four channels have nowhere to put one — a library's error travels **bare** ([ADR-159](docs/specification/adr/adr-159.md) D2), and a generated sum's members each keep their own. Those two are the common ones: a function that only reads files has `io::IoError` as its whole set, which is exactly that record's *three loads, two of them failing on the same outage*.
+- `crates/nikaia/tests/joining.rs` is eleven now, most of them compiling and running the result — including one that asserts `rustc`'s stderr is **empty** rather than that it succeeded, which is the only way to hold a *warning* about a generated file closed.
+
 ## [0.0.81] — 2026-09-20
 
 A block that joins on the executor **pauses**, and its branches travel in the

@@ -227,7 +227,15 @@ fn an_uncaught_failure_in_a_branch_fails_the_block() {
         rust.contains("Ok::<_, Box<dyn std::error::Error>>("),
         "{rust}"
     );
-    assert!(rust.contains("?, __nikaia_branch_1?)"), "{rust}");
+    // **One outcome out of the branches'**, in `std`
+    // ([ADR-164](../../../docs/specification/adr/adr-164.md) D1): a `?` per
+    // branch written here would leave the *function*, which is what a `catch` on
+    // the block cannot allow — and one place that sees every outcome is where
+    // ADR-115's `secondary` list goes.
+    assert!(
+        rust.contains("nikaia_std::task::combine2(__nikaia_branch_0, __nikaia_branch_1)?"),
+        "{rust}"
+    );
 
     // It runs when both files are there…
     assert_eq!(run("overlap-d5", source).trim(), "4 8");

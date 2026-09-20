@@ -60,7 +60,7 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Two entries are open.**
+**One entry is open.**
 
 ### 1.1. A grammar's entry does not say what it keeps
 
@@ -115,47 +115,6 @@ rather than guessed at, and it waits on the same mechanism
 
 *Every example still runs*, at both settings, which is what said this cost
 information rather than correctness.
-
-### 1.2. An `overlap` whose failure is handled at the block does not lower
-
-**Found by measuring [ADR-115](specification/adr/adr-115.md)**, and named by
-[ADR-163](specification/adr/adr-163.md) D3 rather than fixed there.
-`overlap { … } catch { … }` is ADR-115 D4's **own written example** — it is how
-that record says a block combines what its branches failed with — and it does
-not lower:
-
-```nika
-fn main() {
-    let pair = overlap {
-        load("a".to_string())
-        load("b".to_string())
-    } catch {
-        println(f"{error}")
-        return
-    }
-    println(f"{pair.0} {pair.1}")
-}
-```
-
-Where the enclosing function is not `throws`, no branch is wrapped in `Ok` and
-no `?` is written — so the `catch` emits a `match` over the vehicle's **tuple**
-as though it were a `Result`, and `rustc` says
-*expected `(Result<String, Thrown<LoadError>>, …)`, found `Result<_, _>`*
-about a file nobody wrote ([Part III C.1](specification/30-nikaia-tooling.md)).
-
-*Why it is not fixed where it was found:* the shape that fixes it is
-[ADR-115](specification/adr/adr-115.md)'s own first step. Handling at the block
-means looking at **every** branch's outcome rather than returning at the first
-`Err`, which is exactly what that record's `secondary` list is. Writing the
-combination twice — once to make the `catch` compile and once to keep the later
-failures — would be writing the same loop twice. So it is §2.25's opening move,
-and this entry is the evidence for it.
-
-*What is not wrong:* the same block in a `throws` function lowers, compiles and
-runs, with the first failure in written order winning
-([ADR-050](specification/adr/adr-050.md) D5).
-`crates/nikaia/tests/joining.rs` holds that, and asserts the second failure is
-nowhere — which is the line that changes when §2.25 is built.
 
 ## 2. Decided and unbuilt
 
@@ -910,13 +869,21 @@ and the printer; the `overlap` join appending; the cleanup attachment
 through the list; Part I 8.1.2's example and a test with two failing
 branches.
 
-*And it opens with a defect rather than with the list*: §1.2 above.
-`overlap { … } catch { … }` — D4's own written example — does not lower at
-all, because the block returns at the first `Err` instead of combining. The
-combination is the same loop the `secondary` list needs, so the two are one
-piece of work and this is where it starts.
-[ADR-163](specification/adr/adr-163.md) D2 has already made the branches
-travel in the function's channel, which is what that loop has to produce.
+*The opening move is built.* The block **combines** rather than returning at
+the first `Err` ([ADR-164](specification/adr/adr-164.md) D1):
+`nikaia_std::task::combine<n>` takes the branches' results in written order and
+is the only code that ever holds them all, which is where the list goes. D4's
+own written example — `overlap { … } catch { … }` — compiles and runs, and the
+handler binds what the branches threw (D2).
+
+**And what is left is blocked on a question**, which
+[`open-decisions.md`](open-decisions.md) now carries: D1 says *every* error
+carries the list, and two of the four channels have nowhere to put one — a
+library's error travels **bare** ([ADR-159](specification/adr/adr-159.md) D2)
+and a generated sum's members each keep their own. Those two are the common
+ones: a function that only reads files has `io::IoError` as its whole set,
+which is exactly this record's *three loads, two of them failing on the same
+outage*. Steps 1 and 3 of §5 wait on the answer; step 2's loop exists.
 
 ### 2.26. `from` is a name, and a file a build reads is `asset("…")`
 

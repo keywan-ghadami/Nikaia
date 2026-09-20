@@ -259,6 +259,41 @@ macro_rules! overlapping {
     };
 }
 
+/// **A block's one outcome, out of its branches'**
+/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5,
+/// [ADR-163](../../../docs/specification/adr/adr-163.md) D3).
+///
+/// The arguments are the branches' results **in written order**, which is the
+/// only order the source has and therefore the only one that makes the outcome
+/// reproducible. `?` left to right is that rule, written as the language
+/// below's own control flow rather than as a comparison this makes.
+///
+/// **Why it is a function and not a `?` per branch at the call.** An
+/// `overlap { … } catch { … }` hands the block's outcome to a handler, and a
+/// handler needs the `Result` rather than the value - a `?` in the middle of
+/// the block would leave the function instead. One place that turns *n*
+/// outcomes into one is also the place [ADR-115](../../../docs/specification/adr/adr-115.md)
+/// puts the `secondary` list the day the later failures stop being dropped:
+/// this function is the only code that sees them all.
+macro_rules! combining {
+    ($name:ident, $($branch:ident : $value:ident),+) => {
+        #[allow(non_snake_case, clippy::too_many_arguments)]
+        pub fn $name<$($value),+, E>(
+            $($branch: Result<$value, E>),+
+        ) -> Result<($($value),+), E> {
+            Ok(($($branch?),+))
+        }
+    };
+}
+
+combining!(combine2, A: RA, B: RB);
+combining!(combine3, A: RA, B: RB, C: RC);
+combining!(combine4, A: RA, B: RB, C: RC, D: RD);
+combining!(combine5, A: RA, B: RB, C: RC, D: RD, E2: RE);
+combining!(combine6, A: RA, B: RB, C: RC, D: RD, E2: RE, F: RF);
+combining!(combine7, A: RA, B: RB, C: RC, D: RD, E2: RE, F: RF, G: RG);
+combining!(combine8, A: RA, B: RB, C: RC, D: RD, E2: RE, F: RF, G: RG, H: RH);
+
 overlapping!(overlap2, A: RA, B: RB);
 overlapping!(overlap3, A: RA, B: RB, C: RC);
 overlapping!(overlap4, A: RA, B: RB, C: RC, D: RD);

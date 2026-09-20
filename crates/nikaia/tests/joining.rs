@@ -276,9 +276,9 @@ fn a_branch_travels_in_a_librarys_channel_too() {
 /// the other one, which is not built. The assertion is here so that the day it
 /// is, this is the line that has to change.
 ///
-/// Written with the failure leaving `main`, because
-/// `overlap { … } catch { … }` — ADR-115 D4's own form — does not lower:
-/// `docs/open-work.md` §1 carries it with this program as its reproducer.
+/// Written with the failure leaving `main`. The same block with a `catch` on
+/// it is [ADR-164](../../../docs/specification/adr/adr-164.md)'s, below, and
+/// drops the second failure in exactly the same way.
 #[test]
 fn the_first_failure_in_written_order_is_still_the_blocks() {
     let source = format!(
@@ -314,4 +314,162 @@ fn the_first_failure_in_written_order_is_still_the_blocks() {
     );
     // **And the second failure is nowhere**, which is the whole of ADR-115.
     assert!(!said.contains("is broken"), "{said}");
+}
+
+// ---------------------------------------------------------------------------
+// [ADR-164](../../../docs/specification/adr/adr-164.md): the block's outcome is
+// one, and a handler on the block binds what the branches threw.
+// ---------------------------------------------------------------------------
+
+/// **D1: `overlap { … } catch { … }` lowers** — [ADR-115](../../../docs/specification/adr/adr-115.md)
+/// D4's own written example, which did not.
+///
+/// A `?` per branch leaves the **function**, so a `catch` on the block got a
+/// `match` over the vehicle's tuple as though it were a `Result`. The branches
+/// become one outcome in `std` instead, which is also the one place that sees
+/// every branch's result — where that record's `secondary` list goes.
+#[test]
+fn a_handler_on_the_block_gets_the_blocks_outcome() {
+    let source = format!(
+        "{OWN_ERROR}\n\
+         fn main() {{\n\
+         \x20   let pair = overlap {{\n\
+         \x20       load(\"a\".to_string())\n\
+         \x20       load(\"b\".to_string())\n\
+         \x20   }} catch {{\n\
+         \x20       println(f\"caught: {{error}}\")\n\
+         \x20       return\n\
+         \x20   }}\n\
+         \x20   println(f\"{{pair.0}} {{pair.1}}\")\n\
+         }}\n"
+    );
+    let rust = lowered(&source);
+    assert!(rust.contains("nikaia_std::task::combine2("), "{rust}");
+    // **And no `?`**, because the handler is right here: the `match` around the
+    // block is what takes the outcome apart.
+    assert!(
+        !rust.contains("combine2(__nikaia_branch_0, __nikaia_branch_1)?"),
+        "a handler on the block keeps the outcome:\n{rust}"
+    );
+    assert_eq!(
+        output("joining-catch-on-the-block", &source),
+        "caught: a is missing"
+    );
+}
+
+/// **D2: and the handler binds what the *branches* threw.**
+///
+/// The enclosing function may not be `throws` at all, so its channel is the
+/// box — and `match error { LoadError::Missing(w) => … }`, which is Part I
+/// 7.1's whole point, does not compile over one. The block has a set of its
+/// own: the union of its branches'.
+#[test]
+fn a_handler_on_the_block_matches_the_branches_variants() {
+    let source = format!(
+        "{OWN_ERROR}\n\
+         fn main() {{\n\
+         \x20   let pair = overlap {{\n\
+         \x20       load(\"a\".to_string())\n\
+         \x20       load(\"b\".to_string())\n\
+         \x20   }} catch {{\n\
+         \x20       match error {{\n\
+         \x20           LoadError::Missing(w) => {{ println(f\"missing {{w}}\") }}\n\
+         \x20           LoadError::Broken(w) => {{ println(f\"broken {{w}}\") }}\n\
+         \x20       }}\n\
+         \x20       return\n\
+         \x20   }}\n\
+         \x20   println(f\"{{pair.0}} {{pair.1}}\")\n\
+         }}\n"
+    );
+    let rust = lowered(&source);
+    assert!(
+        rust.contains("Ok::<_, nikaia_std::error::Thrown<LoadError>>("),
+        "the branches travel in the block's own channel:\n{rust}"
+    );
+    // The envelope is opened once at the binding, as ADR-157 D2 says.
+    assert!(rust.contains(".split();"), "{rust}");
+    assert_eq!(
+        output("joining-match-on-the-block", &source),
+        "missing a",
+        "the first failure in written order is what the handler is handed"
+    );
+}
+
+/// **The same for a `select`**, whose arms take their failure apart themselves
+/// where the handler is on the block — a `?` there would leave the function.
+#[test]
+fn a_handler_on_a_select_gets_the_blocks_outcome() {
+    let source = format!(
+        "{OWN_ERROR}\n\
+         fn main() {{\n\
+         \x20   select {{\n\
+         \x20       x = load(\"a\".to_string()) => {{ println(f\"a {{x}}\") }}\n\
+         \x20       y = load(\"b\".to_string()) => {{ println(f\"b {{y}}\") }}\n\
+         \x20   }} catch {{\n\
+         \x20       println(f\"caught: {{error}}\")\n\
+         \x20   }}\n\
+         }}\n"
+    );
+    let printed = output("joining-catch-on-a-select", &source);
+    assert!(
+        printed == "caught: a is missing" || printed == "b b",
+        "whichever arm wins, the block answers: {printed}"
+    );
+}
+
+/// **D3: and `rustc` says nothing about any of it.**
+///
+/// Two of the shapes above were `unused_braces` and one was *unreachable call*
+/// — warnings about generated files, which is
+/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md) one
+/// severity down. The handler with **one statement** over a named channel is
+/// what reached the first, and a `throws` function whose body is a bare `throw`
+/// the second; neither needs an `overlap` in it.
+#[test]
+fn rustc_says_nothing_about_the_generated_file() {
+    let programs = [
+        // A one-statement handler over a named channel: the envelope used to be
+        // opened as a block wrapped around the handler.
+        format!(
+            "{OWN_ERROR}\n\
+             fn main() {{\n\
+             \x20   let got = load(\"a\".to_string()) catch {{\n\
+             \x20       println(f\"caught: {{error}}\")\n\
+             \x20       return\n\
+             \x20   }}\n\
+             \x20   println(f\"{{got}}\")\n\
+             }}\n"
+        ),
+        // A `throws` function whose body is a bare `throw`: `Ok(` around it is
+        // `Ok(return Err(…))`.
+        "enum Boom { Now }\n\
+         \n\
+         impl Error for Boom {\n\
+         \x20   fn message(&self) -> String { return \"boom\".to_string() }\n\
+         }\n\
+         \n\
+         fn always() -> String throws {\n\
+         \x20   throw Boom::Now\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let got = always() catch { return }\n\
+         \x20   println(f\"{got}\")\n\
+         }\n"
+        .to_string(),
+    ];
+    for (at, source) in programs.iter().enumerate() {
+        let rust = lowered(source);
+        let dir = common::scratch_dir(&format!("joining-quiet-{at}"));
+        let file = dir.join("main.rs");
+        std::fs::write(&file, &rust).expect("write the Rust");
+        let out = common::compile(&file, &["-o", dir.join("program").to_str().expect("path")]);
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{said}\n--- the Rust ---\n{rust}");
+        assert!(
+            said.trim().is_empty(),
+            "rustc said something about the file it was handed:\n{said}\n--- the Rust ---\n{rust}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

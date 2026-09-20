@@ -1270,6 +1270,19 @@ const PANIC: &str = "panic";
 /// finishes ([ADR-114](../../docs/specification/adr/adr-114.md) D2).
 const STORED: &str = "__nikaia_stored";
 
+/// The name an arm's value is bound to before it is put back in an `Ok`
+/// ([ADR-164](../../docs/specification/adr/adr-164.md) D1).
+///
+/// **The binding is what keeps `rustc` quiet.** `Ok({ … })` around a block
+/// holding one expression is `unused_braces` — a warning about a file nobody
+/// wrote, which is [Part III C.1](../../docs/specification/30-nikaia-tooling.md)
+/// one severity down. A block with a `let` in it is a block the lint has
+/// nothing to say about.
+const ARM_VALUE: &str = "__nikaia_value";
+
+/// The name a failure is bound to where an arm takes it apart itself.
+const ARM_FAILED: &str = "__nikaia_failed";
+
 /// The slot a function's result is filed under, as `contracts::sharing` keys it.
 const SHARED_RESULT: &str = "<result>";
 
@@ -1491,6 +1504,17 @@ struct Flow<'a> {
     /// method says the method's own name (ADR-023 D6), and a ledger key says
     /// `Type::method`.
     function: &'a str,
+    /// This expression **is** the guarded half of a `catch`, rather than
+    /// sitting somewhere inside it
+    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D3).
+    ///
+    /// `caught` reaches inward, because in `outer(inner()) catch { … }` the
+    /// handler runs for either call. This does not: it is set on the one
+    /// expression the `match` is written around, and only where that
+    /// expression is a block that joins. A joining block's outcome is a
+    /// `Result` the handler consumes, and one nested in an argument is a tuple
+    /// like any other value.
+    handled_here: bool,
     /// The type the enclosing function's failures travel in
     /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D2).
     ///
@@ -1613,6 +1637,7 @@ impl<'a> Flow<'a> {
         statement: usize::MAX,
         function: "",
         channel: "Box<dyn std::error::Error>",
+        handled_here: false,
         in_lambda: false,
         bound: "",
         widen: false,
@@ -1632,6 +1657,20 @@ impl<'a> Flow<'a> {
     fn guarded(self) -> Self {
         Flow {
             caught: true,
+            ..self
+        }
+    }
+
+    /// The guarded half of a `catch`, where that half is a block that **joins**
+    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D3).
+    ///
+    /// The `match` is written around this expression, so its outcome has to be
+    /// the `Result` the handler takes apart rather than the value a
+    /// propagating block hands on.
+    fn joined_here(self) -> Self {
+        Flow {
+            caught: true,
+            handled_here: true,
             ..self
         }
     }
@@ -3138,6 +3177,8 @@ impl<'p> Emitter<'p> {
             statement: usize::MAX,
             function: key,
             channel,
+            // A function body is not a `catch`'s guarded half.
+            handled_here: false,
             // A function body was not written inside whatever lambda the call
             // to it sits in: this is the one boundary the flag does not cross.
             in_lambda: false,
@@ -3175,7 +3216,18 @@ impl<'p> Emitter<'p> {
             // returns nothing ends in the `Ok(())` below, so its last statement
             // is a statement like any other.
             let here = tail.at(i, last);
-            let wrap = here == Tail::Return;
+            // **A tail that is a `throw` is not wrapped**
+            // ([ADR-164](../../docs/specification/adr/adr-164.md) D3): it writes
+            // its own `Err(…)` and leaves, so an `Ok(` around it is
+            // `Ok(return Err(…))` — *unreachable call*, about a file nobody
+            // wrote. `fn f() -> String throws { throw E() }` is the whole
+            // program it takes.
+            //
+            // A tail `return` is the other way round and stays wrapped: it is
+            // rewritten to its bare value here (the one place Part I allows
+            // that), and the `Ok(` is what makes that value the function's
+            // outcome.
+            let wrap = here == Tail::Return && !matches!(&stmt.node, Stmt::Expr(Expr::Throw(_)));
             out.from(&stmt.span, |out| {
                 if wrap {
                     out.push("Ok(");
@@ -5113,7 +5165,15 @@ impl<'p> Emitter<'p> {
                 // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), so it
                 // needs no arm of its own — which is what that record meant by
                 // *an ordinary call*.
-                self.expr(out, expr, depth, flow.guarded())?;
+                // **A joining block is told the handler is right here**
+                // ([ADR-163](../../docs/specification/adr/adr-163.md) D3), and
+                // only when it *is* the guarded half: one nested in an argument
+                // hands back a tuple like any other value.
+                let guarded = match &**expr {
+                    Expr::Overlap(_) | Expr::Select(_) => flow.joined_here(),
+                    _ => flow.guarded(),
+                };
+                self.expr(out, expr, depth, guarded)?;
                 let pad = "    ".repeat(depth + 1);
                 let close = "    ".repeat(depth);
                 // **A handler that does not read the error binds `_error`**
@@ -5149,12 +5209,17 @@ impl<'p> Emitter<'p> {
                     false => None,
                 };
                 let flow = flow.handling(named).catching(sum);
-                let opened = match named {
-                    false => String::new(),
-                    true => format!("{{ let ({CAUGHT}, {SITE}) = {CAUGHT}.split(); "),
-                };
+                // **The envelope is opened as the handler's first statement**
+                // ([ADR-164](../../docs/specification/adr/adr-164.md) D3), and
+                // not as a block wrapped around it. A block holding one
+                // expression, inside another block, is `unused_braces` — a
+                // warning about a file nobody wrote, which is
+                // [Part III C.1](../../docs/specification/30-nikaia-tooling.md)
+                // one severity down, and `catch { println(f"{error}") }` over a
+                // named channel is all it took.
+                let opening = named.then(|| format!("let ({CAUGHT}, {SITE}) = {CAUGHT}.split();"));
                 out.push(&format!(
-                    " {{\n{pad}Ok(value) => value,\n{pad}Err({bound}) => {opened}"
+                    " {{\n{pad}Ok(value) => value,\n{pad}Err({bound}) => "
                 ));
                 // Kap 7.1 and ADR-034: the handler's last statement is the
                 // value of the `catch`, so a `return` in it is the *function's*
@@ -5162,10 +5227,14 @@ impl<'p> Emitter<'p> {
                 // counts exactly that `return` when it refuses to overlap the
                 // guarded read, so dropping it here made the ordering analysis
                 // reason about a control flow the emitted program did not have.
-                self.block(out, handler, depth + 1, flow, Tail::Value)?;
-                if named {
-                    out.push(" }");
-                }
+                self.block_opening_with(
+                    out,
+                    handler,
+                    depth + 1,
+                    flow,
+                    Tail::Value,
+                    opening.as_deref(),
+                )?;
                 out.push(&format!(",\n{close}}}"));
             }
             Expr::Try(inner) => {
@@ -5880,11 +5949,36 @@ impl<'p> Emitter<'p> {
         // rather than inferred, because an `async` block with a `?` in it and
         // nothing to infer from is *"type annotations needed"* about a file
         // nobody wrote (Part III, C.1).
-        let fallible = flow.throws
+        //
+        // **Or handled at the block itself**
+        // ([ADR-163](../../docs/specification/adr/adr-163.md) D3): a `catch`
+        // written on the block is where the failure stops, so the branches are
+        // wrapped for it exactly as they are for a `throws` function - and the
+        // outcome stays a `Result` for the handler to take apart.
+        let fallible = (flow.throws || flow.handled_here)
             && block.stmts.iter().any(|stmt| match &stmt.node {
                 Stmt::Expr(value) => self.branch_can_fail(value, flow.at(stmt.span.start)),
                 _ => false,
             });
+
+        // **Whose channel the branches travel in**
+        // ([ADR-164](../../docs/specification/adr/adr-164.md) D2). Where the
+        // failure leaves the function, it is the function's, as
+        // [ADR-163](../../docs/specification/adr/adr-163.md) D2 made it. Where a
+        // `catch` on the block handles it, the function may not be `throws` at
+        // all — so it is the set the **branches** throw, which is also what the
+        // handler binds.
+        let joined = flow
+            .handled_here
+            .then(|| self.joined_throws(Self::branch_values(block)));
+        let channel = match &joined {
+            None => flow.channel.to_string(),
+            // `main` has no parameters to borrow from and a block's outcome is
+            // bound where it is written, so an error carrying a view can only be
+            // `'static` here — [ADR-008](../../docs/specification/adr/adr-008.md)
+            // D9's derivation, one position over.
+            Some(set) => self.channel_of(set, Lifetimes::ELIDED, false),
+        };
 
         let pad = "    ".repeat(depth);
         let inner = "    ".repeat(depth + 1);
@@ -5936,7 +6030,7 @@ impl<'p> Emitter<'p> {
                         // **The enclosing function's channel**
                         // ([ADR-163](../../docs/specification/adr/adr-163.md)
                         // D2), because the `?` below converts into it.
-                        out.push(&format!("Ok::<_, {}>(", flow.channel));
+                        out.push(&format!("Ok::<_, {channel}>("));
                     }
                     out.from(&stmt.span, |out| self.expr(out, value, depth + 1, inside))?;
                     if fallible {
@@ -5955,11 +6049,26 @@ impl<'p> Emitter<'p> {
         out.push(")");
 
         if bound {
-            out.push(&format!(".await;\n{inner}("));
+            out.push(&format!(".await;\n{inner}"));
+            // **The branches become one outcome in `std`**
+            // ([ADR-163](../../docs/specification/adr/adr-163.md) D3) — `combine<n>` takes them in
+            // written order and answers the first `Err` among them
+            // ([ADR-050](../../docs/specification/adr/adr-050.md) D5). A `?`
+            // per branch written here would leave the *function* instead, which
+            // is what a `catch` on the block cannot allow; and one function that
+            // sees every outcome is where
+            // [ADR-115](../../docs/specification/adr/adr-115.md)'s `secondary`
+            // list goes the day the later failures stop being dropped.
+            if fallible {
+                out.push(&format!("nikaia_std::task::combine{}(", block.stmts.len()));
+            } else {
+                out.push("(");
+            }
             // Written order out of start order: branch `written` was handed
             // over at `order.iter().position(…)`, so that is the name it came
             // back under. Where nothing was reordered the two are the same, and
-            // this still writes the tuple out because the `?`s hang off it.
+            // this still writes the tuple out because the combination hangs off
+            // it.
             for written in 0..block.stmts.len() {
                 if written > 0 {
                     out.push(", ");
@@ -5969,11 +6078,15 @@ impl<'p> Emitter<'p> {
                     .position(|&from| from == written)
                     .expect("every branch is handed over exactly once");
                 out.push(&format!("{BRANCH}{at}"));
-                if fallible {
-                    out.push("?");
-                }
             }
-            out.push(&format!(")\n{pad}}}"));
+            out.push(")");
+            // **And the `?` is one, on the block** — unless the handler is
+            // right here, in which case the `match` around this is what takes
+            // the outcome apart.
+            if fallible && !flow.handled_here {
+                out.push("?");
+            }
+            out.push(&format!("\n{pad}}}"));
         } else {
             out.push(".await");
         }
@@ -6025,10 +6138,24 @@ impl<'p> Emitter<'p> {
         // than inferred, because an `async` block with a `?` in it and nothing
         // to infer from is *"type annotations needed"* about a file nobody
         // wrote (Part III, C.1).
-        let fallible = flow.throws
+        //
+        // **Or handled at the block** ([ADR-164](../../docs/specification/adr/adr-164.md)
+        // D1), exactly as an `overlap`'s is.
+        let fallible = (flow.throws || flow.handled_here)
             && arms
                 .iter()
                 .any(|arm| self.branch_can_fail(&arm.value, flow.at(arm.at)));
+
+        // Whose channel the arms travel in (D2): the function's where the
+        // failure leaves it, the **arms'** own set where a `catch` on the block
+        // is what handles it.
+        let joined = flow
+            .handled_here
+            .then(|| self.joined_throws(arms.iter().map(|arm| &arm.value)));
+        let channel = match &joined {
+            None => flow.channel.to_string(),
+            Some(set) => self.channel_of(set, Lifetimes::ELIDED, false),
+        };
 
         let pad = "    ".repeat(depth);
         let inner = "    ".repeat(depth + 1);
@@ -6045,13 +6172,13 @@ impl<'p> Emitter<'p> {
                 throws: fallible,
                 origin: flow.origin,
                 // As an `overlap`'s branch does.
-                channel: flow.channel,
+                channel: channel.as_str(),
                 ..Flow::PLAIN
             };
             if fallible {
                 // The same as an `overlap`'s, one construct over
                 // ([ADR-163](../../docs/specification/adr/adr-163.md) D2).
-                out.push(&format!("Ok::<_, {}>(", flow.channel));
+                out.push(&format!("Ok::<_, {channel}>("));
             }
             self.expr(out, &arm.value, depth + 1, inside)?;
             if fallible {
@@ -6072,9 +6199,30 @@ impl<'p> Emitter<'p> {
                 arms.len(),
                 ORDINALS[at]
             ));
-            // The winner's `?`, at the top of the arm that won. A `_` arm still
-            // propagates, because an arm that ignores a value does not ignore a
-            // failure.
+            // **The winner's `?`, at the top of the arm that won.** A `_` arm
+            // still propagates, because an arm that ignores a value does not
+            // ignore a failure.
+            //
+            // **Unless the handler is right here**
+            // ([ADR-164](../../docs/specification/adr/adr-164.md) D1): a `?`
+            // would leave the *function*, and what the `catch` around this
+            // `match` takes apart is the block's own outcome. So the failure is
+            // taken apart here instead, and the arm's value becomes the `Ok`
+            // half — which is what makes the whole `match` a `Result`.
+            if fallible && flow.handled_here {
+                let name = match arm.binding {
+                    Some(name) => self.text(name).to_string(),
+                    None => "_".to_string(),
+                };
+                out.push(&format!(
+                    "match {WINNER} {{\n{inner}    Err({ARM_FAILED}) => Err({ARM_FAILED}),\n                     {inner}    Ok({name}) => {{ let {ARM_VALUE} = "
+                ));
+                out.from(&Span::from(arm.at..arm.at), |out| {
+                    self.block_opening_with(out, &arm.body, depth + 2, flow, Tail::Value, None)
+                })?;
+                out.push(&format!("; Ok({ARM_VALUE}) }},\n{inner}}}\n"));
+                continue;
+            }
             let opening = fallible.then(|| match arm.binding {
                 Some(name) => format!("let {} = {WINNER}?;", self.text(name)),
                 None => format!("{WINNER}?;"),
@@ -6174,8 +6322,16 @@ impl<'p> Emitter<'p> {
     /// needs the generated sum that is not built, and a type another package
     /// declares is not this unit's to name in a signature.
     fn named_error(&self, key: &str) -> Option<Named<'_>> {
-        let throws = &self.own_contracts.functions.get(key)?.throws;
-        let [one] = throws.as_slice() else {
+        self.named_error_of(&self.own_contracts.functions.get(key)?.throws)
+    }
+
+    /// [`Emitter::named_error`] asked of the **set** rather than of a function.
+    ///
+    /// A joining block has a set of its own — the union of what its branches
+    /// throw — and no ledger key to look it up under
+    /// ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+    fn named_error_of<'t>(&'t self, throws: &'t [String]) -> Option<Named<'t>> {
+        let [one] = throws else {
             return None;
         };
         if one == crate::contracts::UNNAMED_ERROR {
@@ -6203,22 +6359,29 @@ impl<'p> Emitter<'p> {
     /// type with a lifetime, and a function with nothing to borrow from can
     /// only write `'static` for it.
     fn error_channel(&self, key: &str, lifetimes: Lifetimes, borrows: bool) -> String {
+        match self.own_contracts.functions.get(key) {
+            Some(contract) => self.channel_of(&contract.throws, lifetimes, borrows),
+            None => "Box<dyn std::error::Error>".to_string(),
+        }
+    }
+
+    /// [`Emitter::error_channel`] asked of the **set** rather than of a
+    /// function ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+    fn channel_of(&self, throws: &[String], lifetimes: Lifetimes, borrows: bool) -> String {
         // **A set of two or more is the generated sum**
         // ([ADR-160](../../docs/specification/adr/adr-160.md) D1), where every
         // member of it is a name.
-        if let Some(contract) = self.own_contracts.functions.get(key) {
-            if let Some(sum) = self.sums.get(&contract.throws) {
-                let params = match contract.throws.iter().any(|m| self.borrows_named(m)) {
-                    false => String::new(),
-                    true => match lifetimes == Lifetimes::ELIDED && !borrows {
-                        true => format!("<{}>", Lifetimes::STATIC.params),
-                        false => format!("<{}>", lifetimes.params),
-                    },
-                };
-                return format!("{}{params}", Self::sum_path(sum));
-            }
+        if let Some(sum) = self.sums.get(throws) {
+            let params = match throws.iter().any(|m| self.borrows_named(m)) {
+                false => String::new(),
+                true => match lifetimes == Lifetimes::ELIDED && !borrows {
+                    true => format!("<{}>", Lifetimes::STATIC.params),
+                    false => format!("<{}>", lifetimes.params),
+                },
+            };
+            return format!("{}{params}", Self::sum_path(sum));
         }
-        match self.named_error(key) {
+        match self.named_error_of(throws) {
             None => "Box<dyn std::error::Error>".to_string(),
             // **A library's error travels bare**
             // ([ADR-159](../../docs/specification/adr/adr-159.md) D2): there is
@@ -6401,20 +6564,15 @@ impl<'p> Emitter<'p> {
     /// over, and answered the same way: only the outermost call, and only a
     /// call by name.
     fn caught_sum(&self, expr: &Expr) -> Option<&str> {
-        let name = match expr {
-            Expr::Call { func, .. } => match func.as_ref() {
-                Expr::Variable(name) => self.text(*name).to_string(),
-                Expr::Path(segments) => segments
-                    .iter()
-                    .map(|s| self.text(*s))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-                _ => return None,
-            },
-            Expr::Try(inner) => return self.caught_sum(inner),
-            _ => return None,
+        let joined = match expr {
+            Expr::Overlap(block) => Some(self.joined_throws(Self::branch_values(block))),
+            Expr::Select(arms) => Some(self.joined_throws(arms.iter().map(|arm| &arm.value))),
+            _ => None,
         };
-        self.sum_of(&self.parsed.unaliased(&name))
+        if let Some(set) = joined {
+            return self.sums.get(&set).map(String::as_str);
+        }
+        self.sum_of(&self.callee_name(expr)?)
     }
 
     /// `match error { … }` in a handler whose error travels in a **sum**
@@ -6625,24 +6783,93 @@ impl<'p> Emitter<'p> {
     /// call in every program in the tree, and a guess about a shape nobody
     /// writes would be a guess in the lowering. A `false` where the answer was
     /// yes is today's lowering, unchanged.
-    fn caught_channel_is_named(&self, expr: &Expr) -> bool {
-        let name = match expr {
+    /// The name a call resolves to, where the expression is one.
+    ///
+    /// The same walk `caught_channel_is_named` and `caught_sum` each did for
+    /// themselves, written once because a third asker arrived
+    /// ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+    fn callee_name(&self, expr: &Expr) -> Option<String> {
+        match expr {
             Expr::Call { func, .. } => match func.as_ref() {
-                Expr::Variable(name) => self.text(*name).to_string(),
-                Expr::Path(segments) => segments
-                    .iter()
-                    .map(|s| self.text(*s))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-                _ => return false,
+                Expr::Variable(name) => Some(self.text(*name).to_string()),
+                Expr::Path(segments) => Some(
+                    segments
+                        .iter()
+                        .map(|s| self.text(*s))
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                ),
+                _ => None,
             },
-            Expr::Try(inner) => return self.caught_channel_is_named(inner),
-            _ => return false,
+            Expr::Try(inner) => self.callee_name(inner),
+            _ => None,
+        }
+        .map(|name| self.parsed.unaliased(&name))
+    }
+
+    /// **The set of error types a joining block can fail with**
+    /// ([ADR-164](../../docs/specification/adr/adr-164.md) D2): the union of
+    /// its branches', in the ledger's own order, which is sorted.
+    ///
+    /// A `catch` written on an `overlap` handles what the **branches** threw,
+    /// and the enclosing function may not be `throws` at all — so the channel
+    /// the branches are wrapped in and the one the handler binds are this set's
+    /// and not the function's.
+    ///
+    /// **It resolves no more than the two askers above already did**
+    /// ([ADR-011](../../docs/specification/adr/adr-011.md) D2): a branch's
+    /// callee by the name the source wrote, and that callee's `throws` column
+    /// off a ledger. A branch whose callee no ledger knows contributes the
+    /// absence of a claim, which makes the set the box — the safe direction.
+    fn joined_throws<'e>(&self, branches: impl Iterator<Item = &'e Expr>) -> Vec<String> {
+        let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for value in branches {
+            match self.callee_name(value) {
+                Some(name) => match self
+                    .own_contracts
+                    .functions
+                    .get(&name)
+                    .or_else(|| self.library.functions.get(&name))
+                {
+                    Some(contract) => set.extend(contract.throws.iter().cloned()),
+                    None => {
+                        set.insert(crate::contracts::UNNAMED_ERROR.to_string());
+                    }
+                },
+                // Not a call by name: a `throw` written straight into a branch,
+                // an operator, a method. None of them is resolvable here, and
+                // the box is what the absence of a claim lowers to.
+                None => {
+                    set.insert(crate::contracts::UNNAMED_ERROR.to_string());
+                }
+            }
+        }
+        set.into_iter().collect()
+    }
+
+    /// The expressions an `overlap`'s statements are, for [`Emitter::joined_throws`].
+    fn branch_values(block: &Block) -> impl Iterator<Item = &Expr> {
+        block.stmts.iter().filter_map(|stmt| match &stmt.node {
+            Stmt::Expr(value) => Some(value),
+            _ => None,
+        })
+    }
+
+    fn caught_channel_is_named(&self, expr: &Expr) -> bool {
+        // **A joining block answers from its own set**
+        // ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+        let joined = match expr {
+            Expr::Overlap(block) => Some(self.joined_throws(Self::branch_values(block))),
+            Expr::Select(arms) => Some(self.joined_throws(arms.iter().map(|arm| &arm.value))),
+            _ => None,
         };
-        matches!(
-            self.named_error(&self.parsed.unaliased(&name)),
-            Some(Named::Own(_))
-        )
+        if let Some(set) = joined {
+            return matches!(self.named_error_of(&set), Some(Named::Own(_)));
+        }
+        let Some(name) = self.callee_name(expr) else {
+            return false;
+        };
+        matches!(self.named_error(&name), Some(Named::Own(_)))
     }
 
     /// Whether a function of **this program** can pause, and is therefore an
