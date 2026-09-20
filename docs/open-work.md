@@ -470,25 +470,30 @@ comparisons, an `if`, `let`s, a `return`, a `for` over a range, a `while`,
 interpreter; [`fold.rs`](../crates/nikaia/src/fold.rs) stays in front of it,
 because it is what says which integer type a *declaration* pinned.
 
-*What is left is `push`, and after it the field walk.*
+*The aggregate value is built* ([ADR-175](specification/adr/adr-175.md)), and
+**what is left is the field walk.**
 
-*Reproduced:* the interpreter has no `push` and no aggregate value, so
-[ADR-079](specification/adr/adr-079.md) §3's table can be *computed* and has
-nowhere to arrive. What a `comptime` hands to the language below is what Rust's
-`const` can hold, and today that is one integer or one `bool`. The **types** are
-no longer the obstacle: [ADR-135](specification/adr/adr-135.md)'s literal is
-built and so is [ADR-152](specification/adr/adr-152.md)'s `Array[T, N]`, so a
-table can now be written **and** has a type it can cross in — a `Vec` allocates
-and a `const` cannot hold one, where `[T; N]` is exactly what a `const` holds.
-Text is not in it either.
+*What it was:* the interpreter had no aggregate value, so
+[ADR-079](specification/adr/adr-079.md) §3's table could be *computed* and had
+nowhere to arrive — what a `comptime` handed to the language below was one
+integer or one `bool`.
 
-*Why it is work and not a question:* two records decided what may happen and
-neither can happen.
+*How it was answered, and why there is no `push`:* `.push` on a list hands back
+a `Vec[?]`, a `Vec` allocates, and a `const` cannot hold one — `NK1104` refuses
+one against an `Array[i64, 5]` long before the evaluator is reached. `[T; N]` is
+exactly what a `const` holds ([ADR-152](specification/adr/adr-152.md)), so a
+build-time table is written at its length and filled by index, and the evaluator
+gained the four things that needs: the list literal, `xs[i]`, `xs[i] = …` and
+`xs.len()`. `comptime TABLE: Array[i64, 5] = squares()` is
+`const TABLE: [i64; 5] = [0, 1, 4, 9, 16];`. Text is still not in it.
 
-| record | what it wants of the evaluator |
-| :--- | :--- |
-| [ADR-079](specification/adr/adr-079.md) §3 | a **loop and `push`**, to build a table that then crosses as a view — the loop is built; `push` needs a value to push onto |
-| [ADR-088](specification/adr/adr-088.md) D1 | a **loop over a type's fields**, which is the whole of 10.3 |
+*Why it is work and not a question:* two records decided what may happen, and
+one of them now can.
+
+| record | what it wants of the evaluator | |
+| :--- | :--- | :--- |
+| [ADR-079](specification/adr/adr-079.md) §3 | a **loop and `push`**, to build a table that then crosses as a view | **built** ([ADR-175](specification/adr/adr-175.md) D1), as a loop and an array |
+| [ADR-088](specification/adr/adr-088.md) D1 | a **loop over a type's fields**, which is the whole of 10.3 | open, and it is what is left |
 
 [ADR-079](specification/adr/adr-079.md) §3 says it plainly — *"This is the real
 work behind the feature, and this record does not shorten it"* — and until this
@@ -506,11 +511,11 @@ body that does not terminate hangs the build: worth knowing before starting, and
 not a reason to add one on the way past. A **recursion** that does not terminate
 is bounded, because that one takes this compiler's stack with it.
 
-*The order the records imply:* `push` next — which is not the loop's step, since
-the loop is a shape the interpreter reads and `push` is a *value* the whole
-compiler has to carry from the build into the program. The field walk last,
-because it needs something the other two do not — see the entry below, *running
-a grammar while the program is built*.
+*The order the records implied:* the value first — which is not the loop's step,
+since the loop is a shape the interpreter reads and a table is a *value* the
+whole compiler has to carry from the build into the program. That is done. The
+field walk last, because it needs something the other two do not — see the entry
+below, *running a grammar while the program is built*.
 
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is the next entry's, and the reason is there.

@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.108] — 2026-09-20
+
+**A build-time value may be an array** ([ADR-175](docs/specification/adr/adr-175.md)) —
+[ADR-079](docs/specification/adr/adr-079.md) §3's *evaluator that can loop and
+push*, which three records have been waiting on. The loop was built; what a loop
+had nowhere to put was a **value**.
+
+### Added
+
+- **A table computed while the program is built reaches the generated file.** `comptime TABLE: Array[i64, 5] = squares()` is `const TABLE: [i64; 5] = [0, 1, 4, 9, 16];`. The evaluator gained the four things writing one needs and nothing else: the list literal, `xs[i]`, `xs[i] = …` and `xs.len()`.
+- **And there is no `push`, which is measured rather than chosen.** `.push` on a list hands back a `Vec[?]`; a `Vec` allocates, so a `const` cannot hold one, and `NK1104` refuses it against an `Array[i64, 5]` long before this evaluator is reached. `[T; N]` is exactly what a `const` holds ([ADR-152](docs/specification/adr/adr-152.md)) — so a build-time table is written at its length and filled by index, which the type system already made spellable.
+- **`NK1165`: a build-time index the array does not have.** `xs[7]` of three elements, in a body being run while the program is built. [ADR-048](docs/specification/adr/adr-048.md) D1 aborts with this sentence at run time; here there is no run to abort in, and *this compiler cannot evaluate it* would send the reader looking for a missing feature rather than at the line.
+- **`Array::len` and `Array::is_empty` in `std.contracts`.** An `Array[T, N]` knows its length everywhere except in the ledger: `xs.len()` on one resolved to no entry, which lowered and ran and cost the **enclosing** function its touch set, because an unresolved call is unknown. The visible price was that `for i in 0..<xs.len()` — the natural spelling of a build-time loop — made a function uncallable from a `comptime` with *nothing says what it touches*, while `0..<5` was fine.
+
+### Fixed
+
+- **The compiler panicked on a correct program.** `comptime PRIMES: Array[i64, 4] = [2, 3, 5, 7]` reached `expect` with the word `"const"`, which had no diagnostic code, and hit an `unreachable!`. That is [Part I 6.8](docs/specification/10-nikaia-light.md)'s *a raw internal error reaching you is a Nikaia bug*, met by the compiler on itself. The word has `NK1166` now — and the literal it crashed on is answered by its annotation the way a `let`'s is ([ADR-152](docs/specification/adr/adr-152.md) D4), which was one line present in the `let` path and missing here.
+- **One mistake, one error.** A refusal made by name used to drag `NK1127` behind it: `NK1152` said which callee the rule forbids and then *this compiler cannot evaluate it* said the same thing with less in it. `NK1127` is kept for the case it is about — a shape the evaluator does not read.
+
+### Changed
+
+- **`tests/contracts.rs`'s length guard names five entries.** That test exists so a new `::len` is a decision rather than a line — the emitter converts `xs.len()` to `xs.len() as i64` **by name**, and a signature promising an `i64` while emitting a `usize` is what nothing else would notice. It caught the fifth, which is what it is for.
+- The roadmap's build-time box says what is left: [ADR-088](docs/specification/adr/adr-088.md) D1's walk over a type's fields, which waits on running a grammar while the program is built, and text.
+
 ## [0.0.107] — 2026-09-20
 
 **Two roadmap boxes were describing a compiler from several records ago.** No

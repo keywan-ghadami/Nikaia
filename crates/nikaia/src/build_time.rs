@@ -52,7 +52,7 @@ const DEEPEST: usize = 128;
 /// block that **falls through** has no value and is not an error — it is a
 /// loop's body between turns — where before this a block with no value was the
 /// only thing `Unevaluable` could mean.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Flow {
     /// A `return`, or a last statement that is a value.
     Value(Value),
@@ -64,17 +64,28 @@ enum Flow {
 
 /// What a build-time expression came to.
 ///
-/// Two kinds, which is exactly what the declaration can carry today: Rust's
-/// `const` needs a type this compiler can spell
-/// ([ADR-073](../../../docs/specification/adr/adr-073.md) D5), and an integer
-/// and a `bool` are what that list holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Three kinds, which is what the declaration can carry: Rust's `const` needs a
+/// type this compiler can spell
+/// ([ADR-073](../../../docs/specification/adr/adr-073.md) D5) — an integer, a
+/// `bool`, and now an **array of them**.
+///
+/// **The array is the aggregate `open-work.md` §2.8 was about**, and it is an
+/// array rather than a `Vec` for the reason that entry gives from the other
+/// side: a `Vec` allocates and a `const` cannot hold one, where `[T; N]` is
+/// exactly what one holds ([ADR-152](../../../docs/specification/adr/adr-152.md)).
+/// So a build-time table is written at its length and filled by index, which is
+/// the shape the type system already had — measured: `.push` on a list hands
+/// back a `Vec[?]`, and `NK1104` refuses it against an `Array[i64, 5]` before
+/// this evaluator is ever reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     /// In an `i128`, so a sum that cannot fit an `i64` is a number the caller
     /// can name rather than one that wrapped — [`fold`](crate::fold)'s reason,
     /// one level up.
     Int(i128),
     Bool(bool),
+    /// A fixed-length list, every element already a value.
+    List(Vec<Value>),
 }
 
 /// Why a build-time expression did not come to a value.
@@ -94,6 +105,14 @@ pub enum Refusal {
     },
     /// The call depth above.
     TooDeep { callee: String },
+    /// An index this array does not have. **Understood and wrong**, like
+    /// `NotAllowed` and unlike `Unevaluable`: the program says `xs[7]` of five
+    /// elements, and a build that answered *cannot evaluate* would send the
+    /// reader looking for a missing feature instead of at the line
+    /// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)).
+    /// Running it would abort at run time ([ADR-048](../../../docs/specification/adr/adr-048.md)
+    /// D1); at build time there is no run to abort.
+    OutOfBounds { at: i128, len: usize },
 }
 
 /// What a name outside a build-time body is worth: a `comptime` already
@@ -131,7 +150,7 @@ impl<'a> BuildTime<'a> {
                 let name = self.parsed.text(*name);
                 frame
                     .get(name)
-                    .copied()
+                    .cloned()
                     .or_else(|| (self.known)(name))
                     .ok_or(Refusal::Unevaluable)
             }
@@ -156,7 +175,7 @@ impl<'a> BuildTime<'a> {
                 let taken = match self.expr(cond, frame)? {
                     Value::Bool(true) => Some(then_branch),
                     Value::Bool(false) => else_branch.as_ref(),
-                    Value::Int(_) => return Err(Refusal::Unevaluable),
+                    _ => return Err(Refusal::Unevaluable),
                 };
                 // **The branch gets a frame of its own**, because an `if` in
                 // value position is not a place a name is assigned from: what
@@ -169,6 +188,39 @@ impl<'a> BuildTime<'a> {
                 match self.block(block, &mut inner)? {
                     Flow::Value(value) => Ok(value),
                     Flow::Fell | Flow::Broke | Flow::Continued => Err(Refusal::Unevaluable),
+                }
+            }
+            // **A list literal is the aggregate's only constructor here**
+            // ([ADR-135](../../../docs/specification/adr/adr-135.md)). There is
+            // no `push`: what `.push` hands back is a `Vec[?]`, and `NK1104`
+            // refuses one against the `Array[T, N]` a `const` can hold long
+            // before this evaluator sees it. So a table is written at its
+            // length and filled by index, below.
+            Expr::ListLit { items, .. } => {
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    values.push(self.expr(item, frame)?);
+                }
+                Ok(Value::List(values))
+            }
+            Expr::Index { base, index } => {
+                let on = self.expr(base, frame)?;
+                let at = self.expr(index, frame)?;
+                element(&on, &at).cloned()
+            }
+            // `xs.len()`, which is what a loop over a table is written with —
+            // `for i in 0..<xs.len()`. One method and no others: the length of
+            // a list this evaluator already holds is a fact it has, where
+            // anything else would be a body somewhere it cannot read.
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                config,
+            } if args.is_empty() && config.is_empty() && self.parsed.text(*method) == "len" => {
+                match self.expr(receiver, frame)? {
+                    Value::List(items) => Ok(Value::Int(items.len() as i128)),
+                    _ => Err(Refusal::Unevaluable),
                 }
             }
             Expr::Call { func, args, config } if config.is_empty() => {
@@ -206,7 +258,7 @@ impl<'a> BuildTime<'a> {
                 (BinaryOp::Or, true) => Ok(Value::Bool(true)),
                 _ => match self.expr(rhs, frame)? {
                     Value::Bool(right) => Ok(Value::Bool(right)),
-                    Value::Int(_) => Err(Refusal::Unevaluable),
+                    _ => Err(Refusal::Unevaluable),
                 },
             };
         }
@@ -298,7 +350,7 @@ impl<'a> BuildTime<'a> {
         let mut frame: BTreeMap<String, Value> = args
             .iter()
             .map(|name| name.to_string())
-            .zip(given.iter().copied())
+            .zip(given.iter().cloned())
             .collect();
         self.depth += 1;
         let out = self.block(&body, &mut frame);
@@ -373,6 +425,42 @@ impl<'a> BuildTime<'a> {
                     let value = self.expr(value, frame)?;
                     frame.insert(self.parsed.text(*name).to_string(), value);
                 }
+                // **`xs[i] = …`, which is how a build-time table is filled.**
+                // Before the name, because an index is a target this evaluator
+                // reads and `Expr::Variable` is not what it looks like.
+                Stmt::Assign {
+                    target: Expr::Index { base, index },
+                    op,
+                    value,
+                } => {
+                    let Expr::Variable(name) = base.as_ref() else {
+                        return Err(Refusal::Unevaluable);
+                    };
+                    let name = self.parsed.text(*name).to_string();
+                    let at = self.expr(index, frame)?;
+                    let given = self.expr(value, frame)?;
+                    let held = frame.get(&name).ok_or(Refusal::Unevaluable)?;
+                    let next = match op {
+                        None => given,
+                        Some(op) => {
+                            let before = element(held, &at)?.clone();
+                            self.operate(*op, before, given)?
+                        }
+                    };
+                    let Value::List(items) = frame.get_mut(&name).ok_or(Refusal::Unevaluable)?
+                    else {
+                        return Err(Refusal::Unevaluable);
+                    };
+                    let Value::Int(at) = at else {
+                        return Err(Refusal::Unevaluable);
+                    };
+                    let len = items.len();
+                    let slot = usize::try_from(at)
+                        .ok()
+                        .and_then(|at| items.get_mut(at))
+                        .ok_or(Refusal::OutOfBounds { at, len })?;
+                    *slot = next;
+                }
                 Stmt::Assign { target, op, value } => {
                     let Expr::Variable(name) = target else {
                         return Err(Refusal::Unevaluable);
@@ -382,7 +470,7 @@ impl<'a> BuildTime<'a> {
                     let next = match op {
                         None => given,
                         Some(op) => {
-                            let held = frame.get(&name).copied().ok_or(Refusal::Unevaluable)?;
+                            let held = frame.get(&name).cloned().ok_or(Refusal::Unevaluable)?;
                             self.operate(*op, held, given)?
                         }
                     };
@@ -414,7 +502,7 @@ impl<'a> BuildTime<'a> {
                         match self.expr(cond, frame)? {
                             Value::Bool(true) => {}
                             Value::Bool(false) => break,
-                            Value::Int(_) => return Err(Refusal::Unevaluable),
+                            _ => return Err(Refusal::Unevaluable),
                         }
                         match self.block(body, frame)? {
                             Flow::Value(value) => return Ok(Flow::Value(value)),
@@ -436,7 +524,7 @@ impl<'a> BuildTime<'a> {
                     let taken = match self.expr(cond, frame)? {
                         Value::Bool(true) => Some(then_branch),
                         Value::Bool(false) => else_branch.as_ref(),
-                        Value::Int(_) => return Err(Refusal::Unevaluable),
+                        _ => return Err(Refusal::Unevaluable),
                     };
                     if let Some(block) = taken {
                         match self.block(block, frame)? {
@@ -495,6 +583,25 @@ impl<'a> BuildTime<'a> {
         frame.remove(&name);
         Ok(Flow::Fell)
     }
+}
+
+/// One element of a list value, by an index that is a value.
+///
+/// **An index this array does not have is a refusal and not an
+/// `Unevaluable`** — see [`Refusal::OutOfBounds`]. A receiver that is not a
+/// list, or an index that is not a number, is a shape this evaluator does not
+/// read, which is the other thing entirely.
+fn element<'v>(on: &'v Value, at: &Value) -> Result<&'v Value, Refusal> {
+    let (Value::List(items), Value::Int(at)) = (on, at) else {
+        return Err(Refusal::Unevaluable);
+    };
+    usize::try_from(*at)
+        .ok()
+        .and_then(|index| items.get(index))
+        .ok_or(Refusal::OutOfBounds {
+            at: *at,
+            len: items.len(),
+        })
 }
 
 /// Whether a touch is the build's own parameters

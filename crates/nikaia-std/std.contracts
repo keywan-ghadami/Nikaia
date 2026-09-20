@@ -762,6 +762,28 @@ touches = []
 signature = "(&Vec[?]) -> i64"
 doc = "How many elements the list holds."
 
+# **An array knows its own length, and nothing said so.** `Array[T, N]` carries
+# its length in its type (ADR-152), and below it is `[T; N]`, which has `.len()`
+# and `.is_empty()` the same as a slice does. Without these entries `xs.len()`
+# on one resolved to nothing — which lowered and ran, and cost the *enclosing*
+# function its touch set, because an unresolved call is unknown (ADR-033). The
+# visible price was a build-time body: `for i in 0..<xs.len()` made `squares`
+# uncallable from a `comptime` with *nothing says what it touches*, while the
+# same loop written `0..<5` was fine.
+[fn."Array::len"]
+pub = true
+sync = true
+touches = []
+signature = "(&Array[?, ?]) -> i64"
+doc = "How many elements the array holds. It is the length in its type."
+
+[fn."Array::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(&Array[?, ?]) -> bool"
+doc = "Whether the array holds nothing."
+
 [fn."Vec::new"]
 pub = true
 sync = true

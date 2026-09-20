@@ -1032,17 +1032,24 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
     assert_eq!(found[0].callee, "io::read_to_string");
 }
 
-/// **The four lengths are `i64`, and `len` is what all four are called**
+/// **Every length is an `i64`, and `len` is what every one of them is called**
 /// ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
 ///
 /// The emitter converts a call it recognises **by name** — `xs.len()` becomes
 /// `xs.len() as i64`, because Rust's hands back a `usize` and this compiler has no
 /// other way to know that. A name is not a rule, so this is what keeps the two
-/// from drifting: a fifth entry that returns a length under some other name would
+/// from drifting: an entry that returns a length under some other name would
 /// have a signature promising an `i64` and emit a `usize`, and nothing else would
 /// notice.
+///
+/// **It caught the fifth.** `Array::len` was added because an `Array[T, N]`
+/// knew its own length everywhere except in the ledger — `xs.len()` on one
+/// resolved to nothing, which cost the *enclosing* function its touch set and
+/// made a build-time loop written `0..<xs.len()` uncallable from a `comptime`.
+/// The list here is the thing that made adding it a decision rather than a
+/// line.
 #[test]
-fn the_four_lengths_are_i64_and_are_all_called_len() {
+fn the_lengths_are_i64_and_are_all_called_len() {
     let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
 
     let lengths: Vec<&String> = library
@@ -1054,12 +1061,13 @@ fn the_four_lengths_are_i64_and_are_all_called_len() {
     assert_eq!(
         lengths,
         vec![
+            "Array::len",
             "String::len",
             "Vec::len",
             "collections::HashMap::len",
             "str::len",
         ],
-        "the four D1 names"
+        "D1's names, and no others"
     );
     for key in &lengths {
         let result = library.functions[*key]

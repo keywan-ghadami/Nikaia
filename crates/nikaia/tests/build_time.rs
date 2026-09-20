@@ -280,3 +280,139 @@ fn the_loops_binding_does_not_outlive_it() {
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
 }
+
+/// **The aggregate value** ([`open-work.md`](../../../docs/open-work.md) §2.8,
+/// [ADR-079](../../../docs/specification/adr/adr-079.md) §3's *evaluator that
+/// can loop and push*).
+///
+/// The loop was built; what a loop had nowhere to put was a **value**. A table
+/// computed while the program is built reaches the generated file as a Rust
+/// `const` array — which is what [ADR-152](../../../docs/specification/adr/adr-152.md)'s
+/// `Array[T, N]` is for, because a `Vec` allocates and a `const` cannot hold
+/// one.
+///
+/// **And it is an array rather than a `push`** for a reason that is measured
+/// and not chosen: `.push` on a list hands back a `Vec[?]`, and `NK1104`
+/// refuses that against an `Array[i64, 5]` long before this evaluator is
+/// reached. So a build-time table is written at its length and filled by index.
+#[test]
+fn a_table_is_computed_while_the_program_is_built() {
+    let source = "fn squares() -> Array[i64, 5] {\n\
+                  \x20   let mut xs: Array[i64, 5] = [0, 0, 0, 0, 0]\n\
+                  \x20   for i in 0..<xs.len() {\n\
+                  \x20       xs[i] = i * i\n\
+                  \x20   }\n\
+                  \x20   return xs\n\
+                  }\n\
+                  comptime TABLE: Array[i64, 5] = squares()\n\
+                  fn main() { println(f\"{TABLE[4]}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const TABLE: [i64; 5] = [0, 1, 4, 9, 16];"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// A table written out by hand, which [ADR-079](../../../docs/specification/adr/adr-079.md)
+/// §3 calls the *toy* version and which was the harder one to reach: the
+/// annotation is a **use**, so it is what says the literal is an array rather
+/// than a list (ADR-152 D4).
+///
+/// **This crashed the compiler.** `comptime PRIMES: Array[i64, 4] = [2, 3, 5, 7]`
+/// reached `expect` with a word that had no diagnostic code and panicked on an
+/// `unreachable!` — [Part I 6.8](../../../docs/specification/10-nikaia-light.md)'s
+/// *a raw internal error reaching you is a Nikaia bug*, met by the compiler
+/// itself on a correct program.
+#[test]
+fn a_table_written_out_by_hand_is_an_array() {
+    let source = "comptime PRIMES: Array[i64, 4] = [2, 3, 5, 7]\n\
+                  fn main() { println(f\"{PRIMES[3]}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const PRIMES: [i64; 4] = [2, 3, 5, 7];"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// `NK1166`, the code that panic left missing: a `comptime` whose value is not
+/// what it says it is.
+#[test]
+fn a_comptime_that_disagrees_with_its_own_type_is_refused() {
+    let found = findings("comptime X: bool = [2, 3]\nfn main() { println(f\"{X}\") }\n");
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1166")
+        .unwrap_or_else(|| panic!("NK1166 rather than a panic: {found:#?}"));
+    assert!(
+        refusal.message.contains("bool"),
+        "it names what was declared: {}",
+        refusal.message
+    );
+}
+
+/// **`NK1165`: the index happening at the one moment there is no run to abort
+/// in.** [ADR-048](../../../docs/specification/adr/adr-048.md) D1 aborts with
+/// this sentence at run time; *this compiler cannot evaluate it* would send the
+/// reader looking for a missing feature rather than at the line.
+#[test]
+fn a_build_time_index_the_array_does_not_have_is_named() {
+    let source = "fn out() -> i64 {\n\
+                  \x20   let xs: Array[i64, 3] = [1, 2, 3]\n\
+                  \x20   return xs[7]\n\
+                  }\n\
+                  comptime BAD: i64 = out()\n\
+                  fn main() { println(f\"{BAD}\") }\n";
+    let found = findings(source);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1165")
+        .unwrap_or_else(|| panic!("NK1165: {found:#?}"));
+    assert!(
+        refusal.help.as_deref() == Some("the indices are 0 to 2"),
+        "the way out names the range that exists: {:?}",
+        refusal.help
+    );
+    // **And it is said once.** `NK1127` used to follow every refusal by name,
+    // which is not a second fact — it is the first one with less in it.
+    assert!(
+        !found.iter().any(|f| f.code == "NK1127"),
+        "one mistake, one error: {found:#?}"
+    );
+}
+
+/// The same rule where the refusal is `NK1152`'s, which is the case that shows
+/// the doubling was general rather than the new code's.
+#[test]
+fn a_forbidden_callee_is_also_said_once() {
+    let source = "use std::fs\n\
+                  fn read() -> i64 { let t = fs::read_to_string(\"x\") catch { \"\" } return t.len() }\n\
+                  comptime N: i64 = read()\n\
+                  fn main() { println(f\"{N}\") }\n";
+    let found = findings(source);
+    assert!(
+        found.iter().any(|f| f.code == "NK1152"),
+        "the callee the rule forbids: {found:#?}"
+    );
+    assert!(
+        !found.iter().any(|f| f.code == "NK1127"),
+        "one mistake, one error: {found:#?}"
+    );
+}
+
+/// **An array knows its own length**, which nothing said before: `xs.len()` on
+/// an `Array[T, N]` resolved to no ledger entry, and an unresolved call costs
+/// the *enclosing* function its touch set (ADR-033) — so the natural spelling
+/// of a build-time loop was refused with *nothing says what it touches* while
+/// `0..<5` was fine.
+#[test]
+fn an_array_has_a_length_in_the_ledger() {
+    let library = Ledger::parse(STD).expect("std's ledger");
+    let entry = library
+        .functions
+        .get("Array::len")
+        .expect("`Array::len` is described");
+    assert!(entry.sync.is_sync() && entry.touches_known && entry.touches.is_empty());
+    assert!(library.functions.contains_key("Array::is_empty"));
+}

@@ -1000,8 +1000,59 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
             "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" => Some(name.clone()),
             _ => None,
         },
+        // **`Array[T, N]` is `[T; N]`, and it is the one aggregate a `const`
+        // holds** ([ADR-152](../../docs/specification/adr/adr-152.md)). A `Vec`
+        // allocates, which is the whole of why a build-time table is an array.
+        Ty::Named { name, args, view } if name == ty::ARRAY && !*view => match args.as_slice() {
+            [element, Ty::Count(n)] => Some(format!("[{}; {n}]", rust_constant_type(element)?)),
+            _ => None,
+        },
         _ => None,
     }
+}
+
+/// The Rust element type of a build-time array nothing declared a type for.
+///
+/// **Every element has to agree**, which is the same rule
+/// [ADR-135](../../docs/specification/adr/adr-135.md) D1 gives a list literal
+/// one level up — and an empty one has nothing to read, so it says nothing and
+/// the declaration has to.
+fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
+    let mut found: Option<String> = None;
+    for item in items {
+        let ty = match item {
+            build_time::Value::Bool(_) => "bool".to_string(),
+            build_time::Value::Int(value) => match i32::try_from(*value) {
+                Ok(_) => "i32".to_string(),
+                Err(_) => "i64".to_string(),
+            },
+            // An array of arrays has a length per level and this reads one, so
+            // it says nothing rather than guessing.
+            build_time::Value::List(_) => return None,
+        };
+        match &found {
+            // `[1, 3_000_000_000]` is an `i64` array and not a mixed one: the
+            // widest element decides, which is Part I 2.4's rule read over a
+            // list rather than over one literal.
+            Some(held) if held != &ty => found = Some("i64".to_string()),
+            Some(_) => {}
+            None => found = Some(ty),
+        }
+    }
+    found
+}
+
+/// A build-time array, spelled as Rust writes one.
+fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
+    let mut written = Vec::with_capacity(items.len());
+    for item in items {
+        written.push(match item {
+            build_time::Value::Int(value) => value.to_string(),
+            build_time::Value::Bool(yes) => yes.to_string(),
+            build_time::Value::List(_) => return None,
+        });
+    }
+    Some(format!("[{}]", written.join(", ")))
 }
 
 /// A name in scope: what it is called, the type it holds, and - where this
@@ -6200,6 +6251,15 @@ impl<'a> Checker<'a> {
             "returns" => "NK1104",
             "assign" => "NK1105",
             "field" => "NK1106",
+            // **`NK1166`, and it used to be an `unreachable!`.** A `comptime`
+            // whose value disagrees with its declared type reached `expect`
+            // with a word that had no code, and the compiler **panicked** -
+            // which is [Part I 6.8](../../docs/specification/10-nikaia-light.md)'s
+            // *a raw internal error reaching you is a Nikaia bug*, met by the
+            // compiler itself. Found by writing
+            // `comptime PRIMES: Array[i64, 4] = [2, 3, 5, 7]`, which is a
+            // correct program and crashed the build.
+            "const" => "NK1166",
             other => unreachable!("no code for `{other}`"),
         };
         self.checked.findings.push(Finding {
@@ -7946,7 +8006,15 @@ impl<'a> Checker<'a> {
     /// into `NK1127` — the refusal that has always been there and whose note
     /// says what the stage knows. A body the rule **forbids** is a different
     /// claim and gets `NK1152`: the shape is understood and the answer is no.
-    fn build_time_value(&mut self, value: &Expr, span: &Span) -> Option<build_time::Value> {
+    ///
+    /// The second half of the pair is **whether a refusal was already
+    /// reported**. Two errors for one mistake is what this used to print:
+    /// `NK1152` naming the callee the rule forbids, and then `NK1127` saying
+    /// the compiler cannot evaluate it — which is not a second fact, it is the
+    /// first one said again with less in it. The caller keeps `NK1127` for the
+    /// case it is about: a shape this evaluator does not read, which nothing
+    /// else has a sentence for.
+    fn build_time_value(&mut self, value: &Expr, span: &Span) -> (Option<build_time::Value>, bool) {
         let outcome = {
             // A name outside the body: a `comptime` already evaluated, or a
             // `let` whose value folded. Integers only, because that is what
@@ -7959,17 +8027,48 @@ impl<'a> Checker<'a> {
             build_time::BuildTime::new(self.parsed, self.own, &known).evaluate(value)
         };
         match outcome {
-            Ok(value) => Some(value),
-            Err(build_time::Refusal::Unevaluable) => None,
+            Ok(value) => (Some(value), false),
+            Err(build_time::Refusal::Unevaluable) => (None, false),
             Err(build_time::Refusal::NotAllowed { callee, because }) => {
                 self.a_body_that_may_not_run_at_build_time(&callee, because, span);
-                None
+                (None, true)
             }
             Err(build_time::Refusal::TooDeep { callee }) => {
                 self.a_build_time_call_went_too_deep(&callee, span);
-                None
+                (None, true)
+            }
+            Err(build_time::Refusal::OutOfBounds { at, len }) => {
+                self.a_build_time_index_is_not_there(at, len, span);
+                (None, true)
             }
         }
+    }
+
+    /// **`NK1165`: a build-time index the array does not have.**
+    ///
+    /// The same mistake a running program makes, met at the one moment there is
+    /// no run to abort: `xs[7]` of five elements while the program is being
+    /// built. [ADR-048](../../docs/specification/adr/adr-048.md) D1 aborts with
+    /// this sentence at run time, and saying *this compiler cannot evaluate it*
+    /// instead would send the reader looking for a missing feature rather than
+    /// at the line ([Part III C.2](../../docs/specification/30-nikaia-tooling.md)).
+    fn a_build_time_index_is_not_there(&mut self, at: i128, len: usize, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1165",
+            message: format!("this reads element {at} of {}", plural(len, "element")),
+            notes: vec![
+                "the whole of it is computed while the program is built (Part II, 10.2), \
+                 so this is the read happening - there is no run left for it to abort in \
+                 (ADR-048 D1)"
+                    .to_string(),
+            ],
+            help: Some(match len {
+                0 => "the array is empty, so no index is in it".to_string(),
+                _ => format!("the indices are 0 to {}", len - 1),
+            }),
+        });
     }
 
     /// **`[1, 2, 3]`**, and what its type is
@@ -9406,6 +9505,13 @@ impl<'a> Checker<'a> {
         let want = ty.as_ref().map(|ty| self.declared(ty, span));
         if let Some(want) = &want {
             self.constant_fits(value, Some(want), span);
+            // **The annotation is a use, and a use answers the literal**
+            // (ADR-152 D4) - the same line a `let` runs one construct over, and
+            // it was missing here: `comptime PRIMES: Array[i64, 4] = [2, 3, 5, 7]`
+            // is a `Vec[?]` against an `Array[i64, 4]` without it.
+            let found = self
+                .array_literal(&found, want, value, span)
+                .unwrap_or_else(|| found.clone());
             self.expect(&found, want, span.clone(), "const", |found, want| {
                 format!("this is `{found}`, and the `const` says `{want}`")
             });
@@ -9424,8 +9530,8 @@ impl<'a> Checker<'a> {
         // first stage and stays in front of it, because it is what says which
         // integer type a *declaration* pinned — a question the interpreter does
         // not ask and does not need to.
-        let evaluated = match &folded {
-            Some(folded) => Some(build_time::Value::Int(folded.value)),
+        let (evaluated, said) = match &folded {
+            Some(folded) => (Some(build_time::Value::Int(folded.value)), false),
             None => self.build_time_value(value, span),
         };
         let below = match (&want, &folded, value) {
@@ -9437,23 +9543,30 @@ impl<'a> Checker<'a> {
                     Err(_) => "i64".to_string(),
                 },
             }),
-            (None, None, _) => match evaluated {
+            (None, None, _) => match &evaluated {
                 // A `bool` from the interpreter is a `bool` below, whether it
                 // was written `true` or came out of a call.
                 Some(build_time::Value::Bool(_)) => Some("bool".to_string()),
-                Some(build_time::Value::Int(value)) => Some(match i32::try_from(value) {
+                Some(build_time::Value::Int(value)) => Some(match i32::try_from(*value) {
                     Ok(_) => "i32".to_string(),
                     Err(_) => "i64".to_string(),
                 }),
+                // **An array with nothing declaring its type.** Part I 2.4's
+                // rule read one level in: the elements decide, and `[T; N]` is
+                // the whole type because the length is the value's.
+                Some(build_time::Value::List(items)) => {
+                    rust_array_type(items).map(|ty| format!("[{ty}; {}]", items.len()))
+                }
                 None => None,
             },
         };
 
         // The value, spelled below. An integer is what the evaluation came
         // to; `true` and `false` are themselves.
-        let written = match evaluated {
+        let written = match &evaluated {
             Some(build_time::Value::Int(value)) => Some(value.to_string()),
             Some(build_time::Value::Bool(yes)) => Some(yes.to_string()),
+            Some(build_time::Value::List(items)) => rust_array_value(items),
             None => None,
         };
         match (&below, &written) {
@@ -9462,6 +9575,10 @@ impl<'a> Checker<'a> {
                     .comptime_values
                     .insert(span.start, (below.clone(), written.clone()));
             }
+            // …and nothing at all where the refusal has already been made by
+            // name: `NK1152` and `NK1165` each say what `NK1127` would, with
+            // the part that matters in it.
+            _ if said => {}
             _ => self.checked.findings.push(Finding {
                 code: "NK1127",
                 severity: Severity::Error,
@@ -9471,13 +9588,15 @@ impl<'a> Checker<'a> {
                     "a `comptime` is a `let` that *must* fold, so one that cannot is \
                          refused rather than computed while the program runs (Part II, 10.2)"
                         .to_string(),
-                    "what it evaluates today is an integer or a `bool` - a literal, \
-                         arithmetic and comparisons over literals and over other \
-                         constants, an `if`, a **call** to a function of this program \
-                         whose body is made of those, and a `for` over a range or a \
-                         `while` inside such a body (ADR-073 D5's second stage). Text is \
-                         not in it yet, and neither is a value that is not one number or \
-                         one `bool`"
+                    "what it evaluates today is an integer, a `bool`, or a fixed-length \
+                         **array** of them - a literal, arithmetic and comparisons over \
+                         literals and over other constants, an `if`, a **call** to a \
+                         function of this program whose body is made of those, a `for` \
+                         over a range or a `while` inside such a body, and `xs[i]`, \
+                         `xs[i] = …` and `xs.len()` over an array it holds (ADR-073 D5's \
+                         second stage). Text is not in it yet, and neither is a `Vec`: a \
+                         `const` below cannot hold one, which is why a build-time table \
+                         is written at its length and filled by index"
                         .to_string(),
                 ],
                 help: Some(format!(
@@ -9497,8 +9616,8 @@ impl<'a> Checker<'a> {
         self.bind_with(
             bound,
             held,
-            match evaluated {
-                Some(build_time::Value::Int(value)) => Some(value),
+            match &evaluated {
+                Some(build_time::Value::Int(value)) => Some(*value),
                 _ => None,
             },
         );
