@@ -224,9 +224,12 @@ thread the pool could have had.
 *The shape to copy exists.* [ADR-025](specification/adr/adr-025.md) D6's
 `iterates_fallibly` is a property of the **type**, recorded in the ledger, that
 makes the emitter write the step differently — which is what a pausing step would
-need. What it waits on is a ruling about the `for`, not work: it is a question,
-and when it becomes one it belongs in [`open-decisions.md`](open-decisions.md)
-rather than here.
+need.
+
+***The question is asked.*** [`open-decisions.md`](open-decisions.md) carries
+it, with the lowering measured — the **call** awaits and the **step** does not,
+because `Lines::next` is a `BufRead` read that blocks the thread it is on — and
+with what each answer costs. Nothing here moves until it is answered.
 
 ### 2.3. The lock is built and every rule around it is not
 
@@ -1029,8 +1032,13 @@ whether a described foreign function puts what it is given on a thread.
 `crosses = false` and it is handed to `hyper_shim::across_a_thread`, which the
 description names, so the program is still refused by `rustc`'s `Send` bound
 against the `.nika` line. `a_described_foreign_call_is_not_asked_about_crossing`
-asserts the silence so nobody rediscovers it. A column for it is a **question**
-and belongs in [`open-decisions.md`](open-decisions.md) when somebody asks it.
+asserts the silence so nobody rediscovers it.
+
+***The question is asked.*** [`open-decisions.md`](open-decisions.md) carries
+it: whether a described foreign function says that it puts what it is given on
+a thread. The place is already right — C.1's rule is kept and the refusal names
+the `.nika` line — and what is open is the **words**, which
+[ADR-005](specification/adr/adr-005.md) D7 recorded as its own half.
 
 ### 2.32. A library for other languages
 

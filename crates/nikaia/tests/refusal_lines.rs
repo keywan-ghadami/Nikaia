@@ -115,3 +115,43 @@ fn it_reads_like_a_checkers_refusal() {
         assert!(said.contains('|'), "{said}");
     }
 }
+
+/// **A refusal from a helper that never saw a file** gets the statement's
+/// place, which is [ADR-171](../../../docs/specification/adr/adr-171.md) D1
+/// one step out.
+///
+/// `emit::interpolation` works on the **text** of a string literal: it knows an
+/// `{` was never closed and cannot know where the string is. The caller is
+/// emitting a statement and knows exactly where, so the handover happens there
+/// — written once rather than at each call.
+#[test]
+fn a_malformed_literal_is_refused_on_its_line() {
+    let said = nikaia(
+        "fn main() {\n\
+         \x20   let n = 1\n\
+         \x20   println(f\"unclosed {n\")\n\
+         }\n",
+        "unclosed-hole",
+    );
+    assert!(said.contains("unclosed `{`"), "{said}");
+    assert!(said.contains(":3:"), "the line it is about:\n{said}");
+    assert!(said.contains('^'), "{said}");
+}
+
+/// **And the ones with no place stay without one**, which is the scope rather
+/// than a gap: a switch's value is about a manifest key and a whole build, and
+/// a line number would be an invention.
+#[test]
+fn a_refusal_about_no_statement_has_no_line() {
+    let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["--input", "/dev/null", "--user-parallelism", "vielleicht"])
+        .output()
+        .expect("the compiler runs");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("expected yes or no"), "{said}");
+    assert!(
+        !said.contains("-->"),
+        "no place is invented for it:\n{said}"
+    );
+}

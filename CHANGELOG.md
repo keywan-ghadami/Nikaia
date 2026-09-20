@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.91] — 2026-09-20
+
+Two questions asked, and six more refusals given their line.
+
+### Asked
+
+- **Does a `for` iterate something whose step can pause?** `docs/open-work.md` §2.2 says outright that what is left of it *waits on a ruling about the `for`, not work*, and [`docs/open-decisions.md`](docs/open-decisions.md) carries it now with the lowering measured: `for line in io::lines()` becomes `for line in io::lines().await` — the **call** awaits and the **step** does not, because `Lines::next` is a `BufRead` read that blocks the thread it is on. At `user_parallelism = yes` that is a thread the pool could have had.
+- **Does a *described* foreign function say whether it puts its argument on a thread?** §2.31's last paragraph says a column for it *is a question and belongs there when somebody asks it*. `NK2502` asks only of a call **nothing** describes ([ADR-038](docs/specification/adr/adr-038.md) D7's wording), and a test holds that silence on purpose. What refuses the described case is `rustc`'s `Send` bound — on the right `.nika` line, which is [C.1](docs/specification/30-nikaia-tooling.md)'s rule kept, with `rustc`'s words, which [ADR-005](docs/specification/adr/adr-005.md) D7 recorded as the open half.
+- Both entries carry what each answer costs if it is wrong, which is what that page is for. The second's recommendation carries a **shape** as well as an answer: three values and not two, because the absence of the word must stay *nobody said* rather than *it does not* ([ADR-010](docs/specification/adr/adr-010.md) D1).
+
+### Added
+
+- **Six more refusals name their line** ([ADR-171](docs/specification/adr/adr-171.md), continued): a `match` over two error types, a grammar's rule reached with a dot, a sum with no name, and every malformed string literal.
+- **A helper with no place of its own borrows the statement's.** `emit::interpolation` works on the **text** of a literal: it knows an `{` was never closed and cannot know where the string is, because it never saw a file. The caller is emitting a statement and knows exactly where, so the handover happens there — written once rather than at each call, which is what keeps *where* from being something each refusal has to remember.
+- **And a refusal about no statement keeps none**, asserted by a test: a switch's value is about a manifest key and a whole build, and a line number for it would be an invention.
+
 ## [0.0.90] — 2026-09-20
 
 **A refusal from the lowering names its line**

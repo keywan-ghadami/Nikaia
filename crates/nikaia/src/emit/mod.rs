@@ -3715,8 +3715,9 @@ impl<'p> Emitter<'p> {
                 template::Segment::Hole { expr, .. } => {
                     // Parsed as Nikaia and emitted as Nikaia: a hole holds an
                     // expression of this language, not a foreign one.
-                    let parsed = parse_expression(&self.parsed.interner, expr)
-                        .map_err(|e| refused!("in the template hole `{{{expr}}}`: {e}"))?;
+                    let parsed = parse_expression(&self.parsed.interner, expr).map_err(|e| {
+                        refused_at!(flow.statement, "in the template hole `{{{expr}}}`: {e}")
+                    })?;
                     out.push(&format!(
                         "{pad}__html.push_str(&::nikaia_std::html::Render::render(&"
                     ));
@@ -5499,7 +5500,12 @@ impl<'p> Emitter<'p> {
                     out.push(" }");
                 }
             }
-            other => return Err(refused!("cannot emit expression yet: {other:?}")),
+            other => {
+                return Err(refused_at!(
+                    flow.statement,
+                    "cannot emit expression yet: {other:?}"
+                ))
+            }
         }
         Ok(())
     }
@@ -6702,7 +6708,7 @@ impl<'p> Emitter<'p> {
         // the catch-all runs, which is exactly what the source meant by not
         // naming it.
         let Some(members) = self.sum_members(sum) else {
-            return Err(refused!("no error set is named `{sum}`"));
+            return Err(refused_at!(flow.statement, "no error set is named `{sum}`"));
         };
         let mut catch_all: Vec<&crate::ast::MatchArm> = Vec::new();
         let mut by_member: Vec<(&str, Vec<&crate::ast::MatchArm>)> =
@@ -6727,7 +6733,8 @@ impl<'p> Emitter<'p> {
         // say is about a file nobody wrote
         // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
         if catch_all.is_empty() {
-            return Err(refused!(
+            return Err(refused_at!(
+                flow.statement,
                 "this `match error` names variants of {} error types and has no `else`, \
                  and the set of types arriving at a `catch` is open (Part I, 7.1) - \
                  so add `else => throw error` to pass the rest on, or `else => …` to \
@@ -7209,7 +7216,11 @@ impl<'p> Emitter<'p> {
             // hole there is nothing to format, and `format!("x")` is a
             // roundabout way of writing what `.to_string()` says plainly.
             Expr::LitInterpolated(literal) => {
-                if interpolation(literal)?.1.is_empty() {
+                // **A malformed literal is refused on its own line**
+                // ([ADR-171](../../docs/specification/adr/adr-171.md) D1):
+                // `interpolation` has the text and not the place, and the place
+                // is what a reader needs.
+                if at_the_statement(flow, interpolation(literal))?.1.is_empty() {
                     out.push(&format!("\"{literal}\".to_string()"));
                     return Ok(());
                 }
@@ -7230,12 +7241,13 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (format, holes) = interpolation(literal)?;
+        let (format, holes) = at_the_statement(flow, interpolation(literal))?;
         out.push(&format!("\"{format}\""));
 
         for hole in holes {
-            let expr = parse_expression(&self.parsed.interner, &hole)
-                .map_err(|e| refused!("in the interpolated `{{{hole}}}`: {e}"))?;
+            let expr = parse_expression(&self.parsed.interner, &hole).map_err(|e| {
+                refused_at!(flow.statement, "in the interpolated `{{{hole}}}`: {e}")
+            })?;
             out.push(", ");
             self.expr(out, &expr, depth, flow)?;
         }
@@ -7374,7 +7386,8 @@ impl<'p> Emitter<'p> {
                 // meets; this is here so that a caller who lowers without
                 // checking gets the same sentence rather than a method call on
                 // a name that is not a value.
-                return Err(refused!(
+                return Err(refused_at!(
+                    flow.statement,
                     "a rule of grammar `{}` is reached with `::`, not with a dot \
                      (ADR-140 D3): write `{}::{}(…)`",
                     self.text(*name),
@@ -8908,6 +8921,22 @@ fn rust_format_escape(text: &str) -> String {
         }
     }
     out
+}
+
+/// **A refusal with no place of its own, given the statement's**
+/// ([ADR-171](../../docs/specification/adr/adr-171.md) D1).
+///
+/// A helper that works on text — a string literal's holes, say — knows what is
+/// wrong and not where, because it never saw a file. The caller is emitting a
+/// statement and knows exactly where. This is that handover, written once
+/// rather than at each call.
+fn at_the_statement<T>(flow: Flow<'_>, result: Result<T>) -> Result<T> {
+    result.map_err(
+        |error| match crate::diagnostics::refusal_at(&error).is_none() {
+            true => crate::diagnostics::refuse_at(flow.statement, format!("{error}")),
+            false => error,
+        },
+    )
 }
 
 pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
