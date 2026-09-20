@@ -125,11 +125,13 @@ fn a_set_with_a_question_mark_keeps_the_box() {
     assert!(rust.contains("Box<dyn std::error::Error>"), "{rust}");
 }
 
-/// **And a set with two members keeps it too.** The generated sum
-/// [ADR-023](../../../docs/specification/adr/adr-023.md) D1 implies is not
-/// built, and a channel named after one of two error types would be a lie.
+/// **A set with two members is the generated sum**
+/// ([ADR-160](../../../docs/specification/adr/adr-160.md) D1), which is what
+/// this record left open and what `docs/open-work.md` §2.13 carried: until it
+/// was built, a channel named after one of two error types would have been a
+/// lie, so the opaque one was the honest answer.
 #[test]
-fn two_error_types_keep_the_box() {
+fn two_error_types_are_a_sum() {
     let source = format!(
         "{CONFIG_ERROR}enum NetError {{ Down }}\n\
          impl Error for NetError {{\n\
@@ -142,10 +144,10 @@ fn two_error_types_keep_the_box() {
          fn main() {{ }}\n"
     );
     assert_eq!(throws_of(&source, "load"), vec!["ConfigError", "NetError"]);
+    let rust = lowered(&source);
     assert!(
-        lowered(&source).contains("fn load(down: bool) -> Result<i64, Box<dyn"),
-        "{}",
-        lowered(&source)
+        rust.contains("-> Result<i64, crate::__NikaiaThrows_ConfigError__NetError"),
+        "{rust}"
     );
 }
 

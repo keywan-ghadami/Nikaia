@@ -573,46 +573,39 @@ silence today.
 ([ADR-158](specification/adr/adr-158.md)), so a set that gains a member is now
 a change a diff could see.
 
-### 2.13. A set with two error types in it has no channel, and `std` names none
+### 2.13. A grammar's entry rule throws `"?"`, and that is the last one
 
 [ADR-023](specification/adr/adr-023.md) D1 records `throws` as a **set** of
-error types, and [ADR-157](specification/adr/adr-157.md) D1 built the half of
-the lowering a set with **one** member needs: the channel is that type, a
-`catch` matches on its variants, and Part I 7.1's own example is a program that
-runs. Two halves are left, and the second is what keeps the first out of reach
-of every program in the tree.
+error types, and four records have now made every shape of set into a channel:
+one member the unit declares ([ADR-157](specification/adr/adr-157.md)), `std`'s
+own names ([ADR-158](specification/adr/adr-158.md)), one member a **ledger**
+describes ([ADR-159](specification/adr/adr-159.md)), and two or more as a
+generated sum ([ADR-160](specification/adr/adr-160.md)). What travels in the
+opaque channel is a set with a `"?"` in it — *something this compiler cannot
+name* — and in this tree there is exactly **one** source of those left.
 
-*What is left.* **The generated sum**, for a set with two or more members: one
-`enum` per function over what its body throws and what its callees throw, with
-the conversions propagation needs, and the ledger writing the members. Until it
-exists, such a function keeps the opaque channel and a `match` over variants is
-not lowerable there.
+*It is the grammar.* A public rule's ledger entry is written with
+`throws = ["?"]`, because what a parse fails with is a **rendered string**:
+`Config::parse_file().parse_next(&mut stream).map_err(|e| e.render(source))`.
+There is no type, so there is nothing to name.
 
-*And what used to stand in front of it is gone.* **`std` names what it throws**
-([ADR-158](specification/adr/adr-158.md) D1): `io::IoError` for the seven
-entries that read, write or check text, `Overtaken` for the lock's two. So a
-function that reads a file has `throws = ["io::IoError"]` where it had `["?"]`,
-and one that also throws its own has **both** — which is a set of two, and
-therefore exactly the case the generated sum above is for. The floor moved up
-rather than away.
+*What it costs, measured.* Seven of the corpus' eight `main`s carry
+`throws = ["?", "io::IoError"]`, and the `"?"` in every one of them is a grammar
+entry. Name it and those seven become a set of two named members — which is the
+sum, already built — so a program could tell *the file was not there* from *the
+file was not the shape the grammar says*.
 
-*The second piece is done.* [ADR-159](specification/adr/adr-159.md) D1 lets a
-channel be named after a type **any ledger** describes, so a function whose set
-is one library type hands its failure on as that type and a handler matches on
-its variants. The site question answered itself: there is no `throw` in the
-program to have one (D2), and `error.full()` says so in the words the opaque
-channel always used for an error from below.
+*What it needs.* The same shape [ADR-158](specification/adr/adr-158.md) had: a
+type for the failure, with the payload a reader needs (the offset, the line, and
+what was expected), somewhere a program can name it; then the rule entry writing
+it instead of `"?"`. The decision in it is the same one — which variants, and
+where the type lives — and it is smaller, because a parse fails in one way.
 
-*What waits on both:* the note over `catch` sites and the `--locked` failure
-(*an error that newly reaches a `catch` is named once*,
+*What waits on the last `"?"` going:* the note over `catch` sites and the
+`--locked` failure (*an error that newly reaches a `catch` is named once*,
 [ADR-101](specification/adr/adr-101.md)), the reserved `NK2401` case for a
 `catch` that stops covering its arrivals, and `match error { … }` over a variant
 from a callee in another package.
-
-*Evidence:* a function that reads a file **and** throws its own is the shape
-with no channel now. Nothing in `examples/` or `benches/` is that shape yet, so
-what is left is unbuilt rather than broken — which is why it is here and not in
-§1.
 
 ### 2.14. A parameter may be a function, and a kept one has no lowering
 

@@ -573,6 +573,7 @@ pub fn check_program(
         moved_into_a_task: Vec::new(),
         walked: Vec::new(),
         receiver_name: None,
+        caught_several: false,
         read_at: Vec::new(),
         written_at: Vec::new(),
         empty_lists: BTreeMap::new(),
@@ -1089,6 +1090,14 @@ struct Checker<'a> {
     /// handler's own body is not - a failure raised there propagates - so this
     /// goes back to what it was before the handler is walked.
     caught: bool,
+    /// The handler being walked was handed an error that can be **more than
+    /// one type** ([ADR-160](../../docs/specification/adr/adr-160.md) D4).
+    ///
+    /// `match error { … }` reads it. The set of error types arriving at a
+    /// `catch` is **open** ([ADR-023](../../docs/specification/adr/adr-023.md)
+    /// D4), so no `match` over it can be exhaustive — which is why the question
+    /// is about the binding rather than about a type this checker could name.
+    caught_several: bool,
     /// What the guarded expression of the nearest `catch` turned out to hold,
     /// while that expression is being walked - and `None` everywhere else.
     ///
@@ -3882,6 +3891,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 self.stamped_condition = outer_condition;
+                self.a_match_over_several_error_types(value, arms, span);
                 self.a_match_that_misses_a_case(&on, arms, span);
                 // Every arm of a `match` is a value of the same type, but what
                 // that type is, is only known when every arm says the same.
@@ -4590,7 +4600,10 @@ impl<'a> Checker<'a> {
                 self.nothing_here_can_fail(guarded.unwrap_or_default(), span);
                 self.scope
                     .push(vec![Local::free("error".to_string(), Ty::Unknown)]);
+                let arriving = self.several_arrive(expr);
+                let several = std::mem::replace(&mut self.caught_several, arriving);
                 self.block(handler);
+                self.caught_several = several;
                 self.scope.pop();
                 Ty::Unknown
             }
@@ -6998,6 +7011,68 @@ impl<'a> Checker<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Whether more than one error **type** can arrive at a handler
+    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D4).
+    ///
+    /// Read off the guarded call's own set, the way the lowering reads it: only
+    /// the outermost call and only one by name, because that is what a `catch`
+    /// guards in every program in the tree.
+    fn several_arrive(&self, guarded: &Expr) -> bool {
+        let name = match guarded {
+            Expr::Call { func, .. } => match func.as_ref() {
+                Expr::Variable(name) => self.parsed.text(*name).to_string(),
+                Expr::Path(segments) => segments
+                    .iter()
+                    .map(|s| self.parsed.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                _ => return false,
+            },
+            Expr::Try(inner) => return self.several_arrive(inner),
+            _ => return false,
+        };
+        let key = self.parsed.unaliased(&name);
+        self.own
+            .functions
+            .get(&key)
+            .is_some_and(|contract| contract.throws.len() > 1)
+    }
+
+    /// **`NK1151` for a `match` over a `catch`'s error**
+    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D4).
+    ///
+    /// The variants **within** one error type are closed and the set of error
+    /// **types** is open ([ADR-023](../../docs/specification/adr/adr-023.md)
+    /// D4), so a handler that names variants of two of them has covered no set
+    /// at all — a callee that gains a failure sends a third type here, and the
+    /// `match` has nowhere to put it. `else` is what says the rest, which is
+    /// the same answer this code gives for every type whose cases cannot be
+    /// enumerated in arms.
+    ///
+    /// It is the caret for a refusal the **lowering** also states, which is the
+    /// arrangement `NK1132` already has: the emitter cannot write the file
+    /// either way, and this is where a reader finds out why.
+    fn a_match_over_several_error_types(
+        &mut self,
+        value: &Expr,
+        arms: &[ast::MatchArm],
+        span: &Span,
+    ) {
+        if !self.caught_several {
+            return;
+        }
+        if !matches!(value, Expr::Variable(name) if self.parsed.text(*name) == "error") {
+            return;
+        }
+        let caught = arms
+            .iter()
+            .filter(|arm| arm.guard.is_none())
+            .any(|arm| catches_everything(&arm.pattern));
+        if !caught {
+            self.a_case_is_missing("else", span);
         }
     }
 

@@ -260,7 +260,7 @@ fn collect(parsed: &Parsed, block: &Block, own: &Ledger, library: &Ledger, into:
 /// The type a `throw` raises. `ConfigError::NotFound(p)` and
 /// `ConfigError::NotFound` are both `ConfigError` - a variant is written under
 /// the enum that declares it (Part I, 3.4), so the first segment is the type.
-fn error_type(parsed: &Parsed, thrown: &Expr) -> Option<String> {
+pub(crate) fn error_type(parsed: &Parsed, thrown: &Expr) -> Option<String> {
     match thrown {
         // **Everything but the last segment**, which is the variant.
         // `ConfigError::NotFound` is `ConfigError` and

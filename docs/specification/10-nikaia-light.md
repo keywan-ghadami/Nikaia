@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.76 (Draft)
+**Version:** 0.0.77 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -2295,12 +2295,15 @@ let config = load() catch {
 > the channel is one opaque error and a `match` over its variants is not
 > lowerable: `catch { 8080 }` and `f"{error}"` are what such a handler has.
 > **A library's type counts as a name** ([ADR-159](adr/adr-159.md) D1), so a
-> function that reads a file hands its failure on as an `io::IoError` and a
-> handler matches on its variants — with no envelope, because no `throw` in the
-> program raised it, and `error.full()` says so (D3). What is left is a set with
-> **two** members, which is a program that reads a file *and* throws its own:
-> that needs the generated sum, which is not built. `docs/open-work.md` carries
-> it.
+> function that reads a file hands its failure on as an `io::IoError` — with no
+> envelope, because no `throw` in the program raised it, and `error.full()` says
+> so (D3). **And a set of two or more is a generated sum**
+> ([ADR-160](adr/adr-160.md) D1), so a program that reads a file *and* throws
+> its own is the block above with two types named in it. Such a `match` needs
+> `else`, because the set of error **types** is open and no `match` over it can
+> be exhaustive (D4, `NK1151`). What keeps the opaque channel is a `"?"` in the
+> set — *something this compiler cannot name* — which today is a grammar's entry
+> rule; `docs/open-work.md` carries that.
 
 **Two sets differ.** The **variants of an error type** are closed: a `match`
 over them is exhaustive, and adding one is a breaking change. The **set of

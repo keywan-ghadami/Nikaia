@@ -1110,6 +1110,14 @@ struct Emitter<'p> {
     /// a name here resolves in the generated file, and one another package
     /// declares does not.
     declared_errors: std::collections::BTreeSet<String>,
+    /// Every distinct error set of two or more named members in this unit, and
+    /// the type that stands for it
+    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    ///
+    /// Held rather than derived per question, because a `catch` deep inside a
+    /// body needs the **name** and a name computed on the spot has nowhere to
+    /// live.
+    sums: std::collections::BTreeMap<Vec<String>, String>,
     /// ADR-033: whether two statements that meet on nothing may overlap.
     /// What the program's `impl` blocks declare, which is what makes the fold
     /// adapter of D2 a lookup rather than a guess.
@@ -1244,6 +1252,15 @@ enum Named<'a> {
     Own(&'a str),
     Library(&'a str),
 }
+
+/// What a generated error sum is called
+/// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+///
+/// A program never writes it: a `catch` matches on the **members'** variants
+/// ([ADR-023](../../docs/specification/adr/adr-023.md) D4), so this name exists
+/// only in the generated file. Spelled so that nothing a program declares
+/// collides with it.
+const SUM: &str = "__NikaiaThrows_";
 
 /// The slot a function's result is filed under, as `contracts::sharing` keys it.
 const SHARED_RESULT: &str = "<result>";
@@ -1413,6 +1430,20 @@ struct Flow<'a> {
     /// the binding does not either: a lambda inside a handler has its own
     /// `error` or none.
     caught_named: bool,
+    /// The **sum** the error a handler was handed travels in, where it is one
+    /// ([ADR-160](../../../docs/specification/adr/adr-160.md) D3).
+    ///
+    /// `match error { … }` reads it: the patterns the source writes name
+    /// variants of the sum's **members**, so the match has to be taken apart by
+    /// member, and the sum's own name is what the outer arms are written with.
+    caught_sum: Option<&'a str>,
+    /// The **member** of that sum whose arm is being written, where one is
+    /// ([ADR-160](../../../docs/specification/adr/adr-160.md) D3).
+    ///
+    /// `throw error` reads it: inside a member's arm the handler holds the
+    /// member, so passing the error on is putting it back in the variant it
+    /// came out of.
+    caught_member: Option<&'a str>,
     /// The byte the statement being emitted starts at.
     ///
     /// It is here because the checker's answer about method calls is keyed by
@@ -1531,7 +1562,7 @@ struct Flow<'a> {
     in_loop: bool,
 }
 
-impl Flow<'_> {
+impl<'a> Flow<'a> {
     const PLAIN: Flow<'static> = Flow {
         changed: &[],
         awaited: &[],
@@ -1539,6 +1570,8 @@ impl Flow<'_> {
         origin: "",
         caught: false,
         caught_named: false,
+        caught_sum: None,
+        caught_member: None,
         statement: usize::MAX,
         function: "",
         in_lambda: false,
@@ -1573,6 +1606,34 @@ impl Flow<'_> {
     /// handed came through a named channel.
     fn handling(self, named: bool) -> Self {
         Flow {
+            caught_named: named,
+            ..self
+        }
+    }
+
+    /// The same, for a handler whose error travels in a **sum**
+    /// ([ADR-160](../../../docs/specification/adr/adr-160.md) D3).
+    ///
+    /// A shorter lifetime than the flow it came from, and that is the point:
+    /// the sum's name is the emitter's and outlives the handler being written,
+    /// which is all this needs.
+    fn catching<'b>(self, sum: Option<&'b str>) -> Flow<'b>
+    where
+        'a: 'b,
+    {
+        Flow {
+            caught_sum: sum,
+            ..self
+        }
+    }
+
+    /// The surroundings inside one member's arm of a sum's match (D3).
+    fn inside<'b>(self, member: &'b str, named: bool) -> Flow<'b>
+    where
+        'a: 'b,
+    {
+        Flow {
+            caught_member: Some(member),
             caught_named: named,
             ..self
         }
@@ -1704,7 +1765,7 @@ impl<'p> Emitter<'p> {
         // ADR-055 D6, before `own_contracts` is moved into place.
         let reach = pausing_reach(parsed, &own_contracts);
 
-        Self {
+        let mut made = Self {
             parsed,
             build,
             borrowing: borrowing_structs(parsed),
@@ -1746,7 +1807,11 @@ impl<'p> Emitter<'p> {
             opaque_handles: opaque_handles(parsed),
             foreign_results: foreign_results(parsed),
             entry: true,
-        }
+            sums: std::collections::BTreeMap::new(),
+        };
+        // After the rest, because it reads three of the fields above.
+        made.sums = made.error_sums();
+        made
     }
 
     /// The same, said of a module rather than of the crate root.
@@ -1781,6 +1846,7 @@ impl<'p> Emitter<'p> {
     fn items_only(&self) -> Result<Lowered> {
         let mut out = Out::default();
         self.shadow_types(&mut out);
+        self.write_error_sums(&mut out);
         for item in &self.parsed.program.items {
             out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
             out.push("\n");
@@ -1826,6 +1892,7 @@ impl<'p> Emitter<'p> {
         out.push("\n");
 
         self.shadow_types(&mut out);
+        self.write_error_sums(&mut out);
 
         for item in &self.parsed.program.items {
             out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
@@ -3015,6 +3082,8 @@ impl<'p> Emitter<'p> {
             // inside: the boundary `in_lambda` does not cross, this does not
             // cross either.
             caught_named: false,
+            caught_sum: None,
+            caught_member: None,
             statement: usize::MAX,
             function: key,
             // A function body was not written inside whatever lambda the call
@@ -4577,6 +4646,21 @@ impl<'p> Emitter<'p> {
                 ));
             }
             Expr::Match { value, arms } => {
+                // **A `match error` over a sum is taken apart by member**
+                // ([ADR-160](../../docs/specification/adr/adr-160.md) D3). The
+                // patterns the source writes name variants of the **members**
+                // — `ConfigError::Empty(p)` and `io::IoError::NotFound(p)` in
+                // one block — because the sum is a name no program writes
+                // ([ADR-023](../../docs/specification/adr/adr-023.md) D4). So
+                // one match becomes a match per member with the arms that
+                // belong to it, and the catch-all is what every one of them
+                // falls through to.
+                if let Some(sum) = flow.caught_sum {
+                    if matches!(value.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT)
+                    {
+                        return self.match_over_a_sum(out, sum, arms, depth, flow);
+                    }
+                }
                 out.push("match ");
                 self.expr(out, value, depth, flow)?;
                 let pad = "    ".repeat(depth + 1);
@@ -4966,7 +5050,11 @@ impl<'p> Emitter<'p> {
                 // and the site is kept in a local beside it for the one
                 // statement that needs it back (`throw error`, D3).
                 let named = bound == CAUGHT && self.caught_channel_is_named(expr);
-                let flow = flow.handling(named);
+                let sum = match bound == CAUGHT {
+                    true => self.caught_sum(expr),
+                    false => None,
+                };
+                let flow = flow.handling(named).catching(sum);
                 let opened = match named {
                     false => String::new(),
                     true => format!("{{ let ({CAUGHT}, {SITE}) = {CAUGHT}.split(); "),
@@ -5043,10 +5131,26 @@ impl<'p> Emitter<'p> {
                 // [ADR-023](../../docs/specification/adr/adr-023.md) D6 asks
                 // for. The handler's binding opened the envelope; this is where
                 // it is closed again.
-                let passing_on = flow.caught_named
-                    && matches!(inner.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT);
-                if passing_on {
-                    out.push(&format!("return Err({SITE}.refill({CAUGHT}))"));
+                let is_the_binding =
+                    matches!(inner.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT);
+                let passing_on = flow.caught_named && is_the_binding && flow.caught_sum.is_none();
+                if passing_on || (flow.caught_member.is_some() && is_the_binding) {
+                    // **Back into the variant it came out of**, where the
+                    // handler is inside a sum's member arm
+                    // ([ADR-160](../../docs/specification/adr/adr-160.md) D3).
+                    let put_back = |inner: String| match (flow.caught_sum, flow.caught_member) {
+                        (Some(sum), Some(member)) => format!(
+                            "{}::{}({inner})",
+                            Self::sum_path(sum),
+                            Self::sum_variant(member)
+                        ),
+                        _ => inner,
+                    };
+                    let held = match flow.caught_named {
+                        true => format!("{SITE}.refill({CAUGHT})"),
+                        false => CAUGHT.to_string(),
+                    };
+                    out.push(&format!("return Err({})", put_back(held)));
                     return Ok(());
                 }
                 // Three channels and three ways in. The **envelope** takes the
@@ -5055,6 +5159,31 @@ impl<'p> Emitter<'p> {
                 // type** takes the value alone, because a channel that carries
                 // no envelope has nowhere to put a site
                 // ([ADR-159](../../docs/specification/adr/adr-159.md) D2).
+                // **A sum takes the member it is**
+                // ([ADR-160](../../docs/specification/adr/adr-160.md) D2), and
+                // `into()` is what picks the variant: the `From` beside the
+                // generated `enum` is written per member, so the thrown value
+                // says which one it is by its own type.
+                if self.sum_of(flow.function).is_some() {
+                    let thrown = crate::contracts::throws::error_type(self.parsed, inner);
+                    let own = thrown
+                        .as_deref()
+                        .and_then(|t| self.name_of_error(t))
+                        .is_some_and(|named| matches!(named, Named::Own(_)));
+                    match own {
+                        true => {
+                            out.push("return Err(nikaia_std::error::throwing(");
+                            self.expr(out, inner, depth, flow)?;
+                            out.push(&format!(", {:?}).into())", flow.origin));
+                        }
+                        false => {
+                            out.push("return Err(");
+                            self.expr(out, inner, depth, flow)?;
+                            out.push(".into())");
+                        }
+                    }
+                    return Ok(());
+                }
                 match self.named_error(flow.function) {
                     Some(Named::Library(_)) => {
                         out.push("return Err(");
@@ -5969,6 +6098,21 @@ impl<'p> Emitter<'p> {
     /// type with a lifetime, and a function with nothing to borrow from can
     /// only write `'static` for it.
     fn error_channel(&self, key: &str, lifetimes: Lifetimes, borrows: bool) -> String {
+        // **A set of two or more is the generated sum**
+        // ([ADR-160](../../docs/specification/adr/adr-160.md) D1), where every
+        // member of it is a name.
+        if let Some(contract) = self.own_contracts.functions.get(key) {
+            if let Some(sum) = self.sums.get(&contract.throws) {
+                let params = match contract.throws.iter().any(|m| self.borrows_named(m)) {
+                    false => String::new(),
+                    true => match lifetimes == Lifetimes::ELIDED && !borrows {
+                        true => format!("<{}>", Lifetimes::STATIC.params),
+                        false => format!("<{}>", lifetimes.params),
+                    },
+                };
+                return format!("{}{params}", Self::sum_path(sum));
+            }
+        }
         match self.named_error(key) {
             None => "Box<dyn std::error::Error>".to_string(),
             // **A library's error travels bare**
@@ -5995,7 +6139,366 @@ impl<'p> Emitter<'p> {
     /// The ledger's `throws` column carries names, and a name interned by
     /// another parse is not this one's `Symbol`.
     fn borrows_named(&self, name: &str) -> bool {
-        self.tethered.contains(name) || self.borrowing.iter().any(|sym| self.text(*sym) == name)
+        self.tethered.contains(name)
+            || self.borrowing.iter().any(|sym| self.text(*sym) == name)
+            // **A library's type answers from the library's ledger**
+            // ([ADR-160](../../docs/specification/adr/adr-160.md)): the two sets
+            // above are this package's, and a type another one declares is
+            // described where it is declared.
+            || self
+                .library
+                .types
+                .get(name)
+                .is_some_and(|contract| !contract.tethered.is_empty())
+    }
+
+    /// Every distinct error **set of two or more named members** in this unit,
+    /// and the name of the type that stands for it
+    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    ///
+    /// **Per set and not per function**, which is what makes propagation free:
+    /// two functions that fail the same way get the same type, so a `?` between
+    /// them converts nothing. Keyed by the members in the ledger's own order,
+    /// which is sorted, so the name is a function of the set and of nothing
+    /// else.
+    fn error_sums(&self) -> std::collections::BTreeMap<Vec<String>, String> {
+        let mut out = std::collections::BTreeMap::new();
+        for contract in self.own_contracts.functions.values() {
+            let members = &contract.throws;
+            if members.len() < 2 {
+                continue;
+            }
+            // One member this compiler cannot name is the whole set unnamed:
+            // a sum with a hole in it is the box by another spelling.
+            if members.iter().any(|m| self.name_of_error(m).is_none()) {
+                continue;
+            }
+            let name = format!(
+                "{SUM}{}",
+                members
+                    .iter()
+                    .map(|m| m.replace("::", "_"))
+                    .collect::<Vec<_>>()
+                    .join("__")
+            );
+            out.insert(members.clone(), name);
+        }
+        out
+    }
+
+    /// The generated sums, written into the file
+    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    ///
+    /// One `enum` per distinct set, the `From` each member needs so that a `?`
+    /// converts on its own, and `Display`/`Error` so that the sum can still go
+    /// into the opaque channel where a caller has one.
+    fn write_error_sums(&self, out: &mut Out) {
+        // **Once, at the crate root.** A module is its own file below, so a sum
+        // written into each of them would be a different type per file and a
+        // failure could not cross one. Every mention of it is written
+        // `crate::…` for the same reason ([`Emitter::sum_path`]).
+        if !self.entry {
+            return;
+        }
+        for (members, name) in &self.sums {
+            let members: &[String] = members;
+            let borrows = members.iter().any(|m| self.borrows_named(m));
+            // **One lifetime for the whole sum**, and it is the members' own: a
+            // member that carries a view carries the buffer's lifetime, and a
+            // sum of such a member has it too
+            // ([ADR-008](../../docs/specification/adr/adr-008.md) D1).
+            let (decl, params) = match borrows {
+                true => (format!("<{INPUT_LIFETIME}>"), format!("<{INPUT_LIFETIME}>")),
+                false => (String::new(), String::new()),
+            };
+            let of = |m: &str| match self.borrows_named(m) {
+                true => params.clone(),
+                false => String::new(),
+            };
+
+            out.push(&format!(
+                "// The failure channel of every function in this file that \
+                 fails in exactly\n// these ways \
+                 ([ADR-160](docs/specification/adr/adr-160.md) D1). A program \
+                 never\n// writes this name: a `catch` matches on the \
+                 **members'** variants.\n\
+                 //\n\
+                 // `non_camel_case_types` is allowed rather than avoided: the \
+                 name is spelled\n// so that nothing a program declares \
+                 collides with it, and a warning about\n// this file is a \
+                 defect here ([Part III C.1](docs/specification/30-nikaia-tooling.md)).\n\
+                 #[derive(Debug)]\n\
+                 #[allow(non_camel_case_types)]\n\
+                 enum {name}{decl} {{\n"
+            ));
+            for member in members {
+                out.push(&format!(
+                    "    {}({}),\n",
+                    Self::sum_variant(member),
+                    self.sum_member_type(member, &of(member))
+                ));
+            }
+            out.push("}\n");
+
+            for member in members {
+                out.push(&format!(
+                    "impl{decl} From<{}> for {name}{params} {{\n\
+                     \x20   fn from(error: {}) -> {name}{params} {{ {name}::{}(error) }}\n\
+                     }}\n",
+                    self.sum_member_type(member, &of(member)),
+                    self.sum_member_type(member, &of(member)),
+                    Self::sum_variant(member)
+                ));
+            }
+
+            out.push(&format!(
+                "impl{decl} std::fmt::Display for {name}{params} {{\n\
+                 \x20   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n\
+                 \x20       match self {{\n"
+            ));
+            for member in members {
+                out.push(&format!(
+                    "            {name}::{}(e) => e.fmt(f),\n",
+                    Self::sum_variant(member)
+                ));
+            }
+            out.push(&format!(
+                "        }}\n\x20   }}\n}}\n\
+                 impl{decl} std::error::Error for {name}{params} {{}}\n"
+            ));
+
+            // **The long form asks the member** (D2): a member the program
+            // declares carries its envelope and therefore its site, and a
+            // library's says there is none. The sum adds nothing of its own,
+            // because it is not where anything was raised.
+            out.push(&format!(
+                "impl{decl} nikaia_std::error::Full for {name}{params} {{\n\
+                 \x20   fn full(&self) -> String {{\n\
+                 \x20       match self {{\n"
+            ));
+            for member in members {
+                let held = match self.name_of_error(member) {
+                    Some(Named::Own(_)) => "e.full()",
+                    _ => "nikaia_std::error::Full::full(e)",
+                };
+                out.push(&format!(
+                    "            {name}::{}(e) => {held},\n",
+                    Self::sum_variant(member)
+                ));
+            }
+            out.push("        }\n    }\n}\n\n");
+        }
+    }
+
+    /// The sum an expression a `catch` guards fails in, where it is one.
+    ///
+    /// The same question [`Emitter::caught_channel_is_named`] asks, one channel
+    /// over, and answered the same way: only the outermost call, and only a
+    /// call by name.
+    fn caught_sum(&self, expr: &Expr) -> Option<&str> {
+        let name = match expr {
+            Expr::Call { func, .. } => match func.as_ref() {
+                Expr::Variable(name) => self.text(*name).to_string(),
+                Expr::Path(segments) => segments
+                    .iter()
+                    .map(|s| self.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                _ => return None,
+            },
+            Expr::Try(inner) => return self.caught_sum(inner),
+            _ => return None,
+        };
+        self.sum_of(&self.parsed.unaliased(&name))
+    }
+
+    /// `match error { … }` in a handler whose error travels in a **sum**
+    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D3).
+    ///
+    /// One match per member, carrying the arms whose patterns name that
+    /// member's variants, and the source's catch-all written into each of them
+    /// — because Rust has no fall-through and the members are separate types.
+    /// An arm that names no member at all (a bare name, `else`, a literal) is
+    /// the catch-all.
+    fn match_over_a_sum(
+        &self,
+        out: &mut Out,
+        sum: &str,
+        arms: &[crate::ast::MatchArm],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        // **Every member of the sum gets an arm**, and not only the ones the
+        // source named: the sum is a Rust `enum` and a `match` over it has to
+        // cover it. A member the handler said nothing about is one where only
+        // the catch-all runs, which is exactly what the source meant by not
+        // naming it.
+        let Some(members) = self.sum_members(sum) else {
+            return Err(refused!("no error set is named `{sum}`"));
+        };
+        let mut catch_all: Vec<&crate::ast::MatchArm> = Vec::new();
+        let mut by_member: Vec<(&str, Vec<&crate::ast::MatchArm>)> =
+            members.iter().map(|m| (m.as_str(), Vec::new())).collect();
+        for arm in arms {
+            match self.member_of(&arm.pattern) {
+                Some(member) => match by_member.iter_mut().find(|(m, _)| *m == member) {
+                    Some((_, list)) => list.push(arm),
+                    // A variant of a type that is **not** in this set cannot
+                    // arrive here. Left where it was written rather than
+                    // dropped: the language below says it is unreachable, and
+                    // that is a truer message than silence.
+                    None => catch_all.push(arm),
+                },
+                None => catch_all.push(arm),
+            }
+        }
+        // **The set of error types is open**
+        // ([ADR-023](../../docs/specification/adr/adr-023.md) D4), so no
+        // `match` over it can be exhaustive and every one of them needs a
+        // catch-all. Refused here rather than below, because what `rustc` would
+        // say is about a file nobody wrote
+        // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+        if catch_all.is_empty() {
+            return Err(refused!(
+                "this `match error` names variants of {} error types and has no `else`, \
+                 and the set of types arriving at a `catch` is open (Part I, 7.1) - \
+                 so add `else => throw error` to pass the rest on, or `else => …` to \
+                 handle them",
+                by_member.len().max(1)
+            ));
+        }
+
+        let pad = "    ".repeat(depth + 1);
+        let inner = "    ".repeat(depth + 2);
+        let close = "    ".repeat(depth);
+        out.push(&format!("match {CAUGHT} {{\n"));
+        for (member, member_arms) in &by_member {
+            let member: &str = member;
+            // **A member the program declares travels in its envelope**
+            // ([ADR-159](../../docs/specification/adr/adr-159.md) D2), so the
+            // value the patterns are about is what the envelope holds — and the
+            // site is kept in a local beside it, for the arm that passes the
+            // error on. The split is the same one a single-typed handler makes;
+            // what is new is that it happens per member.
+            let own = matches!(self.name_of_error(member), Some(Named::Own(_)));
+            let flow = flow.inside(member, own);
+            if own {
+                out.push(&format!(
+                    "{pad}{}::{}({CAUGHT}) => {{ let ({CAUGHT}, {SITE}) = {CAUGHT}.split(); \
+                     match {CAUGHT} {{\n",
+                    Self::sum_path(sum),
+                    Self::sum_variant(member)
+                ));
+            } else {
+                out.push(&format!(
+                    "{pad}{}::{}({CAUGHT}) => match {CAUGHT} {{\n",
+                    Self::sum_path(sum),
+                    Self::sum_variant(member)
+                ));
+            }
+            for arm in member_arms.iter().chain(catch_all.iter()) {
+                out.push(&inner);
+                self.match_pattern(out, &arm.pattern, depth + 2, flow)?;
+                if let Some(guard) = &arm.guard {
+                    out.push(" if ");
+                    self.expr(out, guard, depth + 2, flow)?;
+                }
+                out.push(" => ");
+                self.expr(out, &arm.body, depth + 2, flow)?;
+                out.push(",\n");
+            }
+            match own {
+                true => out.push(&format!("{pad}}} }},\n")),
+                false => out.push(&format!("{pad}}},\n")),
+            }
+        }
+        out.push(&format!("{close}}}"));
+        Ok(())
+    }
+
+    /// The error **type** a pattern is about, where it names one.
+    ///
+    /// `ConfigError::Empty(p)` is `ConfigError` and `io::IoError::NotFound(p)`
+    /// is `io::IoError` — everything but the last segment, which is
+    /// [ADR-159](../../docs/specification/adr/adr-159.md) D4's rule read off a
+    /// pattern instead of off an expression. A one-segment path **binds**
+    /// (Part I 3.4), so it names no member and is a catch-all.
+    fn member_of(&self, pattern: &crate::ast::MatchPattern) -> Option<String> {
+        use crate::ast::MatchPattern;
+        let path = match pattern {
+            MatchPattern::Path(path)
+            | MatchPattern::Tuple { path, .. }
+            | MatchPattern::Named { path, .. } => path,
+            _ => return None,
+        };
+        if path.len() < 2 {
+            return None;
+        }
+        let member = path[..path.len() - 1]
+            .iter()
+            .map(|s| self.text(*s))
+            .collect::<Vec<_>>()
+            .join("::");
+        self.name_of_error(&member).is_some().then_some(member)
+    }
+
+    /// The generated sum a function's failures travel in, where its set has
+    /// one ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    /// The members of a generated sum, by the name it is written with.
+    fn sum_members(&self, sum: &str) -> Option<&[String]> {
+        self.sums
+            .iter()
+            .find(|(_, name)| name.as_str() == sum)
+            .map(|(members, _)| members.as_slice())
+    }
+
+    fn sum_of(&self, key: &str) -> Option<&str> {
+        let contract = self.own_contracts.functions.get(key)?;
+        self.sums.get(&contract.throws).map(String::as_str)
+    }
+
+    /// Whose one error type a **member** of a set is, asked of the name alone.
+    fn name_of_error<'n>(&'n self, name: &'n str) -> Option<Named<'n>> {
+        if name == crate::contracts::UNNAMED_ERROR {
+            return None;
+        }
+        if self.declared_errors.contains(name) {
+            return Some(Named::Own(name));
+        }
+        self.library
+            .types
+            .contains_key(name)
+            .then_some(Named::Library(name))
+    }
+
+    /// What one member of a sum carries: its own single-member channel
+    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D2).
+    ///
+    /// A type this unit declares is one the program `throw`s, so it keeps the
+    /// envelope and its site; a library's arrives from a call and travels bare
+    /// ([ADR-159](../../docs/specification/adr/adr-159.md) D2). The sum changes
+    /// neither — it only says which of them this failure was.
+    fn sum_member_type(&self, name: &str, params: &str) -> String {
+        match self.name_of_error(name) {
+            Some(Named::Own(_)) => format!("nikaia_std::error::Thrown<{name}{params}>"),
+            _ => name.to_string(),
+        }
+    }
+
+    /// The variant a member is written as: its name with the module flattened,
+    /// because a variant is one identifier.
+    fn sum_variant(name: &str) -> String {
+        name.replace("::", "_")
+    }
+
+    /// How a sum is **named** wherever it is used.
+    ///
+    /// `crate::…`, always: the type is defined once at the crate root
+    /// ([`Emitter::write_error_sums`]), and a module is a file of its own below,
+    /// so a bare name would be a different type in each of them — and a failure
+    /// that crosses a module boundary would have nowhere to go.
+    fn sum_path(name: &str) -> String {
+        format!("crate::{name}")
     }
 
     /// Whether what a `catch` guards fails through a **named** channel.

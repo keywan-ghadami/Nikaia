@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.77] — 2026-09-20
+
+A set with two error types in it is a **generated sum**
+([ADR-160](docs/specification/adr/adr-160.md)) — the last shape a `throws` set
+can have that had no channel.
+
+### Added
+
+- **One `enum` per distinct set** (D1), and not per function: two functions that fail the same way get the same type, so a `?` between them converts nothing. The program never writes the name — a `catch` matches on the **members'** variants ([ADR-023](docs/specification/adr/adr-023.md) D4) — so the type exists only in the generated file, is defined **once at the crate root** and named `crate::…` everywhere. A module is a file of its own below, and a sum written into each of them would be a different type per file, with no way for a failure to cross a module boundary.
+- **Each member carries the channel it would have had alone** (D2): the program's own type its envelope and the site [ADR-023](docs/specification/adr/adr-023.md) D6 asks for, because the program `throw`s it; a library's bare, because no `throw` here raised it ([ADR-159](docs/specification/adr/adr-159.md) D2). The sum adds nothing of its own — it is not where anything was raised, so its `full()` asks the member.
+- **A `match` over a sum is taken apart by member** (D3): one match per member with the arms that name its variants, and the source's catch-all written into each, because the members are separate types and the language below has no fall-through. **Every** member gets an arm, including one the handler said nothing about. `throw error` inside a member's arm puts the failure back in the variant it came out of.
+- **`NK1151` for a `match` over a `catch`'s error with more than one type arriving** (D4). The variants **within** one error type are closed; the set of error **types** is open, so such a `match` has covered no set at all — a callee that gains a failure sends a third type there. Refused **twice**, which is the arrangement `NK1132` already has: the checker for the caret, and the lowering because it cannot write the file either way.
+
+### Fixed
+
+- **A `rustc` warning about the generated file.** `non_camel_case_types`, on the sum's deliberately-uncollidable name. A warning about that file is a defect here ([Part III C.1](docs/specification/30-nikaia-tooling.md)), and `sqlite3_from_end_to_end` is the test that said so — which is also how the corpus turned out to reach the sum at all.
+
+### What it closes, and what it leaves
+
+- **The four error records now cover every shape a set can have.** One named member: the channel is that type. Two or more: the sum. A `"?"` anywhere: the opaque channel, which is the honest answer for *something this compiler cannot name*.
+- **And there is exactly one source of `"?"` left in the tree**, measured: a grammar's entry rule, whose failure is a **rendered string** and has no type. Seven of the corpus' eight `main`s carry `throws = ["?", "io::IoError"]` for that reason alone. Naming it turns those seven into sets of two named members — the sum, already built — so a program could tell *the file was not there* from *the file was not the shape the grammar says*. `docs/open-work.md` §2.13 is now that entry.
+
 ## [0.0.76] — 2026-09-20
 
 A library's error type is a channel too, and it travels **bare**
