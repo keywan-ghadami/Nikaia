@@ -1387,6 +1387,17 @@ struct Declared<'a> {
     /// here reports the function's **own** name, which is the key's last
     /// segment (ADR-023 D6: a `throw` in `main` says `main`).
     key: &'a str,
+    /// The type this function's failures travel in, exactly as the signature
+    /// above wrote it ([ADR-163](../../docs/specification/adr/adr-163.md) D2).
+    ///
+    /// A vehicle that takes fallible branches - `overlap`, `select` - has to
+    /// name an error type for the `async` blocks it writes, because one with a
+    /// `?` in it and nothing to infer from is *type annotations needed* about a
+    /// file nobody wrote. Naming the box was right while every channel was one;
+    /// since [ADR-157](../../docs/specification/adr/adr-157.md) a channel can
+    /// be a `Thrown<E>`, a library's type bare or a generated sum, and the `?`
+    /// on the branch has to convert into whichever it is.
+    channel: &'a str,
 }
 
 /// **The oldest Rust the emitted code compiles under**
@@ -1480,6 +1491,16 @@ struct Flow<'a> {
     /// method says the method's own name (ADR-023 D6), and a ledger key says
     /// `Type::method`.
     function: &'a str,
+    /// The type the enclosing function's failures travel in
+    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D2).
+    ///
+    /// Read by the two vehicles that wrap a fallible branch in an `Ok`:
+    /// `overlap` and `select` write the error type out, and it has to be the
+    /// one the `?` below them converts into. It reaches inward like `function`
+    /// does and for the same reason - a nested block is still that function -
+    /// and `Flow::PLAIN`'s box is what a context with no function around it
+    /// gets.
+    channel: &'a str,
     /// What is being emitted sits inside a **lambda's body**
     /// ([ADR-055](../../../docs/specification/adr/adr-055.md) §6).
     ///
@@ -1591,6 +1612,7 @@ impl<'a> Flow<'a> {
         in_a_place: false,
         statement: usize::MAX,
         function: "",
+        channel: "Box<dyn std::error::Error>",
         in_lambda: false,
         bound: "",
         widen: false,
@@ -3077,6 +3099,7 @@ impl<'p> Emitter<'p> {
                 returns_value: ret_type.is_some(),
                 awaited: &awaited,
                 key: &key,
+                channel: &channel,
             },
         )?;
         out.push("\n");
@@ -3097,6 +3120,7 @@ impl<'p> Emitter<'p> {
             returns_value,
             awaited,
             key,
+            channel,
         } = declared;
         let flow = Flow {
             changed: &[],
@@ -3113,6 +3137,7 @@ impl<'p> Emitter<'p> {
             in_a_place: false,
             statement: usize::MAX,
             function: key,
+            channel,
             // A function body was not written inside whatever lambda the call
             // to it sits in: this is the one boundary the flag does not cross.
             in_lambda: false,
@@ -5899,12 +5924,19 @@ impl<'p> Emitter<'p> {
                 statement: stmt.span.start,
                 throws: fallible,
                 origin: flow.origin,
+                // A branch is still inside this function, so a nested vehicle
+                // in one names the same channel
+                // ([ADR-163](../../docs/specification/adr/adr-163.md) D2).
+                channel: flow.channel,
                 ..Flow::PLAIN
             };
             match &stmt.node {
                 Stmt::Expr(value) => {
                     if fallible {
-                        out.push("Ok::<_, Box<dyn std::error::Error>>(");
+                        // **The enclosing function's channel**
+                        // ([ADR-163](../../docs/specification/adr/adr-163.md)
+                        // D2), because the `?` below converts into it.
+                        out.push(&format!("Ok::<_, {}>(", flow.channel));
                     }
                     out.from(&stmt.span, |out| self.expr(out, value, depth + 1, inside))?;
                     if fallible {
@@ -6012,10 +6044,14 @@ impl<'p> Emitter<'p> {
                 statement: arm.at,
                 throws: fallible,
                 origin: flow.origin,
+                // As an `overlap`'s branch does.
+                channel: flow.channel,
                 ..Flow::PLAIN
             };
             if fallible {
-                out.push("Ok::<_, Box<dyn std::error::Error>>(");
+                // The same as an `overlap`'s, one construct over
+                // ([ADR-163](../../docs/specification/adr/adr-163.md) D2).
+                out.push(&format!("Ok::<_, {}>(", flow.channel));
             }
             self.expr(out, &arm.value, depth + 1, inside)?;
             if fallible {

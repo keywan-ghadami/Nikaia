@@ -660,10 +660,23 @@ pub fn render_sync_violation(
     out.push_str(
         "     = a `sync` function promises it cannot pause and does no I/O (Part II, 12.1)\n",
     );
-    out.push_str(&format!(
-        "     = `{}` carries no `sync` in {ledger}\n",
-        violation.callee
-    ));
+    // **A construct has no ledger entry to name**
+    // ([ADR-163](../../../docs/specification/adr/adr-163.md) D1): an `overlap`
+    // and a `select` hand their branches to the executor and park until they
+    // answer, which is the pause. Saying *carries no `sync`* about one would
+    // send a reader looking for an entry that does not exist.
+    if violation.construct {
+        out.push_str(&format!(
+            "     = a `{}` block hands its branches to the executor and waits \
+             there, which is a pause (ADR-055)\n",
+            violation.callee
+        ));
+    } else {
+        out.push_str(&format!(
+            "     = `{}` carries no `sync` in {ledger}\n",
+            violation.callee
+        ));
+    }
     out.push_str(&format!(
         "     help: drop `sync` from `{}`, or move the call out of it\n",
         violation.caller

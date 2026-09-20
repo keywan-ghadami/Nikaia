@@ -55,6 +55,36 @@ pub struct Violation {
     pub callee: String,
     /// Which ledger answered - this program's, or a library's.
     pub from_library: bool,
+    /// Whether `callee` is a **construct** rather than a function
+    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D1).
+    ///
+    /// An `overlap` and a `select` join on the executor, so a body holding one
+    /// pauses - and no ledger says so, because neither is a call. The
+    /// diagnostic says where the pause is instead of naming an entry that does
+    /// not exist.
+    pub construct: bool,
+}
+
+/// The **constructs that join on the executor**, which is a pause
+/// ([ADR-163](../../../docs/specification/adr/adr-163.md) D1).
+///
+/// An `overlap { … }` and a `select { … }` lower to `task::overlap<n>(…).await`
+/// and `task::race<n>(…).await`: the block hands its branches to the executor
+/// and parks until they answer, which is exactly what
+/// [ADR-055](../../../docs/specification/adr/adr-055.md) calls a suspension
+/// point. Neither is a **call**, so [`reached`] has nothing to answer about
+/// them and both analyses have to ask this separately.
+///
+/// **And `throws` deliberately does not ask.** A block's failures are its
+/// branches', which that walk already reaches by descending into them; treating
+/// the construct as opaque there would put a `"?"` in the set of every function
+/// that writes one, which is a claim about failures rather than about pausing.
+pub(crate) fn joins_on_the_executor(expr: &Expr) -> Option<&'static str> {
+    match expr {
+        Expr::Overlap(_) => Some("overlap"),
+        Expr::Select(_) => Some("select"),
+        _ => None,
+    }
 }
 
 /// Every call a `sync` function makes that the ledgers say can pause.
@@ -407,6 +437,12 @@ fn collect_reach(
             parsed,
             &stmt.node,
             &mut |expr| match reached(parsed, expr, own, library) {
+                // **A block that joins on the executor pauses**
+                // ([ADR-163](../../../docs/specification/adr/adr-163.md) D1),
+                // and it is not a call, so `reached` says nothing about it.
+                // Asked first, because `reached` answers `None` for one and
+                // `None` is what this walk reads as *adds nothing*.
+                _ if joins_on_the_executor(expr).is_some() => reach.blocked = true,
                 Some(Reached::Own(name)) => {
                     reach.calls.insert(name);
                 }
@@ -485,12 +521,29 @@ fn walk_block(
     for stmt in &block.stmts {
         let span = stmt.span.clone();
         visit_stmt(parsed, &stmt.node, &mut |expr| {
+            // **The construct half** ([ADR-163](../../../docs/specification/adr/adr-163.md)
+            // D1). [ADR-027](../../../docs/specification/adr/adr-027.md) D4 says
+            // an assertion is never overwritten by the inference, so fixing the
+            // inference alone would leave a hand-written `sync` on a body that
+            // pauses - and `rustc` would say so about the generated file
+            // ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+            if let Some(construct) = joins_on_the_executor(expr) {
+                found.push(Violation {
+                    span: span.clone(),
+                    caller: caller.to_string(),
+                    callee: construct.to_string(),
+                    from_library: false,
+                    construct: true,
+                });
+                return;
+            }
             if let Some((callee, from_library)) = called(parsed, expr, own, library) {
                 found.push(Violation {
                     span: span.clone(),
                     caller: caller.to_string(),
                     callee,
                     from_library,
+                    construct: false,
                 });
             }
         });

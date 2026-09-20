@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.81] — 2026-09-20
+
+A block that joins on the executor **pauses**, and its branches travel in the
+function's own channel ([ADR-163](docs/specification/adr/adr-163.md)) — two
+correct programs `rustc` refused, in files nobody wrote.
+
+### Fixed
+
+- **An `overlap` of branches that cannot pause left the function `sync`**, and the vehicle's `.await` landed in a `fn` that is not `async` (`E0728`). Ten lines were enough to reach it: two calls to `fn twice(n: i64) -> i64` inside an `overlap`. Both constructs lower to an `.await` on a vehicle in `nikaia_std::task` **whatever their branches do**, so a body holding one parks on the executor and is not `sync` ([ADR-055](docs/specification/adr/adr-055.md)). `select` had it too, for the same reason one construct over.
+- **A fallible branch was wrapped in `Ok::<_, Box<dyn Error>>` whatever the channel was** (`E0277`: *`?` couldn't convert the error to `IoError`*). The box was right while every channel was one; since [ADR-157](docs/specification/adr/adr-157.md) a channel is a `Thrown<E>`, a library's type **bare** ([ADR-159](docs/specification/adr/adr-159.md) D2) or a generated sum ([ADR-160](docs/specification/adr/adr-160.md) D1), and the `?` under the block converts into whichever it is. The branch now names the string the **signature** wrote, carried on the flow beside the ledger key that was already there — two answers that have to agree are one answer or a bug.
+
+### Why neither was visible
+
+- **Nothing in this repository writes either construct.** Not `examples/`, not `benches/`, not `tests/samples/` — both are held by their own tests, and those tests happened to write the two shapes that still worked: an `overlap` over `fs::read_to_string` in a `throws main` whose channel was still the box, and a `select` in a test that only checks the refusal of one arm.
+- Both defects were **reachable only through the records above them**: the first the day the lowering became `async`, the second the day the channel got a type. Neither record had a reason to look at a construct it did not change.
+
+### Also
+
+- **A written `sync` over one is refused** (`NK2202`), which is the other half and not a nicety: [ADR-027](docs/specification/adr/adr-027.md) D4 says an assertion is never overwritten by the inference, so fixing the derivation alone would have left a hand-written `sync` on a body that pauses — and the language below would be the one to say so. A construct has no ledger entry, so the note says where the pause is instead of naming one that does not exist.
+- **`throws` deliberately does not ask the same question.** A block's failures are its branches', which that walk already reaches by descending into them; treating the construct as opaque there would put a `"?"` in the set of every function that writes one — a claim about failures made to fix a fact about pausing.
+
+### What this leaves
+
+- **`overlap { … } catch { … }` does not lower**, and that is [ADR-115](docs/specification/adr/adr-115.md) D4's own written example. It is named as a defect (`docs/open-work.md` §1.2) rather than fixed, because the shape that fixes it is that record's own first step: handling at the block means looking at **every** outcome instead of returning at the first `Err`, which is exactly what its `secondary` list is. §2.25 now opens there.
+- `crates/nikaia/tests/joining.rs` is seven tests, five of which **compile and run** the result — the only shape that holds [Part III C.1](docs/specification/30-nikaia-tooling.md) closed. One of them asserts that a second failing branch is **nowhere**, which is the line that changes the day §2.25 is built.
+
 ## [0.0.80] — 2026-09-20
 
 The roadmap is brought level with what is built, and its tail is put in the
