@@ -14,6 +14,65 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
+### What is a parse failure called, and what can a program read off it?
+
+**What is blocked.** [`open-work.md`](open-work.md) §2.13, *a grammar's entry
+rule throws `"?"`, and that is the last one* — and what that entry says waits on
+it: [ADR-101](specification/adr/adr-101.md)'s reserved `NK2401` case for a
+`catch` that stops covering its arrivals, and `match error { … }` over a variant
+from a callee in another package.
+
+**Measured.** `std.contracts` carries **nine** `throws` lines and **not one** of
+them is `["?"]` — seven `io::IoError` and two `Overtaken`. The one place that
+spelling is still written is a public grammar rule's ledger entry, and seven of
+the corpus' eight `main`s carry the `["?", "io::IoError"]` it produces. So
+naming this turns seven programs' open channel into a **sum of two named
+members**, which is already built ([ADR-160](specification/adr/adr-160.md)): a
+program could tell *the file was not there* from *the file was not the shape the
+grammar says*.
+
+**What there is to name it with.** The backend's error carries `offset`,
+`expected`, `message`, `found` and a rule stack, and `render(source)` turns them
+into the text a program prints today — the headline, the line with a caret, and
+what else was possible. Nothing is missing; what is missing is a **type**.
+
+**Why it is the owner's.** Two questions, and both are about the language's
+surface rather than about work. [Part I 2.2](specification/10-nikaia-light.md)
+is the list of this language's words, and an error type a `catch` can name is
+one of them.
+
+**The options.**
+
+* **A — a bare name, like `Overtaken`.** `Overtaken` is a unit struct in
+  `nikaia-std` with `Display` and `Error`, keyed in the ledger without a module
+  in front because a program never writes a path to it. A parse failure is
+  reached the same way — out of a `dsl` entry, into a `catch`. Its `Display` is
+  what `render` already produces, so every program that prints `error` today
+  prints exactly what it printed. Nothing is readable off it yet.
+* **B — the same, with fields a program can read**: where (line, column), what
+  was expected, what was found. It needs `fields` on a `std` type in the ledger,
+  which nothing there has today — `io::IoError` is an enum with payload and is
+  taken apart by its **variants**, which is the shape that exists.
+* **C — a module of its own.** `std::text` is Nikaia's own file and holds
+  `digit_value`; a Rust error type does not go there. A new module named for
+  the construct would be a word added to the language for one type.
+
+**What this page recommends: A**, and the reason is that it is the only one of
+the three that costs nothing to take back. The name and the channel are what
+seven programs are waiting for; the fields are a second question that B answers
+before anybody has asked it, and C spends a word
+([ADR-084](specification/adr/adr-084.md) calls a keyword the most expensive
+thing a language adds) on a type that has one. A program that wants the line
+today has it in the message.
+
+**What it costs if wrong**: a rename, which is one line in `std.contracts` and
+one in `nikaia-std`. B's cost if wrong is a shape in the ledger that every other
+`std` type then has to be read against; C's is a word.
+
+**And the name itself is the part this page will not guess.** `Rejected`,
+`Unparsed`, `NotTheShape` — each says something slightly different about whose
+fault it is, and that is the owner's sentence to write.
+
 ### Does a **described** foreign function say whether it puts its argument on a thread?
 
 **What is blocked.** [`open-work.md`](open-work.md) §2.31, whose last paragraph

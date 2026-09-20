@@ -591,10 +591,15 @@ sum, already built — so a program could tell *the file was not there* from *th
 file was not the shape the grammar says*.
 
 *What it needs.* The same shape [ADR-158](specification/adr/adr-158.md) had: a
-type for the failure, with the payload a reader needs (the offset, the line, and
-what was expected), somewhere a program can name it; then the rule entry writing
-it instead of `"?"`. The decision in it is the same one — which variants, and
-where the type lives — and it is smaller, because a parse fails in one way.
+type for the failure, somewhere a program can name it, and then the rule entry
+writing it instead of `"?"`. The decision in it is the same one — what it is
+called and what a program can read off it — and it is smaller, because a parse
+fails in one way. ***The question is asked***:
+[`open-decisions.md`](open-decisions.md) carries it, with what the backend's
+error already offers (`offset`, `expected`, `message`, `found`, a rule stack,
+and a `render` that makes the text a program prints today) and with
+`Overtaken`'s precedent for a `std` error type that needs no module in front.
+Nothing here moves until it is answered.
 
 *What waits on the last `"?"` going:* the note over `catch` sites and the
 `--locked` failure (*an error that newly reaches a `catch` is named once*,

@@ -16,7 +16,9 @@
 //! writes `throws = ["?"]` on every entry, so there is no set to diff*. That
 //! stopped being true when [ADR-158](../../../docs/specification/adr/adr-158.md)
 //! gave `std` its error type: the file has nine `throws` lines now, seven of
-//! them `io::IoError`, two `Overtaken` and exactly one `["?"]`.
+//! them `io::IoError` and two `Overtaken`, and **not one** is `["?"]`. What is
+//! left of that spelling is a **grammar** rule's entry, which is
+//! `open-work.md` §2.13 and a question on `open-decisions.md`.
 
 use std::collections::BTreeSet;
 

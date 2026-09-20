@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.102] — 2026-09-20
+
+**The last `["?"]` is asked about, and a miscount of mine is corrected** — the
+second found by the first.
+
+### Corrected
+
+- **0.0.100 said `std.contracts` carries *exactly one* `throws = ["?"]`. It carries none.** The line that count found is in the file's own **header comment**, which explains what entries wrote before [ADR-158](docs/specification/adr/adr-158.md). Nine `throws` lines, seven `io::IoError`, two `Overtaken`, and not one `["?"]` — the corrected number is the stronger claim, and a measurement that counted a comment is worth a sentence of warning. Fixed in ADR-101 §5, the index row and the test that repeated it.
+
+### Asked
+
+- **What is a parse failure called, and what can a program read off it?** The one place `["?"]` is still written is a public **grammar** rule's ledger entry, because a parse fails with a rendered string and there is no type to name — `docs/open-work.md` §2.13, *and that is the last one*. Seven of the corpus' eight `main`s carry the `["?", "io::IoError"]` it produces, so naming it turns an open channel into a **sum of two named members** for all seven: a program could tell *the file was not there* from *the file was not the shape the grammar says*.
+- **Nothing is missing but the type.** The backend's error already carries `offset`, `expected`, `message`, `found` and a rule stack, and its `render(source)` makes the text a program prints today. The entry carries that measurement, `Overtaken`'s precedent for a `std` error type keyed without a module in front, and what each answer costs — and it does not guess the **name**, which says whose fault a rejected file is and is the owner's sentence to write.
+
 ## [0.0.101] — 2026-09-20
 
 **A crate, a description, and a refusal** — the chain three entries were
