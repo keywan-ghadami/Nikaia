@@ -57,6 +57,13 @@ fn project(name: &str, description: Option<&str>) -> PathBuf {
 /// The ledger, the modules and the findings a build of `root` would produce for
 /// one source — assembled exactly as `project::check` assembles them.
 fn findings(root: &Path, source: &str) -> Vec<Finding> {
+    let found = findings_keeping(root, source);
+    let _ = std::fs::remove_dir_all(root);
+    found
+}
+
+/// The same, leaving the project where it is — for a test that asks twice.
+fn findings_keeping(root: &Path, source: &str) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let foreign = Foreign::of(root);
@@ -69,8 +76,8 @@ fn findings(root: &Path, source: &str) -> Vec<Finding> {
         &parsed,
         &foreign.declared,
         &foreign.described,
+        &foreign.moved,
     ));
-    let _ = std::fs::remove_dir_all(root);
     found
 }
 
@@ -204,6 +211,89 @@ fn a_described_crate_is_not_something_to_import_from_std() {
         found.is_empty(),
         "a correct program is not refused: {found:#?}"
     );
+}
+
+/// **A description is believed while its hashes hold** — `NK2505`
+/// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5, on
+/// [ADR-100](../../../docs/specification/adr/adr-100.md) D3's rule).
+///
+/// The description records what the crate's sources hashed to, and until this
+/// **nothing compared it**: a crate could change under a reviewed file and
+/// every analysis would go on reading the old answers. D3's own words for a
+/// ledger are *a dependency is never believed against its own sources*.
+///
+/// **The one difference from a ledger is what happens next.** D3's second row
+/// derives the ledger again; a description cannot be, because what it says is a
+/// reviewer's judgement — a `crosses` read off a field, a signature that lies
+/// corrected. So the row becomes a refusal and the command, which is the same
+/// thing said to a person instead of to a build.
+#[test]
+fn a_description_is_believed_while_its_hashes_hold() {
+    let root = project("hashes", None);
+    // The crate, where the manifest's `../fremd` means from the *generated*
+    // manifest's directory — `target/nikaia/build/`.
+    let crate_root = root.join("target/nikaia/fremd");
+    std::fs::create_dir_all(crate_root.join("src")).expect("a crate to hash");
+    let source = crate_root.join("src/lib.rs");
+    std::fs::write(&source, "pub fn zwei(a: i64, b: i64) -> i64 { a + b }\n")
+        .expect("write the crate");
+    let hash = orchestrator::cache::sha256_hex(&std::fs::read(&source).expect("read it back"));
+    std::fs::write(
+        root.join("contracts/fremd.contracts"),
+        format!("{DESCRIPTION}\n[sources]\n\"src/lib.rs\" = \"{hash}\"\n"),
+    )
+    .expect("write the description");
+
+    let calls = "fn main() {\n    let n = fremd::zwei(1, 2)\n    println(f\"{n}\")\n}";
+    assert!(
+        Foreign::of(&root).moved.is_empty(),
+        "the hash holds, so nothing has moved"
+    );
+    assert!(
+        findings_keeping(&root, calls).is_empty(),
+        "and nothing is said"
+    );
+
+    // …and the moment the crate moves, the file is an answer about a crate
+    // this build is not linking against.
+    std::fs::write(&source, "pub fn zwei(a: i64, b: i64) -> i64 { a * b }\n")
+        .expect("move the crate");
+    let found = findings(&root, calls);
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK2505");
+    assert!(
+        found[0].message.contains("`fremd` has moved"),
+        "{:?}",
+        found[0]
+    );
+    assert!(
+        found[0].notes.join(" ").contains("`src/lib.rs`"),
+        "{found:#?}"
+    );
+    // Part III C.2: the way out is one concrete thing to do.
+    assert_eq!(
+        found[0].help.as_deref(),
+        Some("run `nikaia describe fremd` and read the diff before you believe it")
+    );
+}
+
+/// **A description with nothing to compare says nothing**, which is the
+/// polarity rather than an omission: a crate declared by version has its
+/// sources in Cargo's registry cache, and a description that recorded no
+/// `[sources]` recorded nothing. A refusal resting on an absence would refuse
+/// every crate that comes from a registry ([Part III
+/// C.4](../../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn a_description_with_no_hash_to_compare_is_not_refused() {
+    // The `DESCRIPTION` fixture carries no `[sources]` at all, and the crate it
+    // names is not in the tree either — two absences, one answer.
+    let root = project("no-hash", Some(DESCRIPTION));
+    assert!(Foreign::of(&root).moved.is_empty());
+    let found = findings(
+        &root,
+        "fn main() {\n    let n = fremd::zwei(1, 2)\n    println(f\"{n}\")\n}",
+    );
+    assert!(found.is_empty(), "{found:#?}");
 }
 
 /// The ledger a build assembles holds both halves, and `std` is untouched by

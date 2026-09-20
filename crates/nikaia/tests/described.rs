@@ -21,7 +21,16 @@ fn named(names: &[&str]) -> BTreeSet<String> {
 
 fn refusals(source: &str, declared: &[&str], described: &[&str]) -> Vec<nikaia::check::Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    nikaia::foreign::check(&parsed, &named(declared), &named(described))
+    // **Nothing has moved**, which is what these tests are not about: the hash
+    // rule is `described_entries.rs`'s, and a set handed in empty here keeps
+    // each file measuring one thing ([ADR-104](../../../docs/specification/adr/adr-104.md)
+    // D1 and D5 are two rules).
+    nikaia::foreign::check(
+        &parsed,
+        &named(declared),
+        &named(described),
+        &std::collections::BTreeMap::new(),
+    )
 }
 
 const CALLS: &str = "fn main() {\n\

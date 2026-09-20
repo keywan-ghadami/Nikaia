@@ -648,7 +648,7 @@ describes is refused with the command in the message; `nikaia describe
 calls, from rustdoc-JSON where the toolchain has it and from the crate's
 sources where it does not, translated by Part III 15.2's table with
 `touches` and `locks` fail-closed; the file is committed, hashed against the
-crate's version, and reviewed. **Steps 1 and 2 are built, and step 5 by
+crate's version, and reviewed. **Steps 1, 2 and 3 are built, and step 5 by
 hand.**
 
 *The refusal is `NK2504`*, once per crate and with the command in the
@@ -692,11 +692,19 @@ return for writing it. Measured on a three-line project: a description saying
 are in (the signature, `throws`, `sync`); the fourth is `crosses` and is not a
 gap here — see the paragraph below.
 
-*What it needs, in the record's order (§5):* the file's header and the hash
-rule — the description records the crate source's SHA-256 today and **nothing
-compares it**, which is now the *next* step rather than the one after; the
-rustdoc-JSON reader behind a toolchain check; and a way to read a version
-dependency's sources, which the record leaves to the reviewer.
+*And the hash rule holds* (step 3, D5). A description is believed while the
+files it was derived from hash as recorded, and `NK2505` says so where one does
+not — the same rule as a stale ledger's with the one difference that matters:
+[ADR-100](specification/adr/adr-100.md) D3 derives a ledger again, and a
+description is **reviewed** again instead, because what it says is a person's
+judgement. Only where there is a hash to disagree with: a crate declared by
+version has its sources in Cargo's registry cache, and refusing on that absence
+would refuse every crate that comes from a registry.
+
+*What it needs, in the record's order (§5):* the rustdoc-JSON reader behind a
+toolchain check; and a way to read a version dependency's sources, which is
+what would make the hash rule reach every crate rather than the ones with a
+`path`.
 
 *And one line of the merge is decided in the cheapest direction rather than
 decided.* A description's names carry the crate word in front of them and

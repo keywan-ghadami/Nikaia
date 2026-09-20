@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.98] — 2026-09-20
+
+**The hash rule holds** ([ADR-104](docs/specification/adr/adr-104.md) D5, on
+[ADR-100](docs/specification/adr/adr-100.md) D3's rule) — §5's step 3, and the
+line the previous package left: *the description records the crate source's
+SHA-256 and nothing compares it*.
+
+### Added
+
+- **`NK2505`: a described crate whose sources have moved since the description was reviewed.** Until now a crate could change under a reviewed file and every analysis would go on reading the old answers — which is exactly what D3 calls *believing a dependency against its own sources*, the thing its second row exists to prevent.
+- **The one difference from a ledger's rule is what happens next.** D3 derives the ledger again where a hash does not match; a description cannot be derived, because what it says is a reviewer's judgement — a `crosses` read off a field, a signature that lies corrected. So the row becomes a refusal and the command, which is the same thing said to a person instead of to a build.
+- **Only where there is a hash to disagree with.** A crate declared by version has its sources in Cargo's registry cache, and a description that recorded no `[sources]` recorded nothing; both answer *nothing moved*. Refusing on that absence is what [ADR-169](docs/specification/adr/adr-169.md) D1 keeps `NK2201` from doing, and here it would refuse every crate that comes from a registry ([C.4](docs/specification/30-nikaia-tooling.md)).
+- The tally counts it apart again — *a description of a crate that has moved* is neither *a value that may not cross a thread* nor *a Rust crate nothing describes*, and what a reader does about it is neither of those either.
+
+### Fixed
+
+- **Six diagnostics printed runs of spaces nobody wrote.** A `\`-continuation inside a string literal had been collapsed into one long line with its indentation baked in, so `NK1137`, the missing-trait refusal, the new `NK2701` walk message and two generated-Rust templates each carried eighteen spaces in the middle of a sentence. Found while writing this package's own notes, by reading the rendered output rather than the source — the same way the sentence a reader meets is the only place this shows.
+
+### Left open
+
+- The **rustdoc-JSON reader** (D4), behind a check for the toolchain's support; and a way to read a **version** dependency's sources, which is what would make the hash rule reach every crate rather than the ones with a `path`.
+
 ## [0.0.97] — 2026-09-20
 
 **`nikaia describe <crate>` writes the draft**

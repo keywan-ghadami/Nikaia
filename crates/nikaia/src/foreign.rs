@@ -71,11 +71,13 @@ pub fn check(
     parsed: &Parsed,
     declared: &BTreeSet<String>,
     described: &BTreeSet<String>,
+    moved: &BTreeMap<String, Vec<String>>,
 ) -> Vec<Finding> {
     if declared.is_empty() {
         return Vec::new();
     }
     let mut first: BTreeMap<String, Span> = BTreeMap::new();
+    let mut stale: BTreeMap<String, Span> = BTreeMap::new();
     for item in &parsed.program.items {
         item_names(
             parsed,
@@ -83,8 +85,15 @@ pub fn check(
             &item.span,
             &mut |name: &str, span: &Span| {
                 let crate_name = head_of(name);
-                if declared.contains(crate_name) && !described.contains(crate_name) {
+                if !declared.contains(crate_name) {
+                    return;
+                }
+                if !described.contains(crate_name) {
                     first
+                        .entry(crate_name.to_string())
+                        .or_insert_with(|| span.clone());
+                } else if moved.contains_key(crate_name) {
+                    stale
                         .entry(crate_name.to_string())
                         .or_insert_with(|| span.clone());
                 }
@@ -94,7 +103,56 @@ pub fn check(
     first
         .into_iter()
         .map(|(crate_name, span)| undescribed(&crate_name, &span))
+        .chain(stale.into_iter().map(|(crate_name, span)| {
+            has_moved(&crate_name, moved.get(&crate_name).expect("found"), &span)
+        }))
         .collect()
+}
+
+/// `NK2505`: the crate moved and its description did not
+/// ([ADR-104](../../docs/specification/adr/adr-104.md) D5, on
+/// [ADR-100](../../docs/specification/adr/adr-100.md) D3's rule).
+///
+/// **The same rule as a stale ledger's, with the one difference that matters.**
+/// D3 says a ledger is believed while its hashes hold and **derived again**
+/// where they do not; a description cannot be derived again, because what it
+/// says is a reviewer's judgement — `crosses = false` read off a field, a
+/// signature that lies corrected. So the second row of that table becomes a
+/// refusal and the command, which is the same thing said to a person instead of
+/// to a build.
+///
+/// **Once per crate**, like `NK2504` and for the same reason: the reader's next
+/// move is one command for the whole crate.
+fn has_moved(crate_name: &str, files: &[String], span: &Span) -> Finding {
+    let which = match files.len() {
+        1 => format!("`{}`", files[0]),
+        _ => format!(
+            "{} files, among them `{}`",
+            files.len(),
+            files.first().map(String::as_str).unwrap_or("?")
+        ),
+    };
+    Finding {
+        severity: Severity::Error,
+        span: span.clone(),
+        code: "NK2505",
+        message: format!("`{crate_name}` has moved since its description was reviewed"),
+        notes: vec![
+            format!(
+                "`contracts/{crate_name}.contracts` records what its sources hashed to, \
+                 and {which} hashes differently now - so the entries answer for a crate \
+                 that is not the one this build links against (ADR-104 D5)"
+            ),
+            "a ledger whose hashes do not hold is derived again; a description is \
+             **reviewed** again instead, because what it says is a person's judgement \
+             and not this compiler's - a signature that lies is caught there or by \
+             nobody (ADR-100 D3)"
+                .to_string(),
+        ],
+        help: Some(format!(
+            "run `nikaia describe {crate_name}` and read the diff before you believe it"
+        )),
+    }
 }
 
 /// `NK2504`, and the message is the command.

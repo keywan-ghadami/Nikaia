@@ -2081,7 +2081,7 @@ impl<'p> Emitter<'p> {
             // not know is handed to the hook installed before ours, which is
             // Rust's own, so such a program is exactly as well off as it was.
             out.push(&format!(
-                "\n// ADR-044 D1: no table - this program was emitted without its file name.\n                 const {ABORT_TABLE}: &[nikaia_std::abort::Site] = &[];\n"
+                "\n// ADR-044 D1: no table - this program was emitted without its file name.\nconst {ABORT_TABLE}: &[nikaia_std::abort::Site] = &[];\n"
             ));
         }
 
@@ -6362,7 +6362,7 @@ impl<'p> Emitter<'p> {
                     None => "_".to_string(),
                 };
                 out.push(&format!(
-                    "match {WINNER} {{\n{inner}    Err({ARM_FAILED}) => Err({ARM_FAILED}),\n                     {inner}    Ok({name}) => {{ let {ARM_VALUE} = "
+                    "match {WINNER} {{\n{inner}    Err({ARM_FAILED}) => Err({ARM_FAILED}),\n{inner}    Ok({name}) => {{ let {ARM_VALUE} = "
                 ));
                 out.from(&Span::from(arm.at..arm.at), |out| {
                     self.block_opening_with(out, &arm.body, depth + 2, flow, Tail::Value, None)

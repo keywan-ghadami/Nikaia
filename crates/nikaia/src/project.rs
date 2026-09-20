@@ -683,6 +683,20 @@ pub struct Foreign {
     /// The crates a `contracts/<crate>.contracts` was found for, beside the
     /// project's own ledger (D5).
     pub described: BTreeSet<String>,
+    /// The described crates whose **sources have moved** since the description
+    /// was reviewed, with the files that hash differently
+    /// ([ADR-104](../../docs/specification/adr/adr-104.md) D5, on
+    /// [ADR-100](../../docs/specification/adr/adr-100.md) D3's rule).
+    ///
+    /// **Empty where nothing can be compared**, which is the polarity and not
+    /// an omission: a version dependency's sources are in Cargo's registry
+    /// cache and a description with no `[sources]` recorded nothing, so in both
+    /// cases there is no hash to disagree with. A refusal resting on an absence
+    /// is what [ADR-169](../../docs/specification/adr/adr-169.md) D1 keeps
+    /// `NK2201` from doing, and it would here refuse every crate that comes
+    /// from a registry — [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s
+    /// correct program refused.
+    pub moved: BTreeMap<String, Vec<String>>,
     /// Every described crate's entries, in one ledger under the qualified names
     /// a program writes (`hyper_shim::serve_once`).
     ///
@@ -705,11 +719,16 @@ impl Foreign {
             .unwrap_or_default();
         let mut described = BTreeSet::new();
         let mut descriptions = Ledger::empty();
+        let mut moved = BTreeMap::new();
         for name in &declared {
             let Some(ledger) = description_at(root, name) else {
                 continue;
             };
             described.insert(name.clone());
+            let differing = sources_that_moved(root, name, &ledger);
+            if !differing.is_empty() {
+                moved.insert(name.clone(), differing);
+            }
             // `None`: a description's names are already qualified with the crate
             // word a program writes (`hyper_shim::serve_once`), so there is
             // nothing to put in front of them.
@@ -719,6 +738,7 @@ impl Foreign {
             declared,
             described,
             descriptions,
+            moved,
         }
     }
 
@@ -767,6 +787,36 @@ impl Foreign {
     }
 }
 
+/// Which of the files a description was derived from hash differently now
+/// ([ADR-104](../../docs/specification/adr/adr-104.md) D5).
+///
+/// **Only what can be compared is compared.** A description that recorded no
+/// `[sources]` and a crate whose sources this build cannot find both answer
+/// *nothing moved*, because there is no hash to disagree with — the honest
+/// answer, and the one that keeps a registry crate from being refused for
+/// coming from a registry (Part III, C.4).
+fn sources_that_moved(root: &Path, name: &str, ledger: &Ledger) -> Vec<String> {
+    if ledger.sources.is_empty() {
+        return Vec::new();
+    }
+    let Some(crate_root) = crate::describe::crate_root(root, name) else {
+        return Vec::new();
+    };
+    ledger
+        .sources
+        .iter()
+        .filter(|(file, recorded)| {
+            // **A file that cannot be read is not a file that moved.** A
+            // checkout without the path dependency beside it is a build that
+            // will fail for its own reasons, and a second message about it
+            // would be this compiler guessing at the first.
+            std::fs::read(crate_root.join(file))
+                .is_ok_and(|bytes| orchestrator::cache::sha256_hex(&bytes) != **recorded)
+        })
+        .map(|(file, _)| file.clone())
+        .collect()
+}
+
 /// `contracts/<crate>.contracts`, where it is there **and parses as a ledger**.
 ///
 /// Parsing is the test rather than existence, for
@@ -813,6 +863,7 @@ pub fn check(
         parsed,
         &foreign.declared,
         &foreign.described,
+        &foreign.moved,
     ));
     all.sort_by_key(|finding| finding.span.start);
     lint_where_nothing_crosses(&mut all, user_parallelism);
@@ -887,7 +938,18 @@ pub fn check(
             plural(undescribed)
         ));
     }
-    let crossings = count("NK25") - reaching - undescribed;
+    // **And `NK2505` is a third thing again**: a crate that *is* described, by
+    // a file about a version of it that is no longer there
+    // ([ADR-104](../../docs/specification/adr/adr-104.md) D5). What a reader
+    // does about it is neither of the two above.
+    let stale = count("NK2505");
+    if stale > 0 {
+        refused.push(format!(
+            "{stale} description{} of a crate that has moved",
+            plural(stale)
+        ));
+    }
+    let crossings = count("NK25") - reaching - undescribed - stale;
     if crossings > 0 {
         refused.push(format!(
             "{crossings} value{} that may not cross a thread",
@@ -971,6 +1033,7 @@ pub fn check(
         - crossings
         - reaching
         - undescribed
+        - stale
         - aliases
         - tasks
         - walked

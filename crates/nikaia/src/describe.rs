@@ -244,6 +244,22 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
     Ok(Sources { version, files })
 }
 
+/// **Where a described crate's sources are**, for a reader other than the
+/// describer: the hash rule compares what a description recorded against what
+/// is there now, and *where is there* is this one question.
+///
+/// `None` for anything this cannot answer — a crate the manifest does not
+/// declare, one declared by version, one whose directory is not there. Each of
+/// those is an absence rather than a difference, and a refusal may not rest on
+/// one ([ADR-169](../../docs/specification/adr/adr-169.md) D1).
+pub fn crate_root(root: &Path, crate_word: &str) -> Option<PathBuf> {
+    let manifest = crate::manifest::Manifest::read(&root.join("nikaia.toml")).ok()?;
+    let (_, value) = rust_dependency(&manifest, crate_word).ok()?;
+    let declared = value.get("path").and_then(toml::Value::as_str)?;
+    let at = without_dots(&root.join("target/nikaia/build").join(declared));
+    at.is_dir().then_some(at)
+}
+
 /// A path with its `.` and `..` components walked off, without asking the
 /// filesystem whether any of it exists.
 fn without_dots(path: &Path) -> PathBuf {

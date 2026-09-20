@@ -2901,7 +2901,7 @@ impl<'a> Checker<'a> {
             code: "NK1137",
             message: "the `&` here is the compiler's to write".to_string(),
             notes: vec![format!(
-                "{because}, so the reference is already what this line means                  (ADR-094 D4) - written twice it is a reference to a reference,                  which the language below reports about a file nobody wrote"
+                "{because}, so the reference is already what this line means (ADR-094 D4) - written twice it is a reference to a reference, which the language below reports about a file nobody wrote"
             )],
             help: Some("take the `&` off".to_string()),
         });
@@ -6659,10 +6659,10 @@ impl<'a> Checker<'a> {
             code: "NK2701",
             message: format!("this function can fail because a step of what `{name}` walks can fail"),
             notes: vec![format!(
-                "`{name}` asks the sequence for every element, and a step of this one reads as                  it goes - so the failure leaves this function exactly as a `for` over the same                  sequence would (ADR-025 D1)"
+                "`{name}` asks the sequence for every element, and a step of this one reads as it goes - so the failure leaves this function exactly as a `for` over the same sequence would (ADR-025 D1)"
             )],
             help: Some(format!(
-                "declare the error: add `throws` to `{function}` - or handle it at the call,                  `… catch {{ … }}` (Part I, 7.1)"
+                "declare the error: add `throws` to `{function}` - or handle it at the call, `… catch {{ … }}` (Part I, 7.1)"
             )),
         });
     }

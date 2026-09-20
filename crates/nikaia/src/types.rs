@@ -103,11 +103,11 @@ fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
         code: "NK1135",
         message: format!("nothing declares the trait `{name}`"),
         notes: vec![
-            "a bound names a trait - what a caller's type has to implement (Part I, 4.7) -              and this name is not one this program declares with `trait`, nor one a ledger              records (ADR-106)"
+            "a bound names a trait - what a caller's type has to implement (Part I, 4.7) - and this name is not one this program declares with `trait`, nor one a ledger records (ADR-106)"
                 .to_string(),
         ],
         help: Some(format!(
-            "declare `{name}` with `trait`, or leave the bound off - a parameter without              one may be moved and passed and nothing else (ADR-074 D5)"
+            "declare `{name}` with `trait`, or leave the bound off - a parameter without one may be moved and passed and nothing else (ADR-074 D5)"
         )),
     }
 }
