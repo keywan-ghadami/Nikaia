@@ -2221,6 +2221,24 @@ grammar! {
         // operator has, which is worth more than a coin toss.
         rule coalesce_tail -> Expr =
             "??" e:coalesce_fallback -> { e }
+          // **There is no postfix `??`**
+          // ([ADR-165](../../../docs/specification/adr/adr-165.md) D1). Without
+          // this the reader of [ADR-018](../../../docs/specification/adr/adr-018.md)
+          // D3's own line got *expected one value* and a list of tokens - true,
+          // and no help at all to someone who wrote the two characters on
+          // purpose. [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)
+          // asks for the reason and one concrete way out, and there are three.
+          | "??" fail(
+                "there is no postfix `??` (ADR-165 D1): `??` is null coalescing and \
+                 takes a fallback on its right - `a ?? b` (Part I, 3.5). The same two \
+                 characters with nothing after them would mean something else \
+                 entirely, and what it would mean is an abort written as punctuation. \
+                 The three things a postfix unwrap is reached for each have a \
+                 spelling: a fallback value is `a ?? b`; a jump is \
+                 `a ?? throw NotFound` or `a ?? return r`, since the four jumps are \
+                 expressions (ADR-138 D1); and saying the value is known to be there \
+                 is `a ?? panic(\"...\")`, which ends the program with your own words"
+            ) e:coalesce_fallback -> { e }
 
         // **A fallback is one value, or it is bracketed**
         // ([ADR-089](../../../docs/specification/adr/adr-089.md) D1).
@@ -2715,6 +2733,19 @@ grammar! {
         // put that test there to stop.
         rule head_coalesce_tail -> Expr =
             "??" e:head_coalesce_fallback -> { e }
+          // The head's half, for the reason the fallback's narrowing has one:
+          // `a_head_parses_what_a_body_parses` would catch the difference.
+          | "??" fail(
+                "there is no postfix `??` (ADR-165 D1): `??` is null coalescing and \
+                 takes a fallback on its right - `a ?? b` (Part I, 3.5). The same two \
+                 characters with nothing after them would mean something else \
+                 entirely, and what it would mean is an abort written as punctuation. \
+                 The three things a postfix unwrap is reached for each have a \
+                 spelling: a fallback value is `a ?? b`; a jump is \
+                 `a ?? throw NotFound` or `a ?? return r`, since the four jumps are \
+                 expressions (ADR-138 D1); and saying the value is known to be there \
+                 is `a ?? panic(\"...\")`, which ends the program with your own words"
+            ) e:head_coalesce_fallback -> { e }
 
         rule head_coalesce_fallback -> Expr # "one value, or an expression in brackets" =
             head:head_unary tail:head_coalesce_tail? -> {

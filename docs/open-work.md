@@ -1376,44 +1376,6 @@ it is not the tests, not the wrapper's own code path, and not a stale binary. It
 is worth one look and not a re-run, which is what an unnamed failing gate
 otherwise teaches people to do.
 
-### 3.2. Two examples write a postfix `??` the language does not have
-
-Part I 3.5 defines `??` as **null coalescing** — `a ?? b`, a fallback when the
-left side is null — and nothing else. There is no postfix unwrap in that section,
-in the parser, or anywhere the specification states a rule. But two examples use
-one:
-
-* [ADR-018](specification/adr/adr-018.md) D3: `lookup(a.query("id")??)`
-* Part III 17.1, in the same shape, copied from it
-
-Measured, on the form reduced to one line:
-
-```
-q.nika: Parse error:
-expected expression; found unexpected token `)` at line 3, column 22
-   3 |     return lookup(q??)
-                            ^
-note: also possible here: `"`, `&`, `'`, `(`, `//`, `f"`, `if`, `match`, `seq`, `{`, digits, identifier
-```
-
-This is not a rule specified ahead of the compiler — those carry a **Status**
-note and this has none. It is an example using a construct the language never
-defined, which is worse: a reader who copies it gets a parse error with nothing
-to look up, because the section it would be defined in does not mention it.
-
-*It needs a decision before any work*, and the decision is now where decisions
-go: [`open-decisions.md`](open-decisions.md) carries *does the language have a
-postfix unwrap?*, with both options, a recommendation — **no**, because the
-three things one is reached for already have spellings — and the replacement
-measured as a program rather than sketched.
-
-*Why it stays upkeep and not a defect:* no program in the tree writes a postfix
-`??`, so nothing is wrong today except the page.
-
-The Part III 17.1 example was rewritten while this was found; ADR-018's stands,
-because an ADR is written once and the correction belongs to whatever answers
-the question.
-
 ### 3.3. Three corpus files cannot be compiled with `--input`, and none of them is broken
 
 A sweep that runs `nikaia --input` over every `.nika` file in the tree reports

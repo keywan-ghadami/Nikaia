@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.83] — 2026-09-20
+
+**There is no postfix `??`** ([ADR-165](docs/specification/adr/adr-165.md)),
+and the refusal is where a reader meets the three spellings that replace it.
+The owner's answer to the one question
+[`docs/open-decisions.md`](docs/open-decisions.md) had carried.
+
+### Decided
+
+- **It breaks the operator it is spelled with.** `a ?? b` is binary: a value on the left, a fallback on the right. `a??` is the same two characters with nothing on the right, and it would not be that operator with an argument missing — it would be an unrelated thing wearing its punctuation. One spelling, two unconnected meanings, told apart by what follows.
+- **And what the second meaning is, is an abort.** On a value that turns out to be null the program ends, and the only thing in the source saying so is a second question mark. Part I 2.3's nullable exists so that *there is nothing there* is an answer a program handles rather than a way for it to stop; everything on [Part III A.2](docs/specification/30-nikaia-tooling.md)'s list of what ends a program is written as a **word**.
+
+### Added
+
+- **The refusal names all three ways out**, because the decision was taken *because* they exist: a fallback value is `a ?? b`; a jump is `a ?? throw NotFound` or `a ?? return r`, since the four jumps are expressions ([ADR-138](docs/specification/adr/adr-138.md) D1); and *I know it is there* is `a ?? panic("…")` ([ADR-161](docs/specification/adr/adr-161.md) D3), which ends the program with the program's own words. Before it, a reader who copied [ADR-018](docs/specification/adr/adr-018.md) D3's line got *expected one value, or an expression in brackets* and a list of tokens — true, and no help at all to someone who wrote the two characters on purpose ([Part III C.2](docs/specification/30-nikaia-tooling.md)).
+- In **both** coalescing rules, the body's and the statement head's, because a difference between them is exactly the drift `a_head_parses_what_a_body_parses` is there to catch.
+- `crates/nikaia/tests/coalescing.rs`: the refusal in both positions, the chain [ADR-066](docs/specification/adr/adr-066.md) D4 allows, and each of the three spellings **compiled and run**.
+
+### What this leaves
+
+- [ADR-018](docs/specification/adr/adr-018.md) D3's line reads `lookup(a.query("id") ?? return bad_request())`. A record is written once, so that one keeps its text and [ADR-165](docs/specification/adr/adr-165.md) D2 carries the correction — the arrangement `open-work.md` §3.2 named when it found the line. That entry is closed.
+- Nothing in the tree parsed a postfix `??`, so no program changes. What changes is what a reader is told who tries.
+- [`docs/open-decisions.md`](docs/open-decisions.md) has one entry left: where an error's `secondary` list can live when the channel has no envelope.
+
 ## [0.0.82] — 2026-09-20
 
 A joining block has **one** outcome, and a handler on it binds what the
