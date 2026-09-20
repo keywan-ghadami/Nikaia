@@ -20,8 +20,8 @@ example becomes a program that runs.
 
 - **`nikaia_std::error::Thrown[E]`**, the envelope a named channel carries: the author's value plus the site [ADR-023](docs/specification/adr/adr-023.md) D6 says an error knows. A type of its own rather than a generic `Raised`, because `Box<dyn Error>` does not implement `Error` and one type cannot be bounded to cover both without the impls overlapping.
 - **The channel decision, in the emitter** (D1): `Result<T, Thrown[E]>` where the set has exactly one member and the member is a type this unit declares; the box everywhere else. The error type carries a lifetime exactly when it carries a view, spelled by the position — [ADR-008](docs/specification/adr/adr-008.md) D9's derivation, one position over.
-- **The envelope is opened once, at the handler's binding** (D2), so `match error` is the plain match the source wrote, `f"{error}"` is the author's message, and `error.full()` is assembled from the two halves. A handler that never reads the error binds `_error` ([ADR-090](docs/specification/adr/adr-090.md)) and there is nothing to open.
-- **`throw error` passes the error on with the site it was raised at** (D3), not the one it was caught at.
+- **The envelope is split once, at the handler's binding** (D2): the error into `error`, and what the language put around it — the site, and the trace if one was captured — into a `Site` beside it. So `match error` is the plain match the source wrote, `f"{error}"` is the author's message, and `error.full()` is assembled from the two halves. A handler that never reads the error binds `_error` ([ADR-090](docs/specification/adr/adr-090.md)) and there is nothing to split.
+- **`throw error` passes the error on in the envelope it arrived in** (D3) — the original site *and* the original trace, because a handler that passed an error on is not where it was raised.
 
 ### What keeps the box, and why each does
 
@@ -30,7 +30,7 @@ example becomes a program that runs.
 
 ### Held to by running it
 
-- Eleven tests in `crates/nikaia/tests/error_types.rs`, **seven of which compile and run the program**: a lowering that looks right and does not compile is exactly the defect this closes, so reading the Rust would not have caught it.
+- Eleven tests in `crates/nikaia/tests/error_types.rs`, **seven of which compile and run the program**: a lowering that looks right and does not compile is exactly the defect this closes, so reading the Rust would not have caught it. It earned its keep immediately — the first shape of D2 kept the site and **dropped the trace**, so `error.full()` came out silently two lines where [ADR-036](docs/specification/adr/adr-036.md) wants three, and only running it said so.
 
 ## [0.0.72] — 2026-09-20
 

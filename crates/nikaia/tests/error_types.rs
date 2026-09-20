@@ -258,6 +258,12 @@ fn the_long_form_names_the_site() {
     );
     assert!(printed.contains("no config at etc"), "{printed}");
     assert!(printed.contains("raised at load"), "{printed}");
+    // **And it says a trace was not captured**
+    // ([ADR-036](../../../docs/specification/adr/adr-036.md)), rather than
+    // leaving a reader to wonder whether one was lost. This is the line that
+    // caught the first shape of D2: opening the envelope kept the site and
+    // dropped the trace, so the long form was two lines and silently shorter.
+    assert!(printed.contains("NIKAIA_TRACE=1"), "{printed}");
 }
 
 // ---------------------------------------------------------------------------

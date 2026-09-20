@@ -155,8 +155,14 @@ fn an_error_is_declared_raised_caught_and_printed() {
         }
     "#;
     let rust = emit(source);
+    // **`throwing` and not `raise`** since
+    // [ADR-157](../../../docs/specification/adr/adr-157.md) D1: this program's
+    // error set is one type it declares, so the channel is that type and the
+    // value goes in unboxed. `raise` is what the **box** takes, and the two
+    // have the same job — a `throw` puts the value in the failure channel with
+    // the site the compiler knew (ADR-023 D6).
     assert!(
-        rust.contains("return Err(nikaia_std::error::raise("),
+        rust.contains("return Err(nikaia_std::error::throwing("),
         "{rust}"
     );
     assert!(

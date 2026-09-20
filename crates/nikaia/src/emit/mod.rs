@@ -4510,7 +4510,7 @@ impl<'p> Emitter<'p> {
                     && args.is_empty()
                     && matches!(receiver.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT);
                 match long_form {
-                    true => out.push(&format!("nikaia_std::error::full_of(&{CAUGHT}, {SITE})")),
+                    true => out.push(&format!("{SITE}.full_of(&{CAUGHT})")),
                     false => {
                         self.method_call(out, Some(receiver), *method, args, config, depth, flow)?
                     }
@@ -4956,9 +4956,7 @@ impl<'p> Emitter<'p> {
                 let flow = flow.handling(named);
                 let opened = match named {
                     false => String::new(),
-                    true => format!(
-                        "{{ let {SITE} = {CAUGHT}.origin(); let {CAUGHT} = {CAUGHT}.thrown(); "
-                    ),
+                    true => format!("{{ let ({CAUGHT}, {SITE}) = {CAUGHT}.split(); "),
                 };
                 out.push(&format!(
                     " {{\n{pad}Ok(value) => value,\n{pad}Err({bound}) => {opened}"
@@ -5035,9 +5033,7 @@ impl<'p> Emitter<'p> {
                 let passing_on = flow.caught_named
                     && matches!(inner.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT);
                 if passing_on {
-                    out.push(&format!(
-                        "return Err(nikaia_std::error::throwing({CAUGHT}, {SITE}))"
-                    ));
+                    out.push(&format!("return Err({SITE}.refill({CAUGHT}))"));
                     return Ok(());
                 }
                 // A named channel takes the value itself; the box takes it

@@ -132,13 +132,22 @@ pub struct Thrown<E> {
 }
 
 impl<E> Thrown<E> {
-    /// The error the program actually threw, taken out of the envelope.
+    /// The error the program actually threw, and everything the language put
+    /// around it, as two values.
     ///
-    /// What a `catch` binds: `match error { ConfigError::NotFound(p) => … }` is
-    /// about the author's `enum` and not about what the language wrapped it in
-    /// (D2). By value, because a `catch` owns what it was handed.
-    pub fn thrown(self) -> E {
-        self.inner
+    /// What a `catch` binds is the error: `match error { ConfigError::NotFound(p)
+    /// => … }` is about the author's `enum` and not about the envelope (D2). But
+    /// the envelope is not thrown away — `error.full()` needs it and so does
+    /// `throw error` (D3) — so it comes back beside the error rather than
+    /// around it, and the handler holds both.
+    pub fn split(self) -> (E, Site) {
+        (
+            self.inner,
+            Site {
+                origin: self.origin,
+                trace: self.trace,
+            },
+        )
     }
 
     /// Where the `throw` was, as the compiler wrote it.
@@ -151,15 +160,62 @@ impl<E: fmt::Display> Thrown<E> {
     /// Everything, for an operator — [`Raised::full`]'s answer for a named
     /// error.
     pub fn full(&self) -> String {
-        let mut out = format!("{}\n  raised at {}", self.inner, self.origin);
-        match &self.trace {
-            Some(t) if t.status() == BacktraceStatus::Captured => {
-                out.push_str(&format!("\n{t}"));
-            }
-            _ => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
-        }
-        out
+        full_form(&self.inner, self.origin, self.trace.as_ref())
     }
+}
+
+/// What the language put around a thrown error: where it was raised, and the
+/// trace if this process captured one
+/// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+///
+/// It exists because a handler is handed the **error** and still has to be able
+/// to answer both of the questions the envelope answers. Carrying it beside the
+/// error is what lets `match error { … }` be the plain match the source wrote.
+pub struct Site {
+    origin: &'static str,
+    trace: Option<Backtrace>,
+}
+
+impl Site {
+    /// `error.full()` in a handler a named channel reached: the message, the
+    /// site, and the trace if there is one.
+    ///
+    /// The same string [`Thrown::full`] builds, from the two halves the handler
+    /// holds rather than from one value.
+    pub fn full_of<E: fmt::Display>(&self, error: &E) -> String {
+        full_form(error, self.origin, self.trace.as_ref())
+    }
+
+    /// `throw error`: put the error back in the channel, in the envelope it
+    /// arrived in (D3).
+    ///
+    /// The **original** site and the original trace. A handler that passed an
+    /// error on is not where it was raised, and re-capturing here would make it
+    /// look like it was ([ADR-023](../../../docs/specification/adr/adr-023.md)
+    /// D6).
+    pub fn refill<E>(self, error: E) -> Thrown<E> {
+        Thrown {
+            inner: error,
+            origin: self.origin,
+            trace: self.trace,
+        }
+    }
+}
+
+/// The long form, from its three parts.
+fn full_form<E: fmt::Display>(
+    error: &E,
+    origin: &'static str,
+    trace: Option<&Backtrace>,
+) -> String {
+    let mut out = format!("{error}\n  raised at {origin}");
+    match trace {
+        Some(t) if t.status() == BacktraceStatus::Captured => {
+            out.push_str(&format!("\n{t}"));
+        }
+        _ => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
+    }
+    out
 }
 
 impl<E: fmt::Display> fmt::Display for Thrown<E> {
@@ -192,15 +248,6 @@ pub fn throwing<E>(error: E, origin: &'static str) -> Thrown<E> {
         origin,
         trace: tracing().then(Backtrace::force_capture),
     }
-}
-
-/// The long form of an error a named channel handed a handler, which has the
-/// site in a local beside it rather than inside it (D2).
-///
-/// `error.full()` is what Part I 7.1 writes and it is an ordinary call there;
-/// here the envelope is already open, so the two halves arrive separately.
-pub fn full_of<E: fmt::Display>(error: &E, origin: &'static str) -> String {
-    format!("{error}\n  raised at {origin}")
 }
 
 /// `error.full()` on whatever a `catch` bound.
