@@ -1231,14 +1231,14 @@ doing the job of the state that is missing.
 1. **A buffer to tether to.** `Bytes` — refcounted, offset and length. Small in
    Rust; the question is where it lives, and that is
    [`open-decisions.md`](open-decisions.md)'s.
-2. **The escape analysis** (D2), which is the load-bearing piece and is a kind
-   of analysis this compiler has never had: per **construction site**, a least
-   fixpoint over a three-element lattice, deciding whether a value outlives its
-   buffer's scope. `views.rs` is 919 lines and answers a much cruder question —
-   *does a naked view parameter get stored* — over a fixed list of destinations.
-   Both directions of being wrong are costly: too permissive is a use-after-free
-   the backend catches, which is Part III C.1; too restrictive is a correct
-   program refused, which is C.4.
+2. ~~**The escape analysis** (D2).~~ **Built**, and built *alone*: every view in
+   a signature carries its state in the ledger under `views`, `--tethers` prints
+   it, and **nothing reads it**. What it found is that the whole corpus is the
+   free case — every view in `examples/` and `benches/` solves to Borrowed,
+   which is §3's worked check read off the analysis rather than asserted, and a
+   test holds it as a ceiling. So the piece that was going to decide whether the
+   rest is worth starting has answered: **nothing in the tree needs Tethered**,
+   and what would reach it is a parser handing its rows past the buffer's scope.
 3. **Three layouts per struct** (D3, D5), chosen per construction site. A
    tethered `Entry` is not a `&str`: the **container** holds the handle (D4) and
    the element holds `(offset, len)`, so every read of `entry.name` becomes a
@@ -1260,12 +1260,20 @@ doing the job of the state that is missing.
    a state transition, and today there is no transition to forbid. The emitter
    writes a comment saying so on every `@borrowed` struct.
 
-*So it is not one change package.* It is at least four — the type, the analysis,
-the representation, the ledger — and the second is the one that decides whether
-the rest is worth starting. **What rests on it:** *text is one type*, above,
-whose `String` state comes from this analysis; the `keeps` column of a grammar's
-entry, in §1; and `Bytes` itself, which is the same question read from the other
-end.
+*So it is not one change package.* It was at least four — the type, the
+analysis, the representation, the ledger — and **the analysis is done**. What is
+left is the representation and the type, and the representation is the expensive
+half: three layouts per struct, chosen per site, with the container holding the
+handle. **What rests on it:** *text is one type*, above, whose `String` state
+comes from this analysis; the `keeps` column of a grammar's entry, in §1 — where
+a rule's `input` is a position the analysis does not reach, because a grammar
+entry is written by the ledger rather than declared as a function; and `Bytes`
+itself, which is the same question read from the other end.
+
+*And the analysis has a limit worth knowing before it is trusted further.* It
+errs **towards Tethered**, which is D7's own polarity, and the one shape it does
+not decide is a buffer built element by element into a list whose element type
+the ledger does not name. No program in the tree writes one.
 
 *And a cheaper thing is true meanwhile*, which is why nothing is broken today:
 the refusal is the honest answer for a program that would tether, and it names

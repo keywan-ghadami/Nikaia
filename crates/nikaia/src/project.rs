@@ -970,12 +970,15 @@ pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
 pub struct Explain {
     pub overlaps: bool,
     pub sharing: bool,
+    /// [ADR-008](../../docs/specification/adr/adr-008.md) D6's inverse tool:
+    /// inspection rather than assertion.
+    pub tethers: bool,
     pub trust: bool,
 }
 
 impl Explain {
     pub fn asked(&self) -> bool {
-        self.overlaps || self.sharing || self.trust
+        self.overlaps || self.sharing || self.tethers || self.trust
     }
 }
 
@@ -1024,6 +1027,12 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                     &library,
                     settings.build.user_parallelism == crate::emit::UserParallelism::Yes,
                 )
+            );
+        }
+        if want.tethers {
+            print!(
+                "{}",
+                crate::contracts::tether::report(&unit.parsed, &program.contracts)
             );
         }
         if want.trust {

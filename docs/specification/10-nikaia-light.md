@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.69 (Draft)
+**Version:** 0.0.70 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -2028,7 +2028,11 @@ changes rather than the body.
 > **Implementation status:** Partially implemented, and the table above is the
 > shape of it: **Borrowed** and **Owned** are built — the first is the language
 > below's own lifetime and costs nothing, the second is `.to_owned()` and is
-> never inserted — and **Tethered is not**. Where a value would tether, the
+> never inserted — and **Tethered is not**. The **analysis** is: every view in a
+> signature carries its solved state in the ledger and `nikaia --tethers` prints
+> it, and nothing reads it yet, because a state is a representation and only one
+> of the three is emitted. Every view in `examples/` and `benches/` solves to
+> **Borrowed** ([ADR-008](adr/adr-008.md) §3's worked check, measured). Where a value would tether, the
 > program is **refused** instead, which is the residual hard error
 > [ADR-008](adr/adr-008.md) D5 names rather than the state beside it;
 > `@borrowed` is parsed and forbids nothing, because there is no transition yet

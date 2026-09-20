@@ -31,6 +31,7 @@ pub mod order;
 pub mod send;
 pub mod sharing;
 pub mod sync;
+pub mod tether;
 pub mod throws;
 pub mod touch;
 pub mod trust;
@@ -319,6 +320,20 @@ pub struct FnContract {
     /// same doubt that takes the `sync` claim away gives this one, so one
     /// polarity decision serves both.
     pub touches_a_lock: Lock,
+    /// Which of Part I 6.6's states each view in this signature is in
+    /// ([ADR-008](../../../../docs/specification/adr/adr-008.md) D7's first
+    /// half: *recorded per function: the state of every view in its
+    /// signature*).
+    ///
+    /// Empty where the signature holds no view, which is most of them. Written
+    /// by `tether::infer` and read by nothing yet: a state is a
+    /// **representation** and only one of the three is built, so this column is
+    /// the analysis standing on its own until the other two are.
+    ///
+    /// **`views` and not `tethers` in the file**, because `tethered` above is a
+    /// different question one line up — *which fields hold a view* — and two
+    /// columns a reader has to tell apart by a suffix is one column too many.
+    pub views: Vec<tether::Held>,
     /// Which of its `Shared` positions are one allocation, and which reference
     /// count each of those classes gets
     /// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
@@ -1320,6 +1335,13 @@ impl Ledger {
         // Beside `keeps`, and for the same reason it runs here: it reads the
         // checker's method answers and the entries the item loop wrote.
         locks::infer(&mut ledger, units, library, &resolved);
+        // **Last, and it reads none of the columns above**
+        // ([ADR-008](../../../docs/specification/adr/adr-008.md) D7): what it
+        // asks is about a signature's shape and about which buffer a returned
+        // view came from, and no inference above answers either. It is also the
+        // one that changes no lowering — the state it writes is a
+        // representation and only one of the three is built.
+        tether::infer(&mut ledger, units, library);
         (ledger, checked)
     }
 
@@ -1403,6 +1425,10 @@ impl Ledger {
             key,
             FnContract {
                 public: *is_public,
+                // `tether::infer` writes it, after the signature this loop
+                // records: what it asks is about the signature's shape and
+                // about which buffer a returned view came from.
+                views: Vec::new(),
                 doc: doc.filter(|_| *is_public).cloned(),
                 // What the *declaration* says. `sync::infer` reads the body
                 // afterwards and may raise a `No` to `Inferred`; it never
@@ -1624,6 +1650,17 @@ impl Ledger {
             if let Some(provenance) = contract.provenance {
                 out.push_str(&format!("provenance = \"{}\"\n", provenance.as_str()));
             }
+            if !contract.views.is_empty() {
+                out.push_str(&format!(
+                    "views = [{}]\n",
+                    contract
+                        .views
+                        .iter()
+                        .map(|held| format!("\"{}\"", held.text()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             if !contract.sharing.is_empty() {
                 out.push_str(&format!(
                     "sharing = [{}]\n",
@@ -1800,6 +1837,20 @@ impl Ledger {
                         }
                         "provenance" => {
                             entry.provenance = Some(provenance_of(&unquote(value, at())?, at())?)
+                        }
+                        "views" => {
+                            entry.views = string_list(value, at())?
+                                .iter()
+                                .map(|held| {
+                                    tether::Held::parse(held).ok_or_else(|| {
+                                        anyhow!(
+                                            "line {}: a tether state is `name: borrowed` \
+                                             or `name: tethered`, not `{held}`",
+                                            at()
+                                        )
+                                    })
+                                })
+                                .collect::<Result<Vec<_>>>()?;
                         }
                         "sharing" => {
                             entry.sharing = string_list(value, at())?

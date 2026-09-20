@@ -26,17 +26,20 @@ pub = true
 sync = "inferred"
 throws = ["?"]
 touches = []
+views = ["data: borrowed", "<result>: borrowed"]
 signature = "(data: &str) -> Vec[Entry]"
 
 [fn."total"]
 pub = true
 sync = "inferred"
 touches = []
+views = ["entries: borrowed"]
 signature = "(entries: &Vec[Entry]) -> i64"
 
 [fn."weight"]
 sync = "inferred"
 touches = []
+views = ["entry: borrowed"]
 signature = "(entry: &Entry) -> i64"
 
 [type."Entry"]

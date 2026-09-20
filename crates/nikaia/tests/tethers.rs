@@ -1,0 +1,227 @@
+//! Which of Part I 6.6's states each view in a signature is in
+//! ([ADR-008](../../../docs/specification/adr/adr-008.md) D2, D7).
+//!
+//! **The analysis alone.** Only one of the three states is a representation
+//! this compiler emits — Borrowed is the language below's own lifetime, Owned
+//! is `.to_owned()` written by the program, and **Tethered is not built**. So
+//! this walk changes no lowering: it writes a column, which is D7, and the
+//! column is what a later change reads when the representation exists.
+//!
+//! That order is the point. An analysis nothing depends on can be held against
+//! the whole corpus and read, and being wrong costs a wrong line in a file
+//! rather than a wrong program.
+
+use nikaia::contracts::tether::State;
+use nikaia::contracts::{Ledger, STD};
+use nikaia::parser::parse_to_ast;
+
+fn ledger(source: &str) -> Ledger {
+    Ledger::infer(&parse_to_ast(source).expect("the source parses"))
+}
+
+fn state(own: &Ledger, key: &str, position: &str) -> Option<State> {
+    own.functions
+        .get(key)
+        .expect("the entry is there")
+        .views
+        .iter()
+        .find(|held| held.position == position)
+        .map(|held| held.state)
+}
+
+/// **A parameter is lent for the call**, so the buffer is the caller's and
+/// outlives every use inside the body — which is D2's *transient = borrow*.
+///
+/// Whether the body **keeps** it past the call is `NK2302`'s question and a
+/// refusal rather than a state.
+#[test]
+fn a_view_parameter_borrows() {
+    let own = ledger(
+        "struct Entry { pub name: &str }\n\
+         \n\
+         pub fn read(data: &str) -> Vec[Entry] { return [Entry { name: data }] }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    assert_eq!(state(&own, "read", "data"), Some(State::Borrowed));
+    // And the result borrows it, because the caller's buffer outlives the call.
+    assert_eq!(state(&own, "read", "<result>"), Some(State::Borrowed));
+}
+
+/// **A result built from a buffer this body made escapes it**, which is D2's
+/// *escaping = tether*: the value outlives the scope that owns its buffer.
+///
+/// This is the state that is **not built**. What stands in its place today is
+/// the backend refusing the program on the Nikaia line, which is
+/// [ADR-008](../../../docs/specification/adr/adr-008.md) D5's residual hard
+/// error.
+#[test]
+fn a_result_built_from_a_local_buffer_tethers() {
+    let own = ledger(
+        "use std::fs\n\
+         \n\
+         struct Entry { pub name: &str }\n\
+         \n\
+         pub fn load() -> Vec[Entry] throws {\n\
+         \x20   let text = fs::read_to_string(\"/etc/hostname\")\n\
+         \x20   return [Entry { name: text.trim() }]\n\
+         }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    assert_eq!(state(&own, "load", "<result>"), Some(State::Tethered));
+}
+
+/// **A view of text that outlives the program borrows**, which is
+/// [ADR-008](../../../docs/specification/adr/adr-008.md) D9's own example: it
+/// borrows from nothing and is still the cheapest state.
+#[test]
+fn a_result_that_is_static_text_borrows() {
+    let own = ledger(
+        "pub fn label() -> &str { return \"Ada\" }\n\
+         \n\
+         fn main() { println(label()) }\n",
+    );
+    assert_eq!(state(&own, "label", "<result>"), Some(State::Borrowed));
+}
+
+/// **A list of values is not a buffer.** Nothing views a `Vec[Entry]`; its
+/// elements are values, so a body that builds one owns no buffer a returned
+/// view could point into.
+#[test]
+fn a_body_that_owns_no_buffer_borrows() {
+    let own = ledger(
+        "struct Entry { pub name: &str }\n\
+         \n\
+         pub fn made() -> Vec[Entry] {\n\
+         \x20   let mut out = Vec()\n\
+         \x20   out.push(Entry { name: \"x\" })\n\
+         \x20   return out\n\
+         }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    assert_eq!(state(&own, "made", "<result>"), Some(State::Borrowed));
+}
+
+/// **`.to_owned()` makes a buffer too**, by the name rather than by a ledger
+/// entry: all four entries of either name hand back owned text, which is the
+/// same kind of fact about the language below that `len` records.
+#[test]
+fn text_a_body_owns_is_a_buffer() {
+    let own = ledger(
+        "struct Entry { pub name: &str }\n\
+         \n\
+         pub fn owned(seed: i64) -> Vec[Entry] {\n\
+         \x20   let text = seed.to_string()\n\
+         \x20   return [Entry { name: text.trim() }]\n\
+         }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    assert_eq!(state(&own, "owned", "<result>"), Some(State::Tethered));
+}
+
+/// **A signature with no view in it gets no column at all**, which is most of
+/// them — and an empty list would be a claim rather than a silence.
+#[test]
+fn a_signature_without_a_view_says_nothing() {
+    let own =
+        ledger("pub fn twice(n: i64) -> i64 { return n * 2 }\n\nfn main() { println(\"x\") }\n");
+    assert!(own.functions["twice"].views.is_empty());
+}
+
+/// **A receiver carries what its type does**, so a method of a struct that
+/// holds a view has `self` among its positions.
+#[test]
+fn a_receiver_that_carries_a_view_is_a_position() {
+    let own = ledger(
+        "struct Row { pub name: &str }\n\
+         \n\
+         impl Row {\n\
+         \x20   pub fn width(&self) -> i64 { return self.name.len() }\n\
+         }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    assert_eq!(state(&own, "Row::width", "self"), Some(State::Borrowed));
+}
+
+/// **The column renders and parses back**, which Part III 13.5 requires of
+/// every column: the file is a pure function of the source, and a column that
+/// only renders is one a consumer cannot read.
+#[test]
+fn the_column_renders_and_parses_back() {
+    let own = ledger(
+        "use std::fs\n\
+         \n\
+         struct Entry { pub name: &str }\n\
+         \n\
+         pub fn load() -> Vec[Entry] throws {\n\
+         \x20   let text = fs::read_to_string(\"/etc/hostname\")\n\
+         \x20   return [Entry { name: text.trim() }]\n\
+         }\n\
+         \n\
+         pub fn read(data: &str) -> Vec[Entry] { return [Entry { name: data }] }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    let rendered = own.render();
+    assert!(
+        rendered.contains("views = [\"<result>: tethered\"]"),
+        "{rendered}"
+    );
+    let back = Ledger::parse(&rendered).expect("the ledger parses back");
+    assert_eq!(back.functions["load"].views, own.functions["load"].views);
+    assert_eq!(back.functions["read"].views, own.functions["read"].views);
+}
+
+/// **The whole corpus is the free case**, which is
+/// [ADR-008](../../../docs/specification/adr/adr-008.md) §3's worked check read
+/// off the analysis rather than asserted: *nothing is allocated per row and no
+/// refcount traffic occurs in the parallel section.*
+///
+/// A ceiling rather than an equality, so the number can only be beaten — and if
+/// it rises, a program in the tree has started needing the state that is not
+/// built.
+#[test]
+fn nothing_in_the_corpus_needs_a_tether() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let mut pending = vec![root.join("examples"), root.join("benches")];
+    let mut files = 0;
+    let mut tethering: Vec<String> = Vec::new();
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "nika") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read the program");
+            let Ok(parsed) = parse_to_ast(&source) else {
+                continue;
+            };
+            files += 1;
+            let own = Ledger::infer_package(&[&parsed], &library);
+            for (key, contract) in &own.functions {
+                for held in &contract.views {
+                    if held.state == State::Tethered {
+                        tethering.push(format!("{}: {key} {}", path.display(), held.position));
+                    }
+                }
+            }
+        }
+    }
+    assert!(files >= 18, "only {files} programs were read");
+    assert!(
+        tethering.is_empty(),
+        "no program in the tree needs the state that is not built, and these do: {tethering:#?}"
+    );
+}

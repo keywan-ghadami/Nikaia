@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.70] — 2026-09-20
+
+The tether's **analysis**, built alone
+([ADR-008](docs/specification/adr/adr-008.md) D2, D7, D6) — the state is solved,
+written down and read by nothing.
+
+### Added
+
+- **Every view in a signature carries its state**, in a new ledger column `views`: `["data: borrowed", "<result>: tethered"]`. A parameter is lent for the call, so a view in one **borrows**; a result borrows where a receiver or a parameter carries a view, because that buffer is the caller's, and **tethers** where the buffer is one the body made.
+- **`nikaia --tethers`**, beside `--trust`, `--overlaps` and `--sharing`. That is D6's own inverse tool: *the inverse tool is inspection, not assertion* — `@borrowed` forbids a transition and this shows what was solved without being asked, so a change in representation is a ledger diff in review rather than a surprise in a profile.
+
+### Why alone, and in this order
+
+- **Nothing reads the column.** A state is a **representation**, and only one of the three is emitted: Borrowed is the language below's own lifetime, Owned is `.to_owned()` written by the program, and Tethered is not built. So this change alters no lowering. An analysis whose answers nothing depends on can be held against the whole corpus and read, and being wrong costs a wrong line in a file rather than a wrong program.
+- **Owned is never the analysis's word** (D5). A `.to_owned()` hands back a `String`, which is not a view at all, so no view position is ever Owned and the lattice solved over is the two states below it. The top exists for the program to reach.
+- **It errs towards Tethered**, which is D7's own polarity for the case that record names: a barrier *widens* to Tethered, *the widest representation, never to Owned*.
+
+### What it found
+
+- **The whole corpus is the free case.** Every view in every signature of `examples/` and `benches/` solves to **Borrowed** — [ADR-008](docs/specification/adr/adr-008.md) §3's worked check, read off the analysis rather than asserted. A test holds it as a **ceiling**, so a program that starts needing the state that is not built says so.
+- **So the piece that was going to decide whether the rest is worth starting has answered.** `docs/open-work.md` §2.42 said the analysis was the one of four parts that decides; nothing in the tree needs Tethered, and what would reach it is a parser handing its rows past the buffer's scope.
+- **The question turned out to be smaller than the lattice.** Once the caller's buffers are out of the picture, a returned view points either at something outliving the program — D9's `fn name() -> &str { "Ada" }` — or at a buffer this body **made**. *Does this body own a buffer* is the whole of it, and it is read off the ledger: a `let` whose initialiser hands back a `String`, a `Bytes`, a `Mapped` or a run of `u8`, plus `to_owned` and `to_string` by name.
+
+### Left open
+
+- **The representation**, which is the expensive half: three layouts per struct, chosen per construction site, with the container holding the handle (D3, D4). And **D7's second half** — the solved state per *struct* and the buffer-table shape — which is a fact about that representation and belongs with it.
+- **One shape the analysis does not decide**: a buffer built element by element into a list whose element type the ledger does not name. No program in the tree writes one.
+- **A grammar rule's `input`** is a position the analysis does not reach, because a `pub` rule's entry is written by the ledger rather than declared as a function. That is §1.1's remaining column, read from the other end.
+
 ## [0.0.69] — 2026-09-20
 
 The tether, measured — and the one part of it that was a defect rather than a

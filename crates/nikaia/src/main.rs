@@ -116,6 +116,20 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub sharing: bool,
 
+    /// Print which of Part I 6.6's states each view in a signature is in
+    /// ([ADR-008](../../../docs/specification/adr/adr-008.md) D6).
+    ///
+    /// **The inverse of `@borrowed`, and the reason the state lands in the
+    /// ledger** (D7): the assertion forbids a transition, and this shows what
+    /// the compiler solved without being asked. A change in a representation is
+    /// then a ledger diff in review rather than a surprise in a profile.
+    ///
+    /// Like `--trust`, `--overlaps` and `--sharing`, it explains a decision
+    /// rather than changing one — and today it explains one that changes no
+    /// lowering, because only one of the three states is built.
+    #[arg(long, global = true)]
+    pub tethers: bool,
+
     /// Print where this program's bytes came from and which hash its maps got
     /// (ADR-010 D7).
     ///
@@ -238,6 +252,7 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
         project::Explain {
             overlaps: args.overlaps,
             sharing: args.sharing,
+            tethers: args.tethers,
             trust: args.trust,
         },
     )?;
@@ -317,6 +332,7 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         project::Explain {
             overlaps: args.overlaps,
             sharing: args.sharing,
+            tethers: args.tethers,
             trust: args.trust,
         },
     )
