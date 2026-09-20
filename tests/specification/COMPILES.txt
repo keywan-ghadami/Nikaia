@@ -2,7 +2,7 @@
 10-nikaia-light.md #2 compiles
 10-nikaia-light.md #6 compiles
 10-nikaia-light.md #7 compiles
-10-nikaia-light.md #8 error[E0425]
+10-nikaia-light.md #8 refused
 10-nikaia-light.md #9 compiles
 10-nikaia-light.md #11 compiles
 10-nikaia-light.md #12 compiles
@@ -14,47 +14,47 @@
 10-nikaia-light.md #23 compiles
 10-nikaia-light.md #24 compiles
 10-nikaia-light.md #27 compiles
-10-nikaia-light.md #30 error[E0425]
-10-nikaia-light.md #31 error[E0425]
+10-nikaia-light.md #30 refused
+10-nikaia-light.md #31 refused
 10-nikaia-light.md #32 compiles
 10-nikaia-light.md #33 compiles
 10-nikaia-light.md #35 compiles
 10-nikaia-light.md #36 compiles
 10-nikaia-light.md #37 compiles
 10-nikaia-light.md #38 compiles
-10-nikaia-light.md #40 error[E0425]
+10-nikaia-light.md #40 refused
 10-nikaia-light.md #41 compiles
 10-nikaia-light.md #48 compiles
 10-nikaia-light.md #49 compiles
-10-nikaia-light.md #51 error[E0425] error[E0433]
-10-nikaia-light.md #52 error[E0433]
+10-nikaia-light.md #51 refused
+10-nikaia-light.md #52 refused
 10-nikaia-light.md #55 compiles
-10-nikaia-light.md #56 error[E0405] error[E0425]
+10-nikaia-light.md #56 refused
 10-nikaia-light.md #59 compiles
-10-nikaia-light.md #61 error[E0282] error[E0425]
-10-nikaia-light.md #62 error[E0433]
-10-nikaia-light.md #67 error[E0425]
-10-nikaia-light.md #68 error[E0308] error[E0425] error[E0433]
+10-nikaia-light.md #61 refused
+10-nikaia-light.md #62 refused
+10-nikaia-light.md #67 refused
+10-nikaia-light.md #68 refused
 10-nikaia-light.md #72 compiles
 10-nikaia-light.md #73 compiles
 10-nikaia-light.md #74 compiles
 10-nikaia-light.md #75 compiles
-10-nikaia-light.md #77 error[E0433]
+10-nikaia-light.md #77 refused
 10-nikaia-light.md #78 compiles
-20-nikaia-advance.md #3 error[E0433]
+20-nikaia-advance.md #3 refused
 20-nikaia-advance.md #17 compiles
 20-nikaia-advance.md #18 compiles
-20-nikaia-advance.md #20 error[E0308] error[E0425] error[E0433]
+20-nikaia-advance.md #20 refused
 20-nikaia-advance.md #21 compiles
-20-nikaia-advance.md #22 error[E0599]
-20-nikaia-advance.md #23 error[E0277] error[E0282] error[E0425]
-30-nikaia-tooling.md #1 error[E0433]
+20-nikaia-advance.md #22 refused
+20-nikaia-advance.md #23 refused
+30-nikaia-tooling.md #1 refused
 30-nikaia-tooling.md #7 compiles
 30-nikaia-tooling.md #8 compiles
 30-nikaia-tooling.md #9 compiles
 30-nikaia-tooling.md #10 compiles
-30-nikaia-tooling.md #12 error[E0599]
+30-nikaia-tooling.md #12 refused
 30-nikaia-tooling.md #15 compiles
-30-nikaia-tooling.md #17 error[E0433]
-30-nikaia-tooling.md #19 error[E0433]
+30-nikaia-tooling.md #17 refused
+30-nikaia-tooling.md #19 refused
 30-nikaia-tooling.md #22 compiles

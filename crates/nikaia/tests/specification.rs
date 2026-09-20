@@ -248,6 +248,9 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
 fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
     let dir = common::scratch_dir("specification-compiles");
     let mut report = String::new();
+    // What each refused block was refused **with**, for the failure message
+    // rather than for the comparison: see the verdict below.
+    let mut detail = String::new();
     let mut nth: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for v in specbook::verdicts(&specbook::specification_dir()) {
         // Counted over **every** block and not only the ones that lower, so the
@@ -278,36 +281,51 @@ fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
                 "warnings",
             ],
         );
-        let verdict = match out.status.success() {
-            true => "compiles".to_string(),
-            false => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                // **Every code, sorted, and not the first one.** The code only,
-                // never the message: a `rustc` upgrade rewords its diagnostics
-                // and that must not be a failing test here. The same argument
-                // covers the **order** — a block with two independent errors
-                // has no reason to report them in the same order under two
-                // toolchains, and recording the first made this baseline
-                // toolchain-dependent for exactly one block
-                // (`10-nikaia-light.md #68`, `E0425` here and `E0433` on CI).
-                // A sorted set says the same thing and says it the same way
-                // everywhere.
-                // `error[E0425]` and not `error: aborting due to 3 previous
-                // errors`: the second is a count of the first and says nothing
-                // a diff could be read from.
-                let mut codes: Vec<String> = stderr
-                    .lines()
-                    .filter(|l| l.starts_with("error["))
-                    .map(|l| l.split(':').next().unwrap_or(l).to_string())
-                    .collect();
-                codes.sort();
-                codes.dedup();
-                match codes.is_empty() {
-                    true => "error (no line)".to_string(),
-                    false => codes.join(" "),
-                }
-            }
+        // **Whether it compiles, and not what `rustc` called the failure.**
+        //
+        // The codes were in this baseline once and the baseline disagreed with
+        // itself between two toolchains twice over: which of a block's errors
+        // is printed **first** is the printer's business, and so is **which**
+        // errors it finds at all — Part I's `#61` earns an `E0282` under one
+        // stable and not under the next, because a later inference proves what
+        // an earlier one asked to be annotated.
+        //
+        // That is not a flake to work around. `rust-toolchain.toml` says
+        // `channel = "stable"` and [ADR-001](../../../docs/specification/adr/adr-001.md)
+        // D1 makes that the one source of truth, so a diagnostic's identity is
+        // a thing this repository has **decided** to let move. A baseline that
+        // records it fails for a change nobody made, which is the one way a
+        // baseline can stop being read.
+        //
+        // What does not move is the fact this file is for: a block the language
+        // below **rejects** is [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
+        // class of defect, and a block that stops compiling is a line in a
+        // diff. The codes are still printed — under the assertion, where a
+        // reader who is looking at a diff can see what changed — and are not
+        // what it compares.
+        let refused = !out.status.success();
+        let verdict = match refused {
+            false => "compiles",
+            true => "refused",
         };
+        if refused {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // `error[E0425]` and not `error: aborting due to 3 previous
+            // errors`: the second is a count of the first and says nothing a
+            // reader could act on.
+            let mut codes: Vec<String> = stderr
+                .lines()
+                .filter(|l| l.starts_with("error["))
+                .map(|l| l.split(':').next().unwrap_or(l).to_string())
+                .collect();
+            codes.sort();
+            codes.dedup();
+            detail.push_str(&format!(
+                "{} #{ordinal}: {}\n",
+                v.block.file,
+                codes.join(" ")
+            ));
+        }
         report.push_str(&format!("{} #{ordinal} {verdict}\n", v.block.file));
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -323,6 +341,8 @@ fn what_lowers_is_handed_to_rustc_and_the_verdicts_are_the_recorded_ones() {
          changed. Regenerate with `cargo run -p nikaia --example specification \
          --features regenerate` is not a thing - this baseline is written by \
          this test, so copy the left-hand side in and read the diff: a block \
-         that stopped compiling is Part III C.1's class"
+         that stopped compiling is Part III C.1's class.\n\n\
+         What each refused block was refused with, on this toolchain - not \
+         compared, because it moves (see the verdict above):\n{detail}"
     );
 }

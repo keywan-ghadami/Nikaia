@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.74] — 2026-09-20
+
+The compile baseline records **whether** a block compiles, and no longer what
+`rustc` called the failure — which [0.0.72] fixed one half of and this one
+finishes.
+
+### Fixed
+
+- **`tests/specification/COMPILES.txt` is toolchain-independent.** [0.0.72] took the **order** out of it, because which of a block's errors is printed first is the printer's business. CI then disagreed about **which** errors exist at all: Part I's `#61` and Part II's `#23` earn an `E0282` on one stable and not on the next, because a later inference proves what an earlier one asked to be annotated.
+
+### Why it is the baseline and not a pin
+
+- **The repository has decided to let this move.** `rust-toolchain.toml` says `channel = "stable"` and [ADR-001](docs/specification/adr/adr-001.md) D1 makes that the one source of truth for it. A diagnostic's identity is therefore not a fact this tree holds still, and a baseline that records one fails for a change nobody made — which is the one way a baseline stops being read.
+- **What does not move is what the file is for.** A block the language below **rejects** is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class of defect, and *a block that stops compiling is a line in a diff* is the sentence the test was written around. `compiles` and `refused` say that and say it the same way everywhere.
+- **The codes are still printed**, under the assertion and not inside it, where a reader looking at a diff can see what a block was refused with on the toolchain in front of them.
+- **No verdict changed.** Twenty lines are shorter; nothing that compiled stopped compiling.
+
 ## [0.0.73] — 2026-09-20
 
 The failure channel is **the error type**, where the ledger names one
