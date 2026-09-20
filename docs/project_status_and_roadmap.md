@@ -2,6 +2,34 @@
 
 This document outlines the current status of the Nikaia compiler and the toolchain, and lists the necessary steps to reach a fully functional and stable v1.0 release.
 
+## Where it stands, in numbers
+
+**Counted from the boxes below, and from nothing else.** Every item on this page is `[x]` done,
+`[~]` part-built or `[ ]` open; a part-built one counts a half, and what makes it a half is
+written in the box. That is the whole method, and it is here so the number can be **checked**
+rather than believed — a percentage nobody can re-derive is a mood.
+
+**What a percentage here does *not* mean** is how much work is left. The four areas are not the
+same size and were never meant to be: *the language* is most of the decisions and nearly all of
+the compiler, and *extended targets* is four artifacts that each need one thing built and then
+work. Read the areas, not the average.
+
+| Area | Done | Boxes | What is in it |
+| :--- | ---: | :--- | :--- |
+| **The language**, incl. build-time | **81 %** | 21 of 26 | Control flow, structs, enums, `impl`, modules, the type checker, `sync` inferred per function, `throws` with named channels, the execution model, the backends' refusals. Part-built: the suspension model's last refusal, the compiler's own `anyhow` errors. Open: generics, the build-time evaluator's second stage, compile-time I/O |
+| **Libraries** — `http`, `std::db`, `std` | **25 %** | 1 of 4 | The runtime under them **is** built: the executor at both settings, `spawn`, `overlap`, the I/O layer. `std` exists in the narrow sense the examples need. Open: the socket layer and the HTTP/1.1 parser, the database protocol, the query DSL that checks the SQL while the program is built |
+| **Tools** — `build`, `describe`, `fmt`, `doc`, LSP | **50 %** | 3 of 6 | `nikaia build`/`run` through Cargo, incremental compilation keyed on content, and `nikaia describe` for a foreign crate's boundary. Open: `nikaia fmt`, `nikaia doc`, the LSP |
+| **Extended targets** — wasm, Python, C library, bare metal | **0 %** | 0 of 4 | Each is one artifact from the **same declarations**, which is the point of them: a Nikaia library does not ship twice ([ADR-125](specification/adr/adr-125.md), [ADR-130](specification/adr/adr-130.md), [ADR-131](specification/adr/adr-131.md), [ADR-119](specification/adr/adr-119.md)). `x86_64-linux` is the one that works |
+| **Overall** | **62.5 %** | 25 of 40 | |
+
+*Two things the count deliberately does not flatter.* A `[x]` is **built and tested**, not
+specified: the specification is far ahead of the compiler, and every box here is about the
+compiler. And an area with one big open item reads worse than one with five small ones — which
+is correct, because the big one is what is actually in the way.
+
+*The version number is a different thing.* `0.0.NN` counts **change packages**, one per
+[CHANGELOG](../CHANGELOG.md) heading, and says nothing about how far along anything is.
+
 ## Current Status (Vertical Slice: Complete & Architecturally Robust)
 
 We have successfully implemented a "Vertical Slice" of the compiler that can compile a simple "Hello World" program, using a robust, future-proof architecture.
@@ -86,7 +114,7 @@ To make Nikaia usable for real-world programming, we need to expand the frontend
 
 ### Phase 2: Compiler Robustness (Middle-end)
 
-*   [ ] **Error Reporting**: Replace generic `anyhow` errors with specific, span-aware error messages using `miette` or `codespan`.
+*   [~] **Error Reporting**: Replace generic `anyhow` errors with specific, span-aware error messages using `miette` or `codespan`.
     *   *Done (ADR-012)*: the AST carries spans, the `rust` backend emits a source map, and `nikaia --explain` reports rustc's JSON diagnostics - including the parser backend's frame check - on the `.nika` line that caused them.
     *   *Done (ADR-171)*: a refusal the **lowering** makes names its line, with a caret, in the shape the checker's already had — the byte was in the flow the whole time, carried for the type checker's answers. Nine of the thirty-three sites have a statement in hand and are converted.
     *   *Open*: expression-level spans - both the `sync` check and the type checker report on the enclosing statement (ADR-024 D7), and both get narrower the day expressions carry spans, without either changing - and the refusals about an **item**, a literal or a whole unit, whose byte is a different walk.
@@ -151,15 +179,21 @@ pieces that each carry a demo of their own, and the largest one when they stand.
 *   [ ] **A database is reachable — `std::db`** ([ADR-143](specification/adr/adr-143.md)): the **protocol** only — traits, a statement, a row's values — with each dialect a package beside it, because the compiler knows no SQL. First of the five, since it is the piece every later demo stores something in.
 *   [ ] **A library for other languages** ([ADR-125](specification/adr/adr-125.md), [`open-work.md`](open-work.md) §2.32): `artifact = "c-library"` makes a package an entry point for C and everything that speaks it — the header generated off the ledger, the caller owning the memory, every call answering with a status. The direction [ADR-124](specification/adr/adr-124.md) and [ADR-147](specification/adr/adr-147.md) do **not** face: those let a program *call* C, and both are built.
 *   [ ] **The query DSL checks the SQL while the program is built** ([ADR-143](specification/adr/adr-143.md), [`open-work.md`](open-work.md) §2.40): a dialect is a grammar in the driver package, a misspelled column is refused at the query, and the row type is derived from the columns the grammar declares. Not a query language and not an ORM. Its first step ends at the same blockage compile-time I/O does — running a grammar while the program is built.
+*   [ ] **A WebAssembly library** ([ADR-130](specification/adr/adr-130.md)): `target = "wasm32-unknown"` with `artifact = "c-library"` makes `<package>.wasm`, `.js` and `.d.ts` from the same declarations — one entry point, on another target. The host takes buffers from the module's own allocator, a handle is an offset wrapped in a class, and a pausing entry point becomes a Promise with an `AbortSignal`. `wasm32-unknown` is already a `--target` the compiler knows; what is missing is the artifact.
+*   [ ] **A Python binding** ([ADR-131](specification/adr/adr-131.md)): `nikaia bind python` writes a `ctypes` binding **from the ledger** — exceptions per variant, `str` and `bytes` for buffers, classes with `close()` for handles, generators for streams, an awaitable for `_async`. No second artifact and no native add-on: it is a generated file over the C library, so a Nikaia library does not ship twice.
 *   [ ] **A target without an operating system** ([ADR-119](specification/adr/adr-119.md)). Bare metal is a target, not a second language: `user_parallelism` pinned to `no`, `no_std` emission, the target's executor with interrupts as wakers, an interrupt handler checked as a `fn() sync` that touches no lock, an allocation profile, locks as critical sections. Scheduled **after the C library** and before the HTTP server, which comes last of the five; the record states what the compiler promises about time and what it leaves to analysis, and claims no certification.
-*   [ ] **The runtime's second half, and the HTTP server** ([ADR-038](specification/adr/adr-038.md) §4.5). D3, D4 and D5 are built - the runtime is running before the program's first statement, files complete on `io_uring`, sockets signal readiness, and `nikaia-runtime.toml` is what an operator tunes. **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are untouched**, and the order is that record's: a socket layer that keeps registrations rather than answering one readiness question at a time, then a minimal HTTP/1.1 server on it, then the parsing moved into Nikaia, then `rustls`, then HTTP/2. The first step is the blocker - `worker::poll_one` builds a poller per wait - and route hashing above is the same blockage seen from the optimiser's end.
+*   [~] **The runtime's second half, and the HTTP server** ([ADR-038](specification/adr/adr-038.md) §4.5). D3, D4 and D5 are built - the runtime is running before the program's first statement, files complete on `io_uring`, sockets signal readiness, and `nikaia-runtime.toml` is what an operator tunes. **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are untouched**, and the order is that record's: a socket layer that keeps registrations rather than answering one readiness question at a time, then a minimal HTTP/1.1 server on it, then the parsing moved into Nikaia, then `rustls`, then HTTP/2. The first step is the blocker - `worker::poll_one` builds a poller per wait - and route hashing above is the same blockage seen from the optimiser's end.
     *   *What waits inside it*: [ADR-018](specification/adr/adr-018.md) entire, and [ADR-058](specification/adr/adr-058.md)'s response bodies ([#45](https://github.com/keywan-ghadami/Nikaia/pull/45)) - a `Bytes` or a mapping as a body, `http::File` for a file the program never read, the mechanism choice `std` makes between them, and the kept mappings that measured fastest. `examples/fortunes.nika` is the program on the other side of it.
     *   *One piece was answered without the server*: a name the request chose reaching the filesystem is [ADR-108](specification/adr/adr-108.md) - the root is an argument of the call, `http::File(path, root)` exactly as `fs::map(path, root)`, and no provenance travels a path. The `fs` half is [`open-work.md`](open-work.md) §2's entry on it, and `http::File` inherits it the day it exists.
     *   *Measured before it is built*: `benches/sendfile/` and [`zero-copy-send.md`](zero-copy-send.md) price the five ways a file can reach a socket, in both of the two programs there turn out to be - one whose page is known at startup and one whose file the request names. `mmap` per request is **2.5× worse than plainly reading** at 4 KiB, which is the trap an implementation of `http::File` would otherwise walk into.
+*   [x] **`nikaia describe <crate>`** ([ADR-104](specification/adr/adr-104.md) D2, D3, D5): the command `NK2504` names. It reads a `path` dependency's `pub` signatures out of its sources, translates them by Part III 15.2's table, reads a `pub struct`'s **fields** for the one claim no signature can make (`crosses`, [ADR-123](specification/adr/adr-123.md) D2), and writes `contracts/<crate>.contracts` under a header that says it is to be reviewed. A description is believed while the files it was derived from hash as recorded (`NK2505`).
+    *   *Open*: the rustdoc-JSON reader behind a toolchain check, and a way to read a **version** dependency's sources — those are in Cargo's registry cache, which [ADR-002](specification/adr/adr-002.md) D1 hands to Cargo and never resolves here.
+*   [ ] **`nikaia fmt`** ([ADR-132](specification/adr/adr-132.md) D2): there is no formatter. `cargo fmt` formats this compiler's own Rust and no `.nika` file has ever been formatted by a tool. The one rule it is born with is written down — `} else if cond {` on one line, and never unfolding a chain into nested blocks or folding nested blocks into a chain — because building `else if` is what found that the rule belongs to a tool that is not there.
+*   [ ] **`nikaia doc`** ([ADR-139](specification/adr/adr-139.md) §4): the `doc` column is in the ledger and `std`'s hundred and eight entries carry prose held there by a test. What has nowhere to go is a **field's** and a **variant's**: the parser keeps neither, and nothing would read them until there is a tool that does.
 *   [ ] **LSP Server**: Create a Language Server Protocol (LSP) implementation.
     *   *Benefit*: IDE support (syntax highlighting, go-to-definition) in editors like VS Code.
     *   *Reuse*: Reuse the parser and AST for this.
-*   [ ] **Standard Library**: the **shape** is settled and the *surface* is what is left. `std` is half Rust and half Nikaia ([ADR-014](specification/adr/adr-014.md)), what needs no `use` is Part I 1.3's list and is enforced in both directions ([ADR-162](specification/adr/adr-162.md)), everything else lives in a module and is written out ([ADR-154](specification/adr/adr-154.md)), and every entry says what it throws ([ADR-158](specification/adr/adr-158.md)).
+*   [~] **Standard Library**: the **shape** is settled and the *surface* is what is left. `std` is half Rust and half Nikaia ([ADR-014](specification/adr/adr-014.md)), what needs no `use` is Part I 1.3's list and is enforced in both directions ([ADR-162](specification/adr/adr-162.md)), everything else lives in a module and is written out ([ADR-154](specification/adr/adr-154.md)), and every entry says what it throws ([ADR-158](specification/adr/adr-158.md)).
     *   *Task*: grow the share actually written in `.nika`, which moves with what the compiler can lower — one function today.
 
 ### Phase 4: Backend Optimization

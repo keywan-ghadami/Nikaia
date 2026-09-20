@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.104] — 2026-09-20
+
+**The README stops being a second copy, and the roadmap says how far along it is
+in numbers a reader can re-derive.**
+
+### Changed
+
+- **The README's code example is gone**, and a link to [`examples/`](examples/) stands where it was. A server that is *not built* was the one program on the front page, described at specification level with a status note underneath saying so — while eleven programs that compile, run and are checked by `cargo test` were one paragraph further down.
+- **And so is its status list and its roadmap-to-0.1.0**, replaced by a link. That list lived twice, here and on the roadmap page, and the copy that went stale is the one that was in the README — which is the same failure the roadmap page already records about its own ordering, met from the other side. There is a link where a list used to be.
+
+### Added
+
+- **The roadmap opens with a table: how far along, overall and by area** — the language (incl. build-time) **81 %**, libraries **25 %**, tools **50 %**, extended targets **0 %**, overall **62.5 %**.
+- **Counted from the page's own boxes and from nothing else.** `[x]` is one, `[~]` is a half and what makes it a half is written in the box, `[ ]` is none. The method is stated so the number can be **checked** rather than believed: a percentage nobody can re-derive is a mood.
+- **Five boxes the page was missing**, three of which the count needed and two of which are targets the specification already decided: `nikaia describe` (built this week), `nikaia fmt`, `nikaia doc`, the WebAssembly library ([ADR-130](docs/specification/adr/adr-130.md)) and the Python binding ([ADR-131](docs/specification/adr/adr-131.md)).
+- Two boxes became `[~]`, from their own text rather than from generosity: the standard library (it exists in the narrow sense the examples need) and the HTTP server's box, whose D3, D4 and D5 — the runtime and the I/O layer — are built.
+
+### And it is checked
+
+- **`scripts/check-roadmap-numbers.py`, in CI beside the ADR citation check.** That table is the one thing on the page nothing else would catch going stale: every box below it is a sentence somebody edits, and the number at the top is a sentence nobody re-derives. The script recounts and compares, names which area drifted and by how much, and fails the build.
+- It also refuses a **renamed** item: the three listed areas name their boxes, and a box that no longer starts with the name it is listed under would otherwise fall quietly into the language's count and change two numbers at once.
+- Proved by breaking it: flipping one `[ ]` to `[x]` fails with *the table says 21 of 26, the boxes say 22 of 26*.
+
 ## [0.0.103] — 2026-09-20
 
 **What a parse fails with has a name** — `ParseError`

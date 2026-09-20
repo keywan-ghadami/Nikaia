@@ -302,131 +302,36 @@ that only works single-threaded.
 
 ---
 
-## 💻 Code example
+## 💻 Programs that run
 
-A HTTP server: two routes, one of which reads a query parameter.
+Real programs live in [`examples/`](examples/): the One Billion Row Challenge, a four-function
+calculator, a web access log summarised, an INI file with comments, a JSON document, two
+Computer Language Benchmarks Game programs, an HTML table that cannot be made to leak markup, a
+stock list rendered to a page **on disk**, a pipe tallied in constant memory, the same program
+split across three files, and the TechEmpower `fortunes` benchmark. **Eleven of the twelve
+compile, run, and are checked by `cargo test` at either setting**, with their output — and,
+where one is written, the file they produce — required to be identical; `fortunes` is still
+written at specification level.
 
-```nika
-use http
-
-fn main() throws {
-    http::Server::new()
-        .route("/") fn { "Hello, World" }
-        .route("/hello") fn(request) {
-            let name = request.query("name") ?? "world"
-            return f"Hello, {name}"
-        }
-        .listen(":8080")
-}
-```
-
-A handler is a trailing lambda, and it receives the request only if it mentions it
-([ADR-018](docs/specification/adr/adr-018.md) D1): the first route names nothing, so it takes
-nothing. What a handler *returns* is the answer — a `String` is 200 `text/plain`, an
-`html::Raw` is 200 `text/html`, a `Response` built where it is returned is itself, and a
-handler that fails is a 500 whose message goes to the log rather than to the client (D2).
-`query` yields the nullable of Part I 3.5, so `??` is where the default is written and no empty
-string can be mistaken for an answer.
-
-Two things are not in the source and are not omissions. Which runtime this is: the switch
-chooses the executor and the same text is the program at either setting
-([ADR-011](docs/specification/adr/adr-011.md) D4). And where it pauses: a handler does I/O, so a
-call that waits looks like a call (Part II, 11.1) — the emitted Rust is an `async fn` with an
-`.await` at that call, decided by what the ledger already knows and **built**
-([ADR-055](docs/specification/adr/adr-055.md) D1, D2).
-
-> **Status:** `http` is not built, and it is **not part of `std`**
-> ([ADR-069](docs/specification/adr/adr-069.md) D1): it is a package reached by a path, so that
-> it can ripen at its own speed rather than the language's. This is what the specification says a
-> server is, not something you can run today. What *is* built underneath it: the runtime, the
-> executor at `user_parallelism = no`, and `spawn`
-> ([ADR-055](docs/specification/adr/adr-055.md) §6); what is missing is the socket layer and the
-> HTTP/1.1 parser above them. The programs in [`examples/`](examples/) are the ones that run.
-
-Bigger, more revealing programs live in [`examples/`](examples/): the One Billion Row
-Challenge, a four-function calculator, a web access log summarised, an INI file with comments, a
-JSON document, two Computer Language Benchmarks Game programs, an HTML table that cannot be
-made to leak markup, a stock list rendered to a page **on disk**, a pipe tallied in constant
-memory, the same program split across three files, and the TechEmpower `fortunes` benchmark.
-**Eleven of the twelve compile, run, and are checked by `cargo test` at either setting**, with
-their output — and, where one is written, the file they produce — required to be identical;
-`fortunes` is still written at specification level. They are there because writing a real program against a spec is the
-cheapest way to find out what the spec forgot, and
-[`examples/README.md`](examples/README.md) lists exactly which gaps each one exposed and
-which are still open. `tests/samples/` holds the smaller programs the bootstrap compiler can
-already parse.
+They are there because writing a real program against a spec is the cheapest way to find out
+what the spec forgot, and [`examples/README.md`](examples/README.md) lists exactly which gaps
+each one exposed and which are still open. `tests/samples/` holds the smaller programs the
+bootstrap compiler can already parse.
 
 ---
 
 ## 🚦 Where the project actually stands
 
 Nikaia is an experiment conducted in the open, and the specification is far ahead of the
-compiler. Concretely:
+compiler. **How far, in numbers and by area:**
 
-* ✅ **Specification 0.0.8** — syntax, build switches, unified types, borrow model, cleanup
-  semantics, grammar protocol, the integrity round, the bare-metal target, a library for
-  other languages. The [ADRs](docs/specification/adr/README.md) record *why*, including the
-  ones that reverse an earlier decision. Since 0.0.8 every change package raises the patch
-  number by one; the [CHANGELOG](CHANGELOG.md) is one heading per package.
-* 🚧 **Bootstrap compiler (Stage 0)** — a Rust front-end that lowers a `.nika` file to readable
-  Rust and drives `rustc` to produce a binary; that is the `rust` backend, it is the only code
-  generator, and it is what a bare `nikaia` uses
-  ([ADR-004](docs/specification/adr/adr-004.md) D1). It handles functions and methods, `impl`, `struct` and `use`,
-  control flow, `throws`/`catch`/`??`, string interpolation — and the whole `grammar` construct,
-  `@frame` and `dsl … from …` included. **`examples/1brc.nika` compiles, runs and is a test.**
-  Since [ADR-024](docs/specification/adr/adr-024.md) it also **checks types** — everything the
-  ledger writes down, and nothing it does not.
-* ❌ **Not yet** — the runtime binding to `tokio`, the LSP, self-hosting. The standard library
-  exists in the narrow sense the examples need, and one of its files is already written in
-  Nikaia.
+→ [project status & roadmap](docs/project_status_and_roadmap.md)
 
-Full detail: [project status & roadmap](docs/project_status_and_roadmap.md).
+That page is the one place it is written down. It used to be written twice — here and there —
+and the copy that went stale was this one, which is why there is now a link where a list used
+to be.
 
-### Roadmap to 0.1.0
-
-- [x] **Spec 0.0.5:** syntax, build switches, unified types.
-- [x] **Spec 0.0.6:** borrow model without lifetime annotations; cleanup under implicit async.
-- [x] **Spec 0.0.7:** scannerless grammar protocol, DSLs as expressions, hardware instructions as libraries.
-- [x] **Spec 0.0.8:** the integrity round, the bare-metal target, a library for other languages — and from here on, a version per change package.
-- [x] **Manifesto:** the soul and philosophy of the project.
-- [ ] **Bootstrap compiler:** the transpiler in Rust (Stage 0).
-  - [x] The grammar protocol: `grammar` onto `grammar!`, `@frame` onto `#[frame]`, and
-    `dsl … from …` onto the parallel piece driver, with `user_parallelism` choosing the parallelism
-    ([ADR-011](docs/specification/adr/adr-011.md)).
-  - [x] Diagnostics on the `.nika` line that caused them, for every error class at once
-    ([ADR-012](docs/specification/adr/adr-012.md)).
-  - [x] `impl` blocks and methods, `throws`/`catch`/`??`, string interpolation, and a `std` for
-    what the examples call ([ADR-013](docs/specification/adr/adr-013.md)) — enough that
-    **`examples/1brc.nika` compiles and runs**.
-  - [x] `fs::map` is a memory mapping and the parallel driver runs on every core
-    ([ADR-014](docs/specification/adr/adr-014.md)): 8M lines, 4 cores, 0.52 s → 0.14 s.
-  - [x] The parser backend's lazy diagnostics, and the measurement they made possible
-    ([ADR-015](docs/specification/adr/adr-015.md)): **659 instructions per row against 688 for
-    the same aggregation hand-tuned in Rust**, and 840 for it written naively — a generated
-    parser below hand-written code on the workload the spec picked to be judged by.
-  - [x] `fs::map`'s UTF-8 check divided across the cores rather than skipped
-    ([ADR-016](docs/specification/adr/adr-016.md)): 3.9× on the check, and what is left to gain
-    by removing it altogether is 10 ms of a 140 ms program.
-  - [x] A type checker ([ADR-024](docs/specification/adr/adr-024.md)): arity, arguments, `let`,
-    `return`, assignment, struct fields and conditions, answered from the ledger — with `?`
-    meaning *no claim*, so it never rejects a program that is correct, and it catches more as
-    more of `std` is written down.
-- [ ] **Runtime integration:** binding `tokio` (current-thread & thread-pool).
-- [ ] **Interop:** `extern "C"` in the compiler (Chapter 15 specifies it) and Python bindings —
-      so a Nikaia core can be dropped into an existing stack as a hot loop, without anyone
-      having to migrate a codebase to find out whether it is worth it. Letting foreign code
-      call *in* is a **target**, because the caller then owns the threads and
-      `user_parallelism` only ever bounded yours
-      ([ADR-062](docs/specification/adr/adr-062.md)): one artifact, safe at its boundary, and
-      the per-value answer kept inside. A Nikaia library does not ship twice.
-- [ ] **Prompt bundle:** a single-file specification digest for Claude Projects, Copilot
-      instructions and system prompts, so a model can write correct Nikaia from context.
-- [ ] **Self-hosting:** the compiler compiles itself.
-  - [x] The first `.nika` file the toolchain runs on: `crates/nikaia-std/src/text.nika`,
-    lowered into `std` by Stage 0 at release time, with the `.rs` committed beside it
-    ([ADR-014](docs/specification/adr/adr-014.md) D1,
-    [ADR-002](docs/specification/adr/adr-002.md) D4). What a `std` file may contain is exactly
-    what the compiler can lower; the share grows as it does.
+---
 
 ### Where to start reading
 

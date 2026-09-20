@@ -50,6 +50,13 @@ jobs:
       - name: Check ADR citations resolve
         run: python3 scripts/check-adr-refs.py
 
+      # The roadmap's percentages are counted from its own boxes. That table is
+      # the one thing on the page nothing else would catch going stale: every
+      # box below it is a sentence somebody edits, and the number at the top is
+      # a sentence nobody re-derives.
+      - name: Check the roadmap's numbers
+        run: python3 scripts/check-roadmap-numbers.py
+
       - name: Build the workspace
         run: cargo build --workspace --release
 
