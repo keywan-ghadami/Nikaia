@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.68 (Draft)
+**Version:** 0.0.69 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -2025,7 +2025,16 @@ holding `label: &str` compiles, and `name` is a view of the buffer `label`
 points into. That narrows what a caller may pass, which is why the signature
 changes rather than the body.
 
-> **Implementation status:** Partially implemented. The rule is built for a
+> **Implementation status:** Partially implemented, and the table above is the
+> shape of it: **Borrowed** and **Owned** are built — the first is the language
+> below's own lifetime and costs nothing, the second is `.to_owned()` and is
+> never inserted — and **Tethered is not**. Where a value would tether, the
+> program is **refused** instead, which is the residual hard error
+> [ADR-008](adr/adr-008.md) D5 names rather than the state beside it;
+> `@borrowed` is parsed and forbids nothing, because there is no transition yet
+> to forbid. `docs/open-work.md` carries what the missing state would take.
+>
+> The rule below is built for a
 > method of a struct that holds a view. Three cases are refused with `NK2302`:
 > a function or method whose own subject holds no view, even when the
 > destination is a field of a struct that carries one; a view handed back

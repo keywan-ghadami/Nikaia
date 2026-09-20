@@ -37,6 +37,14 @@ fn findings(source: &str) -> Vec<Finding> {
         .collect()
 }
 
+/// The Rust one source lowers to.
+fn lowered(source: &str) -> String {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    emit_program(&parsed, Build::default())
+        .expect("the source lowers")
+        .rust
+}
+
 fn one(source: &str) -> Finding {
     let found = findings(source);
     assert_eq!(
@@ -494,4 +502,75 @@ fn a_body_that_cannot_honour_static_is_refused_by_the_language_below() {
     // it and reaches the reader as `cannot return value referencing function
     // parameter 'xs'`.
     assert!(rust.contains("-> &'static str"), "{rust}");
+}
+
+/// **A result that *carries* a view needs the same lifetime a result that *is*
+/// one needs** ([ADR-008](../../../docs/specification/adr/adr-008.md) D9).
+///
+/// D9 writes `'static` where a function has nothing to borrow from, because
+/// there is nothing for Rust's elision to take and `-> &str` is *missing
+/// lifetime specifier* about a file nobody wrote. It asked that question of the
+/// **written** type, so `-> Vec[Entry]` — where `Entry` holds a `&str` — went on
+/// eliding, and the answer was `Vec<Entry<'_>>`: the same defect one type in.
+///
+/// The declaration is what tells them apart, and the emitter has it.
+#[test]
+fn a_result_that_carries_a_view_is_static_where_nothing_is_borrowed_from() {
+    let rust = lowered(
+        "struct Entry { pub name: &str }\n\
+         \n\
+         fn made() -> Vec[Entry] {\n\
+         \x20   let mut out = Vec()\n\
+         \x20   out.push(Entry { name: \"x\" })\n\
+         \x20   return out\n\
+         }\n\
+         \n\
+         fn main() { println(f\"{made().len()}\") }\n",
+    );
+    assert!(rust.contains("fn made() -> Vec<Entry<'static>>"), "{rust}");
+}
+
+/// **And a parameter that carries one is something to borrow from**, which is
+/// the other side of the same question: without it every such signature would
+/// widen and `fn keep(e: Entry) -> Entry` would promise the caller `'static`.
+#[test]
+fn a_parameter_that_carries_a_view_keeps_the_elision() {
+    let rust = lowered(
+        "struct Entry { pub name: &str }\n\
+         \n\
+         fn keep(e: Entry) -> Entry { return e }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    assert!(
+        rust.contains("fn keep(e: Entry<'_>) -> Entry<'_>"),
+        "{rust}"
+    );
+    assert!(!rust.contains("'static"), "{rust}");
+}
+
+/// **Only in a signature that declares no lifetime of its own**, which is D9's
+/// own case — *a free function's signature*.
+///
+/// Inside an `impl` that declares `'a` the result is the subject's `'a`, and
+/// `'static` there is a promise the `impl` cannot keep.
+/// `examples/1brc.nika`'s anonymous constructor is what said so: it has no
+/// parameters and no receiver, so the widening reached it and `rustc` answered
+/// *lifetime may not live long enough*.
+#[test]
+fn a_constructor_inside_a_borrowing_impl_keeps_the_subjects_lifetime() {
+    let rust = lowered(
+        "struct Summary { rows: Vec[&str] }\n\
+         \n\
+         impl Summary {\n\
+         \x20   pub fn() -> Summary sync { return Summary { rows: [] } }\n\
+         }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    assert!(rust.contains("impl<'a> Summary<'a>"), "{rust}");
+    assert!(
+        !rust.contains("Summary<'static>"),
+        "the subject's `'a` is what the constructor hands back\n{rust}"
+    );
 }

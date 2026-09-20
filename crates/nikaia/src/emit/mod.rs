@@ -2800,9 +2800,31 @@ impl<'p> Emitter<'p> {
                 // A receiver counts as something to borrow from, and so does any
                 // parameter that is a view or holds one. Where either is there,
                 // the position keeps the spelling it had.
+                //
+                // **And a struct that holds a view is one too**, which is the
+                // half `holds_view` alone could not see: `-> Vec[Entry]` where
+                // `Entry` holds a `&str` carries a lifetime exactly as `-> &str`
+                // does, and a function with nothing to borrow from lowered it to
+                // `Vec<Entry<'_>>` — *missing lifetime specifier* about a file
+                // nobody wrote. `carries_a_view` asks the question about the
+                // whole type, the declaration included, and it is asked on
+                // **both** sides so that `fn f(r: Reading) -> Reading` keeps the
+                // elision it needs.
+                //
+                // **And only where the position declares no lifetime of its
+                // own**, which is `Lifetimes::ELIDED` and is D9's own case: *a
+                // free function's signature*. Inside an `impl` that declares
+                // `'a` the result is the subject's `'a`, and `'static` there
+                // says the value outlives the program — which is a promise the
+                // `impl` cannot keep. `examples/1brc.nika`'s `Summary()` is
+                // what said so: an anonymous constructor has no parameters and
+                // no receiver, so the widening reached it.
                 let borrows_from_something =
-                    receiver.is_some() || args.iter().any(|a| holds_view(&a.ty));
-                let result = match holds_view(ty) && !borrows_from_something {
+                    receiver.is_some() || args.iter().any(|a| self.carries_a_view(&a.ty));
+                let widens = lifetimes == Lifetimes::ELIDED
+                    && self.carries_a_view(ty)
+                    && !borrows_from_something;
+                let result = match widens {
                     true => Lifetimes::STATIC,
                     false => lifetimes,
                 };
@@ -5738,6 +5760,20 @@ impl<'p> Emitter<'p> {
     /// ([`Emitter::tethered`]).
     fn borrows(&self, name: Symbol) -> bool {
         self.borrowing.contains(&name) || self.tethered.contains(self.text(name))
+    }
+
+    /// Whether a written type **carries** a view: it is one, it names a struct
+    /// that holds one, or one of its arguments does
+    /// ([ADR-008](../../docs/specification/adr/adr-008.md) D1, D9).
+    ///
+    /// [`holds_view`] asks the first of the three, off the written type alone,
+    /// and that is all a walk without the declarations can do. This one has them:
+    /// `Vec[Entry]` carries a view exactly when `Entry` does, and D9's
+    /// derivation — *a function with nothing to borrow from can only write
+    /// `'static`* — is about the **lifetime** in the signature rather than about
+    /// the `&`, so it is this question it wants answered.
+    fn carries_a_view(&self, ty: &Type) -> bool {
+        ty.is_view || self.borrows(ty.name) || ty.generics.iter().any(|g| self.carries_a_view(g))
     }
 
     /// Whether a function of **this program** can pause, and is therefore an

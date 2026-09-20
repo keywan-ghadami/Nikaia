@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.69] — 2026-09-20
+
+The tether, measured — and the one part of it that was a defect rather than a
+project ([ADR-008](docs/specification/adr/adr-008.md) D9).
+
+### Fixed
+
+- **A result that *carries* a view gets the lifetime a result that *is* one gets.** D9 writes `'static` where a function has nothing to borrow from, because there is nothing for Rust's elision to take. It asked that question of the **written** type, so `-> Vec[Entry]` — where `Entry` holds a `&str` — went on eliding and the answer was `Vec<Entry<'_>>`: *missing lifetime specifier* about a file nobody wrote, which is the defect D9 exists to close, one type in. The declaration is what tells the two apart and the emitter has it.
+- **And the message lands where it should.** With `'static` written, `rustc` refuses the body instead — *cannot return value referencing local variable `text`* — on the Nikaia line, through `--explain`. That is D9's own argument for why the widening is safe in both directions, now measured for this case too.
+- **Only in a signature that declares no lifetime of its own**, which is D9's own case. Inside an `impl` that declares `'a` the result is the subject's, and `'static` there is a promise the `impl` cannot keep — `examples/1brc.nika`'s anonymous constructor has no parameters and no receiver, so the widening reached it and the backend answered *lifetime may not live long enough*.
+
+### Written down
+
+- **`docs/open-work.md` §2.42 is the tether**, which three entries leaned on as a phrase and none of them stated. Part I 6.6's three states: **Borrowed** and **Owned** are built, and **Tethered is a refusal** — `NK2302` for a stored view parameter, the backend on the Nikaia line for a view of a local that escapes, which is D5's residual hard error standing in for the missing state.
+- **What Tethered would take, in seven parts**, measured rather than estimated: the buffer type, the escape analysis (a per-construction-site fixpoint over a three-element lattice, where `views.rs`'s 919 lines answer a far cruder question), three layouts per struct chosen per site, the buffer table, the ledger's state column, the retention lint and the cleanup it moves, and `@borrowed` — which is **vacuous until the rest exists**, because it forbids a transition there is none of. It is at least four change packages, and the analysis is the one that decides whether the rest is worth starting.
+- **[ADR-008](docs/specification/adr/adr-008.md) gains a §6** and Part I 6.6's **Status** note says which two of the three states are built, instead of leaving a reader to infer it from a table.
+
 ## [0.0.68] — 2026-09-20
 
 The second question goes where questions go: **does a `T?` have a postfix

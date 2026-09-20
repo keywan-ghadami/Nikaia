@@ -157,6 +157,12 @@ So, in order, and each says below why it sits where it does:
    step of this one.
 4. **Supervision.** Last because nothing else waits on it.
 
+**And one that is out of the sequence because three entries rest on it**: the
+**tether** ([ADR-008](specification/adr/adr-008.md)), last below and first under
+*text is one type*, under §1's `keeps` column, and under
+[`open-decisions.md`](open-decisions.md)'s `Bytes`. It is not one change
+package, and the entry says what each of its four parts is.
+
 ### 2.1. A lambda that pauses is refused where `std` takes it
 
 [ADR-055](specification/adr/adr-055.md) §6's remainder, and a limit of this
@@ -1203,6 +1209,69 @@ it. That is why all three are written down rather than left to be found.
 language's ([ADR-064](specification/adr/adr-064.md)) rather than a module's, and
 a `TaskHandle` is what a `spawn` hands back — a program has no reason to write
 the name, so moving it would cost a migration and buy nothing.
+
+### 2.42. The tether: a view that outlives its buffer is refused, not tethered
+
+[ADR-008](specification/adr/adr-008.md), and it is **last in this list and first
+under three of its entries** — which is why it is written down rather than left
+as a phrase three other places lean on. Part I 6.6's three states are Borrowed,
+Tethered and Owned; **two of them are built and the middle one is not.**
+
+*What is built.* **Borrowed** is Rust's own lifetime and costs nothing:
+`examples/1brc.nika` and `examples/inventory` are the shape D2 calls free, and
+they run. **Owned** is `.to_owned()`, written by the program and never by the
+compiler (D5). **D9** is built, and now for a result that *carries* a view as
+well as one that *is* one. What stands where Tethered would is a **refusal**:
+`NK2302` for a naked view parameter that is stored, and `rustc` on the Nikaia
+line for a view of a local that escapes — which is D5's residual hard error
+doing the job of the state that is missing.
+
+*What Tethered needs, measured rather than estimated.*
+
+1. **A buffer to tether to.** `Bytes` — refcounted, offset and length. Small in
+   Rust; the question is where it lives, and that is
+   [`open-decisions.md`](open-decisions.md)'s.
+2. **The escape analysis** (D2), which is the load-bearing piece and is a kind
+   of analysis this compiler has never had: per **construction site**, a least
+   fixpoint over a three-element lattice, deciding whether a value outlives its
+   buffer's scope. `views.rs` is 919 lines and answers a much cruder question —
+   *does a naked view parameter get stored* — over a fixed list of destinations.
+   Both directions of being wrong are costly: too permissive is a use-after-free
+   the backend catches, which is Part III C.1; too restrictive is a correct
+   program refused, which is C.4.
+3. **Three layouts per struct** (D3, D5), chosen per construction site. A
+   tethered `Entry` is not a `&str`: the **container** holds the handle (D4) and
+   the element holds `(offset, len)`, so every read of `entry.name` becomes a
+   slice of the container's buffer. That is a whole representation, emitted
+   three ways and picked by the analysis's answer — handed over the way
+   [ADR-028](specification/adr/adr-028.md) hands every other answer the emitter
+   has no types for.
+4. **The buffer table** (D4): one handle per distinct source buffer on the
+   container, keys as `(index, offset, len)` with the index elided where the
+   compiler proves one buffer. `Eq`/`Hash` content-based and never identity, or
+   a parallel run splits `Hamburg` across workers.
+5. **The ledger** (D7): the state per view in a signature and the buffer-table
+   shape per struct, so the answer crosses a package boundary — plus the barrier
+   rule, where a `dyn` or a published non-generic API widens to Tethered.
+6. **The lint and the cleanup** (D8): a small extract pinning a large buffer,
+   and a `Cleanup` that runs at the last tether rather than at the end of the
+   mapping's scope.
+7. **`@borrowed`** (D6), which is **vacuous until the rest exists**: it forbids
+   a state transition, and today there is no transition to forbid. The emitter
+   writes a comment saying so on every `@borrowed` struct.
+
+*So it is not one change package.* It is at least four — the type, the analysis,
+the representation, the ledger — and the second is the one that decides whether
+the rest is worth starting. **What rests on it:** *text is one type*, above,
+whose `String` state comes from this analysis; the `keeps` column of a grammar's
+entry, in §1; and `Bytes` itself, which is the same question read from the other
+end.
+
+*And a cheaper thing is true meanwhile*, which is why nothing is broken today:
+the refusal is the honest answer for a program that would tether, and it names
+`.to_owned()`. What it costs is the programs D2 describes as free-and-escaping —
+a parser handing its rows past the buffer's scope — and no program in the tree
+writes one.
 
 ## 3. Upkeep
 
