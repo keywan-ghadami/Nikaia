@@ -161,21 +161,43 @@ pub enum Ty {
     /// a `HashMap` and a range are walked *as* a `Seq` by a `for` and are not
     /// one.
     ///
-    /// `sync` and `throws` after it say what **one step** may do, with
-    /// [ADR-102](../../../../docs/specification/adr/adr-102.md) D2's reading:
-    /// without `sync` a step may pause, without `throws` it cannot fail. A step
-    /// of `io::lines()` reads the pipe, which is why it can do either.
+    /// `sync`, `pauses` and `throws` after it say what **one step** may do.
+    /// `throws` is [ADR-102](../../../../docs/specification/adr/adr-102.md)
+    /// D2's reading — without it a step cannot fail — and the other two are
+    /// **three** states rather than two
+    /// ([ADR-172](../../../../docs/specification/adr/adr-172.md) D1):
+    ///
+    /// * **`sync`** — the step does not pause. `keys()` reads memory.
+    /// * **`pauses`** — the step suspends, and a `for` over it gives its thread
+    ///   up rather than holding it. `io::lines()` reads the pipe.
+    /// * **neither** — nobody said, which is what a `map`'s step is: it runs
+    ///   the lambda, and what *that* does is the caller's. Such a step keeps
+    ///   the blocking form, because the two ways of being wrong are not
+    ///   symmetric — awaiting something that has no pausing step does not
+    ///   compile, and holding a thread that could have been given up costs a
+    ///   thread. D1 says which of the two is taken.
+    ///
+    /// **`sync` and `pauses` are not both**, and a ledger that writes both is
+    /// refused rather than read as either.
     ///
     /// `Par[T]` is the same shape with `parallel` set (D3), and the one
     /// dimension that needs a second word is the caller's rule: a lambda given
     /// to a method on a `Par[T]` runs on several cores at once and must be
     /// `sync`, where one given to a `Seq[T]` may pause.
     ///
-    /// **Neither word is in the surface type grammar** (D4). A program writes
-    /// `keys()`, `for` and `collect()`; the ledger does the naming.
+    /// **None of the words is in the surface type grammar** (D4). A program
+    /// writes `keys()`, `for` and `collect()`; the ledger does the naming.
     Seq {
         item: Box<Ty>,
         is_sync: bool,
+        /// The step suspends, and the `for` over it is written as one that
+        /// does ([ADR-172](../../../../docs/specification/adr/adr-172.md) D1).
+        ///
+        /// **A positive claim and not the absence of `sync`**, which is the
+        /// whole of why it is a third word: the absence is *nobody said*, and
+        /// writing `.await` on it would be a correct program refused by
+        /// `rustc` about a file nobody wrote (Part III, C.1 and C.4).
+        pauses: bool,
         throws: bool,
         parallel: bool,
     },
@@ -191,6 +213,10 @@ pub const SEQ: &str = "Seq";
 
 /// The same, where the steps run at once (D3).
 pub const PAR: &str = "Par";
+
+/// The word a `Seq` whose **step suspends** carries
+/// ([ADR-172](../../../../docs/specification/adr/adr-172.md) D1).
+pub const PAUSES: &str = "pauses";
 
 /// **A fixed-size array**
 /// ([ADR-152](../../../../docs/specification/adr/adr-152.md) D1): `Array[T, N]`,
@@ -409,16 +435,31 @@ impl Ty {
                 Ty::Seq {
                     item: a,
                     is_sync: asy,
+                    pauses: ap_,
                     throws: at,
-                    parallel: ap,
+                    parallel: apar,
                 },
                 Ty::Seq {
                     item: b,
                     is_sync: bsy,
+                    pauses: bp_,
                     throws: bt,
-                    parallel: bp,
+                    parallel: bpar,
                 },
-            ) => a.fits(b) && (*asy || !*bsy) && (!*at || *bt) && (*ap || !*bp),
+                // **`pauses` fits the same way `throws` does and the opposite
+                // way to `sync`** ([ADR-172](../../../../docs/specification/adr/adr-172.md)
+                // D1): it is a claim about what a step *does*, so a sequence
+                // whose step pauses does not fit a position that did not say
+                // it would, and one that says nothing fits either. `sync` is
+                // the other polarity because it is a *promise* rather than a
+                // warning, which is the asymmetry D1 rests on.
+            ) => {
+                a.fits(b)
+                    && (*asy || !*bsy)
+                    && (!*ap_ || *bp_)
+                    && (!*at || *bt)
+                    && (*apar || !*bpar)
+            }
             // A variable that reaches a comparison was never bound, and an
             // unbound variable is the absence of a claim rather than a claim
             // about a type called `$V`. `substitute` is supposed to have
@@ -554,6 +595,7 @@ impl Ty {
             };
             let mut tail = rest[close + 1..].trim();
             let mut is_sync = false;
+            let mut pauses = false;
             let mut throws = false;
             loop {
                 if let Some(shorter) = word_off(tail, "throws") {
@@ -566,7 +608,21 @@ impl Ty {
                     tail = shorter;
                     continue;
                 }
+                // **The third word** ([ADR-172](../../../../docs/specification/adr/adr-172.md)
+                // D1), read here and nowhere else: a step that suspends says so
+                // rather than being inferred from the absence of `sync`.
+                if let Some(shorter) = word_off(tail, PAUSES) {
+                    pauses = true;
+                    tail = shorter;
+                    continue;
+                }
                 break;
+            }
+            // Both words is not a type, and reading it as either would be a
+            // claim the file does not make - the same rule the leftover tail
+            // below is refused by.
+            if is_sync && pauses {
+                continue;
             }
             // Anything left over is not this: `Sequence[T] of stuff` is a name
             // with arguments and a tail nobody wrote, and reading it as a `Seq`
@@ -577,6 +633,7 @@ impl Ty {
             return Ty::Seq {
                 item: Box::new(Ty::parse(&rest[..close])),
                 is_sync,
+                pauses,
                 throws,
                 parallel,
             };
@@ -651,11 +708,13 @@ impl Ty {
             Ty::Seq {
                 item,
                 is_sync,
+                pauses,
                 throws,
                 parallel,
             } => Ty::Seq {
                 item: Box::new(item.erase(parameters)),
                 is_sync: *is_sync,
+                pauses: *pauses,
                 throws: *throws,
                 parallel: *parallel,
             },
@@ -731,11 +790,13 @@ impl Ty {
             Ty::Seq {
                 item,
                 is_sync,
+                pauses,
                 throws,
                 parallel,
             } => Ty::Seq {
                 item: Box::new(item.parameterise(parameters)),
                 is_sync: *is_sync,
+                pauses: *pauses,
                 throws: *throws,
                 parallel: *parallel,
             },
@@ -932,6 +993,7 @@ impl fmt::Display for Ty {
             Ty::Seq {
                 item,
                 is_sync,
+                pauses,
                 throws,
                 parallel,
             } => {
@@ -942,6 +1004,11 @@ impl fmt::Display for Ty {
                 write!(f, "{word}[{item}]")?;
                 if *is_sync {
                     f.write_str(" sync")?;
+                }
+                // Written back in the order it is read, so a ledger that goes
+                // through this file comes out byte for byte (Part III, 13.5).
+                if *pauses {
+                    write!(f, " {PAUSES}")?;
                 }
                 if *throws {
                     f.write_str(" throws")?;
@@ -1397,11 +1464,13 @@ pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty
         Ty::Seq {
             item,
             is_sync,
+            pauses,
             throws,
             parallel,
         } => Ty::Seq {
             item: Box::new(substitute(item, bound)),
             is_sync: *is_sync,
+            pauses: *pauses,
             throws: *throws,
             parallel: *parallel,
         },

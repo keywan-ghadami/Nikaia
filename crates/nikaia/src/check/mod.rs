@@ -176,6 +176,13 @@ pub struct Checked {
     /// followed by `for line in stream` has to be the same as the one-line
     /// form, which matching on a name would not give (ADR-025 D7).
     pub fallible_loops: BTreeSet<usize>,
+    /// The `for`s whose step **pauses**, by the byte the statement starts at
+    /// ([ADR-172](../../docs/specification/adr/adr-172.md) D1).
+    ///
+    /// The same arrangement as [`Checked::fallible_loops`] and for the same
+    /// reason: which loop this is, is a question about the iterated
+    /// expression's **type**, and the emitter has no types.
+    pub pausing_loops: BTreeSet<usize>,
     /// The **method calls that can fail**, as the byte the statement they
     /// stand in starts at and the method's name (ADR-023 D8).
     ///
@@ -846,6 +853,8 @@ pub enum Wrap {
 pub struct Propagation {
     /// [`Checked::fallible_loops`].
     pub loops: BTreeSet<usize>,
+    /// [`Checked::pausing_loops`].
+    pub pausing_loops: BTreeSet<usize>,
     /// [`Checked::fallible_methods`].
     pub methods: BTreeSet<(usize, String)>,
     /// [`Checked::pausing_methods`].
@@ -905,6 +914,7 @@ pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
     let checked = check(parsed, own, &library);
     Propagation {
         loops: checked.fallible_loops,
+        pausing_loops: checked.pausing_loops,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
         witnessed_sets: checked.witnessed_sets,
@@ -3663,6 +3673,7 @@ impl<'a> Checker<'a> {
                 self.the_caller_writes_no_reference(iter, span, "a `for` lends what it iterates");
                 let over = self.expr(iter, span);
                 self.fallible_step(&over, bindings.len(), span);
+                self.pausing_step(&over, span);
                 // **A `for` walks a produced sequence, and that consumes it**
                 // ([ADR-105](../../docs/specification/adr/adr-105.md) D2). A
                 // container is walked by view and as often as one likes, which
@@ -6537,6 +6548,25 @@ impl<'a> Checker<'a> {
             self.pausing_methods.insert(key);
         } else {
             self.settled_methods.insert(key);
+        }
+    }
+
+    /// A loop over something whose step **pauses**
+    /// ([ADR-172](../../docs/specification/adr/adr-172.md) D1).
+    ///
+    /// One thing follows and it is not a refusal: the emitter writes the loop
+    /// as one that gives its thread up. Nothing is reported, because nothing is
+    /// wrong — a `for` over a stream is an ordinary program and the whole of
+    /// D1 is that it stops holding a thread it does not need.
+    ///
+    /// **The positive word and not the absence of `sync`**, which is the
+    /// decision this reads rather than a shortcut into it: the absence is
+    /// *nobody said*, a `map`'s step is exactly that, and writing `.await` on
+    /// it would be `rustc` refusing a correct program about a file nobody wrote
+    /// (Part III, C.1 and C.4).
+    fn pausing_step(&mut self, over: &Ty, span: &Span) {
+        if matches!(over, Ty::Seq { pauses: true, .. }) {
+            self.checked.pausing_loops.insert(span.start);
         }
     }
 

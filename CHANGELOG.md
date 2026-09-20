@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.94] — 2026-09-20
+
+**A `for` may iterate something whose step pauses**
+([ADR-172](docs/specification/adr/adr-172.md)) — the question
+`docs/open-decisions.md` carried, answered **A** by the owner and built.
+
+### Decided
+
+- **A `Seq` says `pauses`**, after it and beside `sync` and `throws`, and a `for` over one is written as a loop that awaits each step. The shape is [ADR-025](docs/specification/adr/adr-025.md) D6's: a word on a *type* that changes how the emitter writes a `for`'s step. That one answers *can it fail*; this one answers *does it pause*.
+- **Three states and not two, and that is the decision rather than a detail.** The absence of `sync` already read as *a step may pause* and taking it as the claim would have been cheaper by one word. The two ways of being wrong are not symmetric: awaiting a step that has none does not compile, and what a reader meets is `rustc` about a file nobody wrote ([C.1](docs/specification/30-nikaia-tooling.md), C.4); not awaiting one that does costs a thread. So `sync` is a promise, `pauses` is a warning, and neither is *nobody said* — which is what a `map`'s step is, since it runs the lambda.
+- **The trait, when there is one, is `std`'s own**, and the measurement is in the record so it is not asked twice: [ADR-055](docs/specification/adr/adr-055.md) §5 already rejects `tokio` the runtime; `tokio_stream::Stream` is a re-export of `futures_core::Stream`, so the dependency actually in question is a trait definition and not a runtime; and what neither would shorten is the **consumers**, which is where the cost really lands. There is no trait today: of `Seq[T]`'s six producers exactly one can pause, so what the lowering wants is an inherent `async fn next` on one type.
+
+### Added
+
+- The word parses, writes itself back, and is **refused beside `sync`** — a ledger that says both has said two things about one step, and reading it as either would be a claim the file does not make.
+- The checker records the pausing loops by the byte the statement starts at and the emitter reads the set, which is `fallible_loops`' arrangement for `fallible_loops`' reason: the question is about a **type**, and the emitter has none. The two compose — a loop that pauses *and* can fail awaits its step and takes the `?` inside.
+- **`io::lines` reads a chunk at a time.** A hop to an I/O worker and back costs a wake-up, and paying one per *line* would have made this slower than the blocking reader it replaces; one per buffer is what it costs instead. One read per hop and not a loop to fill the buffer, because short is not the end of a stream: a pipe that produces a line a second stays a program that prints a line a second.
+- What has been handed out is dropped before the next chunk goes in, so what is held is the size of the **unread** remainder. [Part III 17.1](docs/specification/30-nikaia-tooling.md)'s *a stream larger than memory is a `for` over this* is the property this could most easily have lost.
+
+### Measured
+
+- **`examples/tally.nika` runs end to end**, through a pipe: five lines, two blank, longest 31 characters, and the same file appended. That is the proof — the unit tests say where a line ends, and this says the program still works.
+- Every other loop keeps the shape it had — a container, a range, a `map`'s result — asserted rather than hoped for, because the other kind of mistake here is every program in the language.
+
+### Left open
+
+- The **consumers**. `collect`, `count`, `nth`, `join`, `map` and `filter` over a pausing sequence are `Iterator`'s below, so `io::lines().count()` still holds a thread where `for line in io::lines()` no longer does. `docs/open-work.md` §2.2 is that, renamed.
+
 ## [0.0.93] — 2026-09-20
 
 **A description's entries reach the analyses**

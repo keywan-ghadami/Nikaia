@@ -248,6 +248,13 @@ fn the_expression_lambda_says_it_was_removed() {
 /// hand - which is what keeps the lowering readable and the rule honest: the
 /// failure leaves the function the moment it happens, rather than being asked
 /// about afterwards.
+///
+/// **And the loop around it gives its thread up**
+/// ([ADR-172](../../../docs/specification/adr/adr-172.md) D1): `io::lines`
+/// hands back a `Seq[String] pauses throws`, so the `for` is written as a
+/// `while let` that awaits each step. The two rules are one ledger word apart
+/// and they compose - the `?` is inside the awaiting loop exactly as it was
+/// inside the plain one.
 #[test]
 fn a_loop_whose_step_can_fail_unwraps_the_step() {
     let rust = emit(
@@ -257,15 +264,23 @@ fn a_loop_whose_step_can_fail_unwraps_the_step() {
          \x20   return n\n\
          }",
     );
-    // The `.await` is ADR-055 D2 - `io::lines` is a pausing `std` entry since
-    // that record's §6 step 3 - and the step's `?` is unchanged by it: the two
-    // rules are the same shape one ledger column apart, and they compose.
+    // The `.await` on the **call** is ADR-055 D2 - `io::lines` is a pausing
+    // `std` entry since that record's §6 step 3 - and the one on the **step**
+    // is ADR-172 D1. Two different claims, and the lowering shows both.
     assert!(
-        rust.contains("for line in io::lines().await {\n        let line = line?;"),
-        "the step is not unwrapped:\n{rust}"
+        rust.contains("let mut __nikaia_sequence = io::lines().await;"),
+        "the sequence is not bound:\n{rust}"
+    );
+    assert!(
+        rust.contains(
+            "while let Some(line) = __nikaia_sequence.next().await {\n            \
+             let line = line?;"
+        ),
+        "the step is not awaited and unwrapped:\n{rust}"
     );
 
-    // …and naming the stream first is the same loop (D7).
+    // …and naming the stream first is the same loop (D7), both halves of it:
+    // the type travels with the name, so the `pauses` does too.
     let rust = emit(
         "use std::io\n\nfn count() -> i64 throws {\n\
          \x20   let stream = io::lines()\n\
@@ -277,6 +292,10 @@ fn a_loop_whose_step_can_fail_unwraps_the_step() {
     assert!(
         rust.contains("let line = line?;"),
         "naming the stream first hid it:\n{rust}"
+    );
+    assert!(
+        rust.contains(".next().await"),
+        "naming the stream first lost the suspension point:\n{rust}"
     );
 }
 

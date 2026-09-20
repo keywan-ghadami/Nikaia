@@ -964,6 +964,25 @@ pub mod io {
         }
     }
 
+    /// **The next chunk of standard input, as something that can be awaited**
+    /// ([ADR-172](../../../docs/specification/adr/adr-172.md) D4).
+    ///
+    /// The same shape as [`stdin_whole`] with a size on it: a stream a program
+    /// walks a line at a time is read a buffer at a time, and the line endings
+    /// are found by the caller.
+    pub fn stdin_chunk(want: usize) -> Replied<Vec<u8>> {
+        off_the_io_thread();
+        let runtime = handle();
+        let (reply, answer) = std::sync::mpsc::channel();
+        let queued = runtime.workers.send(worker::Op::StdinChunk { want, reply });
+        Replied {
+            answer: match queued {
+                true => Ok(answer),
+                false => Err(Error::other("the runtime has already been drained")),
+            },
+        }
+    }
+
     /// What [`waiting`] hands back.
     pub type Waiting = Replied<bool>;
 

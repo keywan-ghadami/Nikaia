@@ -26,14 +26,15 @@
 //! There is still no second read shape and no ring path for a stream with no
 //! size to `stat`, which is D4's own sentence: what changed is the park.
 //!
-//! [`lines`] is the one that has not moved, and the reason is the language and
-//! not the runtime. A step of it is an `Iterator::next`, and a suspension point
-//! inside one would have to be `while let Some(x) = s.next().await` in the
-//! language below - a `Stream` trait Rust has not stabilised, and a `for` over a
-//! stream this language has not decided. `docs/open-work.md` carries that as the
-//! half it always said was the larger one.
-
-use std::io::BufRead;
+//! **And [`lines`] has moved too**
+//! ([ADR-172](../../../docs/specification/adr/adr-172.md) D4), which took a
+//! decision about the *language* rather than a change to the runtime. A step of
+//! it was an `Iterator::next`, and a suspension point inside one is
+//! `while let Some(x) = s.next().await` below - so D1 decided that a `for` may
+//! iterate something whose step pauses and writes that form, and [`Lines`] has
+//! an inherent `async fn next` for it to write. The chunking is what keeps it
+//! from costing more than it saves: a hop to a worker per *line* would be
+//! slower than the blocking reader, so a buffer comes back at a time.
 
 /// What a `std` call fails with ([ADR-158](../../../docs/specification/adr/adr-158.md) D1).
 ///
@@ -198,7 +199,9 @@ pub async fn read() -> Result<Vec<u8>, IoError> {
 /// to hold whole.
 pub async fn lines() -> Lines {
     Lines {
-        inner: std::io::stdin().lock().lines(),
+        held: Vec::new(),
+        at: 0,
+        ended: false,
     }
 }
 
@@ -206,11 +209,40 @@ pub async fn lines() -> Lines {
 ///
 /// A named type rather than `impl Iterator`, because the ledger names types and
 /// a caller's compiler looks this one up by name (ADR-020).
+///
+/// **Its step pauses** ([ADR-172](../../../docs/specification/adr/adr-172.md)
+/// D4), and the buffer is why that costs nothing: a hop to an I/O worker and
+/// back is a wake-up, and paying one per *line* would make this slower than
+/// the blocking reader it replaces. So a chunk comes back at a time and the
+/// line endings are found here — one hop per buffer, and a program that reads
+/// a million lines pays as many hops as it has buffers.
+///
+/// **Not an `Iterator`**, and that is the decision rather than an omission.
+/// `Iterator::next` has no `await` in it, which is the whole reason D1 exists;
+/// the inherent `async fn next` below is the shape a `for` over a pausing
+/// sequence lowers to, and the trait a second such producer would want is D3's
+/// and is not written until there is a second.
 pub struct Lines {
-    inner: std::io::Lines<std::io::StdinLock<'static>>,
+    /// What the last chunks brought and what has not been handed out yet.
+    held: Vec<u8>,
+    /// How far into `held` the lines already handed out reach.
+    at: usize,
+    /// The stream is over: no further chunk is asked for, and what is left in
+    /// `held` is the last line if it is not empty.
+    ended: bool,
 }
 
-impl Iterator for Lines {
+/// How much of standard input one hop to a worker asks for.
+///
+/// The size `BufReader` uses by default, and for the reason it does: big
+/// enough that the hops are rare, small enough that a program holding one per
+/// stream is holding nothing worth counting.
+const CHUNK: usize = 8 * 1024;
+
+impl Lines {
+    /// The next line, **pausing** while the stream has nothing to give
+    /// ([ADR-172](../../../docs/specification/adr/adr-172.md) D4).
+    ///
     /// **`IoError` and not the language below's own**
     /// ([ADR-158](../../../docs/specification/adr/adr-158.md) D1): a step of
     /// this fails, so the function around the `for` says `throws` — and what it
@@ -220,12 +252,154 @@ impl Iterator for Lines {
     /// ([ADR-159](../../../docs/specification/adr/adr-159.md) D1): the `?` the
     /// loop's step takes had a raw `std::io::Error` on the left of it and a
     /// named one on the right.
-    type Item = Result<String, IoError>;
+    ///
+    /// The trailing newline is not part of a line, a `\r` before it is not
+    /// either, and a final line without one is still a line — which is
+    /// `BufRead::lines`' own rule, kept because programs were written against
+    /// it.
+    pub async fn next(&mut self) -> Option<Result<String, IoError>> {
+        loop {
+            if let Some(line) = self.take_a_line() {
+                return Some(line);
+            }
+            if self.ended {
+                return None;
+            }
+            match crate::rt::io::stdin_chunk(CHUNK).await {
+                Err(e) => {
+                    // The stream is over either way: a reader that kept asking
+                    // after a failure would loop on it.
+                    self.ended = true;
+                    return Some(Err(IoError::of(e, STDIN)));
+                }
+                Ok(chunk) if chunk.is_empty() => self.ended = true,
+                Ok(chunk) => {
+                    // What has been handed out is dropped before the new bytes
+                    // go in, so the buffer is the size of what is *unread*
+                    // rather than of everything the stream ever carried —
+                    // which is what keeps a pipe larger than memory a program
+                    // that does not grow (Part III, 17.1).
+                    self.held.drain(..self.at);
+                    self.at = 0;
+                    self.held.extend_from_slice(&chunk);
+                }
+            }
+        }
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner
-            .next()
-            .map(|line| line.map_err(|e| IoError::of(e, STDIN)))
+    /// One line out of what is already held, where there is one.
+    ///
+    /// A whole line is one with its newline in hand; at the end of the stream
+    /// the remainder is a line too, and `None` there means there is nothing
+    /// left at all.
+    fn take_a_line(&mut self) -> Option<Result<String, IoError>> {
+        let rest = &self.held[self.at..];
+        let (line, step) = match rest.iter().position(|b| *b == b'\n') {
+            Some(at) => (&rest[..at], at + 1),
+            None if self.ended && !rest.is_empty() => (rest, rest.len()),
+            None => return None,
+        };
+        let line = match line.strip_suffix(b"\r") {
+            Some(shorter) => shorter,
+            None => line,
+        };
+        let line = String::from_utf8(line.to_vec());
+        self.at += step;
+        Some(line.map_err(|e| {
+            IoError::of(
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+                STDIN,
+            )
+        }))
+    }
+}
+
+#[cfg(test)]
+mod lines_tests {
+    //! Where a line **ends**, which is the half of
+    //! [ADR-172](../../../docs/specification/adr/adr-172.md) D4 that a chunk
+    //! boundary can get wrong and a whole-stream read never could.
+    //!
+    //! Asked of the buffer directly rather than of standard input: there is one
+    //! of those per process, a test may not consume it, and what is in question
+    //! here is not the read but what is done with what came back. The read
+    //! itself is asserted by `examples/tally.nika`, which runs end to end.
+
+    use super::Lines;
+
+    /// A `Lines` that has been handed these bytes and told whether more are
+    /// coming — the state one hop to a worker leaves behind.
+    fn holding(bytes: &[u8], ended: bool) -> Lines {
+        Lines {
+            held: bytes.to_vec(),
+            at: 0,
+            ended,
+        }
+    }
+
+    fn drain(lines: &mut Lines) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Some(line) = lines.take_a_line() {
+            out.push(line.expect("the bytes are text"));
+        }
+        out
+    }
+
+    /// The rule `BufRead::lines` has and this keeps, because programs were
+    /// written against it: the newline is not part of the line, a `\r` before
+    /// it is not either, and a blank line is a line.
+    #[test]
+    fn a_newline_ends_a_line_and_is_not_part_of_it() {
+        let mut lines = holding(b"one\n\nthree\r\n", true);
+        assert_eq!(drain(&mut lines), ["one", "", "three"]);
+    }
+
+    /// **A final line without a newline is still a line** — but only once the
+    /// stream is over. Before that the same bytes are a line that has not
+    /// finished arriving, and handing them out would split a line at whatever
+    /// byte the chunk happened to end on.
+    #[test]
+    fn the_last_line_needs_no_newline_and_a_partial_one_waits() {
+        assert_eq!(drain(&mut holding(b"one\ntwo", true)), ["one", "two"]);
+
+        let mut waiting = holding(b"one\ntwo", false);
+        assert_eq!(drain(&mut waiting), ["one"]);
+        // …and the rest is still held, which is what the next chunk is
+        // appended to.
+        assert_eq!(&waiting.held[waiting.at..], b"two");
+    }
+
+    /// A chunk that ends mid-line is the case this exists for: the two halves
+    /// meet, and nothing is lost or repeated.
+    #[test]
+    fn a_line_split_across_two_chunks_is_one_line() {
+        let mut lines = holding(b"one\ntw", false);
+        assert_eq!(drain(&mut lines), ["one"]);
+
+        // What `next` does with a chunk: drop what was handed out, append.
+        lines.held.drain(..lines.at);
+        lines.at = 0;
+        lines.held.extend_from_slice(b"o\nthree\n");
+        assert_eq!(drain(&mut lines), ["two", "three"]);
+    }
+
+    /// An empty stream is no lines, and a stream of one newline is one empty
+    /// line — the difference a `for` over this can see.
+    #[test]
+    fn an_empty_stream_is_not_one_empty_line() {
+        assert!(drain(&mut holding(b"", true)).is_empty());
+        assert_eq!(drain(&mut holding(b"\n", true)), [""]);
+    }
+
+    /// Bytes that are not text are a **step that failed**, which is what the
+    /// `throws` on the sequence is for — not the end of the stream, which is
+    /// the bug class Part I 6.4 refuses by name.
+    #[test]
+    fn a_line_that_is_not_text_is_a_failed_step() {
+        let mut lines = holding(b"fine\n\xff\xfe\n", true);
+        assert_eq!(lines.take_a_line().expect("a line").expect("text"), "fine");
+        assert!(lines.take_a_line().expect("a step").is_err());
+        assert!(lines.take_a_line().is_none());
     }
 }
 

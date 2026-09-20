@@ -255,13 +255,17 @@ doc = "The whole of standard input, as bytes.\n\nIt may pause rather than holdin
 # `line` of no type at all, so `line.len()` was a method on `?` and the six
 # `.len()` calls of `examples/tally.nika` were among the 35 §1 counts.
 #
-# `Seq[String] throws` says both things in one place: the element is a `String`,
-# so the binding has a type, and `throws` is the one spelling of *a step can
-# fail*. No `sync`, because a step of this reads the pipe.
+# `Seq[String] pauses throws` says three things in one place: the element is a
+# `String`, so the binding has a type; `throws` is the one spelling of *a step
+# can fail*; and `pauses` is
+# [ADR-172](../../docs/specification/adr/adr-172.md) D1's word for *a step
+# suspends*, which is what makes a `for` over this give its thread up instead of
+# holding it. It is a **positive** claim and not the absence of `sync`: the
+# absence is *nobody said*, and a `map`'s step is exactly that.
 [fn."io::lines"]
 pub = true
 provenance = "trusted"
-signature = "() -> Seq[String] throws"
+signature = "() -> Seq[String] pauses throws"
 doc = "Standard input, one line at a time.\n\nThe lines are produced as they are asked for rather than read up front, so a\nstream larger than memory is a `for` over this. A **step** can fail, because\na step of it reads the pipe."
 
 [fn."io::read_to_string"]
@@ -790,10 +794,14 @@ doc = "The pairs, one at a time, **taken out** of the map.\n\nWhat a `for` over 
 # program can write (D4): a program writes `keys()`, `for` and `collect()`, and
 # these entries do the naming.
 #
-# The two words after it say what one **step** may do, as they do after a
-# function type. `Seq[$K] sync` on `keys` is a step that reads memory; a
-# `map`'s step runs the lambda, so it says neither and a caller reads that as
-# *a step may pause*, which is the answer nobody has to be wrong about.
+# The words after it say what one **step** may do, as they do after a function
+# type, and there are **three** states rather than two
+# ([ADR-172](../../docs/specification/adr/adr-172.md) D1). `Seq[$K] sync` on
+# `keys` is a step that reads memory; `Seq[String] pauses` on `io::lines` is a
+# step that suspends; a `map`'s step runs the lambda, so it says neither and is
+# read as *nobody said*, which keeps the blocking form. The two ways of being
+# wrong are not symmetric: awaiting a step that has none does not compile, and
+# holding a thread that could have been given up costs a thread.
 #
 # **Every entry here is found by its receiver being a `Seq`**, which is what
 # gives the 35 unanswered method calls of ADR-105 §1 somewhere to resolve.

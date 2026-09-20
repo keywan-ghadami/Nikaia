@@ -992,6 +992,10 @@ struct Emitter<'p> {
     /// The `for` statements whose step can fail, by the byte they start at
     /// (ADR-025 D1).
     fallible_loops: std::collections::BTreeSet<usize>,
+    /// The `for`s whose **step pauses**
+    /// ([ADR-172](../../docs/specification/adr/adr-172.md) D1), by the byte the
+    /// statement starts at. Handed over exactly as `fallible_loops` is.
+    pausing_loops: std::collections::BTreeSet<usize>,
     /// The `let`s whose place-initialiser has to be lent
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4), by the byte the
     /// statement starts at. Answered by the checker for the reason every set
@@ -1344,6 +1348,14 @@ const ARM_VALUE: &str = "__nikaia_value";
 
 /// The name a failure is bound to where an arm takes it apart itself.
 const ARM_FAILED: &str = "__nikaia_failed";
+
+/// The name a **pausing** sequence is bound to for the length of its loop
+/// ([ADR-172](../../docs/specification/adr/adr-172.md) D1).
+///
+/// A `while let` steps a value rather than consuming an expression, so the
+/// sequence needs a name — and a generated one, for the reason every other
+/// generated name here has: a program may already have bound `lines`.
+const SEQUENCE: &str = "__nikaia_sequence";
 
 /// The slot a function's result is filed under, as `contracts::sharing` keys it.
 const SHARED_RESULT: &str = "<result>";
@@ -1931,6 +1943,7 @@ impl<'p> Emitter<'p> {
             fails,
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             fallible_loops: propagation.loops,
+            pausing_loops: propagation.pausing_loops,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
             witnessed_sets: propagation.witnessed_sets,
@@ -4477,6 +4490,55 @@ impl<'p> Emitter<'p> {
                     .map(|b| self.name(*b))
                     .collect::<Vec<_>>()
                     .join(", ");
+                let bound = match bindings.len() > 1 {
+                    true => format!("({names})"),
+                    false => names.clone(),
+                };
+                // **A step that pauses is a loop that gives its thread up**
+                // ([ADR-172](../../docs/specification/adr/adr-172.md) D1). The
+                // language below has no `for` that awaits, so the shape is the
+                // one a Rust programmer writes by hand for the same thing: the
+                // sequence is bound once and stepped with a `.next().await`.
+                //
+                // **Off the checker's set and not off the shape**, exactly as
+                // the `?` below is: which sequences pause is a claim in the
+                // ledger about a *type*, and this emitter has none
+                // ([ADR-028](../../docs/specification/adr/adr-028.md)).
+                if self.pausing_loops.contains(&span.start) {
+                    // ADR-025 D1's `?`, unchanged: a step that can fail fails
+                    // the enclosing function, and the checker has already made
+                    // `throws` be there (`NK2701`).
+                    let unwrap = self
+                        .fallible_loops
+                        .contains(&span.start)
+                        .then(|| format!("let {bound} = {bound}?;"));
+                    let pad = "    ".repeat(depth);
+                    let inner = "    ".repeat(depth + 1);
+                    out.push("{\n");
+                    out.push(&inner);
+                    out.push(&format!("let mut {SEQUENCE} = "));
+                    self.expr(out, iter, depth + 1, flow)?;
+                    // A produced sequence is walked **by value**
+                    // ([ADR-105](../../docs/specification/adr/adr-105.md) D2),
+                    // so nothing is lent here and there is no `.iter()`.
+                    out.push(";\n");
+                    out.push(&inner);
+                    out.push(&format!(
+                        "while let Some({bound}) = {SEQUENCE}.next().await "
+                    ));
+                    self.block_opening_with(
+                        out,
+                        body,
+                        depth + 1,
+                        flow.inside_a_loop(),
+                        Tail::Statement,
+                        unwrap.as_deref(),
+                    )?;
+                    out.push("\n");
+                    out.push(&pad);
+                    out.push("}");
+                    return Ok(());
+                }
                 if bindings.len() > 1 {
                     out.push(&format!("for ({names}) in "));
                 } else {

@@ -195,41 +195,31 @@ Nikaia or described as taking a future — `|| async move { … }`, which is sta
 Rust and is how a handler is taken in practice. Not a new mechanism: a claim to
 record.
 
-### 2.2. A `for` over a stream has no suspension point
+### 2.2. A pausing sequence has one walk and six that block
 
-**[ADR-121](specification/adr/adr-121.md) closed the first half of this entry
-and renamed what is left.** The defect was the ring's park, which could not hear
-a worker's bell; an eventfd on the ring makes every worker operation awaitable,
-and the proposal this entry used to carry — wire standard input to readiness —
-is withdrawn, because readiness was never the problem.
+**[ADR-172](specification/adr/adr-172.md) closed what was left of this entry and
+renamed it again.** The question — *may a `for` iterate something whose step
+pauses?* — is answered **yes**: a `Seq` says `pauses` after it, the emitter
+writes `while let Some(x) = s.next().await`, and `io::lines` reads a chunk at a
+time on an I/O worker. A `for` over standard input gives its thread up, which is
+what this entry was about from the first time it was written.
 
-**`io::read` and `io::read_to_string` suspend now.** The read is the blocking one
-standard input always had, performed on an I/O worker and awaited: no second read
-shape, and no ring path for a stream that has no size to `stat`. What changed is
-the park.
+**What is left is every other walk of the same sequence.** `Seq[T]`'s consumers —
+`collect`, `count`, `nth`, `join`, `map`, `filter` — are `Iterator`'s below and
+have no pausing form, so `io::lines().count()` still holds a thread where
+`for line in io::lines()` no longer does. That is D3's *where the cost really
+lands*, and it is work rather than a question: the record says whose trait it
+will be when a second producer needs one.
 
-**`io::lines` does not, and the reason is the language.** A step of it is an
-`Iterator::next`, and a suspension point inside one is `while let Some(x) =
-s.next().await` in the language below — a `Stream` trait Rust has not stabilised
-and a `for` over a stream this language has not decided. This entry always said
-that was the larger half; it is now the whole of it.
+*Evidence: none, and the same kind of none as before.* A caller sees a consumer
+that returns. What is missing is that the thread is **held** for its duration,
+which nothing can observe until something else wants the thread.
 
-*Evidence: none, and none is possible yet.* A caller sees a step that returns,
-which is what it saw before. What is missing is that the thread is **held** for
-the duration of `for line in io::lines()` rather than given up — which nothing
-can observe until something else wants the thread, and at
-`user_parallelism = yes` something can: a `main` blocked in `io::lines()` is a
-thread the pool could have had.
-
-*The shape to copy exists.* [ADR-025](specification/adr/adr-025.md) D6's
-`iterates_fallibly` is a property of the **type**, recorded in the ledger, that
-makes the emitter write the step differently — which is what a pausing step would
-need.
-
-***The question is asked.*** [`open-decisions.md`](open-decisions.md) carries
-it, with the lowering measured — the **call** awaits and the **step** does not,
-because `Lines::next` is a `BufRead` read that blocks the thread it is on — and
-with what each answer costs. Nothing here moves until it is answered.
+*And the trait waits on a second producer rather than on a decision.* Of the six
+things that make a `Seq`, exactly one can pause, so what the lowering needs is an
+inherent `async fn next` on one type and not a trait over many
+([ADR-172](specification/adr/adr-172.md) D3). The day a second one pauses, the
+trait is `std`'s own and the record says why.
 
 ### 2.3. The lock is built and every rule around it is not
 

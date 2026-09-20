@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.93 (Draft)
+**Version:** 0.0.94 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -836,6 +836,12 @@ Nothing marks the loop, as nothing marks a call that can fail
 where a resource's cleanup can fail and the function that owns it declares it
 (6.4). It is one rule for the two places where the language performs a call
 user code did not write ([ADR-025](adr/adr-025.md) D1).
+
+Getting the next element can also **pause**, and nothing marks that either
+([ADR-172](adr/adr-172.md) D1). A loop over standard input gives its thread up
+between lines rather than holding it for the length of the stream, which is what
+a read looking blocking and not being one means one construct further in. The
+library says which sequences are like that; a program writes `for`.
 
 *Design rationale:* a failed read that looked like the end of the input would
 turn a truncated stream into a shorter one and a count into a quietly wrong

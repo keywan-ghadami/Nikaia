@@ -66,6 +66,23 @@ pub(super) enum Op {
     /// mechanism. The lock `StdinLock` takes is the process's, which is what
     /// makes one reader at a time true here as it is anywhere else.
     Stdin { reply: Sender<io::Result<Vec<u8>>> },
+    /// **The next chunk of standard input**
+    /// ([ADR-172](../../../../docs/specification/adr/adr-172.md) D4), for a
+    /// stream a program walks a line at a time.
+    ///
+    /// **A chunk and not a line**, which is the whole of why `io::lines` can
+    /// pause without becoming slower than the blocking reader it replaces: a
+    /// hop to a worker and back costs a wake-up, and a program that reads a
+    /// million lines would pay a million of them. The caller finds its line
+    /// endings in what comes back and asks again when the buffer runs out, so
+    /// the hops are one per buffer.
+    ///
+    /// An empty answer is the end of the stream, which is what a read of zero
+    /// bytes means everywhere.
+    StdinChunk {
+        want: usize,
+        reply: Sender<io::Result<Vec<u8>>>,
+    },
     /// Stop after everything already queued. What shutdown sends (ADR-006 D5).
     Stop,
 }
@@ -246,6 +263,21 @@ fn perform(op: Op) {
                 .lock()
                 .read_to_end(&mut bytes)
                 .map(|_| bytes);
+            let _ = reply.send(read);
+        }
+        Op::StdinChunk { want, reply } => {
+            use std::io::Read;
+
+            // **One read and not a loop to fill the buffer.** Short is not the
+            // end of a stream, and a caller that asked for a chunk wants
+            // whatever is there now - a pipe that produces a line a second is
+            // a program that prints a line a second, and filling 64 KiB first
+            // would make it a program that prints nothing for eighteen hours.
+            let mut bytes = vec![0_u8; want];
+            let read = std::io::stdin().lock().read(&mut bytes).map(|n| {
+                bytes.truncate(n);
+                bytes
+            });
             let _ = reply.send(read);
         }
         Op::Stop => {}
