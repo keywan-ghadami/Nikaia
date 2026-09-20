@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.68] — 2026-09-20
+
+The second question goes where questions go: **does a `T?` have a postfix
+unwrap?**
+
+### Changed
+
+- **`docs/open-work.md` §3.2 kept a decision in an upkeep note**, which is the one place a decision may not sit: [ADR-018](docs/specification/adr/adr-018.md) D3 writes `lookup(a.query("id")??)`, Part I 3.5 defines `??` as null coalescing and nothing else, and the entry's own next line was *what it needs is a decision before any work*. It is in [`docs/open-decisions.md`](docs/open-decisions.md) now, in that page's shape, which is the rule `docs/open-work.md`'s own header states.
+
+### The recommendation, and why it is a program rather than an argument
+
+- **No postfix unwrap.** The three things one is reached for all have a spelling: a fallback value is `a ?? b`, a jump is `a ?? throw NotFound` since [ADR-138](docs/specification/adr/adr-138.md) D1 made the four jumps expressions, and reaching a member is `a?.b`. What is left over is *abort where it is null* — the one thing Part I 2.3 exists to make a program say out loud, and a postfix `??` would be a one-character way to take that back.
+- **And the replacement is shorter than the example it replaces.** ADR-018 D3 asks `query` twice and then unwraps; what the language has today is one binding, `let id = a.query("id") ?? return http::Response(status: 400, body: "id is required")`. Compiled and run before it was written down, not sketched.
+
 ## [0.0.67] — 2026-09-20
 
 A grammar's entry earns its columns

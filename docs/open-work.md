@@ -1309,18 +1309,18 @@ note and this has none. It is an example using a construct the language never
 defined, which is worse: a reader who copies it gets a parse error with nothing
 to look up, because the section it would be defined in does not mention it.
 
-*What it needs is a decision before any work:* whether the nullable gets a
-postfix unwrap at all. If it does, Part I 3.5 gains it and the parser follows —
-and it wants a name for what it does when the value **is** null, which for an
-abort is Part III A.2's territory. If it does not, the two examples are rewritten
-to use what Part I 3.5 has.
+*It needs a decision before any work*, and the decision is now where decisions
+go: [`open-decisions.md`](open-decisions.md) carries *does the language have a
+postfix unwrap?*, with both options, a recommendation — **no**, because the
+three things one is reached for already have spellings — and the replacement
+measured as a program rather than sketched.
 
-*Why it is upkeep and not a defect:* no program in the tree writes a postfix
+*Why it stays upkeep and not a defect:* no program in the tree writes a postfix
 `??`, so nothing is wrong today except the page.
 
 The Part III 17.1 example was rewritten while this was found; ADR-018's stands,
 because an ADR is written once and the correction belongs to whatever answers
-the question above.
+the question.
 
 ### 3.3. Three corpus files cannot be compiled with `--input`, and none of them is broken
 
