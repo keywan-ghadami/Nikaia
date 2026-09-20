@@ -137,25 +137,44 @@ costs. It used to live twice — this file and the roadmap's own "next steps" �
 the second copy is the one that went stale, still asking for `if/else` and structs
 long after both worked. Two lists of one thing is one list and one liability.
 
+**And the order is the thing this file most easily gets wrong**, because it is
+the part that goes stale without any entry changing: what sat first here sat
+first because of what stood in front of it, and both of those were built out
+from under it. It used to open with *the refusals around tasks*, pointing at an
+entry called *a task that may not cross a thread* — which **did not exist**, and
+whose work has since been done from the other end. Read against the code before
+it is followed.
+
 So, in order, and each says below why it sits where it does:
 
-1. **The refusals around tasks** ([ADR-055](specification/adr/adr-055.md)). The
-   mechanism is built at both settings — the executor, `async`/`.await` off the
-   ledger's `sync` column, `std`'s own pausing entries, `spawn` with
-   `TaskHandle` and `.join()`, and `overlap { … }` — so nothing in this list
-   waits on a thread any more. What is left is one **refusal** rather than one
-   mechanism: §2 D6's `Send` is asked for by the pool's starter, so a task
-   holding something that may not cross is refused by `rustc` about the
-   generated file rather than by this compiler about the program. *A task that
-   may not cross a thread*, below.
+1. **A server to bind to, and the `postgres` block.** Its own project rather
+   than a step of this one, and **first now** rather than third: it is what
+   several entries here are waiting for. A `std` entry whose lambda may
+   genuinely pause is a route handler (§2.1); a `par_iter` with an entry to
+   demand `sync` of is a program that calls one (*`par_iter` has no entry*); a
+   pausing sequence's lazy walk is the same shape (§2.2). Each of those says
+   *it waits on a program rather than on work*, and this is the program.
 2. **The rules around the lock.** The type, its constructor, its single spelling
    and all four doors are built, and the transfer has its door
    ([ADR-065](specification/adr/adr-065.md)), so nothing here needs deciding:
-   what is left is every **refusal** the section states and nothing raises.
-   Independent of the sequence above, so it can be taken beside it.
-3. **A server to bind to, and the `postgres` block.** Its own project rather than a
-   step of this one.
-4. **Supervision.** Last because nothing else waits on it.
+   what is left is **D7's stored lambda** and nothing else — and the corpus says
+   a refusal reading the `locks` column today would refuse correct programs, so
+   what it needs first is entries for what those functions call.
+3. **Supervision.** Last because nothing else waits on it.
+
+**And what left the head of this list, measured rather than assumed.** The
+refusals around tasks ([ADR-055](specification/adr/adr-055.md) §2 D6) were
+first, and `NK2501` fires end to end now: a Rust crate with an `Rc` field,
+`nikaia describe` writing `crosses = false` from that field
+([ADR-123](specification/adr/adr-123.md) D2), the description merged into the
+ledger the analyses read ([ADR-104](specification/adr/adr-104.md) D1), and a
+`spawn` refused in **this compiler's** words on the `.nika` line —
+`crates/nikaia/tests/describing.rs` runs that chain from a program. What is left
+is the case this compiler **cannot decide**, where `rustc`'s own `Send` bound
+refuses against the right `.nika` line through
+[ADR-005](specification/adr/adr-005.md) D7's translation: the position is kept
+and the words are `rustc`'s, which that record carries as its own open half and
+is not work in this section.
 
 **And one that is out of the sequence because three entries rest on it**: the
 **tether** ([ADR-008](specification/adr/adr-008.md)), last below and first under

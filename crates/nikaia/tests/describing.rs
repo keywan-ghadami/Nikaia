@@ -354,6 +354,83 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
     }
 }
 
+/// **The whole chain, from a crate to a refusal.**
+///
+/// `nikaia describe` reads a `pub struct`'s `Rc` field and writes
+/// `crosses = false` ([ADR-123](../../../docs/specification/adr/adr-123.md)
+/// D2); the build merges the description into the ledger the analyses read
+/// ([ADR-104](../../../docs/specification/adr/adr-104.md) D1); and `NK2501`
+/// refuses a `spawn` that takes the value with it — in **this compiler's**
+/// words, on the `.nika` line, with a way out.
+///
+/// **That chain is what three entries were waiting on**, each from its own end:
+/// ADR-104 §5's *the day the describer reads fields*, ADR-123's *`NK2501` and
+/// `NK2502` can fire, for the first time, on a described foreign type*, and
+/// `open-work.md`'s task refusals. Asserted from a **program** rather than from
+/// a hand-written ledger, because a hand-written one proves the last link and
+/// none of the others.
+#[test]
+fn a_crate_a_description_and_a_refusal() {
+    let root = project(
+        "chain",
+        "pub struct Held { inner: std::rc::Rc<String> }\n\
+         pub fn hold(name: String) -> Held {\n\
+         \x20   Held { inner: std::rc::Rc::new(name) }\n\
+         }\n",
+        "fn main() {\n\
+         \x20   let h = fremd::hold(\"here\".to_owned())\n\
+         \x20   spawn fn { println(f\"{h}\") }\n\
+         }\n",
+    );
+    let (ledger, described) = draft(&root, "fremd").expect("the draft is written");
+    assert!(
+        ledger
+            .render_description("fremd", &described.version)
+            .contains("[type.\"fremd::Held\"]\npub = true\ncrosses = false"),
+        "the `Rc` field is what says so"
+    );
+
+    // The description written where a build reads it, and then the build's own
+    // answer about the program.
+    std::fs::create_dir_all(root.join("contracts")).expect("a place for it");
+    std::fs::write(
+        root.join("contracts/fremd.contracts"),
+        ledger.render_description("fremd", &described.version),
+    )
+    .expect("write the description");
+
+    let source = std::fs::read_to_string(root.join("src/main.nika")).expect("the program");
+    let parsed = nikaia::parser::parse_to_ast(&source).expect("the source parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let foreign = nikaia::project::Foreign::of(&root);
+    let library = foreign.library().expect("std's ledger and the description");
+    let modules = foreign.packages(&std::collections::BTreeSet::new());
+    let found = nikaia::check::check_program(&parsed, &own, &library, &modules).findings;
+    let _ = std::fs::remove_dir_all(&root);
+
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK2501")
+        .unwrap_or_else(|| panic!("{found:#?}"));
+    assert!(
+        refusal.message.contains("`h` may not cross"),
+        "{refusal:#?}"
+    );
+    assert!(
+        refusal.notes.join(" ").contains("`fremd::Held`"),
+        "the refusal names the type the description named: {:#?}",
+        refusal.notes
+    );
+    // Part III C.2: a way out, and C.1: nothing of `rustc`'s in it.
+    assert!(refusal.help.is_some(), "{refusal:#?}");
+    for word in ["Send", "Rc", "E0277", "rustc"] {
+        assert!(
+            !refusal.notes.join(" ").contains(word),
+            "`{word}`: {refusal:#?}"
+        );
+    }
+}
+
 /// **Nothing is written by a draft**, which is what makes the test above able
 /// to read the repository's own projects without putting them back.
 #[test]

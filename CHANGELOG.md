@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.101] — 2026-09-20
+
+**A crate, a description, and a refusal** — the chain three entries were
+waiting on, run from a program; and the order that said they were waiting,
+which had gone stale.
+
+### Measured
+
+- **`NK2501` fires end to end.** A Rust crate with an `Rc` field, `nikaia describe` writing `crosses = false` from that field ([ADR-123](docs/specification/adr/adr-123.md) D2), the description merged into the ledger every analysis reads ([ADR-104](docs/specification/adr/adr-104.md) D1), and a `spawn` refused in **this compiler's** words on the `.nika` line, with a way out and no word of `rustc`'s in it. Asserted from a **program**, because a hand-written ledger proves the last link and none of the others.
+- That is ADR-123 §3's first consequence — *`NK2501` and `NK2502` can fire, for the first time, on a described foreign type* — and ADR-104 §5's *the day the describer reads fields*, both reached from the same test.
+
+### Fixed
+
+- **`open-work.md` §2's order was wrong in three ways at once**, and the order is the one part of that file which goes stale without any entry changing. It opened with *the refusals around tasks*, pointing at an entry called *a task that may not cross a thread* — which **did not exist**; the work it described has since been done from the other end; and the two items that stood in front of *a server to bind to* were both built out from under it.
+- The list now opens with the server, and says why: three entries say outright that they wait on a **program** rather than on work — a route handler for §2.1's pausing lambda, a caller for `par_iter`, the same shape for §2.2's lazy walk — and a server is the program they wait for. What is left of the lock's rules is D7's stored lambda and nothing else.
+- What left the head of the list says so with its measurement, and what is *still* open there is named exactly: the case this compiler cannot decide, where `rustc`'s own `Send` bound refuses against the right `.nika` line through [ADR-005](docs/specification/adr/adr-005.md) D7's translation — the position kept, the words `rustc`'s, which that record carries as its own open half.
+
 ## [0.0.100] — 2026-09-20
 
 **An error that newly reaches a `catch` is named once**
