@@ -263,8 +263,35 @@ impl Full for Box<dyn Error> {
     fn full(&self) -> String {
         match self.downcast_ref::<Raised>() {
             Some(raised) => raised.full(),
-            None => format!("{self}\n  (raised below Nikaia; no site recorded)"),
+            None => format!("{self}\n{BELOW}"),
         }
+    }
+}
+
+/// What the long form says about a failure **no `throw` in this program
+/// raised** ([ADR-159](../../../docs/specification/adr/adr-159.md) D3).
+const BELOW: &str = "  (raised below Nikaia; no site recorded)";
+
+/// The long form for a **library's** error type, where one is the channel (D2).
+///
+/// It has no envelope, because there is no `throw` in this program to have a
+/// site — so `full()` says so, in the words the boxed channel has always used
+/// for an error that came from below. What it carries instead is **what** the
+/// failure was about, which is in the message.
+///
+/// **Named types and not a blanket impl**: `Box<dyn Error>` does not implement
+/// `Error`, so the language below cannot be told that an `impl<E: Error>` would
+/// not overlap the one above. One line per library error type that can be a
+/// channel, and there are two.
+impl Full for crate::io::IoError {
+    fn full(&self) -> String {
+        format!("{self}\n{BELOW}")
+    }
+}
+
+impl Full for crate::lock::Overtaken {
+    fn full(&self) -> String {
+        format!("{self}\n{BELOW}")
     }
 }
 

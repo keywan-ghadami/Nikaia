@@ -4,6 +4,37 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.76] — 2026-09-20
+
+A library's error type is a channel too, and it travels **bare**
+([ADR-159](docs/specification/adr/adr-159.md)).
+
+### Fixed
+
+- **A `std` failure crossing a function boundary.** `fn load(path) -> String throws { return fs::read_to_string(path) }` declared the opaque channel, so a handler over `load` met *expected `Box<dyn Error>`, found `IoError`* — `rustc` speaking about the generated file, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class. [ADR-157](docs/specification/adr/adr-157.md) D1 named a channel only after a type **this unit declares**, which was right while nothing else could be named and stopped being right the moment [ADR-158](docs/specification/adr/adr-158.md) gave `std` names.
+- **Two path rules read a *module* for a type** (D4). `ConfigError::NotFound` has two segments and the type is the first; `io::IoError::NotFound` has three and the type is the first **two**. Both the error-set derivation and the exemption that tells a variant **constructor** from a call took the first segment, so a `throw io::IoError::NotFound(p)` recorded `io` and the constructor beside it was taken for a callee nothing describes. Neither was reachable until an error type lived in a module.
+
+### What was already built
+
+- **Half of it.** A `catch` written **directly** over a `std` call has always bound what that call hands back, and since [ADR-158](docs/specification/adr/adr-158.md) that is an `io::IoError` — so `match error { io::IoError::NotFound(p) => … }` over `fs::read_to_string(path) catch { … }` compiled and ran before this change, with no compiler edit at all. Measuring first is what kept the record to the half that was missing.
+
+### Added
+
+- **A channel may be named after a type any *ledger* describes** (D1), not only one this unit declares. What still keeps the opaque channel is about the **set** and not about whose the type is: a `"?"` in it, two members in it, or a method that implements a trait.
+- **`Full` for `io::IoError` and `Overtaken`** (D3).
+
+### Why bare, and not the envelope
+
+- **There is no `throw` in this program to have a site.** [ADR-157](docs/specification/adr/adr-157.md) D2's envelope carries the place an error was raised ([ADR-023](docs/specification/adr/adr-023.md) D6); a library's failure arrives from a call, so an envelope would carry the place the program *received* it and read as though the program raised it.
+- **And `std` hands the value back as it is**, so propagating it is the plain `?` the language below already writes. That is also what makes the two shapes agree from the program's side: whether the failure came from a `std` call directly or through a function of its own, `error` is an `io::IoError` either way.
+- **`error.full()` says so** (D3), in the words the opaque channel has always used for an error that came from below Nikaia: *(raised below Nikaia; no site recorded)*. What it carries instead is **what** the failure was about, which is the more useful half for an environmental failure.
+- **The cost, named:** a program that writes `throw io::IoError::NotFound(p)` itself records no site. A program that wants its failures to carry where they were raised declares its own error type, which is what Part I 7.1 teaches first.
+
+### What this changes in the tree
+
+- **The first of the three error records to change what `examples/` lowers to.** A function that reads a file declares `Result<T, io::IoError>` where it declared the box.
+- **What is left** is a set with **two** members — a program that reads a file *and* throws its own — which needs the generated sum. `docs/open-work.md` §2.13 carries it, and now says plainly that nothing in the tree is that shape yet.
+
 ## [0.0.75] — 2026-09-20
 
 `std` names what it throws, and the measurement is why the record is small

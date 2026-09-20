@@ -596,14 +596,12 @@ and one that also throws its own has **both** — which is a set of two, and
 therefore exactly the case the generated sum above is for. The floor moved up
 rather than away.
 
-*A second piece is left beside it, and it is smaller.*
-[ADR-157](specification/adr/adr-157.md) D1 names a channel only after a type
-**this unit declares**, so a set of one that names a **library's** type still
-gets the box. Opening that up needs two things: the emitter writing
-`nikaia_std::io::IoError`, and an answer to what site a `std` failure carries
-([ADR-023](specification/adr/adr-023.md) D6) when the `throw` is not in the
-program. `docs/open-decisions.md` gets the second if it turns out to be a
-question rather than a derivation.
+*The second piece is done.* [ADR-159](specification/adr/adr-159.md) D1 lets a
+channel be named after a type **any ledger** describes, so a function whose set
+is one library type hands its failure on as that type and a handler matches on
+its variants. The site question answered itself: there is no `throw` in the
+program to have one (D2), and `error.full()` says so in the words the opaque
+channel always used for an error from below.
 
 *What waits on both:* the note over `catch` sites and the `--locked` failure
 (*an error that newly reaches a `catch` is named once*,
@@ -611,9 +609,10 @@ question rather than a derivation.
 `catch` that stops covering its arrivals, and `match error { … }` over a variant
 from a callee in another package.
 
-*Evidence:* every failing function in `examples/` and `benches/` now carries a
-**named** set and still travels in the box, which is the gap stated as a
-measurement.
+*Evidence:* a function that reads a file **and** throws its own is the shape
+with no channel now. Nothing in `examples/` or `benches/` is that shape yet, so
+what is left is unbuilt rather than broken — which is why it is here and not in
+§1.
 
 ### 2.14. A parameter may be a function, and a kept one has no lowering
 

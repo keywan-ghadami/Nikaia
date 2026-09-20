@@ -107,15 +107,21 @@ fn a_function_with_one_error_type_declares_it() {
 
 /// **A set with `"?"` in it keeps the box**, which is what `"?"` means: the
 /// compiler cannot name what this fails with, so nothing can be named after it.
+///
+/// **`std` used to be this test's example** and stopped being one twice over:
+/// [ADR-158](../../../docs/specification/adr/adr-158.md) gave `std` names, and
+/// [ADR-159](../../../docs/specification/adr/adr-159.md) D1 let a channel be
+/// named after a type a **ledger** describes. So the example is now a call no
+/// ledger describes at all, which is what `"?"` has always meant.
 #[test]
-fn a_function_that_reaches_std_keeps_the_box() {
-    let rust = lowered(
-        "use std::fs\n\
-         fn load(path: &str) -> String throws {\n\
-         \x20   return fs::read_to_string(&path)\n\
-         }\n\
-         fn main() { }\n",
-    );
+fn a_set_with_a_question_mark_keeps_the_box() {
+    let rust = lowered(&format!(
+        "fn load(s: String) -> String throws {{\n\
+         \x20   return {}\n\
+         }}\n\
+         fn main() {{ }}\n",
+        common::undescribed_value("s")
+    ));
     assert!(rust.contains("Box<dyn std::error::Error>"), "{rust}");
 }
 
@@ -339,4 +345,123 @@ fn a_handler_that_ignores_the_error_is_untouched() {
     ));
     assert!(rust.contains("Err(_error)"), "{rust}");
     assert!(!rust.contains("__nikaia_site"), "{rust}");
+}
+
+// ---------------------------------------------------------------------------
+// [ADR-159](../../../docs/specification/adr/adr-159.md): a library's type too
+// ---------------------------------------------------------------------------
+
+/// **A channel may be named after a type a *ledger* describes** (D1). Before
+/// this, `named` meant *declared by this unit*, so a function that read a file
+/// had a set of exactly one named member and still travelled in the box —
+/// which is the shape `docs/open-work.md` carried as a measurement.
+#[test]
+fn a_librarys_error_type_is_a_channel() {
+    let rust = lowered(
+        "use std::fs\n\
+         fn load(path: &str) -> String throws {\n\
+         \x20   return fs::read_to_string(&path)\n\
+         }\n\
+         fn main() { }\n",
+    );
+    assert!(rust.contains("-> Result<String, io::IoError>"), "{rust}");
+    assert!(!rust.contains("Box<dyn std::error::Error>"), "{rust}");
+}
+
+/// **And it travels bare** (D2): there is no envelope, because there is no
+/// `throw` in this program to record the site of — so propagating it is the
+/// plain `?` the language below already writes.
+#[test]
+fn a_librarys_error_needs_no_envelope() {
+    let rust = lowered(
+        "use std::fs\n\
+         fn load(path: &str) -> String throws {\n\
+         \x20   return fs::read_to_string(&path)\n\
+         }\n\
+         fn main() { }\n",
+    );
+    assert!(!rust.contains("Thrown<"), "{rust}");
+    assert!(rust.contains("fs::read_to_string(&path).await?"), "{rust}");
+}
+
+/// **The whole of it, as a program that runs**: a failure crosses a function
+/// boundary and the handler takes it apart by variant.
+#[test]
+fn a_failure_from_std_is_matched_by_variant() {
+    let printed = output(
+        "library-error-matched",
+        "use std::fs\n\
+         use std::io\n\
+         fn load(path: &str) -> String throws {\n\
+         \x20   return fs::read_to_string(&path)\n\
+         }\n\
+         fn main() {\n\
+         \x20   let text = load(\"nope.txt\") catch {\n\
+         \x20       match error {\n\
+         \x20           io::IoError::NotFound(p) => f\"no file: {p}\"\n\
+         \x20           else => \"other\".to_owned()\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   println(f\"{text}\")\n\
+         }\n",
+    );
+    assert_eq!(printed, "no file: nope.txt");
+}
+
+/// **`{error}` is the message and `error.full()` says there is no site** (D3),
+/// which is not a gap but the truth: no `throw` in this program raised it, and
+/// it is the same sentence the opaque channel has always used for an error that
+/// came from below.
+#[test]
+fn the_long_form_says_there_is_no_site() {
+    let printed = output(
+        "library-error-full",
+        "use std::fs\n\
+         fn load(path: &str) -> String throws {\n\
+         \x20   return fs::read_to_string(&path)\n\
+         }\n\
+         fn main() {\n\
+         \x20   let text = load(\"nope.txt\") catch {\n\
+         \x20       println(f\"{error.full()}\")\n\
+         \x20       \"fallback\".to_owned()\n\
+         \x20   }\n\
+         \x20   println(f\"{text}\")\n\
+         }\n",
+    );
+    assert!(printed.contains("nope.txt"), "{printed}");
+    assert!(printed.contains("no site recorded"), "{printed}");
+    assert!(printed.ends_with("fallback"), "{printed}");
+}
+
+/// **A program's own type still gets the envelope** (D2's other half), because
+/// there the `throw` is the program's and has a site worth carrying.
+#[test]
+fn the_programs_own_error_still_travels_in_an_envelope() {
+    let rust = lowered(&format!(
+        "{CONFIG_ERROR}fn load() -> i64 throws {{\n\
+         \x20   throw ConfigError::NotFound(\"etc\")\n\
+         }}\n\
+         fn main() {{ }}\n"
+    ));
+    assert!(
+        rust.contains("nikaia_std::error::Thrown<ConfigError"),
+        "{rust}"
+    );
+}
+
+/// **The set names the type and not the module** (D4). A variant of a type that
+/// lives in a module is written with three segments, and both the derivation
+/// and the constructor exemption read the **first** of them — so a `throw
+/// io::IoError::NotFound(p)` recorded `io`, and the constructor was taken for a
+/// callee nothing describes.
+#[test]
+fn a_variant_of_a_librarys_type_names_the_type() {
+    let source = "use std::io\n\
+                  fn boom() -> i64 throws {\n\
+                  \x20   throw io::IoError::NotFound(\"x\")\n\
+                  }\n\
+                  fn main() { }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let throws = Ledger::infer(&parsed).functions["boom"].throws.clone();
+    assert_eq!(throws, vec!["io::IoError".to_string()], "{throws:#?}");
 }

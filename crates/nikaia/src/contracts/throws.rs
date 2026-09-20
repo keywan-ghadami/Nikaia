@@ -262,7 +262,21 @@ fn collect(parsed: &Parsed, block: &Block, own: &Ledger, library: &Ledger, into:
 /// the enum that declares it (Part I, 3.4), so the first segment is the type.
 fn error_type(parsed: &Parsed, thrown: &Expr) -> Option<String> {
     match thrown {
-        Expr::Path(segments) => segments.first().map(|s| parsed.text(*s).to_string()),
+        // **Everything but the last segment**, which is the variant.
+        // `ConfigError::NotFound` is `ConfigError` and
+        // `io::IoError::NotFound` is `io::IoError` — a type keyed with its
+        // module ([ADR-154](../../../../docs/specification/adr/adr-154.md) D3)
+        // is still one type. Taking the **first** segment was right for exactly
+        // as long as no error type lived in a module, and it recorded `io` —
+        // the module — the day one did
+        // ([ADR-158](../../../../docs/specification/adr/adr-158.md)).
+        Expr::Path(segments) if segments.len() > 1 => Some(
+            segments[..segments.len() - 1]
+                .iter()
+                .map(|s| parsed.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+        ),
         Expr::Call { func, .. } => error_type(parsed, func),
         // **The type and not the variant.**
         // [ADR-023](../../../../docs/specification/adr/adr-023.md) D1 records a
@@ -274,14 +288,13 @@ fn error_type(parsed: &Parsed, thrown: &Expr) -> Option<String> {
         // where the tuple form one line up read `ConfigError`. One error type,
         // two entries, and a set of two is a set nothing can be named after
         // ([ADR-157](../../../../docs/specification/adr/adr-157.md) D1).
-        Expr::StructLit { name, .. } => Some(
-            parsed
-                .text(*name)
-                .split("::")
-                .next()
-                .unwrap_or_default()
-                .to_string(),
-        ),
+        Expr::StructLit { name, .. } => {
+            let written = parsed.text(*name);
+            Some(match written.rsplit_once("::") {
+                Some((ty, _variant)) => ty.to_string(),
+                None => written.to_string(),
+            })
+        }
         _ => None,
     }
 }

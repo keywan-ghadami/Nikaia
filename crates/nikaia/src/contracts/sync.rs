@@ -607,13 +607,30 @@ pub(crate) fn reached(
     // than off `own.types`, because an enum gets no `TypeContract` — and the
     // walk is over items, on the path where a call resolved to nothing, which
     // is the rare one.
-    if let Some((declared, _)) = name.split_once("::") {
-        let is_a_type = parsed.program.items.iter().any(|item| {
-            matches!(
-                &item.node,
-                Item::Enum { name, .. } | Item::Struct { name, .. } if parsed.text(*name) == declared
-            )
-        });
+    //
+    // **The type is everything but the last segment**, which is the variant.
+    // `ConfigError::NotFound` names `ConfigError`, and
+    // `io::IoError::NotFound` names `io::IoError` — a type keyed with its
+    // module ([ADR-154](../../../../docs/specification/adr/adr-154.md) D3) is
+    // still one type. Reading the **first** segment was right for exactly as
+    // long as no error type lived in a module, and the day one did
+    // ([ADR-158](../../../../docs/specification/adr/adr-158.md)) it looked for
+    // a type called `io`, found none, and called the constructor a callee
+    // nothing describes.
+    //
+    // **And a ledger's types count**, not only this file's declarations: an
+    // enum of this program gets no `TypeContract`, which is what the
+    // declaration walk is for, but `io::IoError` is a library's and the
+    // library says so.
+    if let Some((declared, _variant)) = name.rsplit_once("::") {
+        let is_a_type = library.types.contains_key(declared)
+            || own.types.contains_key(declared)
+            || parsed.program.items.iter().any(|item| {
+                matches!(
+                    &item.node,
+                    Item::Enum { name, .. } | Item::Struct { name, .. } if parsed.text(*name) == declared
+                )
+            });
         if is_a_type && !own.functions.contains_key(&name) {
             return None;
         }

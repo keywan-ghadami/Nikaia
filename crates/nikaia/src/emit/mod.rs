@@ -1232,6 +1232,19 @@ const LOCKED: &str = "Locked";
 /// D9 named that as what one name buys).
 const SHARED_MUT: &str = "SharedMut";
 
+/// Whose the one error type in a function's set is
+/// ([ADR-159](../../docs/specification/adr/adr-159.md) D1, D2).
+///
+/// The difference decides the **envelope**. A type this unit declares is one
+/// the program `throw`s, so the failure has a site and travels in a
+/// `Thrown[E]`. A type a **library** declares arrives from a call, with no
+/// `throw` in this program to have a site — so it travels as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Named<'a> {
+    Own(&'a str),
+    Library(&'a str),
+}
+
 /// The slot a function's result is filed under, as `contracts::sharing` keys it.
 const SHARED_RESULT: &str = "<result>";
 
@@ -5036,13 +5049,22 @@ impl<'p> Emitter<'p> {
                     out.push(&format!("return Err({SITE}.refill({CAUGHT}))"));
                     return Ok(());
                 }
-                // A named channel takes the value itself; the box takes it
-                // boxed, which is what `raise` does and what needs `'static`.
-                let raise = match self.named_error(flow.function) {
-                    Some(_) => "nikaia_std::error::throwing(",
-                    None => "nikaia_std::error::raise(",
-                };
-                out.push(&format!("return Err({raise}"));
+                // Three channels and three ways in. The **envelope** takes the
+                // value and the site; the **box** takes it boxed, which is what
+                // `raise` does and what needs `'static`; and a **library's
+                // type** takes the value alone, because a channel that carries
+                // no envelope has nowhere to put a site
+                // ([ADR-159](../../docs/specification/adr/adr-159.md) D2).
+                match self.named_error(flow.function) {
+                    Some(Named::Library(_)) => {
+                        out.push("return Err(");
+                        self.expr(out, inner, depth, flow)?;
+                        out.push(")");
+                        return Ok(());
+                    }
+                    Some(Named::Own(_)) => out.push("return Err(nikaia_std::error::throwing("),
+                    None => out.push("return Err(nikaia_std::error::raise("),
+                }
                 self.expr(out, inner, depth, flow)?;
                 out.push(&format!(", {:?}))", flow.origin));
             }
@@ -5917,7 +5939,7 @@ impl<'p> Emitter<'p> {
     /// the set is *something this compiler cannot name*, a set with two members
     /// needs the generated sum that is not built, and a type another package
     /// declares is not this unit's to name in a signature.
-    fn named_error(&self, key: &str) -> Option<&str> {
+    fn named_error(&self, key: &str) -> Option<Named<'_>> {
         let throws = &self.own_contracts.functions.get(key)?.throws;
         let [one] = throws.as_slice() else {
             return None;
@@ -5925,7 +5947,18 @@ impl<'p> Emitter<'p> {
         if one == crate::contracts::UNNAMED_ERROR {
             return None;
         }
-        self.declared_errors.contains(one).then_some(one.as_str())
+        if self.declared_errors.contains(one) {
+            return Some(Named::Own(one.as_str()));
+        }
+        // **A type a ledger describes is a name too**
+        // ([ADR-159](../../docs/specification/adr/adr-159.md) D1). `io::IoError`
+        // is not this unit's to declare and is every bit as nameable: `std`
+        // publishes it, the generated file reaches it through the prelude, and
+        // a program that reads a file has it as its whole set.
+        self.library
+            .types
+            .contains_key(one)
+            .then_some(Named::Library(one.as_str()))
     }
 
     /// The type a function's failures travel in.
@@ -5938,7 +5971,13 @@ impl<'p> Emitter<'p> {
     fn error_channel(&self, key: &str, lifetimes: Lifetimes, borrows: bool) -> String {
         match self.named_error(key) {
             None => "Box<dyn std::error::Error>".to_string(),
-            Some(name) => {
+            // **A library's error travels bare**
+            // ([ADR-159](../../docs/specification/adr/adr-159.md) D2): there is
+            // no envelope because there is no `throw` in this program to record
+            // the site of. `std` hands the value back as it is, so propagating
+            // it is a plain `?` and a `catch` binds what the source names.
+            Some(Named::Library(name)) => name.to_string(),
+            Some(Named::Own(name)) => {
                 let params = match self.borrows_named(name) {
                     false => String::new(),
                     true => match lifetimes == Lifetimes::ELIDED && !borrows {
@@ -5979,7 +6018,10 @@ impl<'p> Emitter<'p> {
             Expr::Try(inner) => return self.caught_channel_is_named(inner),
             _ => return false,
         };
-        self.named_error(&self.parsed.unaliased(&name)).is_some()
+        matches!(
+            self.named_error(&self.parsed.unaliased(&name)),
+            Some(Named::Own(_))
+        )
     }
 
     /// Whether a function of **this program** can pause, and is therefore an
