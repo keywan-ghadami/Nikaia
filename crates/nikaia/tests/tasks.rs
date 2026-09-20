@@ -35,7 +35,8 @@ fn lower(source: &str) -> String {
 /// reads.
 fn lower_at(source: &str, user_parallelism: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
-    let build = emit::Build::parse("x86_64-linux", user_parallelism, "yes").expect("a known switch");
+    let build =
+        emit::Build::parse("x86_64-linux", user_parallelism, "yes").expect("a known switch");
     emit::emit_program(&parsed, build)
         .expect("the source lowers")
         .rust

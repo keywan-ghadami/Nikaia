@@ -258,17 +258,57 @@ What is left:
   calls — *a foreign crate is described before it is called*, below — rather
   than a change here. That number is what any refusal reading the column has to
   be read against, which is why it is kept.
-* **`NK2201` and `NK2503`**, catalogued and not emitted.
+* **`NK2201` and `NK2503`**, catalogued and not emitted — and both questions
+  are now **measured** rather than open.
 
-  *`NK2503` needs the reachability walk* [ADR-039](specification/adr/adr-039.md)
-  D6 describes as `NK2502`'s generalised.
+  *`NK2503`'s refusal is built; its number is not.*
+  [ADR-039](specification/adr/adr-039.md) D6 says the check **is** the crossing
+  walk generalised, *never copied* — and it is: a lock reachable through a
+  struct's field, at a call into code nothing describes, is refused today, with
+  the lock's own sentence in the note and D3's way out. Measured on a
+  three-line program:
 
-  *`NK2201` is not obviously anything.* The catalogue calls it *no I/O while
-  holding locked data*, and [ADR-067](specification/adr/adr-067.md) D1 split
-  that sentence in two: what **pauses** is `NK2202`'s and what **takes a lock**
-  is `NK2203`'s, and a `println` is the second. What a third code would add is
-  I/O that neither pauses nor takes a lock, and whether any exists is a question
-  to answer before writing one.
+  ```text
+  error[NK2502]: `b` may not cross a thread, and `foreign_thing::take` may put it on one
+       = `SharedMut[i64]`, which its field `inner` holds, holds a lock, and a lock
+         may not go into code nothing written down describes …
+       help: open the lock where you are and hand over the value inside it
+  ```
+
+  So what is left is a **number and a sentence**, not a walk. Part III C.6
+  writes `NK2503`'s own message — *`hyper_shim::render` can reach a lock through
+  `state`*, a refusal about the **call** rather than about a value crossing —
+  and the shipped diagnostic is `NK2502`'s, about the value. The work is one
+  branch at the site that already walks every argument: where the refusal's
+  reason is a lock, say so under its own code. What it needs first is telling
+  *lock* from *count* in the walk's verdict, since `Shared` answers `MayNot`
+  into foreign code as well and is not a lock.
+
+  *`NK2201` has exactly one thing to be about, and it is worth having.* The
+  catalogue calls it *no I/O while holding locked data*, and
+  [ADR-067](specification/adr/adr-067.md) D1 split that sentence in two: what
+  **pauses** is `NK2202`'s and what **takes a lock** is `NK2203`'s. That record
+  left *whether any third thing exists* as a question to answer before writing
+  a code, and the answer is **yes, one**. Of the nine `std` entries whose touch
+  set names I/O, four are the printing functions (`sync`, `locks = true` —
+  `NK2203`'s), four are `fs`'s reads and its write (not `sync` — `NK2202`'s),
+  and one is neither:
+
+  | entry | `sync` | `locks` | which code |
+  | :--- | :--- | :--- | :--- |
+  | `print`, `println`, `eprint`, `eprintln` | yes | yes | `NK2203` |
+  | `fs::map`, `fs::read`, `fs::read_to_string`, `fs::write` | — | — | `NK2202` |
+  | **`fs::Mapped::deref`** | **yes** | **—** | **neither** |
+
+  Reading a mapping is a **page fault**, which is a disk read that neither
+  suspends nor takes a lock — so `mapped[i]` inside an open door is I/O while
+  holding locked data, and nothing says a word. That is what a third code would
+  be for, and it is now a piece of work rather than a question.
+
+  *It is free today and will not stay free.* No program in `examples/`, in
+  `tests/` or in `benches/` opens a door at all, so a refusal costs nothing now
+  — which is this section's own opening rule about refusals, and the reason to
+  take it before a program exists that a mapping inside a lock is correct for.
 
 ### 2.4. Part II 12.8's supervision syntax
 

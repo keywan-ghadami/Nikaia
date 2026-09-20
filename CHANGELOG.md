@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.87] — 2026-09-20
+
+Two catalogued-and-unemitted codes measured rather than left as questions
+(`docs/open-work.md` §2.3). Docs only.
+
+### Measured
+
+- **`NK2503`'s refusal is built; its number is not.** [ADR-039](docs/specification/adr/adr-039.md) D6 says the check **is** the crossing walk generalised, *never copied* — and it is. A lock reachable through a struct's field, at a call into code nothing describes, is refused today, with the lock's own sentence in the note and D3's way out; a three-line program reaches it. What is left is a **number and a sentence**, not a walk: Part III C.6 writes `NK2503`'s own message — a refusal about the **call** — while the shipped one is `NK2502`'s, about the value. The work is one branch at the site that already walks every argument, and what it needs first is telling *lock* from *count* in the walk's verdict, since `Shared` answers *may not* into foreign code as well and is not a lock.
+- **`NK2201` has exactly one thing to be about.** [ADR-067](docs/specification/adr/adr-067.md) D1 split *no I/O while holding locked data* in two — what pauses is `NK2202`'s, what takes a lock is `NK2203`'s — and left *whether any third thing exists* as a question to answer before writing a code. Of the nine `std` entries whose touch set names I/O, four are the printing functions (`sync`, `locks = true`), four are `fs`'s reads and its write (not `sync`), and one is neither: **`fs::Mapped::deref`**. Reading a mapping is a page fault, a disk read that neither suspends nor takes a lock — so `mapped[i]` inside an open door is I/O while holding locked data and nothing says a word.
+- **And it is free today.** No program in `examples/`, in `tests/` or in `benches/` opens a door at all, so the refusal costs nothing now — which is §2's own opening rule about refusals, and the reason to take it before a program exists that a mapping inside a lock is correct for.
+
+### Fixed
+
+- **0.0.86 went out unformatted and CI was red.** One line of `crates/nikaia/tests/tasks.rs` was edited after `cargo fmt --all` had run, so `cargo fmt --all --check` — the first of the five gates — failed on `main`. The lesson is the gate's own: it is the *last* thing to run before a commit, not the first, and an edit after it is an edit before nothing.
+
+### Not changed
+
+- No other source and no test. An unrecorded measurement is one somebody pays for twice, which is why this is a package rather than a note in a commit message.
+
 ## [0.0.86] — 2026-09-20
 
 The re-entrancy check is a **build option** now
