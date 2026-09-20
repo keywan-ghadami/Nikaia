@@ -441,7 +441,7 @@ use crate::contracts::Ledger;
 use crate::parser::Parsed;
 
 /// What one function's body reaches, before the fixpoint joins it up.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Reach {
     /// Something it calls is not accounted for: a name no ledger knows, a
     /// construct that runs something, or a described callee whose own touch set
@@ -509,6 +509,42 @@ pub fn infer(
                         ) {
                             graph.insert(name, reach);
                         }
+                    }
+                }
+                // **A `pub` rule is an entry, so it gets the walk too**
+                // ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+                // `docs/open-work.md` §1.1). Its body is every **action block**
+                // in the grammar: a rule's pattern names other rules of the same
+                // grammar and their actions run with it, and which ones is the
+                // parser backend's question rather than this walk's — so the
+                // grammar is the unit, which is the over-approximation ADR-033
+                // D4 asks for in this column.
+                Item::Grammar(def) => {
+                    let named = parsed.text(def.name).to_string();
+                    let mut whole = Reach::default();
+                    for rule in &def.rules {
+                        for alt in &rule.alts {
+                            if let Some(action) = &alt.action {
+                                collect(parsed, action, ledger, library, &mut whole);
+                            }
+                        }
+                    }
+                    for rule in def.rules.iter().filter(|r| r.is_public) {
+                        let key = format!("{named}::{}", parsed.text(rule.name));
+                        let mut reach = whole.clone();
+                        // The method calls the type checker resolved, under the
+                        // key it files a rule's answers under.
+                        if let Some(methods) = resolved.get(&key) {
+                            reach.unknown |= methods.unresolved;
+                            for callee in &methods.resolved {
+                                if ledger.functions.contains_key(callee) {
+                                    reach.calls.insert(callee.clone());
+                                } else {
+                                    absorb(library.functions.get(callee), &mut reach);
+                                }
+                            }
+                        }
+                        graph.insert(key, reach);
                     }
                 }
                 _ => {}

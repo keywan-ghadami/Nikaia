@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.67] — 2026-09-20
+
+A grammar's entry earns its columns
+([ADR-082](docs/specification/adr/adr-082.md)) — `docs/open-work.md` §1.1, down
+from four missing columns to one, and the one that is left turns out to be a
+different question.
+
+### Fixed
+
+- **`touches` and `locks` are derived over a `pub` rule's action blocks** and folded into the entry the way a function's are. A rule's actions are ordinary Nikaia, walked by the same two passes that read a function's body. `examples/inventory`'s `Stock::file` carries `touches = []` now, and `read` — whose body is one `Stock::file(data)` — carries it too and has lost its `locks = "?"`. That is the entry's own reproduction, read backwards.
+- **A `pub` rule has the entry's key while its body is checked**, which is what the derivation needed first: the checker files a call's answers under the enclosing **function**, and an action has none, so a rule's answers landed nowhere at all. What the key must not do is make an action a *function*, and `NK2605` says that where it belongs instead — an action's failure leaves the parser rather than travelling to a caller.
+
+### Found by building it
+
+- **Six unanswered method calls in the corpus were not merely unanswered; they were uncounted.** With no key, nothing a grammar action called was recorded, so the ceiling `crates/nikaia/tests/sequences.rs` keeps had never seen them. It rises from 33 to 39 with that sentence on it. What a pattern binds has no type in this compiler — that is the parser backend's — so a method call on one is unanswerable by construction, and an entry derived from such an action says *undecided* rather than nothing.
+
+### Left open
+
+- **`keeps`, which is the tether's question rather than this record's.** A parse hands back views **into its input** — `Stock`'s `Entry` holds `&str` — so an entry keeps its `input`, and that is [ADR-008](docs/specification/adr/adr-008.md)'s tether rather than anything an action block says. Absent is the safe reading meanwhile: *nobody said* makes a caller hand the input over whole, where a derived `keeps = []` would lend it to a parser that tethers views into it. It waits on the same mechanism [`docs/open-decisions.md`](docs/open-decisions.md)'s `Bytes` entry waits on.
+
 ## [0.0.66] — 2026-09-20
 
 The most negative `i64` has a spelling

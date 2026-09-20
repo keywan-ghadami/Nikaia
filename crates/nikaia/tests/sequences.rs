@@ -201,6 +201,16 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// A ceiling rather than a floor, so that the number can only be beaten: what
 /// this guards is that a later change does not quietly make the corpus less
 /// answerable.
+///
+/// **It rose to 39, and the six are not new.** A call in a **grammar action**
+/// used to land in no entry at all, because the checker filed its answers under
+/// the enclosing *function* and an action has none — so six calls that were
+/// always unanswered were also uncounted. A `pub` rule is a ledger entry
+/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1), and it has its
+/// own key now (`docs/open-work.md` §1.1), which is what made them visible.
+/// What a pattern binds has no type in this compiler — that is the parser
+/// backend's — so a method call on one is unanswerable by construction, and the
+/// entries derived from such an action say *undecided* rather than nothing.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -237,8 +247,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 33,
-        "{unanswered} unanswered method calls in {files} programs, and 33 is the \
+        unanswered <= 39,
+        "{unanswered} unanswered method calls in {files} programs, and 39 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"

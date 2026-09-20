@@ -91,7 +91,7 @@ const DOORS: &[&str] = &[
 const MULTI: &[&str] = &["access_all", "update_all"];
 
 /// What one body reaches, before the fixpoint.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Reaches {
     /// What the body says on its own: a door it opens, or the doubt an
     /// unresolvable call leaves.
@@ -130,6 +130,47 @@ pub fn infer(
                         {
                             graph.insert(name, reaches);
                         }
+                    }
+                }
+                // **A `pub` rule is an entry, so it gets the walk too**
+                // ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+                // `docs/open-work.md` §1.1). Its body is every **action block**
+                // in the grammar, for the reason `touch::infer` gives one file
+                // over: a rule's pattern names other rules of the same grammar
+                // and their actions run with it, so the grammar is the unit —
+                // which is the safe direction here, because a lock this walk
+                // does not see is a deadlock the checker does not refuse.
+                Item::Grammar(def) => {
+                    let named = parsed.text(def.name).to_string();
+                    let mut whole = Reaches::default();
+                    for rule in &def.rules {
+                        for alt in &rule.alts {
+                            if let Some(action) = &alt.action {
+                                walk(parsed, action, &mut whole);
+                            }
+                        }
+                    }
+                    for rule in def.rules.iter().filter(|r| r.is_public) {
+                        let key = format!("{named}::{}", parsed.text(rule.name));
+                        let mut reaches = whole.clone();
+                        if let Some(calls) = resolved.get(&key) {
+                            let outside = |name: &String| !calls.in_a_task.resolved.contains(name);
+                            if calls.unresolved && !calls.in_a_task.unresolved {
+                                reaches.itself = reaches.itself.or(Lock::Undecided);
+                            }
+                            if calls
+                                .resolved
+                                .iter()
+                                .filter(|to| outside(to))
+                                .any(|to| DOORS.contains(&to.as_str()))
+                            {
+                                reaches.itself = reaches.itself.or(Lock::Holds);
+                            }
+                            reaches
+                                .callees
+                                .extend(calls.resolved.iter().filter(|to| outside(to)).cloned());
+                        }
+                        graph.insert(key, reaches);
                     }
                 }
                 _ => {}

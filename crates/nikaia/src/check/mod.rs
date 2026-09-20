@@ -1642,8 +1642,22 @@ impl<'a> Checker<'a> {
     /// else is the mistake worth catching: a rule is where a struct literal is
     /// most often typed out in full.
     fn grammar(&mut self, grammar: &ast::GrammarDef) {
+        let named = self.parsed.text(grammar.name).to_string();
         for rule in &grammar.rules {
             let expected = rule.ret_type.as_ref().map(|t| Ty::from_ast(self.parsed, t));
+            // **The rule's own key, so its answers land in its own entry.**
+            // A `pub` rule *is* a ledger entry
+            // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), and the
+            // walks that derive `touches` and `locks` read the method answers
+            // this checker files under the caller's key — which was `None` for
+            // an action, so a grammar's entry inherited nothing and every
+            // caller inherited that (`docs/open-work.md` §1.1). What the key
+            // must **not** do is make an action a *function*, and `NK2605` is
+            // where that is said instead: an action's failure leaves the parser
+            // rather than travelling to a caller.
+            let outer_current = self
+                .current
+                .replace(format!("{named}::{}", self.parsed.text(rule.name)));
             for alt in &rule.alts {
                 let mut frame = Vec::new();
                 self.bindings_of(&alt.pattern.node, &mut frame);
@@ -1682,6 +1696,7 @@ impl<'a> Checker<'a> {
                 }
                 self.expected = outer;
             }
+            self.current = outer_current;
         }
     }
 
@@ -5747,9 +5762,18 @@ impl<'a> Checker<'a> {
         // not travel to one: past the `=>` it leaves the parser as the Nikaia
         // error it is and reaches the `catch` beside the `dsl`
         // ([ADR-023](../../../../docs/specification/adr/adr-023.md) D9). So
-        // there is no `throws` to demand and no function to name, and the same
-        // is true of a `test` or a `bench` body - which is where `current` is
-        // `None`, and the whole of where it is.
+        // there is no `throws` to demand and no function to name.
+        //
+        // **Said here rather than by `current` being `None`**, which is what
+        // said it until a rule's answers needed a key of their own to land
+        // under (`docs/open-work.md` §1.1): the two facts are *this is not a
+        // function* and *these calls belong to this entry*, and only the first
+        // of them is this refusal's.
+        if self.inside_an_action.is_some() {
+            return;
+        }
+        // A `test` or a `bench` body is the other place with no function to
+        // name, and there `current` is still `None`.
         let Some(function) = self.current.clone() else {
             return;
         };

@@ -62,7 +62,7 @@ programs this compiler takes and 39 of those compile below.
 
 **One entry is open.**
 
-### 1.1. A grammar's entry claims nothing, and every caller inherits that
+### 1.1. A grammar's entry does not say what it keeps
 
 **Found by building [ADR-140](specification/adr/adr-140.md) D3**, which is the
 only reason it is visible: a grammar used to be entered through a **method**
@@ -82,18 +82,39 @@ entry and not a revert. Withholding a promise on doubt is
 the analysis failing open: a rule's action is arbitrary Nikaia and could pause,
 and the method shape let the caller keep a promise nobody had derived.
 
-**The sharpest column is answered and the other three are not.**
-[ADR-142](specification/adr/adr-142.md) D1 says an action may not pause, so an
-entry is `sync` by construction and D2 writes the column — `read` is
-`sync = "inferred"` and `pub fn` again. What D1 decided nothing about is what an
-action *keeps*, *touches* or *locks*, so those three are still `?` and still
-want the derivation: a `pub` rule's action blocks are ordinary bodies, and
-`keeps`, `touches` and `locks` can be inferred over them and folded into the
-entry the way a function's are.
+**Three of the four columns are answered, and the fourth is a different
+question.** [ADR-142](specification/adr/adr-142.md) D1 says an action may not
+pause, so an entry is `sync` by construction and D2 writes the column.
+**`touches` and `locks` are now derived over the action blocks** and folded into
+the entry the way a function's are — `Stock::file` carries `touches = []`, and
+`read` carries it too and has lost its `locks = "?"`, which is this entry's own
+reproduction read backwards.
+
+*What that needed first* was a **key**: the checker filed a call's answers under
+the enclosing *function*, and an action has none, so a rule's answers landed
+nowhere. A `pub` rule is a ledger entry
+([ADR-082](specification/adr/adr-082.md) D1) and has its own key now. What the
+key must not do is make an action a *function*, and `NK2605` says that where it
+belongs instead: an action's failure leaves the parser rather than travelling to
+a caller.
+
+*The grammar is the unit rather than the rule*, which is the over-approximation
+[ADR-033](specification/adr/adr-033.md) D4 asks for in this column: a rule's
+pattern names other rules of the same grammar and their actions run with it, and
+which ones is the parser backend's question rather than this walk's.
+
+**`keeps` is what is left, and it is the tether's question rather than this
+one's.** A parse hands back views **into its input** — `Stock`'s `Entry` holds
+`&str` — so the entry keeps its `input`, and that is
+[ADR-008](specification/adr/adr-008.md)'s tether rather than anything an action
+block says. Leaving the column absent is the safe reading today: absent means
+*nobody said*, so the caller does not lend, while a derived `keeps = []` would
+lend the input to a parser that tethers views into it. It is written down here
+rather than guessed at, and it waits on the same mechanism
+[`open-decisions.md`](open-decisions.md)'s `Bytes` entry waits on.
 
 *Every example still runs*, at both settings, which is what said this cost
-information rather than correctness — and `sync` has since been paid back in
-full.
+information rather than correctness.
 
 ## 2. Decided and unbuilt
 

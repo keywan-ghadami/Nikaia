@@ -1164,3 +1164,92 @@ fn a_fields_visibility_survives_the_ledger() {
         "no word is not a promise (ADR-010 D1)"
     );
 }
+
+/// **A grammar's entry earns its columns from its actions**
+/// (`docs/open-work.md` §1.1, [ADR-082](../../../docs/specification/adr/adr-082.md)
+/// D1).
+///
+/// A `pub` rule is a ledger entry, and it used to be written with
+/// `..Default::default()`: `throws`, a signature, and nothing else. The three
+/// columns that are a question about a **body** — `touches`, `locks` and
+/// `keeps` — were absent, so every caller inherited the absence:
+/// `examples/inventory`'s `read`, whose body is one `Stock::file(data)`, came
+/// out with no `touches` and `locks = "?"`.
+///
+/// A rule's action blocks are ordinary Nikaia, so two of the three are derived
+/// over them now.
+#[test]
+fn a_grammar_rules_entry_carries_what_its_actions_reach() {
+    let own = ledger(
+        "grammar Stock {\n\
+         \x20   rule FIELD -> &str = s:until(\";\") -> { s }\n\
+         \x20   pub rule file -> Vec[i64] = n:FIELD* -> { [1] }\n\
+         }\n\
+         \n\
+         pub fn read(data: &str) -> Vec[i64] throws { return Stock::file(data) }\n",
+    );
+    let entry = &own.functions["Stock::file"];
+    assert!(
+        entry.touches_known && entry.touches.is_empty(),
+        "these actions reach nothing, and saying so is what a caller reads: {:#?}",
+        entry.touches
+    );
+    assert_eq!(
+        entry.touches_a_lock,
+        nikaia::contracts::Lock::No,
+        "and they take no lock"
+    );
+    // **The caller is the point**: the absence used to travel, so the presence
+    // has to as well.
+    let caller = &own.functions["read"];
+    assert!(caller.touches_known && caller.touches.is_empty());
+    assert_eq!(caller.touches_a_lock, nikaia::contracts::Lock::No);
+}
+
+/// **And an action that reaches something says so**, which is the other
+/// direction: the claim is derived rather than assumed.
+#[test]
+fn a_grammar_rule_that_prints_carries_the_touch() {
+    let own = ledger(
+        "grammar Noisy {\n\
+         \x20   pub rule one -> i64 = n:dec[i64](digit+) -> { println(\"seen\") n }\n\
+         }\n\
+         \n\
+         pub fn read(data: &str) -> i64 throws { return Noisy::one(data) }\n",
+    );
+    let entry = &own.functions["Noisy::one"];
+    assert!(entry.touches_known, "the column is answered");
+    assert!(
+        entry.touches.iter().any(|t| t.kind.contains("stdout")),
+        "{:#?}",
+        entry.touches
+    );
+    assert_eq!(
+        own.functions["read"].touches, entry.touches,
+        "and the caller reaches what the entry does"
+    );
+}
+
+/// **The grammar is the unit, not the rule**, and that is the
+/// over-approximation [ADR-033](../../../docs/specification/adr/adr-033.md) D4
+/// asks for in this column: a rule's pattern names other rules of the same
+/// grammar and their actions run with it, and which ones is the parser
+/// backend's question rather than this walk's.
+#[test]
+fn a_rule_carries_what_the_grammar_beside_it_reaches() {
+    let own = ledger(
+        "grammar Mixed {\n\
+         \x20   rule LOUD -> i64 = n:dec[i64](digit+) -> { println(\"seen\") n }\n\
+         \x20   pub rule quiet -> i64 = n:LOUD -> { n }\n\
+         }\n\
+         \n\
+         fn main() { println(\"x\") }\n",
+    );
+    let entry = &own.functions["Mixed::quiet"];
+    assert!(entry.touches_known, "the column is answered");
+    assert!(
+        entry.touches.iter().any(|t| t.kind.contains("stdout")),
+        "the rule it names prints, so this one does: {:#?}",
+        entry.touches
+    );
+}
