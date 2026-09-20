@@ -490,6 +490,16 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
     check_program(parsed, own, library, &BTreeSet::new())
 }
 
+/// The errors a callee has **newly** gained since the committed ledger
+/// ([ADR-101](../../docs/specification/adr/adr-101.md) D1), keyed by the
+/// callee's name.
+///
+/// Empty for every build that has nothing to compare — a first build, a loose
+/// file, a package whose ledger is not committed yet — which is the honest
+/// answer: nothing was written against the old set, so nothing has changed for
+/// anybody.
+pub type NewlyThrowing = BTreeMap<String, Vec<String>>;
+
 /// The same, for one file of a program made of several.
 ///
 /// `modules` is what the program is made of, and it is the whole difference: a
@@ -503,7 +513,25 @@ pub fn check_program(
     library: &Ledger,
     modules: &BTreeSet<String>,
 ) -> Checked {
+    check_against(parsed, own, library, modules, &NewlyThrowing::new())
+}
+
+/// The same, told what a callee has newly gained since the committed ledger
+/// ([ADR-101](../../docs/specification/adr/adr-101.md) D1).
+///
+/// **A second entry point rather than a parameter on the first**, because the
+/// answer is a fact about the *build* — two ledgers, one of them on disk — and
+/// every other caller of `check_program` is handed one program and no history.
+/// An empty map is what they all pass, and an empty map says nothing.
+pub fn check_against(
+    parsed: &Parsed,
+    own: &Ledger,
+    library: &Ledger,
+    modules: &BTreeSet<String>,
+    newly: &NewlyThrowing,
+) -> Checked {
     let mut checker = Checker {
+        newly,
         parsed,
         own,
         library,
@@ -1061,6 +1089,10 @@ impl Local {
 }
 
 struct Checker<'a> {
+    /// What each callee has **newly** gained since the committed ledger
+    /// ([ADR-101](../../docs/specification/adr/adr-101.md) D1). Empty where
+    /// there is nothing to compare, which says nothing.
+    newly: &'a NewlyThrowing,
     parsed: &'a Parsed,
     /// This unit's own contracts, inferred from the source being checked.
     own: &'a Ledger,
@@ -6003,6 +6035,7 @@ impl<'a> Checker<'a> {
             if let Some(guarded) = &mut self.guarded {
                 guarded.fallible = true;
             }
+            self.newly_reaches_a_handler(key, span);
             // **And the lambda this may be inside**
             // ([ADR-102](../../docs/specification/adr/adr-102.md) D2). Here for
             // the same reason the line above is here: this is the one place
@@ -6066,6 +6099,59 @@ impl<'a> Checker<'a> {
                 "declare the error: add `throws` to `{function}` - or handle it at the \
                  call, `… catch {{ … }}` (Part I, 7.1)"
             )),
+        });
+    }
+
+    /// **`NK2402`: an error that newly reaches a `catch` is named once**
+    /// ([ADR-101](../../docs/specification/adr/adr-101.md) D1).
+    ///
+    /// A `catch` handles everything that reaches it and `throws` names no types
+    /// at a signature, so the set arriving at a handler is **open**: it grows
+    /// whenever a callee gains a failure. The handler is still a correct
+    /// program and still handles the new error — as it handles everything. What
+    /// was missing is not a refusal. It is that nobody was told.
+    ///
+    /// So this is a **warning**, printed and stopping nothing, and it is given
+    /// **once**: the commit of the ledger diff is the acknowledgement (D2), and
+    /// after it the new set is the baseline. No marker in the source, nothing
+    /// to type at the handler.
+    ///
+    /// **A handler that matches and one that does not are treated alike** (D3),
+    /// because the question is the same for all three shapes — is this new
+    /// error right where it landed? What the author does about it is theirs,
+    /// and both answers are legitimate.
+    ///
+    /// The caret is on the **call** rather than on the `catch`, because that is
+    /// what the sentence is about: *this call brings something new in here*.
+    fn newly_reaches_a_handler(&mut self, key: &str, span: &Span) {
+        if self.guarded.is_none() {
+            return;
+        }
+        let Some(gained) = self.newly.get(key) else {
+            return;
+        };
+        let named = list(&gained.iter().map(String::as_str).collect::<Vec<_>>());
+        self.checked.findings.push(Finding {
+            severity: Severity::Warning,
+            span: span.clone(),
+            code: "NK2402",
+            message: format!("this `catch` receives {named} from `{key}` now"),
+            notes: vec![
+                format!(
+                    "`{key}` did not carry {named} when the handler around this call was \
+                     written, and a `catch` takes everything that reaches it - so it \
+                     handles the new one as it handles everything (Part I, 7.1)"
+                ),
+                "nothing is wrong and nothing is refused: this is the note ADR-101 D1 asks \
+                 for, and committing the ledger diff is what acknowledges it - after that \
+                 the new set is the baseline and the note is not given again"
+                    .to_string(),
+            ],
+            help: Some(
+                "read it where it landed. A new arm in the handler and leaving it where it \
+                 is are both answers; `nikaia build` without `--locked` records the new set"
+                    .to_string(),
+            ),
         });
     }
 

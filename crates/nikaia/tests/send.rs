@@ -118,8 +118,12 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
         &own,
         &BTreeSet::new(),
         // A loose file declares no Rust crate, so ADR-104 D1 has nothing to
-        // ask about here.
-        &nikaia::project::Foreign::default(),
+        // ask about here, and nothing has gained an error since a committed
+        // ledger, which is every build but the one after a change (ADR-101 D1).
+        nikaia::project::Around {
+            foreign: &nikaia::project::Foreign::default(),
+            newly: &nikaia::check::NewlyThrowing::new(),
+        },
         Path::new("app.nika"),
         source,
         user_parallelism,

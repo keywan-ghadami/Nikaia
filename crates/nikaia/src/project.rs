@@ -599,12 +599,22 @@ pub fn lower(
                 true => Foreign::of(&layout.root),
                 false => Foreign::default(),
             };
+            // **The committed ledger against the one this build inferred**
+            // ([ADR-101](../../docs/specification/adr/adr-101.md) D1), read
+            // once for the package rather than once per unit: the question is
+            // whether a *contract* moved, and a contract belongs to the
+            // package.
+            let newly = newly_throwing(&layout.root, &program.contracts);
+            let around = Around {
+                foreign: &foreign,
+                newly: &newly,
+            };
             for unit in &program.units {
                 check(
                     &unit.parsed,
                     &program.contracts,
                     &modules,
-                    &foreign,
+                    around,
                     &unit.path,
                     &unit.source,
                     &settings.user_parallelism,
@@ -835,27 +845,41 @@ fn description_at(root: &Path, name: &str) -> Option<Ledger> {
 /// change it (ADR-005 §1 Group B); what the switch does change is whether a
 /// refusal is about *this* build, and that is a question about severity. See
 /// [`lint_where_nothing_crosses`].
+/// **What a build knows that one unit does not**, handed to the check together.
+///
+/// Two facts, and both are about the *build* rather than about the file being
+/// checked — what the manifest links against and what was described beside it
+/// ([ADR-104](../../docs/specification/adr/adr-104.md) D1), and what a callee
+/// has newly gained since the ledger committed beside it
+/// ([ADR-101](../../docs/specification/adr/adr-101.md) D1). Neither can be read
+/// from a `Parsed`, and neither belongs to it.
+///
+/// **One argument and not two**, because they arrive together and for the same
+/// reason: the day a third fact about the build is needed, it goes here rather
+/// than onto a signature that is already long enough to be read wrong.
+#[derive(Debug, Clone, Copy)]
+pub struct Around<'a> {
+    pub foreign: &'a Foreign,
+    pub newly: &'a check::NewlyThrowing,
+}
+
 pub fn check(
     parsed: &crate::parser::Parsed,
     own: &Ledger,
     modules: &BTreeSet<String>,
-    // **The Rust crates this build declares, and the ones a ledger describes**
-    // ([ADR-104](../../docs/specification/adr/adr-104.md) D1). Handed in rather
-    // than read here, because it is a fact about the *build* - what the manifest
-    // links against and what has been described beside it - and this function is
-    // handed one unit.
-    foreign: &Foreign,
+    around: Around<'_>,
     path: &Path,
     source: &str,
     user_parallelism: &str,
 ) -> Result<()> {
+    let Around { foreign, newly } = around;
     let library = foreign.library()?;
 
     // A described crate is a package by the spelling rule, which is what
     // `modules` is: a set of words that appear in front of a `::` and are not
     // `std`'s ([`Foreign::packages`]).
     let modules = foreign.packages(modules);
-    let mut all = check::check_program(parsed, own, &library, &modules).findings;
+    let mut all = check::check_against(parsed, own, &library, &modules, newly).findings;
     // A separate walk, for the reason the three inside `check_program` are
     // separate: it asks about the **boundary** of the build rather than about a
     // type, and it needs the manifest rather than a ledger.
@@ -1093,6 +1117,45 @@ fn lint_where_nothing_crosses(findings: &mut [check::Finding], user_parallelism:
                 .to_string(),
         );
     }
+}
+
+/// **What each function has newly gained in its `throws` set** since the
+/// ledger committed beside it ([ADR-101](../../docs/specification/adr/adr-101.md)
+/// D1).
+///
+/// The ledger records `throws` as a **set** ([ADR-023](../../docs/specification/adr/adr-023.md)
+/// D1), so a callee that gains a failure is a set that gained a member — and
+/// every `catch` over that callee now receives something it did not when it was
+/// written. D1 asks for a line naming each of them; this is the half that
+/// answers *which errors*.
+///
+/// **Three things answer *nothing gained*, and each is right rather than
+/// cheap.** A build with no committed ledger beside it has nothing to compare,
+/// and a first build is not a change. A ledger that does not parse is not an
+/// answer (`ADR-100` D3's rule one file over). And a function the committed
+/// ledger does not name is **new**, so nothing was ever written against its
+/// set — a new function's whole set is not a set that grew.
+fn newly_throwing(root: &Path, inferred: &Ledger) -> check::NewlyThrowing {
+    let Some(committed) = std::fs::read_to_string(root.join("nikaia.contracts"))
+        .ok()
+        .and_then(|text| Ledger::parse(&text).ok())
+    else {
+        return check::NewlyThrowing::new();
+    };
+    inferred
+        .functions
+        .iter()
+        .filter_map(|(name, contract)| {
+            let before = committed.functions.get(name)?;
+            let gained: Vec<String> = contract
+                .throws
+                .iter()
+                .filter(|error| !before.throws.contains(error))
+                .cloned()
+                .collect();
+            (!gained.is_empty()).then(|| (name.clone(), gained))
+        })
+        .collect()
 }
 
 /// Write the ledger, or - under `--locked` - check that it did not need

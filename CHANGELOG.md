@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.100] — 2026-09-20
+
+**An error that newly reaches a `catch` is named once**
+([ADR-101](docs/specification/adr/adr-101.md)) — `NK2402`, and the record said
+it could not be built.
+
+### Added
+
+- **`NK2402`, a warning.** A `catch` handles everything that reaches it and `throws` names no types at a signature, so the set arriving at a handler is **open**: it grows whenever a callee gains a failure. The handler is still a correct program and still handles the new error — as it handles everything. What was missing is not a refusal; it is that nobody was told.
+- **At the call rather than at the `catch`**, because that is what the sentence is about: *this call brings something new in here*. The build compares the committed `nikaia.contracts` against the one it inferred, once per package, and the checker — which already knows at every failing call whether it is inside a guard and which callee it resolved to — says so. Nothing is walked twice for it.
+- **Once.** The commit of the ledger diff is the acknowledgement, and after it the new set is the baseline. Measured: the note comes on the build after the change and the build after that is silent. No marker in the source, nothing to type at the handler.
+- A handler that reads `error`, one that ignores it and one that dispatches with `match error` are told alike (D3), because the question is the same for all three.
+
+### Measured
+
+- **The record's own §5 was stale**, and that is what let this be built. It read *nothing; `std.contracts` writes `throws = ["?"]` on every entry, so there is no set to diff*. [ADR-158](docs/specification/adr/adr-158.md) gave `std` its error type: the file has **nine** `throws` lines now — seven `io::IoError`, two `Overtaken`, and exactly **one** `["?"]` — and a program's own ledger records named sets too, `["?", "io::IoError"]` in `examples/inventory`. A set that gains a member is a change a diff can see, which is all D1 ever needed.
+- **D2 held before this was written.** `--locked` compares the ledger byte for byte, so a grown `throws` set was already a failure there and `changed_lines` already narrated which entry moved. What is new is the reason it is the right failure.
+- The corpus says nothing, and a test holds that as a guard: 22 handlers, and a note that appeared without a change would be worse than no note at all.
+
+### Stated rather than left as a gap
+
+- **Three things answer *nothing gained*, and each is right rather than cheap.** A build with no committed ledger has nothing to compare, and a first build is not a change. A ledger that does not parse is not an answer. And a function the committed ledger does not name is **new** — a new function's whole set is not a set that grew, and nothing was ever written against it.
+
 ## [0.0.99] — 2026-09-20
 
 **The describer reads fields**

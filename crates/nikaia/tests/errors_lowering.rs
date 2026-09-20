@@ -625,8 +625,12 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
         &std::collections::BTreeSet::new(),
         // Nothing declared and nothing described, which is a loose file's own
         // state: ADR-104 D1 asks a question about the *build*'s boundary and
-        // this one has none.
-        &nikaia::project::Foreign::default(),
+        // this one has none. And nothing has gained an error since a committed
+        // ledger, which is every build but the one after a change (ADR-101 D1).
+        nikaia::project::Around {
+            foreign: &nikaia::project::Foreign::default(),
+            newly: &nikaia::check::NewlyThrowing::new(),
+        },
         &path,
         source,
         "no",

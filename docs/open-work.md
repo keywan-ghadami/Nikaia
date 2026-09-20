@@ -549,24 +549,6 @@ crate is described before it is called*, where there is nothing to derive it
 *from* ([ADR-104](specification/adr/adr-104.md)). Either makes D6 writable and
 testable in the same change, and the test above is what says the day has come.
 
-### 2.12. An error that newly reaches a `catch` is named once
-
-[ADR-101](specification/adr/adr-101.md). When a callee's `throws` set gains a
-member, every `catch` over it is named in the build output, and `--locked`
-fails until the ledger is committed. **Nothing of it is built**, and nothing
-can be yet: `std.contracts` writes `throws = ["?"]` on every entry, so there is
-no set to diff.
-
-*Evidence:* 22 `catch {` handlers in `examples/` and `tests/samples/`, none
-matching on `error`; a new failure in any callee reaches all of them in
-silence today.
-
-*What it needs:* the set written and diffed across builds, then the note and the
-`--locked` failure, which are the `NK2401` machinery over one more column.
-`std` naming its error types was the thing this waited on and it is done
-([ADR-158](specification/adr/adr-158.md)), so a set that gains a member is now
-a change a diff could see.
-
 ### 2.13. A grammar's entry rule throws `"?"`, and that is the last one
 
 [ADR-023](specification/adr/adr-023.md) D1 records `throws` as a **set** of
